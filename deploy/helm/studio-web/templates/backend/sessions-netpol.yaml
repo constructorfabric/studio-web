@@ -44,6 +44,12 @@ spec:
 # allows DNS + the IdP + the LLM host, but NOT the apiserver, so the driver's
 # first call times out ("Connect deadline elapsed") and sessions never launch.
 # Cilium policies are additive; this opens exactly the apiserver, nothing more.
+#
+# OFF BY DEFAULT (backend.sessions.kubeApiEgress=false): the constructorfabric
+# Argo CD project does not permit kind CiliumNetworkPolicy, so shipping this via
+# the chart breaks the whole Application sync. On dmz-core-vhi-eu3 the apiserver
+# egress is provided by cluster-specific-bundles' studio-web-egress instead. Only
+# enable this on clusters whose Argo project whitelists CiliumNetworkPolicy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

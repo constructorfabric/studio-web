@@ -61,7 +61,13 @@ backend:
   # sessions (a DB-backed registry is the follow-up).
   sessions:
     enabled: false
-    kubeApiEgress: true
+    # The session driver needs egress to the kube-apiserver, but that rule must
+    # NOT ship as a chart CiliumNetworkPolicy: the constructorfabric Argo CD
+    # project does not permit kind CiliumNetworkPolicy, so rendering it makes the
+    # whole Application sync invalid. Keep this false and add the apiserver egress
+    # to cluster-specific-bundles (alongside studio-web-egress) instead. Left as a
+    # toggle only for clusters whose Argo project DOES allow the kind.
+    kubeApiEgress: false
     networkPolicy:
       enabled: true
       # Git hosts the session entrypoint may clone from (CIDRs, since a bare
