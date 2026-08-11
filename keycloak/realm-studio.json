@@ -166,22 +166,6 @@
   "editUsernameAllowed": false,
   "identityProviders": [
     {
-      "alias": "google",
-      "providerId": "google",
-      "enabled": true,
-      "trustEmail": true,
-      "storeToken": false,
-      "addReadTokenRoleOnCreate": false,
-      "linkOnly": false,
-      "firstBrokerLoginFlowAlias": "first broker login",
-      "config": {
-        "clientId": "${vault.google-client-id}",
-        "clientSecret": "${vault.google-client-secret}",
-        "syncMode": "IMPORT",
-        "useJwksUrl": "true"
-      }
-    },
-    {
       "alias": "github",
       "providerId": "github",
       "enabled": true,
@@ -196,48 +180,12 @@
         "syncMode": "IMPORT",
         "useJwksUrl": "true"
       }
-    },
-    {
-      "alias": "microsoft",
-      "providerId": "microsoft",
-      "enabled": true,
-      "trustEmail": true,
-      "storeToken": false,
-      "addReadTokenRoleOnCreate": false,
-      "linkOnly": false,
-      "firstBrokerLoginFlowAlias": "first broker login",
-      "config": {
-        "clientId": "${vault.microsoft-client-id}",
-        "clientSecret": "${vault.microsoft-client-secret}",
-        "syncMode": "IMPORT",
-        "useJwksUrl": "true"
-      }
     }
   ],
   "identityProviderMappers": [
     {
-      "name": "google-tenant-id",
-      "identityProviderAlias": "google",
-      "identityProviderMapper": "hardcoded-attribute-idp-mapper",
-      "config": {
-        "syncMode": "INHERIT",
-        "attribute": "tenant_id",
-        "attribute.value": "00000000-0000-0000-0000-000000000002"
-      }
-    },
-    {
       "name": "github-tenant-id",
       "identityProviderAlias": "github",
-      "identityProviderMapper": "hardcoded-attribute-idp-mapper",
-      "config": {
-        "syncMode": "INHERIT",
-        "attribute": "tenant_id",
-        "attribute.value": "00000000-0000-0000-0000-000000000002"
-      }
-    },
-    {
-      "name": "microsoft-tenant-id",
-      "identityProviderAlias": "microsoft",
       "identityProviderMapper": "hardcoded-attribute-idp-mapper",
       "config": {
         "syncMode": "INHERIT",
