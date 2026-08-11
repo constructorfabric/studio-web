@@ -1,0 +1,24 @@
+{{- if and .Values.keycloak.enabled .Values.keycloak.hostname }}
+# Separate host for the IdP (issuer). TLS + cert-manager annotations come from
+# keycloak.ingress in the environment override, not baked here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+  {{- with .Values.keycloak.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.keycloak.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.keycloak.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ include "studio-web.fullname" . }}-keycloak, port: { name: http } } }
+{{- end }}

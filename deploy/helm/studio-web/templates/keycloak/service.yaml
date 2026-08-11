@@ -1,0 +1,12 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "studio-web.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+  ports:
+    - { name: http, port: 80, targetPort: http }
+{{- end }}

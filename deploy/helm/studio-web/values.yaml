@@ -111,3 +111,35 @@ imagePullSecrets: []
 # one pod-wide uid would break whichever image doesn't own its files.
 podSecurityContext:
   runAsNonRoot: true
+
+# Self-hosted Keycloak (real SSO, INFRA-3767). Off by default — enable per
+# environment once (a) a cf-studio-keycloak image exists for the release tag,
+# (b) the PGO cluster has a keycloak DB user, and (c) the admin + vault Secrets
+# are sealed. The image bakes the studio realm and vault; only env-specific,
+# non-secret wiring lives in the chart. Egress (Keycloak -> Postgres, -> GitHub
+# for social brokering) is NOT a chart CiliumNetworkPolicy — it goes in
+# cluster-specific-bundles, same reason as the backend kube-api egress.
+keycloak:
+  enabled: false
+  image:
+    # Matches release.yml: ghcr.io/<repo>/cf-studio-keycloak. The common values
+    # override rewrites this to the Harbor GHCR proxy (kyverno admits Harbor only).
+    repository: ghcr.io/constructorfabric/studio-web/cf-studio-keycloak
+    tag: ""                # REQUIRED when enabled: the v* release tag
+  # Public issuer hostname (needs DNS + TLS). Empty disables the IdP ingress.
+  hostname: ""             # e.g. idp.dev.dmz.cnstr.me
+  # PGO-generated Secret for the keycloak DB user (host/port/dbname/user/password).
+  db:
+    existingSecret: "db-pguser-u-keycloak"
+  # Bootstrap (master realm) admin — sealed Secret with keys username/password.
+  adminSecret: "studio-web-keycloak-admin"
+  # files-plaintext vault Secret (social client id/secret), mounted read-only at
+  # /opt/keycloak/data/vault; keys are studio_<provider>-client-id/secret.
+  vaultSecret: "studio-web-keycloak-vault"
+  # IdP host ingress: cert-manager annotations + TLS come from the override.
+  ingress:
+    annotations: {}
+    tls: []
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }

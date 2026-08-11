@@ -1,0 +1,75 @@
+{{- if .Values.keycloak.enabled }}
+# Self-hosted Keycloak (real SSO, INFRA-3767). Our custom cf-studio-keycloak
+# image bakes the studio realm (--import-realm) and the files-plaintext vault;
+# only env-specific, non-secret wiring lives here. Single replica, Recreate:
+# Keycloak is a stateful writer against Postgres and must not run two versions
+# at once during a rollout.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: keycloak
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak
+    spec:
+      serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ required "keycloak.image.tag is required when keycloak.enabled" .Values.keycloak.image.tag }}"
+          args: ["start", "--optimized", "--import-realm"]
+          env:
+            # --- Postgres (PGO pguser Secret: host/port/dbname/user/password) ---
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL_HOST
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: host } }
+            - name: KC_DB_URL_PORT
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: port } }
+            - name: KC_DB_URL_DATABASE
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: dbname } }
+            - name: KC_DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: user } }
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: password } }
+            # --- Hostname / reverse-proxy (TLS terminated at the ingress) ---
+            - name: KC_HOSTNAME
+              value: {{ printf "https://%s" .Values.keycloak.hostname | quote }}
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            # --- Bootstrap (master realm) admin, from a sealed Secret ---
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: username } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: password } }
+            # KC_DB / KC_HEALTH_ENABLED / KC_VAULT are baked at build time in the
+            # image (start --optimized); KC_VAULT_DIR points at the mounted Secret.
+            - name: KC_VAULT_DIR
+              value: /opt/keycloak/data/vault
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }
+          volumeMounts:
+            - { name: vault, mountPath: /opt/keycloak/data/vault, readOnly: true }
+          # Keycloak serves health on the management port (9000), not http.
+          readinessProbe: { httpGet: { path: /health/ready, port: management }, initialDelaySeconds: 20, periodSeconds: 10 }
+          livenessProbe:  { httpGet: { path: /health/live,  port: management }, initialDelaySeconds: 45, periodSeconds: 20 }
+          resources: {{- toYaml .Values.keycloak.resources | nindent 12 }}
+      volumes:
+        - name: vault
+          secret:
+            secretName: {{ .Values.keycloak.vaultSecret }}
+{{- end }}
