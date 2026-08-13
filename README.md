@@ -5,7 +5,8 @@ Constructor Studio web server — backend, frontend, installer.
 | Project | What | Stack |
 |---|---|---|
 | [`studio-backend/`](studio-backend/) | Studio API service assembled from [CF/Gears](https://github.com/constructorfabric/gears-rust): multi-tenancy, users, groups. REST + OpenAPI at `/cf/docs`. | Rust (axum/tokio/sea-orm via gears) |
-| [`studio-frontend/`](studio-frontend/) | Walking-skeleton SPA: token → `/me` → tenant list through the gateway. | Vite + React 19 + TS, vitest |
+| [`studio-frontend/`](studio-frontend/) | Portal UI — being rebuilt on FrontX (shell + microfrontends, ADR-0006). | React 19 + TS via FrontX templates |
+| [`studio-frontend-prototype/`](studio-frontend-prototype/) | The current portal SPA, moved aside for the FrontX rebuild; still what compose serves. | Vite + React 19 + TS, vitest |
 
 ## Quick start
 
