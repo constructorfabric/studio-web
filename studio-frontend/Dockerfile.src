@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+# Build the Studio frontend FROM SOURCE (one-click compose path).
+# Context = CFS root (matches the backend's Dockerfile.src).
+# CI uses ./Dockerfile with a prebuilt dist/ instead.
+
+FROM node:22-alpine AS build
+WORKDIR /src
+COPY studio-frontend/package.json studio-frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY studio-frontend/ ./
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+COPY studio-frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_HOST=studio-backend:8090
+COPY --from=build /src/dist/ /usr/share/nginx/html/
+COPY studio-frontend/docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
+USER root
+RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh \
+ && touch /usr/share/nginx/html/env.js \
+ && chown 101:101 /usr/share/nginx/html/env.js
+USER 101
+EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
+  CMD wget -q --spider http://127.0.0.1:8080/ || exit 1
