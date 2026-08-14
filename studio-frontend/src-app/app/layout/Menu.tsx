@@ -20,10 +20,8 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarMenuIcon,
-  SidebarHeader,
 } from '@/app/components/ui/sidebar';
 import { Icon } from '@iconify/react';
-import { FrontXLogoIcon } from '@/app/icons/FrontXLogoIcon';
 
 export interface MenuProps {
   children?: React.ReactNode;
@@ -76,8 +74,8 @@ export const Menu: React.FC<MenuProps> = ({ children }) => {
 
   return (
     <Sidebar collapsed={collapsed}>
-      {/* Logo/Brand area (non-interactive: the menu never expands) */}
-      <SidebarHeader logo={<FrontXLogoIcon />} collapsed={collapsed} />
+      {/* No brand header for now — the Studio logo lands here later
+          (re-add <SidebarHeader logo={...} collapsed /> when it does). */}
 
       {/* Menu items */}
       <SidebarContent>
