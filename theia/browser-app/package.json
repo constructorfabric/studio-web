@@ -12,12 +12,11 @@
     "@theia/messages": "1.74.0",
     "@theia/monaco": "1.74.0",
     "@theia/navigator": "1.74.0",
+    "@theia/plugin-ext": "1.74.0",
     "@theia/plugin-ext-vscode": "1.74.0",
     "@theia/preferences": "1.74.0",
-    "@theia/scm": "1.74.0",
     "@theia/workspace": "1.74.0",
-    "drawio-editor": "0.0.0",
-    "studio": "0.0.0"
+    "studio-product-ext": "0.0.0"
   },
   "devDependencies": {
     "@theia/cli": "1.74.0"
@@ -37,6 +36,25 @@
     "vscode.markdown-language-features": "https://open-vsx.org/api/vscode/markdown-language-features/1.95.3/file/vscode.markdown-language-features-1.95.3.vsix"
   },
   "theia": {
-    "target": "browser"
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Constructor Studio",
+        "defaultTheme": {
+          "light": "light",
+          "dark": "dark"
+        },
+        "preferences": {
+          "window.menuBarVisibility": "hidden",
+          "security.workspace.trust.enabled": false,
+          "security.workspace.trust.startupPrompt": "never",
+          "breadcrumbs.enabled": false,
+          "editor.minimap.enabled": false,
+          "workbench.editorAssociations": {
+            "*.md": "studio.markdown-editor"
+          }
+        }
+      }
+    }
   }
 }
