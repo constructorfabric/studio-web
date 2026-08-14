@@ -11,7 +11,7 @@ use std::sync::Arc;
 use authz_resolver_sdk::{AccessRequest, EnforcerError, PolicyEnforcer, ResourceType};
 use resource_group_sdk::api::ResourceGroupClient;
 use resource_group_sdk::models::{CreateGroupRequest, CreateTypeRequest};
-use toolkit_security::{pep_properties, SecurityContext};
+use toolkit_security::{SecurityContext, pep_properties};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -282,9 +282,9 @@ impl ProjectService {
             .await
         {
             Ok(_) => Ok(()),
-            Err(EnforcerError::Denied { .. }) => {
-                Err(ServiceError::Forbidden(format!("not permitted to {action} this project")))
-            }
+            Err(EnforcerError::Denied { .. }) => Err(ServiceError::Forbidden(format!(
+                "not permitted to {action} this project"
+            ))),
             Err(e) => Err(ServiceError::Storage(format!("authz: {e:?}"))),
         }
     }

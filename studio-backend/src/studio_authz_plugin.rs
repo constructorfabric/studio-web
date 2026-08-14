@@ -31,16 +31,15 @@ use toolkit::Gear;
 use toolkit::client_hub::ClientScope;
 use toolkit::context::GearCtx;
 use toolkit::gts::PluginV1;
-use toolkit_security::pep_properties;
 use toolkit_security::SecurityContext;
+use toolkit_security::pep_properties;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use uuid::Uuid;
 
 const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
 /// AM tenant-metadata type holding the org access config (portal writes it).
-const ACCESS_METADATA_TYPE: &str =
-    "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
+const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
 
 /* ── Config ── */
 
@@ -304,7 +303,12 @@ fn tenant_clamp(request: &EvaluationRequest, tid: Uuid) -> EvaluationResponse {
         .any(|c| matches!(c, Capability::TenantHierarchy));
     if hierarchy {
         for prop in [pep_properties::OWNER_TENANT_ID, pep_properties::RESOURCE_ID] {
-            if request.context.supported_properties.iter().any(|p| p == prop) {
+            if request
+                .context
+                .supported_properties
+                .iter()
+                .any(|p| p == prop)
+            {
                 constraints.push(Constraint {
                     predicates: vec![Predicate::InTenantSubtree(InTenantSubtreePredicate::new(
                         prop, tid,
