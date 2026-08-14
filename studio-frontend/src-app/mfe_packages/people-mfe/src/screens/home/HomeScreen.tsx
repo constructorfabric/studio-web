@@ -4,9 +4,9 @@ import {
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
-import { Card, CardContent } from '../../components/ui/card';
-import { Skeleton } from '../../components/ui/skeleton';
+import { Card, CardContent, Skeleton } from '@gears-frontx/ui-kit';
 import { useScreenTranslations } from '../../shared/useScreenTranslations';
+import styles from './HomeScreen.module.css';
 
 // Stable reference for translation modules (hoisted to module level to prevent re-render loops)
 const languageModules = import.meta.glob('./i18n/*.json') as Record<
@@ -15,6 +15,19 @@ const languageModules = import.meta.glob('./i18n/*.json') as Record<
 >;
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
+
+/**
+ * A host theme is a full palette, not a light/dark bit, so it bridges to the
+ * kit's two scopes by explicit enumeration. `dracula` therefore lands in the
+ * kit's dark greys, not Dracula's purples — a stated residual limitation.
+ * The screen root always carries data-theme so the kit's
+ * prefers-color-scheme fallback cannot leak through.
+ */
+const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
+
+function toKitTheme(hostTheme: string): 'dark' | 'light' {
+  return DARK_HOST_THEMES.includes(hostTheme) ? 'dark' : 'light';
+}
 
 function readBridgeProperty(bridge: ChildMfeBridge, property: string, fallback: string): string {
   const current = bridge.getProperty(property);
@@ -29,10 +42,10 @@ interface HomeScreenProps {
 }
 
 /**
- * Placeholder screen for this screenset. Keeps the scaffold's bridge wiring
- * (theme/language subscriptions, per-MFE i18n, RTL sync) and renders the
- * area title and description until the real screens land. The data layer
- * (src/api, src/slices, src/effects) is untouched scaffold reference code —
+ * Placeholder screen for this screenset, built from @gears-frontx/ui-kit
+ * (components + tokens; no Tailwind). Keeps the scaffold's bridge wiring:
+ * theme/language subscriptions, per-MFE i18n, RTL sync. The scaffold's demo
+ * data layer (src/api, src/slices, src/effects) is untouched reference code —
  * wire it in when this area grows real content.
  */
 export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
@@ -41,7 +54,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   // synchronously, during the first render) instead of via setState in a mount effect —
   // this avoids an extra render and the set-state-in-effect anti-pattern. The effect
   // below only subscribes for subsequent property changes.
-  const [, setTheme] = useState<string>(() =>
+  const [theme, setTheme] = useState<string>(() =>
     readBridgeProperty(bridge, FRONTX_SHARED_PROPERTY_THEME, 'default')
   );
   const [language, setLanguage] = useState<string>(() =>
@@ -97,20 +110,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   // Show skeleton while translations are loading
   if (loading) {
     return (
-      <div ref={containerRef} className="p-8">
-        <Skeleton className="h-8 w-64 mb-4" />
-        <Skeleton className="h-4 w-96 mb-6" />
+      <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
+        <Skeleton className={styles.skeletonTitle} />
+        <Skeleton className={styles.skeletonLine} />
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="p-8">
-      <h1 className="text-3xl font-bold mb-4">{t('title')}</h1>
-      <p className="text-muted-foreground mb-6">{t('description')}</p>
+    <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
+      <h1 className={styles.title}>{t('title')}</h1>
+      <p className={styles.description}>{t('description')}</p>
       <Card>
-        <CardContent className="p-6">
-          <p className="text-sm text-muted-foreground">{t('coming_soon')}</p>
+        <CardContent>
+          <p className={styles.note}>{t('coming_soon')}</p>
         </CardContent>
       </Card>
     </div>

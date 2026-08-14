@@ -35,6 +35,14 @@ export const mfeVitestBaseConfig = defineConfig({
     globals: true,
     environment: 'jsdom',
     passWithNoTests: false,
+    server: {
+      deps: {
+        // ui-kit's ESM imports its per-component CSS chunks; externalized
+        // deps load through Node's native ESM loader, which cannot import
+        // .css — inline the kit so Vite's transform pipeline handles it.
+        inline: [/@gears-frontx\/ui-kit/],
+      },
+    },
     execArgv: vitestNodeWorkerExecArgv(),
     setupFiles: [...SHARED_VITEST_SETUP_FILES],
     include: [...TEST_INCLUDE_TSX],
