@@ -20,6 +20,7 @@
 FROM node:22-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ git libsecret-1-dev libx11-dev libxkbfile-dev \
+    curl unzip \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json lerna.json .nvmrc ./
@@ -48,6 +49,38 @@ RUN npm ci --ignore-scripts=false
 RUN npm --prefix drawio-editor run build
 RUN npm run build:browser
 
+# The two assistant extensions, fetched here rather than through
+# `theiaPlugins`, because they are the only platform-specific entries we ship
+# and that map is a fixed list of URLs. product-ext drives Claude and Codex
+# through THESE extensions' commands — `claude-vscode.sidebar.open`,
+# `chatgpt.openSidebar`, `chatgpt.addFileToThread` — which nothing else
+# registers: @theia/ai-codex and @theia/ai-claude-code provide their own chat,
+# not those command ids, so without these the "Ask AI" actions fail with
+# "… is not available here".
+#
+# The prototype pinned darwin-arm64, which cannot run in this container.
+# TARGETARCH is set by BuildKit, so an arm64 image gets linux-arm64 and CI's
+# amd64 image gets linux-x64 from the same line; an unknown value fails the
+# build rather than silently producing an IDE whose assistants do nothing.
+ARG TARGETARCH
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) vsx_target=linux-x64 ;; \
+      arm64) vsx_target=linux-arm64 ;; \
+      *) echo "unsupported TARGETARCH '${TARGETARCH}' for the assistant extensions" >&2; exit 1 ;; \
+    esac; \
+    fetch_vsix() { \
+      namespace="$1"; name="$2"; version="$3"; dir="$4"; \
+      url="https://open-vsx.org/api/${namespace}/${name}/${vsx_target}/${version}/file/${namespace}.${name}-${version}@${vsx_target}.vsix"; \
+      echo "fetching ${dir} (${vsx_target})"; \
+      curl -fsSL "$url" -o /tmp/plugin.vsix; \
+      mkdir -p "plugins/${dir}"; \
+      unzip -q /tmp/plugin.vsix -d "plugins/${dir}"; \
+      rm -f /tmp/plugin.vsix; \
+    }; \
+    fetch_vsix Anthropic claude-code 2.1.227 anthropic.claude-code; \
+    fetch_vsix openai chatgpt 26.5803.61601 openai.chatgpt
+
 # ── Runtime ──
 FROM node:22-bookworm-slim
 # procps: Theia's process-tree termination shells out to `ps`; without it a
@@ -63,7 +96,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `codex` binary), the latter resolves @anthropic-ai/claude-agent-sdk from the
 # global npm root. Codex CLI is pinned to the SDK version resolved in
 # package-lock.json — a mismatched pair breaks the wire protocol.
+#
+# @anthropic-ai/claude-code is the CLI, and it is a separate package from the
+# SDK above: the SDK ships no `claude` executable. Two things need that
+# binary — the Assistants page runs `claude setup-token` and `claude auth
+# status` through it, and the claude-code extension shells out to it — so
+# without this the session reports "The claude command is not installed in
+# this session" and a subscription sign-in is impossible from inside the IDE.
 RUN npm install -g @openai/codex@0.49.0 @anthropic-ai/claude-agent-sdk@0.3.223 \
+    @anthropic-ai/claude-code \
     && npm cache clean --force
 
 # Non-root: the workspace bind-mount owner should match (uid 1000 = node).
