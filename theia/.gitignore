@@ -1,9 +1,20 @@
 node_modules
 .browser_modules
 lib
+# ...except product-ext's, which is hand-written JavaScript rather than tsc
+# output like studio/lib. The bare `lib` above matches at any depth, so
+# without these two lines the extension commits as a package.json with
+# nothing behind it — and the build still "succeeds", just with no shell.
+!product-ext/lib
+!product-ext/lib/**
 *.log
 *-app/*
 !*-app/package.json
+# The esbuild customization (mermaid as its own script, .wasm as a file,
+# no secondary-window app) is source, not generated output: `theia build`
+# writes a default esbuild.mjs only when one is absent, so an ignored file
+# would be silently replaced by the default on every fresh checkout.
+!browser-app/esbuild.mjs
 !browser-app/scripts/
 browser-app/scripts/*
 !browser-app/scripts/start-browser.js

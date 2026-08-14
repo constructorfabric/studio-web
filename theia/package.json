@@ -29,6 +29,7 @@
   "workspaces": [
     "studio",
     "drawio-editor",
+    "product-ext",
     "browser-app",
     "electron-app"
   ]

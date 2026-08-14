@@ -25,9 +25,13 @@ WORKDIR /app
 COPY package.json package-lock.json lerna.json .nvmrc ./
 COPY studio/ studio/
 COPY drawio-editor/ drawio-editor/
+COPY product-ext/ product-ext/
 COPY browser-app/ browser-app/
 COPY electron-app/package.json electron-app/package.json
-COPY esbuild.mjs gen-esbuild.browser.mjs gen-esbuild.node.mjs ./
+# mermaid-entry.mjs is the separate mermaid bundle esbuild.mjs builds; without
+# it in the context the build fails on a missing entry point, and without that
+# bundle mermaid-view.js has no `mermaid.js` script to load.
+COPY esbuild.mjs gen-esbuild.browser.mjs gen-esbuild.node.mjs mermaid-entry.mjs ./
 # patch-package runs from `postinstall`; without patches/ in the build
 # context it silently no-ops and the THEIA_CODEX_PATH / THEIA_CLAUDE_CODE_PATH
 # overrides in @theia/ai-codex and @theia/ai-claude-code are never applied.
