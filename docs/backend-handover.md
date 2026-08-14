@@ -10,9 +10,12 @@ Repo layout this document assumes (sibling checkouts):
 C:\Repos\CFS\
 ├── gears-rust\        # CF/Gears framework + platform gears (our fork)
 ├── studio-web\        # THIS product: studio-backend + studio-frontend
-├── gts-spec\          # GTS type-system specification
-└── fabric-poc\        # Theia IDE image (poc/theia) the sessions run
+│                      #   + theia\ — the IDE image the sessions run
+└── gts-spec\          # GTS type-system specification
 ```
+
+(The Theia image used to be a fourth sibling, `fabric-poc\poc\theia`. It moved
+into `studio-web\theia` in `b51b18d` — see ADR-0003's amendment.)
 
 ---
 
@@ -208,8 +211,8 @@ cd studio-backend
 export STUDIO_PG_PASSWORD=… STUDIO_LLM_API_KEY=…   # LLM key optional
 cargo run -- --config config/oidc.yaml run          # or dev.yaml / postgres.yaml
 # frontend: cd ../studio-frontend && npm run dev    # http://localhost:5173
-# Theia image (once / after image changes):
-#   cd ../../fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .
+# Theia image — only to hack on it; CI publishes the one the gear pulls:
+#   cd .. && docker build -f theia/Dockerfile -t cf-studio-theia:latest theia
 ```
 
 Profiles: `dev.yaml` (static tokens), `postgres.yaml` (same + PG), 

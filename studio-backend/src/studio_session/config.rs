@@ -23,8 +23,9 @@ pub struct StudioSessionConfig {
     #[serde(default)]
     pub k8s_image_pull_secret: Option<String>,
     /// Docker image for a Theia session. Default: the CI-published one
-    /// (fabric-poc/.github/workflows/theia-image.yml). Pulled automatically
-    /// when absent; a locally-built `cf-studio-theia:latest` also works.
+    /// (.github/workflows/release.yml, job `images`, built from `theia/`).
+    /// Pulled automatically when absent; a locally-built
+    /// `cf-studio-theia:latest` also works.
     #[serde(default = "default_image")]
     pub image: String,
     /// Refresh the image on every launch attempt — for mutable tags like
@@ -108,7 +109,7 @@ fn default_driver() -> String {
     "docker".into()
 }
 fn default_image() -> String {
-    "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge".into()
+    "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge".into()
 }
 fn default_always_pull() -> bool {
     true // the default image tag (edge) is mutable
