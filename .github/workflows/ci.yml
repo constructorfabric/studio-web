@@ -122,12 +122,15 @@ jobs:
       - name: Install
         if: steps.app.outputs.present == 'true'
         run: npm ci
-      - name: Test
-        if: steps.app.outputs.present == 'true'
-        run: npm test
+      # Build precedes Test: the test suites resolve workspace packages
+      # (@gears-frontx/react et al.) through their dist/ entries, which only
+      # the build produces — on a fresh checkout Test-first fails to resolve.
       - name: Build
         if: steps.app.outputs.present == 'true'
         run: npm run build
+      - name: Test
+        if: steps.app.outputs.present == 'true'
+        run: npm test
       - uses: actions/upload-artifact@v4
         if: steps.app.outputs.present == 'true'
         with:
