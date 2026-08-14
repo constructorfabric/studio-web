@@ -8,8 +8,6 @@
 
 import React, { useEffect } from 'react';
 import { fetchCurrentUser } from '@/app/actions/bootstrapActions';
-import { Header } from './Header';
-import { Footer } from './Footer';
 import { Menu } from './Menu';
 import { Sidebar } from './Sidebar';
 import { Screen } from './Screen';
@@ -33,11 +31,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Menu - full height on left */}
         <Menu />
 
-        {/* Right side: Header + Content */}
+        {/* Right side: Content */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Header */}
-          <Header />
-
           {/* Main content area */}
           <div className="flex flex-1 overflow-hidden">
             {/* Main content */}
@@ -48,9 +43,6 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </div>
       </div>
-
-      {/* Footer - full width */}
-      <Footer />
 
       {/* Popups */}
       <Popup />

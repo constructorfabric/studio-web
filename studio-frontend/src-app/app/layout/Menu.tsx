@@ -7,13 +7,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  useAppSelector,
   useFrontX,
   useMountedExtensions,
-  eventBus,
   FRONTX_ACTION_MOUNT_EXT,
   FRONTX_SCREEN_DOMAIN,
-  type MenuState,
   type ScreenExtension,
 } from '@gears-frontx/react';
 import {
@@ -27,18 +24,18 @@ import {
 } from '@/app/components/ui/sidebar';
 import { Icon } from '@iconify/react';
 import { FrontXLogoIcon } from '@/app/icons/FrontXLogoIcon';
-import { FrontXLogoTextIcon } from '@/app/icons/FrontXLogoTextIcon';
 
 export interface MenuProps {
   children?: React.ReactNode;
 }
 
 export const Menu: React.FC<MenuProps> = ({ children }) => {
-  const menuState = useAppSelector((state) => state['layout/menu'] as MenuState | undefined);
   const app = useFrontX();
   const { mfeRegistry } = app;
 
-  const collapsed = menuState?.collapsed ?? false;
+  // The menu is deliberately always compact: no expand/collapse affordance,
+  // labels surface as tooltips (see SidebarMenuButton below).
+  const collapsed = true;
 
   // Currently-mounted screen extension (subscribes to store changes; no polling).
   // Index 0 is meaningful because the host registers the screen domain with
@@ -63,10 +60,6 @@ export const Menu: React.FC<MenuProps> = ({ children }) => {
     return () => clearInterval(interval);
   }, [mfeRegistry]);
 
-  const handleToggleCollapse = () => {
-    eventBus.emit('layout/menu/collapsed', { collapsed: !collapsed });
-  };
-
   const handleMenuItemClick = useCallback(
     async (extensionId: string) => {
       if (!mfeRegistry) return;
@@ -83,13 +76,8 @@ export const Menu: React.FC<MenuProps> = ({ children }) => {
 
   return (
     <Sidebar collapsed={collapsed}>
-      {/* Logo/Brand area with collapse button */}
-      <SidebarHeader
-        logo={<FrontXLogoIcon />}
-        logoText={!collapsed ? <FrontXLogoTextIcon /> : undefined}
-        collapsed={collapsed}
-        onClick={handleToggleCollapse}
-      />
+      {/* Logo/Brand area (non-interactive: the menu never expands) */}
+      <SidebarHeader logo={<FrontXLogoIcon />} collapsed={collapsed} />
 
       {/* Menu items */}
       <SidebarContent>
