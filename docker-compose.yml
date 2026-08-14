@@ -188,6 +188,43 @@ services:
       start_period: 180s
       retries: 30
 
+  # Two-step bootstrap for a FRESH/empty Postgres (see scripts/dev-up.sh).
+  # On a brand-new volume the LLM chain's oagw gear deadlocks in post_init: it
+  # needs the root tenant, but account-management only seeds it later, in its
+  # serve phase. This variant is built --no-default-features, so it has NO oagw,
+  # reaches serve, and seeds the root — then the normal `backend` (llm on) finds
+  # it and boots. Behind the `bootstrap` profile, so a plain `up` never runs it.
+  # Idempotent: on a warm volume the root already exists and this is a fast no-op.
+  backend-bootstrap:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: studio-backend/Dockerfile.src
+      args:
+        CARGO_FEATURES: "--no-default-features"
+    container_name: studio-backend-bootstrap
+    restart: "no"
+    environment:
+      STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      STUDIO_CREDSTORE_KEY: ${STUDIO_CREDSTORE_KEY:-}
+      STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
+    volumes:
+      - /srv/cf-studio-workspaces:/srv/cf-studio-workspaces
+      - ./docker/keycloak/certs/dev-ca.pem:/app/certs/dev-ca.pem:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    # Healthy = the backend reached its serve phase, i.e. account-management's
+    # bootstrap saga has seeded the root tenant. scripts/dev-up.sh waits on this.
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/healthz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 180s
+      retries: 60
+
   frontend:
     build:
       context: .

@@ -21,6 +21,17 @@ Requires Docker (Desktop with WSL integration is fine) and a `gears-rust` checko
 sibling of this repo. The first build compiles the whole gears workspace — grab a
 coffee; rebuilds are cached. Stop with `docker compose down` (add `-v` to wipe data).
 
+**Fresh / empty database:** on a brand-new Postgres volume a plain `up` deadlocks — the
+LLM chain's `oagw` gear needs the root tenant in its `post_init`, but account-management
+only seeds the root later (serve phase). Use the two-step bring-up instead, which seeds
+the root with a no-LLM backend first, then starts the full stack:
+
+```bash
+./scripts/dev-up.sh
+```
+
+It's idempotent — safe to use on a warm volume too (the seed step is then a no-op).
+
 **Daily dev (fast iteration):** infra in Docker, backend on the host (WSL), frontend via Vite:
 
 ```bash
