@@ -1,0 +1,32 @@
+{
+  "manifest": {
+    "id": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.people.mfe.manifest.v1",
+    "remoteEntry": "http://localhost:3030/assets/remoteEntry.js"
+  },
+  "entries": [
+    {
+      "id": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.people.mfe.main.v1",
+      "requiredProperties": [
+        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.theme.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~"
+      ],
+      "actions": [],
+      "domainActions": [],
+      "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.people.mfe.manifest.v1",
+      "exposedModule": "./lifecycle"
+    }
+  ],
+  "extensions": [
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.people.screens.main.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.people.mfe.main.v1",
+      "presentation": {
+        "label": "People",
+        "icon": "lucide:users",
+        "route": "/people",
+        "order": 30
+      }
+    }
+  ]
+}

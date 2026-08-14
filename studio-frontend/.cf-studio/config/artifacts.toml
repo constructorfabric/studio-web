@@ -1,0 +1,9 @@
+# Constructor Studio artifacts registry
+
+[[systems]]
+name = "StudioFrontend"
+slug = "studiofrontend"
+kit = ""
+artifacts = []
+codebase = []
+children = []

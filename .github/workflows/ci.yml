@@ -15,6 +15,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      frontx: ${{ steps.filter.outputs.frontx }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -26,6 +27,9 @@ jobs:
               - '.github/workflows/**'
             frontend:
               - 'studio-frontend-prototype/**'
+              - '.github/workflows/**'
+            frontx:
+              - 'studio-frontend/**'
               - '.github/workflows/**'
 
   backend:
@@ -85,4 +89,51 @@ jobs:
         with:
           name: studio-frontend-dist
           path: studio-frontend-prototype/dist
+          retention-days: 7
+
+  frontx:
+    needs: changes
+    if: needs.changes.outputs.frontx == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-frontend
+    steps:
+      - uses: actions/checkout@v4
+      # The FrontX-based app is assembled incrementally (ADR-0006); until its
+      # package.json lands the job is a green no-op — setup-node would fail on
+      # the missing lock file, and a red path-filtered job would block every PR
+      # that touches studio-frontend/.
+      - name: Detect app
+        id: app
+        run: |
+          if [ -f package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "studio-frontend is being rebuilt on FrontX — nothing to build yet"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.app.outputs.present == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - name: Install
+        if: steps.app.outputs.present == 'true'
+        run: npm ci
+      # Build precedes Test: the test suites resolve workspace packages
+      # (@gears-frontx/react et al.) through their dist/ entries, which only
+      # the build produces — on a fresh checkout Test-first fails to resolve.
+      - name: Build
+        if: steps.app.outputs.present == 'true'
+        run: npm run build
+      - name: Test
+        if: steps.app.outputs.present == 'true'
+        run: npm test
+      - uses: actions/upload-artifact@v4
+        if: steps.app.outputs.present == 'true'
+        with:
+          name: studio-frontx-dist
+          path: studio-frontend/dist
           retention-days: 7

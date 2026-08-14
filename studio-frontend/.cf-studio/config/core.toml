@@ -1,0 +1,67 @@
+# Constructor Studio project configuration
+
+version = "1.0"
+project_root = ".."
+
+[install]
+version_source = "project_config"
+runtime_tracking = "ignored"
+agent_tracking = "ignored"
+kit_tracking = "tracked"
+
+[kits]
+[kits.cyber-pilot-kit-frontx]
+format = "CFS"
+path = "config/kits/cyber-pilot-kit-frontx"
+source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+install_mode = "copy"
+version = "bac818226596569a087643a30be9365c3c8e114a"
+
+[kits.cyber-pilot-kit-frontx.source_provenance]
+source_type = "git"
+resolver_mode = "mutable_ref"
+resolution_basis = "git_ref"
+requested_ref = "develop"
+resolved_ref = "bac818226596569a087643a30be9365c3c8e114a"
+commit_sha = "bac818226596569a087643a30be9365c3c8e114a"
+canonical_source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+effective_source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+original_source = "git/https://github.com/constructorfabric/gears-frontx.git//packages/cyber-pilot-kit-frontx"
+decoded_remote_url = "https://github.com/constructorfabric/gears-frontx.git"
+decoded_remote_url_hash = "334b0ef464236f36"
+selected_subdirectory = "packages/cyber-pilot-kit-frontx"
+transport = "https"
+cache_remote_hash = "334b0ef464236f36"
+cache_requested_ref_hash = "947726dd6318753268f3bfbe5e87ae2afe220db399c26e119c181a59227b0c60"
+cache_subdir_hash = "804517dde184476c961eecd317923dba7793fa92b0fbec96b9571424d162c09e"
+cache_kit_hash = "2f2d9de35f25e2c181e0595e6a7c0d707922fa20b522f67635d2359c19f66f75"
+verified = "verified"
+freshness = "fresh"
+
+[kits.cyber-pilot-kit-frontx.resources]
+[kits.cyber-pilot-kit-frontx.resources.frontx_skill]
+path = "config/kits/cyber-pilot-kit-frontx/SKILL.md"
+kind = "skill"
+public = true
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.cyber-pilot-kit-frontx.resources.frontx_project_scaffolding]
+path = "config/kits/cyber-pilot-kit-frontx/skills/project-scaffolding/SKILL.md"
+kind = "skill"
+public = true
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.cyber-pilot-kit-frontx.resources.frontx_agents]
+path = "config/kits/cyber-pilot-kit-frontx/AGENTS.md"
+kind = "rule"
+public = true
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.cyber-pilot-kit-frontx.resources.frontx_guidelines]
+path = "config/kits/cyber-pilot-kit-frontx/guidelines"
+kind = "directory"
+public = false
+user_modifiable = false
