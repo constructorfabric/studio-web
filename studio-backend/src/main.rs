@@ -207,7 +207,7 @@ mod config_expansion_tests {
 
     /// The union of no-default placeholders across the profiles — what the
     /// Helm chart (k8s) and docker-compose (docker/oidc/postgres) provide.
-    const REQUIRED: [&str; 7] = [
+    const REQUIRED: [&str; 10] = [
         "STUDIO_PG_HOST",
         "STUDIO_PG_USER",
         "STUDIO_PG_PASSWORD",
@@ -215,6 +215,11 @@ mod config_expansion_tests {
         "STUDIO_OIDC_ISSUER",
         "STUDIO_FS_SIGNING_SEED",
         "STUDIO_ADMIN_TOKEN",
+        // Interim static-authn test users (INFRA-3767): k8s.yaml feeds these
+        // from the studio-web-test-users Secret, so they are no-default too.
+        "STUDIO_TEST_USER_1_TOKEN",
+        "STUDIO_TEST_USER_2_TOKEN",
+        "STUDIO_TEST_USER_3_TOKEN",
     ];
 
     #[test]

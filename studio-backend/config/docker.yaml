@@ -431,7 +431,7 @@ gears:
   studio-session:
     config:
       image: "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge"
-      always_pull: true
+      always_pull: false
       workspaces_root: "/srv/cf-studio-workspaces"
       bind_host: "127.0.0.1"
       public_host: "localhost"
