@@ -53,19 +53,20 @@ override the Groq defaults; any OpenAI-compatible endpoint works.
 `studio-session` gear (our first own gear — see
 `studio-backend/docs/adr/0003-theia-sessions.md`).
 
-No local image build needed: CI publishes the IDE image on every `fabric-poc`
-push touching `poc/theia/**` (workflow `theia-image.yml`), and the gear pulls
-and refreshes it automatically:
+The image is built from `theia/` in this repo. No local build needed: CI
+publishes it alongside studio-backend and studio-frontend, on the same tags
+(`release.yml`, job `images`), and the gear pulls and refreshes it
+automatically:
 
-- image: `ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge`
+- image: `ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge`
 - auth: the package is private — set `STUDIO_REGISTRY_USER` /
   `STUDIO_REGISTRY_TOKEN` (PAT with `read:packages`) before starting the
   backend. `docker login` alone is NOT enough: the gear talks to the Docker
   API directly, which ignores the CLI credential store.
 - freshness: `always_pull: true` re-pulls the mutable `edge` tag on every
   launch; a failed pull falls back to the local copy (offline-friendly).
-- hacking on the image locally: `cd ../fabric-poc/poc/theia && docker build
-  -t cf-studio-theia:latest .`, then in the config set
+- hacking on the image locally: `docker build -f theia/Dockerfile -t
+  cf-studio-theia:latest theia`, then in the config set
   `image: cf-studio-theia:latest` + `always_pull: false`.
 
 In the portal: workspace → Open Studio → Launch. Optional Git URL is
@@ -155,7 +156,7 @@ stays untouched.
 
 - **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private. DCO is enforced — commit with `-s`.
 - **`release.yml`** — on tag `v*`: release binary + frontend dist → GitHub Release; Docker images → `ghcr.io/constructorfabric/studio-web/studio-{backend,frontend}`; then a `deploy` job gated by the `production` environment.
-- **Theia IDE image** — built in `fabric-poc` (`theia-image.yml`): `edge` on main pushes touching `poc/theia/**`, `vX.Y.Z` on `theia-v*` tags.
+- **Theia IDE image** — built from `theia/` by `release.yml`'s `images` job, on the same tags as the other two: `edge` + `sha-<short>` on main pushes, `vX.Y.Z` + `latest` on `v*` tags. It used to ship from `fabric-poc` on its own `theia-v*` scheme; it moved here in `b51b18d` so one tag describes the whole stack (ADR-0003, amendment).
 
 Release: `git tag v0.1.0 && git push origin v0.1.0`.
 
