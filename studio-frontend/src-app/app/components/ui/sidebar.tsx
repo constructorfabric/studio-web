@@ -216,14 +216,27 @@ const SidebarHeader = (
       {...props}
     >
       <div className="flex items-center flex-1 px-2">
-        <SidebarMenuButton onClick={onClick} tooltip={collapsed ? "Expand menu" : "Collapse menu"}>
-          {logo && <SidebarMenuIcon>{logo}</SidebarMenuIcon>}
-          {logoText && (
-            <SidebarMenuLabel className="[&>svg]:h-5 [&>svg]:w-auto">
-              {logoText}
-            </SidebarMenuLabel>
-          )}
-        </SidebarMenuButton>
+        {onClick ? (
+          <SidebarMenuButton onClick={onClick} tooltip={collapsed ? "Expand menu" : "Collapse menu"}>
+            {logo && <SidebarMenuIcon>{logo}</SidebarMenuIcon>}
+            {logoText && (
+              <SidebarMenuLabel className="[&>svg]:h-5 [&>svg]:w-auto">
+                {logoText}
+              </SidebarMenuLabel>
+            )}
+          </SidebarMenuButton>
+        ) : (
+          // Without a toggle handler the logo is pure branding — render it
+          // outside any button so it exposes no phantom "Expand menu" control.
+          <div className="flex items-center gap-2 px-2 py-2">
+            {logo && <SidebarMenuIcon>{logo}</SidebarMenuIcon>}
+            {logoText && (
+              <SidebarMenuLabel className="[&>svg]:h-5 [&>svg]:w-auto">
+                {logoText}
+              </SidebarMenuLabel>
+            )}
+          </div>
+        )}
       </div>
       <div className="border-b border-mainMenu-border mx-4" />
     </div>

@@ -5,8 +5,6 @@
 // @cpt-algo:cpt-frontx-algo-ui-libraries-choice-theme-propagation:p1
 
 import type { ThemeConfig } from '@gears-frontx/react';
-import colors from './tailwindColors';
-import { hslToVar } from './utils';
 
 /**
  * Dark theme ID
@@ -17,32 +15,32 @@ export const darkTheme: ThemeConfig = {
   id: DARK_THEME_ID,
   name: 'Dark',
   variables: {
-    // Shadcn color variables
-    '--background': hslToVar(colors.zinc[950]),
-    '--foreground': hslToVar(colors.zinc[50]),
-    '--card': hslToVar(colors.zinc[950]),
-    '--card-foreground': hslToVar(colors.zinc[50]),
-    '--popover': hslToVar(colors.zinc[950]),
-    '--popover-foreground': hslToVar(colors.zinc[50]),
-    '--primary': hslToVar(colors.zinc[50]),
-    '--primary-foreground': hslToVar(colors.zinc[950]),
-    '--secondary': hslToVar(colors.zinc[800]),
-    '--secondary-foreground': hslToVar(colors.zinc[50]),
-    '--muted': hslToVar(colors.zinc[800]),
-    '--muted-foreground': hslToVar(colors.zinc[50]),
-    '--accent': hslToVar(colors.zinc[400]),
-    '--accent-foreground': hslToVar(colors.zinc[950]),
-    '--destructive': hslToVar(colors.red[900]),
-    '--destructive-foreground': hslToVar(colors.zinc[50]),
-    '--border': hslToVar(colors.zinc[800]),
-    '--input': hslToVar(colors.zinc[800]),
-    '--ring': hslToVar(colors.zinc[50]),
+    // Shadcn color variables — values mirror @gears-frontx/ui-kit theme.css (Studio palette)
+    '--background': '222.9 28% 4.9%',
+    '--foreground': '220 20% 97.1%',
+    '--card': '218.8 33.3% 10%',
+    '--card-foreground': '220 20% 97.1%',
+    '--popover': '222.4 30.9% 10.8%',
+    '--popover-foreground': '220 20% 97.1%',
+    '--primary': '258.9 68.4% 59%',
+    '--primary-foreground': '0 0% 100%',
+    '--secondary': '217.2 32.6% 17.5%',
+    '--secondary-foreground': '210 40% 98%',
+    '--muted': '217.2 32.6% 17.5%',
+    '--muted-foreground': '220 13.4% 60.6%',
+    '--accent': '261.2 72.6% 22.9%',
+    '--accent-foreground': '251.4 91.3% 95.5%',
+    '--destructive': '349.7 65.8% 52.9%',
+    '--destructive-foreground': '0 0% 100%',
+    '--border': '218.2 24.4% 17.6%',
+    '--input': '219.3 23.2% 24.5%',
+    '--ring': '258.9 68.4% 59%',
 
     // State colors
-    '--error': hslToVar(colors.red[900]),
-    '--warning': hslToVar(colors.orange[500]),
-    '--success': hslToVar(colors.green[500]),
-    '--info': hslToVar(colors.sky[500]),
+    '--error': '349.7 65.8% 52.9%',
+    '--warning': '43.3 96.4% 56.3%',
+    '--success': '158.1 64.4% 51.6%',
+    '--info': '187.9 85.7% 53.3%',
 
     // Chart colors (OKLCH format, shadcn/ui dark theme)
     '--chart-1': 'oklch(0.488 0.243 264.376)',
@@ -52,11 +50,11 @@ export const darkTheme: ThemeConfig = {
     '--chart-5': 'oklch(0.645 0.246 16.439)',
 
     // Left menu colors
-    '--left-menu': hslToVar(colors.black),
-    '--left-menu-foreground': hslToVar(colors.zinc[400]),
-    '--left-menu-hover': hslToVar(colors.zinc[900]),
-    '--left-menu-selected': hslToVar(colors.zinc[500]),
-    '--left-menu-border': hslToVar(colors.zinc[800]),
+    '--left-menu': '220 27.3% 6.5%',
+    '--left-menu-foreground': '220 13.4% 60.6%',
+    '--left-menu-hover': '220.7 37.8% 14.5%',
+    '--left-menu-selected': '258.9 68.4% 59%',
+    '--left-menu-border': '218.2 24.4% 17.6%',
 
     // Spacing
     '--spacing-xs': '0.25rem',

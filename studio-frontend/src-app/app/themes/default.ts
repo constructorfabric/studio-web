@@ -6,8 +6,6 @@
 // @cpt-algo:cpt-frontx-algo-ui-libraries-choice-theme-propagation:p1
 
 import type { ThemeConfig } from '@gears-frontx/react';
-import colors from './tailwindColors';
-import { hslToVar } from './utils';
 
 /**
  * Default theme ID
@@ -19,32 +17,32 @@ export const defaultTheme: ThemeConfig = {
   name: 'Default',
   default: true,
   variables: {
-    // Shadcn color variables
-    '--background': hslToVar(colors.white),
-    '--foreground': hslToVar(colors.gray[900]),
-    '--card': hslToVar(colors.white),
-    '--card-foreground': hslToVar(colors.gray[900]),
-    '--popover': hslToVar(colors.white),
-    '--popover-foreground': hslToVar(colors.gray[900]),
-    '--primary': hslToVar(colors.blue[600]),
-    '--primary-foreground': hslToVar(colors.white),
-    '--secondary': hslToVar(colors.gray[50]),
-    '--secondary-foreground': hslToVar(colors.gray[900]),
-    '--muted': hslToVar(colors.gray[100]),
-    '--muted-foreground': hslToVar(colors.gray[900]),
-    '--accent': hslToVar(colors.blue[100]),
-    '--accent-foreground': hslToVar(colors.white),
-    '--destructive': hslToVar(colors.red[500]),
-    '--destructive-foreground': hslToVar(colors.gray[900]),
-    '--border': hslToVar(colors.gray[200]),
-    '--input': hslToVar(colors.gray[200]),
-    '--ring': hslToVar(colors.blue[600]),
+    // Shadcn color variables — values mirror @gears-frontx/ui-kit theme.css (Studio palette)
+    '--background': '210 40% 98%',
+    '--foreground': '222.2 47.4% 11.2%',
+    '--card': '0 0% 100%',
+    '--card-foreground': '222.2 47.4% 11.2%',
+    '--popover': '0 0% 100%',
+    '--popover-foreground': '222.2 47.4% 11.2%',
+    '--primary': '258 74.1% 62.2%',
+    '--primary-foreground': '0 0% 100%',
+    '--secondary': '210 40% 96.1%',
+    '--secondary-foreground': '222.2 47.4% 11.2%',
+    '--muted': '210 40% 96.1%',
+    '--muted-foreground': '215.4 16.3% 46.9%',
+    '--accent': '268.7 100% 95.5%',
+    '--accent-foreground': '263.4 70% 50.4%',
+    '--destructive': '346.8 77.2% 49.8%',
+    '--destructive-foreground': '0 0% 100%',
+    '--border': '214.3 31.8% 91.4%',
+    '--input': '212.7 26.8% 83.9%',
+    '--ring': '258.3 89.5% 66.3%',
 
     // State colors
-    '--error': hslToVar(colors.red[500]),
-    '--warning': hslToVar(colors.orange[500]),
-    '--success': hslToVar(colors.green[600]),
-    '--info': hslToVar(colors.sky[500]),
+    '--error': '346.8 77.2% 49.8%',
+    '--warning': '32.1 94.6% 43.7%',
+    '--success': '161.4 93.5% 30.4%',
+    '--info': '200.4 98% 39.4%',
 
     // Chart colors (OKLCH format, shadcn/ui light theme)
     '--chart-1': 'oklch(0.646 0.222 41.116)',
@@ -54,11 +52,11 @@ export const defaultTheme: ThemeConfig = {
     '--chart-5': 'oklch(0.769 0.188 70.08)',
 
     // Left menu colors
-    '--left-menu': hslToVar(colors.gray[900]),
-    '--left-menu-foreground': hslToVar(colors.gray[400]),
-    '--left-menu-hover': hslToVar(colors.gray[700]),
-    '--left-menu-selected': hslToVar(colors.blue[600]),
-    '--left-menu-border': hslToVar(colors.gray[700]),
+    '--left-menu': '210 40% 96.1%',
+    '--left-menu-foreground': '215.4 16.3% 46.9%',
+    '--left-menu-hover': '0 0% 100%',
+    '--left-menu-selected': '258 74.1% 62.2%',
+    '--left-menu-border': '214.3 31.8% 91.4%',
 
     // Spacing
     '--spacing-xs': '0.25rem',
