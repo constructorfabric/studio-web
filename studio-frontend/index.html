@@ -8,6 +8,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Runtime env must load before the bundle: the container entrypoint
+         rewrites /env.js, and src-app/app/config/env.ts reads it at import. -->
+    <script src="/env.js"></script>
     <script type="module" src="/src-app/app/main.tsx"></script>
   </body>
 </html>

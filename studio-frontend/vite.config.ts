@@ -5,6 +5,17 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  server: {
+    port: 5173,
+    // Same-origin backend access in dev; nginx.conf.template mirrors this in
+    // containers (location /cf/ -> BACKEND_HOST).
+    proxy: {
+      '/cf': {
+        target: process.env.STUDIO_BACKEND_URL ?? 'http://127.0.0.1:8090',
+        changeOrigin: true,
+      },
+    },
+  },
   plugins: [
     react(),
     federation({
