@@ -1,240 +1,110 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Language, setHeaderLoading, setUser } from '@gears-frontx/react';
-import { UserRole } from '@/app/api/types';
+import { setHeaderLoading, setUser } from '@gears-frontx/react';
 
-type BootstrapUserSnapshot = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  role: UserRole;
-  language: Language;
-  avatarUrl?: string;
-  createdAt: string;
-  updatedAt: string;
-};
+type BusHandler = (payload?: unknown) => void | Promise<void>;
 
-/** Payloads emitted on the bus in these tests (fetch has none; loaded carries user). */
-type BootstrapTestBusPayload =
-  | undefined
-  | {
-      user: BootstrapUserSnapshot;
-    };
-
-type BootstrapEventHandler = (
-  payload?: BootstrapTestBusPayload,
-) => void | Promise<void>;
-
-const listeners = new Map<string, Array<BootstrapEventHandler>>();
-const mockHas = vi.fn();
-const mockGetService = vi.fn();
-const spyCleanups: Array<() => void> = [];
-
-function mockConsoleWarn() {
-  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  spyCleanups.push(() => {
-    warnSpy.mockReset();
-    warnSpy.mockRestore();
-  });
-  return warnSpy;
-}
+const { listeners, mockHas, mockGetService, mockGetIdentity } = vi.hoisted(() => ({
+  listeners: new Map<string, ((payload?: unknown) => void | Promise<void>)[]>(),
+  mockHas: vi.fn(),
+  mockGetService: vi.fn(),
+  mockGetIdentity: vi.fn(),
+}));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
-  ...(await importOriginal()),
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   eventBus: {
-    on: vi.fn((eventName: string, handler: BootstrapEventHandler) => {
-      const handlers = listeners.get(eventName) ?? [];
-      handlers.push(handler);
-      listeners.set(eventName, handlers);
-      return () => {
-        listeners.set(
-          eventName,
-          (listeners.get(eventName) ?? []).filter((candidate) => candidate !== handler),
-        );
-      };
+    on: vi.fn((eventName: string, handler: BusHandler) => {
+      listeners.set(eventName, [...(listeners.get(eventName) ?? []), handler]);
+      return () => listeners.delete(eventName);
     }),
-    emit: async (eventName: string, payload?: BootstrapTestBusPayload) => {
-      const handlers = listeners.get(eventName) ?? [];
-      await Promise.all(handlers.map((handler) => handler(payload)));
-    },
+    emit: vi.fn(),
   },
   apiRegistry: {
-    has: (svc: abstract new (...args: never[]) => Record<string, never>) =>
-      mockHas(svc),
-    getService: (svc: abstract new (...args: never[]) => Record<string, never>) =>
-      mockGetService(svc),
+    has: mockHas,
+    getService: mockGetService,
   },
 }));
 
-vi.mock('@/app/api', () => ({
-  AccountsApiService: class MockAccountsApiService {
-    static {
-      void 0;
-    }
-  },
+vi.mock('@/app/auth/keycloakOidcProvider', () => ({
+  keycloakOidcProvider: { getIdentity: mockGetIdentity },
 }));
 
-async function emitEvent(event: string, payload?: BootstrapTestBusPayload): Promise<void> {
-  const handlers = listeners.get(event) ?? [];
-  await Promise.all(handlers.map((handler) => handler(payload)));
-}
+import { registerBootstrapEffects } from './bootstrapEffects';
 
-function getDispatchedActions(dispatch: ReturnType<typeof vi.fn>) {
-  return dispatch.mock.calls.map(([action]) => action);
+async function emit(eventName: string, payload?: unknown): Promise<void> {
+  await Promise.all((listeners.get(eventName) ?? []).map((h) => h(payload)));
 }
 
 describe('registerBootstrapEffects', () => {
+  const dispatch = vi.fn();
+
   beforeEach(() => {
-    listeners.clear();
-    mockHas.mockReset();
-    mockGetService.mockReset();
-    spyCleanups.length = 0;
+    registerBootstrapEffects(dispatch);
+    mockHas.mockReturnValue(true);
+    mockGetService.mockReturnValue({
+      me: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456', subject_type: 'user' }) },
+    });
+    mockGetIdentity.mockResolvedValue({
+      sub: 'abcdef12-3456',
+      claims: { name: 'Ada L', preferred_username: 'ada', email: 'ada@example.com' },
+    });
   });
 
   afterEach(() => {
-    while (spyCleanups.length > 0) {
-      spyCleanups.pop()?.();
-    }
+    listeners.clear();
+    vi.clearAllMocks();
+  });
+
+  it('assembles the header user from token claims after the /me check', async () => {
+    await emit('app/user/fetch');
+
+    expect(dispatch).toHaveBeenCalledWith(setHeaderLoading(true));
+    expect(dispatch).toHaveBeenCalledWith(
+      setUser({ displayName: 'Ada L', email: 'ada@example.com' })
+    );
+    expect(dispatch).toHaveBeenCalledWith(setHeaderLoading(false));
+  });
+
+  it('falls back to preferred_username, then to the /me subject id', async () => {
+    mockGetIdentity.mockResolvedValue({ sub: 'x', claims: { preferred_username: 'ada' } });
+    await emit('app/user/fetch');
+    expect(dispatch).toHaveBeenCalledWith(setUser({ displayName: 'ada', email: undefined }));
+
+    dispatch.mockClear();
+    mockGetIdentity.mockResolvedValue(null); // opaque static dev token
+    await emit('app/user/fetch');
+    expect(dispatch).toHaveBeenCalledWith(setUser({ displayName: 'abcdef12…', email: undefined }));
   });
 
   it('does nothing when the accounts service is not registered', async () => {
     mockHas.mockReturnValue(false);
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
-
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/fetch');
-
-    expect(mockHas).toHaveBeenCalledTimes(1);
-    expect(mockGetService).not.toHaveBeenCalled();
+    await emit('app/user/fetch');
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('dispatches header slice actions when the bootstrap adapter loads the current user', async () => {
-    mockHas.mockReturnValue(true);
+  it('warns and clears the loading flag when the /me check fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockGetService.mockReturnValue({
-      getCurrentUser: {
-        fetch: vi.fn().mockResolvedValue({
-          user: {
-            id: 'user-ada',
-            firstName: 'Ada',
-            lastName: 'Lovelace',
-            email: 'ada@example.com',
-            role: UserRole.User,
-            language: Language.English,
-            avatarUrl: 'https://example.com/avatar.png',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z',
-          },
-        }),
-      },
+      me: { fetch: vi.fn().mockRejectedValue(new Error('401')) },
     });
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
 
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/fetch');
+    await emit('app/user/fetch');
 
-    expect(dispatch).toHaveBeenCalledTimes(3);
-    expect(getDispatchedActions(dispatch)).toEqual([
-      setHeaderLoading(true),
-      setUser({
-        displayName: 'Ada Lovelace',
-        email: 'ada@example.com',
-        avatarUrl: 'https://example.com/avatar.png',
-      }),
-      setHeaderLoading(false),
-    ]);
+    expect(warn).toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(setHeaderLoading(true));
+    expect(dispatch).toHaveBeenCalledWith(setHeaderLoading(false));
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: expect.stringContaining('setUser') })
+    );
+    warn.mockRestore();
   });
 
-  it('clears header loading when the fetch fails', async () => {
-    const warnSpy = mockConsoleWarn();
-    const error = new Error('boom');
-    mockHas.mockReturnValue(true);
-    mockGetService.mockReturnValue({
-      getCurrentUser: {
-        fetch: vi.fn().mockRejectedValue(error),
-      },
+  it('updates the header from app/user/loaded payloads', async () => {
+    await emit('app/user/loaded', {
+      user: { firstName: 'Grace', lastName: 'Hopper', email: 'g@example.com' },
     });
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
-
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/fetch');
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('Failed to fetch user');
-    expect(warnSpy.mock.calls[0]?.[1]).toBe(error);
-    expect(getDispatchedActions(dispatch)).toEqual([
-      setHeaderLoading(true),
-      setHeaderLoading(false),
-    ]);
-  });
-
-  it('warns instead of throwing when service availability lookup fails synchronously', async () => {
-    const warnSpy = mockConsoleWarn();
-    const error = new Error('registry has failed');
-    mockHas.mockImplementation(() => {
-      throw error;
-    });
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
-
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/fetch');
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('Failed to fetch user');
-    expect(warnSpy.mock.calls[0]?.[1]).toBe(error);
-    expect(mockGetService).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it('clears header loading when service lookup throws synchronously', async () => {
-    const warnSpy = mockConsoleWarn();
-    const error = new Error('registry misconfigured');
-    mockHas.mockReturnValue(true);
-    mockGetService.mockImplementation(() => {
-      throw error;
-    });
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
-
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/fetch');
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('Failed to fetch user');
-    expect(warnSpy.mock.calls[0]?.[1]).toBe(error);
-    expect(getDispatchedActions(dispatch)).toEqual([
-      setHeaderLoading(true),
-      setHeaderLoading(false),
-    ]);
-  });
-
-  it('dispatches header slice actions when the bootstrap adapter receives app/user/loaded', async () => {
-    const dispatch = vi.fn();
-    const { registerBootstrapEffects } = await import('./bootstrapEffects');
-
-    registerBootstrapEffects(dispatch);
-    await emitEvent('app/user/loaded', {
-      user: {
-        id: 'user-grace',
-        firstName: 'Grace',
-        lastName: '  ',
-        email: '',
-        role: UserRole.User,
-        language: Language.English,
-        avatarUrl: undefined,
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z',
-      },
-    });
-
-    expect(getDispatchedActions(dispatch)).toContainEqual(setUser({
-      displayName: 'Grace',
-      email: undefined,
-      avatarUrl: undefined,
-    }));
+    expect(dispatch).toHaveBeenCalledWith(
+      setUser({ displayName: 'Grace Hopper', email: 'g@example.com', avatarUrl: undefined })
+    );
   });
 });

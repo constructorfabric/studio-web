@@ -4,5 +4,5 @@
  */
 
 export { AccountsApiService } from './AccountsApiService';
-export { UserRole, type ApiUser, type UserExtra, type GetCurrentUserResponse } from './types';
+export { UserRole, type ApiUser, type UserExtra, type Me } from './types';
 export { accountsMockMap } from './mocks';

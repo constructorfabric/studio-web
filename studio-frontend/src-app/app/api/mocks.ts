@@ -7,15 +7,16 @@
  */
 
 import type { MockMap } from '@gears-frontx/react';
-import type { GetCurrentUserResponse } from './types';
-import { readCurrentAccountsMockUser } from './mock-user-store';
+import type { Me } from './types';
 
 /**
  * Accounts mock map
- * Keys are full URL patterns (including /api/accounts baseURL)
+ * Keys are full URL patterns (including the /cf/account-management/v1 baseURL)
  */
 export const accountsMockMap: MockMap = {
-  'GET /api/accounts/user/current': (): GetCurrentUserResponse => ({
-    user: readCurrentAccountsMockUser(),
+  'GET /cf/account-management/v1/me': (): Me => ({
+    subject_id: '00000000-0000-0000-0000-000000000001',
+    subject_type: 'user',
+    subject_tenant_id: '00000000-0000-0000-0000-0000000000aa',
   }),
 };

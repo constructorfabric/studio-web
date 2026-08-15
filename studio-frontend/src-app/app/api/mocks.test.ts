@@ -1,31 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { accountsMockMap } from './mocks';
-import { getMockUser, resetAccountsMockState } from './__test-utils__/mocks';
 
 describe('accountsMockMap', () => {
-  beforeEach(() => {
-    resetAccountsMockState();
-  });
+  it('serves the identity check on the real gateway URL', () => {
+    const handler = accountsMockMap['GET /cf/account-management/v1/me'];
+    expect(handler).toBeTypeOf('function');
 
-  it('returns the current mock user instance', () => {
-    const getCurrentUser = accountsMockMap['GET /api/accounts/user/current'];
-
-    expect(getCurrentUser()).toEqual({ user: getMockUser() });
-  });
-
-  it('restores the default mock user after state reset', () => {
-    const initialUser = getMockUser();
-
-    initialUser.firstName = 'Changed';
-
-    resetAccountsMockState();
-
-    expect(getMockUser()).toEqual(
-      expect.objectContaining({
-        id: 'mock-user-001',
-        firstName: 'Demo',
-      }),
-    );
-    expect(getMockUser()).not.toBe(initialUser);
+    const me = (handler as () => unknown)();
+    expect(me).toEqual({
+      subject_id: expect.any(String),
+      subject_type: 'user',
+      subject_tenant_id: expect.any(String),
+    });
   });
 });

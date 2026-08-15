@@ -10,6 +10,7 @@
 import trim from 'lodash/trim';
 import { eventBus, setUser, setHeaderLoading, apiRegistry, type AppDispatch, type HeaderUser } from '@gears-frontx/react';
 import { AccountsApiService, type ApiUser } from '@/app/api';
+import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
 
 /**
  * Convert API user to header user info
@@ -22,6 +23,17 @@ function toHeaderUser(user: ApiUser): HeaderUser {
     email: user.email || undefined,
     avatarUrl: user.avatarUrl,
   };
+}
+
+/**
+ * Header identity assembly: display data (name, email) comes from the token
+ * claims; the /me call is the backend's confirmation of whom the token
+ * authenticates as, and its subject id is the display fallback for tokens
+ * without profile claims (static dev tokens).
+ */
+function claimString(claims: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = claims?.[key];
+  return typeof value === 'string' && value ? value : undefined;
 }
 
 /**
@@ -47,10 +59,14 @@ export function registerBootstrapEffects(appDispatch: AppDispatch): void {
 
       // Get accounts service using class-based registration
       const accountsService = apiRegistry.getService(AccountsApiService);
-      const response = await accountsService.getCurrentUser.fetch();
-      if (response?.user) {
-        dispatch(setUser(toHeaderUser(response.user)));
-      }
+      const me = await accountsService.me.fetch();
+      const identity = await keycloakOidcProvider.getIdentity();
+      const claims = identity?.claims as Record<string, unknown> | undefined;
+      const displayName =
+        claimString(claims, 'name') ??
+        claimString(claims, 'preferred_username') ??
+        (me?.subject_id ? `${me.subject_id.slice(0, 8)}…` : undefined);
+      dispatch(setUser({ displayName, email: claimString(claims, 'email') }));
     } catch (error) {
       console.warn('Failed to fetch user:', error);
     } finally {

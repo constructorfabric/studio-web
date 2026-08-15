@@ -9,7 +9,7 @@ import {
   RestProtocol,
   RestMockPlugin,
 } from '@gears-frontx/react';
-import type { GetCurrentUserResponse } from './types';
+import type { Me } from './types';
 import { accountsMockMap } from './mocks';
 
 /**
@@ -27,7 +27,9 @@ export class AccountsApiService extends BaseApiService {
     });
     const restEndpoints = new RestEndpointProtocol(restProtocol);
 
-    super({ baseURL: '/api/accounts' }, restProtocol, restEndpoints);
+    // The real account-management gear behind the /cf gateway prefix
+    // (vite dev proxy / nginx location — same-origin in every environment).
+    super({ baseURL: '/cf/account-management/v1' }, restProtocol, restEndpoints);
 
     // Register mock plugin (framework controls when it's active based on mock mode toggle)
     this.registerPlugin(
@@ -39,6 +41,6 @@ export class AccountsApiService extends BaseApiService {
     );
   }
 
-  readonly getCurrentUser = this.protocol(RestEndpointProtocol)
-    .query<GetCurrentUserResponse>('/user/current');
+  /** Identity check against the backend: who does this token authenticate as. */
+  readonly me = this.protocol(RestEndpointProtocol).query<Me>('/me');
 }
