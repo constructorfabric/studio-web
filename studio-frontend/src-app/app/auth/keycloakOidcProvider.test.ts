@@ -178,6 +178,14 @@ describe('KeycloakOidcProvider', () => {
       fetchMock.mockResolvedValueOnce(htmlResponse());
       await expect(startAndCallback({ code: 'auth-code' })).rejects.toThrow('non-JSON');
     });
+
+    it('caps the token exchange with a timeout signal', async () => {
+      fetchMock.mockResolvedValueOnce(tokenResponse());
+      await startAndCallback({ code: 'auth-code' });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
   });
 
   describe('refresh', () => {
@@ -216,6 +224,22 @@ describe('KeycloakOidcProvider', () => {
 
     it('keeps the refresh token on a network failure', async () => {
       fetchMock.mockRejectedValueOnce(new Error('offline'));
+      expect(await provider.refresh()).toBeNull();
+      expect(sessionStorage.getItem('studio.oidc.refresh')).toBe('rt-0');
+    });
+
+    it('caps the refresh with a timeout signal', async () => {
+      fetchMock.mockResolvedValueOnce(tokenResponse());
+      await provider.refresh();
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('treats an aborted (timed out) refresh like a network failure', async () => {
+      // A hung IdP: the timeout signal fires and fetch rejects with
+      // AbortError — the refresh token must survive for the next attempt.
+      fetchMock.mockRejectedValueOnce(new DOMException('The operation was aborted.', 'AbortError'));
       expect(await provider.refresh()).toBeNull();
       expect(sessionStorage.getItem('studio.oidc.refresh')).toBe('rt-0');
     });

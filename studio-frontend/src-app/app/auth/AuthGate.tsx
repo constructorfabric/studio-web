@@ -31,9 +31,6 @@ function scrubCallbackParams(): void {
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { auth } = useFrontX();
-  if (!auth) {
-    throw new Error('AuthGate requires createFrontXApp({ auth: { provider } }) to be configured');
-  }
 
   const [phase, setPhase] = useState<Phase>('restoring');
   const [expired, setExpired] = useState(false);
@@ -42,6 +39,15 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   phaseRef.current = phase;
 
   useEffect(() => {
+    if (!auth) {
+      // No auth runtime at all (e.g. the no-uikit scaffold entry builds
+      // createFrontXApp() without an auth plugin): render ungated instead of
+      // crashing on mount. This cannot happen silently in a misconfigured
+      // real app — there is no login screen and every API call fails
+      // without a bearer, and the warning below names the cause.
+      console.warn('[auth] no auth runtime configured — AuthGate renders the app ungated');
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const params = new URLSearchParams(window.location.search);
@@ -77,7 +83,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }, []);
 
   useEffect(() => {
-    return auth.subscribe?.((event) => {
+    return auth?.subscribe?.((event) => {
       if (event.state === 'authenticated') {
         setExpired(false);
         setCallbackError(undefined);
@@ -93,6 +99,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- auth is set once at app construction
   }, []);
 
+  if (!auth) return <>{children}</>;
   if (phase === 'restoring') {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

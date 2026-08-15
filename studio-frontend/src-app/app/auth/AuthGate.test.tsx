@@ -3,18 +3,19 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { AuthStateListener } from '@gears-frontx/auth';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 
-const { mockAuth, listeners } = vi.hoisted(() => ({
+const { mockAuth, mockUseFrontX, listeners } = vi.hoisted(() => ({
   mockAuth: {
     checkAuth: vi.fn(),
     handleCallback: vi.fn(),
     subscribe: vi.fn(),
   },
+  mockUseFrontX: vi.fn(),
   listeners: [] as Array<(event: unknown) => void>,
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  useFrontX: () => ({ auth: mockAuth }),
+  useFrontX: mockUseFrontX,
 }));
 
 // The gate's contract with LoginScreen is just these two props — stub the
@@ -35,6 +36,7 @@ function notify(event: StudioAuthStateEvent): void {
 
 describe('AuthGate', () => {
   beforeEach(() => {
+    mockUseFrontX.mockReturnValue({ auth: mockAuth });
     mockAuth.checkAuth.mockResolvedValue({ authenticated: false });
     mockAuth.handleCallback.mockResolvedValue({ type: 'none' });
     mockAuth.subscribe.mockImplementation((listener: AuthStateListener) => {
@@ -116,6 +118,18 @@ describe('AuthGate', () => {
     notify({ state: 'unauthenticated', reason: 'signed-out' });
     const login = await screen.findByTestId('login');
     expect(login.getAttribute('data-expired')).toBe('false');
+  });
+
+  it('renders ungated with a warning when no auth runtime is configured', () => {
+    // The no-uikit scaffold entry builds createFrontXApp() without an auth
+    // plugin — the gate must not crash the whole app on mount there.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockUseFrontX.mockReturnValue({});
+    render(<AuthGate>app-content</AuthGate>);
+
+    expect(screen.getByText('app-content')).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no auth runtime configured'));
+    warn.mockRestore();
   });
 
   it('flips to the app when the provider reports a fresh session', async () => {
