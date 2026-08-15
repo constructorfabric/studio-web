@@ -7,23 +7,8 @@
  * Following flux architecture: Listen to events from actions, dispatch to slices.
  */
 
-import trim from 'lodash/trim';
-import { eventBus, setUser, setHeaderLoading, apiRegistry, type AppDispatch, type HeaderUser } from '@gears-frontx/react';
-import { AccountsApiService, type ApiUser } from '@/app/api';
-import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
-
-/**
- * Convert API user to header user info
- */
-// @cpt-begin:cpt-frontx-flow-framework-composition-app-bootstrap:p1:inst-1
-function toHeaderUser(user: ApiUser): HeaderUser {
-  const displayName = trim(`${user.firstName || ''} ${user.lastName || ''}`);
-  return {
-    displayName: displayName || undefined,
-    email: user.email || undefined,
-    avatarUrl: user.avatarUrl,
-  };
-}
+import { eventBus, setUser, setHeaderLoading, apiRegistry, type FrontXApp } from '@gears-frontx/react';
+import { AccountsApiService } from '@/app/api';
 
 /**
  * Header identity assembly: display data (name, email) comes from the token
@@ -38,11 +23,12 @@ function claimString(claims: Record<string, unknown> | undefined, key: string): 
 
 /**
  * Register bootstrap effects
- * Called once during app initialization
+ * Called once during app initialization. Takes the app instance so identity
+ * flows through the framework auth runtime, not a concrete provider.
  */
-export function registerBootstrapEffects(appDispatch: AppDispatch): void {
-  // Store dispatch for use in event listeners
-  const dispatch = appDispatch;
+// @cpt-begin:cpt-frontx-flow-framework-composition-app-bootstrap:p1:inst-1
+export function registerBootstrapEffects(app: FrontXApp): void {
+  const dispatch = app.store.dispatch;
 
   // Listen for 'app/user/fetch' event
   eventBus.on('app/user/fetch', async () => {
@@ -60,7 +46,7 @@ export function registerBootstrapEffects(appDispatch: AppDispatch): void {
       // Get accounts service using class-based registration
       const accountsService = apiRegistry.getService(AccountsApiService);
       const me = await accountsService.me.fetch();
-      const identity = await keycloakOidcProvider.getIdentity();
+      const identity = (await app.auth?.getIdentity?.()) ?? null;
       const claims = identity?.claims as Record<string, unknown> | undefined;
       const displayName =
         claimString(claims, 'name') ??
@@ -68,17 +54,14 @@ export function registerBootstrapEffects(appDispatch: AppDispatch): void {
         (me?.subject_id ? `${me.subject_id.slice(0, 8)}…` : undefined);
       dispatch(setUser({ displayName, email: claimString(claims, 'email') }));
     } catch (error) {
-      console.warn('Failed to fetch user:', error);
+      // Log the message only: an AxiosError carries the request config,
+      // Authorization header included — the raw object would print the token.
+      console.warn('Failed to fetch user:', error instanceof Error ? error.message : String(error));
     } finally {
       if (headerLoadingStarted) {
         dispatch(setHeaderLoading(false));
       }
     }
-  });
-
-  // Listen for 'app/user/loaded' event - updates header when any screen loads user data
-  eventBus.on('app/user/loaded', ({ user }) => {
-    dispatch(setUser(toHeaderUser(user)));
   });
 }
 // @cpt-end:cpt-frontx-flow-framework-composition-app-bootstrap:p1:inst-1

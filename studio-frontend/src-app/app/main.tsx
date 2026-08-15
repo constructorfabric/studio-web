@@ -43,8 +43,8 @@ const app = createFrontXApp({
   auth: { provider: keycloakOidcProvider },
 });
 
-// Register app-level effects (pass store dispatch)
-registerBootstrapEffects(app.store.dispatch);
+// Register app-level effects (identity flows through app.auth)
+registerBootstrapEffects(app);
 
 // Register all themes (default theme has default:true, activates automatically)
 app.themeRegistry.register(defaultTheme);

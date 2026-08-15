@@ -8,11 +8,13 @@
  * Primary path is SSO (Authorization Code + PKCE); the collapsed developer
  * path accepts a static token for the backend's static-auth profiles
  * (config/dev.yaml, config/postgres.yaml) and validates it against /me
- * before establishing the session.
+ * before establishing the session. The developer path exists only in dev
+ * builds — Vite eliminates the branch from production bundles.
  */
 
 import React, { useState } from 'react';
-import { keycloakOidcProvider } from './keycloakOidcProvider';
+import { useFrontX } from '@gears-frontx/react';
+import { ACCOUNTS_API_BASE_URL } from '@/app/api';
 
 const IDP_HINTS = [
   { hint: 'google', label: 'Google' },
@@ -26,20 +28,22 @@ export interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initialError }) => {
+  const { auth } = useFrontX();
   const [error, setError] = useState<string | undefined>(
     initialError ?? (sessionExpired ? 'Session expired — please sign in again.' : undefined)
   );
-  const [devToken, setDevToken] = useState('studio-admin-token');
+  // DEV-gated so the default token string is eliminated from prod bundles.
+  const [devToken, setDevToken] = useState(import.meta.env.DEV ? 'studio-admin-token' : '');
   const [busy, setBusy] = useState(false);
 
   const startSso = async (idpHint?: string) => {
     setBusy(true);
     try {
-      const transition = await keycloakOidcProvider.login({
+      const transition = await auth?.login?.({
         type: 'oauth',
         payload: idpHint ? { idpHint } : {},
       });
-      if (transition.type === 'redirect') {
+      if (transition?.type === 'redirect') {
         window.location.href = transition.redirectUrl;
         return; // navigating away
       }
@@ -58,14 +62,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
     try {
       // Validate before establishing the session, so a typo'd token never
       // momentarily mounts the authenticated app.
-      const res = await fetch('/cf/account-management/v1/me', {
+      const res = await fetch(`${ACCOUNTS_API_BASE_URL}/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         setError(res.status === 401 ? 'Invalid token' : `Sign-in failed: HTTP ${res.status}`);
         return;
       }
-      await keycloakOidcProvider.login({ type: 'static-token', payload: { token } });
+      await auth?.login?.({ type: 'static-token', payload: { token } });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -108,29 +112,31 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
           ))}
         </div>
 
-        <details className="text-sm">
-          <summary className="cursor-pointer text-muted-foreground">
-            Developer sign-in (static token)
-          </summary>
-          <form onSubmit={(e) => void devSignIn(e)} className="mt-3 flex gap-2">
-            <input
-              value={devToken}
-              onChange={(e) => setDevToken(e.target.value)}
-              placeholder="static token"
-              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
-            />
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-            >
-              Sign in
-            </button>
-          </form>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Works only with the backend&apos;s static-auth profiles (config/dev.yaml).
-          </p>
-        </details>
+        {import.meta.env.DEV && (
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted-foreground">
+              Developer sign-in (static token)
+            </summary>
+            <form onSubmit={(e) => void devSignIn(e)} className="mt-3 flex gap-2">
+              <input
+                value={devToken}
+                onChange={(e) => setDevToken(e.target.value)}
+                placeholder="static token"
+                className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              >
+                Sign in
+              </button>
+            </form>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Works only with the backend&apos;s static-auth profiles (config/dev.yaml).
+            </p>
+          </details>
+        )}
       </div>
     </div>
   );

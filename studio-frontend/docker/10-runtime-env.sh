@@ -3,7 +3,7 @@
 # variables at container start. nginx:alpine runs every /docker-entrypoint.d
 # script before starting nginx — no custom ENTRYPOINT needed.
 #
-# The generated file sets window.__STUDIO_ENV__ (see src/env.ts): runtime
+# The generated file sets window.__STUDIO_ENV__ (see src-app/app/config/env.ts): runtime
 # values beat the build-time VITE_* fallbacks, so one image serves any
 # environment.
 set -eu

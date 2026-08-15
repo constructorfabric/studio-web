@@ -4,7 +4,6 @@
  */
 
 import '@gears-frontx/react';
-import type { ApiUser } from '@/app/api';
 
 /**
  * Module augmentation for type-safe event payloads
@@ -18,7 +17,5 @@ declare module '@gears-frontx/react' {
   interface EventPayloadMap {
     /** Fetch current user - no payload needed */
     'app/user/fetch': void;
-    /** User data loaded - carries user payload for header update */
-    'app/user/loaded': { user: ApiUser };
   }
 }

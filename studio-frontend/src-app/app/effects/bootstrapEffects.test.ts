@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setHeaderLoading, setUser } from '@gears-frontx/react';
+import { setHeaderLoading, setUser, type FrontXApp } from '@gears-frontx/react';
 
 type BusHandler = (payload?: unknown) => void | Promise<void>;
 
@@ -25,10 +25,6 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   },
 }));
 
-vi.mock('@/app/auth/keycloakOidcProvider', () => ({
-  keycloakOidcProvider: { getIdentity: mockGetIdentity },
-}));
-
 import { registerBootstrapEffects } from './bootstrapEffects';
 
 async function emit(eventName: string, payload?: unknown): Promise<void> {
@@ -37,9 +33,13 @@ async function emit(eventName: string, payload?: unknown): Promise<void> {
 
 describe('registerBootstrapEffects', () => {
   const dispatch = vi.fn();
+  const app = {
+    store: { dispatch },
+    auth: { getIdentity: mockGetIdentity },
+  } as unknown as FrontXApp;
 
   beforeEach(() => {
-    registerBootstrapEffects(dispatch);
+    registerBootstrapEffects(app);
     mockHas.mockReturnValue(true);
     mockGetService.mockReturnValue({
       me: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456', subject_type: 'user' }) },
@@ -99,12 +99,19 @@ describe('registerBootstrapEffects', () => {
     warn.mockRestore();
   });
 
-  it('updates the header from app/user/loaded payloads', async () => {
-    await emit('app/user/loaded', {
-      user: { firstName: 'Grace', lastName: 'Hopper', email: 'g@example.com' },
+  it('never prints the bearer token when /me fails with an axios-like error', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const axiosLikeError = Object.assign(new Error('Request failed with status code 401'), {
+      config: { headers: { Authorization: 'Bearer super-secret-token' } },
     });
-    expect(dispatch).toHaveBeenCalledWith(
-      setUser({ displayName: 'Grace Hopper', email: 'g@example.com', avatarUrl: undefined })
-    );
+    mockGetService.mockReturnValue({
+      me: { fetch: vi.fn().mockRejectedValue(axiosLikeError) },
+    });
+
+    await emit('app/user/fetch');
+
+    expect(warn).toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('super-secret-token');
+    warn.mockRestore();
   });
 });

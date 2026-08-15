@@ -3,6 +3,6 @@
  * Application-specific API exports
  */
 
-export { AccountsApiService } from './AccountsApiService';
-export { UserRole, type ApiUser, type UserExtra, type Me } from './types';
+export { AccountsApiService, ACCOUNTS_API_BASE_URL } from './AccountsApiService';
+export { type Me } from './types';
 export { accountsMockMap } from './mocks';

@@ -17,8 +17,8 @@ apiRegistry.initialize({});
 // No UI component library included
 const app = createFrontXApp();
 
-// Register app-level effects (pass store dispatch)
-registerBootstrapEffects(app.store.dispatch);
+// Register app-level effects (no auth runtime here — header falls back to /me subject id)
+registerBootstrapEffects(app);
 
 /**
  * Render application

@@ -6,10 +6,9 @@
  */
 
 import React from 'react';
-import { useAppSelector, useAppDispatch, clearUser, type HeaderState } from '@gears-frontx/react';
+import { useAppSelector, useAppDispatch, useFrontX, clearUser, type HeaderState } from '@gears-frontx/react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/app/components/ui/avatar';
 import { Skeleton } from '@/app/components/ui/skeleton';
-import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
 
 export interface HeaderProps {
   children?: React.ReactNode;
@@ -18,6 +17,7 @@ export interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ children }) => {
   const headerState = useAppSelector((state) => state['layout/header'] as HeaderState | undefined);
   const dispatch = useAppDispatch();
+  const { auth } = useFrontX();
 
   const user = headerState?.user;
   const loading = headerState?.loading ?? false;
@@ -26,8 +26,8 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
     dispatch(clearUser());
     // RP-initiated logout redirects to the IdP; static-token sessions end
     // locally and the AuthGate flips to the login screen via subscribe().
-    const transition = await keycloakOidcProvider.logout();
-    if (transition.type === 'redirect') window.location.href = transition.redirectUrl;
+    const transition = await auth?.logout();
+    if (transition?.type === 'redirect') window.location.href = transition.redirectUrl;
   };
 
   const getInitials = (): string => {

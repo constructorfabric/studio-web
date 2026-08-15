@@ -13,6 +13,14 @@ import type { Me } from './types';
 import { accountsMockMap } from './mocks';
 
 /**
+ * The real account-management gear behind the /cf gateway prefix
+ * (vite dev proxy / nginx location — same-origin in every environment).
+ * Exported so raw probes (LoginScreen's pre-session token check) stay on
+ * the same base as the service.
+ */
+export const ACCOUNTS_API_BASE_URL = '/cf/account-management/v1';
+
+/**
  * Accounts API Service
  * Manages accounts domain endpoints:
  * - User management (current user, profile, preferences)
@@ -27,9 +35,7 @@ export class AccountsApiService extends BaseApiService {
     });
     const restEndpoints = new RestEndpointProtocol(restProtocol);
 
-    // The real account-management gear behind the /cf gateway prefix
-    // (vite dev proxy / nginx location — same-origin in every environment).
-    super({ baseURL: '/cf/account-management/v1' }, restProtocol, restEndpoints);
+    super({ baseURL: ACCOUNTS_API_BASE_URL }, restProtocol, restEndpoints);
 
     // Register mock plugin (framework controls when it's active based on mock mode toggle)
     this.registerPlugin(
