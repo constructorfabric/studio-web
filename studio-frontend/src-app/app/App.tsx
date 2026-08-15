@@ -26,13 +26,18 @@
 import { Layout } from '@/app/layout';
 import { StudioOverlay } from '@gears-frontx/studio';
 import { MfeScreenContainer } from '@/app/mfe/MfeScreenContainer';
+import { AuthGate } from '@/app/auth/AuthGate';
 
 function App() {
   return (
     <>
-      <Layout>
-        <MfeScreenContainer />
-      </Layout>
+      {/* The authenticated app mounts only behind the gate; the dev overlay
+          stays outside so theme/mock toggles work on the login screen too. */}
+      <AuthGate>
+        <Layout>
+          <MfeScreenContainer />
+        </Layout>
+      </AuthGate>
       <StudioOverlay />
     </>
   );

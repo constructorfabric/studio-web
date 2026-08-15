@@ -6,9 +6,10 @@
  */
 
 import React from 'react';
-import { useAppSelector, type HeaderState } from '@gears-frontx/react';
+import { useAppSelector, useAppDispatch, clearUser, type HeaderState } from '@gears-frontx/react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/app/components/ui/avatar';
 import { Skeleton } from '@/app/components/ui/skeleton';
+import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
 
 export interface HeaderProps {
   children?: React.ReactNode;
@@ -16,9 +17,18 @@ export interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ children }) => {
   const headerState = useAppSelector((state) => state['layout/header'] as HeaderState | undefined);
+  const dispatch = useAppDispatch();
 
   const user = headerState?.user;
   const loading = headerState?.loading ?? false;
+
+  const signOut = async () => {
+    dispatch(clearUser());
+    // RP-initiated logout redirects to the IdP; static-token sessions end
+    // locally and the AuthGate flips to the login screen via subscribe().
+    const transition = await keycloakOidcProvider.logout();
+    if (transition.type === 'redirect') window.location.href = transition.redirectUrl;
+  };
 
   const getInitials = (): string => {
     if (!user?.displayName) return (user?.email?.[0] || '?').toUpperCase();
@@ -45,6 +55,13 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
               <AvatarFallback>{getInitials()}</AvatarFallback>
             </Avatar>
             <span>{user?.displayName || user?.email || 'User'}</span>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="ml-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+            >
+              Sign out
+            </button>
           </div>
         )}
       </div>

@@ -8,6 +8,7 @@
 
 import React, { useEffect } from 'react';
 import { fetchCurrentUser } from '@/app/actions/bootstrapActions';
+import { Header } from './Header';
 import { Menu } from './Menu';
 import { Sidebar } from './Sidebar';
 import { Screen } from './Screen';
@@ -31,8 +32,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Menu - full height on left */}
         <Menu />
 
-        {/* Right side: Content */}
+        {/* Right side: Header + Content */}
         <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Header: current user + sign out (returned with OIDC) */}
+          <Header />
+
           {/* Main content area */}
           <div className="flex flex-1 overflow-hidden">
             {/* Main content */}
