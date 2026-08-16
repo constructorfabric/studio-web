@@ -207,9 +207,48 @@ const cookieOk = (req) => {
 const bearerApiOk = (req) =>
   GW && req.url.startsWith("/studio-api/") && !!req.headers.authorization;
 
+// Theia's webview shell, which the cookie can never reach.
+//
+// Every extension webview is served from its OWN subdomain —
+// `<uuid>.webview.<host>` — so that a webview cannot reach the application's
+// origin, cookies or localStorage. That isolation is why the Claude and Codex
+// panels rendered "403 — session token required": the gate cookie is host-only,
+// the browser does not send it to a different host, and it cannot be made to.
+// `Domain=` needs a dotted name, and every single-label host — `localhost`
+// included — is stored host-only by the browser whatever the attribute says.
+// Moving sessions to a dotted host does fix the cookie, and breaks the panels a
+// second way: `*.webview.localhost` is a potentially-trustworthy origin and
+// `*.webview.<anything-else>` over plain http is not, so the service worker
+// Theia loads webview resources through refuses to register and it logs
+// "Service Workers are not enabled. Webviews will not work properly". That road
+// ends at wildcard TLS — right for a hosted deployment, too much to ask of a
+// local run.
+//
+// So this exempts what actually lives on those subdomains, which is only
+// Theia's own static shell: /webview/index.html, main.js, host.js and
+// service-worker.js. Identical bytes in every session, already public in the
+// npm package, no session data in them. Measured, not assumed: with a webview
+// Host every /webview/theia-resource/… path answers 404 — /etc/passwd,
+// /etc/shadow, files in /workspace, ~/.theia/settings.json and a plugin file
+// that exists on disk all alike. No HTTP route serves file content here. A
+// webview's real content is fetched by its service worker from the PARENT
+// frame over the application's websocket, and that upgrade still needs the
+// cookie (see the `upgrade` handler below) — as does every other path.
+//
+// Both conditions must hold: the webview host pattern AND the /webview/ path.
+const WEBVIEW_HOST = /^[^.]+\.webview\./;
+const webviewShellOk = (req) => {
+  if (!WEBVIEW_HOST.test((req.headers.host || "").split(":")[0])) return false;
+  try {
+    return new URL(req.url, "http://x").pathname.startsWith("/webview/");
+  } catch (e) {
+    return false;
+  }
+};
+
 http
   .createServer((req, res) => {
-    if (!bearerApiOk(req) && !cookieOk(req)) {
+    if (!bearerApiOk(req) && !webviewShellOk(req) && !cookieOk(req)) {
       const url = new URL(req.url, "http://x");
       if (url.searchParams.get("token") === TOKEN) {
         url.searchParams.delete("token");
