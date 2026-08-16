@@ -6,10 +6,10 @@
  * URLs something to resolve against, and lets the iframe stay same-origin so
  * the comment layer can still read it.
  *
- * PROTOTYPE SECURITY NOTE: this serves any readable file under the user's home
- * directory to anyone who can reach the backend. That is acceptable for a
- * localhost probe and NOT acceptable for a hosted deployment, where it must be
- * restricted to the connected workspace roots and access-checked per user.
+ * PROTOTYPE SECURITY NOTE: within the roots below this serves any readable file
+ * to anyone who can reach the backend. Acceptable for a localhost probe, NOT
+ * acceptable for a hosted deployment, where it still needs an access check per
+ * user on top of the root confinement.
  */
 const { ContainerModule } = require('inversify');
 const { BackendApplicationContribution } = require('@theia/core/lib/node');
@@ -18,8 +18,48 @@ const path = require('path');
 const os = require('os');
 
 const PREFIX = '/studio-preview';
-// Allowed roots. The demo workspace lives in /tmp, so that is permitted too.
-const ROOTS = [os.homedir(), os.tmpdir(), '/tmp', '/private/tmp'].map(r => fs.realpathSync.native ? r : r);
+
+/*
+ * The workspace the backend was started with. Theia takes it as the trailing
+ * positional argument (the one WorkspaceCliContribution parses), so reading it
+ * back from argv needs no extra configuration and follows wherever the session
+ * mounts the workspace.
+ *
+ * This is what makes the endpoint work in the session container: there the
+ * workspace is bind-mounted at /workspace, which is under neither $HOME nor
+ * /tmp, so against the old fixed list EVERY preview of a workspace file — the
+ * only files a session has — answered "403 outside the permitted roots". The
+ * standalone prototype never saw it because its workspace sat under $HOME.
+ *
+ * Both spellings of each root are kept: /tmp is a symlink to /private/tmp on
+ * macOS, and the request path carries whichever one Theia knows, not the
+ * resolved one.
+ */
+function workspaceRoots() {
+    const roots = [];
+    const add = p => { if (p && !roots.includes(p)) { roots.push(p); } };
+    for (const arg of process.argv.slice(2)) {
+        if (arg.startsWith('-')) { continue; }
+        const resolved = path.resolve(arg);
+        let real;
+        // A stray positional (e.g. a flag value split by a space) resolves to
+        // nothing on disk and is skipped rather than opening a root.
+        try { real = fs.realpathSync(resolved); } catch (e) { continue; }
+        // A .theia-workspace file names its roots inside; its directory is the
+        // closest confinement available without parsing it here.
+        const dirOf = p => { try { return fs.statSync(p).isDirectory() ? p : path.dirname(p); } catch (e) { return undefined; } };
+        add(dirOf(real));
+        add(dirOf(resolved));
+    }
+    return roots;
+}
+
+// Allowed roots. The home/tmp list is the fallback for a backend started with
+// no workspace at all — the demo workspace lives in /tmp, so that is permitted.
+const WORKSPACE_ROOTS = workspaceRoots();
+const ROOTS = WORKSPACE_ROOTS.length
+    ? WORKSPACE_ROOTS
+    : [os.homedir(), os.tmpdir(), '/tmp', '/private/tmp'];
 
 const TYPES = {
     '.html': 'text/html', '.htm': 'text/html', '.css': 'text/css',
