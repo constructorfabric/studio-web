@@ -25,3 +25,11 @@ $RECYCLE.BIN/
 # Local compose overrides: provider keys and registry credentials live here.
 # .env.example is the tracked template.
 .env
+
+# Local run scaffolding. Both carry absolute paths from whoever generated
+# them (workspaces_root, the locally built Theia image) and are the pair the
+# committed compose file is deliberately without — they are untracked, not
+# ignored, so a `git add -A` used to sweep them and a developer's home
+# directory into the branch.
+docker-compose.override.yml
+local-run/
