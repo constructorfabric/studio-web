@@ -13,6 +13,7 @@
  */
 
 const { CodeBlock } = require('@tiptap/extension-code-block');
+const { showLoading } = require('./loader');
 
 const MERMAID_LANGUAGES = ['mermaid'];
 
@@ -148,6 +149,26 @@ function mermaidNodeView({ node, editor, getPos }) {
         }
         if (source === lastRendered) { return; }
         lastRendered = source;
+        /*
+         * ONLY when there is nothing rendered yet, and that condition is the
+         * whole design of this one.
+         *
+         * The first diagram in a session is the slowest thing in the editor: it
+         * fetches the 3.4 MB mermaid script (see loadMermaid above) before it
+         * can draw anything, behind a blank rectangle that is indistinguishable
+         * from a diagram that failed silently. That is the wait worth showing.
+         *
+         * Every LATER render is a re-render of a diagram that is already on
+         * screen, 450ms after the user stopped typing. Replacing a correct
+         * diagram with a spinner because the source changed would be a flicker
+         * on a surface the user is watching, and it would throw away the one
+         * useful thing there — the previous version — to say "working" about a
+         * job that usually finishes in a few milliseconds. So the old diagram
+         * stays up and the new one swaps in under it.
+         */
+        const done = lastSvg
+            ? () => undefined
+            : showLoading(preview, 'Rendering diagram…', { replace: true, className: 'studio-diagram-loading' });
         try {
             const svg = await renderDiagram(id + '-' + Date.now().toString(36), source);
             if (destroyed) { return; }
@@ -169,6 +190,11 @@ function mermaidNodeView({ node, editor, getPos }) {
             detail.textContent = String((error && error.message) || error).split('\n').slice(0, 4).join('\n');
             box.appendChild(detail);
             preview.appendChild(box);
+        } finally {
+            // Reached on the destroyed-mid-render returns too, which is the
+            // point: a node view torn down while mermaid was still fetching
+            // must not leave a timer holding a reference to its preview.
+            done();
         }
     }
 
@@ -288,6 +314,10 @@ const DIAGRAM_CSS = `
 .studio-diagram-preview svg { max-width: 100%; height: auto; }
 .studio-diagram-preview.failed { justify-content: flex-start; }
 .studio-diagram-empty { font-size: 12.5px; color: var(--studio-muted); }
+/* No padding of its own: .studio-diagram-preview already pads by 16px, and
+   .studio-loading's own 24px on top would make the first diagram of a session
+   taller than the diagram that replaces it, so the block would jump. */
+.studio-diagram-loading { padding: 0; }
 .studio-diagram-error {
   font-size: 12.5px; line-height: 1.55; color: var(--studio-text);
   background: color-mix(in srgb, var(--studio-danger) 12%, transparent);

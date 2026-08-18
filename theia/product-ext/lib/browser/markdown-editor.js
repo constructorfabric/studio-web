@@ -37,14 +37,19 @@ const { newId } = require('./comments-store');
 const { ChangesStore, resolveFile } = require('./changes-store');
 const { diffHunks, applyHunks, countPending } = require('./diff');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
+const { trackedHtml, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
+const { suggestionHunks, isMine, hunkKey } = require('./change-log');
+const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
+const { suggestMarksExtension, refreshSuggestMarks, collect } = require('./suggest-marks');
 const { TABLE_EXTENSIONS, TABLE_COMMANDS, tableContent, cellContext, currentAlign } = require('./editor-tables');
 const { DiagramCodeBlock } = require('./mermaid-view');
 const { SessionLock } = require('./session-lock');
 const { fileTypeSettings } = require('./file-type-settings');
 const { ICONS } = require('./icons');
 const { messageHtml, quoteLineHtml } = require('./comment-ui');
-const { identity } = require('./identity');
+const { identity, authorRecord } = require('./identity');
 const { signature, mergeFolded } = require('./comment-log');
+const { loaderMarkup, loadingMarkup, showLoading } = require('./loader');
 const {
     requestChange, openAiPrompt,
     assistantForKey, revealAssistant, collapseRightPanel, assistantFromTabTitle, SLOT_GRACE_MS
@@ -159,6 +164,15 @@ function buildExtensions(widget) {
         Toggle,
         StudioImage.configure({ inline: false, allowBase64: false, documentUri: widget && widget.uri }),
         CommentMark,
+        /*
+         * Live tracked marks, and the reason this is a callback rather than a
+         * value: the plugin asks on every transaction, so the widget owns when
+         * the baseline moves and the plugin never has to learn about accepting a
+         * suggestion, leaving the mode, or reloading the file. `undefined` is how
+         * the marks are off, which is every document that is not being suggested
+         * into — so nothing here costs anything in Editing mode.
+         */
+        suggestMarksExtension(() => (widget && widget.suggestBaseline ? widget.suggestBaseline() : undefined)),
         ...TABLE_EXTENSIONS
     ];
 }
@@ -226,6 +240,16 @@ const SPLIT_SYNC_MS = 320;
 // while the user is still thinking about the request that caused it.
 const EXTERNAL_POLL_MS = 2000;
 
+/*
+ * How long after a keystroke a suggestion is written.
+ *
+ * Longer than AUTOSAVE_DELAY_MS deliberately. An autosave is invisible; a
+ * suggestion is a card that appears on somebody's rail and, once the watcher
+ * below is in play, on somebody else's screen. Writing one per burst of typing
+ * would make a colleague watch a sentence being composed a word at a time.
+ */
+const SUGGEST_DELAY_MS = 1100;
+
 function buildTextIndex(doc) {
     let text = '';
     const map = [];
@@ -249,6 +273,21 @@ function buildTextIndex(doc) {
  */
 const openEditors = new Map();
 
+/*
+ * A rendered body reduced to the same string shape suggest-marks.js's collect()
+ * produces from a ProseMirror document: the text of each top-level block, joined
+ * by a newline.
+ *
+ * The correspondence holds because every block the renderer emits — p, h1-h4, ul,
+ * ol, blockquote, pre, table — becomes exactly one top-level ProseMirror node,
+ * and neither side puts a separator between the items inside one.
+ */
+function plainBlockText(html) {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    return [...host.children].map(el => el.textContent).join('\n');
+}
+
 function timeLabel(iso) {
     const d = iso ? new Date(iso) : new Date();
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
@@ -262,6 +301,7 @@ class MarkdownEditorWidget extends Widget {
         this.fileService = ctx.fileService;
         this.commentsStore = ctx.commentsStore;
         this.changesStore = ctx.changesStore;
+        this.changeLog = ctx.changeLog;
         this.historyStore = ctx.historyStore;
         this.labelProvider = ctx.labelProvider;
         this.commandRegistry = ctx.commandRegistry;
@@ -288,6 +328,24 @@ class MarkdownEditorWidget extends Widget {
         this.compareSelection = [];
         this.decisionJournal = [];
         this.mode = 'rich';
+        // Which review style this project uses, re-read from the settings store
+        // wherever it is needed rather than trusted from open time — the Project
+        // page can change it while this document sits open. See renderTracked.
+        this.reviewStyle = 'queue';
+        /*
+         * Suggestions from every author, and MY answers to them.
+         *
+         * Separate from this.proposals, which is the assistant path's single
+         * proposal against a recorded base. They render into the same rail and
+         * the same document, and they are two stores because they are two shapes
+         * — see change-log.js.
+         */
+        this.suggestions = [];
+        this.rejections = {};
+        this.suggesting = suggestMode.suggesting();
+        // Set while a counter-suggestion is being composed, so the record says
+        // which suggestion it answers.
+        this.counterTo = undefined;
         this.rail = 'comments';
         this.railOpen = true;
         // Which assistant, if any, is the current occupant of the single right
@@ -348,6 +406,28 @@ class MarkdownEditorWidget extends Widget {
             '<div class="studio-doc-topbar">' +
             '  <div class="studio-seg" data-seg="mode"></div>' +
             '  <span class="studio-doc-spacer"></span>' +
+            /*
+             * The busy dot sits BESIDE the status, never inside it.
+             *
+             * .studio-doc-status is read as text by four regression suites --
+             * content-editing asserts /^Saved/ on it, slot- and fidcheck read
+             * its textContent -- so putting a <title>Loading</title> inside it
+             * would make the widget's own state assertion depend on the
+             * spinner's accessible name. It is a sibling with its own hidden
+             * flag, and setSaveState below owns when it shows.
+             */
+            /*
+             * Editing / Suggesting sits here rather than in a menu because it
+             * changes what the NEXT KEYSTROKE DOES, and a mode with that much
+             * consequence has to be visible without being opened — the same
+             * argument that keeps the save status in this bar. It is placed
+             * after the spacer, next to the status, because the two together
+             * answer one question: where is my typing going.
+             */
+            '  <span class="studio-doc-suggest"></span>' +
+            '  <span class="studio-doc-busy" hidden>' +
+                 loaderMarkup({ size: 13, decorative: true }) +
+            '  </span>' +
             '  <span class="studio-doc-status">Loading…</span>' +
             '  <button class="studio-btn primary" data-act="save-now" hidden>Save</button>' +
             '</div>' +
@@ -363,7 +443,22 @@ class MarkdownEditorWidget extends Widget {
             '    <div class="studio-doc-banners"></div>' +
             '    <div class="studio-doc-panes">' +
             '      <div class="studio-source-pane"><textarea class="studio-source" spellcheck="false"></textarea></div>' +
-            '      <div class="studio-doc-scroll"><div class="studio-doc-page"></div></div>' +
+            '      <div class="studio-doc-scroll">' +
+            '        <div class="studio-doc-page"></div>' +
+            /*
+             * The tracked-changes rendering of the document, a SIBLING of the
+             * live editor page rather than a replacement for its contents.
+             *
+             * Writing the marked-up document into .studio-doc-page would mean
+             * tearing down ProseMirror's DOM and rebuilding it on every
+             * decision, and ProseMirror owns that subtree — it would come back
+             * without its plugin state, its selection, or its comment marks.
+             * Two nodes, one shown at a time (see .tracked-review in
+             * tracked-changes.js), keeps the editor intact underneath and makes
+             * releasing the review lock a class toggle instead of a reload.
+             */
+            '        <div class="studio-doc-page studio-tracked-page" hidden></div>' +
+            '      </div>' +
             '    </div>' +
             '  </div>' +
             '  <aside class="studio-rail">' +
@@ -377,12 +472,19 @@ class MarkdownEditorWidget extends Widget {
             '<div class="studio-table-bar" hidden></div>';
 
         this.statusEl = this.node.querySelector('.studio-doc-status');
+        this.suggestEl = this.node.querySelector('.studio-doc-suggest');
+        this.busyEl = this.node.querySelector('.studio-doc-busy');
         this.saveBtn = this.node.querySelector('[data-act="save-now"]');
         this.bannersEl = this.node.querySelector('.studio-doc-banners');
         this.bodyEl = this.node.querySelector('.studio-doc-body');
+        // The loading state's host. Not .studio-doc-scroll, which mode-raw
+        // hides outright, and not the widget root, which would put a cover over
+        // the topbar the user reads the document's state from.
+        this.panesEl = this.node.querySelector('.studio-doc-panes');
         this.sourcePaneEl = this.node.querySelector('.studio-source-pane');
         this.sourceEl = this.node.querySelector('.studio-source');
         this.pageEl = this.node.querySelector('.studio-doc-page');
+        this.trackedEl = this.node.querySelector('.studio-tracked-page');
         this.railEl = this.node.querySelector('.studio-rail');
         this.railHeadEl = this.node.querySelector('.studio-rail-head');
         this.listEl = this.node.querySelector('.studio-rail-list');
@@ -405,10 +507,36 @@ class MarkdownEditorWidget extends Widget {
          * what makes a stale listener inert instead of a source of exceptions on
          * every settings write. Same guard, same reason, as project-page.js.
          */
+        /*
+         * suggestMode keeps a plain listener array with no unsubscribe, like
+         * fileTypeSettings, so the isDisposed guard is what makes a stale
+         * listener inert rather than a source of exceptions. Every open document
+         * follows the mode, because it is a property of the person and not of
+         * one file.
+         */
+        suggestMode.onChanged(() => { if (!this.isDisposed) { this.applySuggestMode(); } });
+        this.renderSuggestSwitch();
+
         fileTypeSettings.onChanged(() => {
             if (this.isDisposed) { return; }
             if (!fileTypeSettings.authoringModesForFile(this.uri) && this.mode !== 'rich') { this.setMode('rich'); }
             else { this.renderSegmented(); }
+            /*
+             * The review style can be switched from the Project page while a
+             * proposal is open in this document, and both styles are views of
+             * the same decisions — so the correct response is to re-render, not
+             * to refuse or to reload. Guarded on an actual change because this
+             * listener fires for every settings write, including the file-type
+             * checkboxes, and re-rendering the tracked document rebuilds its
+             * markup from the proposal each time.
+             */
+            const style = fileTypeSettings.changeReviewForFile(this.uri);
+            if (style !== this.reviewStyle) {
+                this.reviewStyle = style;
+                this.renderTracked();
+                this.renderRail();
+                this.renderBanners();
+            }
         });
 
         this.node.addEventListener('click', e => this.onClick(e));
@@ -576,7 +704,38 @@ class MarkdownEditorWidget extends Widget {
         }
     }
 
+    /*
+     * Opening a document is the one wait in this product with a MEASURED
+     * duration attached to it, and the measurement is already in this file.
+     *
+     * The note in loadDocument() below records why the editor is created last:
+     * the loads and the session claim are asynchronous, and creating the editor
+     * first made the ProseMirror surface interactive "several hundred
+     * milliseconds before the chrome settled". That ordering is right and stays
+     * — but it also states, in the code's own words, how long this widget is a
+     * blank white rectangle with "Loading…" in 11.5px grey at the far end of
+     * its topbar. The dock is the largest region of the window; the status was
+     * the smallest text in it.
+     *
+     * The wrapper exists so the loading state cannot outlive the load. Every
+     * exit from loadDocument passes through the finally — including the throw
+     * from a file that vanished between the click and the read, which would
+     * otherwise leave a spinner turning over a document that is never coming.
+     */
     async init() {
+        const done = showLoading(
+            this.panesEl,
+            'Opening ' + this.uri.path.base + '…',
+            { className: 'studio-doc-loading' }
+        );
+        try {
+            await this.loadDocument();
+        } finally {
+            done();
+        }
+    }
+
+    async loadDocument() {
         const stat = await this.fileService.resolve(this.uri, { resolveMetadata: true });
         this.knownMtime = stat.mtime;
         const content = await this.fileService.read(this.uri);
@@ -594,6 +753,7 @@ class MarkdownEditorWidget extends Widget {
 
         this.sourceEl.value = this.originalBody;
         this.autosave = fileTypeSettings.autosaveForFile(this.uri);
+        this.reviewStyle = fileTypeSettings.changeReviewForFile(this.uri);
 
         /*
          * Everything that changes the LAYOUT around the editor happens before
@@ -607,17 +767,21 @@ class MarkdownEditorWidget extends Widget {
          * since moved — the interaction was simply lost. Creating the editor
          * last means the surface appearing implies a settled layout.
          */
-        const [comments, changes, history] = await Promise.all([
+        const [comments, changes, history, suggested] = await Promise.all([
             this.commentsStore.load(this.uri),
             this.changesStore.load(this.uri),
-            this.historyStore.load(this.uri)
+            this.historyStore.load(this.uri),
+            this.changeLog.load(this.uri)
         ]);
+        this.suggestions = suggested.proposals;
+        this.rejections = suggested.rejections;
         this.threads = comments.threads.map(t => ({ scope: 'inline', ...t }));
         this.threadsSig = signature(comments.threads);
         this.proposals = changes.proposals;
         this.historyEntries = history.entries;
 
         this.watchComments();
+        this.watchSuggestions();
         this.watchFile();
         await this.claimSession();
 
@@ -745,9 +909,32 @@ class MarkdownEditorWidget extends Widget {
         this.updateTopbarVisibility();
     }
 
+    /*
+     * The bar is hidden only when it would be EMPTY.
+     *
+     * It used to be hidden whenever authoring modes were off and no Save button
+     * was needed — which is the DEFAULT project (autosave on, source modes off),
+     * so on an ordinary document the bar was not there at all. That was right
+     * when its only contents were the mode segment and a conditional button.
+     *
+     * It stopped being right the moment the bar gained the Editing / Suggesting
+     * switch, because that control is available on every editable document and a
+     * control nobody can reach is not a feature. Reported exactly that way: "i
+     * don't get how to enable suggestion mode" — the switch was rendering
+     * correctly into a parent with `hidden` set.
+     *
+     * The consequence is deliberate and worth naming: an ordinary document now
+     * shows a 43px bar it previously did not, carrying the mode switch and the
+     * save status. That is a cost against the empty-chrome work (D10–D19), paid
+     * because the alternative is a mode you can only enter by editing
+     * localStorage by hand.
+     */
     updateTopbarVisibility() {
         const topbar = this.node.querySelector('.studio-doc-topbar');
-        if (topbar) { topbar.hidden = !this.authoringModes && (!this.saveBtn || this.saveBtn.hidden); }
+        if (!topbar) { return; }
+        const hasSuggest = !!(this.suggestEl && !this.suggestEl.hidden);
+        const hasSave = !!(this.saveBtn && !this.saveBtn.hidden);
+        topbar.hidden = !this.authoringModes && !hasSave && !hasSuggest;
     }
 
     /*
@@ -766,7 +953,10 @@ class MarkdownEditorWidget extends Widget {
             active: this.assistant || (this.railOpen ? this.rail : undefined),
             counts: {
                 comments: this.threads.filter(t => !t.resolved).length,
-                changes: this.pendingHunkCount()
+                // Both stores. A colleague's suggestion is review work waiting on
+                // me exactly as an assistant's proposal is, so a strip that
+                // counted only one of them would say the rail was empty.
+                changes: this.pendingHunkCount() + this.pendingSuggestionCount()
             }
         };
     }
@@ -892,6 +1082,23 @@ class MarkdownEditorWidget extends Widget {
 
     markDirty() {
         if (this.saveState === 'conflict') { return; }   // autosave is paused; see resolveConflict
+        /*
+         * Suggesting mode diverts HERE, at the one place in this widget that
+         * knows the user has just typed something real.
+         *
+         * Nothing reaches disk on this path. The body in the editor becomes my
+         * suggestion instead, and the file stays exactly as it was — which is
+         * what makes this a suggestion rather than an edit. The session lock is
+         * deliberately not marked dirty either: the document has no unsaved
+         * work, I do, and a second tab warning somebody about unsaved edits to a
+         * file that is untouched would be a lie.
+         */
+        if (this.suggestingNow()) {
+            this.setSaveState('suggesting');
+            clearTimeout(this.suggestTimer);
+            this.suggestTimer = setTimeout(() => this.captureSuggestion(), SUGGEST_DELAY_MS);
+            return;
+        }
         if (this.lock) { this.lock.setDirty(true); }
         this.setSaveState('dirty');
         if (!this.autosave) { return; }
@@ -923,6 +1130,10 @@ class MarkdownEditorWidget extends Widget {
             dirty: this.autosave ? 'Editing…' : 'Unsaved changes',
             saving: 'Saving…',
             saved: 'Saved ' + (detail || timeLabel()),
+            /* Not a variant of 'dirty'. "Editing…" would be false: the document
+               is not being edited, and nothing here is on its way to disk. */
+            suggesting: 'Suggesting…',
+            suggested: 'Suggested ' + (detail || timeLabel()),
             conflict: 'Conflict — not saved',
             error: 'Save failed'
         };
@@ -930,9 +1141,17 @@ class MarkdownEditorWidget extends Widget {
             this.statusEl.textContent = labels[state] || state;
             this.statusEl.className = 'studio-doc-status state-' + state;
         }
+        /*
+         * 'saving' is the ONLY state that gets the dot, and that is the whole
+         * rule: it is the only one of the seven that is a wait. 'dirty' reads
+         * "Editing…" and is the user typing, not the product working; 'saved'
+         * and 'clean' are outcomes. A spinner on any of those would be an
+         * indicator that never stops, which is an indicator that says nothing.
+         */
+        if (this.busyEl) { this.busyEl.hidden = state !== 'saving'; }
         statusLine.setDocumentState(this.uri, state, labels[state] || state);
         if (this.saveBtn) {
-            this.saveBtn.hidden = this.autosave || this.readOnly || this.reviewing ||
+            this.saveBtn.hidden = this.autosave || this.readOnly || this.reviewing || this.suggesting ||
                 (state !== 'dirty' && state !== 'error' && state !== 'conflict');
         }
         this.updateTopbarVisibility();
@@ -951,6 +1170,17 @@ class MarkdownEditorWidget extends Widget {
      * clobbering impossible in the case that actually occurs here.
      */
     async save(options) {
+        /*
+         * Cmd+S while suggesting flushes the suggestion rather than doing
+         * nothing. The keystroke means "commit what I just wrote", and on this
+         * path what I just wrote is a suggestion — refusing silently would read
+         * as the shortcut being broken.
+         */
+        if (this.suggestingNow()) {
+            clearTimeout(this.suggestTimer);
+            await this.captureSuggestion();
+            return false;
+        }
         if (!this.editor || this.readOnly || !this.armed || this.reviewing) { return false; }
         const force = !!(options && options.force);
         const body = this.currentBody();
@@ -1159,6 +1389,22 @@ class MarkdownEditorWidget extends Widget {
      * its reviewed state, so nothing unapproved is ever the live document.
      */
     async captureProposal(proposedBody, meta) {
+        /*
+         * If I was suggesting, my draft is in the editor and is about to be in
+         * the way: the document is going to be held at `base` for review, and
+         * the editor has to show that base rather than my unsaved wording.
+         *
+         * So flush first (the draft becomes my suggestion, on the rail, where it
+         * survives) and reset the surface after the write below. Both halves are
+         * needed — flushing without resetting leaves my text on screen labelled
+         * as the document under review, and resetting without flushing loses it.
+         */
+        const wasSuggesting = this.suggestingNow();
+        if (wasSuggesting) {
+            clearTimeout(this.suggestTimer);
+            await this.captureSuggestion();
+        }
+
         // The arming context (set when the user asked for the change) and the
         // capture context (discovered when the write arrived) are both real —
         // merge them rather than letting one shadow the other.
@@ -1181,6 +1427,7 @@ class MarkdownEditorWidget extends Widget {
         const stat = await this.fileService.resolve(this.uri, { resolveMetadata: true });
         this.knownMtime = stat.mtime;
         await this.writeBody(base);
+        if (wasSuggesting) { this.setBody(base); }
 
         const open = this.proposals.find(p => p.status === 'open');
         if (open) {
@@ -1233,6 +1480,384 @@ class MarkdownEditorWidget extends Widget {
         this.messageService.info(count + ' proposed change' + (count === 1 ? '' : 's') + ' ready to review.');
     }
 
+    // -- suggesting mode -----------------------------------------------------
+
+    /** The reviewed state: what is on disk, and the base every suggestion is derived against. */
+    reviewedBody() {
+        return this.lastSavedBody !== undefined ? this.lastSavedBody : this.originalBody;
+    }
+
+    renderSuggestSwitch() {
+        if (!this.suggestEl) { return; }
+        /*
+         * Hidden on a document nobody can change. On a read-only document there
+         * is no keystroke to route, so a switch offering to route one is a
+         * control that does nothing — and while an assistant proposal holds the
+         * document at its base, the answer to "where does my typing go" is
+         * "nowhere yet", which the review banner already says.
+         */
+        const useless = this.readOnly || this.reviewing;
+        this.suggestEl.hidden = useless;
+        this.suggestEl.innerHTML = useless ? '' : suggestSwitchHtml();
+        // This control is one of the three things that decide whether the bar is
+        // empty, so showing or hiding it has to re-ask the question.
+        this.updateTopbarVisibility();
+    }
+
+    /**
+     * Follow a mode change, in this document.
+     *
+     * Two asymmetric jobs, and the asymmetry is the interesting part.
+     *
+     * Entering Suggesting: if I already have an open suggestion on this
+     * document, the editor is seeded with it so I carry on where I left off
+     * rather than starting again from the document.
+     *
+     * Leaving Suggesting: the editor is put back to the document. My draft is
+     * not lost — it was written as a suggestion on the last pause, and its card
+     * is on the rail — but it must stop being what the editor contains, or the
+     * next keystroke would save my suggested text INTO the document as an
+     * ordinary edit. That is the one way this mode could silently apply
+     * something nobody approved, so the reset is not optional.
+     */
+    async applySuggestMode() {
+        const next = suggestMode.suggesting();
+        if (next === this.suggesting) { this.renderSuggestSwitch(); return; }
+        clearTimeout(this.suggestTimer);
+        if (!next) { await this.captureSuggestion(); }
+        this.suggesting = next;
+        this.counterTo = undefined;
+
+        const mine = this.mySuggestion();
+        if (next) {
+            // BEFORE seeding: right now the editor holds the document, and after
+            // the next line it may not.
+            this.captureSuggestBaseline();
+            if (mine) { this.setBody(mine.proposedBody); }
+        } else {
+            this.setBody(this.reviewedBody());
+        }
+
+        this.renderSuggestSwitch();
+        this.applyReviewLock();
+        // Entering or leaving the mode changes nothing about the document, so
+        // there is no transaction for the marks plugin to notice.
+        refreshSuggestMarks(this.editor);
+        this.setSaveState(next ? 'suggesting' : 'clean');
+        this.renderRail();
+        this.renderBanners();
+    }
+
+    setSuggestMode(mode) {
+        suggestMode.set(mode);          // fires onChanged -> applySuggestMode
+    }
+
+    mySuggestion() {
+        return this.suggestions.find(p => isMine(p.by));
+    }
+
+    /**
+     * Am I suggesting RIGHT NOW, as distinct from having chosen to.
+     *
+     * The two come apart when an assistant proposal arrives: that holds the
+     * document at its reviewed base and makes the editor read-only, because every
+     * hunk under review describes that exact base. My mode is still Suggesting
+     * and stays so — it is my standing choice and nothing gets to change it
+     * behind my back — but there is no live caret to route, so every behaviour
+     * that depends on typing asks THIS rather than the stored flag.
+     *
+     * The review lock wins because it is the narrower, temporary state; my mode
+     * is the broader, persistent one, waiting underneath for it to clear.
+     */
+    suggestingNow() {
+        return this.suggesting && !this.reviewing && !this.readOnly;
+    }
+
+    /**
+     * The text the live marks are measured against, or undefined for no marks.
+     *
+     * Read by the ProseMirror plugin on every transaction, so it must be cheap
+     * and must not allocate a document. Two sources, preferred in order:
+     *
+     *   CAPTURED — the editor's own text, taken at a moment when the editor was
+     *   holding the document. Exact by construction, because it comes from the
+     *   same extraction the plugin uses.
+     *
+     *   DERIVED — the reviewed body rendered to HTML and reduced to block text.
+     *   Needed when the editor has never held the document in this session, which
+     *   happens when Suggesting is entered with a suggestion already open and the
+     *   editor is seeded with that instead. It matches the captured form because
+     *   ProseMirror's top-level blocks correspond to the renderer's top-level
+     *   elements, but it is the fallback rather than the first choice precisely
+     *   because that correspondence is an assumption and the capture is not.
+     */
+    suggestBaseline() {
+        if (!this.suggestingNow()) { return undefined; }
+        const body = this.reviewedBody();
+        if (this.baselineBody === body && this.baselineText !== undefined) { return this.baselineText; }
+        this.baselineBody = body;
+        this.baselineText = plainBlockText(markdownToHtml(body));
+        return this.baselineText;
+    }
+
+    /**
+     * Take the baseline from the editor, which is exact.
+     *
+     * Called only at the moments the editor is known to hold the document: just
+     * before Suggesting seeds it with something else, and just after a decision
+     * has written a new document into it.
+     */
+    captureSuggestBaseline() {
+        if (!this.editor) { return; }
+        try {
+            this.baselineText = collect(this.editor.state.doc).text;
+            this.baselineBody = this.reviewedBody();
+        } catch (e) {
+            // Fall back to the derived form rather than leaving a stale baseline,
+            // which would mark text nobody changed.
+            this.baselineBody = undefined;
+            this.baselineText = undefined;
+        }
+    }
+
+    /**
+     * Write what is in the editor as my suggestion.
+     *
+     * The base handed to the store is the reviewed body, never the editor's own
+     * previous content: a suggestion is the difference between the document and
+     * what I think it should say, and computing it against my own last draft
+     * would make it the difference between two drafts of mine.
+     */
+    async captureSuggestion() {
+        if (!this.editor || this.isDisposed) { return; }
+        const body = this.currentBody();
+        const documentBody = this.reviewedBody();
+        try {
+            await this.changeLog.upsert(this.uri, identity.current(), {
+                documentBody,
+                proposedBody: body,
+                inReplyTo: this.counterTo
+            });
+        } catch (e) {
+            console.error('[studio] could not record the suggestion', e);
+            this.messageService.error('Could not save your suggestion.');
+            this.setSaveState('error');
+            return;
+        }
+        await this.reloadSuggestions();
+        if (this.suggestingNow()) { this.setSaveState('suggested'); }
+    }
+
+    async reloadSuggestions() {
+        try {
+            const loaded = await this.changeLog.load(this.uri);
+            this.suggestions = loaded.proposals;
+            this.rejections = loaded.rejections;
+        } catch (e) {
+            console.warn('[studio] could not read suggestions', e);
+        }
+        if (this.isDisposed) { return; }
+        // A suggestion can be withdrawn or accepted from under the focused index,
+        // by me here or by its author in another window.
+        const total = this.orderedEntries().length;
+        if (this.currentHunkIndex !== undefined && this.currentHunkIndex >= total) {
+            this.currentHunkIndex = total ? total - 1 : 0;
+        }
+        this.renderTracked();
+        this.renderRail();
+        this.renderBanners();
+    }
+
+    /**
+     * Every change on the document that a card can be drawn for, from both
+     * stores, with an author slot each.
+     *
+     * Slots are assigned in order of first appearance so they are stable within
+     * a render and shared by the document and the rail — which is what lets a
+     * reader pair a dashed mark with a dashed card without clicking either.
+     */
+    trackedEntries() {
+        const documentBody = this.reviewedBody();
+        const slots = new Map();
+        const slotFor = author => {
+            const key = authorRecord(author).id;
+            if (!slots.has(key)) { slots.set(key, slots.size % AUTHOR_SLOTS.length); }
+            return slots.get(key);
+        };
+
+        const entries = [];
+        const assistant = this.openProposal();
+        if (assistant) {
+            /* The assistant path keys verdicts by the positional hunk id, and
+               its base is held still for exactly that reason, so `ref` is the
+               id. Suggestions key by content — see change-log.js. */
+            for (const hunk of this.proposalHunks(assistant)) {
+                entries.push({
+                    hunk, ref: hunk.id, proposalId: assistant.id, proposal: assistant,
+                    slot: slotFor(assistant.by || assistant.author),
+                    decision: assistant.decisions[hunk.id],
+                    createdAt: assistant.createdAt
+                });
+            }
+        }
+        for (const suggestion of this.suggestions) {
+            for (const hunk of suggestionHunks(suggestion, documentBody, this.rejections)) {
+                entries.push({
+                    hunk, ref: hunk.key, proposalId: suggestion.id, proposal: suggestion,
+                    slot: slotFor(suggestion.by),
+                    decision: hunk.rejected ? 'rejected' : undefined,
+                    createdAt: suggestion.createdAt,
+                    conflicted: hunk.conflicted,
+                    mine: isMine(suggestion.by),
+                    replyTo: suggestion.inReplyTo
+                });
+            }
+        }
+        return entries;
+    }
+
+    /** Unanswered suggestion hunks, for the rail count and the banner. */
+    pendingSuggestionCount() {
+        const documentBody = this.reviewedBody();
+        return this.suggestions.reduce((sum, p) =>
+            sum + suggestionHunks(p, documentBody, this.rejections).filter(h => !h.rejected).length, 0);
+    }
+
+    /**
+     * Answer one suggested change.
+     *
+     * Accept and reject are asymmetric, and that follows from a suggestion
+     * having no stored base: accepting writes the text into the document, after
+     * which the change is simply absent from the next derivation and needs no
+     * record. Rejecting has to be REMEMBERED by content key, or the change
+     * reappears on the next render. See change-log.js.
+     */
+    async decideSuggestion(proposalId, key, verdict) {
+        const suggestion = this.suggestions.find(p => p.id === proposalId);
+        if (!suggestion) { return; }
+        const documentBody = this.reviewedBody();
+        const hunks = suggestionHunks(suggestion, documentBody, this.rejections);
+        const hunk = hunks.find(h => h.key === key);
+        if (!hunk) { return; }
+        /*
+         * A conflicted hunk edits text that is no longer in the document, so
+         * there is nothing to apply it to — accepting it would write the author's
+         * lines at whatever position the search failed to find. Dismissal is the
+         * only honest answer, and the card says so.
+         */
+        if (hunk.conflicted && verdict === 'accepted') {
+            this.messageService.warn('That suggestion no longer matches the document. ' +
+                'Its author will need to make it again.');
+            return;
+        }
+
+        if (verdict === 'rejected') {
+            try {
+                this.rejections = await this.changeLog.reject(this.uri, key, true);
+            } catch (e) {
+                console.error('[studio] could not record the rejection', e);
+                this.messageService.error('Could not dismiss that suggestion.');
+                return;
+            }
+        } else {
+            const body = applyHunks(documentBody, hunks, [hunk.id]);
+            const written = await this.writeDecidedBody(body);
+            if (!written) { return; }
+        }
+
+        this.historyEntries = await this.historyStore.record(this.uri, {
+            kind: verdict === 'accepted' ? 'accept' : 'reject',
+            author: identity.displayName(),
+            title: (verdict === 'accepted' ? 'Accepted' : 'Dismissed') + ' a suggestion from ' +
+                authorRecord(suggestion.by).name,
+            detail: changeSummaryText(hunk),
+            proposalId,
+            body: verdict === 'accepted' ? this.reviewedBody() : undefined
+        });
+        await this.reloadSuggestions();
+        this.setSaveState(verdict === 'accepted' ? 'saved' : this.saveState);
+    }
+
+    /** Take back my own answer, so the change is unanswered again. */
+    async reopenSuggestion(key) {
+        try {
+            this.rejections = await this.changeLog.reject(this.uri, key, false);
+        } catch (e) {
+            console.error('[studio] could not undo that decision', e);
+            return;
+        }
+        await this.reloadSuggestions();
+    }
+
+    /**
+     * Write a body that a decision produced.
+     *
+     * Goes through the same applyingProposal guard the assistant path uses, so
+     * our own write is not read back by the external-change watcher and
+     * re-proposed to us.
+     */
+    async writeDecidedBody(body) {
+        this.applyingProposal = true;
+        try {
+            this.setBody(body);
+            await this.writeBody(body);
+            this.lastSavedBody = body;
+            // The editor now holds the new document, which is the one moment the
+            // baseline can be taken exactly rather than derived.
+            this.captureSuggestBaseline();
+            return true;
+        } catch (e) {
+            console.error('[studio] could not apply the suggestion', e);
+            this.messageService.error('Could not write the accepted suggestion.');
+            return false;
+        } finally {
+            this.applyingProposal = false;
+        }
+    }
+
+    /**
+     * Answer somebody's suggestion with one of my own.
+     *
+     * Their wording becomes the STARTING POINT for mine, and their suggestion is
+     * left open and undecided. Nothing they wrote is altered — which is the same
+     * rule this repository already holds for a person's comment, applied to a
+     * proposal. The reviewer then has both cards and decides between them.
+     */
+    async counterSuggest(proposalId) {
+        const theirs = this.suggestions.find(p => p.id === proposalId);
+        if (!theirs) { return; }
+        if (isMine(theirs.by)) { return; }          // revising my own is what typing does
+        clearTimeout(this.suggestTimer);
+        this.counterTo = proposalId;
+        if (!suggestMode.suggesting()) {
+            // Sets this.suggesting through the listener, and would seed the
+            // editor from my existing suggestion -- so seed from theirs after.
+            suggestMode.set(suggestMode.SUGGEST);
+        }
+        this.suggesting = true;
+        this.setBody(theirs.proposedBody);
+        await this.captureSuggestion();
+        this.renderSuggestSwitch();
+        this.messageService.info('Editing ' + authorRecord(theirs.by).name +
+            '\u2019s suggestion as your own. Theirs stays open.');
+        setTimeout(() => this.editor && this.editor.commands.focus(), 0);
+    }
+
+    /** Withdraw my own suggestion. A reviewer dismisses; only the author withdraws. */
+    async withdrawSuggestion(proposalId) {
+        const mine = this.suggestions.find(p => p.id === proposalId);
+        if (!mine || !isMine(mine.by)) { return; }
+        try {
+            await this.changeLog.withdraw(this.uri, identity.current(), proposalId);
+        } catch (e) {
+            console.error('[studio] could not withdraw the suggestion', e);
+            return;
+        }
+        if (this.counterTo === proposalId) { this.counterTo = undefined; }
+        if (this.suggestingNow()) { this.setBody(this.reviewedBody()); }
+        await this.reloadSuggestions();
+    }
+
     openProposal() { return this.proposals.find(p => p.status === 'open'); }
 
     proposalHunks(proposal) {
@@ -1254,6 +1879,127 @@ class MarkdownEditorWidget extends Widget {
      * that no longer exists. Deciding the changes — or rejecting them all —
      * releases the lock.
      */
+    /*
+     * Whether the tracked document is what this widget is currently showing.
+     *
+     * Three things have to be true, and each is a separate fact: the project
+     * asked for this style, there is something to review, and the document
+     * survived the fidelity check. The last one matters — a read-only document
+     * is one this product cannot round-trip through Markdown, so rendering it
+     * as a tracked document would be showing a reader a version of their file
+     * that the product has already admitted it gets wrong. Those documents keep
+     * the diff queue, which quotes source lines verbatim and claims nothing.
+     */
+    trackedActive() {
+        /*
+         * Four facts, each separate.
+         *
+         * The project asked for this style; something is waiting to be reviewed;
+         * the document survived the fidelity check (a document this product
+         * cannot round-trip through Markdown must not be shown as a tracked
+         * version of itself — those keep the diff queue, which quotes source
+         * lines verbatim and claims nothing); and I am not myself suggesting.
+         *
+         * That last one is a real limitation rather than a nicety. While I am
+         * suggesting I need a live caret, and the tracked page is not editable —
+         * so my own typing surface wins and other people's suggestions are
+         * visible on the rail as cards but not marked up in the prose. Docs shows
+         * both at once; doing that here needs the marks to be part of the editor
+         * model rather than a second rendering of it.
+         */
+        if (this.reviewStyle !== 'inline' || this.readOnly || this.suggestingNow()) { return false; }
+        return !!this.openProposal() || this.suggestions.length > 0;
+    }
+
+    /**
+     * Paint the tracked document, or put the editor back.
+     *
+     * Called from applyReviewLock rather than from the rail render, because
+     * which surface the document shows is a property of the review LOCK, not of
+     * which rail happens to be open — the marked-up document must be there when
+     * the reviewer closes the rail entirely.
+     */
+    renderTracked() {
+        const active = this.trackedActive();
+        this.bodyEl.classList.toggle('tracked-review', active);
+        if (!this.trackedEl) { return; }
+        this.trackedEl.hidden = !active;
+        if (!active) {
+            // Dropped rather than left in place: it is a snapshot of a proposal
+            // that no longer exists, and keeping it would let a later reveal
+            // flash the previous review before the new one renders.
+            this.trackedEl.innerHTML = '';
+            return;
+        }
+        /*
+         * One base, every author. The reviewed body is the base for both stores:
+         * while an assistant proposal is open the document is held AT its base,
+         * so the two coincide, and a suggestion is derived against the live
+         * document by definition.
+         */
+        this.trackedEl.innerHTML = trackedHtml(this.reviewedBody(), this.trackedEntries(), markdownToHtml);
+        this.highlightTracked();
+    }
+
+    /**
+     * The document's changes in the order they appear in it, which is the order
+     * the rail lists them and the order the arrows step through.
+     *
+     * One ordering, computed in one place, because three surfaces index into it.
+     * `orderEntries` also flags the entries that cannot be drawn — two authors
+     * editing the same lines — so the rail can say why a card has no mark.
+     */
+    orderedEntries() {
+        return orderEntries(this.trackedEntries());
+    }
+
+    /**
+     * Mark the change under review in the document, to the same index the rail
+     * highlights. One attribute rather than a class, so the CSS can carry the
+     * ring on the mark without a second class name to keep in step.
+     */
+    highlightTracked(scroll) {
+        if (!this.trackedEl || this.trackedEl.hidden) { return; }
+        const entries = this.orderedEntries();
+        const current = entries[this.currentHunkIndex === undefined ? 0 : this.currentHunkIndex];
+        for (const mark of this.trackedEl.querySelectorAll('.studio-tc')) {
+            mark.removeAttribute('data-current');
+        }
+        if (!current) { return; }
+        /* Both halves of the address: two authors can propose textually
+           identical edits, and they are still two decisions. */
+        const marks = this.trackedEl.querySelectorAll(
+            '[data-hunk="' + current.ref + '"][data-proposal="' + current.proposalId + '"]');
+        marks.forEach(mark => mark.setAttribute('data-current', 'true'));
+        if (scroll && marks[0]) { marks[0].scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    }
+
+    /**
+     * Make one change the current one, from either side of the pairing.
+     *
+     * The document and the rail are two views of one list, so selecting in
+     * either has to move the other — a reviewer who clicks a struck-through
+     * sentence is asking "what is this?", and the answer is the card.
+     */
+    focusChange(ref, proposalId, { fromDocument = false } = {}) {
+        const entries = this.orderedEntries();
+        const index = entries.findIndex(entry =>
+            entry.ref === ref && (!proposalId || entry.proposalId === proposalId));
+        if (index === -1) { return; }
+        this.currentHunkIndex = index;
+        this.highlightTracked(!fromDocument);
+        this.highlightCurrentCard(fromDocument);
+    }
+
+    /** The rail side of focusChange, and of stepHunk in this style. */
+    highlightCurrentCard(scroll) {
+        const cards = [...this.listEl.querySelectorAll('.studio-change-card')];
+        cards.forEach((card, i) => card.classList.toggle('current', i === this.currentHunkIndex));
+        if (!scroll) { return; }
+        const card = cards[this.currentHunkIndex];
+        if (card) { card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    }
+
     applyReviewLock() {
         const wasReviewing = this.reviewing;
         this.reviewing = !!this.openProposal();
@@ -1264,6 +2010,11 @@ class MarkdownEditorWidget extends Widget {
         // silently wiped a selection the user had just made.
         if (this.editor && this.editor.isEditable !== editable) { this.editor.setEditable(editable); }
         this.sourceEl.readOnly = this.readOnly || this.reviewing;
+        // After the lock, not before: renderTracked reads openProposal() and
+        // this.readOnly, and showing the tracked document while the editor is
+        // still editable would put an accept/reject surface over a live caret.
+        this.renderTracked();
+        this.renderSuggestSwitch();
         if (wasReviewing !== this.reviewing) { this.setSaveState(this.saveState); }
     }
 
@@ -1282,6 +2033,27 @@ class MarkdownEditorWidget extends Widget {
         if (!proposal) { return; }
         if (last.previous === undefined) { delete proposal.decisions[last.hunkId]; }
         else { proposal.decisions[last.hunkId] = last.previous; }
+        proposal.status = 'open';
+        await this.applyProposal(proposal, { undo: true });
+    }
+
+    /**
+     * Put one decided change back to undecided.
+     *
+     * Distinct from undoLastDecision, which is a stack pop: this one names the
+     * change, because a tracked-changes card sits beside its own change and its
+     * undo button therefore promises to undo that one. The journal entries for
+     * this hunk are dropped rather than kept, since a later stack pop would
+     * otherwise restore a decision the user has already retracted here.
+     *
+     * A resolved proposal is reopened, which is what makes the accepted text
+     * reviewable again — decideHunk cannot be reached on a resolved one.
+     */
+    async reopenChange(hunkId) {
+        const proposal = this.proposals.find(p => p.decisions && p.decisions[hunkId] !== undefined);
+        if (!proposal) { return; }
+        delete proposal.decisions[hunkId];
+        this.decisionJournal = this.decisionJournal.filter(entry => entry.hunkId !== hunkId);
         proposal.status = 'open';
         await this.applyProposal(proposal, { undo: true });
     }
@@ -1480,10 +2252,49 @@ class MarkdownEditorWidget extends Widget {
             banners.push({
                 tone: 'info',
                 html: '<b>' + escapeHtml(proposal.title) + '</b> — ' + pending + ' change' + (pending === 1 ? '' : 's') +
-                    ' awaiting your review. The file is held at its reviewed state and editing is paused until you decide. ' +
+                    ' awaiting your review. ' +
+                    (this.trackedActive()
+                        /* The tracked document is not the file. Saying so here is
+                           the whole reason this banner has a second sentence: a
+                           reader looking at struck-through text they did not
+                           write needs to know that nothing on disk says that. */
+                        ? 'They are shown in the document below; the file on disk is still at its reviewed state. '
+                        : 'The file is held at its reviewed state and editing is paused until you decide. ') +
                     '<button class="studio-btn" data-act="rail-changes">Review</button>' +
                     ' <button class="studio-btn" data-act="accept-all">Accept all</button>' +
                     ' <button class="studio-btn" data-act="reject-all">Reject all</button>'
+            });
+        }
+        /*
+         * Suggestions get a banner only when somebody ELSE is waiting on me.
+         * My own suggestion needs no announcement — the topbar already says I am
+         * suggesting, and a banner telling me about my own typing is noise on
+         * every keystroke.
+         */
+        const suggestedByOthers = this.suggestions.filter(p => !isMine(p.by));
+        const waiting = suggestedByOthers.length ? this.pendingSuggestionCount() : 0;
+        if (waiting) {
+            const names = [...new Set(suggestedByOthers.map(p => authorRecord(p.by).name))];
+            banners.push({
+                tone: 'info',
+                html: '<b>' + escapeHtml(names.join(', ')) + '</b> suggested ' + waiting +
+                    ' change' + (waiting === 1 ? '' : 's') + '. The document is unchanged until you accept them. ' +
+                    '<button class="studio-btn" data-act="rail-changes">Review</button>'
+            });
+        }
+        /*
+         * The banner teaches the mode ONCE and then stops.
+         *
+         * Its job is to explain a consequence that is not obvious the first time:
+         * the file is not changing. Once there is a card with your name on it the
+         * consequence has been demonstrated, and a permanent banner restating it
+         * on every keystroke is what made this mode feel noisy. The pill and the
+         * status carry the state from then on.
+         */
+        if (this.suggestingNow() && !this.mySuggestion()) {
+            banners.push({
+                tone: 'note',
+                html: 'Suggesting · What you type is recorded for review, and this file is not changed.'
             });
         }
         if (this.readOnly && !this.yielded) {
@@ -1537,7 +2348,15 @@ class MarkdownEditorWidget extends Widget {
      */
     renderGutter() {
         if (!this.gutterEl) { return; }
-        if (this.mode === 'raw' || !this.editor) { this.gutterEl.innerHTML = ''; return; }
+        /*
+         * Nothing to anchor to while the tracked review is showing: the editor
+         * page is display:none, so every mark's offsetTop reads 0 and all of
+         * them would be placed at the top of a document nobody is looking at.
+         * Clearing is safe because the ResizeObserver below fires when the page
+         * comes back (display:none reports a 0x0 box), which re-renders them
+         * against the real layout.
+         */
+        if (this.mode === 'raw' || !this.editor || this.trackedActive()) { this.gutterEl.innerHTML = ''; return; }
 
         const root = this.editor.view.dom;
         const marks = [];
@@ -1800,6 +2619,41 @@ class MarkdownEditorWidget extends Widget {
      * document is reopened, and an append-only log is just a tidier way of
      * storing the same invisible file.
      */
+    /**
+     * Follow other people's suggestion files.
+     *
+     * This is the whole point of one file per author: somebody else's suggestion
+     * appears here without either of us coordinating. The reload is dropped when
+     * it says nothing new, because the watcher fires for this client's own writes
+     * too (a debounce, not write bookkeeping — see change-log.js) and
+     * re-rendering on those would move focus out of the document mid-sentence.
+     */
+    async watchSuggestions() {
+        if (this.suggestWatch || !this.changeLog || typeof this.changeLog.watch !== 'function') { return; }
+        try {
+            this.suggestWatch = await this.changeLog.watch(this.uri, data => {
+                if (this.isDisposed) { return; }
+                const sig = JSON.stringify(data.proposals.map(p => [p.id, p.updatedAt, p.proposedBody.length]))
+                    + '|' + Object.keys(data.rejections).sort().join(',');
+                if (sig === this.suggestionsSig) { return; }
+                this.suggestionsSig = sig;
+                this.suggestions = data.proposals;
+                this.rejections = data.rejections;
+                this.renderTracked();
+                this.renderRail();
+                this.renderBanners();
+                // The strip carries a pending count, so somebody else's new
+                // suggestion has to reach it too.
+                slotStrip.refresh();
+            });
+            // onCloseRequest drains this, which releases the filesystem watch and
+            // cancels a pending debounce into a disposed widget.
+            this.disposables.push(this.suggestWatch);
+        } catch (e) {
+            console.warn('[studio] could not watch the suggestion files', e);
+        }
+    }
+
     async watchComments() {
         if (this.commentWatch || typeof this.commentsStore.watch !== 'function') { return; }
         try {
@@ -2180,6 +3034,32 @@ class MarkdownEditorWidget extends Widget {
 
     // -- rail: changes -------------------------------------------------------
 
+    /*
+     * What a proposal is, and the decisions that apply to all of it — shared by
+     * both review styles verbatim.
+     *
+     * The bulk controls and the step arrows are the same controls doing the same
+     * thing in both, so they are built once. Only what sits BELOW this block
+     * differs: hunks with diffs in the queue, cards with sentences inline.
+     */
+    proposalHeaderHtml(proposal, pending) {
+        return '<div class="studio-proposal">' +
+            '<div class="studio-proposal-title">' + escapeHtml(proposal.title) + '</div>' +
+            '<div class="studio-proposal-meta">' + escapeHtml(proposal.author) + ' · ' +
+            new Date(proposal.createdAt).toLocaleString() +
+            (proposal.commentId ? ' · from a comment' : '') + '</div>' +
+            (proposal.frontmatterChanged
+                ? '<div class="studio-proposal-note">Frontmatter edits in this write were not applied — only the document body is reviewable here.</div>'
+                : '') +
+            '<div class="studio-rail-toolbar">' +
+            '<button class="studio-btn" data-act="accept-all">Accept all ' + (pending ? '(' + pending + ')' : '') + '</button>' +
+            '<button class="studio-btn" data-act="reject-all">Reject all</button>' +
+            '<span class="studio-doc-spacer"></span>' +
+            '<button class="studio-icon-btn" data-act="hunk-prev" title="Previous change" aria-label="Previous change">' + ICONS.chevronLeft + '</button>' +
+            '<button class="studio-icon-btn" data-act="hunk-next" title="Next change" aria-label="Next change">' + ICONS.chevronRight + '</button>' +
+            '</div></div>';
+    }
+
     renderChanges() {
         const proposal = this.openProposal();
         const others = this.pendingFiles.filter(f => f.uri.toString() !== this.uri.toString());
@@ -2201,7 +3081,15 @@ class MarkdownEditorWidget extends Widget {
         }
 
         if (this.pendingFilesAvailable === undefined) {
-            this.listEl.innerHTML = '<div class="studio-rail-empty">Loading review queue…</div>';
+            /*
+             * `undefined` here is a deliberate third value (see the note on
+             * pendingFilesAvailable in the constructor) meaning "the index has
+             * not answered yet", as distinct from `false`, "it could not be
+             * read". The two states already render differently -- this one and
+             * the Retry block below -- and this one now says which of the two
+             * it is with something other than the tense of a sentence.
+             */
+            this.listEl.innerHTML = loadingMarkup('Loading review queue…', { inline: true, className: 'studio-rail-loading' });
             this.footEl.textContent = '';
             return;
         }
@@ -2227,47 +3115,133 @@ class MarkdownEditorWidget extends Widget {
             : '';
 
         if (!proposal) {
-            this.listEl.innerHTML = filesHtml +
-                '<div class="studio-rail-empty">This document is clear.</div>';
-            this.footEl.textContent = others.length ? 'Review work remains in other files.' : 'No pending review work.';
+            /* "This document is clear" is only true if there are no suggestions
+               either. With one open it is the opposite of true, which is why this
+               early return renders the section rather than skipping to it. */
+            const suggestions = this.suggestionsSectionHtml();
+            this.listEl.innerHTML = filesHtml + suggestions +
+                (suggestions ? '' : '<div class="studio-rail-empty">This document is clear.</div>');
+            const open = this.pendingSuggestionCount();
+            this.footEl.textContent = open
+                ? open + ' suggestion' + (open === 1 ? '' : 's') + ' to decide'
+                : (others.length ? 'Review work remains in other files.' : 'No pending review work.');
             return;
         }
 
         const hunks = this.proposalHunks(proposal);
         const pending = countPending(hunks, proposal.decisions);
-        const meta = '<div class="studio-proposal">' +
-            '<div class="studio-proposal-title">' + escapeHtml(proposal.title) + '</div>' +
-            '<div class="studio-proposal-meta">' + escapeHtml(proposal.author) + ' · ' +
-            new Date(proposal.createdAt).toLocaleString() +
-            (proposal.commentId ? ' · from a comment' : '') + '</div>' +
-            (proposal.frontmatterChanged
-                ? '<div class="studio-proposal-note">Frontmatter edits in this write were not applied — only the document body is reviewable here.</div>'
-                : '') +
-            '<div class="studio-rail-toolbar">' +
-            '<button class="studio-btn" data-act="accept-all">Accept all ' + (pending ? '(' + pending + ')' : '') + '</button>' +
-            '<button class="studio-btn" data-act="reject-all">Reject all</button>' +
-            '<span class="studio-doc-spacer"></span>' +
-            '<button class="studio-icon-btn" data-act="hunk-prev" title="Previous change" aria-label="Previous change">' + ICONS.chevronLeft + '</button>' +
-            '<button class="studio-icon-btn" data-act="hunk-next" title="Next change" aria-label="Next change">' + ICONS.chevronRight + '</button>' +
-            '</div></div>';
 
-        this.listEl.innerHTML = filesHtml + meta +
-            hunks.map((h, i) => reviewHunkHtml(h, proposal.decisions[h.id], i, hunks.length)).join('');
+        /*
+         * The tracked-changes rail, and what it deliberately does NOT repeat.
+         *
+         * In this style the document beside it is already showing the change in
+         * place, so a card that also carried a diff would be stating the same
+         * thing twice at two different granularities — and the second telling
+         * is the one in monospace, which is the wrong one to leave a prose
+         * reader with. A card carries what the document cannot: who proposed
+         * it, when, what it does in words, and the two decisions.
+         */
+        if (this.trackedActive()) {
+            if (this.currentHunkIndex === undefined) { this.currentHunkIndex = 0; }
+            this.listEl.innerHTML = filesHtml +
+                (proposal ? this.proposalHeaderHtml(proposal, pending) : '') +
+                this.changeCardsHtml();
+            const open = pending + this.pendingSuggestionCount();
+            this.footEl.textContent = open
+                ? open + ' change' + (open === 1 ? '' : 's') + ' still to decide'
+                : 'All changes decided.';
+            return;
+        }
+
+        this.listEl.innerHTML = filesHtml + this.proposalHeaderHtml(proposal, pending) +
+            hunks.map((h, i) => reviewHunkHtml(h, proposal.decisions[h.id], i, hunks.length)).join('') +
+            this.suggestionsSectionHtml();
         this.footEl.textContent = pending
             ? pending + ' of ' + hunks.length + ' still to decide'
             : 'All changes decided.';
         this.highlightCurrentHunk();
     }
 
+    /**
+     * One card per change, in document order, from both stores.
+     *
+     * The same list backs both review styles: in Tracked changes it is the whole
+     * rail, and in Diff queue it sits under the hunks as the SUGGESTIONS section
+     * — because a suggestion has no place in a patch view (it is not a patch
+     * against a fixed base), and leaving it out of that style entirely would
+     * hide a colleague's work from anyone whose project prefers the queue.
+     */
+    changeCardsHtml(only) {
+        /*
+         * ONE call to orderedEntries, not two. trackedEntries() builds fresh
+         * objects every time, so filtering a second call and then asking the
+         * first for indexOf compares objects from different lists and never
+         * matches — the current card would silently never be marked current.
+         */
+        const all = this.orderedEntries();
+        const entries = only ? all.filter(only) : all;
+        if (!entries.length) { return ''; }
+        const nameOf = id => {
+            const target = this.suggestions.find(p => p.id === id);
+            return target ? authorRecord(target.by).name : undefined;
+        };
+        return entries.map(entry => changeCardHtml(entry.hunk, entry.decision, entry.proposal, {
+            /* Indexed against the FULL list, not the filtered one, so the arrows
+               and the document stay in step with whichever subset is drawn. */
+            current: all.indexOf(entry) === this.currentHunkIndex,
+            ref: entry.ref,
+            slot: entry.slot,
+            mine: entry.mine,
+            replyToName: entry.replyTo ? nameOf(entry.replyTo) : undefined,
+            overlapped: entry.overlapped,
+            conflicted: entry.hunk.conflicted
+        })).join('');
+    }
+
+    /**
+     * The suggestions section.
+     *
+     * It used to carry a sentence explaining Suggesting mode as well, and that
+     * sentence was the third statement of one fact — the topbar pill is solid
+     * accent, the status reads "Suggesting…", and a banner said it in the
+     * document. Reported as "this seems overloaded", correctly. The rail is the
+     * one place it was least useful, because it sits directly above a heading
+     * that says SUGGESTIONS over a card with the reader's own name on it.
+     */
+    suggestionsSectionHtml() {
+        const cards = this.changeCardsHtml(entry => entry.proposal && entry.proposal.kind === 'suggestion');
+        return cards ? '<div class="studio-rail-section">Suggestions</div>' + cards : '';
+    }
+
     /** Requirement 7's sequential review: step through the undecided hunks. */
     stepHunk(delta) {
+        /*
+         * In Tracked changes the list is every change in the document from every
+         * author, which is what the arrows have to walk — stepping only the
+         * assistant's hunks would skip past a colleague's suggestion sitting
+         * between two of them.
+         */
+        if (this.trackedActive()) {
+            const entries = this.orderedEntries();
+            if (!entries.length) { return; }
+            const at = this.currentHunkIndex === undefined ? 0 : this.currentHunkIndex;
+            this.currentHunkIndex = Math.max(0, Math.min(entries.length - 1, at + delta));
+            this.highlightTracked(true);
+            this.highlightCurrentCard(true);
+            return;
+        }
         const proposal = this.openProposal();
         if (!proposal) { return; }
         const hunks = this.proposalHunks(proposal);
         if (!hunks.length) { return; }
         const index = this.currentHunkIndex === undefined ? 0 : this.currentHunkIndex;
         this.currentHunkIndex = Math.max(0, Math.min(hunks.length - 1, index + delta));
+        // Both styles step through the same list; only what "the current change"
+        // looks like differs. Calling both is safe -- each is a no-op when its
+        // surface is not the one showing.
         this.highlightCurrentHunk(true);
+        this.highlightCurrentCard(true);
+        this.highlightTracked(true);
     }
 
     highlightCurrentHunk(scroll) {
@@ -2714,6 +3688,24 @@ class MarkdownEditorWidget extends Widget {
             return;
         }
 
+        /*
+         * A click on a tracked mark in the document selects that change.
+         *
+         * Before the [data-act] lookup, because the marks carry no data-act of
+         * their own on purpose: a struck-through sentence is not a button, and
+         * giving it one would make "accept" a thing that can happen from a
+         * mis-aimed click in the middle of the prose. Selecting is the whole
+         * affordance; the decision stays on the card, where the two verdicts sit
+         * side by side and one of them is destructive.
+         */
+        const trackedMark = this.trackedEl && !this.trackedEl.hidden
+            ? this.closestIn(e.target, '.studio-tc') : undefined;
+        if (trackedMark && this.trackedEl.contains(trackedMark)) {
+            this.focusChange(trackedMark.getAttribute('data-hunk'),
+                trackedMark.getAttribute('data-proposal'), { fromDocument: true });
+            return;
+        }
+
         const act = this.closestIn(e.target, '[data-act]');
         const isArmedDeleteTarget = act && act.getAttribute('data-act') === 'comment-delete' &&
             act.getAttribute('data-id') === this.armedDeleteId;
@@ -2721,6 +3713,16 @@ class MarkdownEditorWidget extends Widget {
         if (act) {
             const a = act.getAttribute('data-act');
             const id = act.getAttribute('data-id');
+            /*
+             * Which store owns this decision.
+             *
+             * Present on every card, absent on the diff queue's own hunk
+             * controls — and that absence is the routing rule rather than a
+             * defect: a queue hunk can only belong to the one assistant
+             * proposal, so it has nothing to name.
+             */
+            const proposalId = act.getAttribute('data-proposal');
+            const suggested = proposalId && this.suggestions.some(p => p.id === proposalId);
             switch (a) {
                 case 'unlock': this.unlock(); break;
                 case 'save-now': this.save(); break;
@@ -2738,8 +3740,21 @@ class MarkdownEditorWidget extends Widget {
                     if (this.armedDeleteId === id) { this.deleteThread(id); } else { this.armDelete(id, act); }
                     break;
                 case 'comment-request-change': this.requestChangeFromComment(id, act); break;
-                case 'hunk-accept': this.decideHunk(id, 'accepted'); break;
-                case 'hunk-reject': this.decideHunk(id, 'rejected'); break;
+                case 'hunk-accept':
+                    if (suggested) { this.decideSuggestion(proposalId, id, 'accepted'); }
+                    else { this.decideHunk(id, 'accepted'); }
+                    break;
+                case 'hunk-reject':
+                    if (suggested) { this.decideSuggestion(proposalId, id, 'rejected'); }
+                    else { this.decideHunk(id, 'rejected'); }
+                    break;
+                case 'focus-change': this.focusChange(id, proposalId); break;
+                case 'reopen-change':
+                    if (suggested) { this.reopenSuggestion(id); } else { this.reopenChange(id); }
+                    break;
+                case 'counter-suggest': this.counterSuggest(proposalId); break;
+                case 'withdraw-suggestion': this.withdrawSuggestion(proposalId); break;
+                case 'suggest-mode': this.setSuggestMode(act.getAttribute('data-mode')); break;
                 case 'hunk-prev': this.stepHunk(-1); break;
                 case 'hunk-next': this.stepHunk(1); break;
                 case 'accept-all': this.decideAll('accepted'); break;

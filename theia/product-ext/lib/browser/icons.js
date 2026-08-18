@@ -43,7 +43,10 @@ const ICONS = {
     brackets: svg('<path d="M9 6 4 12l5 6M15 6l5 6-5 6"/>'),
     sliders: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
     more: svg('<circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>'),
-    home: svg('<path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/>')
+    home: svg('<path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/>'),
+    /* Suggest a change to a suggestion: a nib, not a plus. The action is
+       "write my version of this", not "add something". */
+    pencil: svg('<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 6.5 3 3"/>')
 };
 
 module.exports = { ICONS };

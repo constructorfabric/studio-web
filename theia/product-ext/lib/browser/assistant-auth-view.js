@@ -28,6 +28,7 @@ const { RemoteConnectionProvider } =
 // The shell's own escape helper, so this surface cannot disagree with the
 // rest of the product about what is safe to interpolate.
 const { esc: escapeHtml } = require('./comment-ui');
+const { loadingMarkup, showLoading } = require('./loader');
 
 const ASSISTANT_AUTH_PATH = '/services/studio-assistant-auth';
 const POLL_MS = 1500;
@@ -78,12 +79,29 @@ class AssistantAuthView {
             this.node.innerHTML = '<p class="studio-settings-note">Assistant sign-in is not available in this session.</p>';
             return;
         }
+        /*
+         * status() is not a field read: the backend shells out to each
+         * assistant's CLI to ask whether it holds credentials, so this is two
+         * process spawns, and it runs again after every sign-in, sign-out and
+         * key save. Until now the section simply held its previous contents —
+         * which, right after a sign-out, meant showing "Signed in" for as long
+         * as the probe took.
+         *
+         * `replace` is deliberate for that reason: what is on screen during
+         * this call is a claim about credentials that may have just stopped
+         * being true, so it is taken down rather than left up. The delay still
+         * applies, so a fast probe never shows this at all.
+         */
+        const done = showLoading(this.node, 'Checking assistant sign-in…',
+            { inline: true, replace: true, className: 'studio-assistant-wait' });
         let status;
         try {
             status = await this.service.status();
         } catch (error) {
             this.node.innerHTML = '<p class="studio-settings-note">Could not read assistant sign-in state.</p>';
             return;
+        } finally {
+            done();
         }
         this.status = status;
         this.render();
@@ -125,8 +143,28 @@ class AssistantAuthView {
                     ? '<p><a class="studio-assistant-link" href="' + escapeHtml(url) + '" target="_blank" rel="noreferrer noopener">' +
                       escapeHtml(url) + '</a></p>'
                     : '') +
-                (!code && !url
-                    ? '<p class="studio-settings-note">Starting sign-in…</p>'
+                /*
+                 * The two halves of this flow are both waits, and they are
+                 * waits for different things, so they say different things.
+                 *
+                 * Before a code has been parsed out, the product is waiting on
+                 * the CLI to start and print one. After it, the product is
+                 * waiting on the USER — who has, by design, walked off to
+                 * another device — and the poll below runs every 1.5s for as
+                 * long as that takes. Neither had an indicator; the second is
+                 * the one where a still screen most looks like a dead one,
+                 * because the thing that will change it is not on this machine.
+                 *
+                 * Both are gated on flow.running. A finished flow shows its
+                 * output and a Done button, and a spinner over that would claim
+                 * work that has stopped.
+                 */
+                (flow.running && !code && !url
+                    ? loadingMarkup('Starting sign-in…', { inline: true, className: 'studio-assistant-wait' })
+                    : '') +
+                (flow.running && (code || url)
+                    ? loadingMarkup('Waiting for you to approve this on the other device…',
+                        { inline: true, className: 'studio-assistant-wait' })
                     : '') +
                 '<pre class="studio-assistant-output">' + escapeHtml((flow.output || '').slice(-1200)) + '</pre>' +
                 (flow.running
@@ -283,6 +321,10 @@ const ASSISTANT_AUTH_CSS = `
   font-size: 22px; letter-spacing: 2px; font-weight: 650; user-select: all;
 }
 .studio-assistant-link { font-size: 13px; }
+/* Sits in the same 11.5px muted register as .studio-settings-note, because
+   that is what it replaced and the section reads as one voice. */
+.studio-assistant-wait { margin: 8px 0 0; }
+.studio-assistant-wait .studio-loading-caption { font-size: 11.5px; }
 .studio-assistant-output {
   margin: 8px 0; padding: 8px; max-height: 140px; overflow: auto;
   background: var(--studio-surface-sunken, var(--studio-surface-raised));

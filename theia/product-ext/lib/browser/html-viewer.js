@@ -21,6 +21,7 @@ const { signature, mergeFolded } = require('./comment-log');
 const { ICONS } = require('./icons');
 const { messageHtml, quoteLineHtml } = require('./comment-ui');
 const { identity } = require('./identity');
+const { showLoading } = require('./loader');
 const {
     askClaude, askCodex, openAiMenu,
     revealAssistant, collapseRightPanel, assistantFromTabTitle, currentAssistant, SLOT_GRACE_MS
@@ -165,6 +166,7 @@ class HtmlViewerWidget extends Widget {
             '<div class="studio-html-frame"><iframe></iframe><div class="studio-overlay"></div></div>';
 
         this.hintEl = this.node.querySelector('.studio-html-hint');
+        this.frameHostEl = this.node.querySelector('.studio-html-frame');
         this.frame = this.node.querySelector('iframe');
         this.overlayEl = this.node.querySelector('.studio-overlay');
         this.overlayEl.addEventListener('click', e => this.onThreadClick(e));
@@ -218,7 +220,28 @@ class HtmlViewerWidget extends Widget {
     }
 
     async load() {
-        await this.loadComments();
+        /*
+         * The longest wait this widget has, and until now the least visible:
+         * an empty iframe on --studio-bg is indistinguishable from a page that
+         * rendered as blank. Reload produces the same two seconds of nothing
+         * with no acknowledgement that the button did anything.
+         *
+         * Cleared in onFrameLoad — including its cross-origin early return,
+         * which is a real ending for this wait even though it is a failed one.
+         * The one path that can leave it turning is the frame never firing
+         * `load` at all, and that is the state it is FOR.
+         */
+        this.clearFrameLoading = showLoading(
+            this.frameHostEl,
+            'Rendering ' + this.uri.path.base + '…',
+            { className: 'studio-html-loading' }
+        );
+        try {
+            await this.loadComments();
+        } catch (error) {
+            this.clearFrameLoading();
+            throw error;
+        }
         this.frame.onload = () => this.onFrameLoad();
         // Served through the backend rather than a blob: URL — a blob has no
         // base, so any page that pulls in its own CSS/JS/images renders blank.
@@ -271,6 +294,7 @@ class HtmlViewerWidget extends Widget {
     }
 
     onFrameLoad() {
+        if (this.clearFrameLoading) { this.clearFrameLoading(); this.clearFrameLoading = undefined; }
         const doc = this.doc;
         if (!doc) {
             this.hintEl.textContent = 'Preview blocked — the page is cross-origin.';
@@ -756,6 +780,14 @@ const HTML_VIEWER_CSS = `
 .studio-html { display: flex; flex-direction: column; height: 100%; background: var(--studio-bg) !important; color: var(--studio-text); }
 /* !important: see the matching note on .studio-doc-scroll in markdown-editor.js. */
 .studio-html .studio-html-frame { flex: 1; min-height: 0; position: relative; background: var(--studio-bg) !important; }
+/* Over the iframe AND over .studio-overlay: both are positioned and neither
+   declares a z-index, so they stack by document order and an appended sibling
+   would already win — the explicit 3 is so that stays true if either of them
+   ever gets one. Opaque, so a half-painted page cannot show through and read
+   as the finished render. */
+.studio-html .studio-html-loading {
+  position: absolute; inset: 0; z-index: 3; background: var(--studio-bg);
+}
 .studio-html iframe { width: 100%; height: 100%; border: none; background: var(--studio-surface); display: block; }
 .studio-html-hint { font-size: 11.5px; color: var(--studio-muted); margin-right: 4px; }
 .studio-html .studio-btn.on { background: var(--studio-amber); color: var(--studio-bg); border-color: var(--studio-amber); }

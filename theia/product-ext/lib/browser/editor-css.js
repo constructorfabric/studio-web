@@ -9,6 +9,7 @@
  */
 
 const { DIFF_CSS } = require('./diff-view');
+const { TRACKED_CSS } = require('./tracked-changes');
 const { DIAGRAM_CSS } = require('./mermaid-view');
 
 const WIDGET_CSS = `
@@ -45,6 +46,19 @@ const WIDGET_CSS = `
 .studio-doc-status { font-size: 11.5px; color: var(--studio-muted); white-space: nowrap; }
 .studio-doc-status.state-dirty { color: var(--studio-amber); }
 .studio-doc-status.state-conflict, .studio-doc-status.state-error { color: var(--studio-danger); font-weight: 650; }
+/* The save-in-progress dot. -6px pulls it against the status text it belongs
+   to, out of the topbar's uniform 10px rhythm, so the pair reads as one field
+   rather than as two adjacent ones. */
+/* The mode pill sits left of the status with the same gap the status keeps from
+   the Save button, so the topbar reads as one row of related facts rather than a
+   control parked next to some text. */
+.studio-doc-suggest { display: inline-flex; flex: none; margin-right: 4px; }
+.studio-doc-suggest[hidden] { display: none; }
+/* Suggesting takes the accent in the status too: the two together are the only
+   answer to "is what I type going into the file", so they agree or neither is
+   trustworthy. */
+.studio-doc-status.state-suggesting, .studio-doc-status.state-suggested { color: var(--studio-amber); }
+.studio-doc-busy { display: inline-flex; align-items: center; margin-right: -6px; }
 
 /* --- segmented controls (mode) --- */
 /* Sunken track, not raised: the bar it sits on is raised now, and a control has
@@ -134,7 +148,21 @@ const WIDGET_CSS = `
  */
 .studio-doc-body { flex: 1; display: flex; min-height: 0; }
 .studio-doc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.studio-doc-panes { flex: 1; min-height: 0; display: flex; }
+/* position: relative so .studio-doc-loading below has a containing block.
+   Checked against every absolutely positioned element in this file first: the
+   gutter resolves against .studio-doc-page, the selected-cell wash against its
+   own td, and the bubble/slash/table-bar are siblings of .studio-doc-body, not
+   descendants of the panes — so none of them changes containing block. */
+.studio-doc-panes { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* The document-open state, over the panes rather than inside either of them:
+   Rich and Raw put the content in different children, and the wait belongs to
+   the document, not to the mode it will open in. Opaque, because a half-built
+   ProseMirror surface showing through would be worse than a clean wait. */
+.studio-doc-loading {
+  position: absolute; inset: 0; z-index: 3;
+  background: var(--studio-bg);
+}
 .studio-source-pane { display: none; flex: 1 1 50%; min-width: 0; border-right: 1px solid var(--studio-line); }
 .studio-doc-body.mode-raw .studio-source-pane { display: flex; flex-basis: 100%; border-right: none; }
 .studio-doc-body.mode-split .studio-source-pane { display: flex; }
@@ -166,8 +194,21 @@ const WIDGET_CSS = `
   outline: 2px solid var(--studio-amber); outline-offset: 2px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-amber) 24%, transparent);
 }
 
-/* --- document typography --- */
-.studio-doc .ProseMirror {
+/* --- document typography ---
+ *
+ * Scoped to :is(.ProseMirror, .studio-tracked-page), not to .ProseMirror alone.
+ *
+ * The tracked-changes review surface (tracked-changes.js) is a second rendering
+ * of the same document, and it is plain HTML rather than a ProseMirror instance
+ * — so with the original selector it inherited the browser's default type scale
+ * and a reviewer comparing the two saw a 32px Times heading where their document
+ * has a 22px one. A review surface that does not look like the document is
+ * describing a document the reader does not have.
+ *
+ * :is() rather than a second selector on every rule: it keeps the compound
+ * selectors below correct (a trailing "h1" expands over both arms) and does not change
+ * specificity, since both arms are class selectors. */
+.studio-doc :is(.ProseMirror, .studio-tracked-page) {
   outline: none; line-height: 1.7; font-size: 15.5px; color: var(--studio-text);
   /* TipTap's bundled base styles set an opaque white background on the
      editable surface; without this override that background survives a
@@ -175,35 +216,35 @@ const WIDGET_CSS = `
      leaving near-invisible text on a still-white page. */
   background: var(--studio-bg);
 }
-.studio-doc .ProseMirror h1 { font-size: 31px; font-weight: 650; letter-spacing: -0.02em; margin: 26px 0 12px; }
-.studio-doc .ProseMirror h2 { font-size: 22px; font-weight: 620; margin: 26px 0 8px; }
-.studio-doc .ProseMirror h3 { font-size: 17px; font-weight: 620; margin: 22px 0 6px; }
-.studio-doc .ProseMirror h4 { font-size: 14px; font-weight: 620; margin: 18px 0 5px; }
-.studio-doc .ProseMirror p { margin: 0 0 12px; }
-.studio-doc .ProseMirror ul, .studio-doc .ProseMirror ol { padding-left: 22px; margin: 0 0 12px; }
-.studio-doc .ProseMirror li p { margin: 0 0 4px; }
-.studio-doc .ProseMirror blockquote {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) h1 { font-size: 31px; font-weight: 650; letter-spacing: -0.02em; margin: 26px 0 12px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) h2 { font-size: 22px; font-weight: 620; margin: 26px 0 8px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) h3 { font-size: 17px; font-weight: 620; margin: 22px 0 6px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) h4 { font-size: 14px; font-weight: 620; margin: 18px 0 5px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) p { margin: 0 0 12px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul, .studio-doc :is(.ProseMirror, .studio-tracked-page) ol { padding-left: 22px; margin: 0 0 12px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) li p { margin: 0 0 4px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) blockquote {
   border-left: 3px solid var(--studio-line); margin: 0 0 12px; padding: 2px 0 2px 14px; color: var(--studio-muted);
 }
-.studio-doc .ProseMirror pre {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) pre {
   background: var(--studio-surface); border-radius: 8px; padding: 12px 14px; overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.8px; margin: 0 0 12px;
 }
-.studio-doc .ProseMirror code {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em;
   background: var(--studio-surface); padding: 1px 5px; border-radius: 4px;
 }
-.studio-doc .ProseMirror pre code { background: none; padding: 0; }
-.studio-doc .ProseMirror hr { border: none; border-top: 1px solid var(--studio-line); margin: 22px 0; }
-.studio-doc .ProseMirror a { color: var(--studio-cyan); text-decoration: underline; text-underline-offset: 2px; }
-.studio-doc .ProseMirror details { margin: 0 0 12px; border: 1px solid var(--studio-line); border-radius: 8px; background: var(--studio-surface-raised); }
-.studio-doc .ProseMirror details > summary { padding: 8px 10px; cursor: pointer; color: var(--studio-text); font-weight: 620; }
-.studio-doc .ProseMirror details > summary:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: -2px; }
-.studio-doc .ProseMirror details > [data-studio-toggle-body] { padding: 2px 10px 10px; }
-.studio-doc .ProseMirror details > [data-studio-toggle-body] > :last-child { margin-bottom: 0; }
-.studio-doc .ProseMirror img { display: block; max-width: 100%; height: auto; margin: 0 0 12px; border-radius: 6px; }
-.studio-doc .ProseMirror p.is-editor-empty:first-child::before,
-.studio-doc .ProseMirror .is-empty::before {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) pre code { background: none; padding: 0; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) hr { border: none; border-top: 1px solid var(--studio-line); margin: 22px 0; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) a { color: var(--studio-cyan); text-decoration: underline; text-underline-offset: 2px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) details { margin: 0 0 12px; border: 1px solid var(--studio-line); border-radius: 8px; background: var(--studio-surface-raised); }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) details > summary { padding: 8px 10px; cursor: pointer; color: var(--studio-text); font-weight: 620; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) details > summary:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: -2px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) details > [data-studio-toggle-body] { padding: 2px 10px 10px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) details > [data-studio-toggle-body] > :last-child { margin-bottom: 0; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) img { display: block; max-width: 100%; height: auto; margin: 0 0 12px; border-radius: 6px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) p.is-editor-empty:first-child::before,
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .is-empty::before {
   content: attr(data-placeholder); color: var(--studio-muted); float: left; height: 0; pointer-events: none;
 }
 .studio-comment-mark { background: color-mix(in srgb, var(--studio-amber) 28%, transparent); border-bottom: 1.5px solid var(--studio-amber); cursor: pointer; }
@@ -212,25 +253,25 @@ const WIDGET_CSS = `
 .studio-comment-mark.studio-comment-resolved { background: transparent; border-bottom-color: transparent; cursor: default; }
 
 /* --- task lists --- */
-.studio-doc .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 2px; }
-.studio-doc .ProseMirror ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 9px; }
-.studio-doc .ProseMirror ul[data-type="taskList"] li > label { flex: none; margin-top: 4px; user-select: none; }
-.studio-doc .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
-.studio-doc .ProseMirror ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--studio-amber); width: 14px; height: 14px; cursor: pointer; }
-.studio-doc .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--studio-muted); text-decoration: line-through; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] { list-style: none; padding-left: 2px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 9px; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] li > label { flex: none; margin-top: 4px; user-select: none; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--studio-amber); width: 14px; height: 14px; cursor: pointer; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--studio-muted); text-decoration: line-through; }
 
 /* --- tables --- */
-.studio-doc .ProseMirror table {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) table {
   width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13.5px; table-layout: fixed; overflow: hidden;
 }
-.studio-doc .ProseMirror th, .studio-doc .ProseMirror td {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) th, .studio-doc :is(.ProseMirror, .studio-tracked-page) td {
   border: 1px solid var(--studio-line); padding: 7px 9px; text-align: left; vertical-align: top; position: relative;
 }
-.studio-doc .ProseMirror th { background: var(--studio-surface-raised); font-weight: 650; }
-.studio-doc .ProseMirror td p, .studio-doc .ProseMirror th p { margin: 0; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) th { background: var(--studio-surface-raised); font-weight: 650; }
+.studio-doc :is(.ProseMirror, .studio-tracked-page) td p, .studio-doc :is(.ProseMirror, .studio-tracked-page) th p { margin: 0; }
 /* prosemirror-tables paints cell selection with this class; without a rule it
    is invisible, and "select a column, then align it" has no feedback at all. */
-.studio-doc .ProseMirror .selectedCell::after {
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .selectedCell::after {
   content: ''; position: absolute; inset: 0; background: var(--studio-selection-bg); opacity: .7; pointer-events: none;
 }
 /* The rule that makes [hidden] actually hide .studio-bubble and
@@ -322,6 +363,12 @@ const WIDGET_CSS = `
 .studio-rail-title { flex: 1; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--studio-muted); }
 .studio-rail-list { flex: 1; overflow: auto; padding: 0 12px 12px; }
 .studio-rail-empty { font-size: 12.5px; color: var(--studio-muted); line-height: 1.6; padding: 6px 2px; }
+/* The waiting twin of .studio-rail-empty above: same box, same voice. It is a
+   separate class rather than that one plus a spinner because .studio-loading
+   already carries the colour and the caption size, and stacking the two would
+   have them argue about padding at equal specificity. */
+.studio-rail-loading.studio-loading.inline { padding: 6px 2px; }
+.studio-rail-loading .studio-loading-caption { font-size: 12.5px; line-height: 1.6; }
 .studio-rail-section {
   font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted);
   margin: 10px 2px 6px; padding-top: 8px; border-top: 1px solid var(--studio-line);
@@ -425,6 +472,6 @@ const WIDGET_CSS = `
 .studio-compare { margin-bottom: 12px; }
 `;
 
-const EDITOR_CSS = WIDGET_CSS + DIFF_CSS + DIAGRAM_CSS;
+const EDITOR_CSS = WIDGET_CSS + DIFF_CSS + TRACKED_CSS + DIAGRAM_CSS;
 
 module.exports = { EDITOR_CSS };

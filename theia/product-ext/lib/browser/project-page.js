@@ -199,7 +199,37 @@ class ProjectPageWidget extends Widget {
             '    </section>' +
 
             /*
-             * 4. The saving policy. The button, its data-act, and its exact
+             * 4. How a proposed change is reviewed.
+             *
+             * Two styles, and the setting is a CHOICE rather than a toggle
+             * because neither is the absence of the other — "tracked changes
+             * off" does not describe the diff queue, it describes nothing. So
+             * this is the one control on this page that is a pair of buttons:
+             * both options are named, both are visible, and the pressed one is
+             * the current state.
+             *
+             * A project setting for the same reason the two above it are: two
+             * people reviewing the same proposal should be looking at the same
+             * thing, and it travels with the branch.
+             */
+            '    <section class="studio-settings-section">' +
+            '      <h3>Reviewing changes</h3>' +
+            '      <p class="studio-settings-help">How a change proposed by an assistant is presented for you to accept ' +
+            'or reject. Both styles decide the same changes and write the same result — they differ in what you are ' +
+            'looking at while you decide.</p>' +
+            '      <div class="studio-settings-row">' +
+            '        <div class="studio-choice" role="group" aria-label="Change review style">' +
+            '          <button class="studio-choice-btn" data-act="review-style" data-style="queue" ' +
+            'aria-pressed="true">Diff queue</button>' +
+            '          <button class="studio-choice-btn" data-act="review-style" data-style="inline" ' +
+            'aria-pressed="false">Tracked changes</button>' +
+            '        </div>' +
+            '      </div>' +
+            '      <p class="studio-settings-note" data-page-review-note></p>' +
+            '    </section>' +
+
+            /*
+             * 5. The saving policy. The button, its data-act, and its exact
              * label text are carried over verbatim: the words are accurate and
              * content-editing-regression asserts on them. It LOOKS like the
              * control it always was (a switch, not muted body text) and says what
@@ -228,6 +258,8 @@ class ProjectPageWidget extends Widget {
         this.autosaveEl = this.node.querySelector('[data-act="toggle-autosave"]');
         this.autosaveNoteEl = this.node.querySelector('[data-page-autosave-note]');
         this.modesEl = this.node.querySelector('[data-act="toggle-modes"]');
+        this.reviewStyleEls = [...this.node.querySelectorAll('[data-act="review-style"]')];
+        this.reviewNoteEl = this.node.querySelector('[data-page-review-note]');
         this.modesNoteEl = this.node.querySelector('[data-page-modes-note]');
         this.identityEl = this.node.querySelector('[data-act="display-name"]');
         this.identityAvatarEl = this.node.querySelector('[data-page-identity-avatar]');
@@ -367,6 +399,7 @@ class ProjectPageWidget extends Widget {
         this.locationEl.textContent = root.resource.path.toString();
         this.renderTypes(root);
         this.renderModes(root);
+        this.renderReviewStyle(root);
         this.renderAutosave(root);
     }
 
@@ -492,6 +525,40 @@ class ProjectPageWidget extends Widget {
             : 'Markdown documents are edited in Rich mode, with no mode switch.';
     }
 
+    // -- review style --------------------------------------------------------
+
+    /*
+     * Set, not toggle: the control names both options, so a click means "this
+     * one", and a click on the option that is already current is a no-op rather
+     * than a switch back. Writing the value the user already has would still be
+     * harmless — the write is idempotent — but it would fire onChanged and make
+     * every open document re-render for nothing.
+     */
+    async setReviewStyle(style) {
+        const root = await this.activeRoot();
+        if (!root) { return; }
+        if (fileTypeSettings.changeReviewFor(root.resource) === style) { return; }
+        try {
+            await fileTypeSettings.setChangeReview(root.resource, style);
+        } catch (e) {
+            console.error('[studio] could not persist the change-review style', e);
+        }
+        this.renderReviewStyle(root);
+    }
+
+    renderReviewStyle(root) {
+        if (!this.reviewStyleEls || !this.reviewStyleEls.length) { return; }
+        const style = root ? fileTypeSettings.changeReviewFor(root.resource) : 'queue';
+        this.reviewStyleEls.forEach(button =>
+            button.setAttribute('aria-pressed', String(button.getAttribute('data-style') === style)));
+        this.reviewNoteEl.textContent = style === 'inline'
+            ? 'The document shows the change in place — deletions struck through, insertions underlined — and each ' +
+              'change gets a card beside it saying who proposed it and what it does. Closest to Word or Google Docs. ' +
+              'Documents this product cannot round-trip losslessly stay on the diff queue.'
+            : 'The document is held at its reviewed state and the change is listed beside it as a patch, with line ' +
+              'numbers and the surrounding lines for context. Best when the exact edit matters more than how it reads.';
+    }
+
     // -- saving policy -------------------------------------------------------
 
     /*
@@ -592,6 +659,8 @@ class ProjectPageWidget extends Widget {
             this.toggleAutosave();
         } else if (act === 'toggle-modes') {
             this.toggleModes();
+        } else if (act === 'review-style') {
+            this.setReviewStyle(target.getAttribute('data-style'));
         }
     }
 }
@@ -673,6 +742,20 @@ const PROJECT_PAGE_CSS = ASSISTANT_AUTH_CSS + `
 .studio-switch[aria-pressed="true"]::after { transform:translateX(11px); background:var(--studio-bg, #16171c); }
 .studio-switch:hover { border-color:var(--studio-amber, #d59b3b); }
 .studio-switch:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+
+/* A two-option choice, not a toggle. One track, both labels legible, and the
+   pressed half filled — the same amber-on-bg pairing the switch knob and the
+   primary button use, so nothing new has to be learned to read it. Segments
+   share a single border rather than each having one, so the pair reads as one
+   control with two states and not as two independent buttons. */
+.studio-choice { display:inline-flex; border:1px solid var(--studio-line, #30333d); border-radius:999px; padding:2px; background:var(--studio-surface-raised, #202127); }
+.studio-choice-btn { border:0; border-radius:999px; padding:6px 14px; background:transparent; color:var(--studio-muted, #9298a8); cursor:pointer; font:600 12px/1.2 inherit; }
+.studio-choice-btn:hover { color:var(--studio-text, #f1eee7); }
+.studio-choice-btn[aria-pressed="true"] { background:var(--studio-amber, #d59b3b); color:var(--studio-bg, #16171c); }
+.studio-choice-btn:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+/* This note is a full sentence about a consequence, so it sits under the
+   control on its own line rather than competing with it for the row. */
+.studio-settings-section .studio-settings-note[data-page-review-note] { flex:none; margin:10px 0 0; max-width:64ch; }
 
 /* Danger reads as danger only once armed: an outline button first, filled on
    the confirming click, so the loud state is the one that actually removes. */

@@ -159,6 +159,44 @@ class FileTypeSettings {
         await this.writeRoot(rootUri, { authoringModes: !!enabled });
     }
 
+    /*
+     * How a pending proposal is reviewed. Two styles, one pipeline.
+     *
+     *   'queue'  — the diff queue. Hunks in the rail with `+`/`−` gutters, the
+     *              document held at its reviewed state beside them.
+     *   'inline' — tracked changes. The document itself carries the deletions
+     *              and insertions, and the rail carries one card per change.
+     *
+     * A project setting rather than a per-document or per-machine one, for the
+     * same reason as the two above it: it decides how this project is reviewed,
+     * and two people reviewing the same proposal should be looking at the same
+     * thing. It travels with the branch.
+     *
+     * 'queue' is the default because it is what every existing project already
+     * behaves like, and a settings key appearing in a build must not silently
+     * change how work already in flight is presented.
+     *
+     * Anything unrecognised in the file reads as 'queue' rather than throwing.
+     * The file is committed and hand-editable, so a typo has to degrade to the
+     * conservative style, not to a broken review surface.
+     */
+    changeReviewFor(rootUri) {
+        const raw = rootUri && this.rawByRoot.get(rootUri.toString());
+        return raw && raw.changeReview === 'inline' ? 'inline' : 'queue';
+    }
+
+    async setChangeReview(rootUri, style) {
+        await this.writeRoot(rootUri, { changeReview: style === 'inline' ? 'inline' : 'queue' });
+    }
+
+    /** Review style for the root that owns `uri`. */
+    changeReviewForFile(uri) {
+        const key = this.rootOf(uri);
+        if (!key) { return 'queue'; }
+        const raw = this.rawByRoot.get(key);
+        return raw && raw.changeReview === 'inline' ? 'inline' : 'queue';
+    }
+
     /** Authoring-modes policy for the root that owns `uri`. */
     authoringModesForFile(uri) {
         const key = this.rootOf(uri);

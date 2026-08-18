@@ -30,18 +30,22 @@ const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-ser
 const { MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS } = require('./markdown-editor');
 const { HtmlViewerWidget, HTML_VIEWER_CSS } = require('./html-viewer');
 const { COMMENT_UI_CSS } = require('./comment-ui');
+const { SUGGEST_MODE_CSS } = require('./suggest-mode');
+const { SUGGEST_MARKS_CSS } = require('./suggest-marks');
 const { fileTypeSettings, patchNavigatorFilter } = require('./file-type-settings');
 const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
 const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
+const { ChangeLog } = require('./change-log');
 const { HistoryStore } = require('./history-store');
 const { AI_MENU_CSS } = require('./ai-context');
 const { slotStrip, SLOT_STRIP_CSS } = require('./slot-strip');
 const { welcomeView, WELCOME_CSS } = require('./welcome-view');
 const { statusLine, STATUS_LINE_CSS } = require('./status-line');
 const { ProjectPageWidget, PROJECT_PAGE_CSS } = require('./project-page');
+const { LOADER_CSS, loadingNode } = require('./loader');
 const { StatusBar } = require('@theia/core/lib/browser/status-bar/status-bar-types');
 
 const THEME_STORAGE_KEY = 'studio-theme';
@@ -288,6 +292,23 @@ const SHELL_CSS = `
      raised in both themes instead of each surface inventing its own mix. */
   --studio-shadow: rgba(31, 35, 40, .16);
   --studio-radius: 8px;
+  /*
+   * The loading indicator's two colours (loader.js).
+   *
+   * WRITTEN OUT, not aliased to --studio-amber and --studio-line, and the same
+   * two lines appear again in the dark block below. That looks like duplication
+   * and is not: a custom property whose value is var(--other) is substituted in
+   * the scope it is DECLARED in, so declaring it only here would freeze both
+   * colours at their light values and the spinner would stay pale-grey-on-blue
+   * after a switch to dark. Caught in review as exactly that -- a near-white dot
+   * field on a near-black ground.
+   *
+   * The lit arc is the product's one accent, so a wait is drawn in the same
+   * colour as everything else that is "active". The unlit field is the line
+   * tone: present, structural, not competing with the arc travelling over it.
+   */
+  --studio-loader-on: #0b2275;
+  --studio-loader-off: #e1e4e8;
 }
 
 /*
@@ -320,6 +341,10 @@ body[data-studio-theme="dark"] {
   --studio-danger: #e5534b;
   --studio-focus: rgba(91, 115, 232, .35);
   --studio-shadow: rgba(0, 0, 0, .55);
+  /* The dark half of the pair declared in :root above. See the note there for
+     why this is restated rather than aliased. */
+  --studio-loader-on: #5b73e8;
+  --studio-loader-off: #2d303c;
 }
 body, body * { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease; }
 :root {
@@ -759,6 +784,37 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
 .studio-rail-btn:focus-visible {
   outline: 2px solid var(--studio-amber); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-amber) 24%, transparent);
 }
+
+/* --- the startup splash -------------------------------------------------- *
+ *
+ * THE LAST PIECE OF VS CODE FURNITURE ANYBODY SEES, and it was the FIRST: the
+ * div in index.html carries Theia's own indicator, a 72px codicon-load glyph
+ * spun by a keyframe, in #777 on the editor background. Every other stock
+ * surface in this product has been replaced -- rail glyphs, tabs, status bar,
+ * scrollbars -- and this one survived only because it is painted before any of
+ * the code that does the replacing has run.
+ *
+ * It is also, by a wide margin, the LONGEST wait the product has. Everything
+ * else here is a filesystem call; this one covers parsing a 14 MB bundle,
+ * building the shell layout and loading the plugin contributions. So it is
+ * worth the two rules and the four lines of JS in onStart below.
+ *
+ * WHY IT CAN BE DONE FROM HERE AT ALL. FrontendApplication.revealShell() --
+ * which adds .theia-hidden and then removes the element -- runs AFTER
+ * startContributions(), so a contribution's onStart is still early enough to
+ * reach the node while it is on screen. That is why the glyph is turned off in
+ * CSS and the real indicator is appended in JS: the CSS lands with everything
+ * else in the injected stylesheet, and neither half is any use without the
+ * other.
+ */
+.theia-preload {
+  background: var(--studio-bg);
+  flex-direction: column;
+}
+/* The codicon. "content: none" and not "display: none": the pseudo-element is
+   the only thing this rule needs to reach, and the box it sits in is the flex
+   centre the replacement is dropped into. */
+.theia-preload::after { content: none; }
 `;
 
 /*
@@ -813,6 +869,38 @@ function installStandardTabShortcuts(shell) {
     }, true);
 }
 
+/*
+ * Put the product's own indicator into Theia's startup splash.
+ *
+ * The counterpart to the .theia-preload rules in SHELL_CSS; see the long note
+ * there for why this is possible from onStart and why it is worth doing.
+ *
+ * DELAY 0, unlike every other loading state in the product. The delay in
+ * showLoading exists so a wait too short to perceive is never mentioned. This
+ * wait is already several seconds old by the time this line runs — the whole
+ * bundle had to parse to get here — so waiting another 140ms would only leave
+ * the one thing on screen empty for longer.
+ *
+ * THE CAPTION IS NOT THE PRODUCT NAME. The <title> already says that, in the
+ * tab, and this is the one surface where the two would be read together. What
+ * the splash has to answer is "is this coming, or is it stuck", so it says
+ * that instead — and says it in the same voice as the other waits rather than
+ * inventing a splash-screen register.
+ *
+ * Every step is guarded. A splash that throws would take the whole onStart
+ * contribution — the injected stylesheet, identity, credentials — with it, to
+ * decorate a screen that is about to be removed.
+ */
+function replaceStartupIndicator() {
+    try {
+        const splash = document.querySelector('.theia-preload');
+        if (!splash || splash.querySelector('.studio-loading')) { return; }
+        splash.appendChild(loadingNode('Starting…', { variant: '7x7', size: 40 }));
+    } catch (e) {
+        console.warn('[studio] could not replace the startup indicator', e);
+    }
+}
+
 class ProductChromeContribution {
 
     constructor(container) { this.container = container; }
@@ -822,7 +910,7 @@ class ProductChromeContribution {
         installStandardTabShortcuts(app.shell);
         const style = document.createElement('style');
         style.id = 'studio-product-chrome';
-        style.textContent = SHELL_CSS + COMMENT_UI_CSS + EDITOR_CSS + HTML_VIEWER_CSS + REPOS_CSS +
+        style.textContent = SHELL_CSS + LOADER_CSS + COMMENT_UI_CSS + SUGGEST_MODE_CSS + SUGGEST_MARKS_CSS + EDITOR_CSS + HTML_VIEWER_CSS + REPOS_CSS +
             AI_MENU_CSS + SLOT_STRIP_CSS + STATUS_LINE_CSS + PROJECT_PAGE_CSS + WELCOME_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
         /*
@@ -853,6 +941,9 @@ class ProductChromeContribution {
         // whatever ThemeService lands on either way; nothing here fights it.
         if (loadStoredTheme() !== themeService.getCurrentTheme().id) { themeService.setCurrentTheme(loadStoredTheme()); }
         syncTheme();
+        // Last, so the splash is repainted in the theme that was just settled
+        // rather than flipping under the user a frame later.
+        replaceStartupIndicator();
     }
 
     /*
@@ -1037,6 +1128,16 @@ function makeOpenHandler(container, spec) {
                      */
                     commentsStore: new CommentLog(fileService, workspaceService),
                     changesStore: new ChangesStore(fileService, workspaceService),
+                    /*
+                     * ChangeLog is the SUGGESTIONS store and sits beside
+                     * ChangesStore rather than replacing it. The assistant path
+                     * is one proposal against one recorded base with composed
+                     * verdicts; a suggestion is one of many, from one of many
+                     * authors, derived against the live document. Same rail, two
+                     * stores — see change-log.js's header for why they are not
+                     * the same shape.
+                     */
+                    changeLog: new ChangeLog(fileService, workspaceService),
                     historyStore: new HistoryStore(fileService, workspaceService),
                     commandRegistry: container.get(CommandRegistry),
                     messageService: container.get(MessageService),

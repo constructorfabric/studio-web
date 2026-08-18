@@ -18,6 +18,7 @@ const { ChangesStore, relativePath } = require('./changes-store');
 // This panel WRITES the active project; the status line and the Project page
 // read it. See active-project.js for why the fact needed one home.
 const { activeProject } = require('./active-project');
+const { showLoading } = require('./loader');
 
 // Badges re-read after a burst of sidecar writes (an "accept all" can touch
 // several files at once) settle on one read instead of one per file change.
@@ -375,6 +376,25 @@ class RepositoriesWidget extends Widget {
      */
 
     async renderDirectory(root) {
+        /*
+         * The listing keeps the PREVIOUS folder on screen while the next one
+         * resolves. That is the correct default for a local disk, where the
+         * resolve returns in single-digit milliseconds and blanking the list
+         * would produce a flicker on every click — and it is why this loading
+         * state is delayed rather than immediate.
+         *
+         * But the default is only correct while it is fast. On a slow or remote
+         * root the panel shows one folder's contents under another folder's
+         * breadcrumb, which is not "not yet updated", it is wrong: the entries
+         * are clickable and they belong to somewhere else. So past the delay the
+         * stale listing is REPLACED rather than covered, and what replaces it
+         * names the folder being opened.
+         */
+        const done = showLoading(
+            this.entriesEl,
+            'Opening ' + this.currentDirectory.path.base + '…',
+            { replace: true, className: 'studio-project-loading' }
+        );
         try {
             const stat = await this.fileService.resolve(this.currentDirectory);
             const children = (stat.children || [])
@@ -397,6 +417,11 @@ class RepositoriesWidget extends Widget {
         } catch (error) {
             console.error('[studio] could not resolve project directory', this.currentDirectory.toString(), error);
             this.entriesEl.innerHTML = '<div class="studio-project-empty">This folder is unavailable.</div>';
+        } finally {
+            // Both branches above replace the whole listing, so the node is
+            // already gone by now; this is here for the pending TIMER, which
+            // would otherwise fire into the folder that just finished loading.
+            done();
         }
     }
 
@@ -511,11 +536,31 @@ class RepositoriesWidget extends Widget {
             canSelectMany: false, openLabel: 'Connect'
         }, roots[0]);
         if (!folder) { return; }
-        await this.workspaceService.addRoot(folder);
-        this.activeRoot = folder.toString();
-        this.currentDirectory = folder;
-        await fileTypeSettings.reloadAll();
-        await this.refresh();
+        /*
+         * delayMs: 0, against the rule the other listing state follows.
+         *
+         * Connecting is the one action in this panel the user has already spent
+         * a modal dialog on, and it is the slowest: addRoot rewrites the
+         * workspace file and makes Theia re-resolve every root, reloadAll reads
+         * a settings sidecar per root, and only then does the listing render.
+         * The dialog closes the instant Connect is clicked, so with a delay the
+         * panel would sit on the OLD project — or on "Connect a local project"
+         * — for the whole of it, which reads as the click having missed.
+         */
+        const done = showLoading(
+            this.entriesEl,
+            'Connecting ' + folder.path.base + '…',
+            { replace: true, delayMs: 0, className: 'studio-project-loading' }
+        );
+        try {
+            await this.workspaceService.addRoot(folder);
+            this.activeRoot = folder.toString();
+            this.currentDirectory = folder;
+            await fileTypeSettings.reloadAll();
+            await this.refresh();
+        } finally {
+            done();
+        }
     }
 
     /*
@@ -823,6 +868,11 @@ const REPOS_CSS = `
 .studio-entry-forward { color:var(--studio-muted, #9298a8); font-size:18px; line-height:1; }
 .studio-entry-badge { flex:none; font-size:10px; font-weight:650; min-width:16px; text-align:center; padding:1px 5px; margin-left:auto; border-radius:999px; background:var(--studio-amber, #d59b3b); color:#fff; font-variant-numeric:tabular-nums; }
 .studio-project-empty { padding:16px 8px; color:var(--studio-muted, #9298a8); font-size:12px; line-height:1.45; }
+/* The waiting twin of .studio-project-empty: the panel is 257px wide and the
+   folder name in the caption can be longer than that, so it wraps and breaks
+   rather than pushing a horizontal scrollbar into a column that has none. */
+.studio-project-loading { padding:28px 8px; }
+.studio-project-loading .studio-loading-caption { font-size:12px; overflow-wrap:anywhere; }
 /* With nothing connected, connecting IS the panel's content, so the primary
    button sits in the listing area rather than in a permanent footer band. The
    footer, the file-type filter, and the autosave toggle that used to live down
