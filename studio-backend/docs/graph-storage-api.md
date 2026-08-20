@@ -155,8 +155,9 @@ caller cannot see and disclose that it exists.
 `POST /hybrid` takes `{ query_vector, text, seed_limit, limit }`: vector
 similarity picks the seeds, the graph expands around them, and a full-text
 predicate filters what is reached, in one SQL/PGQ statement. It needs ingested
-nodes to carry embeddings — the gear has no model and never computes one, in
-either direction, so the query vector is the caller's too.
+nodes to carry embeddings. This copy computes none — the provider is ADR-0005's
+pluggable one and is not implemented here — so both the stored vectors and the
+query vector are the caller's.
 
 ### Payloads are opt-in everywhere
 
@@ -230,7 +231,7 @@ additive.
 
 **Embeddings.** Optional on ingest, dimension-checked against the column
 (`embedding_dimensions`, 384) with a clear error rather than a database failure.
-The gear never computes them.
+This copy does not compute them; see "The embedding provider" in § 5.
 
 **Scoping is by construction.** Every query goes through the secure ORM.
 Element keys are composite `(tenant_id, id)`, so an edge structurally cannot
@@ -290,10 +291,15 @@ it does:
 **Tabular projection.** `cpt-cf-graph-storage-fr-tabular-projection` — OData
 filters over annotated attributes — depends on the above.
 
-**Embedding production.** Nothing in this assembly computes embeddings, so the
-hybrid endpoint works only for callers that bring their own vectors on both
-sides. Deciding where embeddings come from is a product question, not a gear
-one.
+**The embedding provider.** This vendored copy computes no embeddings, so the
+hybrid endpoint currently works only for callers that bring their own vectors on
+both sides. That is a gap in the copy, not an open question: ADR-0005
+(`cpt-cf-graph-storage-adr-embedding-provider`) settles it — a pluggable
+embedding provider behind the plugin contract, with an in-process ONNX default,
+a remote plugin, and a deterministic fake for CI. DESIGN's Embedding Coordinator
+also owns composing search text from the vectorized attributes and preserving
+stored vectors on non-embedding upserts, which is why `search_text` here is a
+stopgap.
 
 **Prune is bounded.** One call removes at most `ingest_max_nodes` nodes; a
 larger sweep needs repeating until it reports zero. It reports what it removed,
