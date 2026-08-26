@@ -1,0 +1,18 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned: the organization the session is working in, as {id, name}, or null when none is in scope. Replaces every MFE-side derivation of the same answer — see contextActions.ts for why those disagreed.",
+  "allOf": [{ "$ref": "gts://gts.frontx.mfes.comm.shared_property.v1~" }],
+  "properties": {
+    "value": {
+      "type": ["object", "null"],
+      "$comment": "null is 'no organization in scope' — a published value, not an absent one. It must validate, or seeding at bootstrap throws inside updateSharedProperty and takes the screen slot with it.",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"],
+      "additionalProperties": false
+    }
+  }
+}

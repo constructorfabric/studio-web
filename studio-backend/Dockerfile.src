@@ -32,7 +32,9 @@ WORKDIR /src/studio-backend
 # dependencies change and not when our sources do.
 FROM chef AS planner
 COPY studio-backend/ .
-RUN cargo chef prepare --recipe-path recipe.json
+# Track latest gears-rust main: refresh the lock before projecting the
+# recipe so the cached dep layer is built against head.
+RUN cargo update && cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 COPY --from=planner /src/studio-backend/recipe.json recipe.json
@@ -41,14 +43,29 @@ COPY --from=planner /src/studio-backend/recipe.json recipe.json
 # rather than local to one BuildKit daemon.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY studio-backend/ .
-RUN cargo build --release --locked \
+# CARGO_FEATURES lets the two-step dev bootstrap build a stripped binary
+# (--no-default-features) that reaches the serve phase and seeds the root
+# tenant, without the oagw post_init that deadlocks on an empty DB. Note that
+# this drops BOTH default features: `llm` (mini-chat + oagw) and `graph`
+# (graph-storage + the repository importer). The bootstrap run only has to seed
+# a tenant, so neither is missed — but a binary built this way serves no
+# /graph-storage routes. Default is empty = the normal dev build with both on.
+# The cargo-chef dep layer above is unchanged, so both variants share it and
+# only the final app compile differs.
+ARG CARGO_FEATURES=""
+# cargo update again here (the COPY above restored the committed lock) so the
+# final compile also resolves the latest gears-rust main; no --locked.
+RUN cargo update \
+ && cargo build --release ${CARGO_FEATURES} \
  && cp target/release/studio-backend /studio-backend
 
 FROM debian:bookworm-slim
 # gosu drops privileges in the entrypoint without the signal-forwarding and
 # TTY quirks of su/sudo — the process it execs stays PID 1.
+# git: the artifact-ingest gear shells out to it to clone repositories into the
+# artifacts volume (STUDIO_ARTIFACT_WORKDIR) and walk their files.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl gosu \
+ && apt-get install -y --no-install-recommends ca-certificates curl gosu git \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1000 studio \
  && useradd --system --uid 1000 --gid 1000 --create-home --home /app studio
@@ -60,7 +77,12 @@ WORKDIR /app
 COPY --from=build /studio-backend /app/studio-backend
 COPY studio-backend/config/ /app/config/
 COPY studio-backend/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chown -R studio /app && chmod +x /usr/local/bin/entrypoint.sh
+# Fresh-DB seeder entrypoint used only by the `backend-bootstrap` compose
+# service (built --no-default-features): it runs the backend, waits for the
+# platform root tenant to be seeded, then exits so the main backend can start.
+COPY studio-backend/docker/bootstrap-seed.sh /usr/local/bin/bootstrap-seed.sh
+RUN chown -R studio /app \
+ && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/bootstrap-seed.sh
 # Stays root: the entrypoint needs it to join the Docker socket's group, and
 # hands the server to `studio` via gosu as its last act.
 EXPOSE 8090

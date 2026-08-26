@@ -380,9 +380,24 @@ impl SessionService {
         // make the directory non-empty and block the clone; the entrypoint
         // now adopts the repo either way, but the stub would still shadow the
         // real file until the first checkout).
+        // A managed workspace (no bring-your-own folder, no root repo) is ours
+        // to keep tidy: rewrite the manifest to exactly the current sources and
+        // delete any stale source clones left behind by previously-detached
+        // sources, so the IDE's Source Control only shows what the project
+        // selects. A bring-your-own folder is never rewritten or pruned.
+        let managed = root_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .is_none();
         if root_repo.is_none() {
-            // No-op when .cf-workspace.toml already exists (CLI workspaces).
-            self.materialize_workspace_toml(&ws_dir, &repos)?;
+            if managed {
+                self.rewrite_workspace_toml(&ws_dir, &repos)?;
+                self.prune_stale_sources(&ws_dir, &repos);
+            } else {
+                // No-op when .cf-workspace.toml already exists (CLI workspaces).
+                self.materialize_workspace_toml(&ws_dir, &repos)?;
+            }
         }
 
         let port = self.allocate_port().await?;
@@ -572,6 +587,94 @@ impl SessionService {
         }
         std::fs::write(&path, toml).with_context(|| format!("cannot write {path}"))?;
         Ok(())
+    }
+
+    /// Rewrite `.cf-workspace.toml` to exactly the current sources (managed
+    /// workspaces only). Authoritative: a source detached in the portal is
+    /// dropped here, so the Theia Workspace Sources panel stops listing it.
+    fn rewrite_workspace_toml(&self, ws_dir: &str, repos: &[RepoSpec]) -> anyhow::Result<()> {
+        let path = format!("{ws_dir}/.cf-workspace.toml");
+        let mut toml = String::from("version = \"1.0\"\n");
+        for r in repos {
+            let target = r
+                .target
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .unwrap_or(&r.name);
+            toml.push_str(&format!("\n[sources.{}]\nrole = \"codebase\"\n", r.name));
+            if r.kind == RepoKind::Git {
+                toml.push_str(&format!(
+                    "url = \"{}\"\n",
+                    r.url.as_deref().unwrap_or("").trim()
+                ));
+                if let Some(b) = r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                    toml.push_str(&format!("branch = \"{b}\"\n"));
+                }
+            }
+            toml.push_str(&format!("path = \"{target}\"\n"));
+        }
+        std::fs::write(&path, toml).with_context(|| format!("cannot write {path}"))?;
+        Ok(())
+    }
+
+    /// Delete source clones in a managed workspace that no longer belong to any
+    /// current source — the "junk" the IDE's Source Control was showing. Only
+    /// top-level directories that are actual git clones (`.git` present) and are
+    /// not a current source are removed; dotfiles and non-repo content are left
+    /// untouched. Best-effort: a failure to remove one is logged, not fatal.
+    fn prune_stale_sources(&self, ws_dir: &str, repos: &[RepoSpec]) {
+        let mut expected: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for r in repos {
+            let dir = r
+                .target
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .unwrap_or(&r.name);
+            // The first path segment is the top-level dir under the workspace.
+            if let Some(top) = dir.split('/').next().filter(|s| !s.is_empty()) {
+                expected.insert(top.to_string());
+            }
+        }
+        let base = std::path::Path::new(ws_dir);
+        let read = match std::fs::read_dir(base) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let mut removed: Vec<String> = Vec::new();
+        for entry in read.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if name.starts_with('.') {
+                continue; // .git of a root repo, .cf-workspace.toml, dotdirs
+            }
+            if !path.is_dir() || expected.contains(&name) {
+                continue;
+            }
+            // Only prune actual clones — never arbitrary content the user made.
+            if !path.join(".git").exists() {
+                continue;
+            }
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => removed.push(name),
+                Err(e) => tracing::warn!(
+                    dir = %path.display(),
+                    error = %e,
+                    "studio-session: could not remove stale source clone"
+                ),
+            }
+        }
+        if !removed.is_empty() {
+            tracing::info!(
+                removed = ?removed,
+                workspace_dir = %ws_dir,
+                "studio-session: removed stale source clones from the workspace"
+            );
+        }
     }
 
     /// Refresh state: Starting → Running once the session port accepts a

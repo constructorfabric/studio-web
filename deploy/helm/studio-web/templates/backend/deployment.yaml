@@ -26,21 +26,29 @@ spec:
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required (immutable, fixed at chart publication)" .Values.backend.image.tag }}"
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "run"]
+          {{- if .Values.backend.configOverride.existingConfigMap }}
+          volumeMounts:
+            - name: backend-config
+              mountPath: /app/config/{{ .Values.backend.configProfile }}.yaml
+              subPath: {{ .Values.backend.configProfile }}.yaml
+              readOnly: true
+          {{- end }}
           ports: [{ name: http, containerPort: {{ .Values.backend.port }} }]
           env:
             - name: STUDIO_ENVIRONMENT
               value: {{ .Values.global.environmentName | quote }}
             - name: STUDIO_PG_HOST
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: host } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.host }} } }
             - name: STUDIO_PG_PORT
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: port } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.port }} } }
             - name: STUDIO_PG_USER
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: user } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.user }} } }
             - name: STUDIO_PG_PASSWORD
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: password } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.password }} } }
             - name: STUDIO_PG_DBNAME
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: dbname } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.dbname }} } }
             - name: STUDIO_OIDC_ISSUER
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
             - name: STUDIO_OIDC_CLIENT_ID
@@ -64,35 +72,14 @@ spec:
             # file-storage URL-signing seed — per environment, never baked in.
             - name: STUDIO_FS_SIGNING_SEED
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
-            # Dev token auth (INFRA-3767 interim): the k8s profile runs
-            # static-authn while no OIDC realm exists. The profile REQUIRES
-            # this variable — a missing Secret fails the boot naming it.
-            {{- if .Values.backend.devAuth.existingSecret }}
-            - name: STUDIO_ADMIN_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.devAuth.existingSecret }}, key: admin_token } }
-            {{- end }}
-            # Interim test users (INFRA-3767): extra static-authn logins, all
-            # root-tenant admins. The k8s config profile references these tokens,
-            # so the studio-web-test-users Secret must exist in the namespace; keys
-            # are required (not optional) to fail closed rather than mint
-            # empty-token entries. Drop this block with the real IdP.
-            - name: STUDIO_TEST_USER_1_TOKEN
-              valueFrom: { secretKeyRef: { name: studio-web-test-users, key: test_user_1_token } }
-            - name: STUDIO_TEST_USER_2_TOKEN
-              valueFrom: { secretKeyRef: { name: studio-web-test-users, key: test_user_2_token } }
-            - name: STUDIO_TEST_USER_3_TOKEN
-              valueFrom: { secretKeyRef: { name: studio-web-test-users, key: test_user_3_token } }
             # Sealing key for the persistent credstore value store (#66),
-            # base64 of 32 bytes. REQUIRED by default: without it the gear
-            # stands down to an in-memory fallback and every user-typed secret
-            # (repo PATs, connector tokens, per-user AI keys) dies on each pod
-            # restart. `optional` is now false so a missing key fails the pod
-            # loudly instead of silently losing secrets. A throwaway env that
-            # intentionally runs without persistent secrets can opt out with
-            # `backend.credstore.optionalKey: true`. Keep the value STABLE:
-            # rotating it makes all previously stored secrets unreadable.
+            # base64 of 32 bytes. Optional by design: without it the gear
+            # stands down with a WARN and the in-memory fallback wins — the
+            # pod still boots, but every user-typed secret (repo PATs) dies
+            # with each restart. Set it in any environment that restarts pods,
+            # which is all of them.
             - name: STUDIO_CREDSTORE_KEY
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: credstore_key, optional: {{ .Values.backend.credstore.optionalKey | default false }} } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: credstore_key, optional: true } }
             # Keycloak Admin API for invites (keycloak-idp-plugin). Optional:
             # without the secret the plugin self-deprioritizes (invites off).
             {{- if .Values.backend.idpAdmin.baseUrl }}
@@ -104,3 +91,9 @@ spec:
           readinessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 15, periodSeconds: 20 }
           resources: {{- toYaml .Values.backend.resources | nindent 12 }}
+      {{- if .Values.backend.configOverride.existingConfigMap }}
+      volumes:
+        - name: backend-config
+          configMap:
+            name: {{ .Values.backend.configOverride.existingConfigMap }}
+      {{- end }}

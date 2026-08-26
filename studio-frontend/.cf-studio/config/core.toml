@@ -1,0 +1,364 @@
+# Constructor Studio project configuration
+
+version = "1.0"
+project_root = ".."
+
+[install]
+version_source = "project_config"
+runtime_tracking = "ignored"
+agent_tracking = "ignored"
+kit_tracking = "tracked"
+
+[kits]
+[kits.cyber-pilot-kit-frontx]
+format = "CFS"
+path = "config/kits/cyber-pilot-kit-frontx"
+source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+install_mode = "copy"
+version = "bac818226596569a087643a30be9365c3c8e114a"
+tracking = "tracked"
+
+[kits.cyber-pilot-kit-frontx.source_provenance]
+source_type = "git"
+resolver_mode = "mutable_ref"
+resolution_basis = "git_ref"
+requested_ref = "develop"
+resolved_ref = "bac818226596569a087643a30be9365c3c8e114a"
+commit_sha = "bac818226596569a087643a30be9365c3c8e114a"
+canonical_source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+effective_source = "git:https%3A%2F%2Fgithub.com%2Fconstructorfabric%2Fgears-frontx.git//packages/cyber-pilot-kit-frontx"
+original_source = "git/https://github.com/constructorfabric/gears-frontx.git//packages/cyber-pilot-kit-frontx"
+decoded_remote_url = "https://github.com/constructorfabric/gears-frontx.git"
+decoded_remote_url_hash = "334b0ef464236f36"
+selected_subdirectory = "packages/cyber-pilot-kit-frontx"
+transport = "https"
+cache_remote_hash = "334b0ef464236f36"
+cache_requested_ref_hash = "947726dd6318753268f3bfbe5e87ae2afe220db399c26e119c181a59227b0c60"
+cache_subdir_hash = "804517dde184476c961eecd317923dba7793fa92b0fbec96b9571424d162c09e"
+cache_kit_hash = "2f2d9de35f25e2c181e0595e6a7c0d707922fa20b522f67635d2359c19f66f75"
+verified = "verified"
+freshness = "fresh"
+
+[kits.cyber-pilot-kit-frontx.resources]
+[kits.cyber-pilot-kit-frontx.resources.frontx_skill]
+path = "config/kits/cyber-pilot-kit-frontx/SKILL.md"
+kind = "skill"
+public = true
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.cyber-pilot-kit-frontx.resources.frontx_project_scaffolding]
+path = "config/kits/cyber-pilot-kit-frontx/skills/project-scaffolding/SKILL.md"
+kind = "skill"
+public = true
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.cyber-pilot-kit-frontx.resources.frontx_guidelines]
+path = "config/kits/cyber-pilot-kit-frontx/guidelines"
+kind = "directory"
+public = false
+user_modifiable = false
+
+[kits.sdlc]
+format = "CFS"
+path = "config/kits/sdlc"
+source = "github:constructorfabric/studio-kit-sdlc"
+install_mode = "copy"
+version = "v1.2.1"
+tracking = "tracked"
+
+[kits.sdlc.local_metadata]
+conf_version = "1.0.0"
+
+[kits.sdlc.resources]
+[kits.sdlc.resources.adr_template]
+path = "config/kits/sdlc/artifacts/ADR/template.md"
+kind = "template"
+public = false
+description = "ADR artifact template"
+
+[kits.sdlc.resources.adr_rules]
+path = "config/kits/sdlc/artifacts/ADR/rules.md"
+kind = "other"
+public = false
+description = "ADR validation rules"
+
+[kits.sdlc.resources.adr_checklist]
+path = "config/kits/sdlc/artifacts/ADR/checklist.md"
+kind = "checklist"
+public = false
+description = "ADR review checklist"
+
+[kits.sdlc.resources.adr_example]
+path = "config/kits/sdlc/artifacts/ADR/examples/example.md"
+kind = "other"
+public = false
+description = "ADR example artifact"
+
+[kits.sdlc.resources.decomposition_template]
+path = "config/kits/sdlc/artifacts/DECOMPOSITION/template.md"
+kind = "template"
+public = false
+description = "DECOMPOSITION artifact template"
+
+[kits.sdlc.resources.decomposition_rules]
+path = "config/kits/sdlc/artifacts/DECOMPOSITION/rules.md"
+kind = "other"
+public = false
+description = "DECOMPOSITION validation rules"
+
+[kits.sdlc.resources.decomposition_checklist]
+path = "config/kits/sdlc/artifacts/DECOMPOSITION/checklist.md"
+kind = "checklist"
+public = false
+description = "DECOMPOSITION review checklist"
+
+[kits.sdlc.resources.decomposition_example]
+path = "config/kits/sdlc/artifacts/DECOMPOSITION/examples/example.md"
+kind = "other"
+public = false
+description = "DECOMPOSITION example artifact"
+
+[kits.sdlc.resources.design_template]
+path = "config/kits/sdlc/artifacts/DESIGN/template.md"
+kind = "template"
+public = false
+description = "DESIGN artifact template"
+
+[kits.sdlc.resources.design_rules]
+path = "config/kits/sdlc/artifacts/DESIGN/rules.md"
+kind = "other"
+public = false
+description = "DESIGN validation rules"
+
+[kits.sdlc.resources.design_checklist]
+path = "config/kits/sdlc/artifacts/DESIGN/checklist.md"
+kind = "checklist"
+public = false
+description = "DESIGN review checklist"
+
+[kits.sdlc.resources.design_example]
+path = "config/kits/sdlc/artifacts/DESIGN/examples/example.md"
+kind = "other"
+public = false
+description = "DESIGN example artifact"
+
+[kits.sdlc.resources.feature_template]
+path = "config/kits/sdlc/artifacts/FEATURE/template.md"
+kind = "template"
+public = false
+description = "FEATURE artifact template"
+
+[kits.sdlc.resources.feature_rules]
+path = "config/kits/sdlc/artifacts/FEATURE/rules.md"
+kind = "other"
+public = false
+description = "FEATURE validation rules"
+
+[kits.sdlc.resources.feature_checklist]
+path = "config/kits/sdlc/artifacts/FEATURE/checklist.md"
+kind = "checklist"
+public = false
+description = "FEATURE review checklist"
+
+[kits.sdlc.resources.feature_example]
+path = "config/kits/sdlc/artifacts/FEATURE/examples/example.md"
+kind = "other"
+public = false
+description = "FEATURE example artifact"
+
+[kits.sdlc.resources.prd_template]
+path = "config/kits/sdlc/artifacts/PRD/template.md"
+kind = "template"
+public = false
+description = "PRD artifact template"
+
+[kits.sdlc.resources.prd_rules]
+path = "config/kits/sdlc/artifacts/PRD/rules.md"
+kind = "other"
+public = false
+description = "PRD validation rules"
+
+[kits.sdlc.resources.prd_checklist]
+path = "config/kits/sdlc/artifacts/PRD/checklist.md"
+kind = "checklist"
+public = false
+description = "PRD review checklist"
+
+[kits.sdlc.resources.prd_example]
+path = "config/kits/sdlc/artifacts/PRD/examples/example.md"
+kind = "other"
+public = false
+description = "PRD example artifact"
+
+[kits.sdlc.resources.pr_code_review_template]
+path = "config/kits/sdlc/artifacts/PR-CODE-REVIEW-TEMPLATE/template.md"
+kind = "template"
+public = false
+description = "PR code review report template"
+
+[kits.sdlc.resources.pr_status_report_template]
+path = "config/kits/sdlc/artifacts/PR-STATUS-REPORT-TEMPLATE/template.md"
+kind = "template"
+public = false
+description = "PR status report template"
+
+[kits.sdlc.resources.codebase_rules]
+path = "config/kits/sdlc/codebase/rules.md"
+kind = "other"
+public = false
+description = "Codebase traceability and implementation rules"
+
+[kits.sdlc.resources.codebase_checklist]
+path = "config/kits/sdlc/codebase/checklist.md"
+kind = "checklist"
+public = false
+description = "Codebase review checklist"
+
+[kits.sdlc.resources.workflow_pr_review]
+path = "config/kits/sdlc/workflows/pr-review.md"
+kind = "skill"
+public = true
+description = "PR review workflow"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_pr_status]
+path = "config/kits/sdlc/workflows/pr-status.md"
+kind = "skill"
+public = true
+description = "PR status report workflow"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_migrate_openspec]
+path = "config/kits/sdlc/workflows/migrate-openspec.md"
+kind = "skill"
+public = true
+description = "OpenSpec to Constructor Studio SDLC migration workflow"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_doc_prd]
+path = "config/kits/sdlc/workflows/doc-prd.md"
+kind = "skill"
+public = true
+description = "PRD authoring preset workflow (wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_doc_adr]
+path = "config/kits/sdlc/workflows/doc-adr.md"
+kind = "skill"
+public = true
+description = "ADR authoring preset workflow (wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_doc_design]
+path = "config/kits/sdlc/workflows/doc-design.md"
+kind = "skill"
+public = true
+description = "DESIGN authoring preset workflow (wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_decompose]
+path = "config/kits/sdlc/workflows/decompose.md"
+kind = "skill"
+public = true
+description = "DECOMPOSITION authoring preset workflow (wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_doc_feature]
+path = "config/kits/sdlc/workflows/doc-feature.md"
+kind = "skill"
+public = true
+description = "FEATURE authoring preset workflow (wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_implement]
+path = "config/kits/sdlc/workflows/implement.md"
+kind = "skill"
+public = true
+description = "CODE implementation preset workflow (wraps cf-coding)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_change_impact_analysis]
+path = "config/kits/sdlc/workflows/change-impact-analysis.md"
+kind = "skill"
+public = true
+description = "Change impact analysis workflow (Phase-1; wraps cf-analyze)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.workflow_reverse_engineer]
+path = "config/kits/sdlc/workflows/reverse-engineer.md"
+kind = "skill"
+public = true
+description = "Reverse-engineer artifacts from code workflow (Phase-1; wraps cf-write-docs)"
+origin = "legacy-workflow"
+generated_targets = ["installed"]
+user_modifiable = false
+
+[kits.sdlc.resources.change_impact_config]
+path = "config/kits/sdlc/scripts/change-impact-analysis.toml"
+kind = "script"
+public = false
+description = "Kit-owned thresholds for the change-impact-analysis workflow"
+
+[kits.sdlc.resources.scripts]
+path = "config/kits/sdlc/scripts"
+kind = "directory"
+public = false
+description = "Kit scripts and PR review prompts"
+
+[kits.sdlc.resources.constraints]
+path = "config/kits/sdlc/constraints.toml"
+kind = "constraints"
+public = false
+description = "Kit structural constraints (heading outlines, ID kinds, cross-references)"
+user_modifiable = false
+
+[kits.sdlc.resources.constraints.artifacts]
+[kits.sdlc.resources.constraints.artifacts.ADR]
+template = "adr_template"
+examples = "adr_example"
+
+[kits.sdlc.resources.constraints.artifacts.DECOMPOSITION]
+template = "decomposition_template"
+examples = "decomposition_example"
+
+[kits.sdlc.resources.constraints.artifacts.DESIGN]
+template = "design_template"
+examples = "design_example"
+
+[kits.sdlc.resources.constraints.artifacts.FEATURE]
+template = "feature_template"
+examples = "feature_example"
+
+[kits.sdlc.resources.constraints.artifacts.PRD]
+template = "prd_template"
+examples = "prd_example"
+
+[kits.sdlc.resources.agents]
+path = "config/kits/sdlc/AGENTS.md"
+kind = "rule"
+public = true
+description = "Kit AGENTS.md for agent integration entry points"
+generated_targets = ["installed"]
+user_modifiable = false

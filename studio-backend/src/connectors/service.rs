@@ -559,6 +559,26 @@ impl ConnectorService {
         Ok((c, identity))
     }
 
+    /// Resolve a connection into the driver that speaks its provider and the
+    /// credential to speak with.
+    ///
+    /// Exposed because the knowledge-graph producer ([`super::graph_sync`])
+    /// needs the same two things every other provider call needs, and the
+    /// pieces that assemble them — the catalogue lookup and the credstore
+    /// read — are private to this module for good reason.
+    #[cfg_attr(not(feature = "graph"), allow(dead_code))]
+    pub async fn driver_and_auth(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<(Arc<dyn ConnectorDriver>, ConnectionAuth, Connection)> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = Arc::clone(self.driver(&c.provider)?);
+        let auth = self.auth(ctx, &c).await?;
+        Ok((driver, auth, c))
+    }
+
     pub async fn repositories(
         &self,
         ctx: &SecurityContext,

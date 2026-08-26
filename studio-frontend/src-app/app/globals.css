@@ -1,0 +1,220 @@
+/* Font files ship in the bundle, not from a CDN: the portal is offline-capable
+ * by design (runtime /env.js, one image per environment). ui-kit declares the
+ * family via --font-sans but deliberately ships no files — loading them is the
+ * consuming app's build concern, which is this line.
+ *
+ * The variable face covers weights 100-900 in one import — no per-weight
+ * bookkeeping — but registers the family as **'Inter Variable'**, not 'Inter'.
+ * Every --font-sans stack must therefore name 'Inter Variable' first, in the
+ * shell themes AND inside each MFE (ui-kit's own token says 'Inter', and there
+ * is no @font-face under that name any more). Miss one and that surface falls
+ * back to system-ui with nothing in the console. */
+@import '@fontsource-variable/inter';
+
+/* The mono face, and the *static* package on purpose — it registers the family
+ * as 'JetBrains Mono', which is exactly the name ui-kit's `--font-mono` already
+ * says. So this line is the whole job: no token to restate, in the themes or in
+ * any MFE. The `-variable` package would register 'JetBrains Mono Variable' and
+ * drag the Inter rename dance into thirteen more places for a variable weight
+ * the design does not use.
+ *
+ * One weight, 400 — the design's `System Micro` role is JetBrains Mono Regular
+ * and nothing else asks for mono. The root `400.css` (not `latin-400.css`)
+ * declares six @font-face rules with `unicode-range`, so the browser downloads
+ * only the subsets actually on screen: 21 KB for a latin UI, cyrillic added
+ * only once cyrillic text appears. Picking the latin file alone would render
+ * translated labels in two different mono faces at once.
+ *
+ * @font-face is document-scoped and DOES reach into every shadow root, which is
+ * why no MFE imports a font of its own. Only the variable would not cross — and
+ * here it does not have to. */
+@import '@fontsource/jetbrains-mono/400.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Theme CSS variables — a snapshot of the DEFAULT theme (app/themes/default.ts),
+ * which themeRegistry.apply() then sets for real.
+ *
+ * main.tsx applies the default theme before the first render, so these values
+ * are not currently observable — which is how they drifted into a different
+ * palette (untouched shadcn greyscale, monochrome primary) without anyone
+ * noticing. They are kept in step with default.ts so that reading this file
+ * tells the truth about the product's colours, and so a change in boot order
+ * cannot silently repaint the app. Every token here must exist in default.ts
+ * with the same value; the menu, spacing, shadow and chart tokens live only in
+ * the themes.
+ *
+ * Values are WHOLE colours, not the bare HSL triplets shadcn's older
+ * convention used, so that ui-kit components reading `var(--popover)` directly
+ * resolve a colour. See docs/adr/0007.
+ */
+
+@layer base {
+  :root {
+    --background: hsl(210 40% 98%);
+    --foreground: hsl(222.2 47.4% 11.2%);
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(222.2 47.4% 11.2%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(222.2 47.4% 11.2%);
+    --primary: hsl(258 74.1% 62.2%);
+    --primary-foreground: hsl(0 0% 100%);
+    --secondary: hsl(210 40% 96.1%);
+    --secondary-foreground: hsl(222.2 47.4% 11.2%);
+    --muted: hsl(210 40% 96.1%);
+    --muted-foreground: hsl(215.4 16.3% 46.9%);
+    --accent: hsl(268.7 100% 95.5%);
+    --accent-foreground: hsl(263.4 70% 50.4%);
+    --destructive: hsl(346.8 77.2% 49.8%);
+    --destructive-foreground: hsl(0 0% 100%);
+    --border: hsl(214.3 31.8% 91.4%);
+    --input: hsl(212.7 26.8% 83.9%);
+    --ring: hsl(258.3 89.5% 66.3%);
+    --error: hsl(346.8 77.2% 49.8%);
+    --warning: hsl(32.1 94.6% 43.7%);
+    --success: hsl(161.4 93.5% 30.4%);
+    --info: hsl(200.4 98% 39.4%);
+    /* Avatar palette — see app/themes/default.ts. */
+    --avatar-yellow: hsl(31.3 100% 35.7%);
+    --avatar-orange: hsl(17.1 100% 42%);
+    --avatar-blue: hsl(219.1 66.5% 54.3%);
+    --avatar-mint: hsl(160.2 59.5% 32.9%);
+    --avatar-brown: hsl(21 32.8% 46.1%);
+    --avatar-grey: hsl(60 0.5% 40.6%);
+    --avatar-pink: hsl(339 74.1% 51.6%);
+    --avatar-turquoise: hsl(187.3 59.8% 35.1%);
+    --avatar-purple: hsl(278.9 100% 57.6%);
+    --avatar-magenta: hsl(259 66.5% 54.3%);
+    --avatar-red: hsl(347.1 92.7% 43.1%);
+    --avatar-green: hsl(116.6 47.5% 35.9%);
+    --avatar-foreground: hsl(0 0% 100%);
+    --radius-sm: 0.125rem;
+    --radius-md: 0.25rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 1rem;
+    /* Typography half of the same snapshot. Names and values match ui-kit's
+     * --font-sans and its Body / Heading 1 / Label roles. */
+    --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --text-body-size: 0.9375rem;
+    --text-body-line-height: 1.25rem;
+    --text-heading-1-size: 1.25rem;
+    --text-heading-1-line-height: 1.75rem;
+    --text-label-size: 0.8125rem;
+    --text-label-line-height: 1rem;
+  }
+}
+
+/* Tokens @gears-frontx/ui-kit components read that the shell's own themes do not
+ * declare. A kit component's CSS writes `var(--space-2)` / `var(--popover-shadow)`
+ * directly; without these it renders functional but unpainted — invalid
+ * declarations are dropped, so the popup would come out transparent and
+ * borderless.
+ *
+ * Deliberately NOT `@import '@gears-frontx/ui-kit/theme.css'`: that file also
+ * redeclares the whole palette AND paints `body`, and its
+ * `:root:not([data-theme='light'])` rule under @media (prefers-color-scheme: dark)
+ * outranks the plain `:root` that themeRegistry.apply() writes — an OS in dark
+ * mode would repaint the shell in the kit's dark palette. So the shell takes only
+ * the names it is missing, with the kit's own values.
+ *
+ * These are theme-invariant, hence one block rather than an entry per theme.
+ * The two popover tokens derive from --foreground, so they follow the active
+ * theme on their own — exactly as they do in the kit. Keep this list in step with
+ * what the kit components in use actually read; see docs/adr/0007.
+ */
+@layer base {
+  :root {
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-8: 2rem;
+    --border-width: 1px;
+    --icon-size-sm: 1rem;
+    --text-meta-size: 0.75rem;
+    --text-meta-line-height: 1rem;
+    --text-meta-weight: 400;
+    --text-meta-tracking: 0;
+    --text-label-weight: 500;
+    --popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --popover-shadow:
+      0 4px 6px -1px var(--popover-border),
+      0 2px 4px -2px var(--popover-border);
+
+    /* Added for the kit's Button (top-bar controls). Sizes and metrics are
+     * theme-invariant and carry the kit's own values; the colour-ish ones are
+     * mapped onto tokens the shell already themes, rather than frozen at the
+     * kit's light-mode hex — otherwise they would stay light under dark and
+     * dracula. */
+    --control-height-sm: 2rem;
+    --control-height-md: 2.25rem;
+    --control-height-lg: 2.5rem;
+    --border-width-focus: 2px;
+    --icon-size-md: 1.25rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --text-label-tracking: 0.1px;
+    --border-strong: var(--input);
+    --surface-elevated: var(--card);
+    --link-foreground: var(--primary);
+    --primary-ring: var(--ring);
+    --destructive-ring: var(--destructive);
+    /* The kit's own value is a deeper shade of primary; derived so it tracks
+     * whatever primary the active theme sets. */
+    --primary-hover: color-mix(in oklab, var(--primary) 88%, black);
+    --button-focus-ring: var(--ring);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply overflow-hidden;
+  }
+  body {
+    @apply bg-background text-foreground font-sans overflow-hidden m-0;
+  }
+  #root {
+    @apply h-screen w-screen;
+  }
+}
+
+/* Sonner toast styles */
+[data-sonner-toaster] [data-sonner-toast] {
+  --normal-bg: hsl(var(--popover));
+  --normal-text: hsl(var(--popover-foreground));
+  --normal-border: hsl(var(--border));
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-button] {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 500;
+  font-size: 0.875rem;
+  height: 2rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  border-radius: calc(var(--radius-lg) - 2px);
+  transition: background-color 0.2s;
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-button]:hover {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-cancel] {
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-cancel]:hover {
+  background-color: hsl(var(--muted) / 0.8);
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-description] {
+  color: hsl(var(--muted-foreground));
+}

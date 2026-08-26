@@ -1,0 +1,56 @@
+# Constructor Studio artifacts registry
+
+# The 1129 `@cpt-frontx-*` markers in this repository arrived with the FrontX
+# codebase; the artifacts they name (`cpt-frontx-algo-*`, `-flow-*`, `-dod-*`)
+# live in constructorfabric/gears-frontx and are not vendored here. Validating
+# them locally would report every one of them as dangling and drown the signal
+# from artifacts this repository actually owns.
+#
+# Ignored, not deleted: the markers are correct where they came from, and if
+# gears-frontx is ever added as a workspace source this block is what comes out.
+[[ignore]]
+reason = "FrontX-owned markers; their artifacts live in constructorfabric/gears-frontx, not here"
+patterns = [
+  "packages/**",
+  "scripts/**",
+  "vitest.setup.ts",
+  "vitest.shared.ts",
+  "__tests__/**",
+  "src/**",
+  # Copied verbatim from the _blank-mfe template into every MFE.
+  "src-app/mfe_packages/*/vite.config.ts",
+  "src-app/mfe_packages/*/vitest.config.ts",
+  "src-app/mfe_packages/*/src/init.ts",
+]
+
+[[systems]]
+name = "StudioFrontend"
+slug = "studiofrontend"
+kit = "sdlc"
+children = []
+# Only the projects MFE is in scope. The rest of the repository carries FrontX
+# markers whose artifacts live elsewhere (see the ignore block above), so
+# widening this would measure coverage against specs this repository does not own.
+codebase = [
+  { path = "src-app/mfe_packages/projects-mfe/src", extensions = [".ts", ".tsx"] },
+]
+
+# Artifacts this repository owns live under docs/sdlc/. Deliberately narrow:
+# only FEATURE is registered, and only the projects MFE's code is in scope.
+#
+# `docs/adr/` is NOT registered on purpose. Those five ADRs (and ADR-0010) use
+# the repository's own lightweight format — `## Context` / `## Decision` /
+# `## Consequences` — while the sdlc kit's ADR constraints require the MADR
+# outline (`Context and Problem Statement`, `Decision Drivers`, `Considered
+# Options`, …). Registering them would fail every existing ADR against a
+# convention the repository never adopted. They stay readable by
+# `cfs where-used` regardless: each carries its own `**ID**: cpt-…` line.
+[[systems.autodetect]]
+kit = "sdlc"
+system_root = "{project_root}"
+artifacts_root = "docs/sdlc"
+
+[systems.autodetect.artifacts.FEATURE]
+pattern = "FEATURE/*.md"
+traceability = "FULL"
+required = false

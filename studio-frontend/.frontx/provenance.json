@@ -1,0 +1,14 @@
+[
+  {
+    "templateIdentity": "@gears-frontx/frontx-template-shell",
+    "scaffoldedFromVersion": "0.1.0-alpha.2",
+    "sourceSpec": "github:constructorfabric/gears-frontx//template-shell@develop",
+    "occupiedOwnershipBoundary": "."
+  },
+  {
+    "templateIdentity": "@gears-frontx/frontx-template-mfe",
+    "scaffoldedFromVersion": "0.1.0-alpha.0",
+    "sourceSpec": "github:constructorfabric/gears-frontx//template-mfe@develop",
+    "occupiedOwnershipBoundary": "."
+  }
+]

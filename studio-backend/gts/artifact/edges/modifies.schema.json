@@ -1,0 +1,13 @@
+{
+  "$id": "gts://gts.cf.studio.rel.modifies.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "rel:modifies",
+  "description": "Typed edge (modifies); the relation is the GTS type, endpoints are instance ids.",
+  "type": "object",
+  "properties": {
+    "from": { "type": "string", "description": "source instance id" },
+    "to":   { "type": "string", "description": "target instance id" }
+  },
+  "required": ["from", "to"],
+  "additionalProperties": false
+}

@@ -1,0 +1,366 @@
+/*
+ * Sizes and colours come from ui-kit tokens (theme.css) and its text roles —
+ * never px off the mockup. The two literals are the table's column widths,
+ * which no token can express.
+ */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  min-height: 100%;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line-height);
+  font-weight: var(--text-display-weight);
+  letter-spacing: var(--text-display-tracking);
+}
+
+.titleSkeleton {
+  width: 8rem;
+  height: var(--text-display-line-height);
+}
+
+/*
+ * The kit's Input has no size variant — its height is fixed at
+ * --control-height-lg — so the toolbar's 32px row is set here, to match
+ * Button/SelectTrigger at size="sm".
+ */
+.search {
+  width: 13rem;
+  height: var(--control-height-sm);
+  border-radius: var(--radius-sm);
+}
+
+.sort {
+  /* Label plus the longest value; below this the trigger clips its own text. */
+  min-width: 12rem;
+}
+
+.sortPrefix {
+  color: var(--muted-foreground);
+}
+
+.card {
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  /*
+   * Matches the fill the kit's body rows paint themselves
+   * (`--table-row-fill`, default `--surface-elevated`) rather than `--card`.
+   * The two are the same white in light and differ in dark, which would show
+   * as a seam wherever a row does not cover the card — the empty state, the
+   * skeleton, the footer.
+   */
+  background: var(--surface-elevated);
+  color: var(--card-foreground);
+  overflow: hidden;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Re-shaping the kit's Table
+ * ---------------------------------------------------------------------------
+ * The kit draws every row as a detached card: `border-spacing: 0 var(--space-2)`
+ * on the table, a full ring per row, and radii on the first and last cell. The
+ * mockup's Projects Portfolio is the opposite — one card, rows flush, a single
+ * hairline between them.
+ *
+ * What the kit exposes as variables is colour and state, not geometry:
+ * `--table-row-ring`, `--table-row-ring-inset`, `--table-row-fill`, the
+ * `data-state` row flags, and the `density` prop. So the colours below stay on
+ * those (the rule is still `--table-row-ring`, the fill still
+ * `--table-row-fill`, hover still comes free) and only the geometry is
+ * overridden — four declarations, all of them here.
+ *
+ * This is NOT a gap the kit forgot to fill. Its own docs (ui-kit
+ * `dist/docs/table.md`) state the carded row is deliberate: "the card shape is
+ * the primitive itself, not a composition layered on top of these hooks ...
+ * they don't turn carding on", and it calls that carded row "the Studio Data
+ * Table's" row — while the Figma node named `Tables / Data Table / Studio ·
+ * Projects Portfolio` (40001565:8371) draws the flush shape below. The kit and
+ * the design file disagree about the same named component, so resolving it is
+ * a conversation with the owners of both, not a `variant` to be added
+ * unilaterally. Until then this block is the local answer; it comes out in one
+ * edit if the kit grows the variant.
+ *
+ * TODO: move this into the kit. A flush single-card table is a design-system
+ * shape, not a projects concern, and every screen that draws one will otherwise
+ * copy these declarations — the second copy is the point at which they start
+ * drifting. Delete this whole block once the kit takes it.
+ */
+.table {
+  width: 100%;
+}
+
+.table.table {
+  border-spacing: 0;
+}
+
+/*
+ * The ring belongs to the card now. Each row keeps only the border beneath it,
+ * still painted in `--table-row-ring`, so a `data-state` row still recolours
+ * its own rule. `box-shadow` is left alone on purpose: it is how the kit draws
+ * the selected-row inset ring, and it renders nothing while
+ * `--table-row-ring-inset` is 0.
+ */
+.table.table tr > :is(th, td) {
+  border-block-start: 0;
+  border-inline: 0;
+  border-radius: 0;
+}
+
+/* The card's own border already draws this edge. */
+.table.table tbody tr:last-child > :is(th, td) {
+  border-block-end: 0;
+}
+
+/* Two text lines plus breathing room — the mockup's row rhythm. */
+.table.table tbody tr > td {
+  padding-block: var(--space-4);
+}
+
+/*
+ * The mockup's column dividers: a short rule between header cells, not a full
+ * cell border. `th + th` gives one before every column but the first, which is
+ * exactly where the mockup puts them.
+ */
+.table.table thead th + th {
+  position: relative;
+}
+
+.table.table thead th + th::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  inline-size: var(--border-width);
+  block-size: var(--icon-size-sm);
+  background: var(--border);
+}
+
+/*
+ * Column headers are the mockup's System Micro role: mono, uppercase, muted.
+ * That is what separates the header band from the rows without a second
+ * background colour.
+ */
+.table th {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: var(--text-mono-line-height);
+  font-weight: var(--text-mono-weight);
+  letter-spacing: var(--text-mono-tracking);
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.headLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.sortSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-size-sm, 1rem);
+  height: var(--icon-size-sm, 1rem);
+  flex: none;
+  color: var(--foreground);
+  transition: transform 120ms ease;
+}
+
+.sortSlot[data-direction='asc'] {
+  transform: rotate(180deg);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.colProject {
+  text-align: start;
+}
+
+.colStatus,
+.colIssues,
+.colMovement,
+.colOwner {
+  text-align: start;
+  white-space: nowrap;
+}
+
+.colUpdated {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.nameButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  /* One indent step per tree level; the level comes in as --row-level. */
+  padding-inline-start: calc(var(--row-level, 0) * var(--space-5));
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.nameButton:disabled {
+  cursor: default;
+}
+
+.pending {
+  display: block;
+  padding-inline-start: calc(var(--row-level, 0) * var(--space-5));
+}
+
+.pendingSkeleton {
+  height: var(--text-body-line-height, 1.25rem);
+  width: 40%;
+}
+
+.chevron {
+  display: inline-flex;
+  color: var(--muted-foreground);
+}
+
+/* A leaf keeps the slot so names stay aligned with their siblings. */
+.chevron[data-expandable='false'] {
+  visibility: hidden;
+}
+
+.chevron[data-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+.nameButton:hover .name {
+  color: var(--link-foreground);
+}
+
+.nameButton:focus-visible {
+  outline: var(--border-width-focus) solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.rowGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+.rowGlyph svg {
+  inline-size: var(--icon-size-md);
+  block-size: var(--icon-size-md);
+}
+
+.nameText {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: calc(var(--text-body-line-height) + 2px + var(--text-meta-line-height));
+}
+
+.name {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+}
+
+.subtitle,
+.updated,
+.noData {
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+}
+
+.subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28rem;
+}
+
+.owner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ownerName {
+  font-size: var(--text-label-size);
+  line-height: var(--text-label-line-height);
+}
+
+.rowsSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.rowSkeleton {
+  height: var(--space-6);
+}
+
+.state {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.stateTitle {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+}
+
+.stateHint {
+  margin: 0;
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+}
+
+.footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+}

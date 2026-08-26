@@ -1,0 +1,22 @@
+{
+  "$id": "gts://gts.cf.studio.artifact.issue.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Issue",
+  "description": "An issue pulled from the connector API.",
+  "type": "object",
+  "properties": {
+    "repo": { "type": "string" },
+    "external_id": { "type": "string", "description": "Provider-native id, stringified." },
+    "number": { "type": "integer" },
+    "title": { "type": "string" },
+    "state": { "type": "string", "enum": ["open", "closed"] },
+    "author": { "type": ["string", "null"] },
+    "body": { "type": ["string", "null"] },
+    "url": { "type": ["string", "null"] },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": ["string", "null"], "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "required": ["repo", "external_id", "number", "title", "state"],
+  "additionalProperties": false
+}

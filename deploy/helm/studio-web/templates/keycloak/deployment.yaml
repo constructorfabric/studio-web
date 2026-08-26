@@ -1,0 +1,98 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  replicas: {{ .Values.keycloak.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: keycloak
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak
+    spec:
+      serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: {{- include "studio-web.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: keycloak
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ required "keycloak.image.tag is required when keycloak is enabled" .Values.keycloak.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          # The custom image is built for /auth and contains no realm. The
+          # environment-specific Secret mounted below is imported on first boot.
+          args: ["start", "--optimized", "--import-realm"]
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }
+          env:
+            - { name: KC_DB, value: "postgres" }
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            - { name: KC_METRICS_ENABLED, value: "true" }
+            - { name: KC_VAULT, value: "file" }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_PROXY_HEADERS, value: "xforwarded" }
+            - { name: KC_HOSTNAME, value: {{ printf "https://%s%s" .Values.keycloak.hostname .Values.keycloak.relativePath | quote }} }
+            - { name: KC_HTTP_RELATIVE_PATH, value: {{ .Values.keycloak.relativePath | quote }} }
+            - { name: KC_HTTP_MANAGEMENT_RELATIVE_PATH, value: "/" }
+            - { name: KC_HTTP_MANAGEMENT_SCHEME, value: "http" }
+            - { name: KC_CACHE, value: "ispn" }
+            - { name: KC_CACHE_STACK, value: "jdbc-ping" }
+            - name: KC_DB_URL_HOST
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: {{ .Values.keycloak.db.keys.host }} } }
+            - name: KC_DB_URL_PORT
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: {{ .Values.keycloak.db.keys.port }} } }
+            - name: KC_DB_URL_DATABASE
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: {{ .Values.keycloak.db.keys.database }} } }
+            - name: KC_DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: {{ .Values.keycloak.db.keys.username }} } }
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.db.existingSecret }}, key: {{ .Values.keycloak.db.keys.password }} } }
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: username } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: password } }
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 20
+          resources: {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import/realm-studio.json
+              subPath: realm-studio.json
+              readOnly: true
+            - name: vault
+              mountPath: /opt/keycloak/data/vault
+              readOnly: true
+      volumes:
+        - name: realm
+          secret:
+            secretName: {{ .Values.keycloak.realmSecret }}
+        - name: vault
+          secret:
+            secretName: {{ .Values.keycloak.vaultSecret }}
+            optional: true
+{{- end }}

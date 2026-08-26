@@ -1,0 +1,56 @@
+/*
+ * Placeholder screen styles over ui-kit semantic tokens (see theme.css in
+ * @gears-frontx/ui-kit). No Tailwind here: inside the shadow root the
+ * re-anchored kit tokens shadow the shell's HSL triplets, so Tailwind color
+ * utilities would silently resolve to hsl(<hex>) and drop.
+ *
+ * The skeleton silhouette literals are the stated exception — the kit ships
+ * no skeleton dimensions.
+ */
+
+.screen {
+  /* The document registers Inter under the family name 'Inter Variable'
+   * (@fontsource-variable). ui-kit's own --font-sans says 'Inter', which no
+   * longer matches any @font-face — so restate the token here, or this screen
+   * silently falls back to system-ui. See globals.css in the shell. */
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* This MFE opens in the shell's overlay frame, and that frame shrink-wraps
+   * its content — so the footprint is stated here, by the thing that knows what
+   * it draws, not by the shell. The shell only clamps it to the viewport. */
+  width: 40rem;
+  height: 32.5rem;
+  padding: 2rem;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.title {
+  margin: 0 0 1rem;
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 700;
+}
+
+.description {
+  margin: 0 0 1.5rem;
+  color: var(--muted-foreground);
+}
+
+.note {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.skeletonTitle {
+  height: 2rem;
+  width: 16rem;
+  margin-bottom: 1rem;
+}
+
+.skeletonLine {
+  height: 1rem;
+  width: 24rem;
+  max-width: 100%;
+}

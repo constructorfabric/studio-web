@@ -29,29 +29,6 @@
       ]
     },
     {
-      "username": "demo",
-      "enabled": true,
-      "email": "demo@studio.local",
-      "emailVerified": true,
-      "firstName": "Demo",
-      "lastName": "User",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "change-me-on-first-login",
-          "temporary": true
-        }
-      ],
-      "attributes": {
-        "tenant_id": [
-          "00000000-0000-0000-0000-000000000001"
-        ]
-      },
-      "requiredActions": [
-        "UPDATE_PASSWORD"
-      ]
-    },
-    {
       "username": "service-account-studio-admin",
       "enabled": true,
       "serviceAccountClientId": "studio-admin",

@@ -1,0 +1,24 @@
+{
+  "$id": "gts://gts.cf.studio.artifact.pull_request.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PullRequest",
+  "description": "A pull/merge request pulled from the connector API.",
+  "type": "object",
+  "properties": {
+    "repo": { "type": "string" },
+    "external_id": { "type": "string" },
+    "number": { "type": "integer" },
+    "title": { "type": "string" },
+    "state": { "type": "string", "enum": ["open", "closed", "merged"] },
+    "author": { "type": ["string", "null"] },
+    "body": { "type": ["string", "null"] },
+    "url": { "type": ["string", "null"] },
+    "source_branch": { "type": ["string", "null"] },
+    "target_branch": { "type": ["string", "null"] },
+    "merged": { "type": "boolean" },
+    "created_at": { "type": ["string", "null"], "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "required": ["repo", "external_id", "number", "title", "state"],
+  "additionalProperties": false
+}

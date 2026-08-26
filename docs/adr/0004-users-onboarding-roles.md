@@ -49,7 +49,8 @@ static allow-all; the Studio PDP is a parked milestone.
   without `tenant_id`; approval assigns the tenant), SMTP invite mails,
   `update_user`.
 - **P3:** Role Grants + Studio PDP (authz plugin replacing allow-all),
-  Teams as grantees (RG user-group containers).
+  layered over the tenant model (roles narrow within tenant isolation, never
+  across it — ADR-0009), Teams as grantees (RG user-group containers).
 
 ## Consequences
 

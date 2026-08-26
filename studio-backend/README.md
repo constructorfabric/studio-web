@@ -11,7 +11,7 @@ The Constructor Studio backend service, assembled from [CF/Gears](https://github
 | Entry | api-gateway (port 8090, prefix `/cf`, per-request auth, OpenAPI UI at `/cf/docs`) |
 | Auth (dev stubs) | authn-resolver + **static-authn** (bearer tokens + mini-chat S2S), authz-resolver + **static-authz** (permissive PDP) |
 | Platform | grpc-hub, gear-orchestrator, nodes-registry, types-registry (GTS), tenant-resolver |
-| Domain | **account-management** (tenants, users, conversions, metadata) + its co-located TR plugin + **static-idp** (echo IdP), resource-group (group hierarchies, memberships) |
+| Domain | **account-management** (tenants, users, conversions, metadata) + its co-located TR plugin + IdP plugins (**keycloak-idp** for real Keycloak provisioning in docker/oidc/k8s; **static-idp** echo for the Keycloak-less dev/postgres profiles), resource-group (group hierarchies, memberships) |
 | Features | **mini-chat** (workspace AI chat, SSE) + static model-policy plugin, **oagw** (LLM egress) + **credstore** + static secrets plugin, **simple-user-settings** (per-user theme/language), **file-storage** |
 
 Ask AI needs a real provider key: put your OpenAI API key into
@@ -19,7 +19,7 @@ Ask AI needs a real provider key: put your OpenAI API key into
 `sk-REPLACE_ME`). Without it, chats are created but streamed replies fail at the
 provider with 401.
 
-Production swaps are config + two imports: static-authn → OIDC plugin, static-authz → a Studio PDP plugin (workspace-level roles), static-idp → a real IdP plugin, SQLite → Postgres.
+Production swaps are config + imports: static-authn → OIDC plugin, static-authz → a Studio PDP plugin (workspace-level roles), SQLite → Postgres. The IdP swap is already done — the official `cf-gears-keycloak-idp-plugin` is the active IdP in the docker/oidc/k8s profiles (static-idp echo remains only for the Keycloak-less dev/postgres profiles).
 
 ## API surface (47 operations; live contract at `/cf/docs`)
 

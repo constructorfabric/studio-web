@@ -5,7 +5,8 @@ Constructor Studio web server — backend, frontend, installer.
 | Project | What | Stack |
 |---|---|---|
 | [`studio-backend/`](studio-backend/) | Studio API service assembled from [CF/Gears](https://github.com/constructorfabric/gears-rust): multi-tenancy, users, groups. REST + OpenAPI at `/cf/docs`. | Rust (axum/tokio/sea-orm via gears) |
-| [`studio-frontend/`](studio-frontend/) | Walking-skeleton SPA: token → `/me` → tenant list through the gateway. | Vite + React 19 + TS, vitest |
+| [`studio-frontend/`](studio-frontend/) | Portal UI on FrontX (shell + microfrontends, ADR-0006) — what CI/release build, compose serves and k8s deploys. | React 19 + TS via FrontX templates |
+| [`studio-frontend-prototype/`](studio-frontend-prototype/) | The pre-FrontX portal SPA, kept as a playground; ships as its own image (`studio-frontend-prototype`) and runs with the compose stack on port 8081. Tested/built at release time, not in CI. | Vite + React 19 + TS, vitest |
 
 ## Quick start
 
@@ -17,9 +18,23 @@ docker compose up --build -d
 # API/docs: http://localhost:8090/cf/docs
 ```
 
-Requires Docker (Desktop with WSL integration is fine) and a `gears-rust` checkout as a
-sibling of this repo. The first build compiles the whole gears workspace — grab a
-coffee; rebuilds are cached. Stop with `docker compose down` (add `-v` to wipe data).
+Requires Docker (Desktop with WSL integration is fine). `gears-rust` is a git dependency
+pinned in `Cargo.toml`, so cargo fetches it during the image build — no sibling checkout
+is needed. The first build compiles the whole gears workspace — grab a coffee; rebuilds
+are cached. Stop with `docker compose down` (add `-v` to wipe data).
+
+**Fresh / empty database — handled automatically.** On a brand-new Postgres volume the
+LLM chain's `oagw` gear would otherwise abort boot: it resolves the platform root tenant
+in its `post_init`, but account-management only seeds that root later, in its serve
+phase. A plain `docker compose up` now closes this chicken-and-egg by itself — a one-shot
+`backend-bootstrap` service (built `--no-default-features`, so no `oagw`) starts first,
+reaches serve, seeds and realm-binds the root, then exits. The main backend is gated on
+that seeder finishing (`service_completed_successfully`), so it only starts against an
+already-seeded database. On a warm volume the seeder is a fast no-op and leaves nothing
+running — the same `docker compose up` works cold or warm.
+
+**Prototype playground:** the pre-FrontX SPA comes up with the stack automatically —
+http://localhost:8081 (own image, same backend, same `/cf/` proxy).
 
 **Daily dev (fast iteration):** infra in Docker, backend on the host (WSL), frontend via Vite:
 
@@ -111,6 +126,26 @@ through `http_client.custom_ca_certificate_paths`) and maps claims into the
 platform SecurityContext. mini-chat's background S2S goes through the same
 realm (`s2s_oauth`, confidential client `mini-chat`).
 
+### User provisioning (official Keycloak IdP plugin)
+
+Inviting a user in the portal creates a real Keycloak user, not a local stub. Account-
+management drives this through the official `cf-gears-keycloak-idp-plugin` (it replaced
+the in-crate plugin): every tenant is bound to a Keycloak realm, and user operations
+(invite, list) run against that realm.
+
+All Studio tenants share one realm, `studio`. The binding is seeded once, at bootstrap —
+`account-management.bootstrap.root_tenant_metadata: { realm_name: "studio" }` binds the
+platform root, and every descendant (organization → workspace → project) inherits
+`studio` through its parent context. There is nothing per-tenant to configure, and no
+`idp_provisioning` flag is needed: account-management provisions every tenant with its
+IdP plugin regardless.
+
+Because the binding is written at bootstrap, it exists only on tenants created after it
+was configured — turning it on requires a fresh database (`docker compose down -v`). The
+`studio-admin` confidential client in `docker/keycloak/realm-studio.json` already carries
+the `realm-management` roles the plugin needs, so `docker compose up` wires everything
+with no manual Keycloak steps. Full swap notes: `studio-backend/docs/keycloak-idp-migration.md`.
+
 ### Cloning from a self-hosted GitLab (or GitHub Enterprise)
 
 The GitHub/GitLab chips compose `github.com` / `gitlab.com` URLs. For a
@@ -154,18 +189,29 @@ stays untouched.
 
 ## CI/CD (GitHub Actions)
 
-- **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private. DCO is enforced — commit with `-s`.
-- **`release.yml`** — on tag `v*`: release binary + frontend dist → GitHub Release; Docker images → `ghcr.io/constructorfabric/studio-web/studio-{backend,frontend}`; then a `deploy` job gated by the `production` environment.
-- **Theia IDE image** — built from `theia/` by `release.yml`'s `images` job, on the same tags as the other two: `edge` + `sha-<short>` on main pushes, `vX.Y.Z` + `latest` on `v*` tags. It used to ship from `fabric-poc` on its own `theia-v*` scheme; it moved here in `b51b18d` so one tag describes the whole stack (ADR-0003, amendment).
+- **`ci.yml` / Test** — on push/PR, path-filtered: backend (fmt,
+  clippy `-D warnings`, locked build, tests, and `--list-gears` smoke) and
+  frontend (`studio-frontend/`: build and tests).
+- **`release.yml` / Build Images** — service tags `v*` publish backend,
+  frontend, prototype, and Theia images; infrastructure tags `infra-v*`
+  publish graph PostgreSQL and Keycloak images. Every publication requires Test
+  success for the exact commit.
+- **`deploy.yml` / Deploy Services** — manually deploys backend, frontend, or
+  both. Branch snapshots are dev-only; `v*` releases may target any configured
+  application environment.
+- **`deploy-infra.yml` / Deploy Infra** — manually reconciles graph PostgreSQL
+  and Keycloak from a published `infra-v*` release.
 
-Release: `git tag v0.1.0 && git push origin v0.1.0`.
+Service release: `git tag v0.1.0 && git push origin v0.1.0`.
+
+Infrastructure release: `git tag infra-v0.1.0 && git push origin infra-v0.1.0`.
 
 ## Deploying to Kubernetes
 
-Chart in `deploy/helm/studio-web` (rendered/linted against the dmz values),
-environment values + pipeline in GitLab `constructorfabric/studio-web-ci`
-(Pattern B: clone the mirror → Trivy → mirror images to Harbor → helm).
-The Secret contract and prerequisites live in
-`deploy/helm/values-dmz.example.yaml` and `deploy/README.md`. Cluster v1
+The current compatibility chart is in `deploy/helm/studio-web`. Environment
+values and GitHub Actions deployment workflows live in this repository; there
+is no GitLab or Argo CD deployment dependency. The pipeline contract, Secret
+contract, and prerequisites live in `deploy/PIPELINES.md`,
+`deploy/helm/values-dmz.example.yaml`, and `deploy/README.md`. Cluster v1
 runs with IDE sessions disabled (`studio-session.enabled=false` in
 `config/k8s.yaml`) until the per-session Pod driver lands (ADR-0003).

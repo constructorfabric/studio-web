@@ -30,15 +30,24 @@ export interface Page<T> {
 export const TENANT_TYPES = {
   organization: "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~",
   workspace: "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~",
+  /** A project is now its own AM tenant, child of a workspace — its codebase
+   *  context (sources, IDE, artifacts, spec-quality) is tenant-scoped on it. */
+  project: "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~",
 } as const;
 
-// Project MEMBERSHIP is Resource Group-backed: an RG group of this type, bound
-// to a workspace via metadata.workspace_id. The project RECORD moved out of RG
-// into the studio-project gear (ADR-0005) — see the `project` client below.
-// The gear registers this type itself at start, so setup-projects.sh is only
-// needed against a backend that predates it.
-export const PROJECT_RG_TYPE = "gts.cf.core.rg.type.v1~cf.studio.project.v1~";
-export const USER_MEMBER_HANDLE = "gts.cf.core.rg.type.v1~cf.core.am.user.v1~";
+/** Project attributes stored as tenant metadata on the project tenant. */
+export const PROJECT_CONFIG_TYPE =
+  "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
+
+/** The project attributes carried in PROJECT_CONFIG_TYPE metadata. */
+export interface ProjectConfig {
+  mode?: ProjectMode;
+  stages?: string[];
+  status?: ProjectStatus;
+  /** Seed source: a git url, a brief, or an uploaded file id. */
+  source_git_url?: string;
+  brief?: string;
+}
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
 export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
@@ -46,60 +55,36 @@ export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.wor
 // mechanism as workspace settings (schema seeded by the backend config).
 export const ACCESS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
 
-/** One journey stage from `GET /studio-project/v1/stages`.
- *  Fetched rather than hardcoded: the gear validates against this catalogue,
- *  and a client-side copy that drifts shows up as a checkbox that does nothing. */
-export interface Stage {
-  key: string;
-  label: string;
-  /** Always applied — render it ticked and disabled. */
-  required: boolean;
-}
-
 /** The two creation shapes. A greenfield project has no source to import; a
- *  modernization has exactly one. The backend rejects any other combination. */
+ *  modernization has exactly one. Carried in a project's config metadata. */
 export type ProjectMode = "greenfield" | "modernize";
 
 /** Forward-only: draft -> active -> archived, and archived is terminal. */
 export type ProjectStatus = "draft" | "active" | "archived";
 
-export interface Project {
-  id: string;
-  workspace_id: string;
-  name: string;
-  mode: ProjectMode;
-  status: ProjectStatus;
-  stages: string[];
-  /** Greenfield only. */
-  brief?: string | null;
-  /** Modernize via repository. */
-  git_url?: string | null;
-  /** Modernize via an archive already in file-storage. */
-  file_id?: string | null;
-  members_group_id?: string | null;
-  /** `false` when the project has no RG member group — explain the missing
-   *  member list rather than rendering an empty one. */
-  members_available: boolean;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
+/** The status ladder in order — used to enforce forward-only transitions in
+ *  the UI now that the studio-project gear no longer guards them server-side. */
+export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
 
-export interface NewProjectInput {
-  name: string;
-  mode: ProjectMode;
-  /** Required stages are added by the backend whether or not they are sent. */
-  stages: string[];
-  /** Greenfield: the idea, pasted PRD or notes. */
-  brief?: string;
-  /** Modernize: mutually exclusive with file_id. */
-  git_url?: string;
-  /** Modernize: mutually exclusive with git_url. NB uploads need the
-   *  file-storage data-plane sidecar, which the compose stack does not run —
-   *  see the note on `project.uploadAvailable`. */
-  file_id?: string;
-  /** Omitted = the caller's own tenant. */
-  workspace_id?: string;
+/** The canonical journey-stage catalogue (was `GET /studio-project/v1/stages`).
+ *  Intent is always applied; the rest are opt-in. A project's `stages` should be
+ *  a subset of these keys, kept in this order. */
+export const JOURNEY_STAGES: { key: string; label: string; required: boolean }[] = [
+  { key: "intent", label: "Intent", required: true },
+  { key: "brd", label: "BRD", required: false },
+  { key: "prd", label: "PRD", required: false },
+  { key: "prd_spec", label: "PRD-Spec", required: false },
+  { key: "architecture", label: "Architecture", required: false },
+  { key: "ui_design", label: "UI Design", required: false },
+  { key: "user_stories", label: "User Stories", required: false },
+  { key: "testing", label: "Testing", required: false },
+];
+
+/** Normalise a stage selection to the required set + chosen keys, in catalogue
+ *  order — the same idempotent normalisation the old gear did server-side. */
+export function normalizeStages(selected: readonly string[]): string[] {
+  const chosen = new Set(selected);
+  return JOURNEY_STAGES.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
 }
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
@@ -169,6 +154,47 @@ export interface RemoteRepo {
   default_branch?: string;
   description?: string;
   visibility?: string;
+}
+
+/** One ingested artifact node from `GET /studio-artifact-ingest/v1/nodes`.
+ * `value` is the free-form GTS payload (issue/PR/repo fields). */
+export interface ArtifactNode {
+  type_id: string;
+  instance_id: string;
+  value: {
+    repo?: string;
+    external_id?: string;
+    number?: number;
+    title?: string;
+    state?: string;
+    author?: string | null;
+    body?: string | null;
+    url?: string | null;
+    labels?: string[];
+    source_branch?: string | null;
+    target_branch?: string | null;
+    merged?: boolean;
+    provider?: string;
+    full_path?: string;
+    // File nodes:
+    path?: string;
+    sha?: string;
+    is_dir?: boolean;
+    size?: number | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    // User nodes:
+    login?: string;
+    [key: string]: unknown;
+  };
+}
+
+/** A relation between two artifact nodes (endpoints by instance id). Types:
+ *  `…rel.authored_by…`, `…rel.modifies…`, `…rel.artifact_of…`, `…rel.contains…`. */
+export interface ArtifactEdge {
+  type_id: string;
+  from: string;
+  to: string;
 }
 
 export interface WorkspaceSettings {
@@ -433,51 +459,6 @@ export const api = {
       { method: "PATCH", body: JSON.stringify(input) },
     ),
 
-  /* ── Projects (studio-project gear, ADR-0005) ── */
-
-  /** The stage catalogue the gear validates against. */
-  projectStages: (token: string) =>
-    request<{ items: Stage[] }>("/studio-project/v1/stages", token),
-
-  projects: (token: string, workspaceId?: string) =>
-    request<{ items: Project[] }>(
-      `/studio-project/v1/projects${workspaceId ? `?tenant=${workspaceId}` : ""}`,
-      token,
-    ),
-
-  project: (token: string, id: string, workspaceId?: string) =>
-    request<Project>(
-      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
-      token,
-    ),
-
-  createProject: (token: string, input: NewProjectInput) =>
-    request<Project>("/studio-project/v1/projects", token, {
-      method: "POST",
-      body: JSON.stringify(input),
-    }),
-
-  /** Rename, replace the stage selection, or move the status forward.
-   *  `stages` is a full replacement, not a delta. */
-  patchProject: (
-    token: string,
-    id: string,
-    input: { name?: string; stages?: string[]; status?: ProjectStatus },
-    workspaceId?: string,
-  ) =>
-    request<Project>(
-      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
-      token,
-      { method: "PATCH", body: JSON.stringify(input) },
-    ),
-
-  deleteProject: (token: string, id: string, workspaceId?: string) =>
-    request<void>(
-      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
-      token,
-      { method: "DELETE" },
-    ),
-
   /* ── Workspace settings (AM tenant metadata) ── */
 
   workspaceSettings: async (token: string, tenantId: string): Promise<WorkspaceSettings | null> => {
@@ -561,6 +542,27 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(value), // transparent payload; GTS-validated server-side
     }),
+
+  /* ── Project attributes (AM tenant metadata on the project tenant) ── */
+  projectConfig: async (token: string, tenantId: string): Promise<ProjectConfig | null> => {
+    try {
+      const entry = await request<{ value: ProjectConfig }>(
+        `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_CONFIG_TYPE}`,
+        token,
+      );
+      return entry.value;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+
+  putProjectConfig: (token: string, tenantId: string, value: ProjectConfig) =>
+    request<unknown>(
+      `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_CONFIG_TYPE}`,
+      token,
+      { method: "PUT", body: JSON.stringify(value) },
+    ),
 
   /* ── Organization access config (AM tenant metadata) ── */
 
@@ -662,6 +664,61 @@ export const api = {
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
   files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
+
+  /* ── studio-artifact-ingest gear: pull issues/PRs from a source into the graph ── */
+  syncArtifacts: (
+    token: string,
+    body: {
+      provider: string;
+      secret_ref: string;
+      repo_full_path: string;
+      base_url?: string;
+      since?: string;
+      /** Workspace + repo dir → ingest reads the IDE's checkout instead of
+       *  cloning its own. */
+      workspace_id?: string;
+      repo_dir?: string;
+    },
+  ) =>
+    request<{ task_id: string; status: string }>(
+      "/studio-artifact-ingest/v1/sync",
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  /** Poll a background sync task. Terminal states are `succeeded` / `failed`. */
+  artifactSyncTask: (token: string, taskId: string) =>
+    request<{
+      task_id: string;
+      status: "queued" | "running" | "succeeded" | "failed";
+      repo_full_path: string;
+      message?: string | null;
+      issues: number;
+      pull_requests: number;
+      files: number;
+    }>(`/studio-artifact-ingest/v1/tasks/${encodeURIComponent(taskId)}`, token),
+
+  /** Text files (path + content) from a repository's IDE checkout, for running
+   * analysis over the actual repo. Empty until the IDE has cloned it. */
+  repoFiles: (token: string, workspaceId: string, repoDir: string) =>
+    request<{ files: { path: string; text: string }[] }>(
+      `/studio-artifact-ingest/v1/repo-files?workspace_id=${encodeURIComponent(
+        workspaceId,
+      )}&repo_dir=${encodeURIComponent(repoDir)}`,
+      token,
+    ),
+
+  /** Read back the ingested artifact nodes, optionally filtered by type
+   * substring (`issue`, `pull_request`, `file`, `repo`). */
+  listArtifactNodes: (token: string, type?: string) =>
+    request<{ nodes: ArtifactNode[] }>(
+      `/studio-artifact-ingest/v1/nodes${type ? `?type=${encodeURIComponent(type)}` : ""}`,
+      token,
+    ),
+
+  /** Relations between ingested nodes (authored_by / modifies / …). */
+  artifactEdges: (token: string) =>
+    request<{ edges: ArtifactEdge[] }>("/studio-artifact-ingest/v1/edges", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
   createStudioSession: (

@@ -28,6 +28,22 @@ database:
         max_conns: 10
         acquire_timeout: "30s"
 
+    # PostgreSQL 19 + pgvector, used by graph-storage and nothing else. That
+    # gear's migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
+    # (SQL/PGQ, PostgreSQL 19+) and an HNSW index, none of which the server
+    # above provides. Routing one gear here keeps every other gear on the
+    # stable engine — see the `graph-postgres` service in docker-compose.yml.
+    pg_graph:
+      engine: "postgres"
+      host: "127.0.0.1"
+      port: 5433
+      user: "graph"
+      password: "${STUDIO_GRAPH_PG_PASSWORD:-graph}"
+      dbname: "graph_storage"
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
 logging:
   default:
     console_level: info
@@ -39,6 +55,15 @@ logging:
     file_level: debug
 
 gears:
+  # Wrapper over the external spec-quality detector service (bloat / purpose /
+  # leak / traceability). The service has its OWN bearer secret; it lives here
+  # (env STUDIO_SPEC_QUALITY_API_KEY) and never reaches the browser. Unset key
+  # = analysis calls 500 with a clear message; the backend still boots.
+  studio-spec-quality:
+    config:
+      base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
+      api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
+
   api-gateway:
     config:
       bind_addr: "127.0.0.1:8090"
@@ -131,6 +156,24 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        # Studio project tenant: a project is its own codebase context (sources,
+        # IDE session, artifact graph, spec-quality) — all of which are already
+        # tenant-scoped, so the id of this tenant is what the session/ingest/
+        # settings paths key on.
+        #
+        # Two allowed parents, not one. The portal's New project wizard has no
+        # workspace field (ADR-0010) and creates under the organization the
+        # session is in; workspace stays allowed so the Org → Workspace →
+        # Project shape remains available and already-seeded trees keep working.
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project tenant (a codebase context inside an organization or a workspace)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types:
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+            idp_provisioning: false
         # Connector driver contract (see oidc.yaml for the rationale).
         - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
@@ -154,6 +197,16 @@ gears:
           # client-side until the base schema is relaxed upstream.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+          # Project attributes on the project tenant: {mode, stages[], status,
+          # source}. Free-form for the same gears issue #4 reason as the settings
+          # above; shape enforced client-side. Per-tenant (not inherited) —
+          # a project must not read its parent's attributes as its own.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project attributes (mode, stages, status, source) — free-form until gears issue #4"
           type: "object"
           x-gts-traits:
             inheritance_policy: "override_only"
@@ -187,6 +240,14 @@ gears:
     config:
       vendor: "cf"
       priority: 100
+
+  # The official keycloak-idp-plugin is linked in the binary but has no Keycloak
+  # to reach in this profile — keep it dormant so its init doesn't try (and fail)
+  # to pre-warm an admin token. static-idp (echo, vendor "cf") above stays the
+  # active IdP here.
+  keycloak-idp-plugin:
+    config:
+      enabled: false
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
@@ -322,21 +383,9 @@ gears:
   # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
   # Requires a Docker daemon; the CI-published image is pulled/refreshed
   # automatically (docker login ghcr.io once if the package is private).
-  # ── Projects (ADR-0005) ──
-  # Two creation shapes (greenfield / modernize), journey stages with a
-  # mandatory Intent, and a forward-only status ladder — the reasons this is a
-  # gear and not Resource Group metadata. Membership stays on RG per ADR-0002,
-  # and this gear registers the RG project type at start, which retires the
-  # manual demo/setup-projects.sh step.
-  #
-  # Uploaded codebases go to the file-storage gear over REST; only the file id
-  # is stored here. There is no in-process path to storage to take even if we
-  # wanted one — FileStorageClientV1 is still a stub with one method.
-  studio-project:
-    database:
-      server: "pg_main"
-      dbname: "studio_projects"
-    config: {}
+  # Projects (ADR-0005 studio-project gear) retired: a project is now an AM
+  # tenant (type cf.studio.tenant.project.v1~) with its attributes in the
+  # cf.studio.project.config.v1~ tenant metadata — no separate project gear.
 
   studio-session:
     config:
@@ -370,3 +419,18 @@ gears:
       s2s_oauth:
         discovery_url: "https://localhost:8443/realms/studio"
         default_subject_type: "gts.cf.core.security.subject_service.v1~"
+
+  # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
+  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
+  # it cannot run on the main server.
+  graph-storage:
+    database:
+      server: "pg_graph"
+      dbname: "graph_storage"
+    config:
+      # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A
+      # request whose scope cannot be bounded to a set of tenants is served by
+      # `two_query` instead, so this is safe to leave on; `two_query` is the
+      # portable fallback and `cte` is deliberately absent while the pinned
+      # gears-rust revision predates the safe-CTE API it needs.
+      traversal_hop: pgq

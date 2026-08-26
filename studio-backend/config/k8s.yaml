@@ -3,7 +3,9 @@
 # value comes from the environment (wired by the Helm chart from Secrets):
 #   STUDIO_PG_HOST / STUDIO_PG_USER / STUDIO_PG_PASSWORD / STUDIO_PG_DBNAME
 #   STUDIO_OIDC_ISSUER                 (IdP realm URL, real TLS)
-#   STUDIO_IDP_ADMIN_BASE_URL / STUDIO_IDP_ADMIN_SECRET   (optional: invites)
+#   STUDIO_IDP_ADMIN_BASE_URL / STUDIO_IDP_ADMIN_SECRET   (REQUIRED for user
+#     provisioning: the official keycloak-idp-plugin is active — see its block
+#     below; add `enabled: false` there + idp.vendor "cf" to run without invites)
 #   STUDIO_LLM_API_KEY / STUDIO_LLM_HOST / STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL
 #   STUDIO_FS_SIGNING_SEED             (URL-signing key, per environment)
 # IDE sessions are DISABLED here (studio-session.enabled=false): the Docker
@@ -31,6 +33,19 @@ database:
         max_conns: 10
         acquire_timeout: "30s"
 
+    # Same CloudNativePG instance as pg_main, but a distinct logical database.
+    # The graph-enabled release requires PostgreSQL 19 SQL/PGQ and pgvector.
+    pg_graph:
+      engine: "postgres"
+      host: "${STUDIO_PG_HOST}"
+      port: 5432
+      user: "${STUDIO_PG_USER}"
+      password: "${STUDIO_PG_PASSWORD}"
+      dbname: "graph_storage"
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
 logging:
   default:
     console_level: info
@@ -42,6 +57,15 @@ logging:
     file_level: debug
 
 gears:
+  # Wrapper over the external spec-quality detector service (bloat / purpose /
+  # leak / traceability). The service has its OWN bearer secret; it lives here
+  # (env STUDIO_SPEC_QUALITY_API_KEY) and never reaches the browser. Unset key
+  # = analysis calls 500 with a clear message; the backend still boots.
+  studio-spec-quality:
+    config:
+      base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
+      api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
+
   api-gateway:
     config:
       # 0.0.0.0: session containers reach the gateway via
@@ -138,6 +162,24 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        # Studio project tenant: a project is its own codebase context (sources,
+        # IDE session, artifact graph, spec-quality) — all of which are already
+        # tenant-scoped, so the id of this tenant is what the session/ingest/
+        # settings paths key on.
+        #
+        # Two allowed parents, not one. The portal's New project wizard has no
+        # workspace field (ADR-0010) and creates under the organization the
+        # session is in; workspace stays allowed so the Org → Workspace →
+        # Project shape remains available and already-seeded trees keep working.
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project tenant (a codebase context inside an organization or a workspace)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types:
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+            idp_provisioning: false
         # Connector driver contract (see oidc.yaml for the rationale).
         - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
@@ -161,6 +203,16 @@ gears:
           # client-side until the base schema is relaxed upstream.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+          # Project attributes on the project tenant: {mode, stages[], status,
+          # source}. Free-form for the same gears issue #4 reason as the settings
+          # above; shape enforced client-side. Per-tenant (not inherited) —
+          # a project must not read its parent's attributes as its own.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project attributes (mode, stages, status, source) — free-form until gears issue #4"
           type: "object"
           x-gts-traits:
             inheritance_policy: "override_only"
@@ -196,30 +248,48 @@ gears:
         root_name: "Constructor Platform"
         root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
         strict: true
+        # Bind the platform root to the shared `studio` realm; descendants inherit
+        # it via parent_context (full rationale in docker.yaml). The realm must
+        # exist in the target Keycloak. Only takes effect on a fresh AM database.
+        root_tenant_metadata:
+          realm_name: "studio"
+      # Select the official Keycloak IdP plugin.
+      idp:
+        vendor: "keycloak"
       tr_plugin:
         enabled: true
 
-  static-idp-plugin:
-    config:
-      vendor: "cf"
-      priority: 100
-
-  # Real user provisioning (ADR-0004, invite-first): the portal's "Invite"
-  # creates an actual Keycloak user with the tenant_id attribute + temporary
-  # password (rotation forced at first sign-in). Wins selection over the
-  # static echo plugin (priority 50 < 100). Without a client_secret the
-  # plugin self-deprioritizes to 10000 and the echo plugin stays in charge —
-  # that is how the static-token profiles keep working unchanged.
+  # Official cf-gears-keycloak-idp-plugin — real user provisioning for the k8s
+  # deploy. ACTIVE (AM idp.vendor: "keycloak"). REQUIRES a reachable Keycloak with
+  # a `studio` realm and a `studio-admin` service-account client carrying the
+  # realm-management roles. Set in the deploy:
+  #   STUDIO_IDP_ADMIN_BASE_URL   admin API base, e.g. https://idp.example.com
+  #                               (must be TLS-trusted by the pod's system roots)
+  #   STUDIO_IDP_ADMIN_SECRET     the studio-admin client secret
+  #
+  # BEHAVIOUR CHANGE vs the former in-crate plugin: this one does NOT self-disable
+  # on a missing secret — if STUDIO_IDP_ADMIN_BASE_URL is unset the config load
+  # fails loudly (empty URL), and if Keycloak is unreachable the admin pre-warm
+  # fails and boot aborts. To run this deploy WITHOUT invites, add `enabled: false`
+  # under config below and set account-management.idp.vendor back to "cf" (the
+  # linked static echo IdP). See docs/keycloak-idp-migration.md.
   keycloak-idp-plugin:
     config:
-      vendor: "cf"
+      vendor: "keycloak"
       priority: 50
-      base_url: "${STUDIO_IDP_ADMIN_BASE_URL:-https://localhost:8443}"
-      realm: "studio"
-      client_id: "studio-admin"
-      client_secret: "${STUDIO_IDP_ADMIN_SECRET:-}"  # empty = plugin self-deprioritizes (invites off)
-      custom_ca_certificate_paths: []
-      default_temp_password: "${STUDIO_IDP_TEMP_PASSWORD:-studio}"
+      security_context:
+        platform_tenant_id: "00000000-0000-0000-0000-000000000001"
+      keycloak:
+        base_url: "${STUDIO_IDP_ADMIN_BASE_URL}"
+        bootstrap_admin:
+          realm: "studio"
+          client_id: "studio-admin"
+          client_secret: "${STUDIO_IDP_ADMIN_SECRET}"
+        realm_admin:
+          client_id_default: "studio-admin"
+          default_shared_realm_secret: "${STUDIO_IDP_ADMIN_SECRET}"
+      tenant_facade: {}
+      user_facade: {}
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
@@ -404,31 +474,29 @@ gears:
               audio_transcription: false
               audio_translation: false
 
+  # Knowledge graph: PostgreSQL 19 SQL/PGQ plus pgvector. The release binary is
+  # compiled with `--no-default-features --features graph`, so this database
+  # must be available before the backend starts.
+  graph-storage:
+    database:
+      server: "pg_graph"
+      dbname: "graph_storage"
+    config:
+      traversal_hop: pgq
+
   # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
   # Requires: Docker daemon on the host and the Theia image built once:
   #   cd theia && docker build -t cf-studio-theia:latest .
-  # ── Projects (ADR-0005) ──
-  # Two creation shapes (greenfield / modernize), journey stages with a
-  # mandatory Intent, and a forward-only status ladder — the reasons this is a
-  # gear and not Resource Group metadata. Membership stays on RG per ADR-0002,
-  # and this gear registers the RG project type at start, which retires the
-  # manual demo/setup-projects.sh step.
-  #
-  # Uploaded codebases go to the file-storage gear over REST; only the file id
-  # is stored here. There is no in-process path to storage to take even if we
-  # wanted one — FileStorageClientV1 is still a stub with one method.
-  studio-project:
-    database:
-      server: "pg_main"
-      dbname: "studio_projects"
-    config: {}
+  # Projects (ADR-0005 studio-project gear) retired: a project is now an AM
+  # tenant (type cf.studio.tenant.project.v1~) with its attributes in the
+  # cf.studio.project.config.v1~ tenant metadata — no separate project gear.
 
   studio-session:
     config:
       # IDE sessions via the Kubernetes Pod driver (ADR-0003). Needs the
       # backend Role over pods/services (Helm backend.sessions.enabled=true)
       # and a browser reachable through the /studio proxy.
-      enabled: true
+      enabled: false
       driver: "kubernetes"
       # kyverno on this cluster admits only harbor.constr.dev images, so the
       # session image goes through the ghcr proxy project (same as the backend
@@ -456,6 +524,15 @@ gears:
           value_env: "STUDIO_ANTHROPIC_API_KEY"
           sharing: "shared"
 
+  # This plugin is linked into the binary and therefore must be configured.
+  # Keep it empty and deprioritized so OIDC is the only selected AuthN provider.
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 1000
+      mode: static_tokens
+      tokens: []
+
   # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
   # Provider-agnostic gear; this PROFILE defaults to Groq's free tier
   # (console.groq.com → API Keys; free, no card, rate-limited). Env beats
@@ -472,49 +549,3 @@ gears:
       model: "llama-3.3-70b-versatile"
       developer_message_settings: "system"    # safest across providers
       api_key_env: "STUDIO_LLM_API_KEY"
-
-  # TEMPORARILY IN CHARGE (INFRA-3767): no environment has a usable OIDC
-  # realm yet (the central IdP still needs a studio client registered), so
-  # token auth runs this deploy — priority 50 beats oidc-authn-plugin (100).
-  # The portal's "Developer sign-in (static token)" form takes the token.
-  # When the real realm lands: put this back to 1000, reseal studio-web-idp
-  # with the real issuer, and drop the studio-web-dev-auth Secret.
-  #
-  # The token VALUE arrives via the environment (Secret studio-web-dev-auth,
-  # chart backend.devAuth) — required on purpose: a token-auth deploy without
-  # a token would be a portal nobody can enter, discovered only by clicking.
-  static-authn-plugin:
-    config:
-      vendor: "constructorfabric"
-      priority: 50     # LOWER number wins vendor selection; oidc (100) stands by
-      mode: static_tokens
-      tokens:
-        # Platform admin, same subject the dev/postgres profiles use.
-        - token: "${STUDIO_ADMIN_TOKEN}"
-          identity:
-            subject_id: "00000000-0000-0000-0000-00000000a001"
-            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
-            token_scopes: ["*"]
-            subject_type: "gts.cf.core.security.subject_user.v1~"
-        # Test users (INFRA-3767 interim): several distinct logins, each its own
-        # token, all platform admins on the root tenant. Tokens come from the
-        # studio-web-test-users Secret (chart backend deployment). Drop these when
-        # Keycloak SSO replaces token auth.
-        - token: "${STUDIO_TEST_USER_1_TOKEN}"
-          identity:
-            subject_id: "00000000-0000-0000-0000-00000000a002"
-            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
-            token_scopes: ["*"]
-            subject_type: "gts.cf.core.security.subject_user.v1~"
-        - token: "${STUDIO_TEST_USER_2_TOKEN}"
-          identity:
-            subject_id: "00000000-0000-0000-0000-00000000a003"
-            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
-            token_scopes: ["*"]
-            subject_type: "gts.cf.core.security.subject_user.v1~"
-        - token: "${STUDIO_TEST_USER_3_TOKEN}"
-          identity:
-            subject_id: "00000000-0000-0000-0000-00000000a004"
-            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
-            token_scopes: ["*"]
-            subject_type: "gts.cf.core.security.subject_user.v1~"

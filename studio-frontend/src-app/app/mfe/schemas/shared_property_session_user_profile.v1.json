@@ -1,0 +1,19 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.user.profile.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned: the signed-in subject for display — {id, displayName?, email?} or null. `id` is /me's subject_id, the authoritative subject an MFE writes as owner_id; the strings come from the token claims, which only the host can read.",
+  "allOf": [{ "$ref": "gts://gts.frontx.mfes.comm.shared_property.v1~" }],
+  "properties": {
+    "value": {
+      "type": ["object", "null"],
+      "$comment": "null while the subject is unresolved, and it must validate for the same reason as the organization property: bootstrap seeds it before anything is known.",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  }
+}

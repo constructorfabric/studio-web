@@ -15,13 +15,33 @@ database:
   # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
   auto_provision: true
   servers:
+    # Single Postgres for the whole assembly (Variant B): the graph-postgres
+    # image (PostgreSQL 19 + pgvector) hosts every gear database AND graph_storage
+    # as separate databases on one instance. Both aliases below point at the same
+    # server so gears keep their `server:` unchanged; they differ only in the
+    # admin/default dbname. NB: PG19 is beta — this consolidates all data onto it
+    # on purpose (see the graph-postgres service in docker-compose.yml).
     pg_main:
       engine: "postgres"
-      host: "postgres"
+      host: "graph-postgres"
       port: 5432
       user: "studio"
       password: "${STUDIO_PG_PASSWORD}"
       dbname: "studio"            # admin/default db; gears override per-gear below
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
+    # Same physical instance as pg_main; the graph-storage gear keeps its own
+    # `server: pg_graph` and its `graph_storage` database (where the vector /
+    # PROPERTY GRAPH / HNSW migrations run).
+    pg_graph:
+      engine: "postgres"
+      host: "graph-postgres"
+      port: 5432
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD}"
+      dbname: "graph_storage"
       pool:
         max_conns: 10
         acquire_timeout: "30s"
@@ -37,6 +57,15 @@ logging:
     file_level: debug
 
 gears:
+  # Wrapper over the external spec-quality detector service (bloat / purpose /
+  # leak / traceability). The service has its OWN bearer secret; it lives here
+  # (env STUDIO_SPEC_QUALITY_API_KEY) and never reaches the browser. Unset key
+  # = analysis calls 500 with a clear message; the backend still boots.
+  studio-spec-quality:
+    config:
+      base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
+      api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
+
   api-gateway:
     config:
       bind_addr: "0.0.0.0:8090"
@@ -134,6 +163,24 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        # Studio project tenant: a project is its own codebase context (sources,
+        # IDE session, artifact graph, spec-quality) — all of which are already
+        # tenant-scoped, so the id of this tenant is what the session/ingest/
+        # settings paths key on.
+        #
+        # Two allowed parents, not one. The portal's New project wizard has no
+        # workspace field (ADR-0010) and creates under the organization the
+        # session is in; workspace stays allowed so the Org → Workspace →
+        # Project shape remains available and already-seeded trees keep working.
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project tenant (a codebase context inside an organization or a workspace)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types:
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+            idp_provisioning: false
         # Connector driver contract (see oidc.yaml for the rationale).
         - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
@@ -157,6 +204,15 @@ gears:
           # client-side until the base schema is relaxed upstream.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+          # Project attributes on the project tenant: {mode, stages[], status,
+          # source}. Free-form for the same gears issue #4 reason as the settings
+          # above; shape enforced client-side. Per-tenant (not inherited).
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project attributes (mode, stages, status, source) — free-form until gears issue #4"
           type: "object"
           x-gts-traits:
             inheritance_policy: "override_only"
@@ -192,30 +248,65 @@ gears:
         root_name: "Constructor Platform"
         root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
         strict: true
+        # Bind the platform-root tenant to the shared `studio` realm at bootstrap.
+        # AM forwards this verbatim as the root IdP `provision_tenant` metadata
+        # (WireMetadata): mode defaults to "shared", realm_name is required for a
+        # root target. The plugin then persists a TenantIdpMetadataV1 on the root,
+        # and EVERY descendant (org -> workspace -> project) inherits `studio`
+        # through parent_context -- so user ops (invite/list) resolve a realm
+        # instead of failing "tenant has no persisted IdP metadata".
+        # deny_unknown_fields on WireMetadata: only mode/realm_name/admin_user_id
+        # are permitted keys here.
+        root_tenant_metadata:
+          realm_name: "studio"
+      # Select the official Keycloak IdP plugin. ROLLBACK to the linked static
+      # echo IdP: set vendor "cf" and add `enabled: false` to keycloak-idp-plugin.
+      idp:
+        vendor: "keycloak"
       tr_plugin:
         enabled: true
 
-  static-idp-plugin:
-    config:
-      vendor: "cf"
-      priority: 100
-
-  # Real user provisioning (ADR-0004): the portal's "Invite" creates an actual
-  # Keycloak user with a tenant_id attribute and a temporary password. Wins
-  # over the static echo plugin above (50 < 100). Pure backend-to-Keycloak
-  # traffic, so it uses the compose service name — unlike the token issuer,
-  # which the browser must also be able to reach.
+  # Official cf-gears-keycloak-idp-plugin — the ONLY IdP plugin configured here
+  # (static-idp is linked in the binary but left unconfigured → idle). ACTIVE and
+  # fully auto-provisioned.
+  # Everything it needs is in the realm import (docker/keycloak/realm-studio.json):
+  # the `studio-admin` confidential client (service account) now carries all 7
+  # realm-management roles, and studio-portal has the tenant_id/user_type mappers.
+  # It reuses that ONE client for both admin tiers over plain HTTP inside the
+  # compose network (http://keycloak:8080 → no TLS CA, no master realm, no new
+  # secrets), so `docker compose up` activates it with zero manual Keycloak steps.
+  #
+  # ROLLBACK if the stack misbehaves: add `enabled: false` here and set
+  # account-management.idp.vendor back to "cf" (static-idp echo).
+  #
+  # REALM BINDING (verified against gears-rust main): AM's create_tenant calls
+  # idp.provision_tenant for EVERY tenant unconditionally (it does NOT gate on
+  # the idp_provisioning trait) and forwards the parent's loaded context. The
+  # platform root is bound to `studio` via account-management.bootstrap
+  # .root_tenant_metadata above (mode defaults to shared); org -> workspace ->
+  # project each inherit `studio` through parent_context. So every user op
+  # (invite/list) resolves the shared realm — no per-type idp_provisioning flag
+  # and no frontend change required. See docs/keycloak-idp-migration.md.
+  # REQUIRES A FRESH DB: tenants provisioned before this binding existed carry
+  # no IdP metadata — `docker compose down -v` before the first test.
   keycloak-idp-plugin:
     config:
-      vendor: "cf"
+      vendor: "keycloak"
       priority: 50
-      base_url: "https://keycloak:8443"
-      realm: "studio"
-      client_id: "studio-admin"
-      client_secret: "studio-admin-dev-secret"
-      custom_ca_certificate_paths:
-        - "/app/certs/dev-ca.pem"
-      default_temp_password: "studio"
+      security_context:
+        platform_tenant_id: "00000000-0000-0000-0000-000000000001"
+      keycloak:
+        base_url: "http://keycloak:8080"
+        bootstrap_admin:
+          # Shared-only mode: assert (GET) the studio realm — no master realm needed.
+          realm: "studio"
+          client_id: "studio-admin"
+          client_secret: "studio-admin-dev-secret"
+        realm_admin:
+          client_id_default: "studio-admin"
+          default_shared_realm_secret: "studio-admin-dev-secret"
+      tenant_facade: {}
+      user_facade: {}
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
@@ -412,26 +503,15 @@ gears:
           value_env: "STUDIO_ANTHROPIC_API_KEY"
           sharing: "shared"
 
-  # ── Projects (ADR-0005) ──
-  # Two creation shapes (greenfield / modernize), journey stages with a
-  # mandatory Intent, and a forward-only status ladder — the reasons this is a
-  # gear and not Resource Group metadata. Membership stays on RG per ADR-0002,
-  # and this gear registers the RG project type at start, which retires the
-  # manual demo/setup-projects.sh step.
-  #
-  # Uploaded codebases go to the file-storage gear over REST; only the file id
-  # is stored here. There is no in-process path to storage to take even if we
-  # wanted one — FileStorageClientV1 is still a stub with one method.
-  studio-project:
-    database:
-      server: "pg_main"
-      dbname: "studio_projects"
-    config: {}
+  # Projects (ADR-0005 studio-project gear) retired: a project is now an AM
+  # tenant (type cf.studio.tenant.project.v1~) and its attributes live in the
+  # cf.studio.project.config.v1~ tenant metadata, so there is no separate
+  # project gear or studio_projects database.
 
   studio-session:
     config:
       image: "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge"
-      always_pull: true
+      always_pull: false
       workspaces_root: "/srv/cf-studio-workspaces"
       bind_host: "127.0.0.1"
       public_host: "localhost"
@@ -489,3 +569,18 @@ gears:
         # backend-to-Keycloak, so the service name again.
         discovery_url: "https://keycloak:8443/realms/studio"
         default_subject_type: "gts.cf.core.security.subject_service.v1~"
+
+  # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
+  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
+  # it cannot run on the main server.
+  graph-storage:
+    database:
+      server: "pg_graph"
+      dbname: "graph_storage"
+    config:
+      # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A
+      # request whose scope cannot be bounded to a set of tenants is served by
+      # `two_query` instead, so this is safe to leave on; `two_query` is the
+      # portable fallback and `cte` is deliberately absent while the pinned
+      # gears-rust revision predates the safe-CTE API it needs.
+      traversal_hop: pgq

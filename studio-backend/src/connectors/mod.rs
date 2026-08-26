@@ -22,9 +22,11 @@
 
 mod ai_providers;
 mod bitbucket;
-mod driver;
+pub mod driver;
 mod github;
 mod gitlab;
+#[cfg(feature = "graph")]
+mod graph_sync;
 mod gts;
 mod plugin;
 mod rest;
@@ -58,6 +60,18 @@ const KNOWN_DRIVERS: [&str; 5] = [
     gts::ANTHROPIC_INSTANCE_ID,
     gts::OPENAI_INSTANCE_ID,
 ];
+
+/// Source-host driver plugin ids (github/gitlab/bitbucket), for gears that
+/// resolve a driver from ClientHub without duplicating the id strings — e.g.
+/// `artifact_ingest`. AI providers are excluded: they have no repositories,
+/// issues or pull requests.
+pub fn source_driver_ids() -> [&'static str; 3] {
+    [
+        gts::GITHUB_INSTANCE_ID,
+        gts::GITLAB_INSTANCE_ID,
+        gts::BITBUCKET_INSTANCE_ID,
+    ]
+}
 
 #[toolkit::gear(
     name = "studio-connector",
@@ -111,16 +125,40 @@ impl Gear for StudioConnectorGear {
 
 #[async_trait]
 impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
+    // `ctx` is read only to resolve the knowledge-graph client.
+    #[cfg_attr(not(feature = "graph"), allow(unused_variables))]
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        // Resolved here rather than in `init`: the REST phase runs after every
+        // gear has initialized, so this does not depend on graph-storage
+        // happening to come first in the topological order. A deployment
+        // without it keeps the route mounted and answers 503.
+        #[cfg(feature = "graph")]
+        let graph = rest::GraphSink(
+            ctx.client_hub()
+                .get::<dyn crate::graph_storage::sdk::GraphStorageClientV1>()
+                .inspect_err(|_| {
+                    warn!(
+                        "studio-connector: graph-storage client not registered — \
+                         repository import will answer 503"
+                    );
+                })
+                .ok(),
+        );
+        // Built without the `graph` feature there is no knowledge graph to
+        // import into, and the route is not registered at all.
+        #[cfg(not(feature = "graph"))]
+        let graph = rest::GraphSink;
+
         Ok(rest::register_routes(
             router,
             openapi,
             self.service.get().cloned(),
+            graph,
         ))
     }
 }

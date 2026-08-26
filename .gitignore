@@ -33,3 +33,5 @@ $RECYCLE.BIN/
 # directory into the branch.
 docker-compose.override.yml
 local-run/
+
+.idea

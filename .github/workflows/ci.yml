@@ -1,8 +1,11 @@
-name: CI
+name: Test
 
 on:
   push:
-    branches: [main]
+    # Internal feature branches need an exact-SHA Test result before their
+    # snapshot images may be published for dev. Tags reuse the Test result of
+    # the commit they point at, so only branch pushes are selected here.
+    branches: ["**"]
   pull_request:
 
 concurrency:
@@ -15,17 +18,29 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
+      deployment: ${{ steps.filter.outputs.deployment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # studio-frontend-prototype/ is deliberately NOT filtered: the
+          # prototype playground no longer gates Test — release.yml builds and
+          # tests it when it publishes the studio-frontend-prototype image.
           filters: |
             backend:
               - 'studio-backend/**'
               - '.github/workflows/**'
             frontend:
-              - 'studio-frontend-prototype/**'
+              - 'studio-frontend/**'
+              - '.github/workflows/**'
+            infra:
+              - 'studio-backend/docker/graph-postgres/**'
+              - 'keycloak/**'
+              - '.github/workflows/**'
+            deployment:
+              - 'deploy/**'
               - '.github/workflows/**'
 
   backend:
@@ -38,7 +53,7 @@ jobs:
     steps:
       # gears-rust is a git dependency pinned in Cargo.toml — no second
       # checkout, and no second place to keep the revision in sync.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
@@ -51,7 +66,7 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Build
         run: cargo build --locked
       - name: Test
@@ -61,28 +76,91 @@ jobs:
           cargo run --locked -- --config config/dev.yaml --list-gears | tee gears.txt
           grep -q 'account-management' gears.txt
 
+  # The FrontX-based studio-frontend/ (ADR-0006) is the deployed portal;
+  # this used to build studio-frontend-prototype/, which is now a playground
+  # built only at release time (see release.yml, prototype-dist).
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: studio-frontend-prototype
+        working-directory: studio-frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-          cache-dependency-path: studio-frontend-prototype/package-lock.json
+          cache-dependency-path: studio-frontend/package-lock.json
       - name: Install
         run: npm ci
-      - name: Test
-        run: npm test
+      # Build precedes Test: the test suites resolve workspace packages
+      # (@gears-frontx/react et al.) through their dist/ entries, which only
+      # the build produces — on a fresh checkout Test-first fails to resolve.
       - name: Build
         run: npm run build
-      - uses: actions/upload-artifact@v4
+      - name: Test
+        run: npm test
+      - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-dist
-          path: studio-frontend-prototype/dist
+          path: studio-frontend/dist
           retention-days: 7
+
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build graph PostgreSQL image
+        run: >-
+          docker build
+          -f studio-backend/docker/graph-postgres/Dockerfile
+          -t graph-postgres:test
+          studio-backend/docker/graph-postgres
+
+      - name: Verify graph PostgreSQL CloudNativePG compatibility
+        run: >-
+          bash studio-backend/docker/graph-postgres/verify-cnpg-compatibility.sh
+          graph-postgres:test
+
+      - name: Build Keycloak image
+        run: docker build -f keycloak/Dockerfile -t cf-studio-keycloak:test keycloak
+
+      - name: Verify optimized Keycloak runtime
+        run: docker run --rm cf-studio-keycloak:test show-config >/dev/null
+
+  deployment-config:
+    needs: changes
+    if: needs.changes.outputs.deployment == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate GitHub Actions workflows
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
+            | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          # Keep this gate deterministic across runner images. Shell scripts
+          # execute in their component jobs; this step validates workflow YAML,
+          # expressions, job dependencies, actions and event schemas.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck=
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.3
+
+      - name: Lint dev chart
+        run: helm lint deploy/helm/studio-web -f deploy/helm/values-dev.example.yaml
+
+      - name: Lint test chart
+        run: helm lint deploy/helm/studio-web -f deploy/helm/values-test.example.yaml

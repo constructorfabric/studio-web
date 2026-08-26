@@ -1,0 +1,23 @@
+/*
+ * The mounted frame. Screens paint their own gutters (ADR-0008: with the
+ * shell's left column gone, each MFE owns its full area), so this only sets the
+ * surface, the font and the box.
+ *
+ * No Tailwind inside the shadow root: the re-anchored kit tokens shadow the
+ * shell's utilities, so a color utility would resolve to hsl(<hex>) and drop.
+ */
+
+.root {
+  /* The document registers Inter under the family name 'Inter Variable'
+   * (@fontsource-variable). ui-kit's own --font-sans says 'Inter', which no
+   * longer matches any @font-face — so restate the token here, or this screen
+   * silently falls back to system-ui. See globals.css in the shell. */
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  min-height: 100%;
+  height: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  background: var(--background);
+  color: var(--foreground);
+}

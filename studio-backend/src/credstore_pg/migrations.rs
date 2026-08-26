@@ -65,16 +65,15 @@ CREATE TABLE IF NOT EXISTS studio_credstore_values (
 );
                     "
                 }
-                sea_orm::DatabaseBackend::MySql => {
+                // Postgres and Sqlite are the only supported engines; MySQL and any
+                // future backend fall through to the same unsupported-engine error
+                // (DatabaseBackend is #[non_exhaustive] in sea-orm 2.0).
+                _ => {
                     return Err(DbErr::Custom(MYSQL_NOT_SUPPORTED.to_owned()));
                 }
             };
 
-            let backend = manager.get_database_backend();
-            manager
-                .get_connection()
-                .execute(sea_orm::Statement::from_string(backend, sql.to_owned()))
-                .await?;
+            manager.get_connection().execute_unprepared(sql).await?;
             Ok(())
         }
 
@@ -85,10 +84,7 @@ CREATE TABLE IF NOT EXISTS studio_credstore_values (
             }
             manager
                 .get_connection()
-                .execute(sea_orm::Statement::from_string(
-                    backend,
-                    "DROP TABLE IF EXISTS studio_credstore_values;".to_owned(),
-                ))
+                .execute_unprepared("DROP TABLE IF EXISTS studio_credstore_values;")
                 .await?;
             Ok(())
         }

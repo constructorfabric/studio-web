@@ -1,0 +1,106 @@
+# Render GRAPH_POSTGRES_IMAGE to an immutable GHCR `sha-*` tag before apply.
+# Example:
+#   GRAPH_POSTGRES_IMAGE=ghcr.io/constructorfabric/studio-web/graph-postgres:sha-0123456 \
+#     envsubst < test-cluster.template.yaml | kubectl apply -f -
+apiVersion: postgresql.cnpg.io/v1
+kind: ImageCatalog
+metadata:
+  name: studio-postgres-images
+  namespace: studio-test
+spec:
+  images:
+    - major: 19
+      image: ${GRAPH_POSTGRES_IMAGE}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: studio-postgres
+  namespace: studio-test
+spec:
+  description: Experimental PostgreSQL 19 cluster for graph-enabled Studio test
+  instances: 2
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ImageCatalog
+    name: studio-postgres-images
+    major: 19
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: false
+  managed:
+    roles:
+      - name: keycloak
+        ensure: present
+        login: true
+        passwordSecret:
+          name: keycloak-postgres-app
+  bootstrap:
+    initdb:
+      database: studio
+      owner: studio
+      # Run as postgres against the postgres database; each statement is sent
+      # separately, which is required because CREATE DATABASE cannot run in a
+      # transaction block.
+      postInitSQL:
+        - CREATE DATABASE studio_types_registry OWNER studio
+        - CREATE DATABASE studio_nodes_registry OWNER studio
+        - CREATE DATABASE studio_resource_group OWNER studio
+        - CREATE DATABASE studio_account_management OWNER studio
+        - CREATE DATABASE studio_settings OWNER studio
+        - CREATE DATABASE studio_file_storage OWNER studio
+        - CREATE DATABASE studio_mini_chat OWNER studio
+        - CREATE DATABASE studio_credstore OWNER studio
+        - CREATE DATABASE studio_credstore_values OWNER studio
+        - CREATE DATABASE graph_storage OWNER studio
+  storage:
+    storageClass: cinder-postgres
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  affinity:
+    topologyKey: kubernetes.io/hostname
+  monitoring:
+    enablePodMonitor: false
+---
+# studio-test has default-deny ingress. Replication and application traffic are
+# same-namespace and already allowed; the operator additionally needs the
+# authenticated instance-manager status endpoint introduced in CNPG 1.30.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: keycloak
+  namespace: studio-test
+spec:
+  name: keycloak
+  owner: keycloak
+  cluster:
+    name: studio-postgres
+  encoding: UTF8
+  databaseReclaimPolicy: retain
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-operator
+  namespace: studio-test
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: studio-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: 8000

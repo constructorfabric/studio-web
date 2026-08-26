@@ -1,0 +1,16 @@
+{
+  "title": "FrontX Studio",
+  "aria": {
+    "openButton": "Open Studio (Shift+`) or drag to move",
+    "collapseButton": "Collapse Studio panel",
+    "resizeHandle": "Resize Studio panel"
+  },
+  "controls": {
+    "heading": "Development Controls",
+    "screenset": "Screenset:",
+    "theme": "Theme:",
+    "language": "Language:",
+    "mockApi": "Mock API",
+    "gts_package": "GTS Package"
+  }
+}

@@ -18,7 +18,11 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{DriverIdentity, RemoteRepo};
+#[cfg(feature = "graph")]
+use super::graph_sync::{SyncRequest, sync_repository};
 use super::service::{Connection, ConnectorService, NewConnection};
+#[cfg(feature = "graph")]
+use crate::graph_storage::sdk::GraphStorageClientV1;
 
 /// Errors attributable to a connection as a resource.
 #[resource_error(gts_id!("cf.studio.connector.connection.v1~"))]
@@ -38,6 +42,31 @@ impl Connectors {
                     "source connectors are not available in this deployment \
                      (no connector driver plugin is registered)",
                 )
+                .create()
+        })
+    }
+}
+
+/// Knowledge-graph sink. `None` = the graph-storage gear did not publish its
+/// client, so the sync route answers 503 instead of 500 on a missing
+/// dependency.
+///
+/// The type exists in both builds so `register_routes` keeps one signature;
+/// without the `graph` feature it carries nothing and no route reads it.
+#[cfg(feature = "graph")]
+#[derive(Clone)]
+pub struct GraphSink(pub Option<Arc<dyn GraphStorageClientV1>>);
+
+#[cfg(not(feature = "graph"))]
+#[derive(Clone)]
+pub struct GraphSink;
+
+#[cfg(feature = "graph")]
+impl GraphSink {
+    fn get(&self) -> ApiResult<&Arc<dyn GraphStorageClientV1>> {
+        self.0.as_ref().ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail("the knowledge graph is not available in this deployment")
                 .create()
         })
     }
@@ -450,6 +479,7 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<ConnectorService>>,
+    graph: GraphSink,
 ) -> Router {
     router = OperationBuilder::get("/studio-connector/v1/providers")
         .operation_id("studio_connector.list_providers")
@@ -601,5 +631,136 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Connectors(service)))
+    #[cfg(feature = "graph")]
+    let router = OperationBuilder::post("/studio-connector/v1/connections/{id}/graph-sync")
+        .operation_id("studio_connector.graph_sync")
+        .summary("Import a repository into the knowledge graph")
+        .description(
+            "Reads the repository's file tree and contributor list through this \
+             connection and upserts them as typed nodes and edges. Node keys are \
+             derived, so re-running converges instead of duplicating.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Connection id")
+        .json_request::<GraphSyncRequest>(openapi, "What to import")
+        .handler(graph_sync)
+        .json_response_with_schema::<GraphSyncResultDto>(
+            openapi,
+            StatusCode::OK,
+            "What the import wrote",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router
+        .layer(Extension(Connectors(service)))
+        .layer(Extension(graph))
+}
+
+// ── repository import into the knowledge graph (`graph` feature) ──
+#[cfg(feature = "graph")]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GraphSyncRequest {
+    /// Namespaced repository path, e.g. `constructorfabric/gears-rust`.
+    pub repo_full_path: String,
+    /// Ref to read the tree at; omitted = the repository's default branch.
+    #[serde(default)]
+    pub git_ref: Option<String>,
+    /// Cap on tree entries turned into nodes. A large repository is truncated
+    /// rather than refused, and the response says so.
+    #[serde(default = "default_max_entries")]
+    pub max_entries: usize,
+    /// Cap on contributors turned into nodes.
+    #[serde(default = "default_max_contributors")]
+    pub max_contributors: u32,
+    /// Project to attach the repository to, when the caller has one.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub project_id: Option<Uuid>,
+    /// Display name of that project.
+    #[serde(default)]
+    pub project_name: Option<String>,
+    /// Tenant context; omitted = the caller's own tenant.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub tenant: Option<Uuid>,
+}
+
+#[cfg(feature = "graph")]
+const fn default_max_entries() -> usize {
+    2_000
+}
+
+#[cfg(feature = "graph")]
+const fn default_max_contributors() -> u32 {
+    50
+}
+
+#[cfg(feature = "graph")]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GraphSyncResultDto {
+    /// Ref the tree was actually read at.
+    pub git_ref: String,
+    /// Node key of the repository — seed a traversal or a subgraph with it.
+    pub repo_node_key: String,
+    pub nodes_upserted: u64,
+    pub edges_upserted: u64,
+    pub files: usize,
+    pub directories: usize,
+    pub contributors: usize,
+    /// Whether the provider or `max_entries` cut the tree short.
+    pub truncated: bool,
+}
+
+/// Walk a repository and write it into the caller's knowledge graph.
+#[cfg(feature = "graph")]
+async fn graph_sync(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Extension(graph): Extension<GraphSink>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<GraphSyncRequest>,
+) -> ApiResult<JsonBody<GraphSyncResultDto>> {
+    let svc = connectors.get()?;
+    let sink = graph.get()?;
+
+    let outcome = sync_repository(
+        svc,
+        sink,
+        &ctx,
+        &SyncRequest {
+            connection_id: id,
+            tenant: body.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            repo_full_path: &body.repo_full_path,
+            git_ref: body.git_ref.as_deref(),
+            max_entries: body.max_entries,
+            max_contributors: body.max_contributors,
+            project_id: body.project_id,
+            project_name: body.project_name.as_deref(),
+        },
+    )
+    .await
+    .map_err(|e| {
+        StudioConnectorError::invalid_argument()
+            .with_constraint(format!("repository sync failed: {e:#}"))
+            .create()
+    })?;
+
+    Ok(Json(GraphSyncResultDto {
+        git_ref: outcome.git_ref,
+        repo_node_key: outcome.repo_node_key,
+        nodes_upserted: outcome.nodes_upserted,
+        edges_upserted: outcome.edges_upserted,
+        files: outcome.files,
+        directories: outcome.directories,
+        contributors: outcome.contributors,
+        truncated: outcome.truncated,
+    }))
 }

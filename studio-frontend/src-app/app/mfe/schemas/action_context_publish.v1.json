@@ -1,0 +1,65 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.context.projects.publish.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned action an MFE executes against the screen domain to fill the top bar's context slot while one of its entities is open. It exists because an MFE runs in an isolated module realm: its eventBus is not the shell's, so the app/context/* events of ADR-0008 cannot cross the boundary. This action chain can. The organization list in the same slot is NOT published here — those are account-management tenants the shell fetches itself.",
+  "allOf": [
+    {
+      "$ref": "gts://gts.frontx.mfes.comm.action.v1~"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "opened",
+            "closed"
+          ],
+          "$comment": "opened = this project is now in scope, with the projects next to it; closed = back to organization scope."
+        },
+        "project": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "$comment": "Required for kind=opened."
+        },
+        "siblings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "$comment": "Sent with kind=opened: the projects of the same workspace, the open one included — what the switcher offers. Not a list of every project in the organization; the tree loads one branch per click and never knows that."
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  },
+  "required": [
+    "payload"
+  ]
+}

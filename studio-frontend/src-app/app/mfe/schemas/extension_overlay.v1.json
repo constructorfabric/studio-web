@@ -1,0 +1,30 @@
+{
+  "$id": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Overlay Extension Schema (Derived). A derived Extension type for the overlay domain that adds the presentation metadata the shell's top bar needs to decide WHICH overlay surface a control opens. The overlay domain instance pins no extensionsTypeId, so a contribution could target it with the bare base type — but GTS refuses to register an instance whose type has no schema, and no schema exists for the base extension type. Modelled on the shell's extension_screen.v1: same derived-type mechanism, same trailing '~', base type pulled in via allOf.",
+  "allOf": [
+    { "$ref": "gts://gts.frontx.mfes.ext.extension.v1~" }
+  ],
+  "properties": {
+    "presentation": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "$comment": "Accessible name of the control that opens this surface (e.g. the top bar's search button)"
+        },
+        "icon": {
+          "type": "string",
+          "$comment": "Icon identifier for that control (Iconify name with prefix)"
+        },
+        "route": {
+          "type": "string",
+          "$comment": "Which surface this is, e.g. '/search' or '/inbox'. REQUIRED: this is what the top bar matches on to pick an extension, so an overlay contribution without it is unreachable."
+        }
+      },
+      "required": ["label", "route"],
+      "$comment": "Presentation metadata for overlay domain extensions. Drives which top-bar control opens this surface."
+    }
+  },
+  "required": ["presentation"]
+}

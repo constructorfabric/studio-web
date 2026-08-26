@@ -350,10 +350,10 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    // Browser → session reverse proxy (Kubernetes driver). These are `.public()`
+    // Browser → session reverse proxy (Kubernetes driver). These are `.anonymous().exposed()`
     // on purpose: the browser opens the IDE in an iframe with no platform token,
     // so the api-gateway must NOT auth-gate them — the session container's own
-    // 256-bit gate (?token -> cookie) is the auth (see proxy.rs). `.public()`
+    // 256-bit gate (?token -> cookie) is the auth (see proxy.rs). `.anonymous().exposed()`
     // (vs a raw route) is what lands the path in the gateway's public-route set;
     // a raw route is still caught by require_auth_by_default and 401s. The
     // handler mounts as a plain `get`/`post`, so the WebSocket upgrade passes
@@ -378,7 +378,8 @@ pub fn register_routes(
             ))
             .summary("Reverse proxy to a Kubernetes IDE session")
             .tag("StudioSessions")
-            .public();
+            .anonymous()
+            .exposed();
         router = if is_root {
             op.handler(super::proxy::ide_proxy_root)
                 .text_response(StatusCode::OK, "IDE session stream", "text/html")

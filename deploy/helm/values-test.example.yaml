@@ -1,0 +1,44 @@
+global:
+  hostname: studio-test.cfabric.org
+  environmentName: test
+  environmentType: test
+
+backend:
+  image:
+    tag: "sha-REPLACE_ME"
+  replicas: 1
+  database:
+    existingSecret: studio-postgres-app
+    keys:
+      host: host
+      port: port
+      user: username
+      password: password
+      dbname: dbname
+  autoscaling:
+    enabled: false
+  sessions:
+    enabled: false
+  configOverride:
+    existingConfigMap: ""
+  idpAdmin:
+    baseUrl: "https://studio-test.cfabric.org/auth"
+
+frontend:
+  image:
+    tag: "sha-REPLACE_ME"
+  replicas: 1
+  autoscaling:
+    enabled: false
+
+keycloak:
+  enabled: true
+  replicas: 2
+  hostname: studio-test.cfabric.org
+  relativePath: /auth
+  image:
+    tag: "sha-REPLACE_ME"
+
+ingress:
+  enabled: true
+  className: traefik

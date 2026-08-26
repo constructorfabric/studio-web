@@ -1,0 +1,13 @@
+{{- if and .Values.keycloak.enabled .Values.keycloak.podDisruptionBudget.enabled (gt (int .Values.keycloak.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: keycloak
+{{- end }}

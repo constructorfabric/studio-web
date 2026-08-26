@@ -4,14 +4,19 @@
 //! lives in the linked gear crates (see `registered_gears.rs`); this binary
 //! only loads layered config and hands control to `toolkit::bootstrap`.
 
+mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
-mod keycloak_idp_plugin; // real user provisioning via Keycloak Admin API (ADR-0004)
+#[cfg(feature = "graph")]
+mod graph_storage; // knowledge graph: typed nodes/edges, traversal, hybrid search
+// keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in
+// registered_gears.rs). The former in-crate implementation was removed once the
+// official plugin went green — see docs/keycloak-idp-migration.md.
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
-mod project; // projects: two creation shapes, stages, lifecycle (ADR-0005)
 mod registered_gears;
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
+mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 
@@ -207,14 +212,15 @@ mod config_expansion_tests {
 
     /// The union of no-default placeholders across the profiles — what the
     /// Helm chart (k8s) and docker-compose (docker/oidc/postgres) provide.
-    const REQUIRED: [&str; 7] = [
+    const REQUIRED: [&str; 8] = [
         "STUDIO_PG_HOST",
         "STUDIO_PG_USER",
         "STUDIO_PG_PASSWORD",
         "STUDIO_PG_DBNAME",
         "STUDIO_OIDC_ISSUER",
         "STUDIO_FS_SIGNING_SEED",
-        "STUDIO_ADMIN_TOKEN",
+        "STUDIO_IDP_ADMIN_BASE_URL",
+        "STUDIO_IDP_ADMIN_SECRET",
     ];
 
     #[test]

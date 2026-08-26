@@ -14,34 +14,32 @@ backend:
   replicas: 1
   port: 8090
   configProfile: "k8s"
+  # Optional ConfigMap override for testing a corrected profile with an already
+  # published immutable image. The ConfigMap key must match configProfile.
+  configOverride:
+    existingConfigMap: ""
   # Postgres is operator-managed; connection comes ONLY from this Secret
   # (keys: host, port, user, password, dbname).
   database:
     existingSecret: "studio-postgres-app"
+    # Key mapping is configurable because CloudNativePG generates `username`,
+    # while the legacy manually-created Secret used `user`.
+    keys:
+      host: host
+      port: port
+      user: user
+      password: password
+      dbname: dbname
   # Platform IDP (OIDC issuer + client) — external, per-service Secret
   # (keys: issuer_url, client_id, client_secret).
   auth:
     existingSecret: "studio-web-idp"
   # Application secrets (keys: llm_api_key [required], fs_signing_seed
-  # [required], credstore_key [REQUIRED: base64 of 32 bytes,
+  # [required], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
-  # pod restart — see credstore.optionalKey], s2s_client_secret [optional],
-  # idp_admin_secret [optional]).
+  # pod restart], s2s_client_secret [optional], idp_admin_secret [optional]).
   appSecrets:
     existingSecret: "studio-web-app"
-  # Persistent credstore sealing key (STUDIO_CREDSTORE_KEY, from appSecrets
-  # key `credstore_key`). Required by default: a missing key fails the pod
-  # rather than silently dropping to the in-memory store and losing every
-  # user-typed secret on restart (#66). Set optionalKey: true ONLY for a
-  # throwaway env that intentionally keeps no persistent secrets.
-  credstore:
-    optionalKey: false
-  # Interim token auth (INFRA-3767): while no OIDC realm exists, the k8s
-  # profile runs static-authn and needs a Secret with key `admin_token`.
-  # The k8s profile REQUIRES the variable, so leaving this empty fails the
-  # boot naming STUDIO_ADMIN_TOKEN. Drop when a real IdP takes over.
-  devAuth:
-    existingSecret: "studio-web-dev-auth"
   # LLM egress endpoint (non-secret half; the key lives in appSecrets).
   # Any OpenAI-compatible provider; defaults = Groq free tier.
   llm:
@@ -69,7 +67,13 @@ backend:
   # sessions (a DB-backed registry is the follow-up).
   sessions:
     enabled: false
-    kubeApiEgress: true
+    # The session driver needs egress to the kube-apiserver, but that rule must
+    # NOT ship as a chart CiliumNetworkPolicy: the constructorfabric Argo CD
+    # project does not permit kind CiliumNetworkPolicy, so rendering it makes the
+    # whole Application sync invalid. Keep this false and add the apiserver egress
+    # to cluster-specific-bundles (alongside studio-web-egress) instead. Left as a
+    # toggle only for clusters whose Argo project DOES allow the kind.
+    kubeApiEgress: false
     networkPolicy:
       enabled: true
       # Git hosts the session entrypoint may clone from (CIDRs, since a bare
@@ -113,3 +117,56 @@ imagePullSecrets: []
 # one pod-wide uid would break whichever image doesn't own its files.
 podSecurityContext:
   runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# Self-hosted Keycloak (real SSO, INFRA-3767). Off by default — enable per
+# environment once (a) a cf-studio-keycloak image exists for the release tag,
+# (b) the PGO cluster has a keycloak DB user, and (c) the admin + vault Secrets
+# are sealed. The image bakes the studio realm and vault; only env-specific,
+# non-secret wiring lives in the chart. Egress (Keycloak -> Postgres, -> GitHub
+# for social brokering) is NOT a chart CiliumNetworkPolicy — it goes in
+# cluster-specific-bundles, same reason as the backend kube-api egress.
+keycloak:
+  enabled: false
+  replicas: 1
+  relativePath: "/auth"
+  image:
+    # Matches release.yml: ghcr.io/<repo>/cf-studio-keycloak. The common values
+    # override rewrites this to the Harbor GHCR proxy (kyverno admits Harbor only).
+    repository: ghcr.io/constructorfabric/studio-web/cf-studio-keycloak
+    tag: ""                # REQUIRED when enabled: the infra-v* release tag
+  # Public issuer hostname (needs DNS + TLS). Empty disables the IdP ingress.
+  hostname: ""             # same public hostname as Studio; Keycloak uses /auth
+  # Existing Secret for the Keycloak role/database in the shared Studio
+  # PostgreSQL cluster (host/port/dbname/username/password).
+  db:
+    existingSecret: "keycloak-postgres-app"
+    keys:
+      host: host
+      port: port
+      database: dbname
+      username: username
+      password: password
+  # Bootstrap (master realm) admin — sealed Secret with keys username/password.
+  adminSecret: "studio-web-keycloak-admin"
+  # Complete environment-specific realm JSON. The public image contains no
+  # realm; this Secret is required and must contain key `realm-studio.json`.
+  realmSecret: "studio-web-keycloak-realm"
+  # files-plaintext vault Secret (social client id/secret), mounted read-only at
+  # /opt/keycloak/data/vault; keys are studio_<provider>-client-id/secret.
+  vaultSecret: "studio-web-keycloak-vault"
+  # IdP host ingress: cert-manager annotations + TLS come from the override.
+  ingress:
+    annotations: {}
+    tls: []
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  podDisruptionBudget:
+    enabled: true

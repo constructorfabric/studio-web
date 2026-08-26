@@ -1,0 +1,356 @@
+/* The wizard card.*/
+
+.wizard {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 35rem;
+  /*
+   * The value is the mockup's 620px, clamped by the shell frame's own
+   * `max-h-[calc(100vh-8rem)]` minus its 1px borders, so a short window shrinks
+   * the card instead of overflowing it. Viewport units on purpose: they resolve
+   * regardless of the parent chain, and `height: 100%` cannot — the frame is
+   * `h-fit`, so its height flows UP from here and a percentage would be circular.
+   */
+  height: min(38.75rem, calc(100vh - 8rem - 2px));
+  padding: var(--space-8);
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.title {
+  margin: 0 0 var(--space-5);
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.goal {
+  field-sizing: fixed;
+  height: 4rem;
+  resize: none;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldLabel {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: var(--text-mono-line-height);
+  font-weight: var(--text-mono-weight);
+  letter-spacing: var(--text-mono-tracking);
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.modeCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border);
+  border-radius: 0.625rem;
+  cursor: pointer;
+}
+
+.modeCard[data-selected] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 var(--border-width) var(--primary);
+}
+
+.modeInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.modeHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.modeTitle {
+  font-weight: 600;
+}
+
+.modeHint {
+  font-size: var(--text-meta-size);
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.footerNote {
+  flex: 1;
+  font-size: var(--text-label-size);
+  color: var(--muted-foreground);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-label-size);
+  color: var(--destructive);
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.repoTabs {
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.repoTab {
+  flex: 0 0 auto;
+  padding-inline: 0;
+}
+
+.repoTab::after {
+  bottom: calc(-1 * var(--border-width));
+  background-color: var(--primary);
+}
+
+.repoViewport {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.repoSearch {
+  width: 100%;
+}
+
+.repoViewport .placeholder {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.repoRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.repoRowSkeleton {
+  height: 2.125rem;
+  border-radius: var(--radius-sm);
+}
+
+.repoScroll {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  scrollbar-width: thin;
+}
+
+.repoTable {
+  border-spacing: 0;
+  font-size: var(--text-label-size);
+  --radius-md: 0;
+}
+
+.repoTable tr {
+  --table-row-ring: transparent;
+  --table-row-fill: transparent;
+}
+
+.repoTable thead tr {
+  --table-row-fill: transparent;
+}
+
+.repoTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: auto;
+  padding: 0.375rem var(--space-2);
+  background: var(--card);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-size);
+  line-height: var(--text-mono-line-height);
+  font-weight: var(--text-mono-weight);
+  letter-spacing: var(--text-mono-tracking);
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--muted-foreground);
+}
+
+.repoTable tbody tr {
+  cursor: pointer;
+}
+
+/* Hover only. The mockup gives a picked row no fill of its own — the filled
+   checkbox is what says it is chosen, and a second signal would fight it. */
+.repoTable tbody tr:hover > * {
+  background: var(--muted);
+}
+
+/* At the source cap the unpicked rows stop responding — say so visually, or an
+   ignored click reads as a broken table. */
+.repoTable tbody tr[aria-disabled] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.repoTable tbody tr[aria-disabled]:hover {
+  background: none;
+}
+
+/* The mockup's 34px row with a hairline under it, against the kit's 12/16 cell
+   padding and per-row ring. */
+.repoTable tbody tr {
+  height: 2.125rem;
+}
+
+.repoTable tbody th,
+.repoTable tbody td {
+  padding: 0 var(--space-2);
+  border-bottom: var(--border-width) solid var(--border);
+  text-align: left;
+  font-weight: 400;
+}
+
+.repoCheckbox {
+  width: 1rem;
+  height: 1rem;
+}
+
+.repoCheckbox svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.repoPickHead {
+  width: 2.25rem;
+}
+
+.repoVisibilityHead {
+  width: 6rem;
+}
+
+.repoName {
+  height: auto;
+  font-size: var(--text-label-size);
+  font-weight: 600;
+  text-transform: none;
+  color: var(--foreground);
+}
+
+.repoVisibility,
+.repoUpdated {
+  font-size: var(--text-meta-size);
+}
+
+.repoVisibility {
+  color: var(--muted-foreground);
+}
+
+.repoVisibilityInner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.repoUpdatedHead,
+.repoUpdated {
+  width: 5rem;
+  text-align: right;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.owner {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+}
+
+/* will be fixed after using avatar from ui kit */
+.ownerAvatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ownerText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+
+.ownerName {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ownerEmail {
+  font-size: var(--text-meta-size);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

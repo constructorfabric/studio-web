@@ -1,0 +1,13 @@
+{
+  "$id": "gts://gts.cf.studio.artifact.user.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "User",
+  "description": "An author/actor referenced by issues, PRs and commits.",
+  "type": "object",
+  "properties": {
+    "login": { "type": "string" },
+    "display_name": { "type": ["string", "null"] }
+  },
+  "required": ["login"],
+  "additionalProperties": false
+}

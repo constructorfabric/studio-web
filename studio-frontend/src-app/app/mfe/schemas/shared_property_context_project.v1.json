@@ -1,0 +1,13 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project.selected.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned: which project the session is inside, as a tenant id, or null at organization scope. The shell -> MFE counterpart of the context-publish action, and the half the top bar's switcher needs to steer anything — a shared property is the only host -> child channel that crosses an MFE's module realm.",
+  "allOf": [{ "$ref": "gts://gts.frontx.mfes.comm.shared_property.v1~" }],
+  "properties": {
+    "value": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "$comment": "null is organization scope, not absence — it must validate, or closing a project throws inside updateSharedProperty."
+    }
+  }
+}

@@ -23,9 +23,19 @@ use oidc_authn_plugin as _; // real login (config/oidc.yaml profile)
 use static_authn_plugin as _;
 use static_authz_plugin as _;
 
-// Account Management + its static IdP echo plugin.
+// Account Management + its IdP plugins.
 // AM also brings its co-located Tenant Resolver plugin (reads tenant_closure).
 use account_management as _;
+// Two IdP plugins are linked; AM selects one per config via `idp.vendor` + each
+// plugin's own `enabled` flag:
+//   - static_idp_plugin  (vendor "cf")      — dev echo IdP for Keycloak-less
+//     profiles (dev.yaml SQLite, postgres.yaml). Registers by default even
+//     without a config block; harmless where "keycloak" is selected.
+//   - keycloak_idp_plugin (vendor "keycloak") — the official
+//     cf-gears-keycloak-idp-plugin; real user provisioning against Keycloak.
+//     ACTIVE in docker/oidc/k8s; set `keycloak-idp-plugin.config.enabled: false`
+//     in profiles that must NOT reach a Keycloak. See docs/keycloak-idp-migration.md.
+use keycloak_idp_plugin as _;
 use static_idp_plugin as _;
 
 // Feature gears: per-user settings, file storage, credstore.

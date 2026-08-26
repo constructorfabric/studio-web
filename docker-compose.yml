@@ -22,23 +22,11 @@
 name: studio
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: studio-backend-pg
-    environment:
-      POSTGRES_USER: studio
-      POSTGRES_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
-      POSTGRES_DB: studio
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - studio_pg_data:/var/lib/postgresql/data
-      - ./studio-backend/docker/initdb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+  # Variant B: a SINGLE Postgres for the whole assembly. The graph-postgres
+  # service below (PostgreSQL 19 + pgvector) is the only database instance —
+  # it hosts every gear database AND graph_storage. The former postgres:16
+  # service ("studio-backend-pg") was removed; config/docker.yaml now points
+  # both server aliases (pg_main, pg_graph) at graph-postgres.
 
   # OIDC IdP for real login (config/oidc.yaml profile). Dev-grade: self-signed
   # TLS (certs in docker/keycloak/certs, CA trusted by the backend via
@@ -88,6 +76,11 @@ services:
       KC_LEGACY_OBSERVABILITY_INTERFACE: "true"
     ports:
       - "127.0.0.1:8443:8443"
+      # Plain-HTTP admin API for a backend running on the HOST (the `oidc.yaml`
+      # dev profile): the keycloak-idp-plugin talks to http://localhost:8088
+      # instead of the self-signed :8443. Bound to 127.0.0.1 only. The in-compose
+      # backend keeps using http://keycloak:8080 on the internal network.
+      - "127.0.0.1:8088:8080"
     volumes:
       - ./docker/keycloak/realm-studio.json:/opt/keycloak/data/import/realm-studio.json:ro
       - ./docker/keycloak/certs:/opt/keycloak/certs:ro
@@ -111,6 +104,41 @@ services:
       retries: 30
       start_period: 30s
 
+  # PostgreSQL 19 + pgvector — the graph-storage gear's database, and ONLY that
+  # gear's. It is separate from `postgres` above because graph-storage needs
+  # three things 16-alpine does not have: the `vector` extension, SQL/PGQ
+  # (`CREATE PROPERTY GRAPH`, PostgreSQL 19+) and HNSW indexes. Isolating it
+  # this way keeps every other gear on the stable server: nothing else in the
+  # assembly is exposed to a beta PostgreSQL.
+  #
+  # The gear reaches it through the per-gear database override in
+  # studio-backend/config/*.yaml (`database.servers.pg_graph`), so no other
+  # gear can be routed here by accident.
+  graph-postgres:
+    build:
+      context: studio-backend/docker/graph-postgres
+    container_name: studio-graph-pg
+    # The single instance for the whole assembly (Variant B). User/db renamed to
+    # `studio` so the gear databases (created by the init script) and graph_storage
+    # all share one superuser; graph_storage is created by the init script now.
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      POSTGRES_DB: studio
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # postgres:18+ images keep data in a versioned subdirectory and expect
+      # the mount one level up, which also leaves room for pg_upgrade.
+      - studio_graph_pg_data:/var/lib/postgresql
+      # Per-gear databases + graph_storage, created once on first volume init.
+      - ./studio-backend/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   backend:
     build:
       context: .
@@ -128,6 +156,11 @@ services:
       #   the Claude Code agent in IDE sessions -> STUDIO_ANTHROPIC_API_KEY
       STUDIO_LLM_API_KEY: ${STUDIO_LLM_API_KEY:-}
       STUDIO_ANTHROPIC_API_KEY: ${STUDIO_ANTHROPIC_API_KEY:-}
+      # Bearer secret for the external spec-quality detector service. The gear
+      # has base_url in config/docker.yaml but reads the KEY from this env var
+      # (studio-spec-quality.config.api_key_env); without it the wrapper reports
+      # "not configured" and every Spec Quality run fails. Value lives in .env.
+      STUDIO_SPEC_QUALITY_API_KEY: ${STUDIO_SPEC_QUALITY_API_KEY:-}
       # Encryption key for credstore secret VALUES at rest (issue #66, base64,
       # 32 bytes). Without it the backend falls back to the in-memory value
       # store and every secret typed into the portal — source PATs, connector
@@ -144,6 +177,9 @@ services:
       # bind-mount below writable for the unprivileged server user. Keep it
       # equal to studio-session.workspaces_root in config/docker.yaml and to
       # the bind path below — all three name the same directory.
+      # Shared by studio-session AND studio-artifact-ingest: the session gear
+      # clones repos into {root}/{workspace_id}/{repo_dir}, and the ingest gear
+      # reads those same checkouts to build the artifact graph — one clone.
       STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
@@ -158,9 +194,10 @@ services:
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:
-      # Postgres HAS to be healthy: the backend runs its migrations during boot
-      # and exits non-zero if the databases are not reachable.
-      postgres:
+      # The single Postgres HAS to be healthy: the backend runs every gear's
+      # migrations (and graph-storage's) during boot and exits non-zero if the
+      # databases are not reachable.
+      graph-postgres:
         condition: service_healthy
       # Keycloak only has to be STARTED, not healthy. Nothing in the backend's
       # init path talks to it: oidc-authn-plugin just builds an HTTP client and
@@ -177,7 +214,16 @@ services:
       # is for ordering — conflating the two is what cost an evening.
       keycloak:
         condition: service_started
+      # Fresh-DB gate: the no-LLM seeder must seed (and realm-bind) the platform
+      # root tenant and exit 0 before the LLM backend starts — otherwise oagw's
+      # post_init aborts boot resolving a root that account-management has not
+      # seeded yet. On a warm volume the seeder is a fast no-op (seconds).
+      backend-bootstrap:
+        condition: service_completed_successfully
     healthcheck:
+      # /cf/health is the endpoint the gateway actually serves (proven 200);
+      # the bare /healthz was never mounted, so the probe stayed red forever and
+      # the frontend — gated on `backend healthy` — never started.
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/cf/health"]
       interval: 10s
       timeout: 3s
@@ -188,10 +234,46 @@ services:
       start_period: 180s
       retries: 30
 
+  # Fresh-DB seeder — runs automatically on every `docker compose up`.
+  # On a brand-new volume the LLM chain's oagw gear aborts boot in post_init: it
+  # needs the platform root tenant, but account-management only seeds it later,
+  # in its serve phase. This variant is built --no-default-features, so it has
+  # NO oagw (and no graph): it reaches serve, seeds (and realm-binds) the root,
+  # then its bootstrap-seed.sh entrypoint exits 0. The main `backend` gates on
+  # this via `service_completed_successfully`, so nothing is left running.
+  # Idempotent: on a warm volume the root already exists and this exits in seconds.
+  backend-bootstrap:
+    # Override the image entrypoint: run the backend, wait until the root tenant
+    # is seeded (gateway health 200), then exit so the gate above is satisfied.
+    entrypoint: ["/usr/local/bin/bootstrap-seed.sh"]
+    build:
+      context: .
+      dockerfile: studio-backend/Dockerfile.src
+      args:
+        CARGO_FEATURES: "--no-default-features"
+    container_name: studio-backend-bootstrap
+    restart: "no"
+    environment:
+      STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      STUDIO_CREDSTORE_KEY: ${STUDIO_CREDSTORE_KEY:-}
+      STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
+    volumes:
+      - /srv/cf-studio-workspaces:/srv/cf-studio-workspaces
+      - ./docker/keycloak/certs/dev-ca.pem:/app/certs/dev-ca.pem:ro
+    depends_on:
+      graph-postgres:
+        condition: service_healthy
+      # The seeder EAGERLY provisions the root tenant into Keycloak (realm-binds
+      # it via the keycloak-idp-plugin), so unlike the main backend it must wait
+      # for Keycloak to be fully ready — `/health/ready` is green only after the
+      # studio realm import completes. Gating on `started` would race the import.
+      keycloak:
+        condition: service_healthy
+
   frontend:
     build:
       context: .
-      dockerfile: studio-frontend-prototype/Dockerfile.src
+      dockerfile: studio-frontend/Dockerfile.src
     container_name: studio-frontend
     # Wait for the backend to be healthy and restart together with it, so the
     # portal comes up on its own once the backend is ready — no manual start.
@@ -207,10 +289,26 @@ services:
     # nginx.conf proxies /cf/ to http://studio-backend:8090 — the service's
     # container_name above must stay in sync with it.
 
+  # Prototype portal — the fast-moving UI (Artifacts, Spec Quality, Overview).
+  # Same build pattern as `frontend` (context = repo root); BACKEND_HOST is
+  # baked into its image, and nginx proxies /cf/ to the backend. Published on
+  # 8081 so it can run alongside the main portal on 8080. Part of the compose
+  # project now, so `--remove-orphans` no longer deletes it.
+  frontend-prototype:
+    build:
+      context: .
+      dockerfile: studio-frontend-prototype/Dockerfile.src
+    container_name: studio-frontend-prototype
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
+    depends_on:
+      backend:
+        condition: service_healthy
+        restart: true
+
 volumes:
-  studio_pg_data:
-    # Pinned to the volume created by the ORIGINAL studio-backend compose
-    # project (before `name: studio` unified everything): regrouping the
-    # containers must not orphan the Postgres data. Fresh machines simply
-    # get a volume with this name.
-    name: studio-backend_studio_pg_data
+  # The single Postgres instance's data (Variant B). The former studio_pg_data
+  # volume (postgres:16) is retired; on an existing machine it simply goes
+  # unused — data now lives here on the PG19 instance.
+  studio_graph_pg_data:

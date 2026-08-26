@@ -50,4 +50,12 @@ if [ -d "$WORKSPACES_ROOT" ]; then
     fi
 fi
 
+# Artifact-ingest clone volume. Mounted root-owned like the workspaces root, so
+# make it writable for the server user or the gear can't create checkouts in it.
+ARTIFACT_WORKDIR="${STUDIO_ARTIFACT_WORKDIR:-}"
+if [ -n "$ARTIFACT_WORKDIR" ]; then
+    mkdir -p "$ARTIFACT_WORKDIR" 2>/dev/null || true
+    chown studio:studio "$ARTIFACT_WORKDIR" 2>/dev/null || true
+fi
+
 exec gosu studio /app/studio-backend "$@"

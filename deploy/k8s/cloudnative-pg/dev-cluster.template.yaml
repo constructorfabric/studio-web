@@ -1,0 +1,97 @@
+# Development uses the same graph-capable image and database contract as test,
+# but a single smaller instance. Render GRAPH_POSTGRES_IMAGE to an immutable
+# GHCR `sha-*` tag before apply.
+apiVersion: postgresql.cnpg.io/v1
+kind: ImageCatalog
+metadata:
+  name: studio-postgres-images
+  namespace: studio-dev
+spec:
+  images:
+    - major: 19
+      image: ${GRAPH_POSTGRES_IMAGE}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: studio-postgres
+  namespace: studio-dev
+spec:
+  description: Experimental PostgreSQL 19 cluster for graph-enabled Studio dev
+  instances: 1
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ImageCatalog
+    name: studio-postgres-images
+    major: 19
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: false
+  managed:
+    roles:
+      - name: keycloak
+        ensure: present
+        login: true
+        passwordSecret:
+          name: keycloak-postgres-app
+  bootstrap:
+    initdb:
+      database: studio
+      owner: studio
+      postInitSQL:
+        - CREATE DATABASE studio_types_registry OWNER studio
+        - CREATE DATABASE studio_nodes_registry OWNER studio
+        - CREATE DATABASE studio_resource_group OWNER studio
+        - CREATE DATABASE studio_account_management OWNER studio
+        - CREATE DATABASE studio_settings OWNER studio
+        - CREATE DATABASE studio_file_storage OWNER studio
+        - CREATE DATABASE studio_mini_chat OWNER studio
+        - CREATE DATABASE studio_credstore OWNER studio
+        - CREATE DATABASE studio_credstore_values OWNER studio
+        - CREATE DATABASE graph_storage OWNER studio
+  storage:
+    storageClass: cinder-postgres
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  monitoring:
+    enablePodMonitor: false
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: keycloak
+  namespace: studio-dev
+spec:
+  name: keycloak
+  owner: keycloak
+  cluster:
+    name: studio-postgres
+  encoding: UTF8
+  databaseReclaimPolicy: retain
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-operator
+  namespace: studio-dev
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: studio-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: 8000

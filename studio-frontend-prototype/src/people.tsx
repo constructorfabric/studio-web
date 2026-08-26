@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api, type Project, type User } from "./api";
+import { api, type User } from "./api";
 import { errText, initials, matches } from "./format";
 import {
   normalizeAccessConfig,
@@ -30,10 +30,8 @@ interface Person {
   user: User;
   /** True when this account is owned by the organization tenant itself. */
   homeIsOrg: boolean;
-  /** Projects whose owning tenant IS this person (real, server-backed). */
+  /** Project tenants this person is a member of (AM tenant users). */
   rootIds: string[];
-  /** Nested projects (Works) they are a member of (Resource Group). */
-  nested: Project[];
 }
 
 export function PeopleView({
@@ -69,24 +67,14 @@ export function PeopleView({
     setError(null);
     const list = ids ? ids.split(",") : [];
     try {
-      const [memberships, perRoot, orgUsers, access] = await Promise.all([
-        api.memberships(token).then(
-          (p) => p.items ?? [],
-          () => [],
-        ),
+      const [perRoot, orgUsers, access] = await Promise.all([
         Promise.all(
           list.map(async (id) => {
-            const [users, projects] = await Promise.all([
-              api.tenantUsers(token, id).then(
-                (p) => p.items ?? [],
-                () => [] as User[],
-              ),
-              api.projects(token, id).then(
-                (p) => p.items ?? [],
-                () => [] as Project[],
-              ),
-            ]);
-            return { id, users, projects };
+            const users = await api.tenantUsers(token, id).then(
+              (p) => p.items ?? [],
+              () => [] as User[],
+            );
+            return { id, users };
           }),
         ),
         orgId
@@ -103,22 +91,11 @@ export function PeopleView({
           : Promise.resolve(null),
       ]);
 
-      const byGroup = new Map<string, Project>();
-      for (const r of perRoot) {
-        for (const p of r.projects) if (p.members_group_id) byGroup.set(p.members_group_id, p);
-      }
-      const nestedOf = new Map<string, Project[]>();
-      for (const m of memberships) {
-        const project = byGroup.get(m.group_id);
-        if (!project) continue;
-        nestedOf.set(m.resource_id, [...(nestedOf.get(m.resource_id) ?? []), project]);
-      }
-
       const merged = new Map<string, Person>();
       const upsert = (u: User): Person => {
         let cur = merged.get(u.id);
         if (!cur) {
-          cur = { user: u, homeIsOrg: false, rootIds: [], nested: nestedOf.get(u.id) ?? [] };
+          cur = { user: u, homeIsOrg: false, rootIds: [] };
           merged.set(u.id, cur);
         }
         return cur;
