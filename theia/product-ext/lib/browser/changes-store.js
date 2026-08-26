@@ -21,7 +21,7 @@
  */
 
 const { URI } = require('@theia/core/lib/common/uri');
-const { diffHunks, countPending } = require('./diff');
+const { diffHunks, countPending, applyHunks } = require('./diff');
 
 const CHANGES_DIR = '.studio/changes';
 const INDEX_FILE = CHANGES_DIR + '/index.json';
@@ -98,8 +98,28 @@ class ChangesStore {
      * A proposal captured from a full replacement body — the shape every
      * origin produces, whether the new text came from an assistant writing
      * the file directly, an inline selection edit, or a comment follow-up.
+     *
+     * `groupId` is optional and is the whole of tier 2's linked move: a
+     * cross-file move is a cut proposal in one document and an insert
+     * proposal in another, and sharing a groupId is what tells the store
+     * they must be accepted or rejected together. Every proposal already on
+     * disk was written before this field existed, so it must decode as
+     * `undefined` — not `null`, not `''` — and behave exactly as a solo
+     * proposal always has. That is why this is the one field here with no
+     * `|| undefined` normalisation of a falsy default: a caller that does not
+     * pass one gets `undefined` for free from destructuring, which is also
+     * exactly what `JSON.parse` hands back for an old proposal that never had
+     * the key.
+     *
+     * `groupMembers`, when a groupId is given, is the relative path of every
+     * document in the group, INCLUDING this one, fixed at creation time. It
+     * is never read as the live membership — `proposalsInGroup` below finds
+     * that by looking at what is actually still open — but it is what lets a
+     * lone survivor of a half-finished group resolution recognise itself as
+     * incomplete rather than as an ordinary single-document proposal that
+     * happens to carry a groupId.
      */
-    static proposal({ title, origin, instruction, commentId, baseBody, proposedBody, author }) {
+    static proposal({ title, origin, instruction, commentId, baseBody, proposedBody, author, groupId, groupMembers }) {
         return {
             id: newProposalId(),
             title: title || 'Proposed change',
@@ -111,7 +131,9 @@ class ChangesStore {
             baseBody,
             proposedBody,
             decisions: {},
-            status: 'open'
+            status: 'open',
+            groupId,
+            groupMembers: groupId ? (groupMembers || undefined) : undefined
         };
     }
 
@@ -167,6 +189,47 @@ class ChangesStore {
     async pendingFiles(anyUri) {
         return (await this.pendingFilesStatus(anyUri)).files;
     }
+
+    /**
+     * Every open proposal that shares `groupId`, across every document that
+     * currently has pending work — the cross-file half of a linked move,
+     * found without a caller having to know which document "the other side"
+     * lives in.
+     *
+     * This walks `pendingFiles`, the same index the badges use, rather than
+     * adding a second index for groups: a grouped proposal is, by
+     * construction, pending in its own document until the whole group
+     * resolves, so the existing "which files have open proposals" cache
+     * already enumerates every place a group member can be.
+     *
+     * `expected` and `partial` are what make a half-resolved group visible
+     * on the next load instead of silent. Each surviving member remembers,
+     * in `groupMembers`, how many documents the group was created with; if
+     * fewer members are still open than that, some of the group already
+     * went through (or crashed partway through) a resolution and the rest
+     * did not — a state that must never look like an ordinary, still-open
+     * group of the same size.
+     *
+     * `groupId` undefined/null always returns no members, on purpose: the
+     * vast majority of proposals have no groupId at all, and `p.groupId ===
+     * groupId` would otherwise treat every one of them as one giant "group
+     * undefined" the moment a caller forgot to pass an id. Backward
+     * compatibility is the point of this field, not an afterthought, so an
+     * ungrouped proposal must never be reachable through this method.
+     */
+    async proposalsInGroup(anyUri, groupId) {
+        if (groupId === undefined || groupId === null) { return { members: [], expected: 0, partial: false }; }
+        const files = await this.pendingFiles(anyUri);
+        const members = [];
+        for (const file of files) {
+            const { proposals } = await this.load(file.uri);
+            for (const proposal of proposals) {
+                if (proposal.groupId === groupId) { members.push({ uri: file.uri, proposal }); }
+            }
+        }
+        const expected = members.reduce((max, m) => Math.max(max, (m.proposal.groupMembers || []).length), 0);
+        return { members, expected, partial: members.length > 0 && expected > members.length };
+    }
 }
 
 /*
@@ -213,4 +276,94 @@ async function resolveFile({ fileService, changesStore, historyStore, uri, verdi
     return { changed: true, hunks: decided, body };
 }
 
-module.exports = { ChangesStore, newProposalId, relativePath, resolveFile };
+/*
+ * Resolve every member of a linked group the same way — the all-or-nothing
+ * accept/reject that a cross-file move needs (CONTRACT-runner.md §6): a cut
+ * in one document and an insert in another must not come apart, because a
+ * half-accepted move deletes a section from one file without it ever landing
+ * in the other, which loses the reader's text outright.
+ *
+ * WHY THIS CANNOT BE ATOMIC, AND WHAT STANDS IN FOR IT. There is no
+ * transaction across two files on a plain filesystem, and this store does
+ * not pretend otherwise. What it does instead is push everything that CAN be
+ * checked in advance to before the first write:
+ *
+ *   1. Every member must still exist and be readable. A group whose second
+ *      document has gone missing refuses whole rather than resolving the
+ *      first document and silently stranding the second.
+ *   2. Every member's document body must still match the `baseBody` its
+ *      proposal was computed against. If a member's document was edited
+ *      underneath the proposal — the reader touched that file while the
+ *      move sat pending — the hunk was built against text that no longer
+ *      exists, and applying it anyway would silently discard whatever the
+ *      reader just wrote there. REFUSING THE WHOLE GROUP IS THE CHOSEN
+ *      BEHAVIOUR: it is visible and recoverable (re-run once the conflict is
+ *      dealt with), where accepting the still-valid half and dropping the
+ *      other is a silent partial edit — exactly the failure mode this
+ *      mechanism exists to prevent.
+ *
+ * Only once both checks pass for every member does this write anything, and
+ * even then a write can still fail mid-flight (disk full, a lock, the
+ * process dying) after some members are already resolved. That residual
+ * risk is not swallowed: a member write is never wrapped in a try/catch that
+ * lets its neighbours proceed as if nothing happened, so a real failure here
+ * throws and stops immediately, leaving the group in exactly the state
+ * `proposalsInGroup` above is built to recognise — some members gone,
+ * others still open, `partial: true` — on the very next load. That is the
+ * "detectable rather than invisible" half of the contract; re-calling
+ * resolveGroup with the same verdict is the recovery, because the members
+ * already resolved are already gone from their own sidecars and only the
+ * survivors get touched again.
+ *
+ * A group with no open members left (already resolved, or never existed) is
+ * a no-op: re-resolving a settled group must not be a second write.
+ */
+async function resolveGroup({ fileService, changesStore, historyStore, anyUri, groupId, verdict, splitFrontmatter, joinFrontmatter }) {
+    const { members } = await changesStore.proposalsInGroup(anyUri, groupId);
+    if (!members.length) { return { ok: true, changed: false, resolved: [] }; }
+
+    for (const { uri, proposal } of members) {
+        let current;
+        try {
+            if (!(await fileService.exists(uri))) { throw new Error('document is missing'); }
+            current = await fileService.read(uri);
+        } catch (e) {
+            return { ok: false, why: 'could not read ' + uri.toString() + ' (' + e.message + ')', groupId };
+        }
+        if (splitFrontmatter(current.value).body !== proposal.baseBody) {
+            return { ok: false, why: 'document has changed since the linked proposal was computed: ' + uri.toString(), groupId };
+        }
+    }
+
+    const resolved = [];
+    for (const { uri } of members) {
+        const store = await changesStore.load(uri);
+        const proposal = store.proposals.find(p => p.groupId === groupId);
+        if (!proposal) { continue; } // a previous, partial attempt already resolved this one
+
+        const { hunks } = diffHunks(proposal.baseBody, proposal.proposedBody);
+        const undecided = hunks.filter(h => !proposal.decisions[h.id]);
+        for (const hunk of undecided) { proposal.decisions[hunk.id] = verdict; }
+        const accepted = hunks.filter(h => proposal.decisions[h.id] === 'accepted').map(h => h.id);
+        const body = applyHunks(proposal.baseBody, hunks, accepted);
+        proposal.status = 'resolved';
+
+        const current = await fileService.read(uri);
+        const split = splitFrontmatter(current.value);
+        await fileService.write(uri, joinFrontmatter(split.frontmatter, body));
+        await changesStore.save(uri, store.proposals);
+        if (historyStore) {
+            await historyStore.record(uri, {
+                kind: verdict === 'accepted' ? 'accept' : 'reject',
+                title: (verdict === 'accepted' ? 'Accepted' : 'Rejected') + ' a linked change',
+                detail: 'Resolved together with its linked proposal in another document',
+                body
+            });
+        }
+        resolved.push(uri.toString());
+    }
+
+    return { ok: true, changed: true, resolved };
+}
+
+module.exports = { ChangesStore, newProposalId, relativePath, resolveFile, resolveGroup };

@@ -19,6 +19,7 @@ const {
     OpenerService
 } = require('@theia/core/lib/browser');
 const { CommandRegistry, CommandContribution } = require('@theia/core/lib/common/command');
+const { KeybindingContribution } = require('@theia/core/lib/browser/keybinding');
 const { TabBarToolbarContribution } = require('@theia/core/lib/browser/shell/tab-bar-toolbar');
 const { MessageService } = require('@theia/core/lib/common/message-service');
 const { ThemeService } = require('@theia/core/lib/browser/theming');
@@ -26,27 +27,61 @@ const monaco = require('@theia/monaco-editor-core');
 const { FileService } = require('@theia/filesystem/lib/browser/file-service');
 const { FileDialogService } = require('@theia/filesystem/lib/browser/file-dialog');
 const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-service');
+/*
+ * The home directory, for one purpose: the Projects panel's Connect dialog needs
+ * a folder it is CERTAIN can be opened, and every other candidate it has — the
+ * directory being browsed, the active project, the workspace roots — can be
+ * deleted, renamed, or on an unmounted volume. Theia's own fallback
+ * (UserWorkingDirectoryProvider) is not a safe last resort either: it derives a
+ * directory from the current selection first, which in a workspace that has gone
+ * missing is just as dead. See dialogStartFolder() in repositories-view.js.
+ */
+const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 
 const { MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS } = require('./markdown-editor');
 const { HtmlViewerWidget, HTML_VIEWER_CSS } = require('./html-viewer');
+const { TableEditorWidget, TABLE_EDITOR_CSS } = require('./table-editor');
 const { COMMENT_UI_CSS } = require('./comment-ui');
 const { SUGGEST_MODE_CSS } = require('./suggest-mode');
 const { SUGGEST_MARKS_CSS } = require('./suggest-marks');
 const { fileTypeSettings, patchNavigatorFilter } = require('./file-type-settings');
+const { TABLE_EXTENSIONS } = require('./table-data');
 const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
+const { QualityRunnerClient } = require('./quality-runner-client');
 const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
 const { ChangeLog } = require('./change-log');
 const { HistoryStore } = require('./history-store');
-const { AI_MENU_CSS } = require('./ai-context');
+const { AI_MENU_CSS, seedClaude } = require('./ai-context');
 const { slotStrip, SLOT_STRIP_CSS } = require('./slot-strip');
+const { railNav, RAIL_NAV_CSS } = require('./rail-nav');
 const { welcomeView, WELCOME_CSS } = require('./welcome-view');
 const { statusLine, STATUS_LINE_CSS } = require('./status-line');
 const { ProjectPageWidget, PROJECT_PAGE_CSS } = require('./project-page');
+const { SearchWidget, SEARCH_CSS, SEARCH_WIDGET_ID } = require('./search-view');
+const { QUALITY_CSS } = require('./quality-view');
+const { MEASURES_CSS } = require('./quality-measures');
+const { QUALITY_MARKS_CSS } = require('./quality-marks');
+const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
+const { QualityStore } = require('./quality-store');
+/*
+ * The green-field flow. Four modules and a hard rule: with no
+ * `.studio/flow/flow.json` in a project, none of them draws anything, so a
+ * project that is not a flow sees exactly the product it saw before.
+ */
+const { FlowRailWidget, FLOW_RAIL_CSS, FLOW_RAIL_WIDGET_ID } = require('./flow-rail');
+const { flowTools } = require('./flow-tools-client');
+const { activeProject } = require('./active-project');
+const { URI } = require('@theia/core/lib/common/uri');
+const { FlowStore } = require('./flow-store');
+const flowSpec = require('./flow-spec');
 const { LOADER_CSS, loadingNode } = require('./loader');
+const { ICONS } = require('./icons');
+const { isOSX } = require('@theia/core/lib/common/os');
 const { StatusBar } = require('@theia/core/lib/browser/status-bar/status-bar-types');
+const { QuickInputService } = require('@theia/core/lib/common/quick-pick-service');
 
 const THEME_STORAGE_KEY = 'studio-theme';
 
@@ -77,6 +112,85 @@ const CONNECT_PROJECT_COMMAND = {
     label: 'Connect project…',
     category: 'Studio',
     iconClass: 'codicon codicon-add'
+};
+
+/*
+ * Search the project. A command in its own right, for the same reason Connect
+ * project is one: it is reachable from the command palette, bindable to a key,
+ * and callable from the activity rail's own button without any of those three
+ * knowing about the widget.
+ */
+const SEARCH_COMMAND = {
+    id: 'studio.search.open',
+    label: 'Search…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-search'
+};
+
+// The rail button's DOM id, dot-free for the same reason as the one below.
+const SEARCH_RAIL_ITEM_ID = 'studio-search-rail';
+
+/*
+ * Quality at project scope. NO KEYBINDING, deliberately: the obvious chord is
+ * ⇧⌘Q, which is macOS's log-out, and claiming it would be the single most
+ * expensive mis-press in the product. The per-document rail has ⌥⌘Q (see
+ * SLOT_SHORTCUTS); this surface is reached from the activity rail's extensions
+ * group and from the palette, which is exactly the route Search takes.
+ */
+const QUALITY_PROJECT_COMMAND = {
+    id: 'studio.quality.project',
+    label: 'Quality — check this project…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-dashboard'
+};
+
+const QUALITY_RAIL_ITEM_ID = 'studio-quality-rail';
+
+/*
+ * The green-field flow's three commands.
+ *
+ * `studio.flow.new` is the one that did not exist in any form: the scenario's
+ * premise is a person with an idea and NO repository, and the only entry point
+ * the product had was a folder chooser, which cannot start one. The other two
+ * are the flow's only two chrome actions — everything else the flow does is
+ * asked by an agent in its own chat and written into the repository.
+ *
+ * No keybindings. The palette and the rail are the routes, exactly as for
+ * Quality: a chord for something done once per project is a chord spent badly.
+ */
+const FLOW_NEW_COMMAND = {
+    id: 'studio.flow.new',
+    label: 'New project from an idea…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-lightbulb'
+};
+
+const FLOW_START_HERE_COMMAND = {
+    id: 'studio.flow.start-here',
+    label: 'Start a flow in this project',
+    category: 'Studio'
+};
+
+const FLOW_DESTINATION_COMMAND = {
+    id: 'studio.flow.destination',
+    label: 'Set where this project is going…',
+    category: 'Studio'
+};
+
+const FLOW_CONTINUE_COMMAND = {
+    id: 'studio.flow.continue',
+    label: 'Hand this flow to an assistant',
+    category: 'Studio'
+};
+
+/* The repair action. A project cloned from git has the contract and the skill —
+ * they are tracked files — and a `.mcp.json` whose absolute path is somebody
+ * else's machine, so the one thing that is actually missing is the one nobody
+ * would think to check. */
+const FLOW_PROVISION_COMMAND = {
+    id: 'studio.flow.provision',
+    label: 'Set this project up for agents',
+    category: 'Studio'
 };
 
 // The DOM id of the rendered toolbar item is the ITEM's id, so it stays free of
@@ -565,10 +679,18 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
    panels below — so only Theia's own Outline tab (an empty, editor-shaped
    dead end Studio does not use) is removed, not the whole wing. */
 #shell-tab-outline-view { display: none !important; }
-/* The document's right-slot selector is the only product entry point for
-   Comments, Changes, History, Claude, and Codex. Assistant webviews remain
-   native Theia panels when selected there; their duplicate activity icons do
-   not remain as a second, competing right-side menu. */
+/* The product's own clusters are the only entry point for Comments, Changes,
+   History, Claude and Codex: three in the document's topbar, two at the foot of
+   the left activity rail. Assistant webviews remain native Theia panels when
+   selected; their duplicate activity icons do not remain as a second, competing
+   right-side menu.
+
+   This rule is now belt-and-braces -- the whole column the tab bar lives in is
+   hidden at the Lumino level (hideRightSlotColumn in slot-strip.js), so nothing
+   can see it. It stays because the tab bar itself must NOT be removed (its
+   currentChanged signal is how the surfaces learn an assistant opened), and if
+   the column ever comes back this is what keeps the second menu from coming
+   back with it. */
 .lm-TabBar.theia-app-right.theia-app-sides { display: none !important; }
 /* Claude Code contributes a second, independent view (a session-history
    browser) straight into the LEFT activity rail, alongside its main chat
@@ -595,8 +717,8 @@ body, .theia-ApplicationShell {
 #theia-left-content-panel, .theia-side-panel { background: var(--studio-surface); }
 /* The activity bars are the shell's outermost frame, along with the dock's tab
    strip and the status line, so they take the same chrome tone. This is what
-   makes the frame read as a frame: rail | panel | document | slot strip, with
-   the outer edges quieter than anything they contain. */
+   makes the frame read as a frame: rail | panel | document, with the outer
+   edges quieter than anything they contain. */
 .lm-TabBar.theia-app-sides { background: var(--studio-chrome); }
 /* Lumino's left split handle has zero visual width in this shell. The panel
    owns the durable boundary instead, so Projects and the document never melt
@@ -728,14 +850,35 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
 #theia-left-content-panel .theia-sidepanel-toolbar .item > .action-label { color: var(--studio-muted); }
 #theia-left-content-panel .theia-sidepanel-toolbar .item > .action-label:hover { color: var(--studio-text); background: var(--studio-surface-sunken); }
 
-/* Activity rail: Studio's compact outlined glyphs replace VS Code codicons.
-   The shapes are deliberately abstract so the rail reads as product navigation,
-   not an IDE tool palette. */
+/* Activity rail: Studio's compact outlined glyphs replace VS Code codicons on
+   THIS PRODUCT'S OWN tabs. The shapes are deliberately abstract so the rail reads
+   as product navigation, not an IDE tool palette. */
 .lm-TabBar.theia-app-sides .lm-TabBar-tab {
   width: 48px; height: 48px; margin: 0; padding: 0; border-radius: 0;
   display: grid; place-items: center;
 }
-.lm-TabBar.theia-app-sides .lm-TabBar-tabIcon {
+/*
+ * SCOPED TO shell-tab-studio-*, and the scope is the load-bearing part.
+ *
+ * This rule replaces the icon with a MASK of --studio-rail-icon, so a tab that
+ * does not declare that variable gets mask: none -- which does not mean "no
+ * mask", it means nothing is masked away, and the 22px box paints as a solid
+ * --studio-muted square with the real icon hidden under it. Unscoped, that is
+ * what the first plugin view container to earn a left-rail tab would render as:
+ * a grey block with no way to tell what it opens.
+ *
+ * It used to be unscoped, and two ids underneath it handed Claude Code and Codex
+ * abstract stroke glyphs (a chat bubble, a pair of brackets) so they would speak
+ * the rail's language. Both rules are gone, and the principle they encoded is
+ * reversed: AN EXTENSION KEEPS ITS OWN MARK. The vendor's logo is the thing
+ * people already recognise from every other editor, and repainting it as a
+ * product glyph spends recognition to buy consistency the state colours provide
+ * for free -- muted at rest like every other rail control, the vendor's own
+ * colour on hover and while its panel is open. That is the standard for anything
+ * added to the rail from here on; see the assistants in rail-nav.js /
+ * slot-strip.js, which is where the two former occupants of those ids now live.
+ */
+.lm-TabBar.theia-app-sides .lm-TabBar-tab[id^="shell-tab-studio-"] .lm-TabBar-tabIcon {
   width: 22px; height: 22px; display: block;
   background: var(--studio-muted);
   border: none; border-radius: 0;
@@ -743,19 +886,12 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
   -webkit-mask: var(--studio-rail-icon) center / contain no-repeat;
   mask: var(--studio-rail-icon) center / contain no-repeat;
 }
-.lm-TabBar.theia-app-sides .lm-TabBar-tabIcon::before { content: none !important; }
-.lm-TabBar.theia-app-sides .lm-TabBar-tab.lm-mod-current .lm-TabBar-tabIcon {
+.lm-TabBar.theia-app-sides .lm-TabBar-tab[id^="shell-tab-studio-"] .lm-TabBar-tabIcon::before { content: none !important; }
+.lm-TabBar.theia-app-sides .lm-TabBar-tab[id^="shell-tab-studio-"].lm-mod-current .lm-TabBar-tabIcon {
   background-color: var(--studio-amber);
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--studio-amber) 45%, transparent));
 }
 #shell-tab-studio-repositories { --studio-rail-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='4'/%3E%3Cpath d='M8 9h8M8 15h5'/%3E%3C/svg%3E"); }
-/* Claude Code and Codex contribute their own colored vendor logos; masking
-   them into the same single-color glyph language keeps the rail reading as
-   one navigation system rather than an IDE tool palette with two stickers
-   on it. Distinct abstract shapes (chat bubble vs. code brackets) keep the
-   two tellable apart at a glance. */
-[id^="shell-tab-plugin-view-container:workbench.view.extension.claude-sidebar"] { --studio-rail-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16v11H9l-4 4V5Z'/%3E%3C/svg%3E"); }
-[id^="shell-tab-plugin-view-container:workbench.view.extension.codex"] { --studio-rail-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6 4 12l5 6M15 6l5 6-5 6'/%3E%3C/svg%3E"); }
 /* Eliminate the dark native resize strip and make webview scrollbars neutral. */
 .lm-SplitPanel-handle, .lm-DockPanel-handle { background: var(--studio-line) !important; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -779,6 +915,11 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
   transition: transform 140ms cubic-bezier(0.23,1,0.32,1), background-color 140ms ease, color 140ms ease;
 }
 .studio-rail-btn svg { width: 18px; height: 18px; display: block; }
+/* Search's placement is NOT here any more, and neither is the container's
+   positioning context: both belong to the rail's navigation column, which now
+   holds Search, a separator and the installed extensions in one flex stack. See
+   rail-nav.js -- one measurement places the lot, and an extension added later
+   needs no rule of its own. */
 .studio-rail-btn:hover { background: var(--studio-surface-raised); color: var(--studio-text); }
 .studio-rail-btn:active { transform: scale(0.9); }
 .studio-rail-btn:focus-visible {
@@ -847,6 +988,60 @@ function trackInputModality() {
  * not claim undo/redo: each focused editor remains the source of truth for its
  * own history.
  */
+/*
+ * Reaching the slot from the keyboard.
+ *
+ * The five destinations no longer have a permanent 48px column advertising
+ * them, so the shortcuts are not a convenience layer over a visible strip any
+ * more -- for the two assistants they are the only route that does not involve
+ * finding a 28px tile at the foot of the left rail.
+ *
+ * `event.code`, NOT `event.key`. On macOS Option is a compose modifier:
+ * Option+C arrives as 'c-cedilla' and Option+Y as a yen or dieresis depending on
+ * layout, so a key-based match silently does nothing for exactly the chord being
+ * bound here. `code` is the physical position, which is what a modifier chord
+ * means anyway.
+ *
+ * Shift is excluded rather than ignored, so a chord with Shift stays available
+ * to anything that wants it instead of being quietly swallowed by this.
+ *
+ * slotStrip.choose is the same entry point both clusters click through, so a
+ * shortcut cannot disagree with a button about what a second press does: it
+ * lands in the active surface's selectSlot() with toggle on, and picking what is
+ * already open closes it and gives the width back to the document
+ * (constraint 20). With no document open it falls through to the assistants,
+ * which are app-level and still work.
+ *
+ * Capture phase, matching installStandardTabShortcuts below, so a focused
+ * webview or a widget that stops propagation cannot swallow it.
+ */
+const SLOT_SHORTCUTS = {
+    KeyC: 'comments',
+    KeyR: 'changes',
+    KeyY: 'history',
+    /*
+     * ⌥⌘Q for the document's quality rail. The Option modifier is what makes
+     * this safe — ⌘Q is Quit and ⇧⌘Q is Log Out, and neither is a key this
+     * product may go near. `KeyQ` rather than 'q' for the reason above: on
+     * macOS Option is a compose modifier, so a key-based match would be
+     * comparing against whatever Option+Q produces on the current layout.
+     */
+    KeyQ: 'quality',
+    KeyK: 'claude',
+    KeyX: 'codex'
+};
+
+function installSlotShortcuts() {
+    document.addEventListener('keydown', event => {
+        if (!(event.metaKey || event.ctrlKey) || !event.altKey || event.shiftKey) { return; }
+        const key = SLOT_SHORTCUTS[event.code];
+        if (!key) { return; }
+        event.preventDefault();
+        event.stopPropagation();
+        slotStrip.choose(key);
+    }, true);
+}
+
 function installStandardTabShortcuts(shell) {
     document.addEventListener('keydown', event => {
         const primary = event.metaKey || event.ctrlKey;
@@ -908,10 +1103,24 @@ class ProductChromeContribution {
     onStart(app) {
         trackInputModality();
         installStandardTabShortcuts(app.shell);
+        // Registered here, used later: the listener only ever fires after
+        // slotStrip.init, and slotStrip.choose is safe before it (no shell means
+        // no surface and no assistant, so it returns without doing anything).
+        installSlotShortcuts();
         const style = document.createElement('style');
         style.id = 'studio-product-chrome';
-        style.textContent = SHELL_CSS + LOADER_CSS + COMMENT_UI_CSS + SUGGEST_MODE_CSS + SUGGEST_MARKS_CSS + EDITOR_CSS + HTML_VIEWER_CSS + REPOS_CSS +
-            AI_MENU_CSS + SLOT_STRIP_CSS + STATUS_LINE_CSS + PROJECT_PAGE_CSS + WELCOME_CSS;
+        style.textContent = SHELL_CSS + LOADER_CSS + COMMENT_UI_CSS + SUGGEST_MODE_CSS + SUGGEST_MARKS_CSS + EDITOR_CSS + HTML_VIEWER_CSS +
+            TABLE_EDITOR_CSS + REPOS_CSS +
+            AI_MENU_CSS + SLOT_STRIP_CSS + RAIL_NAV_CSS + STATUS_LINE_CSS + PROJECT_PAGE_CSS + WELCOME_CSS + SEARCH_CSS +
+            /*
+             * The quality extension's four stylesheets, in dependency order:
+             * the marks restate .studio-gutter-mark from EDITOR_CSS above, and
+             * the rail's own CSS must land after EDITOR_CSS's .studio-rail-*
+             * geometry it builds on.
+             */
+            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS +
+            /* The flow's one surface: the rail's column. */
+            FLOW_RAIL_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
         /*
          * Who is writing. Reads localStorage and needs no services today; the
@@ -958,8 +1167,8 @@ class ProductChromeContribution {
      * rail guard below was never connected, so Claude Code's session-history
      * view could claim the rail while its own tab was hidden by CSS, leaving
      * the user staring at an unfamiliar panel with no visible way back.
-     * The same reasoning now covers the slot strip and the status line, which
-     * are set up here for exactly this reason.
+     * The same reasoning now covers the assistant cluster and the status
+     * line, which are set up here for exactly this reason.
      *
      * `onDidInitializeLayout` runs after EITHER path, so the setup lives there
      * and this method only exists to make the intent explicit.
@@ -982,7 +1191,8 @@ class ProductChromeContribution {
                 fileDialogService: this.container.get(FileDialogService),
                 fileService: this.container.get(FileService),
                 openerService: this.container.get(OpenerService),
-                messageService: this.container.get(MessageService)
+                messageService: this.container.get(MessageService),
+                envVariables: this.container.get(EnvVariablesServer)
                 // No openProjectPage callback: the panel no longer has a control
                 // that opens the page. The route is the bottom line's own
                 // settings field, which statusLine.init receives below.
@@ -995,9 +1205,38 @@ class ProductChromeContribution {
         } catch (e) {
             console.error('[studio] could not add the Repositories view', e);
         }
-        // The slot strip owns the right-hand column: the five destinations that
-        // can occupy the slot, in the surface they govern rather than in the
-        // document's topbar. See slot-strip.js.
+        /*
+         * The slot's two clusters. The five destinations are split by SCOPE, not
+         * by convenience: the three document views are rendered by the document
+         * surface that owns them, into its own topbar, and die with it; the two
+         * assistants are app-level panels that outlive any document, so they are
+         * mounted once here at the foot of the left activity rail -- a
+         * per-document toolbar cannot reach them when no document is open.
+         *
+         * This singleton owns the second cluster, the keybindings' entry point
+         * (slotStrip.choose) and the hiding of Theia's now-empty right-hand
+         * column. See the header of slot-strip.js for the whole route the
+         * selector took to get here, including the 48px column it no longer
+         * needs.
+         */
+        /*
+         * The flow rail, beside Projects rather than instead of it.
+         *
+         * `rank: 21` puts its tab directly under Projects (rank 20), which is
+         * where a second navigation surface belongs — and rail-nav.js already
+         * watches the tab bar for exactly this, so the Search and Quality
+         * buttons re-measure themselves down by one tab rather than overlapping
+         * it.
+         *
+         * The widget is created for every project THAT ASKS FOR IT — the
+         * `gearFlow` setting — with a flow or without one, because it is also
+         * the place a project that has turned the feature on but not started a
+         * flow is offered one. What it draws in that case is one sentence and a
+         * button. A project that has not asked for it gets no widget and
+         * therefore no tab at all: see watchFeatureSettings.
+         */
+        await this.syncFlowRail(app.shell);
+
         slotStrip.init({
             shell: app.shell,
             commandRegistry: this.container.get(CommandRegistry),
@@ -1030,7 +1269,107 @@ class ProductChromeContribution {
         // The shell is not attached yet under onDidInitializeLayout, and mounting
         // reaches into its DOM, so it waits for the current tick to finish. Same
         // reason the rail-foot cluster this replaces did.
-        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); }, 0);
+        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); }, 0);
+
+        this.watchFeatureSettings(app.shell);
+    }
+
+    /*
+     * The two optional features, and the chrome that comes with them.
+     *
+     * Specification quality and gear-based development are both off until a
+     * project asks for them (`qualitySignals` and `gearFlow` in
+     * `.studio/settings.json` — file-type-settings.js carries why the defaults
+     * are off and why the choice is committed rather than per machine). OFF
+     * MEANS NOT BUILT: no gauge in the activity rail, no Flow tab beside
+     * Projects, no fourth destination in a document's topbar, nothing in the
+     * command palette. A dimmed control that cannot explain itself is worse
+     * than one that was never there.
+     *
+     * Both settings are per project, and the person can move between projects
+     * without touching either file — so this re-runs on a settings write AND on
+     * a change of active project. Re-running is cheap and idempotent: each half
+     * compares what is on screen with what the setting says and does nothing
+     * when they already agree.
+     */
+    watchFeatureSettings(shell) {
+        const sync = () => {
+            this.mountQualityRail();
+            void this.syncFlowRail(shell);
+        };
+        fileTypeSettings.onChanged(sync);
+        activeProject.onChanged(sync);
+    }
+
+    /*
+     * Add or remove the Flow tab, from the setting.
+     *
+     * `close()` rather than `hide()`: Theia's left panel handler renders one tab
+     * per widget it holds, so a hidden widget keeps exactly the furniture this
+     * is here to remove. Closing also drops it from the SAVED LAYOUT, which is
+     * what makes turning the feature off stick across a restart on a machine
+     * that had it on.
+     */
+    async syncFlowRail(shell) {
+        const wanted = fileTypeSettings.gearFlowActive();
+        const existing = shell.widgets.find(w => w.id === FLOW_RAIL_WIDGET_ID);
+        if (!wanted) {
+            if (existing) {
+                try { existing.close(); } catch (e) { console.warn('[studio] the flow rail would not close', e); }
+            }
+            this.flowRail = undefined;
+            return;
+        }
+        if (existing) {
+            this.flowRail = existing;
+            if (existing.refresh) { await existing.refresh(); }
+            return;
+        }
+        try {
+            const flowRail = new FlowRailWidget({
+                workspaceService: this.container.get(WorkspaceService),
+                fileService: this.container.get(FileService),
+                openerService: this.container.get(OpenerService),
+                commandRegistry: this.container.get(CommandRegistry)
+            });
+            await shell.addWidget(flowRail, { area: 'left', rank: 21 });
+            this.flowRail = flowRail;
+        } catch (e) {
+            console.error('[studio] could not add the flow rail', e);
+        }
+    }
+
+    /*
+     * The rail's Search button.
+     *
+     * It sits directly UNDER the Projects tab rather than at the foot of the
+     * rail. The foot is where the theme toggle used to be, and it was removed on
+     * report ("we still have UI hanging here without any reason", D10) precisely
+     * because a control 899px below the rail's only tab does not read as part of
+     * the navigation. Search IS navigation, so it goes where the navigation is --
+     * and the assistants followed it there for the same reason (see the header of
+     * slot-strip.js).
+     *
+     * All this method does now is hand a button to the rail's own column, which
+     * owns the positioning, the retry and the separator between product actions
+     * and installed extensions. The measuring this used to do lives in
+     * railNav.place(), where it serves every occupant of the column instead of
+     * this one button. Nothing else here knows the rail's geometry, which is the
+     * property that makes adding the next rail control a one-liner.
+     */
+    mountSearchRail() {
+        if (this.searchRailNode) { return; }
+        const button = document.createElement('button');
+        button.id = SEARCH_RAIL_ITEM_ID;
+        button.className = 'studio-rail-btn';
+        button.title = 'Search this project (' + (isOSX ? '⇧⌘F' : 'Ctrl+Shift+F') + ')';
+        button.setAttribute('aria-label', 'Search this project');
+        button.innerHTML = ICONS.search;
+        button.addEventListener('click', () => {
+            this.container.get(CommandRegistry).executeCommand(SEARCH_COMMAND.id);
+        });
+        this.searchRailNode = button;
+        railNav.claim('actions', group => group.appendChild(button));
     }
 
     /*
@@ -1059,6 +1398,119 @@ class ProductChromeContribution {
         shell.activateWidget(widget.id);
     }
 
+    /*
+     * Open (or re-reveal) Search.
+     *
+     * Same staleness guard as openProjectPage above, and for the same reason:
+     * SearchWidget extends raw Lumino Widget and disposes itself on close
+     * (constraint 27), but a widget the shell still tracks while belonging to no
+     * area cannot be activated — so a stale one is dropped rather than reused.
+     *
+     * Re-activating a widget that is already open is not a no-op here: the
+     * widget's own onActivateRequest re-focuses and selects the query, so the
+     * shortcut pressed while Search is open means "search again" rather than
+     * nothing.
+     */
+    async openSearch(shell) {
+        let widget = shell.widgets.find(w => w.id === SEARCH_WIDGET_ID);
+        if (widget && (widget.isDisposed || !widget.parent)) {
+            try { widget.dispose(); } catch (e) { /* already going */ }
+            widget = undefined;
+        }
+        if (!widget) {
+            widget = new SearchWidget({
+                workspaceService: this.container.get(WorkspaceService),
+                fileService: this.container.get(FileService),
+                openerService: this.container.get(OpenerService),
+                messageService: this.container.get(MessageService),
+                commandRegistry: this.container.get(CommandRegistry)
+            });
+            await shell.addWidget(widget, { area: 'main' });
+        }
+        shell.activateWidget(widget.id);
+    }
+
+    /*
+     * Open (or re-reveal) the project-scope Quality tab.
+     *
+     * openSearch's shape exactly, including the staleness guard, and for the
+     * same reason: the widget extends raw Lumino Widget and disposes itself on
+     * close (constraint 27), so a widget the shell still tracks while belonging
+     * to no area cannot be activated and has to be dropped rather than reused.
+     */
+    async openQuality(shell) {
+        let widget = shell.widgets.find(w => w.id === QUALITY_PROJECT_WIDGET_ID);
+        if (widget && (widget.isDisposed || !widget.parent)) {
+            try { widget.dispose(); } catch (e) { /* already going */ }
+            widget = undefined;
+        }
+        if (!widget) {
+            widget = new QualityProjectWidget({
+                workspaceService: this.container.get(WorkspaceService),
+                fileService: this.container.get(FileService),
+                openerService: this.container.get(OpenerService),
+                messageService: this.container.get(MessageService),
+                commandRegistry: this.container.get(CommandRegistry),
+                /*
+                 * The detector runner. ONE client for the whole frontend rather
+                 * than one per widget: the proxy is a connection to the backend,
+                 * and a second one buys nothing while making "is a run already
+                 * going" a question with two answers. `init` is lazy and never
+                 * throws, so a deployment with no backend service reaches
+                 * `probe()` and is told so, instead of failing to open the tab.
+                 */
+                runnerClient: qualityRunner(this.container)
+            });
+            await shell.addWidget(widget, { area: 'main' });
+        }
+        shell.activateWidget(widget.id);
+    }
+
+    /*
+     * The rail's Quality button, in the ACTIONS group beside Search.
+     *
+     * IT WENT IN `extensions` FIRST, AND VANISHED. rail-nav.js's header says a
+     * claimant "appends to it (Search) or owns its innerHTML (the extensions)",
+     * and slot-strip.js is the one that owns it: its refresh() replaces that
+     * group's innerHTML on every slot transition, a few times a minute, so an
+     * appended sibling is destroyed within seconds of being added. Measured in
+     * the running application — the stylesheet was registered, the command was
+     * registered, and the button was simply not in the DOM.
+     *
+     * `actions` is the append-friendly group and it is also the right one on the
+     * merits: this is a product surface reached by a command, exactly like
+     * Search, rather than a vendor's panel. The `extensions` group is for
+     * something that brings its own mark, and it currently has exactly one
+     * tenant that owns it outright.
+     */
+    mountQualityRail() {
+        /*
+         * Reversible, unlike the Search button beside it, because this one
+         * belongs to an optional feature and has to be able to LEAVE as well as
+         * arrive. rail-nav.js drains its claim list on every mount, so
+         * re-claiming after a removal puts one button back rather than two.
+         */
+        if (!fileTypeSettings.qualitySignalsActive()) {
+            if (this.qualityRailNode) {
+                this.qualityRailNode.remove();
+                this.qualityRailNode = undefined;
+            }
+            return;
+        }
+        if (this.qualityRailNode) { return; }
+        const button = document.createElement('button');
+        button.id = QUALITY_RAIL_ITEM_ID;
+        button.className = 'studio-rail-btn';
+        button.title = 'Specification quality across this project';
+        button.setAttribute('aria-label', 'Specification quality across this project');
+        button.innerHTML = ICONS.gauge;
+        button.addEventListener('click', () => {
+            this.container.get(CommandRegistry).executeCommand(QUALITY_PROJECT_COMMAND.id);
+        });
+        this.qualityRailNode = button;
+        railNav.claim('actions', group => group.appendChild(button));
+    }
+
     // Hiding Claude Code's session-history tab via CSS (see the chrome-removal
     // block above) does not stop it from becoming Lumino's *current* tab —
     // its own startup activation claims that regardless of the tab button
@@ -1083,21 +1535,29 @@ class ProductChromeContribution {
 }
 
 // ---------------------------------------------------------------------------
-// The *.md open handler.
+// The product's open handlers: Markdown, HTML, and delimited data.
 //
 // EditorManager.canHandle returns 100 for ordinary files
-// (editor-manager.ts:215-223), so 500 wins for Markdown while Monaco keeps
-// every other file type — which the VS Code extensions still need. This is the
-// documented priority mechanism, not an override or a monkey-patch.
+// (editor-manager.ts:215-223), so 500 wins for the file types this product has
+// a document surface for, while Monaco keeps every other one — which the VS
+// Code extensions still need. This is the documented priority mechanism, not an
+// override or a monkey-patch.
+//
+// Three specs share one factory rather than each writing its own handler,
+// because the parts that are easy to get wrong are the parts they have in
+// common: the reuse-by-id lookup, the staleness guard around a widget the shell
+// still tracks but that has no parent, and awaiting addWidget so a second
+// open() cannot dispose a live widget mid-attach. Every one of those is a bug
+// this product has already had once.
 // ---------------------------------------------------------------------------
-const MARKDOWN_HANDLER_PRIORITY = 500;
+const DOCUMENT_HANDLER_PRIORITY = 500;
 
 function makeOpenHandler(container, spec) {
     return {
         id: spec.id,
         label: spec.label,
         canHandle(uri) {
-            return spec.extensions.includes(uri.path.ext.toLowerCase()) ? MARKDOWN_HANDLER_PRIORITY : 0;
+            return spec.extensions.includes(uri.path.ext.toLowerCase()) ? DOCUMENT_HANDLER_PRIORITY : 0;
         },
         async open(uri) {
             const shell = container.get(ApplicationShell);
@@ -1139,6 +1599,15 @@ function makeOpenHandler(container, spec) {
                      */
                     changeLog: new ChangeLog(fileService, workspaceService),
                     historyStore: new HistoryStore(fileService, workspaceService),
+                    /*
+                     * The quality sidecar. Constructed per document like every
+                     * other store here, and holding no state of its own — the
+                     * reports are read on demand and the judgments are a file.
+                     */
+                    qualityStore: new QualityStore(fileService, workspaceService),
+                    // Shared with the project tab — see qualityRunner below.
+                    qualityRunner: qualityRunner(container),
+                    workspaceService,
                     commandRegistry: container.get(CommandRegistry),
                     messageService: container.get(MessageService),
                     openerService: container.get(OpenerService),
@@ -1175,12 +1644,309 @@ const HTML_SPEC = {
 };
 
 /*
+ * Delimited data files, as a grid rather than as text.
+ *
+ * The extension list is the codec's own (table-data.js TABLE_EXTENSIONS), so
+ * adding a dialect there cannot leave the open handler behind. `.tab` and
+ * `.psv` are hidden by default in the Projects browser — they are in
+ * KNOWN_TYPES, not DEFAULT_ON — which is a visibility choice, not a capability
+ * one: a project that shows them gets the same grid.
+ */
+const TABLE_SPEC = {
+    id: 'studio.table-editor',
+    label: 'Studio Table Editor',
+    extensions: TABLE_EXTENSIONS,
+    prefix: 'studio-table:',
+    create: (uri, ctx) => new TableEditorWidget(uri, ctx)
+};
+
+/*
  * The Projects panel owns connecting a project (its file dialog, its active
  * root, its refresh), so the command reaches the live widget rather than
  * reimplementing any of that. Looked up by id at execute time rather than
  * captured: the widget can be rebuilt across a layout restore, and a captured
  * reference would go stale silently.
  */
+
+/*
+ * ---------------------------------------------------------------------------
+ * The green-field flow's three handlers.
+ * ---------------------------------------------------------------------------
+ */
+
+
+/* Every flow store in this module is built the same way, and takes no editor:
+ * Studio does not write prose into the person's documents. It writes the
+ * skeleton once, records ops, and reads. The words come from an agent through
+ * the MCP server, or from the person's own keyboard. */
+function flowStoreFor(container) {
+    /* Idempotent, and cheap: the client caches its proxy and its one answer.
+     * Done here rather than at start-up so a build with no backend service
+     * bound degrades at the moment somebody provisions, with a sentence, rather
+     * than logging at boot and being forgotten. */
+    flowTools.init(container);
+    return new FlowStore(container.get(FileService), container.get(WorkspaceService));
+}
+
+/* What each destination costs the person in questions. Shown in the picker,
+ * because this is the only choice in the flow that changes how much they are
+ * asked, and hiding that makes it look like a category rather than a budget. */
+const DESTINATION_HELP = {
+    'prototype': 'One field, one tap, at most three questions. Country, certification and scale are not asked.',
+    'internal-tool': 'The prototype questions, plus a success signal and roughly how many people will use it.',
+    'production': 'Everything, including where it runs, which region, and any certification it must meet.'
+};
+
+/*
+ * New project from an idea.
+ *
+ * Three prompts and a folder, in the order that lets somebody stop after the
+ * first: a name, where it is going, and where to put it. The destination offers
+ * "Decide later" because it is also the first question the agent is told to ask
+ * — asking it twice would be the questionnaire behaviour the flow exists to
+ * avoid.
+ */
+function flowNewHandler(container) {
+    return {
+        execute: async () => {
+            const quickInput = container.get(QuickInputService);
+            const fileDialogService = container.get(FileDialogService);
+            const workspaceService = container.get(WorkspaceService);
+            const fileService = container.get(FileService);
+            const messageService = container.get(MessageService);
+            const openerService = container.get(OpenerService);
+
+            const name = await quickInput.input({
+                title: 'New project from an idea',
+                prompt: 'What is it called? A folder of this name is created, with the intent document in it.',
+                placeHolder: 'Field notes'
+            });
+            if (!name || !name.trim()) { return; }
+
+            const picks = flowSpec.DESTINATIONS.map(id => ({
+                id, label: flowSpec.DESTINATION_LABELS[id], description: DESTINATION_HELP[id]
+            }));
+            picks.push({ id: '', label: 'Decide later', description: 'It becomes the first question the agent asks.' });
+            const destination = await quickInput.showQuickPick(picks, {
+                title: 'How far is this going?',
+                placeholder: 'The only answer that changes which later questions exist.'
+            });
+            if (!destination) { return; }
+
+            const folder = await fileDialogService.showOpenDialog({
+                title: 'Where should the project folder go?', canSelectFiles: false, canSelectFolders: true,
+                canSelectMany: false, openLabel: 'Create here'
+            });
+            if (!folder) { return; }
+
+            const store = flowStoreFor(container);
+            let result;
+            try {
+                result = await store.createProject(folder, name.trim(), destination.id || undefined);
+            } catch (e) {
+                console.error('[studio] could not create the project', e);
+                messageService.error('That folder could not be written. Nothing was created.');
+                return;
+            }
+            if (!result.ok) { messageService.error(result.reason); return; }
+
+            await workspaceService.addRoot(result.rootUri);
+            activeProject.set(result.rootUri.toString());
+            /*
+             * Open the intent document straight away — it is the thing the
+             * person watches fill, and the shape of it is the briefing an agent
+             * reads before asking anything.
+             */
+            try {
+                const intent = new URI(result.rootUri.toString() + '/intent.md');
+                const opener = await openerService.getOpener(intent);
+                await opener.open(intent);
+            } catch (e) {
+                console.warn('[studio] the project was created but its intent document would not open', e);
+            }
+            const shell = container.get(ApplicationShell);
+            const rail = shell.widgets.find(w => w.id === FLOW_RAIL_WIDGET_ID);
+            if (rail) { shell.activateWidget(rail.id); if (rail.refresh) { await rail.refresh(); } }
+        }
+    };
+}
+
+/*
+ * Start a flow in the project that is already open.
+ *
+ * The second entry point. "New project…" insists on creating a folder, which is
+ * right for the scenario's own premise — somebody with an idea and no repository
+ * — and useless to somebody who has already connected an empty one. This writes
+ * the same skeleton into what is there, over nothing: every file is written only
+ * if it does not already exist.
+ */
+function flowStartHereHandler(container) {
+    return {
+        execute: async () => {
+            const workspaceService = container.get(WorkspaceService);
+            const fileService = container.get(FileService);
+            const messageService = container.get(MessageService);
+            const openerService = container.get(OpenerService);
+            const quickInput = container.get(QuickInputService);
+            const roots = await workspaceService.roots;
+            const root = activeProject.resolve(roots);
+            if (!root) { messageService.info('Connect a project first, or use “New project from an idea…”.'); return; }
+
+            const store = flowStoreFor(container);
+            if (await store.hasFlow(root.resource)) {
+                messageService.info('This project already has a flow. Its rail is on the left.');
+                return;
+            }
+            const picks = flowSpec.DESTINATIONS.map(id => ({
+                id, label: flowSpec.DESTINATION_LABELS[id], description: DESTINATION_HELP[id]
+            }));
+            picks.push({ id: '', label: 'Decide later', description: 'It becomes the first question the agent asks.' });
+            const destination = await quickInput.showQuickPick(picks, {
+                title: 'How far is this going?',
+                placeholder: 'The only answer that changes which later questions exist.'
+            });
+            if (!destination) { return; }
+
+            const result = await store.startHere(root.resource, root.resource.path.base, destination.id || undefined);
+            if (!result.ok) { messageService.error(result.reason); return; }
+            try {
+                const intent = new URI(root.resource.toString() + '/intent.md');
+                const opener = await openerService.getOpener(intent);
+                await opener.open(intent);
+            } catch (e) {
+                console.warn('[studio] the flow started but its intent document would not open', e);
+            }
+            const shell = container.get(ApplicationShell);
+            const rail = shell.widgets.find(w => w.id === FLOW_RAIL_WIDGET_ID);
+            if (rail && rail.refresh) { await rail.refresh(); }
+        }
+    };
+}
+
+/*
+ * Set, or change, where the project is going.
+ *
+ * Changing it re-opens what its new value requires and discards nothing — which
+ * is a property of the fold rather than of this handler: coverage already
+ * recorded stays recorded, and `destinationNeeds` simply returns a longer list.
+ */
+function flowDestinationHandler(container) {
+    return {
+        execute: async () => {
+            const quickInput = container.get(QuickInputService);
+            const workspaceService = container.get(WorkspaceService);
+            const fileService = container.get(FileService);
+            const messageService = container.get(MessageService);
+            const roots = await workspaceService.roots;
+            const root = activeProject.resolve(roots);
+            if (!root) { return; }
+            const store = flowStoreFor(container);
+            if (!(await store.hasFlow(root.resource))) {
+                messageService.info('This project has no flow. Start one with “New project from an idea…”.');
+                return;
+            }
+            const picks = flowSpec.DESTINATIONS.map(id => ({
+                id, label: flowSpec.DESTINATION_LABELS[id], description: DESTINATION_HELP[id]
+            }));
+            const chosen = await quickInput.showQuickPick(picks, {
+                title: 'How far is this going?',
+                placeholder: 'Nothing already answered is discarded.'
+            });
+            if (!chosen) { return; }
+            await store.append(root.resource, { op: 'destination', value: chosen.id });
+            const shell = container.get(ApplicationShell);
+            const rail = shell.widgets.find(w => w.id === FLOW_RAIL_WIDGET_ID);
+            if (rail && rail.refresh) { await rail.refresh(); }
+        }
+    };
+}
+
+/*
+ * Write what an agent needs into this project, and say what it did.
+ *
+ * The message names the files rather than saying "done", because the
+ * interesting outcome is the one where the tools could NOT be registered: the
+ * flow still works, an agent will still follow the contract, and nothing will
+ * be recorded. That has to arrive as a sentence somebody reads, not as a green
+ * tick.
+ */
+function flowProvisionHandler(container) {
+    return {
+        execute: async () => {
+            const workspaceService = container.get(WorkspaceService);
+            const messageService = container.get(MessageService);
+            const roots = await workspaceService.roots;
+            const root = activeProject.resolve(roots);
+            if (!root) { return; }
+            const store = flowStoreFor(container);
+            if (!(await store.hasFlow(root.resource))) {
+                messageService.info('This project has no flow. Start one first.');
+                return;
+            }
+            const result = await store.provision(root.resource);
+            const shell = container.get(ApplicationShell);
+            const rail = shell.widgets.find(w => w.id === FLOW_RAIL_WIDGET_ID);
+            if (rail && rail.refresh) { await rail.refresh(); }
+            if (!result.registered.ok) {
+                messageService.warn('The contract and the skill are in place, but the studio-flow tools could not be registered: ' +
+                    result.registered.why + ' An agent will follow AGENTS.md and record nothing.');
+                return;
+            }
+            messageService.info(result.wrote.length
+                ? 'Written: ' + result.wrote.join(', ') + '. Restart your assistant so it picks up the tools.'
+                : 'Already set up — the contract, the skill and the studio-flow tools are all registered.');
+        }
+    };
+}
+
+/*
+ * Hand the flow to an assistant.
+ *
+ * The prompt is SHORT on purpose and says almost nothing about the flow: seeding
+ * is one-way and unreliable by design (see ai-context.js — Claude accepts a
+ * seeded prompt only on a fresh session, and Codex accepts none), so everything
+ * that matters travels through the repository instead. AGENTS.md is the contract
+ * and the MCP server is the state; this is only the doorbell.
+ */
+function flowContinueHandler(container) {
+    return {
+        execute: async () => {
+            const workspaceService = container.get(WorkspaceService);
+            const fileService = container.get(FileService);
+            const messageService = container.get(MessageService);
+            const commandRegistry = container.get(CommandRegistry);
+            const roots = await workspaceService.roots;
+            const root = activeProject.resolve(roots);
+            if (!root) { return; }
+            const store = flowStoreFor(container);
+            const state = await store.readState(root.resource);
+            if (!state) {
+                messageService.info('This project has no flow to hand over.');
+                return;
+            }
+            const section = flowSpec.section(flowSpec.currentSection(state));
+            const prompt = [
+                'You are driving the Studio green-field flow in this repository, and you run the interview.',
+                'Call flow_state() first; it tells you the step, the destination, and the next question.',
+                'Follow AGENTS.md in this repository — it is the contract, not a summary.',
+                'Ask one question at a time, here in chat. Record it with ask_question before you ask it.',
+                'Next step: ' + section.id + ' · ' + section.title + '.'
+            ].join('\n');
+            if (await seedClaude(commandRegistry, prompt)) {
+                messageService.info('Handed to Claude — the next step is already in its prompt.');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(prompt);
+                await commandRegistry.executeCommand('claude-vscode.sidebar.open');
+                messageService.info('Copied the handover prompt — paste it into an assistant with ⌘V.');
+            } catch (e) {
+                messageService.error('No assistant is available here. The flow is answerable by hand: AGENTS.md is the contract, and intent.md is the document.');
+            }
+        }
+    };
+}
+
 function connectProjectHandler(container) {
     return {
         execute: () => {
@@ -1201,11 +1967,145 @@ function connectProjectHandler(container) {
     };
 }
 
+/*
+ * Search is opened through the layout contribution rather than by constructing
+ * the widget here, because that singleton is the one thing holding the container
+ * and the shell together — the same route openProjectPage takes from the status
+ * line. Looked up by contribution instance rather than captured, so a layout
+ * restore cannot leave this pointing at a dead object.
+ */
+function searchHandler(container) {
+    return {
+        execute: () => {
+            const shell = container.get(ApplicationShell);
+            const chrome = container.getAll(FrontendApplicationContribution)
+                .find(contribution => typeof contribution.openSearch === 'function');
+            if (!chrome) {
+                console.warn('[studio] the product chrome contribution is not available to open Search');
+                return;
+            }
+            return chrome.openSearch(shell);
+        }
+    };
+}
+
+/*
+ * Same route in as searchHandler: through the layout contribution rather than by
+ * constructing the widget here, because that singleton is the one thing holding
+ * the container and the shell together. Looked up by contribution instance
+ * rather than captured, so a layout restore cannot leave this pointing at a
+ * dead object.
+ */
+/*
+ * The one QualityRunnerClient, made on first use and kept.
+ *
+ * Module scope rather than a container binding because this package has no
+ * decorators and no build step (CONTRACT-quality.md §1), so a binding would mean
+ * hand-writing a factory for a value with exactly one instance and no
+ * dependencies of its own. The client itself holds no state beyond the proxy,
+ * and `init` is idempotent.
+ */
+let qualityRunnerClient;
+function qualityRunner(container) {
+    if (!qualityRunnerClient) { qualityRunnerClient = new QualityRunnerClient(); }
+    try { qualityRunnerClient.init(container); } catch (e) {
+        console.warn('[studio] the quality runner service is not reachable', e);
+    }
+    return qualityRunnerClient;
+}
+
+/*
+ * A command that belongs to an optional feature.
+ *
+ * isVisible AND isEnabled, because Theia's palette and its menus read different
+ * ones: the quick-command surface filters on visibility, and a menu item reads
+ * enablement to decide whether it can be clicked. Setting one and not the other
+ * leaves the command reachable from the half that was forgotten.
+ *
+ * A predicate that throws counts as OFF. It reads a settings file that is
+ * committed and hand-editable, and the failure this protects against is a
+ * malformed one making every command in the palette throw on keystroke.
+ */
+function whileFeatureOn(active, handler) {
+    const on = () => {
+        try { return !!active(); } catch (e) {
+            console.warn('[studio] could not read a feature setting; treating the feature as off', e);
+            return false;
+        }
+    };
+    return {
+        execute: (...args) => handler.execute(...args),
+        isEnabled: (...args) => on() && (handler.isEnabled ? handler.isEnabled(...args) : true),
+        isVisible: (...args) => on() && (handler.isVisible ? handler.isVisible(...args) : true)
+    };
+}
+
+function qualityProjectHandler(container) {
+    return {
+        execute: () => {
+            const shell = container.get(ApplicationShell);
+            const chrome = container.getAll(FrontendApplicationContribution)
+                .find(contribution => typeof contribution.openQuality === 'function');
+            if (!chrome) {
+                console.warn('[studio] the product chrome contribution is not available to open Quality');
+                return;
+            }
+            return chrome.openQuality(shell);
+        }
+    };
+}
+
 const mod = new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toDynamicValue(ctx => new ProductChromeContribution(ctx.container)).inSingletonScope();
     bind(CommandContribution).toDynamicValue(ctx => ({
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
+            commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
+            /*
+             * The optional features' commands are registered whatever the
+             * setting says and made INVISIBLE when it is off, rather than
+             * registered conditionally: registration happens once, at startup,
+             * and the setting is per project and changes while the application
+             * runs. A command that exists only when the window opened would be
+             * missing from the palette for the rest of the session in the
+             * project that has just turned the feature on.
+             */
+            commands.registerCommand(QUALITY_PROJECT_COMMAND,
+                whileFeatureOn(() => fileTypeSettings.qualitySignalsActive(), qualityProjectHandler(ctx.container)));
+            const gearFlowOn = () => fileTypeSettings.gearFlowActive();
+            commands.registerCommand(FLOW_NEW_COMMAND, whileFeatureOn(gearFlowOn, flowNewHandler(ctx.container)));
+            commands.registerCommand(FLOW_START_HERE_COMMAND, whileFeatureOn(gearFlowOn, flowStartHereHandler(ctx.container)));
+            commands.registerCommand(FLOW_DESTINATION_COMMAND, whileFeatureOn(gearFlowOn, flowDestinationHandler(ctx.container)));
+            commands.registerCommand(FLOW_CONTINUE_COMMAND, whileFeatureOn(gearFlowOn, flowContinueHandler(ctx.container)));
+            commands.registerCommand(FLOW_PROVISION_COMMAND, whileFeatureOn(gearFlowOn, flowProvisionHandler(ctx.container)));
+        }
+    })).inSingletonScope();
+    /*
+     * The search shortcut, and one collision that has to be settled explicitly.
+     *
+     * @theia/search-in-workspace is NOT a dependency of app/package.json, but it
+     * is loaded anyway — plugin-ext depends on it, so src-gen/frontend/index.js
+     * pulls it in at line 136 — and it registers 'ctrlcmd+shift+f' for
+     * search-in-workspace.open. That panel is one of the ones SHELL_CSS hides,
+     * so the key currently opens a view the user cannot see. Unregistering it
+     * first is what reclaims the key, rather than leaving two bindings on it and
+     * trusting contribution order.
+     *
+     * The string must match search-in-workspace's own literal exactly —
+     * KeybindingRegistry.unregisterKeybinding compares the keybinding by
+     * equality — which is why ours is registered under the same canonical
+     * spelling instead of 'shift+ctrlcmd+f'. Checked against their
+     * search-in-workspace-frontend-contribution.js, which spells it
+     * 'ctrlcmd+shift+f'.
+     *
+     * This module loads at index.js line 142, after line 136, so this
+     * contribution runs second and the unregister lands on a binding that is
+     * already there.
+     */
+    bind(KeybindingContribution).toDynamicValue(() => ({
+        registerKeybindings(keybindings) {
+            keybindings.unregisterKeybinding('ctrlcmd+shift+f');
+            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f' });
         }
     })).inSingletonScope();
     bind(TabBarToolbarContribution).toDynamicValue(() => ({
@@ -1226,6 +2126,7 @@ const mod = new ContainerModule(bind => {
     })).inSingletonScope();
     bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, MARKDOWN_SPEC)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, HTML_SPEC)).inSingletonScope();
+    bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, TABLE_SPEC)).inSingletonScope();
 });
 
 module.exports = mod;

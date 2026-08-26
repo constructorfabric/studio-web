@@ -12,7 +12,7 @@
  * dock that is not a document, give it a tab button, and then have to decide
  * what happens when the user closes it. This is a state of the empty dock, so
  * it is a layer inside the dock's own node, shown exactly when the dock holds
- * no widgets. Same pattern, and the same reason, as the slot strip and the
+ * no widgets. Same pattern, and the same reason, as the assistant cluster and
  * bottom line: a raw node appended into a shell container, outside Lumino's
  * layout, driven by signals the shell already publishes.
  *
@@ -56,11 +56,19 @@ const REPOSITORIES_WIDGET_ID = 'studio-repositories';
  * language with the rest of the product (viewBox units, round caps, 1px).
  *
  * The direction is not decoration either, and the first version had it wrong.
- * The Projects panel and the slot strip are full-height columns either side of
- * the dock, so those two leaders run straight out sideways. The settings gear
- * and the terminal are single fields at the two ends of the 22px bottom line,
- * so those two turn down. An arrow that points where the thing is not is worse
- * than no arrow.
+ * The Projects panel is a full-height column beside the dock, so its leader runs
+ * straight out sideways. The settings gear and the terminal are single fields at
+ * the two ends of the 22px bottom line, so those two turn down. An arrow that
+ * points where the thing is not is worse than no arrow.
+ *
+ * Which is why there are three leaders now and not four. `tr` named "Comments &
+ * AI" and pointed right, at the 48px slot strip -- and that column is gone: the
+ * three document views moved into the document's own topbar (which does not
+ * exist while the dock is empty, so there is nothing here to point at) and the
+ * two assistants moved to the FOOT of the left rail, which is the one direction
+ * this leader could not mean. `tr` is kept below rather than deleted, because a
+ * fourth region on that side is a plausible thing to want back and rediscovering
+ * the geometry is the expensive part.
  */
 const LEADERS = {
     tl: '<path d="M47 17H6"/><path d="m11 12-5 5 5 5"/>',
@@ -220,7 +228,6 @@ class WelcomeView {
             '</section>').join('');
 
         return hintHtml('tl', 'Your files') +
-            hintHtml('tr', 'Comments &amp; AI') +
             hintHtml('bl', 'Project settings') +
             hintHtml('br', 'Terminal &amp; theme') +
             '<div class="studio-welcome-body">' +

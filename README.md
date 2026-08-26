@@ -78,13 +78,17 @@ automatically:
   `STUDIO_REGISTRY_TOKEN` (PAT with `read:packages`) before starting the
   backend. `docker login` alone is NOT enough: the gear talks to the Docker
   API directly, which ignores the CLI credential store.
-- freshness: `always_pull: true` re-pulls the mutable `edge` tag on every
-  launch; a failed pull falls back to the local copy (offline-friendly).
+- freshness: `always_pull` re-pulls the mutable `edge` tag on every launch; a
+  failed pull falls back to the local copy (offline-friendly). The docker
+  profile ships it `false`, so a locally built image is used as-is — set it
+  `true` to track the published tag.
 - hacking on the image locally: `docker build -f theia/Dockerfile -t
   cf-studio-theia:latest theia`, then in the config set
   `image: cf-studio-theia:latest` + `always_pull: false`.
 
-In the portal: workspace → Open Studio → Launch. Optional Git URL is
+In the portal: workspace → Open Studio → Launch. The launcher lives in
+`studio-frontend-prototype` (compose publishes it on 8081); the FrontX portal
+on 8080 does not carry it yet. Optional Git URL is
 cloned into the workspace on first launch. Sessions bind to loopback ports
 41000-41099, live 4 h (reaper), survive backend restarts (label adoption),
 and can be stopped from the launcher. Inside the IDE, Theia AI (chat with

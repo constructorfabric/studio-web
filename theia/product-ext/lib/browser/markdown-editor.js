@@ -34,7 +34,7 @@ const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
 
 const { markdownToHtml, jsonToMarkdown, splitFrontmatter, joinFrontmatter, unsupportedConstructs, contentWords } = require('./markdown');
 const { newId } = require('./comments-store');
-const { ChangesStore, resolveFile } = require('./changes-store');
+const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
 const { diffHunks, applyHunks, countPending } = require('./diff');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
 const { trackedHtml, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
@@ -42,7 +42,17 @@ const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
 const { suggestMarksExtension, refreshSuggestMarks, collect } = require('./suggest-marks');
 const { TABLE_EXTENSIONS, TABLE_COMMANDS, tableContent, cellContext, currentAlign } = require('./editor-tables');
-const { DiagramCodeBlock } = require('./mermaid-view');
+/*
+ * ONE code block extension, for both rendered content types.
+ *
+ * Mermaid diagrams and interactive figures are both fenced code blocks, and
+ * ProseMirror allows exactly one node view per node type — so figure-view.js owns
+ * the dispatch and calls mermaid-view.js's node view when the language is
+ * Mermaid. Importing the diagram extension directly here again would install a
+ * second node view for the same node and silently lose whichever lost the race.
+ */
+const { DocumentCodeBlock, starterButtonsHtml } = require('./figure-view');
+const { FIGURE_LANGUAGE, figureRequestPrompt, starterFigure } = require('./figure-spec');
 const { SessionLock } = require('./session-lock');
 const { fileTypeSettings } = require('./file-type-settings');
 const { ICONS } = require('./icons');
@@ -54,7 +64,23 @@ const {
     requestChange, openAiPrompt,
     assistantForKey, revealAssistant, collapseRightPanel, assistantFromTabTitle, SLOT_GRACE_MS
 } = require('./ai-context');
-const { slotStrip } = require('./slot-strip');
+const { slotStrip, renderDocCluster } = require('./slot-strip');
+/*
+ * The quality extension: specification signals about this document.
+ *
+ * Five modules, split along the one seam that matters — three of them are pure
+ * (no DOM, no Theia, tested in milliseconds under plain node) and two build
+ * markup. The orchestration is in this file, in "rail: quality", and it is only
+ * orchestration; every hard question is answered in one of these.
+ */
+const qualityScan = require('./quality-scan');
+const qualityIdentity = require('./quality-identity');
+const qualityAnchor = require('./quality-anchor');
+const qualityView = require('./quality-view');
+const qualityMeasures = require('./quality-measures');
+const { qualityMarksExtension, refreshQualityMarks } = require('./quality-marks');
+const qualityMove = require('./quality-move');
+const { previewBase } = require('./preview-url');
 const { statusLine } = require('./status-line');
 
 // StarterKit's Code mark declares `excludes: '_'`, which means it cannot
@@ -85,12 +111,73 @@ const Toggle = Node.create({
     }
 });
 
+/*
+ * Footnotes, as two nodes.
+ *
+ * The reference is an ATOM. A footnote reference is one indivisible token whose
+ * label has to match a definition elsewhere in the file; if the caret could sit
+ * inside it, ordinary typing would produce `[^peo|ple]` and quietly break that
+ * pairing. Atom means the editor treats it as a single character: select it,
+ * delete it, or leave it alone.
+ *
+ * The definition is a normal block with inline content, because the text of a
+ * footnote is prose that deserves bold, links and code like any other. Only its
+ * label is an attribute, rendered as a non-editable prefix — editing the label
+ * in place would silently orphan every reference pointing at it.
+ */
+const FootnoteRef = Node.create({
+    name: 'footnoteRef', group: 'inline', inline: true, atom: true, selectable: true,
+    addAttributes() {
+        return {
+            label: {
+                default: '',
+                parseHTML: el => el.getAttribute('data-footnote-ref') || '',
+                renderHTML: attrs => ({ 'data-footnote-ref': attrs.label || '' })
+            }
+        };
+    },
+    parseHTML() { return [{ tag: 'sup[data-footnote-ref]' }]; },
+    renderHTML({ HTMLAttributes }) {
+        const label = HTMLAttributes['data-footnote-ref'] || '';
+        return ['sup', mergeAttributes(HTMLAttributes, { class: 'studio-footnote-ref' }), label];
+    }
+});
+
+const FootnoteDef = Node.create({
+    name: 'footnoteDef', group: 'block', content: 'inline*', defining: true,
+    addAttributes() {
+        return {
+            label: {
+                default: '',
+                parseHTML: el => el.getAttribute('data-footnote-def') || '',
+                renderHTML: attrs => ({ 'data-footnote-def': attrs.label || '' })
+            }
+        };
+    },
+    parseHTML() {
+        return [{ tag: 'div[data-footnote-def]', contentElement: '[data-studio-footnote-body]' }];
+    },
+    renderHTML({ HTMLAttributes }) {
+        const label = HTMLAttributes['data-footnote-def'] || '';
+        /* The label is shown in source form. A reader editing the footnote needs
+         * to see which reference it answers, and `[^people]` is the spelling
+         * they wrote and can search for; a bare `people` reads as body text. */
+        return ['div', mergeAttributes(HTMLAttributes, { class: 'studio-footnote-def' }),
+            ['span', { class: 'studio-footnote-def-label', contenteditable: 'false' }, '[^' + label + ']'],
+            ['span', { class: 'studio-footnote-def-body', 'data-studio-footnote-body': '' }, 0]];
+    }
+});
+
 function richImageSrc(documentUri, src) {
     const value = String(src || '');
     // Remote and data URLs retain their author-provided meaning. Markdown
     // relative paths must be resolved against the document, not the app shell.
     if (!documentUri || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value)) { return value; }
-    return encodeURI('/studio-preview' + documentUri.parent.resolve(value).path.toString());
+    // previewBase() rather than a root-relative path: on an Electron shell the
+    // document is displayed from a file:// page, and a leading slash resolves
+    // there instead of at the backend — every image in every document broken.
+    // encodeURI is safe over the absolute form: it leaves ':' and '/' alone.
+    return encodeURI(previewBase() + documentUri.parent.resolve(value).path.toString());
 }
 
 const StudioImage = Image.extend({
@@ -151,17 +238,162 @@ function saveShortcut(widget) {
     });
 }
 
+/*
+ * How long "Dismissed — undo" stays on the rail.
+ *
+ * A dismissal writes to a file that gets committed, so a mis-click has to be
+ * takeable back — and long enough to notice it happened, which four seconds is
+ * not. Six is the figure the comment rail's armed delete settled on for the same
+ * class of decision.
+ */
+const QUALITY_UNDO_MS = 6000;
+
+/* The document's path inside its project, which is the key everything about a
+ * quality run is stored under. Same rule as changes-store.js's relativePath, and
+ * repeated rather than imported because that one is about a sidecar filename and
+ * this one is about matching a detector's own path. */
+function qualityRelativePath(rootUri, docUri) {
+    const root = rootUri.toString();
+    const doc = docUri.toString();
+    return doc.startsWith(root) ? decodeURIComponent(doc.slice(root.length).replace(/^\//, '')) : doc;
+}
+
+/*
+ * Every path a detector's path could mean inside this project, longest first.
+ *
+ * The detectors record their own root-relative path —
+ * `tests/traceability/assess/mcp-engine/DESIGN.md` — which has nothing to do
+ * with the Studio project root. So a report's path is treated as a suffix to be
+ * matched rather than an address to be resolved, exactly as quality-store.js
+ * does when it matches a report to a document. Longest first, so a project that
+ * genuinely reproduces the detector's directory layout wins over a coincidence
+ * two segments deep.
+ */
+function qualitySuffixCandidates(reportPath) {
+    const parts = String(reportPath || '').split('/').filter(Boolean);
+    const out = [];
+    for (let start = 0; start < parts.length; start++) { out.push(parts.slice(start).join('/')); }
+    return out;
+}
+
+/*
+ * Is this anchor pointing at the document on screen?
+ *
+ * A suffix comparison in both directions, aligned on segment boundaries. Aligned
+ * because the alternative — a bare `endsWith` — makes `api.md` match
+ * `internal-api.md`, which would put another document's findings in this one's
+ * rail with no visible sign that it had happened.
+ */
+function qualitySameFile(reportPath, relPath) {
+    if (!reportPath || !relPath) { return false; }
+    if (reportPath === relPath) { return true; }
+    const a = String(reportPath).split('/').filter(Boolean);
+    const b = String(relPath).split('/').filter(Boolean);
+    const n = Math.min(a.length, b.length);
+    for (let i = 1; i <= n; i++) { if (a[a.length - i] !== b[b.length - i]) { return false; } }
+    return n > 0;
+}
+
+/*
+ * The chip that goes on a flagged heading: what the section reads as.
+ *
+ * Taken from the finding's own explanation rather than composed here, because
+ * the detector's wording is the claim and paraphrasing a claim in the view is
+ * how a UI ends up saying something the data does not support. Upper-cased by
+ * CSS, not here, so the value stays readable in a tooltip and in the rail.
+ */
+function qualitySectionLabel(finding) {
+    const role = finding && finding.fix && finding.fix.readsAs;
+    if (role) { return 'reads as ' + role; }
+    const match = /reads as ([A-Za-z]+)/.exec((finding && finding.explain && finding.explain.reason) || '');
+    return match ? 'reads as ' + match[1] : 'wrong voice';
+}
+
+/*
+ * Every document's duplication and leak numbers, so one document's rate can be
+ * stated as a rank. Cheap: the reports are already parsed and in memory.
+ */
+function qualityProjectMetrics(reports) {
+    const rows = [];
+    for (const report of (reports && reports.bloat) || []) {
+        const path = (report.paths && report.paths[0]) || report.path;
+        if (!path) { continue; }
+        rows.push({ path, dupRate: (report.metrics || {}).dup_rate });
+    }
+    for (const report of (reports && reports.purpose) || []) {
+        if (!report.path) { continue; }
+        const existing = rows.find(row => row.path === report.path);
+        const leakShare = (report.gate || {}).leak_share;
+        if (existing) { existing.leakShare = leakShare; }
+        else { rows.push({ path: report.path, leakShare }); }
+    }
+    return rows;
+}
+
+function qualityShorten(text, limit = 60) {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    return value.length > limit ? value.slice(0, limit - 1) + '…' : value;
+}
+
+/* GitHub's heading-anchor rule, which is what a Markdown reader will resolve the
+ * link against. Not a general slugifier — only what a heading needs. */
+function qualitySlug(text) {
+    return String(text || '').toLowerCase().trim()
+        .replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-');
+}
+
+/*
+ * The prompt an assistant is given for a tier-2 or tier-3 fix.
+ *
+ * SHORT BY CONSTRUCTION, and the envelope is what makes it short: the
+ * occurrences are ADDRESSES — a file, a heading path, a line range — rather than
+ * pasted text, so a cluster spanning sixteen files is sixteen lines of prompt
+ * instead of sixteen paragraphs. ai-context.js records why this matters (a
+ * seeded assistant opens as an editor tab, not in the slot, so the prompt is
+ * read by a person before it is read by a model).
+ *
+ * It names the rule that fired and the outcome asked for, and it says nothing
+ * about how to achieve it — the tiers exist precisely because the deterministic
+ * cases are handled without a model, and what is left is judgment.
+ */
+function qualityFixInstruction(finding, relPath) {
+    const places = (finding.anchors || []).map(anchor => {
+        const where = qualitySameFile(anchor.file, relPath) ? 'this document' : anchor.file;
+        const lines = anchor.line ? ' lines ' + anchor.line +
+            (anchor.lineEnd && anchor.lineEnd !== anchor.line ? '–' + anchor.lineEnd : '') : '';
+        return '  - ' + where + ' § ' + (anchor.section || '(top level)') + lines;
+    }).join('\n');
+
+    if (finding.rule === 'purpose') {
+        const readsAs = (finding.fix && finding.fix.readsAs) || 'another kind of document';
+        const belongs = (finding.fix && finding.fix.belongsIn) || 'the document that owns that material';
+        return 'A specification check found that this section reads as ' + readsAs +
+            ' rather than as part of a ' + ((finding.fix && finding.fix.docType) || 'document') +
+            '.\n\nSection:\n' + places +
+            '\n\nMove it to ' + belongs + ', leaving a one-line reference behind, and change nothing else.' +
+            ' Reason given by the check: ' + (finding.explain && finding.explain.reason || '') + '.';
+    }
+
+    return 'A specification check found the same content in more than one place — ' +
+        (finding.trust === 'exact' ? 'identical wording' : 'reworded, matched by a model') + '.\n\n' +
+        'Quoted:\n  "' + qualityShorten(finding.quote, 240) + '"\n\nPlaces:\n' + places +
+        '\n\nKeep one authoritative copy and replace the others with a reference to it.' +
+        ' Do not paraphrase the copy you keep.';
+}
+
 function buildExtensions(widget) {
     return [
         saveShortcut(widget),
         StarterKit.configure({ heading: { levels: [1, 2, 3, 4] }, code: false, codeBlock: false }),
-        DiagramCodeBlock,
+        DocumentCodeBlock,
         CoexistingCode,
         Link.configure({ openOnClick: false, autolink: false, validate: () => true, isAllowedUri: () => true }),
         Placeholder.configure({ placeholder: "Type '/' for blocks…" }),
         TaskList,
         TaskItem.configure({ nested: true }),
         Toggle,
+        FootnoteRef,
+        FootnoteDef,
         StudioImage.configure({ inline: false, allowBase64: false, documentUri: widget && widget.uri }),
         CommentMark,
         /*
@@ -173,6 +405,14 @@ function buildExtensions(widget) {
          * into — so nothing here costs anything in Editing mode.
          */
         suggestMarksExtension(() => (widget && widget.suggestBaseline ? widget.suggestBaseline() : undefined)),
+        /*
+         * Quality findings in the text, on the same callback argument: the
+         * plugin asks per transaction, so the widget owns when the answer
+         * changes and the plugin never learns about a check finishing, a card
+         * being selected or a finding being dismissed. An empty array is how the
+         * marks are off, which is every document nobody has checked.
+         */
+        qualityMarksExtension(() => (widget && widget.qualityRanges ? widget.qualityRanges() : [])),
         ...TABLE_EXTENSIONS
     ];
 }
@@ -189,8 +429,16 @@ const SLASH_ITEMS = [
     { key: 'quote', label: 'Quote', hint: 'Capture a citation', icon: '"', run: c => c.toggleBlockquote() },
     { key: 'code', label: 'Code block', hint: 'Preformatted code', icon: '{}', run: c => c.toggleCodeBlock() },
     { key: 'toggle', label: 'Toggle', hint: 'Collapsible details', icon: '›', run: c => c.setNode('toggle', { summary: 'Toggle' }) },
-    { key: 'image', label: 'Image', hint: 'Add an image from this project', icon: '▧', run: (_, widget) => widget.importImage() },
+    { key: 'image', label: 'Image', hint: 'Add an image from this project', icon: '▧', defer: true, run: (_, widget) => widget.importImage() },
     { key: 'diagram', label: 'Diagram', hint: 'Mermaid diagram', icon: '◇', run: c => c.insertContent({ type: 'codeBlock', attrs: { language: 'mermaid' }, content: [{ type: 'text', text: 'graph TD;\n  A[Start] --> B[Finish];' }] }) },
+    /*
+     * `defer` means "this one opens a surface of its own": the slash text is
+     * deleted, the menu closes, and the item takes over. Two items need it and
+     * the second one is why it is a flag rather than a special case — the image
+     * picker was special-cased in applySlash, and adding a second special case
+     * beside it is how a switch statement starts.
+     */
+    { key: 'figure', label: 'Interactive figure', hint: 'Describe one, or start from a template', icon: '◈', defer: true, run: (_, widget) => widget.createFigure() },
     { key: 'table', label: 'Table', hint: 'Data table', icon: '▦', run: c => c.insertContent(tableContent(3, 2)) },
     { key: 'divider', label: 'Divider', hint: 'Horizontal rule', icon: '—', run: c => c.setHorizontalRule() }
 ];
@@ -346,8 +594,23 @@ class MarkdownEditorWidget extends Widget {
         // Set while a counter-suggestion is being composed, so the record says
         // which suggestion it answers.
         this.counterTo = undefined;
+        /*
+         * Which rail would open, and whether it is open. NOT open by default,
+         * and that changed with the topbar cluster.
+         *
+         * Comments being the default occupant made sense while a 48px strip was
+         * on screen advertising all five destinations: the panel was the visible
+         * half of a control the user could already see. Now the resting state is
+         * the whole point — the document reaches the window's edge, and the
+         * count badge on the Comments tile is what says a document has threads.
+         * Opening 360px of rail unasked would give the width back with one hand
+         * and take it with the other.
+         *
+         * `rail` still remembers Comments, so the first press opens what it
+         * always did.
+         */
         this.rail = 'comments';
-        this.railOpen = true;
+        this.railOpen = false;
         // Which assistant, if any, is the current occupant of the single right
         // slot. Mutually exclusive with railOpen -- see selectSlot().
         this.assistant = undefined;
@@ -368,6 +631,45 @@ class MarkdownEditorWidget extends Widget {
         this.resolvedThreadsOpen = false;
         this.openResolvedThreadId = undefined;
         this.armedDeleteId = undefined;
+        /*
+         * The quality rail's own state, all of it view state except the
+         * judgments, which are a mirror of the committed sidecar.
+         *
+         * `qualityLoaded` rather than a truthiness check on the envelope,
+         * because a document with no report is a legitimate loaded state and
+         * must not send the rail back to read the directory on every render.
+         */
+        this.qualityStore = ctx.qualityStore;
+        /*
+         * The detector runner, or undefined where there is none. Probed once,
+         * lazily, when the rail first opens — not in this constructor, which
+         * runs for every document a person opens whether they look at Quality
+         * or not, and an unconditional probe there is a filesystem walk per tab.
+         */
+        this.qualityRunner = ctx.qualityRunner;
+        this.qualityRun = undefined;      // { available, why, running, done, total, current, error }
+        this.qualityRunId = undefined;
+        this.qualityRunWatch = undefined;
+        this.qualityEnvelope = undefined;
+        this.qualityFindings = [];
+        this.qualityJudgments = {};
+        this.qualityTab = 'findings';
+        this.qualityTrust = 'all';
+        this.qualitySort = 'document';
+        this.qualityShowWeak = false;
+        this.qualityShowDismissed = false;
+        this.activeFinding = undefined;
+        this.qualityExplainFor = undefined;
+        this.qualityPickerFor = undefined;
+        this.qualityPickerReason = undefined;
+        this.qualityUndoFor = undefined;
+        this.qualityResolvedSince = 0;
+        this.qualityLoaded = false;
+        this.qualityLoading = false;
+        this.qualityDocTypeOpen = false;
+        this.qualitySegment = undefined;
+        this.qualityMissing = undefined;
+        this.qualityError = undefined;
         this.drafts = {};
         this.disposables = [];
 
@@ -390,12 +692,19 @@ class MarkdownEditorWidget extends Widget {
              */
             /*
              * Two things left this bar in design review 02, and both left
-             * because they belonged to another scope.
+             * because they belonged to another scope. One of them has come
+             * back, changed.
              *
              * The slot selector moved to the shell's right-hand strip
              * (slot-strip.js): three of its five entries were app-level panels
              * that outlive the document, and the pill's membership changed per
-             * surface. The bar went from six children to four.
+             * surface. It is now HALF back, as the icon cluster at the end of
+             * this bar -- the three DOCUMENT destinations only. The two
+             * assistants stayed shell-level and live at the foot of the left
+             * activity rail, because a per-document toolbar cannot reach them
+             * when no document is open. The strip's own 48px column is gone; see
+             * the header of slot-strip.js for why holding it was worse than
+             * crowding this bar.
              *
              * The path moved to the status line: it stated the file name a
              * second time 35px under the dock tab that already says it, and the
@@ -430,6 +739,17 @@ class MarkdownEditorWidget extends Widget {
             '  </span>' +
             '  <span class="studio-doc-status">Loading…</span>' +
             '  <button class="studio-btn primary" data-act="save-now" hidden>Save</button>' +
+            /*
+             * Last, hard against the bar's right edge, because the surface it
+             * governs is the right of the window -- the same argument that
+             * pushed the old pill out of the middle of this row.
+             *
+             * The divider is not decoration: everything left of it states what
+             * the FILE is doing, everything right of it opens something BESIDE
+             * it. Without a rule the cluster read as three more status fields.
+             */
+            '  <span class="studio-slot-divider" aria-hidden="true"></span>' +
+            '  <div class="studio-slot-cluster" data-slot-cluster></div>' +
             '</div>' +
             /*
              * Banners live INSIDE the document column, not above the whole
@@ -475,6 +795,7 @@ class MarkdownEditorWidget extends Widget {
         this.suggestEl = this.node.querySelector('.studio-doc-suggest');
         this.busyEl = this.node.querySelector('.studio-doc-busy');
         this.saveBtn = this.node.querySelector('[data-act="save-now"]');
+        this.slotClusterEl = this.node.querySelector('[data-slot-cluster]');
         this.bannersEl = this.node.querySelector('.studio-doc-banners');
         this.bodyEl = this.node.querySelector('.studio-doc-body');
         // The loading state's host. Not .studio-doc-scroll, which mode-raw
@@ -530,6 +851,17 @@ class MarkdownEditorWidget extends Widget {
              * checkboxes, and re-rendering the tracked document rebuilds its
              * markup from the proposal each time.
              */
+            /*
+             * Specification signals can be turned off from the Project page
+             * while this document has the quality rail open — the destination
+             * stops being drawn, and a panel left open in a slot nothing can
+             * reach any more is a trap. Close it, and give the width back to the
+             * document exactly as the selector's own toggle would.
+             */
+            if (!fileTypeSettings.qualitySignalsForFile(this.uri) && this.rail === 'quality' && this.railOpen) {
+                this.closeSlot();
+            }
+            this.renderSlotCluster();
             const style = fileTypeSettings.changeReviewForFile(this.uri);
             if (style !== this.reviewStyle) {
                 this.reviewStyle = style;
@@ -603,12 +935,15 @@ class MarkdownEditorWidget extends Widget {
          *
          * onClick below dismisses them for clicks inside the widget, which used
          * to be enough, because every product control near the document was
-         * inside it. It is not any more: the slot selector is the shell's
-         * right-hand strip and the ambient state is a status line, both outside
-         * this node. Measured consequence before this existed — clicking the
-         * strip to open Comments left the selection toolbar hanging over the
-         * document, because on macOS pressing a button moves no focus, so the
-         * editor kept both focus and selection and nothing told it to hide.
+         * inside it. It is not any more: the ambient state is a status line and
+         * the two assistants are a cluster in the left activity rail, both
+         * outside this node. Measured consequence before this existed — clicking
+         * the shell-level slot selector (then a strip in the right-hand column)
+         * to open Comments left the selection toolbar hanging over the document,
+         * because on macOS pressing a button moves no focus, so the editor kept
+         * both focus and selection and nothing told it to hide. The document's
+         * own three destinations are back inside this node and are covered by
+         * onClick again, but the assistants are not, so this stays.
          *
          * Capture phase on `document`, mirroring the keydown handler above, so a
          * control that stops propagation cannot swallow the dismissal; the
@@ -898,55 +1233,92 @@ class MarkdownEditorWidget extends Widget {
         // buttons keeps them in the DOM and in the tab order, which is the same
         // defect the floating toolbars had (see the [hidden] note in SHELL_CSS).
         seg.hidden = !this.authoringModes;
-        if (!this.authoringModes) { seg.innerHTML = ''; this.updateTopbarVisibility(); slotStrip.refresh(); return; }
+        if (!this.authoringModes) {
+            seg.innerHTML = '';
+            this.updateTopbarVisibility();
+            this.renderSlotCluster();
+            slotStrip.refresh();
+            return;
+        }
         seg.innerHTML = MODES.map(m =>
             '<button class="studio-seg-btn' + (m.key === this.mode ? ' on' : '') + '" data-studio-mode="' + m.key +
             '" title="' + m.hint + '" aria-pressed="' + (m.key === this.mode) + '">' + m.label + '</button>').join('');
-        // The slot selector is no longer in this bar; the shell's strip renders
-        // it from slotState() below. Nothing else in this widget reads it, so a
-        // refresh is the whole handoff.
+        /*
+         * The document's three destinations are in this bar and the two
+         * assistants are not, so keeping the selector honest is two calls, not
+         * one: renderSlotCluster paints this widget's own cluster from
+         * slotState(), and slotStrip.refresh() repaints the shell-level
+         * assistant cluster from whichever assistant owns Theia's panel.
+         */
+        this.renderSlotCluster();
         slotStrip.refresh();
         this.updateTopbarVisibility();
     }
 
     /*
-     * The bar is hidden only when it would be EMPTY.
+     * THE BAR IS ALWAYS SHOWN. This method exists to say so and to record why it
+     * used to do something, because it has now been wrong twice in the same
+     * direction and the reasoning is what stops a third time.
      *
-     * It used to be hidden whenever authoring modes were off and no Save button
-     * was needed — which is the DEFAULT project (autosave on, source modes off),
-     * so on an ordinary document the bar was not there at all. That was right
-     * when its only contents were the mode segment and a conditional button.
+     * Round one: hidden whenever authoring modes were off and no Save button was
+     * needed — which is the DEFAULT project (autosave on, source modes off), so
+     * on an ordinary document the bar was not there at all. Right when its only
+     * contents were the mode segment and a conditional button.
      *
-     * It stopped being right the moment the bar gained the Editing / Suggesting
-     * switch, because that control is available on every editable document and a
-     * control nobody can reach is not a feature. Reported exactly that way: "i
-     * don't get how to enable suggestion mode" — the switch was rendering
-     * correctly into a parent with `hidden` set.
+     * Round two: hidden only when it would be EMPTY, after the bar gained the
+     * Editing / Suggesting switch. That switch is available on every editable
+     * document, and a control nobody can reach is not a feature — reported
+     * exactly that way, "i don't get how to enable suggestion mode", with the
+     * switch rendering correctly into a parent that had `hidden` set.
      *
-     * The consequence is deliberate and worth naming: an ordinary document now
-     * shows a 43px bar it previously did not, carrying the mode switch and the
-     * save status. That is a cost against the empty-chrome work (D10–D19), paid
-     * because the alternative is a mode you can only enter by editing
-     * localStorage by hand.
+     * Round three, here: the bar can no longer be empty, so there is no
+     * condition left to test. It carries the slot cluster, whose membership is
+     * FIXED at three (slot-strip.js) — an entry the document cannot serve is
+     * dimmed and explains itself rather than disappearing, so the cluster has
+     * exactly the same three children on every document, always. Hiding the bar
+     * would take the only route to Comments, Changes and History with it, which
+     * is round two's mistake with a worse blast radius.
+     *
+     * The cost is deliberate and worth naming: an ordinary document shows a 42px
+     * bar it did not before the mode switch landed. That is a charge against the
+     * empty-chrome work (D10–D19), and this change is what pays for it — the
+     * 48px right-hand column that held the same buttons is gone, so the document
+     * is 48px wider and the bar is the only chrome left.
+     *
+     * The call sites are kept rather than deleted: it is the one place that
+     * knows the answer, and a future bar that CAN be empty needs it back here
+     * rather than reinvented at four call sites.
      */
     updateTopbarVisibility() {
         const topbar = this.node.querySelector('.studio-doc-topbar');
         if (!topbar) { return; }
-        const hasSuggest = !!(this.suggestEl && !this.suggestEl.hidden);
-        const hasSave = !!(this.saveBtn && !this.saveBtn.hidden);
-        topbar.hidden = !this.authoringModes && !hasSave && !hasSuggest;
+        topbar.hidden = false;
     }
 
     /*
-     * What the shell's slot strip renders for this document.
+     * Paint this document's own slot cluster.
      *
-     * Capabilities are stated rather than implied: the strip's membership is
-     * fixed at five, and an entry a surface cannot serve is disabled with a
-     * reason. A Markdown document can serve all five.
-     *
-     * `counts` keeps the same two numbers the pills carried as <em> badges.
+     * The rendering is slot-strip.js's, from this widget's slotCapabilities()
+     * and slotState() — the same two methods the shell-level strip used to read
+     * off it. Nothing about the contract changed when the buttons moved into
+     * this node; only who owns the pixels.
      */
-    slotCapabilities() { return ['comments', 'changes', 'history', 'claude', 'codex']; }
+    renderSlotCluster() { renderDocCluster(this.slotClusterEl, this); }
+
+    /*
+     * What the slot clusters render for this document.
+     *
+     * Capabilities are stated rather than implied: membership is fixed at five
+     * across the two clusters, and an entry a surface cannot serve is dimmed
+     * with a reason. A Markdown document can serve all five.
+     *
+     * `counts` keeps the same two numbers the old pills carried as <em> badges,
+     * and they matter MORE now than they did in either previous home: with the
+     * panel absent by default, the badge on the Comments button is the only
+     * thing on screen saying a document-scope thread exists at all (constraint
+     * 22 — those threads have no gutter mark to fall back on).
+     */
+    slotCapabilities() { return ['comments', 'changes', 'history', 'quality', 'claude', 'codex']; }
 
     slotState() {
         return {
@@ -956,7 +1328,19 @@ class MarkdownEditorWidget extends Widget {
                 // Both stores. A colleague's suggestion is review work waiting on
                 // me exactly as an assistant's proposal is, so a strip that
                 // counted only one of them would say the rail was empty.
-                changes: this.pendingHunkCount() + this.pendingSuggestionCount()
+                changes: this.pendingHunkCount() + this.pendingSuggestionCount(),
+                /*
+                 * Open findings, which is what is left to triage. Dismissed and
+                 * resolved are deliberately excluded and `later` is deliberately
+                 * included: parking something does not settle it, and a badge
+                 * that dropped it would make the rail look finished while work
+                 * was still parked in it.
+                 *
+                 * Zero until the rail has been opened once, because reading the
+                 * run costs a directory walk and nothing should pay for it on
+                 * every document that is merely open.
+                 */
+                quality: this.qualityFindings.filter(finding => finding.status !== 'dismissed').length
             }
         };
     }
@@ -1202,11 +1586,47 @@ class MarkdownEditorWidget extends Widget {
             await this.historyStore.record(this.uri, {
                 kind: 'edit', title: 'Edited ' + this.uri.path.base, detail: 'Manual edit', body
             }).then(entries => { this.historyEntries = entries; if (this.rail === 'history') { this.renderRail(); } });
+            void this.checkPurposeOnSave();
             return true;
         } catch (e) {
             console.error('[studio] save failed', e);
             this.setSaveState('error');
             return false;
+        }
+    }
+
+    /*
+     * The save-time pass — purpose only, and only when the rail is open.
+     *
+     * PLAN §13 is the whole argument: purpose is 68 ms and model-free, so it can
+     * follow a save; duplication is 2.1 s behind a ~500 MB reranker, so it
+     * cannot, and CONTRACT-runner.md §1 records the correction to the plan's own
+     * table. Nothing runs on a keystroke, ever.
+     *
+     * GATED ON THE RAIL BEING OPEN, which is the difference between a helpful
+     * background check and a subprocess spawned on every Cmd+S of every document
+     * for a panel nobody is looking at. Fire-and-forget: a save must not wait on
+     * a detector, and a detector that fails must not make a successful save look
+     * failed.
+     */
+    async checkPurposeOnSave() {
+        if (this.rail !== 'quality' || !this.railOpen) { return; }
+        const runner = await this.qualityRunnerState();
+        if (!runner || !runner.available || runner.running) { return; }
+        try {
+            const started = await this.qualityRunner.run(this.qualityRoot, {
+                scope: 'document', paths: [this.qualityRelPath], detectors: ['purpose']
+            });
+            await this.qualityRunner.watch(started && started.runId);
+            this.qualityLoaded = false;
+            await this.refreshQuality({ quiet: true });
+            this.renderRail();
+        } catch (e) {
+            /* Deliberately quiet. The document saved; the check is a bonus, and
+             * a toast about a background pass a person did not ask for would be
+             * noise on the one action they DID ask for. The rail's freshness
+             * line still tells the truth about when the last check ran. */
+            console.warn('[studio] the save-time quality check did not run', e);
         }
     }
 
@@ -1452,6 +1872,16 @@ class MarkdownEditorWidget extends Widget {
                 commentId: info.commentId,
                 author: info.author || 'assistant',
                 baseBody: base,
+                /*
+                 * A cross-file move is a cut here and an insert there, and the
+                 * two must accept or reject together — half of it deletes a
+                 * section from one document without adding it to the other.
+                 * `groupId` is undefined for every ordinary proposal and is not
+                 * serialised at all in that case, so nothing already on disk
+                 * changes shape (PLAN §8, changes-store.js's own group block).
+                 */
+                groupId: info.groupId,
+                groupMembers: info.groupMembers,
                 proposedBody
             }));
         }
@@ -2117,6 +2547,53 @@ class MarkdownEditorWidget extends Widget {
         this.refreshPendingFiles();
 
         if (settled && proposal.commentId) { this.offerCommentResolution(proposal.commentId); }
+        if (settled && proposal.groupId) { await this.settleGroup(proposal); }
+    }
+
+    /*
+     * The other half of a linked move, resolved the same way this half was.
+     *
+     * A move is a cut in one document and an insert in another; half of it
+     * deletes a section without adding it anywhere. So when this side settles,
+     * the rest of the group follows — through changes-store.js's `resolveGroup`,
+     * which validates every remaining member against its own base BEFORE
+     * writing anything and refuses the lot if one has moved underneath.
+     *
+     * MIXED DECISIONS ARE REFUSED RATHER THAN GUESSED AT. Per-hunk review is
+     * the right granularity for an assistant's edit and the wrong one for a
+     * move: "accept the deletion but not the insertion" is not a coherent
+     * outcome, and picking one of the two verdicts on the reviewer's behalf
+     * would be this feature quietly deciding something about their document.
+     * The other half stays open, which `proposalsInGroup` reports as `partial`,
+     * and the message says what to do about it.
+     */
+    async settleGroup(proposal) {
+        const decisions = Object.values(proposal.decisions || {});
+        const uniform = decisions.length && decisions.every(d => d === decisions[0]);
+        if (!uniform) {
+            this.messageService.warn('A linked move has to be accepted or rejected as a whole. ' +
+                'The other document still has its half of this change waiting.');
+            return;
+        }
+        try {
+            const result = await resolveGroup({
+                fileService: this.fileService, changesStore: this.changesStore,
+                historyStore: this.historyStore, anyUri: this.uri, groupId: proposal.groupId,
+                verdict: decisions[0], splitFrontmatter, joinFrontmatter
+            });
+            await this.refreshPendingFiles();
+            /* `ok: false` is a REFUSAL, not a crash: resolveGroup validated every
+             * remaining member first and wrote nothing. Say which document and
+             * why, because the reviewer is the only one who can decide what to
+             * do about a document that moved underneath the plan. */
+            if (result && result.ok === false) {
+                this.messageService.warn('The linked half of this change was not applied — ' + result.why);
+            }
+        } catch (e) {
+            console.error('[studio] could not resolve the linked half of this change', e);
+            this.messageService.error('The other document could not be updated, so this move is only half applied. ' +
+                'Open it to finish or undo it.');
+        }
     }
 
     /*
@@ -2384,6 +2861,43 @@ class MarkdownEditorWidget extends Widget {
                 (active ? ' active' : '') + '" data-gutter-thread="' + m.id +
                 '" style="top:' + top + 'px" title="' +
                 'Open comment" aria-label="Open comment"></button>';
+        }).join('') + this.qualityGutterHtml(root, lastTop);
+    }
+
+    /*
+     * Quality findings in the same gutter, and deliberately in the same gutter.
+     *
+     * A second margin strip would say the two kinds of mark are different kinds
+     * of thing; they are not — both are "there is something to look at on this
+     * line", and a reviewer scanning a document should be able to read one
+     * column rather than two. They are told apart by treatment, not by position:
+     * a comment mark is a filled dot, a finding is a hollow one.
+     *
+     * Read off laid-out DOM exactly as the comment marks are, for the same
+     * reason — the decoration plugin has already put a span at the right place,
+     * so a mark's vertical position is that element's offsetTop and no position
+     * bookkeeping is needed. It follows reflow for free.
+     */
+    qualityGutterHtml(root, floor) {
+        if (!this.qualityFindings.length) { return ''; }
+        const marks = [];
+        const seen = new Set();
+        for (const el of root.querySelectorAll('[data-quality]')) {
+            const fingerprint = el.getAttribute('data-quality');
+            if (!fingerprint || seen.has(fingerprint)) { continue; }
+            seen.add(fingerprint);
+            marks.push({ fingerprint, top: el.offsetTop });
+        }
+        marks.sort((a, b) => a.top - b.top);
+        let lastTop = floor;
+        return marks.map(mark => {
+            const top = Math.max(mark.top, lastTop + GUTTER_MIN_GAP);
+            lastTop = top;
+            const active = mark.fingerprint === this.activeFinding;
+            return '<button class="studio-gutter-mark studio-gutter-quality' +
+                (active ? ' active' : '') + '" data-act="quality-focus" data-fp="' +
+                mark.fingerprint + '" style="top:' + top + 'px" ' +
+                'title="Open this finding" aria-label="Open this finding"></button>';
         }).join('');
     }
 
@@ -2543,6 +3057,7 @@ class MarkdownEditorWidget extends Widget {
         if (!this.railOpen) { return; }
         if (this.rail === 'comments') { return this.renderComments(); }
         if (this.rail === 'changes') { return this.renderChanges(); }
+        if (this.rail === 'quality') { return this.renderQuality(); }
         return this.renderHistory();
     }
 
@@ -2912,6 +3427,101 @@ class MarkdownEditorWidget extends Widget {
             author: identity.displayName(),
             base
         });
+    }
+
+    // -- interactive figures -------------------------------------------------
+
+    /*
+     * "Describe a figure and have it generated."
+     *
+     * THE SHAPE OF THIS, AND WHY IT IS NOT A CHAT BOX. The request goes out
+     * through the SAME path as an inline AI edit — the assistant writes the file,
+     * the editor's watcher catches the write and holds it as a proposal — so a
+     * generated figure arrives as a reviewable pending change and not as content
+     * that appeared in somebody's document. That matters more here than for a
+     * text edit: a figure is a few hundred lines of code, nobody is going to read
+     * it line by line, and the answer to "what did that put in my file" has to be
+     * the review pipeline rather than trust.
+     *
+     * The starters are the other half. Neither assistant can hand text back to
+     * this widget (ai-context.js explains why), and on this target both arrive
+     * over the network on first run — so without a route that needs no assistant,
+     * the entry point in the slash menu would do nothing at all for the first
+     * few minutes of the product's life.
+     */
+    createFigure() {
+        if (this.readOnly || !this.editor) { return; }
+        const { state } = this.editor;
+        const block = state.selection.$from.parent;
+        // The paragraph or heading the caret is in, which is what the assistant
+        // is told to insert after. A figure belongs next to the sentence that
+        // called for it, and this is the only evidence of which sentence that is.
+        const anchorText = (block && block.textContent ? block.textContent : '').trim().slice(0, 400);
+        openAiPrompt(this.node, this.caretAnchor(), {
+            title: 'Describe an interactive figure',
+            excerpt: anchorText,
+            placeholder: 'How compound interest outruns simple interest…',
+            extra: starterButtonsHtml(),
+            secondary: false
+        }, {
+            onSubmit: (kind, description) => {
+                if (kind.indexOf('starter:') === 0) { return this.insertFigure(starterFigure(kind.slice(8))); }
+                this.startFigureRequest(kind, description, anchorText);
+            }
+        });
+    }
+
+    /*
+     * A DOM-less anchor for a popover at the caret.
+     *
+     * openAiPrompt anchors to an element, and a slash command has no element to
+     * anchor to — the menu it was chosen from is already gone by the time this
+     * runs. Only getBoundingClientRect is ever called on it, so a duck is
+     * cheaper than inserting a placeholder element into the document just to
+     * measure it and take it out again.
+     */
+    caretAnchor() {
+        const coords = this.editor.view.coordsAtPos(this.editor.state.selection.from);
+        return {
+            getBoundingClientRect: () => ({
+                left: coords.left, right: coords.left, top: coords.top, bottom: coords.bottom,
+                width: 0, height: coords.bottom - coords.top
+            })
+        };
+    }
+
+    /** Put a figure block in the document, at the caret. */
+    insertFigure(code) {
+        if (this.readOnly || !this.editor) { return; }
+        this.editor.chain().focus().insertContent({
+            type: 'codeBlock',
+            attrs: { language: FIGURE_LANGUAGE },
+            content: [{ type: 'text', text: String(code) }]
+        }).run();
+    }
+
+    /*
+     * Hand the figure request to an assistant.
+     *
+     * `awaitingProposal` is armed first, for the reason startChangeRequest gives:
+     * the write arrives later as an ordinary file change carrying none of this
+     * context, and without it the proposal has no title and no attribution.
+     */
+    async startFigureRequest(kind, description, anchorText) {
+        this.awaitingProposal = {
+            instruction: 'Interactive figure: ' + description,
+            origin: 'figure',
+            author: kind === 'claude' ? 'Claude Code' : 'Codex'
+        };
+        const ok = await requestChange({
+            commandRegistry: this.commandRegistry, messageService: this.messageService,
+            uri: this.uri, kind, path: this.uri.path.toString(),
+            instruction: description, excerpt: anchorText,
+            prompt: figureRequestPrompt({
+                path: this.uri.path.toString(), description, anchor: anchorText
+            })
+        });
+        if (!ok) { this.awaitingProposal = undefined; }
     }
 
     // -- rail: comments ------------------------------------------------------
@@ -3355,6 +3965,902 @@ class MarkdownEditorWidget extends Widget {
         this.messageService.info('Restored the version from ' + new Date(entry.at).toLocaleString() + '.');
     }
 
+    // -- rail: quality -------------------------------------------------------
+
+    /*
+     * The fourth destination in this document's slot: specification signals.
+     *
+     * WHAT IT IS. Detectors that run outside Theia produce reports about a
+     * document's duplication and about whether its sections read as the kind of
+     * document it claims to be. This rail is where those reports become
+     * something a person can act on: findings they can jump to, decline, or fix,
+     * and — behind the second tab — the numbers that did not earn a place in the
+     * findings list.
+     *
+     * WHY IT IS A RAIL AND NOT A PANEL OF ITS OWN. It dies with the document,
+     * and it holds that document's triage. The project-scope half of the same
+     * feature is a closable tab in the main dock (quality-project-view.js),
+     * because a sixteen-file occurrence list plus source context does not fit a
+     * 360px column — the same measurement that moved Search out of the rail.
+     *
+     * WHAT THIS SECTION OWNS AND WHAT IT DELEGATES. Everything here is
+     * orchestration: read the reports, normalise them, reconcile them against
+     * what was seen last time, resolve anchors into the live document, and route
+     * clicks. The four hard questions are all somewhere else, on purpose —
+     * identity in quality-identity.js, normalisation and ordering in
+     * quality-scan.js, anchoring in quality-anchor.js, and the markup in
+     * quality-view.js and quality-measures.js. That split is what lets the
+     * engine be tested in milliseconds under plain node, which is the argument
+     * search-scan.js makes at its head and it is the same argument.
+     */
+
+    /*
+     * Read a run and make it presentable, once.
+     *
+     * Deliberately lazy and deliberately not on a keystroke. The reports are
+     * files somebody or some CI job dropped into `.studio/quality/reports/`;
+     * reading them costs a directory walk and a few JSON parses, which is
+     * nothing next to a check but is not free either. So this runs when the rail
+     * is first opened and when the sidecar changes underneath us, and never in
+     * response to typing.
+     */
+    /*
+     * "Check again" — and what that means depends on what is reachable.
+     *
+     * With a runner: run the detectors over THIS DOCUMENT. That is the purpose
+     * pass only, measured at 68 ms on the corpus's largest PRD and needing no
+     * model — CONTRACT-runner.md §1 records why duplication is not in it (the
+     * bloat detector has no lexical-only mode, so it would cost 2.1 s and a
+     * ~500 MB model load). Cross-document work belongs to the project tab,
+     * whose scope matches that cost.
+     *
+     * Without one: re-read whatever is on disk, which is what this button has
+     * always done and remains the honest action when the reports come from CI
+     * or from a colleague's hand-drop.
+     */
+    async recheckQuality() {
+        const runner = await this.qualityRunnerState();
+        if (!runner || !runner.available || runner.running) {
+            this.qualityLoaded = false;
+            void this.refreshQuality();
+            return;
+        }
+        this.qualityRun = { ...runner, running: true, done: 0, total: 1, current: this.qualityRelPath, error: undefined };
+        this.renderRail();
+        try {
+            /*
+             * PURPOSE ONLY — the comment above is the contract and this is where
+             * it is kept. Without the filter this ran everything, which for one
+             * document means the docset's duplication pass: measured here, a
+             * ⟳ click sat on "Checking…" for over a minute loading the reranker
+             * to answer a question about one file. The expensive pass belongs to
+             * the project tab, where its cost is signposted and its scope
+             * matches what it computes.
+             */
+            const started = await this.qualityRunner.run(this.qualityRoot, {
+                scope: 'document', paths: [this.qualityRelPath], detectors: ['purpose']
+            });
+            this.qualityRunId = started && started.runId;
+            this.qualityRunWatch = this.qualityRunner.watch(this.qualityRunId, progress => {
+                this.qualityRun = { ...this.qualityRun, done: progress.done, total: progress.total, current: progress.current };
+                this.renderRail();
+            });
+            const final = await this.qualityRunWatch;
+            this.qualityRunWatch = undefined;
+            this.qualityRun = {
+                ...this.qualityRun, running: false,
+                error: final && final.state === 'failed' ? (final.error || 'the detectors reported an error') : undefined
+            };
+            /* The run wrote FILES; the rail reads them the same way it reads a
+             * hand-dropped report. There is no result payload over RPC, which is
+             * the property that lets CI produce the same thing (PLAN §11). */
+            this.qualityLoaded = false;
+            await this.refreshQuality({ quiet: true });
+            this.renderRail();
+        } catch (e) {
+            this.qualityRunWatch = undefined;
+            this.qualityRun = { ...this.qualityRun, running: false, error: String((e && e.message) || e) };
+            this.renderRail();
+        }
+    }
+
+    async cancelQualityRun() {
+        if (!this.qualityRunner || !this.qualityRunId) { return; }
+        try { await this.qualityRunner.cancel(this.qualityRunId); } catch (e) { /* already finished */ }
+        if (this.qualityRunWatch) { this.qualityRunWatch.cancel(); this.qualityRunWatch = undefined; }
+        this.qualityRun = { ...this.qualityRun, running: false };
+        this.renderRail();
+    }
+
+    /*
+     * Probe once per document, and remember the answer. Whether a detector is
+     * installed is a fact about the machine and the project, not about anything
+     * the person is doing, so asking again on every render would spawn a
+     * filesystem walk per repaint for an answer that cannot have changed.
+     */
+    async qualityRunnerState() {
+        if (this.qualityRun) { return this.qualityRun; }
+        if (!this.qualityRunner || !this.qualityRoot) { return undefined; }
+        try {
+            const probe = await this.qualityRunner.probe(this.qualityRoot);
+            this.qualityRun = { available: !!(probe && probe.available), why: probe && probe.why };
+        } catch (e) {
+            this.qualityRun = { available: false, why: 'the runner could not be reached' };
+        }
+        return this.qualityRun;
+    }
+
+    async refreshQuality({ quiet = false } = {}) {
+        if (this.qualityLoading || !this.qualityStore) { return; }
+        this.qualityLoading = true;
+        if (!quiet) { this.renderRail(); }
+        try {
+            const root = await this.qualityStore.rootFor(this.uri);
+            const relPath = qualityRelativePath(root, this.uri);
+            const reports = await this.qualityStore.loadReports(root);
+            const state = await this.qualityStore.loadState(root);
+            const judgments = await this.qualityStore.loadJudgments(root);
+
+            this.qualityRoot = root;
+            this.qualityRelPath = relPath;
+            /*
+             * Ask the backend whether there is a detector here, once, without
+             * blocking this load — the reports on disk are what the panel is
+             * about, and waiting on a probe to draw them would make a cheap
+             * read wait on a filesystem walk. The answer only changes the
+             * "Check again" tooltip and the project tab's button, so it can
+             * arrive a moment late and repaint.
+             */
+            if (!this.qualityRun) {
+                void this.qualityRunnerState().then(() => {
+                    if (this.rail === 'quality' && this.railOpen) { this.renderRail(); }
+                });
+            }
+            this.qualityReportStats = { read: reports.read, skipped: reports.skipped };
+            this.qualityJudgments = judgments;
+            this.qualityDocTypes = qualityScan.DOC_TYPES;
+
+            const pair = this.qualityStore.reportsForDocument(reports, relPath) || {};
+            if (!reports.present || (!pair.bloat && !pair.purpose)) {
+                /*
+                 * Two different absences, and the view renders them
+                 * differently: no reports at all in the project, or reports that
+                 * exist but none matching this document. Neither is an empty
+                 * panel — a document nobody has checked and a document with
+                 * nothing wrong must never look alike, and 14 of the 86 real
+                 * documents are genuinely clean.
+                 */
+                this.qualityEnvelope = undefined;
+                this.qualityFindings = [];
+                this.qualityMissing = reports.present ? 'document' : 'project';
+                this.qualityFreshness = { producedAt: reports.producedAt, present: reports.present };
+                return;
+            }
+
+            this.qualityMissing = undefined;
+            const override = (state.overrides || {})[relPath];
+            const envelope = qualityScan.normalizeDocument({
+                bloat: pair.bloat,
+                purpose: pair.purpose,
+                docPath: relPath,
+                root: root.toString(),
+                runId: reports.runId,
+                producedAt: reports.producedAt,
+                overrides: override,
+                /*
+                 * The other documents' numbers, so a rate can be stated as a
+                 * rank. "the highest of 7 documents in this project" is
+                 * actionable in a way that "9.3%" is not, and PLAN §5 asks for
+                 * exactly that — the rate on its own discriminates nothing,
+                 * because it is non-zero almost everywhere in the corpus.
+                 */
+                projectMetrics: qualityProjectMetrics(reports)
+            });
+
+            /*
+             * Reconcile against what was seen last time, so a triage decision
+             * survives a rescan and a re-word. `previous` is the slim record
+             * saveLastRun wrote — enough anchors for the supersede case to be
+             * decidable, and nothing else, because observations are disposable
+             * and only judgments are kept.
+             */
+            /* An ARRAY of slim finding records — the shape saveLastRun below
+             * writes, and the shape quality-store.js persists verbatim. */
+            const previousRun = (state.lastRun || {})[relPath];
+            const reconciled = qualityIdentity.reconcile({
+                previous: Array.isArray(previousRun) ? previousRun : [],
+                next: envelope.findings,
+                judgments
+            });
+
+            /*
+             * STALENESS IS A DOCUMENT-LEVEL FACT HERE, not a per-finding one,
+             * and that is an honest limitation rather than a shortcut. A real
+             * per-finding answer needs the content hash the detector read, and
+             * the detectors do not emit one — so what can actually be known is
+             * "this document has moved since the report was produced", which is
+             * true of every finding in it or of none. The envelope keeps the
+             * per-finding field for the day a runner fills it in.
+             */
+            const stale = await this.qualityStaleness(reports.producedAt);
+            for (const finding of reconciled.findings) { finding.stale = stale; }
+
+            envelope.findings = reconciled.findings;
+            this.qualityEnvelope = envelope;
+            this.qualityResolvedSince = reconciled.resolved.length;
+            this.qualityFindings = qualityScan.orderFindings(reconciled.findings, this.qualitySort);
+            this.qualityFreshness = {
+                producedAt: reports.producedAt, present: true, stale,
+                analyzers: envelope.analyzers
+            };
+
+            /*
+             * Record what was seen, so the next load can tell resolved from
+             * unchanged. Written after the counts above are computed, because
+             * writing first would make every run look like the first one.
+             */
+            await this.qualityStore.saveLastRun(root, relPath,
+                reconciled.findings.map(finding => ({
+                    fingerprint: finding.fingerprint,
+                    rule: finding.rule,
+                    status: finding.status,
+                    /*
+                     * Enough anchor to make the supersede case decidable, and
+                     * nothing else. Observations are disposable; this record
+                     * exists only so the next run can tell "still here" from
+                     * "resolved" from "the same problem, re-worded".
+                     */
+                    anchors: (finding.anchors || []).map(anchor =>
+                        ({ file: anchor.file, section: anchor.section, text: anchor.text }))
+                })));
+        } catch (error) {
+            /*
+             * A malformed report is somebody else's tool's output, so it is an
+             * expected condition rather than a defect here. Say so on the rail
+             * instead of leaving a panel that renders nothing and explains
+             * nothing.
+             */
+            console.warn('[studio] quality: could not read the run', error);
+            this.qualityError = String((error && error.message) || error);
+            this.qualityEnvelope = undefined;
+            this.qualityFindings = [];
+        } finally {
+            this.qualityLoading = false;
+            this.qualityLoaded = true;
+            if (!this.isDisposed) {
+                this.renderRail();
+                refreshQualityMarks(this.editor);
+            }
+        }
+    }
+
+    /*
+     * Has the document moved since the report was produced?
+     *
+     * Two ways it can have: unsaved edits in this buffer, or a saved file whose
+     * mtime is newer than the newest report. Both mean the same thing to a
+     * reader — "this may already be fixed" — and neither is allowed to silently
+     * drop a finding, because dropping it would be a claim and the claim would
+     * be wrong about half the time.
+     */
+    async qualityStaleness(producedAt) {
+        if (this.saveState === 'dirty' || this.saveState === 'conflict') { return true; }
+        if (!producedAt) { return false; }
+        try {
+            const stat = await this.fileService.resolve(this.uri, { resolveMetadata: true });
+            return stat.mtime > new Date(producedAt).getTime();
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /*
+     * The document's flattened text with a map back to positions, plus its
+     * headings — the two things quality-anchor.js resolves against.
+     *
+     * The sentinel heading at the end is how the section resolver learns where
+     * the document stops: a section's range runs to the next heading of the same
+     * level or shallower, and the last section in a document has no such
+     * heading. A level-0 sentinel is shallower than every real heading, so the
+     * rule needs no special case for the final section.
+     */
+    qualityIndex() {
+        if (!this.editor) { return undefined; }
+        const doc = this.editor.state.doc;
+        const index = buildTextIndex(doc);
+        const headings = [];
+        const seen = new Map();
+        doc.forEach((node, offset) => {
+            if (node.type.name !== 'heading') { return; }
+            const text = node.textContent;
+            const ordinal = seen.get(text) || 0;
+            seen.set(text, ordinal + 1);
+            headings.push({
+                level: node.attrs.level, text,
+                from: offset, to: offset + node.nodeSize, index: ordinal
+            });
+        });
+        headings.push({ level: 0, text: '', from: doc.content.size, to: doc.content.size, index: 0 });
+        return { index, headings };
+    }
+
+    /*
+     * What the decoration plugin draws.
+     *
+     * Dismissed findings contribute nothing — their decorations leaving the text
+     * is what dismissing IS. `later` findings keep theirs, because parking
+     * something is not the same as deciding it is not a problem.
+     *
+     * Only anchors in THIS file are resolved. A cluster spanning sixteen files
+     * has one card with sixteen jump targets; fifteen of them are links to other
+     * documents, and this method is only about the one on screen.
+     */
+    qualityRanges() {
+        if (!this.editor || !this.qualityFindings.length) { return []; }
+        const resolved = this.qualityIndex();
+        if (!resolved) { return []; }
+        const relPath = this.qualityRelPath;
+        const ranges = [];
+        for (const finding of this.qualityFindings) {
+            if (finding.status === 'dismissed') { continue; }
+            if (this.qualityTrust === 'exact' && finding.trust !== 'exact') { continue; }
+            if (this.qualityTrust === 'hide-weak' && finding.trust === 'weak') { continue; }
+            for (const anchor of finding.anchors || []) {
+                if (!qualitySameFile(anchor.file, relPath)) { continue; }
+                const range = qualityAnchor.resolveAnchor(resolved.index, resolved.headings, anchor);
+                if (!range) { continue; }
+                ranges.push({
+                    from: range.from, to: range.to,
+                    kind: anchor.granularity === 'section' ? 'section' : 'span',
+                    provenance: finding.provenance,
+                    trust: finding.trust,
+                    fingerprint: finding.fingerprint,
+                    active: finding.fingerprint === this.activeFinding,
+                    stale: !!finding.stale,
+                    /* The chip carries a VALUE — what the section reads as —
+                     * which is why it is passed as data rather than styled. */
+                    label: anchor.granularity === 'section' ? qualitySectionLabel(finding) : undefined
+                });
+            }
+        }
+        return ranges;
+    }
+
+    /** The state object both tabs render from. One shape, two renderers. */
+    qualityState() {
+        const findings = this.qualityFindings;
+        return {
+            envelope: this.qualityEnvelope,
+            tab: this.qualityTab,
+            findings,
+            partitioned: qualityScan.partition(findings, {
+                trustFilter: this.qualityTrust,
+                showWeak: this.qualityShowWeak,
+                showDismissed: this.qualityShowDismissed
+            }),
+            trustFilter: this.qualityTrust,
+            sort: this.qualitySort,
+            showWeak: this.qualityShowWeak,
+            showDismissed: this.qualityShowDismissed,
+            activeFingerprint: this.activeFinding,
+            explainFor: this.qualityExplainFor,
+            pickerFor: this.qualityPickerFor,
+            pickerReason: this.qualityPickerReason,
+            undoFor: this.qualityUndoFor,
+            resolvedSince: this.qualityResolvedSince,
+            freshness: this.qualityFreshness || { present: false },
+            missing: this.qualityMissing,
+            error: this.qualityError,
+            docRelPath: this.qualityRelPath,
+            docTypes: this.qualityDocTypes,
+            docTypeOpen: this.qualityDocTypeOpen,
+            openSegment: this.qualitySegment,
+            reportStats: this.qualityReportStats,
+            scanning: this.qualityLoading,
+            runner: this.qualityRun
+        };
+    }
+
+    renderQuality() {
+        /*
+         * First open reads the run. Rendering the loading state first rather
+         * than awaiting is what keeps the rail from appearing empty for the
+         * duration of a directory walk — the same reason loader.js exists.
+         */
+        if (!this.qualityLoaded && !this.qualityLoading) { void this.refreshQuality(); }
+
+        const state = this.qualityState();
+        this.railHeadEl.innerHTML = qualityView.qualityHeadHtml(state);
+        this.listEl.innerHTML = state.tab === 'measured'
+            ? qualityMeasures.measuredListHtml(state)
+            : qualityView.qualityListHtml(state);
+        this.footEl.textContent = state.tab === 'measured'
+            ? qualityMeasures.measuredFootText(state)
+            : qualityView.qualityFootText(state);
+    }
+
+    /*
+     * One entry point for every control on this rail.
+     *
+     * A single dispatcher rather than twenty cases in the widget's main switch,
+     * because the vocabulary is exported from quality-view.js — the view and the
+     * handler read the same list, so a renamed action is a missing method rather
+     * than a button that silently does nothing.
+     */
+    onQualityAct(action, el) {
+        const fingerprint = el.getAttribute('data-fp');
+        switch (action) {
+            case 'quality-tab':
+                this.qualityTab = el.getAttribute('data-tab') === 'measured' ? 'measured' : 'findings';
+                this.qualityExplainFor = undefined;
+                this.renderRail();
+                break;
+            case 'quality-focus':
+                this.focusFinding(fingerprint);
+                break;
+            case 'quality-jump':
+                this.jumpToFinding(fingerprint, Number(el.getAttribute('data-anchor')) || 0);
+                break;
+            case 'quality-explain':
+                this.qualityExplainFor = this.qualityExplainFor === fingerprint ? undefined : fingerprint;
+                this.renderRail();
+                break;
+            case 'quality-explain-close':
+                this.qualityExplainFor = undefined;
+                this.renderRail();
+                break;
+            case 'quality-dismiss':
+                this.qualityPickerFor = fingerprint;
+                this.qualityPickerReason = undefined;
+                this.renderRail();
+                break;
+            case 'quality-reason':
+                this.qualityPickerReason = el.getAttribute('data-reason');
+                /*
+                 * "Wrong document type" is not a dismissal at all — it says the
+                 * whole run was judged against the wrong template, and the fix
+                 * is the type control rather than seven dismissals one at a
+                 * time. Routing it is the reason the picker exists.
+                 */
+                if (this.qualityPickerReason === 'wrong-doc-type') {
+                    this.qualityPickerFor = undefined;
+                    this.qualityTab = 'measured';
+                    this.qualityDocTypeOpen = true;
+                }
+                this.renderRail();
+                break;
+            case 'quality-dismiss-confirm':
+                void this.judgeFinding(fingerprint, 'dismissed');
+                break;
+            case 'quality-picker-cancel':
+                this.qualityPickerFor = undefined;
+                this.qualityPickerReason = undefined;
+                this.renderRail();
+                break;
+            case 'quality-later':
+                void this.judgeFinding(fingerprint, 'later');
+                break;
+            case 'quality-undo':
+            case 'quality-restore':
+                void this.judgeFinding(fingerprint, 'open');
+                break;
+            case 'quality-toggle-weak':
+                this.qualityShowWeak = !this.qualityShowWeak;
+                this.renderRail();
+                break;
+            case 'quality-toggle-dismissed':
+                this.qualityShowDismissed = !this.qualityShowDismissed;
+                this.renderRail();
+                refreshQualityMarks(this.editor);
+                break;
+            case 'quality-trust':
+                this.qualityTrust = el.getAttribute('data-trust') || 'all';
+                this.renderRail();
+                refreshQualityMarks(this.editor);
+                break;
+            case 'quality-sort':
+                this.qualitySort = el.getAttribute('data-sort') === 'reach' ? 'reach' : 'document';
+                this.qualityFindings = qualityScan.orderFindings(this.qualityFindings, this.qualitySort);
+                this.renderRail();
+                break;
+            case 'quality-fix':
+                void this.applyQualityFix(fingerprint, el.getAttribute('data-kind'));
+                break;
+            case 'quality-recheck':
+                void this.recheckQuality();
+                break;
+            case 'quality-cancel-run':
+                void this.cancelQualityRun();
+                break;
+            case 'quality-dismiss-resolved':
+                this.qualityResolvedSince = 0;
+                this.renderRail();
+                break;
+            case 'quality-doctype':
+                void this.setQualityDocType(el.getAttribute('data-type'));
+                break;
+            /* Two spellings, one behaviour. quality-measures.js renders the
+             * disclosure and quality-view.js renders the reason picker's route
+             * into it, and the two named the toggle differently — accepting
+             * both is cheaper and safer than making one of them wrong, and a
+             * disclosure that silently does nothing is the failure this avoids. */
+            case 'quality-doctype-open':
+            case 'quality-doctype-toggle':
+                this.qualityDocTypeOpen = !this.qualityDocTypeOpen;
+                this.renderRail();
+                break;
+            case 'quality-segment':
+                this.qualitySegment = this.qualitySegment === el.getAttribute('data-role')
+                    ? undefined : el.getAttribute('data-role');
+                this.renderRail();
+                break;
+            case 'quality-open-project':
+                void this.commandRegistry.executeCommand('studio.quality.project');
+                break;
+            default:
+                break;
+        }
+    }
+
+    /*
+     * Make a card current, and light its marks.
+     *
+     * The pairing is focusChange()'s exact shape, which already exists twice in
+     * this file: clicking a mark makes its card current and scrolls the rail;
+     * clicking a card scrolls the document. A reviewer who clicks an underlined
+     * sentence has to get an answer, and the answer is the card.
+     */
+    focusFinding(fingerprint, { fromDocument = false } = {}) {
+        this.activeFinding = fingerprint;
+        this.qualityExplainFor = undefined;
+        if (!this.railOpen || this.rail !== 'quality') { this.openSlot('quality'); }
+        else { this.renderRail(); }
+        refreshQualityMarks(this.editor);
+        if (fromDocument) {
+            const card = this.listEl.querySelector('[data-quality-card="' + fingerprint + '"]');
+            if (card) { card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+        } else {
+            this.jumpToFinding(fingerprint, 0, { keepFocus: true });
+        }
+    }
+
+    /*
+     * Scroll to one of a finding's places.
+     *
+     * An anchor in ANOTHER file is a link, not a jump: it opens that document,
+     * where its own rail can triage it. 246 of the 288 real clusters span two
+     * places and one spans sixteen files, so "the other places" is the common
+     * case rather than an edge.
+     */
+    jumpToFinding(fingerprint, anchorIndex, { keepFocus = false } = {}) {
+        const finding = this.qualityFindings.find(candidate => candidate.fingerprint === fingerprint);
+        if (!finding) { return; }
+        if (!keepFocus) { this.activeFinding = fingerprint; this.renderRail(); refreshQualityMarks(this.editor); }
+        const anchor = (finding.anchors || [])[anchorIndex];
+        if (!anchor) { return; }
+
+        if (!qualitySameFile(anchor.file, this.qualityRelPath)) {
+            void this.openQualityAnchorFile(anchor.file);
+            return;
+        }
+
+        const resolved = this.qualityIndex();
+        if (!resolved) { return; }
+        const range = qualityAnchor.resolveAnchor(resolved.index, resolved.headings, anchor);
+        if (!range) {
+            /*
+             * The text moved. Said out loud rather than scrolling somewhere
+             * arbitrary — a quality tool that highlights the wrong sentence is
+             * worse than one that admits it lost the right one.
+             */
+            this.messageService.info('That passage has changed since the check ran.');
+            return;
+        }
+        const el = this.editor.view.dom.querySelector('[data-quality="' + fingerprint + '"]');
+        if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    }
+
+    /*
+     * Write a judgment, and give it back for a few seconds.
+     *
+     * A mis-click here writes to a file that gets committed, so undo is not a
+     * nicety. The card collapses to "Dismissed — undo", its decorations leave
+     * the text, and it moves into a counted, collapsed Dismissed row — never
+     * deleted, always restorable, because "what have we already decided about
+     * this file" should be one click rather than a git log.
+     */
+    async judgeFinding(fingerprint, status) {
+        const finding = this.qualityFindings.find(candidate => candidate.fingerprint === fingerprint);
+        if (!finding || !this.qualityStore || !this.qualityRoot) { return; }
+
+        if (status === 'open') {
+            finding.status = 'open';
+            finding.judgment = undefined;
+            delete this.qualityJudgments[fingerprint];
+            this.qualityUndoFor = undefined;
+            await this.qualityStore.clearJudgment(this.qualityRoot, fingerprint);
+        } else {
+            const note = this.qualityPickerFor === fingerprint
+                ? (this.listEl.querySelector('[data-quality-note]') || {}).value
+                : undefined;
+            const record = {
+                status,
+                /*
+                 * A reason is required for a dismissal and meaningless for
+                 * "later": parking something says nothing about whether the
+                 * detector was right, and the closed vocabulary exists to be the
+                 * one piece of ground truth this product can generate about
+                 * detector quality. Recording it from the first day is what
+                 * makes a false-positive rate measurable later, and it costs one
+                 * enum.
+                 */
+                reason: status === 'dismissed' ? (this.qualityPickerReason || 'wont-fix') : undefined,
+                note: note && note.trim() ? note.trim() : undefined
+            };
+            finding.status = status;
+            finding.judgment = record;
+            this.qualityJudgments[fingerprint] = record;
+            this.qualityUndoFor = status === 'dismissed' ? fingerprint : undefined;
+            await this.qualityStore.saveJudgment(this.qualityRoot, fingerprint, record);
+        }
+
+        this.qualityPickerFor = undefined;
+        this.qualityPickerReason = undefined;
+        if (this.activeFinding === fingerprint && status === 'dismissed') { this.activeFinding = undefined; }
+        this.renderRail();
+        this.renderSlotCluster();
+        refreshQualityMarks(this.editor);
+
+        if (this.qualityUndoFor) {
+            clearTimeout(this.qualityUndoTimer);
+            this.qualityUndoTimer = setTimeout(() => {
+                if (this.isDisposed) { return; }
+                this.qualityUndoFor = undefined;
+                this.renderRail();
+            }, QUALITY_UNDO_MS);
+        }
+    }
+
+    /*
+     * Correct the document type, and re-read everything against it.
+     *
+     * THE HIGHEST-LEVERAGE CONTROL IN THE FEATURE, and until now there was no
+     * way to say the inference was wrong at all. The type is inferred from the
+     * filename and it is the INPUT to the purpose detector — if it is wrong,
+     * every violation is wrong. Nothing else in this product turns seven
+     * findings into zero with one click.
+     *
+     * What it cannot do yet is re-run the detector: there is no runner in this
+     * build, so the override is recorded and the gate is re-evaluated against
+     * the sections the existing report already classified. That is a real
+     * answer for the common case — a document classified as an ADR that is
+     * actually a PRD — and it is honest about being a re-reading rather than a
+     * re-analysis, which the Measured tab says in words.
+     */
+    async setQualityDocType(docType) {
+        if (!docType || !this.qualityStore || !this.qualityRoot) { return; }
+        this.qualityDocTypeOpen = false;
+        await this.qualityStore.saveDocTypeOverride(this.qualityRoot, this.qualityRelPath, docType);
+        this.qualityLoaded = false;
+        await this.refreshQuality();
+    }
+
+    /*
+     * The four tiers of "fix it", and which of them this build actually has.
+     *
+     * Every one of them lands in the EXISTING review pipeline as a pending
+     * proposal — never a silent write. That is already this product's rule for
+     * assistant edits and for generated figures, and a quality tool that edited
+     * files behind a reviewer's back would be the one place it is broken.
+     */
+    async applyQualityFix(fingerprint, kind) {
+        const finding = this.qualityFindings.find(candidate => candidate.fingerprint === fingerprint);
+        if (!finding) { return; }
+
+        if (kind === 'dedupe-link') { return this.applyDedupeLink(finding); }
+        if (kind === 'move-section') { return this.applyQualityMove(finding); }
+
+        /*
+         * Tier 3 — anything needing judgment — goes to an assistant, and the
+         * label says so. Tier 2 no longer does: applyQualityMove computes the
+         * cut and the insert itself and opens them as ONE linked pair of
+         * proposals, which is what `groupId` in changes-store.js exists for.
+         * A move that cannot be computed falls through to here rather than
+         * failing, because a precise instruction to a model is slower and not
+         * wrong.
+         */
+        const excerpt = finding.quote || '';
+        const instruction = qualityFixInstruction(finding, this.qualityRelPath);
+        return this.startChangeRequest('claude', instruction, excerpt, undefined);
+    }
+
+    /*
+     * Tier 2: the structural one — a section moved to the document it belongs
+     * in, as ONE linked pair of proposals.
+     *
+     * Two documents, and they must not be half-accepted: a cut here without an
+     * insert there deletes somebody's section. `groupId` is what makes accept
+     * and reject cover both, and changes-store.js validates every member
+     * against its own base BEFORE writing anything, so a target edited since
+     * the check refuses the whole move rather than applying half of it.
+     *
+     * The target is a sibling of the source, named by the role the detector
+     * assigned: design leaks go to DESIGN.md, requirements to PRD.md, and a
+     * decision goes nowhere — its home is a NEW ADR, which a move cannot
+     * create, so that case falls through to an assistant. Refusals here are
+     * loud and specific, because the alternative to a refusal is guessing where
+     * a paragraph of somebody's specification should live.
+     */
+    async applyQualityMove(finding) {
+        const suggested = finding.fix && finding.fix.suggestedFile;
+        if (!suggested) {
+            this.messageService.warn('There is no document to move this into — ' +
+                ((finding.fix && finding.fix.belongsIn) || 'its home') + ' would have to be written first.');
+            return;
+        }
+        const targetRel = await this.findQualityTarget(suggested);
+        if (!targetRel) {
+            this.messageService.warn('There is no ' + suggested + ' in this document\'s service folder to move the section into.');
+            return;
+        }
+        if (targetRel === this.qualityRelPath) {
+            this.messageService.warn('That section is already in the document it belongs in.');
+            return;
+        }
+        const targetUri = this.qualityRoot.resolve(targetRel);
+
+        const sourceBody = this.currentBody();
+        const targetRead = await this.fileService.read(targetUri);
+        const targetSplit = splitFrontmatter(targetRead.value);
+
+        const plan = qualityMove.planMove({
+            finding, sourceBody, targetBody: targetSplit.body,
+            sourcePath: this.qualityRelPath, targetPath: targetRel
+        });
+        if (!plan.ok) {
+            this.messageService.warn(plan.why);
+            return;
+        }
+
+        /*
+         * One id for both halves. Derived from the finding's fingerprint rather
+         * than randomly, so re-running the same move on the same finding lands
+         * in the same group instead of creating a second one beside the first.
+         */
+        const groupId = 'move-' + finding.fingerprint;
+        const members = [this.qualityRelPath, targetRel];
+        const heading = (plan.source.removed && plan.source.removed.heading) || 'that section';
+        const instruction = 'Move "' + qualityShorten(heading) + '" to ' + suggested;
+
+        /*
+         * THE TARGET FIRST, and deliberately. The source half goes through
+         * captureProposal, which writes the base to disk and locks this editor
+         * for review; if the target's write failed after that, a reviewer would
+         * be looking at half a move with the editor already locked. Writing the
+         * side we do not own first means a failure there aborts before anything
+         * visible has happened here.
+         */
+        const targetProposals = (await this.changesStore.load(targetUri)).proposals;
+        targetProposals.push(ChangesStore.proposal({
+            title: instruction,
+            origin: 'quality',
+            instruction,
+            author: identity.displayName(),
+            baseBody: targetSplit.body,
+            proposedBody: plan.target.body,
+            groupId,
+            groupMembers: members
+        }));
+        await this.changesStore.save(targetUri, targetProposals);
+
+        await this.captureProposal(plan.source.body, {
+            instruction, origin: 'quality', author: identity.displayName(),
+            base: sourceBody, groupId, groupMembers: members
+        });
+        this.openSlot('changes');
+        this.messageService.info(instruction + ' — review it here and in ' + suggested + '; they accept together.');
+    }
+
+    /*
+     * Where the service's DESIGN.md (or PRD.md) actually is: beside this
+     * document, or in a directory above it, up to the project root.
+     *
+     * NOT JUST THE SIBLING. An ADR lives in `<service>/ADR/0010-….md` and its
+     * design document is `<service>/DESIGN.md`, one level up — measured across
+     * the real corpus, a sibling-only search finds a target for 35 of the 46
+     * purpose violations and refuses the other 11 for a document that is
+     * plainly there. Nearest first, so a service that does have its own
+     * `ADR/DESIGN.md` wins over the one at the service root.
+     *
+     * Stops at the project root, and never leaves it: a search that walked past
+     * the root would offer to move a paragraph of somebody's specification into
+     * a file from an unrelated project.
+     */
+    async findQualityTarget(filename) {
+        const segments = this.qualityRelPath.split('/').filter(Boolean).slice(0, -1);
+        while (true) {
+            const candidate = segments.concat(filename).join('/');
+            if (await this.fileService.exists(this.qualityRoot.resolve(candidate))) { return candidate; }
+            if (!segments.length) { return undefined; }
+            segments.pop();
+        }
+    }
+
+    /*
+     * Tier 1: the deterministic one.
+     *
+     * When every occurrence of a cluster is textually identical — 130 of the
+     * 288 real clusters — the edit does not need a model. Keep the first
+     * occurrence, replace the others with a link to the section it lives in, and
+     * open the result as a proposal.
+     *
+     * COMPUTED AGAINST THE MARKDOWN SOURCE, not the ProseMirror document,
+     * because a proposal is a body and the review pipeline diffs bodies. If the
+     * text is not found verbatim in the source, this says so and does nothing —
+     * the detector read a normalised copy of the file on disk, and a
+     * find-and-replace that guesses which near-match was meant is exactly the
+     * silent corruption this whole feature is supposed to be the opposite of.
+     */
+    async applyDedupeLink(finding) {
+        const base = this.currentBody();
+        const here = (finding.anchors || []).filter(anchor => qualitySameFile(anchor.file, this.qualityRelPath));
+        if (here.length < 2) {
+            this.messageService.warn('This repetition spans other documents, so it cannot be de-duplicated from here.');
+            return;
+        }
+
+        const keep = here[0];
+        const label = qualityAnchor.sectionLeaf(keep.section) || 'above';
+        const link = 'See [' + label + '](#' + qualitySlug(label) + ').';
+
+        let proposed = base;
+        let replaced = 0;
+        for (const anchor of here.slice(1)) {
+            const text = anchor.text || '';
+            if (!text || !proposed.includes(text)) { continue; }
+            proposed = proposed.replace(text, link);
+            replaced++;
+        }
+        if (!replaced) {
+            this.messageService.warn('That wording has changed since the check ran — re-check before de-duplicating.');
+            return;
+        }
+        await this.captureProposal(proposed, {
+            instruction: 'Keep one copy of "' + qualityShorten(keep.text || finding.quote) +
+                '" and link to it from ' + replaced + (replaced === 1 ? ' other place' : ' other places'),
+            origin: 'quality',
+            author: identity.displayName(),
+            base
+        });
+        this.openSlot('changes');
+    }
+
+    /*
+     * Open a sibling document a finding also points at.
+     *
+     * Same shape as openChangedFile above — the opener service, and a message
+     * rather than a console line when it fails, because the click came from a
+     * visible link and a link that does nothing is a defect the user cannot
+     * diagnose. The path is the DETECTOR'S, relative to its own root, so the
+     * longest-suffix match quality-store.js does for reports is done again here:
+     * a report can name `tests/traceability/assess/mcp-engine/DESIGN.md` for a
+     * file that lives at `mcp-engine/DESIGN.md` in this project.
+     */
+    async openQualityAnchorFile(reportPath) {
+        if (!this.openerService || !this.qualityRoot) { return; }
+        const candidates = qualitySuffixCandidates(reportPath);
+        for (const relative of candidates) {
+            const target = this.qualityRoot.resolve(relative);
+            try {
+                if (!(await this.fileService.exists(target))) { continue; }
+                const opener = await this.openerService.getOpener(target);
+                await opener.open(target);
+                return;
+            } catch (error) { /* try the next, shorter candidate */ }
+        }
+        this.messageService.info(reportPath + ' is not in this project.');
+    }
+
     // -- slash menu ----------------------------------------------------------
 
     updateSlash() {
@@ -3389,10 +4895,14 @@ class MarkdownEditorWidget extends Widget {
         const item = SLASH_ITEMS.find(i => i.key === key);
         if (!item) { return; }
         const chain = this.editor.chain().focus().deleteRange({ from: this.slashFrom, to: this.editor.state.selection.from });
-        if (key === 'image') {
+        if (item.defer) {
+            // The range has to go BEFORE the surface opens: a popover positioned
+            // at the caret has to be positioned at where the caret ends up, and
+            // an image picker that returns to a document still holding `/image`
+            // inserts its image after it.
             chain.run();
             this.hideSlash();
-            this.importImage();
+            item.run(undefined, this);
             return;
         }
         item.run(chain, this).run();
@@ -3660,10 +5170,25 @@ class MarkdownEditorWidget extends Widget {
         const mode = this.closestIn(e.target, '[data-studio-mode]');
         if (mode) { e.preventDefault(); this.setMode(mode.getAttribute('data-studio-mode')); return; }
 
-        // No [data-studio-rail] branch here any more: the slot selector lives in
-        // the shell's right-hand strip, outside this widget's node, and calls
-        // selectSlot() directly. closestIn() is scoped to this widget, so a
-        // branch for it could never match.
+        /*
+         * The slot cluster is back inside this widget's node, so this branch is
+         * back too -- it was deleted while the selector lived in the shell's
+         * right-hand strip, which called selectSlot() directly.
+         *
+         * selectSlot() with its default toggle=true: clicking the destination
+         * that is already open closes the slot and gives the width back to the
+         * document. A dimmed entry is a real, focusable button (see the .off
+         * note in slot-strip.js), so it has to be skipped here rather than by
+         * the DOM.
+         */
+        const slot = this.closestIn(e.target, '[data-studio-rail]');
+        if (slot) {
+            e.preventDefault();
+            if (slot.getAttribute('aria-disabled') !== 'true') {
+                this.selectSlot(slot.getAttribute('data-studio-rail'));
+            }
+            return;
+        }
 
         const tableCmd = this.closestIn(e.target, '[data-tcmd]');
         if (tableCmd) { e.preventDefault(); this.runTableCommand(tableCmd.getAttribute('data-tcmd')); return; }
@@ -3706,6 +5231,20 @@ class MarkdownEditorWidget extends Widget {
             return;
         }
 
+        /*
+         * A click on a quality mark selects its card, and never decides
+         * anything — the same rule the tracked marks above follow, for the same
+         * reason: an underlined sentence is not a button, and a mis-aimed click
+         * in the middle of the prose must not be able to dismiss a finding. The
+         * decision stays on the card.
+         */
+        const qualityMark = this.closestIn(e.target, '[data-quality]');
+        if (qualityMark && !this.closestIn(e.target, '[data-act]')) {
+            e.preventDefault();
+            this.focusFinding(qualityMark.getAttribute('data-quality'), { fromDocument: true });
+            return;
+        }
+
         const act = this.closestIn(e.target, '[data-act]');
         const isArmedDeleteTarget = act && act.getAttribute('data-act') === 'comment-delete' &&
             act.getAttribute('data-id') === this.armedDeleteId;
@@ -3723,6 +5262,13 @@ class MarkdownEditorWidget extends Widget {
              */
             const proposalId = act.getAttribute('data-proposal');
             const suggested = proposalId && this.suggestions.some(p => p.id === proposalId);
+            /*
+             * One dispatcher for the quality rail instead of twenty cases here.
+             * The action names are exported from quality-view.js and read by
+             * both sides, so a renamed action is a missing method rather than a
+             * button that silently does nothing.
+             */
+            if (a.startsWith('quality-')) { e.preventDefault(); this.onQualityAct(a, act); return; }
             switch (a) {
                 case 'unlock': this.unlock(); break;
                 case 'save-now': this.save(); break;

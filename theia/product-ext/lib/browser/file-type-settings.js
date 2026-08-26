@@ -17,6 +17,10 @@ const DEFAULT_ON = ['md', 'html', 'txt', 'json', 'csv', 'tsv'];
 // still hidden unless the user adds it, so the list doubles as the vocabulary.
 const KNOWN_TYPES = [
     'md', 'html', 'txt', 'json', 'csv', 'tsv',
+    // `tab` and `psv` are the two rarer delimited dialects the table editor
+    // opens (table-data.js). They are in the vocabulary but NOT in DEFAULT_ON:
+    // a project that has them says so, and gets the same grid csv and tsv get.
+    'tab', 'psv',
     'yaml', 'yml', 'xml', 'svg', 'png', 'jpg', 'pdf',
     'ts', 'js', 'tsx', 'jsx', 'py', 'sh', 'css', 'scss'
 ];
@@ -69,8 +73,23 @@ class FileTypeSettings {
                     this.byRoot.set(key, new Set(parsed.visibleExtensions.map(e => e.toLowerCase())));
                     return;
                 }
+            } else {
+                this.rawByRoot.delete(key);
             }
         } catch (e) {
+            /*
+             * A FILE WE COULD NOT READ TELLS US NOTHING, so the last one we
+             * could must stop speaking for it. Dropping the parsed copy is what
+             * makes an unreadable file read as the conservative answer for every
+             * setting — the optional features off, saving on — rather than
+             * leaving whatever was true before the person broke the JSON.
+             *
+             * It matters because this file is committed and hand-editable, and
+             * because the reload happens on a workspace change: without the
+             * delete, a project whose settings became invalid would keep
+             * offering a feature nothing on disk asks for any more.
+             */
+            this.rawByRoot.delete(key);
             console.warn('[studio] could not read', SETTINGS_PATH, 'for', key, e);
         }
         this.byRoot.set(key, new Set(DEFAULT_ON));
@@ -157,6 +176,95 @@ class FileTypeSettings {
 
     async setAuthoringModes(rootUri, enabled) {
         await this.writeRoot(rootUri, { authoringModes: !!enabled });
+    }
+
+    /*
+     * The two advanced features: OFF by default, per project.
+     *
+     * Specification quality and gear-based development are both real features
+     * and both are wrong as the product's front door. Quality puts a gauge in
+     * the rail, a fourth destination in every document's slot and marks in the
+     * margin; the gear flow puts a second navigation tab beside Projects and
+     * five commands in the palette. A person who opened this application to
+     * write a document is offered neither until they ask, which is the same
+     * argument `authoringModes` above makes and the same shape of answer: with
+     * the feature off the surfaces are NOT RENDERED, rather than rendered
+     * disabled — a dimmed control that cannot be explained is worse than one
+     * that is not there.
+     *
+     * Absent means false, as it does for `authoringModes` and unlike
+     * `autosave`: a project that has never been configured has neither.
+     *
+     * Per project rather than per machine, for the reason the settings above
+     * are: a repository that does gear-based development does it for everybody
+     * who clones it, and `.studio/settings.json` is committed. Starting a flow
+     * writes `gearFlow` here, so the project that HAS a flow shows its rail to
+     * the next person without them having to find this setting.
+     */
+    qualitySignalsFor(rootUri) {
+        const raw = rootUri && this.rawByRoot.get(rootUri.toString());
+        return !!(raw && raw.qualitySignals);
+    }
+
+    async setQualitySignals(rootUri, enabled) {
+        await this.writeRoot(rootUri, { qualitySignals: !!enabled });
+    }
+
+    /** Quality-signal policy for the root that owns `uri`. */
+    qualitySignalsForFile(uri) {
+        const key = this.rootOf(uri);
+        if (!key) { return false; }
+        const raw = this.rawByRoot.get(key);
+        return !!(raw && raw.qualitySignals);
+    }
+
+    gearFlowFor(rootUri) {
+        const raw = rootUri && this.rawByRoot.get(rootUri.toString());
+        return !!(raw && raw.gearFlow);
+    }
+
+    async setGearFlow(rootUri, enabled) {
+        await this.writeRoot(rootUri, { gearFlow: !!enabled });
+    }
+
+    /** Gear-flow policy for the root that owns `uri`. */
+    gearFlowForFile(uri) {
+        const key = this.rootOf(uri);
+        if (!key) { return false; }
+        const raw = this.rawByRoot.get(key);
+        return !!(raw && raw.gearFlow);
+    }
+
+    /*
+     * The same two questions, asked by chrome that belongs to no document.
+     *
+     * The rail's Quality button, the flow's left-panel tab and the commands in
+     * the palette are all app-level surfaces describing ONE project — the one
+     * the person is looking at — and they are read synchronously, from a click
+     * handler or from a command's isEnabled. `activeProject` is the product's
+     * single answer to "which project is that" (see active-project.js); the
+     * fallback to the only loaded root matters on a fresh window, where the
+     * Projects panel has not announced a choice yet and every surface would
+     * otherwise read the feature as off for a second.
+     */
+    activeRootKey() {
+        const { activeProject } = require('./active-project');
+        const chosen = activeProject.get();
+        if (chosen && this.rawByRoot.has(chosen)) { return chosen; }
+        const keys = [...this.byRoot.keys()];
+        return chosen || (keys.length ? keys[0] : undefined);
+    }
+
+    qualitySignalsActive() {
+        const key = this.activeRootKey();
+        const raw = key && this.rawByRoot.get(key);
+        return !!(raw && raw.qualitySignals);
+    }
+
+    gearFlowActive() {
+        const key = this.activeRootKey();
+        const raw = key && this.rawByRoot.get(key);
+        return !!(raw && raw.gearFlow);
     }
 
     /*

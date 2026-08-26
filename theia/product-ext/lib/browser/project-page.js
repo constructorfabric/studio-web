@@ -185,12 +185,20 @@ class ProjectPageWidget extends Widget {
              * that is always on screen is an invitation to leave the rendered
              * document — so with the feature off, the switch is not rendered at
              * all rather than rendered disabled.
+             *
+             * ONE SETTING, EVERY DOCUMENT SURFACE. It governs Markdown documents
+             * and delimited tables alike, and that is the point rather than an
+             * implementation convenience: the setting means "this project edits
+             * source as well as documents", which is a statement about the
+             * project, not about a file extension. A second switch for tables
+             * would be the same decision asked twice. See renderSegmented() in
+             * markdown-editor.js and table-editor.js — both read this one flag.
              */
             '    <section class="studio-settings-section">' +
             '      <h3>Authoring modes</h3>' +
-            '      <p class="studio-settings-help">Documents are edited in Rich mode: the rendered document itself. ' +
-            'Turn this on to add a Rich / Split / Raw switch above every Markdown document, for working on the ' +
-            'Markdown source directly.</p>' +
+            '      <p class="studio-settings-help">Documents are edited in Rich mode: the rendered document itself, ' +
+            'or the grid for a table. Turn this on to add a Rich / Split / Raw switch above every Markdown document ' +
+            'and every CSV or TSV, for working on the source text directly.</p>' +
             '      <div class="studio-settings-row">' +
             '        <button class="studio-switch" data-act="toggle-modes" aria-pressed="false" ' +
             'title="Authoring modes for this project">Source modes off</button>' +
@@ -245,6 +253,38 @@ class ProjectPageWidget extends Widget {
             '        <span class="studio-settings-note" data-page-autosave-note></span>' +
             '      </div>' +
             '    </section>' +
+
+            /*
+             * 6. The two features that are off until asked for.
+             *
+             * LAST on the page, and that is the honest order rather than a
+             * demotion: everything above decides how this project's documents
+             * behave, and these two decide whether a whole additional way of
+             * working exists here at all. Somebody reading down the page meets
+             * the settings that apply to them first.
+             *
+             * Each switch says what APPEARS, not what it is called — "adds a
+             * Quality tab" is checkable against the screen, and "enables
+             * specification quality" is not. See file-type-settings.js for why
+             * both default to off and why the answer is committed to the
+             * repository rather than kept per machine.
+             */
+            '    <section class="studio-settings-section">' +
+            '      <h3>Optional features</h3>' +
+            '      <p class="studio-settings-help">Two larger ways of working this product can do, both off until a ' +
+            'project asks for one. Turning one on adds its surfaces to this project only, and the answer is written ' +
+            'into this project\'s settings — so everybody who clones the repository gets the same one.</p>' +
+            '      <div class="studio-settings-row">' +
+            '        <button class="studio-switch" data-act="toggle-quality" aria-pressed="false" ' +
+            'title="Specification quality signals for this project">Quality signals off</button>' +
+            '        <span class="studio-settings-note" data-page-quality-note></span>' +
+            '      </div>' +
+            '      <div class="studio-settings-row">' +
+            '        <button class="studio-switch" data-act="toggle-gear-flow" aria-pressed="false" ' +
+            'title="Gear-based development for this project">Gear-based development off</button>' +
+            '        <span class="studio-settings-note" data-page-gear-flow-note></span>' +
+            '      </div>' +
+            '    </section>' +
             '  </div>' +
             '</div>';
 
@@ -261,6 +301,10 @@ class ProjectPageWidget extends Widget {
         this.reviewStyleEls = [...this.node.querySelectorAll('[data-act="review-style"]')];
         this.reviewNoteEl = this.node.querySelector('[data-page-review-note]');
         this.modesNoteEl = this.node.querySelector('[data-page-modes-note]');
+        this.qualityEl = this.node.querySelector('[data-act="toggle-quality"]');
+        this.qualityNoteEl = this.node.querySelector('[data-page-quality-note]');
+        this.gearFlowEl = this.node.querySelector('[data-act="toggle-gear-flow"]');
+        this.gearFlowNoteEl = this.node.querySelector('[data-page-gear-flow-note]');
         this.identityEl = this.node.querySelector('[data-act="display-name"]');
         this.identityAvatarEl = this.node.querySelector('[data-page-identity-avatar]');
         this.identityNoteEl = this.node.querySelector('[data-page-identity-note]');
@@ -401,6 +445,7 @@ class ProjectPageWidget extends Widget {
         this.renderModes(root);
         this.renderReviewStyle(root);
         this.renderAutosave(root);
+        this.renderFeatures(root);
     }
 
     // -- you -----------------------------------------------------------------
@@ -521,8 +566,8 @@ class ProjectPageWidget extends Widget {
         this.modesEl.textContent = on ? 'Source modes on' : 'Source modes off';
         this.modesEl.setAttribute('aria-pressed', String(on));
         this.modesNoteEl.textContent = on
-            ? 'A Rich / Split / Raw switch appears above every Markdown document.'
-            : 'Markdown documents are edited in Rich mode, with no mode switch.';
+            ? 'A Rich / Split / Raw switch appears above every Markdown document and every table.'
+            : 'Documents and tables are edited in Rich mode, with no mode switch.';
     }
 
     // -- review style --------------------------------------------------------
@@ -597,6 +642,58 @@ class ProjectPageWidget extends Widget {
             : 'Changes are held until you save with Cmd+S.';
     }
 
+    // -- the optional features -----------------------------------------------
+
+    /*
+     * One method for both, because the two switches differ only in which pair of
+     * accessors they read and write. A second copy of this would be four lines
+     * shorter to read and one more place for the two to drift apart.
+     */
+    async toggleFeature(feature) {
+        const root = await this.activeRoot();
+        if (!root) { return; }
+        const on = feature === 'quality'
+            ? fileTypeSettings.qualitySignalsFor(root.resource)
+            : fileTypeSettings.gearFlowFor(root.resource);
+        try {
+            if (feature === 'quality') { await fileTypeSettings.setQualitySignals(root.resource, !on); }
+            else { await fileTypeSettings.setGearFlow(root.resource, !on); }
+        } catch (e) {
+            console.error('[studio] could not persist the ' + feature + ' feature setting', e);
+        }
+        this.renderFeatures(root);
+    }
+
+    /*
+     * The notes name the surfaces the switch adds or removes, in the words they
+     * appear under on screen. Turning a feature OFF hides chrome the person may
+     * be looking at right now, so the off-state sentence has to say what left —
+     * a control that silently removes a tab is indistinguishable from a bug.
+     *
+     * Nothing recorded is deleted either way, and both sentences say so: the
+     * quality reports and the flow's own log are files in `.studio/`, and a
+     * setting that reads as "and lose the work" would stop people trying the
+     * feature at all.
+     */
+    renderFeatures(root) {
+        if (!this.qualityEl || !this.gearFlowEl) { return; }
+        const quality = root ? fileTypeSettings.qualitySignalsFor(root.resource) : false;
+        this.qualityEl.textContent = quality ? 'Quality signals on' : 'Quality signals off';
+        this.qualityEl.setAttribute('aria-pressed', String(quality));
+        this.qualityNoteEl.textContent = quality
+            ? 'Every Markdown document gets a Quality destination in its topbar, and the activity rail gets a gauge ' +
+              'that opens the project-wide check.'
+            : 'Hidden. Detector reports already in .studio/quality are kept and reappear when this is turned back on.';
+
+        const flow = root ? fileTypeSettings.gearFlowFor(root.resource) : false;
+        this.gearFlowEl.textContent = flow ? 'Gear-based development on' : 'Gear-based development off';
+        this.gearFlowEl.setAttribute('aria-pressed', String(flow));
+        this.gearFlowNoteEl.textContent = flow
+            ? 'A Flow tab appears beside Projects, and the palette gains “New project from an idea…” and the four ' +
+              'commands that go with it — the interview an assistant runs from an idea to a plan.'
+            : 'Hidden. A .studio/flow directory that already exists is kept, and starting a flow turns this back on.';
+    }
+
     // -- disconnect ----------------------------------------------------------
 
     /*
@@ -661,6 +758,10 @@ class ProjectPageWidget extends Widget {
             this.toggleModes();
         } else if (act === 'review-style') {
             this.setReviewStyle(target.getAttribute('data-style'));
+        } else if (act === 'toggle-quality') {
+            void this.toggleFeature('quality');
+        } else if (act === 'toggle-gear-flow') {
+            void this.toggleFeature('gear-flow');
         }
     }
 }

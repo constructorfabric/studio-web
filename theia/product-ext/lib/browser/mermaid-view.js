@@ -329,4 +329,20 @@ const DIAGRAM_CSS = `
 }
 `;
 
-module.exports = { DiagramCodeBlock, DIAGRAM_CSS, MERMAID_LANGUAGES };
+/*
+ * `mermaidNodeView` and `renderDiagram` are exported for figure-view.js, which
+ * needs both and neither of which this module has any reason to know about:
+ *
+ *  - the NODE VIEW, because ProseMirror allows exactly one per node type and
+ *    both figures and diagrams are code blocks. figure-view.js owns the
+ *    dispatch and calls this one when the language is Mermaid, so the
+ *    dependency points one way and this file stays unaware of figures.
+ *  - the RENDERER, because a figure runs in a sandboxed frame with no network
+ *    and therefore cannot load Mermaid itself. It posts its source out, this
+ *    renders it, and the SVG goes back in — which means a document with both a
+ *    diagram and a figure that wants one loads the 3 MB library once.
+ */
+module.exports = {
+    DiagramCodeBlock, DIAGRAM_CSS, MERMAID_LANGUAGES,
+    mermaidNodeView, renderMermaid: renderDiagram
+};

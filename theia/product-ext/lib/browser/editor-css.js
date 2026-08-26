@@ -11,6 +11,7 @@
 const { DIFF_CSS } = require('./diff-view');
 const { TRACKED_CSS } = require('./tracked-changes');
 const { DIAGRAM_CSS } = require('./mermaid-view');
+const { FIGURE_CSS } = require('./figure-view');
 
 const WIDGET_CSS = `
 /* !important: Theia's generated theme CSS targets Lumino dock widgets with a
@@ -72,12 +73,44 @@ const WIDGET_CSS = `
 .studio-seg-btn.on { background: var(--studio-bg); color: var(--studio-text); font-weight: 620; box-shadow: 0 1px 2px color-mix(in srgb, var(--studio-text) 8%, transparent); }
 .studio-seg-btn:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 1px; }
 
-/* The slot selector's rules are GONE from here, along with .studio-seg-split,
- * .studio-seg-btn.assistant and the <em> count badge. That selector was a pill
- * in this bar spanning two scopes, with a 1px divider inside a shared container
- * as the only sign of it; it is now the shell's right-hand strip, with its own
- * stylesheet in slot-strip.js. The mode segment is the only segmented control
- * left in the document, which is what the shape should have meant all along. */
+/* The slot selector is not a segmented control here and never will be again:
+ * .studio-seg-split, .studio-seg-btn.assistant and the <em> count badge are
+ * gone for good. That pill spanned two scopes with a 1px divider inside a
+ * shared container as the only sign of it, and the mode segment is now the only
+ * segmented control in the document -- which is what the shape should have
+ * meant all along.
+ *
+ * What DID come back into this bar is the document's three slot destinations, as
+ * an icon cluster at the right end. They went to a strip in the 48px right-hand
+ * column in between (see the header of slot-strip.js for the whole round trip);
+ * the column cost the document 48px permanently to hold five buttons, so the
+ * three that belong to the document came back to the bar the document already
+ * pays for, and the two app-level assistants went to the left activity rail.
+ *
+ * The BUTTON is styled once, in slot-strip.js, because the same node renders in
+ * both places and two near-identical rule sets is how the old per-surface pills
+ * drifted apart. What is here is only how this bar HOSTS one. */
+/* --- the slot cluster, at the right end of the bar ------------------------- */
+/* The bar's gap is 10px, which is the distance between unrelated facts in it.
+ * The cluster is a different KIND from the save status next to it -- one states
+ * what the file is doing, the other opens things beside it -- so it gets a rule
+ * rather than more air: 18px of --studio-line (constraint 24: this is a divider
+ * inside a panel, not a shell seam), with 2px margins so the 10px gaps either
+ * side still carry most of the separation. -4px on the right pulls the cluster
+ * to the bar's 12px padding: a 28px tile has its own visual inset, and without
+ * this the last button floated ~7px off the window's right edge while the mode
+ * segment sat flush on the left. */
+.studio-slot-divider {
+  flex: none; width: 1px; height: 18px; background: var(--studio-line); margin: 0 2px;
+}
+/* --studio-slot-ring is restated rather than inherited: the badge has to read as
+ * sitting on THIS bar, and the cluster's own default is the same tone only by
+ * coincidence -- the raised surface is where a cluster happens to live today. */
+.studio-doc-topbar .studio-slot-cluster {
+  margin-right: -4px; --studio-slot-ring: var(--studio-surface-raised);
+}
+/* Never hidden, and never emptied: membership is fixed, so the cluster is the
+ * one thing in this bar that is always there. See updateTopbarVisibility. */
 
 /* --- gutter marks ----------------------------------------------------------
  *
@@ -237,6 +270,34 @@ const WIDGET_CSS = `
 .studio-doc :is(.ProseMirror, .studio-tracked-page) pre code { background: none; padding: 0; }
 .studio-doc :is(.ProseMirror, .studio-tracked-page) hr { border: none; border-top: 1px solid var(--studio-line); margin: 22px 0; }
 .studio-doc :is(.ProseMirror, .studio-tracked-page) a { color: var(--studio-cyan); text-decoration: underline; text-underline-offset: 2px; }
+/* Footnotes. The reference is a chip rather than bare superscript text: it is an
+   atom, so it behaves like one object under the caret, and it should look like
+   one. The definition gets a rule and a hanging label so the block reads as
+   apparatus rather than as another paragraph of the document. */
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-footnote-ref {
+  font-size: 0.72em; font-weight: 650; line-height: 1; vertical-align: super;
+  color: var(--studio-cyan); background: var(--studio-surface);
+  border: 1px solid var(--studio-line); border-radius: 4px;
+  padding: 1px 4px; margin: 0 1px; cursor: default; white-space: nowrap;
+  /* An atom holds no editable text, so a text cursor over it would lie. */
+  user-select: none; -webkit-user-select: none;
+}
+.studio-doc .ProseMirror .studio-footnote-ref.ProseMirror-selectednode {
+  outline: 2px solid var(--studio-amber); outline-offset: 1px;
+}
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-footnote-def {
+  display: flex; gap: 8px; margin: 0 0 8px; padding-top: 8px;
+  border-top: 1px solid var(--studio-line);
+  font-size: 13px; color: var(--studio-muted);
+}
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-footnote-def + .studio-footnote-def {
+  border-top: none; padding-top: 0;
+}
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-footnote-def-label {
+  flex: none; font-weight: 650; color: var(--studio-cyan);
+  user-select: none; -webkit-user-select: none;
+}
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-footnote-def-body { flex: 1; min-width: 0; }
 .studio-doc :is(.ProseMirror, .studio-tracked-page) details { margin: 0 0 12px; border: 1px solid var(--studio-line); border-radius: 8px; background: var(--studio-surface-raised); }
 .studio-doc :is(.ProseMirror, .studio-tracked-page) details > summary { padding: 8px 10px; cursor: pointer; color: var(--studio-text); font-weight: 620; }
 .studio-doc :is(.ProseMirror, .studio-tracked-page) details > summary:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: -2px; }
@@ -377,7 +438,12 @@ const WIDGET_CSS = `
 .studio-rail-toolbar { display: flex; align-items: center; gap: 5px; margin: 8px 0 10px; flex-wrap: wrap; }
 .studio-rail-foot-note {
   padding: 8px 14px 12px; font-size: 10.5px; color: var(--studio-muted); border-top: 1px solid var(--studio-line);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; flex: none;
+  /* overflow-wrap: anywhere, not word-break: break-all — break-all splits at
+     whatever character the line happens to end on, which turned the quality
+     tab's analyser credit into "\u2026 0.3.0 \u00b7 ev / ery threshold \u2026". This still
+     breaks a token that cannot fit on its own (a long path, a URL) and
+     otherwise breaks at spaces like prose. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; flex: none;
 }
 
 /* --- comment threads ---
@@ -472,6 +538,6 @@ const WIDGET_CSS = `
 .studio-compare { margin-bottom: 12px; }
 `;
 
-const EDITOR_CSS = WIDGET_CSS + DIFF_CSS + TRACKED_CSS + DIAGRAM_CSS;
+const EDITOR_CSS = WIDGET_CSS + DIFF_CSS + TRACKED_CSS + DIAGRAM_CSS + FIGURE_CSS;
 
 module.exports = { EDITOR_CSS };

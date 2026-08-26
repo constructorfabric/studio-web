@@ -10,6 +10,12 @@
     },
     {
       "backend": "lib/node/viewer-credentials"
+    },
+    {
+      "backend": "lib/node/quality-backend"
+    },
+    {
+      "backend": "lib/node/flow-backend"
     }
   ],
   "dependencies": {

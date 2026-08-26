@@ -47,7 +47,8 @@ function fileIconKind(name) {
         png: 'image', jpg: 'image', jpeg: 'image', pdf: 'pdf', txt: 'text', lock: 'package',
         'package.json': 'package'
     })[name.toLowerCase()] || ({
-        json: 'data', yaml: 'data', yml: 'data', csv: 'table', tsv: 'table', ts: 'typescript', tsx: 'typescript',
+        json: 'data', yaml: 'data', yml: 'data', csv: 'table', tsv: 'table', tab: 'table', psv: 'table',
+        ts: 'typescript', tsx: 'typescript',
         js: 'javascript', jsx: 'javascript', py: 'python', sh: 'terminal', css: 'style', scss: 'style',
         xml: 'markup', svg: 'vector', png: 'image', jpg: 'image', jpeg: 'image', pdf: 'pdf', md: 'markdown',
         html: 'html', htm: 'html', txt: 'text'
@@ -63,6 +64,8 @@ class RepositoriesWidget extends Widget {
         this.fileService = ctx.fileService;
         this.openerService = ctx.openerService;
         this.messageService = ctx.messageService;
+        // Only for the Connect dialog's last-resort folder. See dialogStartFolder().
+        this.envVariables = ctx.envVariables;
         // No openProjectPage callback any more: the route to the Project page is
         // the bottom line's own field, and this panel no longer has a control
         // that opens it. See the note where the ⋯ menu used to be.
@@ -530,11 +533,35 @@ class RepositoriesWidget extends Widget {
     }
 
     async connect() {
-        const roots = await this.workspaceService.roots;
+        /*
+         * THE STARTING FOLDER HAS TO BE ONE THAT STILL EXISTS.
+         *
+         * This passed `roots[0]` straight through, and that is how "Connect
+         * project" became a button that does nothing. Theia's
+         * ElectronFileDialogService resolves the folder it is given
+         * (`getRootNode` -> `fileService.resolve`), swallows the failure in a bare
+         * `catch {}`, and returns `undefined` — which is the same value it returns
+         * when the user cancels. So a workspace whose FIRST root has been deleted,
+         * renamed, or left on an unmounted volume produces: no dialog, no error,
+         * no message, and no way to connect a project ever again without editing
+         * the workspace file by hand.
+         *
+         * Reproduced exactly: with root[0] present the native dialog opens; with
+         * root[0] missing the call resolves `undefined` in under a millisecond.
+         * It is easy to reach — a project under /tmp that the OS has cleaned, a
+         * folder moved in Finder, an external disk — and completely silent, which
+         * is the worst combination a primary action can have.
+         *
+         * So the dialog is given the first candidate that actually resolves, and
+         * `undefined` if none does, which makes Theia fall back to the user's
+         * working directory. The candidate ORDER is also an improvement in its own
+         * right: opening where the user is currently browsing beats opening at
+         * whichever root happens to be first.
+         */
         const folder = await this.fileDialogService.showOpenDialog({
             title: 'Connect a local project', canSelectFiles: false, canSelectFolders: true,
             canSelectMany: false, openLabel: 'Connect'
-        }, roots[0]);
+        }, await this.dialogStartFolder());
         if (!folder) { return; }
         /*
          * delayMs: 0, against the rule the other listing state follows.
@@ -561,6 +588,43 @@ class RepositoriesWidget extends Widget {
         } finally {
             done();
         }
+    }
+
+    /**
+     * Where the Connect dialog should open, as a FileStat Theia can resolve.
+     *
+     * Candidates in order of how useful they are to the person clicking, not in
+     * the order the workspace happens to store them: where they are browsing,
+     * then the project they have selected, then any root at all.
+     */
+    async dialogStartFolder() {
+        const { URI } = require('@theia/core/lib/common/uri');
+        const roots = await this.workspaceService.roots;
+        const candidates = [];
+        if (this.currentDirectory) { candidates.push(this.currentDirectory); }
+        if (this.activeRoot) { candidates.push(new URI(this.activeRoot)); }
+        for (const root of roots) { candidates.push(root.resource); }
+        /*
+         * The home directory LAST, and it is what makes this a fix rather than an
+         * improvement.
+         *
+         * Handing Theia `undefined` looks like it should be enough — its own
+         * `getRootNode` falls back to `UserWorkingDirectoryProvider` — and it is
+         * not: that provider tries the current SELECTION first, which in a
+         * workspace whose folder has gone missing is a path inside the missing
+         * folder. So `undefined` resolves to a dead directory, `resolve` throws,
+         * the bare `catch {}` swallows it, and the dialog still never opens.
+         * Verified in the running application: with every candidate dead and
+         * `undefined` passed, the command still returned immediately.
+         *
+         * Home is the one directory that cannot have been deleted out from under
+         * the person now asking to connect a project.
+         */
+        if (this.envVariables && typeof this.envVariables.getHomeDirUri === 'function') {
+            try { candidates.push(new URI(await this.envVariables.getHomeDirUri())); }
+            catch (e) { console.warn('[studio] could not read the home directory', e); }
+        }
+        return firstResolvableFolder(candidates, uri => this.fileService.resolve(uri));
     }
 
     /*
@@ -782,6 +846,28 @@ class RepositoriesWidget extends Widget {
     }
 }
 
+/**
+ * The first of `uris` that resolves to a directory, or undefined.
+ *
+ * Pure, and exported, because the bug it exists to prevent is entirely about
+ * what happens when a path is gone — which is a condition a test can state in
+ * one line and a running application can only be coaxed into.
+ */
+async function firstResolvableFolder(uris, resolve) {
+    for (const uri of uris || []) {
+        if (!uri) { continue; }
+        try {
+            const stat = await resolve(uri);
+            if (stat && stat.isDirectory) { return stat; }
+        } catch (e) {
+            // Deleted, renamed, or on a volume that is no longer mounted. Not
+            // worth reporting: the next candidate is the answer, and the last
+            // resort (undefined) is a working dialog at the user's home.
+        }
+    }
+    return undefined;
+}
+
 const REPOS_CSS = `
 .studio-repos { display:flex; flex-direction:column; height:100%; min-width:0; background:var(--studio-surface, #16171c); color:var(--studio-text, #f1eee7); }
 .studio-project-head { padding:16px 14px 10px; border-bottom:1px solid var(--studio-line, #e1e4e8); }
@@ -884,4 +970,4 @@ const REPOS_CSS = `
 .studio-btn.ghost { background:transparent; color:var(--studio-muted, #9298a8); }
 `;
 
-module.exports = { RepositoriesWidget, REPOS_CSS };
+module.exports = { RepositoriesWidget, REPOS_CSS, firstResolvableFolder };

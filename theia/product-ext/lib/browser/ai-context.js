@@ -202,8 +202,15 @@ function formatChangeRequest(path, instruction, excerpt, threadId) {
  * true here with nothing delivered leaves the editor waiting for a write that
  * will never come.
  */
-async function requestChange({ commandRegistry, messageService, uri, kind, path, instruction, excerpt, threadId }) {
-    const prompt = formatChangeRequest(path, instruction, excerpt, threadId);
+/*
+ * `prompt` overrides the composed one. Added for interactive figures, whose
+ * request is not "edit this passage" at all — it is a two-step brief plus a
+ * runtime API document (figure-spec.js). The delivery half is identical, and it
+ * is the half with the undocumented commands and the fallback in it, so it stays
+ * one function rather than becoming two that drift.
+ */
+async function requestChange({ commandRegistry, messageService, uri, kind, path, instruction, excerpt, threadId, prompt: composed }) {
+    const prompt = composed || formatChangeRequest(path, instruction, excerpt, threadId);
 
     if (kind === 'claude' && await seedClaude(commandRegistry, prompt)) {
         messageService.info('Sent to Claude. Studio will hold its edit for review.');
@@ -241,6 +248,14 @@ function openAiPrompt(hostEl, anchorEl, options, handlers) {
     const opts = options || {};
     const menu = document.createElement('div');
     menu.className = 'studio-ai-popover prompt';
+    /*
+     * `extra` and `secondary: false` exist for the figure request, which has a
+     * different offline path from a text edit: a starter figure is inserted
+     * straight into the document rather than pasted in as a proposal. Same
+     * popover, because it is the same act -- one instruction, one destination --
+     * and a second implementation of the anchoring, the outside-click and the
+     * Escape handling is how two surfaces drift apart.
+     */
     menu.innerHTML =
         '<div class="studio-ai-title">' + (opts.title || 'Ask AI to change this') + '</div>' +
         (opts.excerpt
@@ -252,7 +267,10 @@ function openAiPrompt(hostEl, anchorEl, options, handlers) {
         '<button type="button" data-ai="claude">Claude</button>' +
         '<button type="button" data-ai="codex">Codex</button>' +
         '</div>' +
-        '<button type="button" class="studio-ai-secondary" data-ai="paste">Paste a proposal instead…</button>';
+        (opts.extra || '') +
+        (opts.secondary === false ? ''
+            : '<button type="button" class="studio-ai-secondary" data-ai="paste">' +
+              (opts.secondaryLabel || 'Paste a proposal instead…') + '</button>');
     hostEl.appendChild(menu);
 
     const hostRect = hostEl.getBoundingClientRect();
@@ -267,7 +285,13 @@ function openAiPrompt(hostEl, anchorEl, options, handlers) {
 
     const submit = kind => {
         const instruction = textarea.value.trim();
-        if (!instruction && kind !== 'paste') { textarea.focus(); return; }
+        /*
+         * Only the two assistant buttons need something typed. `paste` never
+         * did, and neither does a starter -- both are "give me a thing to work
+         * from", and refusing them for an empty textarea would be refusing the
+         * only route that works when no assistant is installed.
+         */
+        if (!instruction && (kind === 'claude' || kind === 'codex')) { textarea.focus(); return; }
         closeAiMenu(hostEl);
         handlers.onSubmit(kind, instruction);
     };
@@ -422,7 +446,7 @@ const ASSISTANT_WIDGET_PREFIX = 'plugin-view-container:';
  * entirely, so picking an assistant immediately still works.
  *
  * It lives here rather than in markdown-editor.js because the HTML viewer needs
- * the identical rule: it had no guard at all, and the slot strip made that
+ * the identical rule: it had no guard at all, and the slot cluster made that
  * visible -- opening a rendered page showed Claude as the occupant with nobody
  * having asked. Two surfaces, one rule, one place.
  */
@@ -513,6 +537,57 @@ function collapseRightPanel(shell) {
     if (!shell) { return; }
     try { shell.collapsePanel('right'); }
     catch (e) { console.error('[studio] could not collapse the right panel', e); }
+    zeroRightPanelSlot(shell);
+}
+
+/*
+ * Give the right panel's SLOT back to the document, not just its pixels.
+ *
+ * Collapsing is not enough, and this was measured rather than guessed: with the
+ * panel collapsed, `#theia-right-content-panel` rendered 1px wide while 265px of
+ * the window sat empty to the right of the document, owned by nothing. Theia's
+ * own collapse path explains it —
+ *
+ *   - refresh() clamps a collapsed panel through a CSS class, and hides the
+ *     container outright ONLY when its tab bar has no titles. Ours always has
+ *     two (Claude and Codex are registered right-panel widgets), so the
+ *     container stays a visible child of the split panel;
+ *   - resize() deliberately does nothing while the dock panel is hidden — it
+ *     records lastPanelSize and returns — so the split handle keeps whatever the
+ *     last reveal set it to, and a child clamped narrower than its sizer does not
+ *     hand the slack to its neighbour.
+ *
+ * So the handle itself has to move. This goes through Lumino's SplitPanel
+ * directly (`relativeSizes` / `setRelativeSizes`, the same API Theia's own
+ * SplitPositionHandler ends up calling) rather than through
+ * `handler.setPanelSize(0)`, which was tried first: that route animates towards
+ * a reference widget — the collapsed dock panel — and a hidden reference makes
+ * it a no-op, silently. This is synchronous, has no promise to lose, and cannot
+ * half-apply.
+ *
+ * The freed share goes to the widget immediately before the panel, which in this
+ * shell is the main area. Ordering matters where this is called from a collapse:
+ * it runs AFTER collapsePanel, because refresh() records lastPanelSize on the way
+ * into the collapsed state and that recorded width is what a later reveal
+ * restores. Zeroing first would teach it that an assistant is 0px wide.
+ */
+function zeroRightPanelSlot(shell) {
+    const handler = shell && shell.rightPanelHandler;
+    const container = handler && handler.container;
+    const parent = container && container.parent;
+    if (!parent || typeof parent.relativeSizes !== 'function' || typeof parent.setRelativeSizes !== 'function') { return; }
+    try {
+        const index = parent.widgets ? parent.widgets.indexOf(container) : -1;
+        if (index < 1) { return; }
+        const sizes = parent.relativeSizes();
+        const share = sizes[index];
+        if (!share) { return; }                 // already nothing, nothing to give back
+        sizes[index] = 0;
+        sizes[index - 1] += share;
+        parent.setRelativeSizes(sizes);
+    } catch (e) {
+        console.error('[studio] could not return the right panel slot to the document', e);
+    }
 }
 
 /** Which assistant, if any, currently owns Theia's right panel. */
@@ -523,6 +598,7 @@ function assistantFromTabTitle(title) {
 }
 
 module.exports = {
+    zeroRightPanelSlot,
     askClaude, askCodex, requestChange, formatChangeRequest, formatContext,
     seedClaude, commandAvailable, CLAUDE_SEED_COMMAND,
     openAiMenu, openAiPrompt, closeAiMenu, AI_MENU_CSS,

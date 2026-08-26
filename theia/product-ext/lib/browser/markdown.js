@@ -58,6 +58,19 @@ function inlineToHtml(text) {
     });
     out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">');
     out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    /*
+     * After links on purpose. `[^a](b)` is then an ordinary link whose text is
+     * `^a`, which is what this converter did before footnotes existed; reading
+     * it as a footnote followed by a stray `(b)` would change the meaning of
+     * documents that already work. A bare `[^a]` cannot match the link rule
+     * above it — that rule requires the `(…)` — so nothing is shadowed.
+     *
+     * The label needs no escaping here: escapeHtml has already run over the
+     * whole string, and FOOTNOTE_LABEL excludes every character that escaping
+     * would have touched.
+     */
+    out = out.replace(FOOTNOTE_REF_G, (_, label) =>
+        '<sup data-footnote-ref="' + label + '">' + label + '</sup>');
     out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     out = out.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
     codeSpans.forEach((code, index) => {
@@ -74,6 +87,32 @@ const ORDERED = /^(\s*)\d+[.)]\s+(.*)$/;
 // reading is the one the author meant.
 const TASK = /^(\s*)[-*+]\s+\[([ xX])\]\s*(.*)$/;
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+/*
+ * Footnotes: a reference `[^people]` in running text, and its definition
+ * `[^people]: Alice and Bob.` as its own block.
+ *
+ * WHY THE LABEL CHARSET IS THIS NARROW. The label is written straight into an
+ * HTML attribute and straight back out as Markdown, so the safe move is to
+ * refuse the characters that would need escaping in either direction rather
+ * than to escape them and hope both directions agree. A label containing a
+ * quote, an ampersand or an angle bracket is therefore not read as a footnote
+ * at all — it stays literal text, which still round-trips byte-for-byte,
+ * because that is the property that must never break.
+ *
+ * WHY THE LABEL IS SHOWN RATHER THAN A NUMBER. Rendered footnotes are usually
+ * numbered, and numbering here would be actively wrong: the number depends on
+ * position, the editor lets you insert a footnote above an existing one, and a
+ * number that silently disagrees with the source is worse than no number. The
+ * label is what the author typed and is stable under editing. Numbering is a
+ * concern for whatever renders the finished document.
+ */
+const FOOTNOTE_LABEL = '[^\\]\\s"\'&<>]+';
+const FOOTNOTE_REF_G = new RegExp('\\[\\^(' + FOOTNOTE_LABEL + ')\\]', 'g');
+const FOOTNOTE_DEF = new RegExp('^\\s*\\[\\^(' + FOOTNOTE_LABEL + ')\\]:[ \\t]*(.*)$');
+// Non-global twin for `.test()`. A /g/ regex carries lastIndex between calls,
+// so sharing one would make the same input match only every other time.
+const FOOTNOTE_DEF_LINE = new RegExp('^\\s*\\[\\^' + FOOTNOTE_LABEL + '\\]:');
 
 function tableCells(line) {
     return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
@@ -186,6 +225,30 @@ function markdownToHtml(md) {
             }
         }
 
+        /*
+         * A footnote definition is its own block, not a paragraph that happens
+         * to start with a bracket. It has to be recognised here AND listed as a
+         * paragraph terminator below, because the paragraph loop joins
+         * consecutive non-blank lines with a space — without both, a definition
+         * written directly under the line that cites it is absorbed into that
+         * paragraph and the two become one.
+         */
+        const footnote = line.match(FOOTNOTE_DEF);
+        if (footnote) {
+            /*
+             * The body sits in its own span, matching what the editor node
+             * renders. That is not decoration: the node declares this span as
+             * its contentElement, so parsing takes the footnote's text and not
+             * the label prefix beside it. If this shape and the node's rendered
+             * shape drifted apart, copying a footnote inside the editor would
+             * parse the visible label back in as body text and duplicate it.
+             */
+            out.push('<div data-footnote-def="' + footnote[1] + '">' +
+                '<span data-studio-footnote-body>' + inlineToHtml(footnote[2]) + '</span></div>');
+            i++;
+            continue;
+        }
+
         const image = line.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$/);
         if (image) {
             out.push('<img alt="' + escapeAttribute(image[1]) + '" src="' + escapeAttribute(image[2]) + '">');
@@ -235,6 +298,7 @@ function markdownToHtml(md) {
 
         const para = [];
         while (i < lines.length && lines[i].trim() &&
+            !FOOTNOTE_DEF_LINE.test(lines[i]) &&
             !/^(#{1,4}\s|```|\s*>|\s*[-*+]\s|\s*\d+[.)]\s|\s*(-{3,}|\*{3,}|_{3,})\s*$)/.test(lines[i])) {
             para.push(lines[i].trim());
             i++;
@@ -254,6 +318,9 @@ function inlineFromJson(nodes) {
             const a = n.attrs || {};
             return '![' + (a.alt || '') + '](' + (a.src || '') + ')';
         }
+        // An atom node, so it has no text content of its own — the label in its
+        // attributes is the only record of what the author wrote.
+        if (n.type === 'footnoteRef') { return '[^' + ((n.attrs && n.attrs.label) || '') + ']'; }
         if (n.type !== 'text') { return ''; }
         let t = n.text || '';
         const marks = n.marks || [];
@@ -285,6 +352,8 @@ function blockToMarkdown(node, indent) {
             return pad + '#'.repeat((node.attrs && node.attrs.level) || 1) + ' ' + inlineFromJson(node.content);
         case 'paragraph':
             return pad + inlineFromJson(node.content);
+        case 'footnoteDef':
+            return pad + '[^' + ((node.attrs && node.attrs.label) || '') + ']: ' + inlineFromJson(node.content);
         case 'codeBlock':
             return '```' + ((node.attrs && node.attrs.language) || '') + '\n' + inlineFromJson(node.content) + '\n```';
         case 'blockquote':
@@ -377,8 +446,19 @@ function jsonToMarkdown(doc) {
  * markdown-editor.js; a document has to clear all three to become editable.
  */
 const UNSUPPORTED = [
-    [/^\s*\[[^\]]+\]:\s+\S+/m, 'reference-style link definitions'],
-    [/\[\^[^\]]+\]/, 'footnotes'],
+    // `(?!\^)` keeps this off footnote definitions, which are supported and
+    // share the shape `[label]: value`. Without it the rule below would still
+    // hold every footnoted document read-only.
+    [/^\s*\[(?!\^)[^\]]+\]:\s+\S+/m, 'reference-style link definitions'],
+    /*
+     * A definition continued on a following indented line. Single-line
+     * definitions are supported; a continuation would be re-emitted as a
+     * separate paragraph, which changes what the document means while still
+     * passing the word-level and idempotence checks — exactly the silent class
+     * of loss this blocklist exists to catch, so it stays listed.
+     */
+    [new RegExp('^\\s*\\[\\^' + FOOTNOTE_LABEL + '\\]:[^\\n]*\\n[ \\t]+\\S', 'm'),
+        'footnote definitions continued on another line'],
     [/^#{5,}\s/m, 'headings deeper than level 4'],
     [/^(?: {4}|\t)\S/m, 'indented code blocks'],
     [/<\/?[a-zA-Z][^>]*>/, 'inline or block HTML']

@@ -26,7 +26,8 @@ const {
     askClaude, askCodex, openAiMenu,
     revealAssistant, collapseRightPanel, assistantFromTabTitle, currentAssistant, SLOT_GRACE_MS
 } = require('./ai-context');
-const { slotStrip } = require('./slot-strip');
+const { slotStrip, renderDocCluster } = require('./slot-strip');
+const { previewBase } = require('./preview-url');
 
 const INJECTED = 'data-studio-injected';
 
@@ -139,18 +140,29 @@ class HtmlViewerWidget extends Widget {
         this.armedDeleteId = undefined;
 
         /*
-         * No slot selector in this bar any more — it is the shell's right-hand
-         * strip, shared with the Markdown editor, and this widget answers it
-         * through slotCapabilities()/slotState() below.
+         * The slot cluster is in this bar, and it is the SAME cluster the
+         * Markdown editor has — same three entries, same order, rendered by the
+         * same function (renderDocCluster), with this widget's own
+         * slotCapabilities()/slotState() below deciding which are live.
          *
-         * The history is worth keeping, because it is why the strip is built the
-         * way it is. Reported from use: "in the HTML rendered scenario I can't
-         * open any codex / claude / changes" — the slot had only ever been built
-         * into markdown-editor.js, so on a rendered page the assistants were
+         * The history is worth keeping, because it is why membership is fixed.
+         * Reported from use: "in the HTML rendered scenario I can't open any
+         * codex / claude / changes" — the slot had only ever been built into
+         * markdown-editor.js, so on a rendered page the assistants were
          * unreachable. The first fix gave this bar its own two-entry pill, which
          * made the same control have five entries on one surface and two on
-         * another. The strip replaces both: fixed membership at five, with the
-         * three this surface cannot serve disabled and explaining why.
+         * another. Then a shell-level strip in the right-hand column replaced
+         * both, and then the column itself went (see the header of
+         * slot-strip.js). Through all of it the rule has held: the cluster shows
+         * the same three destinations everywhere and DIMS what this surface
+         * cannot serve, with a tooltip that says where to go instead.
+         *
+         * On this surface that means all three are dimmed today, and that is the
+         * honest state rather than an empty cluster: the reader can see that a
+         * rendered page has no change review and no history, and why comments
+         * work differently here. The two assistants — the destinations this
+         * surface really does serve — are in the left activity rail, one cluster
+         * for the whole application.
          *
          * Comment mode stays here, and stays a button in this bar, because it is
          * a mode over the rendered page rather than an occupant of the slot.
@@ -162,10 +174,13 @@ class HtmlViewerWidget extends Widget {
             '  <button class="studio-btn" data-hact="reload">Reload</button>' +
             '  <button class="studio-btn" data-hact="toggle-all">Show all threads</button>' +
             '  <button class="studio-btn" data-hact="comment-mode">Comment mode</button>' +
+            '  <span class="studio-slot-divider" aria-hidden="true"></span>' +
+            '  <div class="studio-slot-cluster" data-slot-cluster></div>' +
             '</div>' +
             '<div class="studio-html-frame"><iframe></iframe><div class="studio-overlay"></div></div>';
 
         this.hintEl = this.node.querySelector('.studio-html-hint');
+        this.slotClusterEl = this.node.querySelector('[data-slot-cluster]');
         this.frameHostEl = this.node.querySelector('.studio-html-frame');
         this.frame = this.node.querySelector('iframe');
         this.overlayEl = this.node.querySelector('.studio-overlay');
@@ -186,6 +201,10 @@ class HtmlViewerWidget extends Widget {
         });
         this.node.addEventListener('click', e => this.onToolbarClick(e));
         this.node.addEventListener('pointerdown', e => this.dismissOutsideThread(e), true);
+        // Before anything loads: the cluster's membership does not depend on the
+        // page having rendered, and a bar that fills in a beat late reads as a
+        // glitch rather than as loading.
+        this.renderSlotCluster();
     }
 
     onAfterAttach(msg) {
@@ -245,8 +264,12 @@ class HtmlViewerWidget extends Widget {
         this.frame.onload = () => this.onFrameLoad();
         // Served through the backend rather than a blob: URL — a blob has no
         // base, so any page that pulls in its own CSS/JS/images renders blank.
+        //
+        // ABSOLUTE, via previewBase(). A root-relative path resolves against the
+        // page, and on an Electron shell that page is a file:// URL, so the
+        // request went to file:///studio-preview/... and the frame stayed empty.
         this._t = (this._t || 0) + 1;
-        this.frame.src = '/studio-preview' + this.uri.path.toString() + '?r=' + this._t;
+        this.frame.src = previewBase() + this.uri.path.toString() + '?r=' + this._t;
     }
 
     /*
@@ -637,8 +660,20 @@ class HtmlViewerWidget extends Widget {
     }
 
     onToolbarClick(e) {
-        // The slot selector left this bar for the shell's right-hand strip; it
-        // calls selectSlot() directly, so there is no markup here to dispatch.
+        /*
+         * The slot cluster is in this bar again, so it is dispatched here.
+         * A dimmed entry is a real, focusable button (see the .off note in
+         * slot-strip.js), which is why aria-disabled is checked rather than
+         * relying on the DOM to swallow the click.
+         */
+        const slot = e.target.closest('[data-studio-rail]');
+        if (slot) {
+            e.preventDefault();
+            if (slot.getAttribute('aria-disabled') !== 'true') {
+                this.selectSlot(slot.getAttribute('data-studio-rail'));
+            }
+            return;
+        }
         const btn = e.target.closest('[data-hact]');
         if (!btn) { return; }
         const a = btn.getAttribute('data-hact');
@@ -651,24 +686,41 @@ class HtmlViewerWidget extends Widget {
     }
 
     /*
-     * What the shell's slot strip renders for a rendered HTML document.
+     * What the slot clusters render for a rendered HTML document.
      *
-     * Two of the five entries are real here, and the strip DISABLES the other
-     * three with a reason rather than hiding them — which is what replaces the
-     * old asymmetry of five pills on one surface and two on the other (D15).
-     * Fixed membership with an explained gap is honest; membership that changes
-     * per surface is a segmented control breaking its own promise.
+     * Two of the five destinations are real here, and both clusters DIM the rest
+     * with a reason rather than hiding them — which is what replaces the old
+     * asymmetry of five pills on one surface and two on the other (D15). Fixed
+     * membership with an explained gap is honest; membership that changes per
+     * surface is a segmented control breaking its own promise.
      *
      * Comments is deliberately NOT a slot destination here, and this is the one
-     * judgement call in this file worth defending. The strip answers "what can
+     * judgement call in this file worth defending. The cluster answers "what can
      * occupy the right of the window", and on a rendered page comments do not:
      * they are cards anchored over the page itself, switched on by the Comment
-     * mode control in this bar. Listing Comments here as well would have given
-     * one piece of state two controls in two places — the exact defect this whole
-     * change set exists to remove. The disabled entry's tooltip says where to go
-     * instead.
+     * mode control in this bar. Listing Comments as a destination as well would
+     * have given one piece of state two controls in two places — the exact defect
+     * this whole change set exists to remove. The dimmed entry's tooltip says
+     * where to go instead.
      */
     slotCapabilities() { return ['claude', 'codex']; }
+
+    /*
+     * Why two of the three are dark here, in this surface's own words.
+     *
+     * Comments is the interesting one: a rendered page HAS comments, they are
+     * just not a panel — they are cards anchored over the page, switched on by
+     * this widget's own Comment mode. Listing Comments as a slot destination as
+     * well would give one piece of state two controls in two places
+     * (constraint 30), so the tile stays and says where to go instead.
+     */
+    slotHints() {
+        return {
+            comments: 'Comments on a rendered page are cards on the page — use Comment mode',
+            changes: 'Change review is only available for Markdown documents',
+            history: 'History is only available for Markdown documents'
+        };
+    }
 
     slotState() {
         return {
@@ -705,8 +757,17 @@ class HtmlViewerWidget extends Widget {
         });
     }
 
-    // The strip is the selector now, so keeping it in sync is the whole job.
-    renderSlot() { slotStrip.refresh(); }
+    /*
+     * Two clusters to keep honest, one call: this bar's own three document
+     * entries, and the shell-level assistant cluster in the left rail that
+     * reflects which assistant owns Theia's panel.
+     */
+    renderSlot() {
+        this.renderSlotCluster();
+        slotStrip.refresh();
+    }
+
+    renderSlotCluster() { renderDocCluster(this.slotClusterEl, this); }
 
     /*
      * Keep the selector honest when the panel is worked through Theia's own
