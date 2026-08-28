@@ -83,8 +83,37 @@ function collect(doc) {
                 text += node.text;
                 return false;
             }
+            /*
+             * A hard break carries no text of its own, so leaving it out of
+             * `text` glues the word before it to the word after ("a" + "rail"
+             * -> "arail") and diffWords reports a word-change nobody made.
+             * Treating it as a one-character text node keeps it a real word
+             * boundary and keeps it addressable by toDocRanges/toDocPos, the
+             * same as any other span.
+             */
+            if (node.type.name === 'hardBreak') {
+                spans.push({ start: text.length, from: base + pos, length: 1 });
+                text += '\n';
+                return false;
+            }
             return true;
         });
+        /*
+         * Trailing whitespace at the end of a block is not content, and the
+         * serialiser trims it (see md-serialize.js) rather than escaping it
+         * into a &#x20; entity. So a trailing space must not be a MARK either:
+         * without this, typing one at the end of a paragraph draws a struck
+         * line break and an inserted space for an edit that will never reach
+         * the file — the exact residual mark this whole fix set exists to
+         * remove. The last span shrinks with the text so every offset the
+         * decorations are placed at still addresses a real character.
+         */
+        const trimmed = text.replace(/[ \t]+$/, '');
+        if (trimmed.length !== text.length && spans.length) {
+            const last = spans[spans.length - 1];
+            last.length = Math.max(0, Math.min(last.length, trimmed.length - last.start));
+            text = trimmed;
+        }
     });
     return { text, spans };
 }

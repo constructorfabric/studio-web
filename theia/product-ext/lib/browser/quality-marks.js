@@ -220,7 +220,7 @@ const QUALITY_MARKS_CSS = `
  */
 .studio-quality-span {
   text-decoration-line: underline;
-  text-decoration-color: var(--studio-amber);
+  text-decoration-color: var(--studio-accent);
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
   cursor: pointer;
@@ -262,7 +262,7 @@ const QUALITY_MARKS_CSS = `
   box-shadow: -11px 0 0 -8px var(--studio-edge);
 }
 .studio-quality-section.studio-quality-on {
-  box-shadow: -11px 0 0 -8px var(--studio-amber);
+  box-shadow: -11px 0 0 -8px var(--studio-accent);
 }
 .studio-quality-section.studio-quality-stale {
   box-shadow: -11px 0 0 -8px var(--studio-line);
@@ -283,7 +283,7 @@ const QUALITY_MARKS_CSS = `
   user-select: none; -webkit-user-select: none; cursor: pointer;
 }
 .studio-quality-chip.studio-quality-on {
-  border-color: var(--studio-amber); color: var(--studio-amber);
+  border-color: var(--studio-accent); color: var(--studio-accent);
   background: var(--studio-selection-bg);
 }
 
@@ -306,7 +306,7 @@ const QUALITY_MARKS_CSS = `
   width: 3px; height: 13px; border-radius: 2px; left: 3px;
   border: none; background: var(--studio-muted);
 }
-.studio-gutter-mark.studio-gutter-quality.active { background: var(--studio-amber); }
+.studio-gutter-mark.studio-gutter-quality.active { background: var(--studio-accent); }
 `;
 
 module.exports = { qualityMarksExtension, refreshQualityMarks, buildDecorations, QUALITY_MARKS_CSS };

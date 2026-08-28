@@ -1559,7 +1559,7 @@ const SEARCH_CSS = `
    would hit on its first empty render. */
 .studio-search [hidden] { display: none !important; }
 
-.studio-search { height: 100%; overflow: hidden; background: var(--studio-bg, #fff); color: var(--studio-text, #1f2328); }
+.studio-search { height: 100%; overflow: hidden; background: var(--studio-bg); color: var(--studio-text); }
 .studio-search-shell { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .studio-visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -1569,62 +1569,62 @@ const SEARCH_CSS = `
 /* --- 1. the query row ---------------------------------------------------- */
 .studio-search-query {
   flex: none; height: 56px; display: flex; align-items: center; gap: 12px;
-  padding: 0 18px; border-bottom: 1px solid var(--studio-line, #e1e4e8);
+  padding: 0 18px; border-bottom: 1px solid var(--studio-line);
 }
-.studio-search-glyph { flex: none; display: block; color: var(--studio-muted, #6e7781); }
+.studio-search-glyph { flex: none; display: block; color: var(--studio-muted); }
 .studio-search-glyph svg { width: 19px; height: 19px; display: block; }
 /* No border and no box: the row's own hairline is the field's edge. A bordered
    input inside a 56px bordered row is two boxes for one control. */
 .studio-search-input {
   flex: 1 1 auto; min-width: 0; border: 0; background: transparent;
-  color: var(--studio-text, #1f2328); font: 400 17px/1.4 inherit; padding: 0;
+  color: var(--studio-text); font: 400 17px/1.4 inherit; padding: 0;
 }
-.studio-search-input::placeholder { color: var(--studio-muted, #6e7781); }
+.studio-search-input::placeholder { color: var(--studio-muted); }
 .studio-search-input:focus { outline: none; }
 /* The focus ring goes on the ROW, so a focused field is a lit row rather than a
    rectangle drawn inside another rectangle. */
-.studio-search-query:focus-within { box-shadow: inset 0 -2px 0 var(--studio-amber, #0b2275); }
-.studio-search-count { flex: none; color: var(--studio-muted, #6e7781); font: 400 12px/1.4 inherit; white-space: nowrap; }
+.studio-search-query:focus-within { box-shadow: inset 0 -2px 0 var(--studio-accent); }
+.studio-search-count { flex: none; color: var(--studio-muted); font: 400 12px/1.4 inherit; white-space: nowrap; }
 .studio-search-scope-label { flex: none; display: flex; align-items: center; }
 .studio-search-scope {
-  max-width: 210px; padding: 5px 8px; border: 1px solid var(--studio-line, #e1e4e8);
-  border-radius: 6px; background: var(--studio-surface, #fff); color: var(--studio-text, #1f2328);
+  max-width: 210px; padding: 5px 8px; border: 1px solid var(--studio-line);
+  border-radius: 6px; background: var(--studio-surface); color: var(--studio-text);
   font: 400 12px/1.3 inherit; cursor: pointer;
 }
-.studio-search-scope:hover { border-color: var(--studio-amber, #0b2275); }
-.studio-search-scope:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 1px; }
+.studio-search-scope:hover { border-color: var(--studio-accent); }
+.studio-search-scope:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 
 /* --- 2. the chip row ----------------------------------------------------- */
 .studio-search-chips {
   flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
-  padding: 9px 22px; background: var(--studio-surface-raised, #f6f7f9);
-  border-bottom: 1px solid var(--studio-line, #e1e4e8);
+  padding: 9px 22px; background: var(--studio-surface-raised);
+  border-bottom: 1px solid var(--studio-line);
 }
 .studio-chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 999px;
-  background: var(--studio-surface, #fff); font: 400 11.5px/1.3 inherit;
+  border: 1px solid var(--studio-line); border-radius: 999px;
+  background: var(--studio-surface); font: 400 11.5px/1.3 inherit;
 }
-.studio-chip-key { color: var(--studio-muted, #6e7781); }
+.studio-chip-key { color: var(--studio-muted); }
 .studio-chip b { font-weight: 620; }
 .studio-chip-x {
   display: grid; place-items: center; width: 17px; height: 17px; padding: 0;
   border: 0; border-radius: 999px; background: transparent;
-  color: var(--studio-muted, #6e7781); cursor: pointer;
+  color: var(--studio-muted); cursor: pointer;
 }
 .studio-chip-x svg { width: 11px; height: 11px; display: block; }
-.studio-chip-x:hover { background: var(--studio-surface-sunken, #f0f2f5); color: var(--studio-text, #1f2328); }
-.studio-chip-x:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 1px; }
+.studio-chip-x:hover { background: var(--studio-surface-sunken); color: var(--studio-text); }
+.studio-chip-x:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 .studio-search-clear {
   border: 0; background: transparent; padding: 3px 6px; cursor: pointer;
-  color: var(--studio-amber, #0b2275); font: 620 11.5px/1.3 inherit;
+  color: var(--studio-accent); font: 620 11.5px/1.3 inherit;
 }
 .studio-search-clear:hover { text-decoration: underline; }
-.studio-search-clear:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 1px; border-radius: 4px; }
+.studio-search-clear:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; border-radius: 4px; }
 /* Pushed to the right edge and monospace, because it is a set of counts to be
    compared between runs, not a sentence to be read. */
 .studio-search-honesty {
-  margin-left: auto; color: var(--studio-muted, #6e7781);
+  margin-left: auto; color: var(--studio-muted);
   font: 400 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch;
 }
@@ -1633,12 +1633,12 @@ const SEARCH_CSS = `
 .studio-search-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .studio-search-facets {
   flex: none; width: 240px; overflow: auto; padding: 0 0 22px;
-  border-right: 1px solid var(--studio-line, #e1e4e8);
+  border-right: 1px solid var(--studio-line);
 }
 .studio-facet-group { padding: 0 14px 12px; }
 .studio-facet-group h4 {
-  margin: 0; padding: 14px 0 7px; border-top: 1px solid var(--studio-line, #e1e4e8);
-  color: var(--studio-muted, #6e7781);
+  margin: 0; padding: 14px 0 7px; border-top: 1px solid var(--studio-line);
+  color: var(--studio-muted);
   font: 620 10.5px/1.3 inherit; letter-spacing: .07em; text-transform: uppercase;
 }
 .studio-facet-group:first-child h4 { border-top: 0; }
@@ -1646,67 +1646,67 @@ const SEARCH_CSS = `
   display: flex; align-items: center; gap: 8px; padding: 4px 7px;
   border-radius: 5px; cursor: pointer; font: 400 13px/1.35 inherit;
 }
-.studio-facet:hover { background: var(--studio-surface-raised, #f6f7f9); }
+.studio-facet:hover { background: var(--studio-surface-raised); }
 /* Checked reads as a selected ROW, not as a ticked box in a list of rows: the
    selection tone is what makes an active filter visible while scanning the
    rail, which is when it matters. */
-.studio-facet.on { background: var(--studio-selection-bg, #e9edfb); }
-.studio-facet input { flex: none; margin: 0; accent-color: var(--studio-amber, #0b2275); }
-.studio-facet input:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 2px; }
+.studio-facet.on { background: var(--studio-selection-bg); }
+.studio-facet input { flex: none; margin: 0; accent-color: var(--studio-accent); }
+.studio-facet input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .studio-facet-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Tabular figures so a column of counts lines up on its digits — the whole
    reason to put numbers in a column. */
 .studio-facet-count {
-  flex: none; color: var(--studio-muted, #6e7781); font-size: 11.5px;
+  flex: none; color: var(--studio-muted); font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 .studio-facet.empty { cursor: default; opacity: .45; }
 .studio-facet.empty:hover { background: transparent; }
 .studio-facet-since { cursor: default; }
 .studio-since-input {
-  flex: none; width: 118px; padding: 2px 5px; border: 1px solid var(--studio-line, #e1e4e8);
-  border-radius: 5px; background: var(--studio-surface, #fff);
-  color: var(--studio-text, #1f2328); font: 400 11px/1.3 inherit;
+  flex: none; width: 118px; padding: 2px 5px; border: 1px solid var(--studio-line);
+  border-radius: 5px; background: var(--studio-surface);
+  color: var(--studio-text); font: 400 11px/1.3 inherit;
 }
-.studio-since-input:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 1px; }
+.studio-since-input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 /* The stated omission. Muted and small, at the FOOT of the rail: it is a
    footnote about the rail, and putting it at the top would make the first thing
    a user reads a list of what is missing. */
 .studio-facet-note {
-  margin: 16px 14px 0; padding-top: 12px; border-top: 1px solid var(--studio-line, #e1e4e8);
-  color: var(--studio-muted, #6e7781); font: 400 11px/1.55 inherit;
+  margin: 16px 14px 0; padding-top: 12px; border-top: 1px solid var(--studio-line);
+  color: var(--studio-muted); font: 400 11px/1.55 inherit;
 }
-.studio-facet-note b { font-weight: 620; color: var(--studio-text, #1f2328); }
+.studio-facet-note b { font-weight: 620; color: var(--studio-text); }
 
 .studio-search-results { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 0 0 28px; }
 .studio-search-results:focus-visible { outline: none; }
 
 /* --- results: one group per file ----------------------------------------- */
-.studio-file-group { border-bottom: 1px solid var(--studio-line, #e1e4e8); }
+.studio-file-group { border-bottom: 1px solid var(--studio-line); }
 .studio-file-head {
   display: flex; align-items: center; gap: 9px; padding: 9px 18px 7px;
   font: 400 12.5px/1.4 inherit;
 }
 .studio-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.studio-file-dir { color: var(--studio-muted, #6e7781); }
+.studio-file-dir { color: var(--studio-muted); }
 .studio-file-path b { font-weight: 620; }
 .studio-file-project {
   flex: none; padding: 1px 7px; border-radius: 999px;
-  background: var(--studio-surface-sunken, #f0f2f5); color: var(--studio-muted, #6e7781); font-size: 10.5px;
+  background: var(--studio-surface-sunken); color: var(--studio-muted); font-size: 10.5px;
 }
 .studio-file-matches {
-  margin-left: auto; flex: none; color: var(--studio-muted, #6e7781);
+  margin-left: auto; flex: none; color: var(--studio-muted);
   font-size: 11.5px; font-variant-numeric: tabular-nums;
 }
 /* The same drawn-not-imported file mark the Projects browser uses, at the same
    size, so a file looks like the same file in both places. */
 .studio-file-glyph {
   flex: none; position: relative; width: 11px; height: 14px; box-sizing: border-box;
-  border: 1.5px solid var(--studio-muted, #6e7781); border-radius: 1px;
+  border: 1.5px solid var(--studio-muted); border-radius: 1px;
 }
 .studio-file-glyph::after {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -48%);
-  color: var(--studio-muted, #6e7781); content: "·"; font: 700 9px/1 ui-sans-serif, system-ui, sans-serif;
+  color: var(--studio-muted); content: "·"; font: 700 9px/1 ui-sans-serif, system-ui, sans-serif;
 }
 .studio-file-glyph.icon-markdown::after { content: "M"; font-size: 7px; }
 .studio-file-glyph.icon-html::after, .studio-file-glyph.icon-markup::after { content: "<>"; font-size: 5px; letter-spacing: -1px; }
@@ -1719,13 +1719,13 @@ const SEARCH_CSS = `
   padding: 6px 18px 7px; border: 0; background: transparent;
   color: inherit; cursor: pointer; text-align: left; font: inherit;
 }
-.studio-hit:hover { background: var(--studio-surface-raised, #f6f7f9); }
+.studio-hit:hover { background: var(--studio-surface-raised); }
 /* The keyboard's own selection, distinct from hover: ↑↓ moves this, and it has
    to stay visible while the pointer is elsewhere on the page. */
-.studio-hit.on { background: var(--studio-selection-bg, #e9edfb); }
-.studio-hit:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: -2px; }
+.studio-hit.on { background: var(--studio-selection-bg); }
+.studio-hit:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 .studio-hit-kind {
-  flex: none; width: 66px; padding-top: 2px; color: var(--studio-muted, #6e7781);
+  flex: none; width: 66px; padding-top: 2px; color: var(--studio-muted);
   font: 620 9.5px/1.5 inherit; letter-spacing: .08em; text-transform: uppercase;
 }
 .studio-hit-main { flex: 1 1 auto; min-width: 0; }
@@ -1736,38 +1736,38 @@ const SEARCH_CSS = `
 .studio-hit-line mark {
   /* The accent at 22% alpha: enough to find with your eye, transparent enough
      that the text on top of it is still the document's text and not a badge. */
-  background: color-mix(in srgb, var(--studio-amber, #0b2275) 22%, transparent);
+  background: color-mix(in srgb, var(--studio-accent) 22%, transparent);
   color: inherit; border-radius: 2px; padding: 0 1px;
 }
 .studio-hit-meta {
   display: flex; align-items: center; gap: 6px; margin-top: 2px;
-  color: var(--studio-muted, #6e7781); font: 400 10.5px/1.5 inherit;
+  color: var(--studio-muted); font: 400 10.5px/1.5 inherit;
 }
 /* The comment surfaces' own disc, shrunk to meta size. Reused rather than
    redrawn so "who" looks the same here as it does in a thread. */
 .studio-hit-meta .studio-avatar { width: 15px; height: 15px; margin: 0; font-size: 7.5px; border-width: 1.2px; }
-.studio-hit-who { font-weight: 620; color: var(--studio-text, #1f2328); }
+.studio-hit-who { font-weight: 620; color: var(--studio-text); }
 .studio-hit-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
 .studio-hit-pill {
-  flex: none; padding: 0 6px; border: 1px solid var(--studio-line, #e1e4e8); border-radius: 999px;
+  flex: none; padding: 0 6px; border: 1px solid var(--studio-line); border-radius: 999px;
   font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase;
 }
-.studio-hit-pill.open { border-color: var(--studio-amber, #0b2275); color: var(--studio-amber, #0b2275); }
+.studio-hit-pill.open { border-color: var(--studio-accent); color: var(--studio-accent); }
 .studio-search-more {
-  margin: 0; padding: 14px 18px; color: var(--studio-muted, #6e7781); font: 400 11.5px/1.6 inherit;
+  margin: 0; padding: 14px 18px; color: var(--studio-muted); font: 400 11.5px/1.6 inherit;
 }
 
 /* --- the scanning state -------------------------------------------------- */
 .studio-search-scanning {
-  padding: 12px 18px 0; border-bottom: 1px solid var(--studio-line, #e1e4e8);
+  padding: 12px 18px 0; border-bottom: 1px solid var(--studio-line);
 }
-.studio-scanning-head { display: flex; align-items: center; gap: 9px; color: var(--studio-muted, #6e7781); font: 400 12px/1.5 inherit; }
+.studio-scanning-head { display: flex; align-items: center; gap: 9px; color: var(--studio-muted); font: 400 12px/1.5 inherit; }
 .studio-scanning-honesty {
   margin-left: auto; font: 400 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
-.studio-scanning-bar { position: relative; overflow: hidden; height: 2px; margin: 10px 0 11px; background: var(--studio-line, #e1e4e8); border-radius: 999px; }
-.studio-scanning-bar > span { display: block; height: 100%; background: var(--studio-amber, #0b2275); transition: width 160ms linear; }
+.studio-scanning-bar { position: relative; overflow: hidden; height: 2px; margin: 10px 0 11px; background: var(--studio-line); border-radius: 999px; }
+.studio-scanning-bar > span { display: block; height: 100%; background: var(--studio-accent); transition: width 160ms linear; }
 /* Before the walk has finished counting, the bar has nothing honest to show as
    a fraction — so it sweeps instead of lying about a percentage. */
 .studio-scanning-bar.indeterminate > span { width: 34% !important; animation: studio-search-sweep 1100ms ease-in-out infinite; }
@@ -1779,68 +1779,68 @@ const SEARCH_CSS = `
 
 /* --- the idle state ------------------------------------------------------ */
 .studio-search-idle { max-width: 720px; padding: 22px 18px 40px; }
-.studio-search-idle section + section { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--studio-line, #e1e4e8); }
+.studio-search-idle section + section { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--studio-line); }
 .studio-search-idle h3 { margin: 0 0 10px; font: 620 13px/1.3 inherit; }
-.studio-search-hint { margin: 0; color: var(--studio-muted, #6e7781); font: 400 12.5px/1.6 inherit; }
+.studio-search-hint { margin: 0; color: var(--studio-muted); font: 400 12.5px/1.6 inherit; }
 .studio-recent { margin: 0; padding: 0; list-style: none; }
 .studio-recent-btn {
   display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px;
   border: 0; border-radius: 6px; background: transparent; color: inherit;
   cursor: pointer; text-align: left; font: inherit;
 }
-.studio-recent-btn:hover { background: var(--studio-surface-raised, #f6f7f9); }
-.studio-recent-btn:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: -2px; }
+.studio-recent-btn:hover { background: var(--studio-surface-raised); }
+.studio-recent-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 .studio-recent-q { flex: none; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 620 13px/1.4 inherit; }
 .studio-recent-chips { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .studio-recent-chips span {
-  padding: 1px 7px; border: 1px solid var(--studio-line, #e1e4e8); border-radius: 999px;
-  color: var(--studio-muted, #6e7781); font-size: 10.5px; white-space: nowrap;
+  padding: 1px 7px; border: 1px solid var(--studio-line); border-radius: 999px;
+  color: var(--studio-muted); font-size: 10.5px; white-space: nowrap;
 }
-.studio-recent-count { margin-left: auto; flex: none; color: var(--studio-muted, #6e7781); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.studio-recent-count { margin-left: auto; flex: none; color: var(--studio-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .studio-covered { margin: 0; padding: 0; list-style: none; }
 .studio-covered li {
   position: relative; padding: 4px 0 4px 24px;
-  color: var(--studio-text, #1f2328); font: 400 12.5px/1.6 inherit;
+  color: var(--studio-text); font: 400 12.5px/1.6 inherit;
 }
 .studio-covered li b { font-weight: 620; }
 /* A tick and a dash, not two colours: the palette has one accent, and "we do
    not search this" is not a danger state. */
-.studio-covered li.yes::before { content: "✓"; position: absolute; left: 4px; top: 4px; color: var(--studio-amber, #0b2275); font-size: 11px; }
-.studio-covered li.no { color: var(--studio-muted, #6e7781); }
+.studio-covered li.yes::before { content: "✓"; position: absolute; left: 4px; top: 4px; color: var(--studio-accent); font-size: 11px; }
+.studio-covered li.no { color: var(--studio-muted); }
 .studio-covered li.no::before { content: "—"; position: absolute; left: 2px; top: 4px; }
-.studio-covered li.no b { color: var(--studio-text, #1f2328); }
+.studio-covered li.no b { color: var(--studio-text); }
 
 /* --- the no-match state -------------------------------------------------- */
 .studio-search-empty { max-width: 680px; padding: 26px 18px 40px; }
 .studio-search-empty h3 { margin: 0; font: 620 15px/1.35 inherit; }
-.studio-search-empty p { margin: 9px 0 0; color: var(--studio-muted, #6e7781); font: 400 12.5px/1.65 inherit; }
-.studio-search-empty p b { color: var(--studio-text, #1f2328); font-weight: 620; }
+.studio-search-empty p { margin: 9px 0 0; color: var(--studio-muted); font: 400 12.5px/1.65 inherit; }
+.studio-search-empty p b { color: var(--studio-text); font-weight: 620; }
 .studio-blame { margin: 16px 0 0; padding: 0; list-style: none; }
 .studio-blame li {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  padding: 9px 12px; margin-top: 8px; border-radius: var(--studio-radius, 8px);
-  background: var(--studio-surface-sunken, #f0f2f5); font: 400 12.5px/1.5 inherit;
+  padding: 9px 12px; margin-top: 8px; border-radius: var(--studio-radius);
+  background: var(--studio-surface-sunken); font: 400 12.5px/1.5 inherit;
 }
 .studio-blame li b { font-weight: 620; }
 .studio-search-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 /* .studio-btn itself is defined in REPOS_CSS and shared across the product;
    only the focus ring is restated, because this page's buttons sit on three
    different tones and the shared rule assumes one. */
-.studio-search .studio-btn:focus-visible { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 2px; }
+.studio-search .studio-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 /* --- 4. the keyboard row ------------------------------------------------- */
 .studio-search-keys {
   flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 16px;
   padding: 0 18px; height: 30px;
-  border-top: 1px solid var(--studio-line, #e1e4e8);
-  background: var(--studio-surface-raised, #f6f7f9);
-  color: var(--studio-muted, #6e7781); font: 400 10.5px/1.4 inherit;
+  border-top: 1px solid var(--studio-line);
+  background: var(--studio-surface-raised);
+  color: var(--studio-muted); font: 400 10.5px/1.4 inherit;
 }
 .studio-search-keys span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .studio-search-keys kbd {
   display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 3px;
-  background: var(--studio-surface, #fff); color: var(--studio-text, #1f2328);
+  border: 1px solid var(--studio-line); border-radius: 3px;
+  background: var(--studio-surface); color: var(--studio-text);
   font: 500 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -1851,7 +1851,7 @@ const SEARCH_CSS = `
   .studio-search-body { flex-direction: column; }
   .studio-search-facets {
     width: auto; max-height: 216px; border-right: 0;
-    border-bottom: 1px solid var(--studio-line, #e1e4e8);
+    border-bottom: 1px solid var(--studio-line);
   }
 }
 `;

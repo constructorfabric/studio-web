@@ -25,11 +25,13 @@
  * same SVG the component would. It is the package's own documented seam, not a
  * workaround: geometry, timing and keyframe maths still come from one place.
  *
- * WHAT IT SHOWS. C and F, travelling left to right across the dot field like
- * the destination board they are named after. A flip-dot display is a marquee
- * before it is anything else, and a product mark passing through one is a
- * loading state that says whose product is loading — which a rotating arc,
- * the shape every spinner has, cannot.
+ * WHAT IT SHOWS. C and F, travelling right to left across the dot field like
+ * the destination board they are named after — right to left because that is
+ * the direction a real board runs: the message arrives at the far edge and
+ * leaves at the near one. A flip-dot display is a marquee before it is anything
+ * else, and a product mark passing through one is a loading state that says
+ * whose product is loading — which a rotating arc, the shape every spinner has,
+ * cannot.
  *
  * WHY THE PATTERN IS GENERATED AND NOT PASTED. flicker-dot expects `grids` as
  * a paste-ready export from its editor: one flat array of 49 booleans per
@@ -109,9 +111,14 @@ function buildTape() {
  * One frame per tape column, so the marquee advances exactly one dot per
  * flicker-dot frame (150ms) — the step a flip-dot board takes.
  *
- * The window start runs BACKWARDS along the tape (`-frame`), which is what
- * makes the letters travel left to right: hold the window still and pull the
- * tape the other way, exactly as the physical thing works.
+ * The window start walks FORWARD along the tape (`frame`), one column per
+ * frame, which is what makes the letters travel right to left. Column `c`
+ * shows `tape[(frame + c) % length]`: the tape index still increases across
+ * the display, so the pair reads "CF" left to right exactly as it is written
+ * above, and C is the letter that arrives at the right edge first. What moves
+ * is the window — each column takes on whatever its right-hand neighbour was
+ * showing a frame ago, so the message slides out to the left, exactly as the
+ * physical thing works.
  */
 function buildGrids() {
     const tape = buildTape();
@@ -119,7 +126,7 @@ function buildGrids() {
     const grids = [];
     for (let frame = 0; frame < length; frame++) {
         const cells = new Array(GRID_ROWS * GRID_COLS).fill(false);
-        const start = ((-frame % length) + length) % length;
+        const start = frame % length;
         for (let column = 0; column < GRID_COLS; column++) {
             const source = tape[(start + column) % length];
             for (let row = 0; row < 5; row++) {

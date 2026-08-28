@@ -20,28 +20,36 @@
  *     recorded base cannot drift out from under the diff the user is reading.
  */
 
-const { Editor, Extension, Mark, Node, mergeAttributes, generateJSON } = require('@tiptap/core');
+const { Editor, Extension, Mark, Node, mergeAttributes, generateHTML, getMarkRange } = require('@tiptap/core');
 const { StarterKit } = require('@tiptap/starter-kit');
 const { Link } = require('@tiptap/extension-link');
 const { Code } = require('@tiptap/extension-code');
+const { HardBreak } = require('@tiptap/extension-hard-break');
 const { Image } = require('@tiptap/extension-image');
 const { Placeholder } = require('@tiptap/extension-placeholder');
 const { TaskList } = require('@tiptap/extension-task-list');
 const { TaskItem } = require('@tiptap/extension-task-item');
+const { TextSelection } = require('@tiptap/pm/state');
 const { Widget } = require('@theia/core/shared/@lumino/widgets');
 const { FileChangeType } = require('@theia/filesystem/lib/common/files');
 const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
+const URI = require('@theia/core/lib/common/uri').default;
 
-const { markdownToHtml, jsonToMarkdown, splitFrontmatter, joinFrontmatter, unsupportedConstructs, contentWords } = require('./markdown');
+const { markdownToDoc, docToMarkdown, repairMarkdown, splitFrontmatter, joinFrontmatter, unsupportedConstructs, contentWords } = require('./markdown');
 const { newId } = require('./comments-store');
 const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
-const { diffHunks, applyHunks, countPending } = require('./diff');
+const { diffHunks, applyHunks, countPending, splitLines } = require('./diff');
+const { preserveWrapping } = require('./md-rewrap');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
 const { trackedHtml, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
 const { suggestMarksExtension, refreshSuggestMarks, collect } = require('./suggest-marks');
-const { TABLE_EXTENSIONS, TABLE_COMMANDS, tableContent, cellContext, currentAlign } = require('./editor-tables');
+const { TABLE_EXTENSIONS, TABLE_COMMANDS, cellContext, currentAlign } = require('./editor-tables');
+const { BLOCKS, blocksFor, rankBlocks } = require('./blocks');
+const { Callout } = require('./callout-view');
+const { MathBlock, MathInline } = require('./math-view');
+const { RawBlock, RawInline } = require('./raw-view');
 /*
  * ONE code block extension, for both rendered content types.
  *
@@ -52,6 +60,7 @@ const { TABLE_EXTENSIONS, TABLE_COMMANDS, tableContent, cellContext, currentAlig
  * second node view for the same node and silently lose whichever lost the race.
  */
 const { DocumentCodeBlock, starterButtonsHtml } = require('./figure-view');
+const { codeHighlightPlugin } = require('./code-highlight');
 const { FIGURE_LANGUAGE, figureRequestPrompt, starterFigure } = require('./figure-spec');
 const { SessionLock } = require('./session-lock');
 const { fileTypeSettings } = require('./file-type-settings');
@@ -88,6 +97,29 @@ const { statusLine } = require('./status-line');
 // parse. Allowing coexistence is what keeps that construct round-trippable.
 const CoexistingCode = Code.extend({ excludes: '' });
 
+// HardBreak declares itself the schema's linebreakReplacement node, which
+// tells ProseMirror's DOM parser to fold any \r\n or \n it meets in text
+// content into a hardBreak node instead of leaving it as whitespace. These
+// files are hand-wrapped at ~80 columns, so every soft line ending in a
+// pasted or re-parsed paragraph was read back as a hard break and serialised
+// as a trailing backslash — a single keystroke could record an entire
+// paragraph as changed. A hard break must only come from Shift+Enter or an
+// explicit <br>/backslash in the source, never from whitespace survival.
+const StudioHardBreak = HardBreak.extend({ linebreakReplacement: false });
+
+/*
+ * Syntax highlighting, as decorations over the code blocks already in the
+ * document. See code-highlight.js for why it cannot be innerHTML.
+ *
+ * A bare Extension with no schema of its own, so it cannot affect what
+ * checkFidelity's round trip sees — colour is a view concern and the file on
+ * disk must not be able to tell that this is switched on.
+ */
+const CodeHighlight = Extension.create({
+    name: 'studioCodeHighlight',
+    addProseMirrorPlugins() { return [codeHighlightPlugin()]; }
+});
+
 /*
  * Toggle source stays standard and plain:
  *
@@ -96,9 +128,175 @@ const CoexistingCode = Code.extend({ excludes: '' });
  * The extra wrapper only exists in the editor DOM. It gives ProseMirror a
  * content element that excludes <summary>, which is UI chrome rather than a
  * paragraph in the document model.
+ *
+ * THE NODE VIEW IS NOT DECORATION. Rendering a real <details>/<summary> and
+ * leaving the browser to it looks right and does not work, and both halves of
+ * that failed in the shipped build:
+ *
+ *   - A summary click does not open a details element inside a
+ *     contenteditable region. The browser's disclosure behaviour is suppressed
+ *     there (the click is a caret placement), so a toggle opened only by
+ *     whatever `open` state it was rendered with — which was none. Every
+ *     toggle in the document was shut, permanently, with its body unreachable.
+ *   - The title was unreachable too. `summary` is a node ATTRIBUTE, and the
+ *     static renderHTML prints it as text; there is nothing there for the
+ *     caret to enter, so every toggle in the product was called "Toggle".
+ *
+ * So: the twisty is a button with a handler, and the title is a small
+ * contenteditable region of its own that writes the attribute back on commit.
+ * Both live in head, which is chrome — hence the ignoreMutation and stopEvent
+ * pair below, the same guard mermaid-view.js needs around its language field.
+ *
+ * OPEN/CLOSED IS DELIBERATELY NOT IN THE DOCUMENT. It is a reading position,
+ * not content: putting it in an attribute would mark the file dirty on every
+ * twisty click and would have to serialise as <details open> to survive a
+ * reload, which writes a view preference into the author's markdown. It lives
+ * on the node view instance, which outlives every edit to the node, and
+ * resets to open — never to closed, which would hide body text behind a
+ * control the reader has to discover.
  */
+function toggleNodeView({ node, editor, getPos }) {
+    const dom = document.createElement('div');
+    dom.className = 'studio-toggle is-open';
+
+    const head = document.createElement('div');
+    head.className = 'studio-toggle-head';
+    // setAttribute, not the contentEditable property: the property is not
+    // implemented in jsdom, so test/node-views.test.js cannot see it.
+    head.setAttribute('contenteditable', 'false');
+
+    const twisty = document.createElement('button');
+    twisty.type = 'button';
+    twisty.className = 'studio-toggle-twisty';
+    twisty.innerHTML = ICONS.chevronRight;
+
+    /*
+     * A one-line editable region, not an <input>: it sits in the text column
+     * at the document's own type size, and an input there brings its own
+     * baseline, its own font stack and a fixed width that the title has to fit.
+     */
+    const title = document.createElement('div');
+    title.className = 'studio-toggle-title';
+    title.setAttribute('contenteditable', 'true');
+    title.setAttribute('role', 'textbox');
+    title.setAttribute('aria-label', 'Toggle title');
+    title.setAttribute('data-placeholder', 'Toggle');
+
+    const body = document.createElement('div');
+    body.className = 'studio-toggle-body';
+    body.setAttribute('data-studio-toggle-body', '');
+
+    head.append(twisty, title);
+    dom.append(head, body);
+
+    let open = true;
+    let summary = node.attrs.summary;
+    title.textContent = summary;
+
+    function paint() {
+        dom.classList.toggle('is-open', open);
+        twisty.setAttribute('aria-expanded', String(open));
+        twisty.title = open ? 'Collapse' : 'Expand';
+    }
+    paint();
+
+    function nodeRange() {
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos === undefined) { return undefined; }
+        const at = editor.state.doc.nodeAt(pos);
+        return at && at.type.name === 'toggle' ? { pos, node: at } : undefined;
+    }
+
+    /* The title is plain text in the source (<summary> is not a markdown
+       context), so newlines and runs of spaces cannot survive a save — they
+       are collapsed here rather than written and silently lost. */
+    function commitTitle() {
+        const range = nodeRange();
+        if (!range) { return; }
+        const next = title.textContent.replace(/\s+/g, ' ').trim() || 'Toggle';
+        if (next === range.node.attrs.summary) { return; }
+        summary = next;
+        editor.view.dispatch(editor.state.tr.setNodeMarkup(range.pos, undefined,
+            Object.assign({}, range.node.attrs, { summary: next })));
+    }
+
+    /* Enter in the title means "done naming it": commit and drop the caret
+       into the body, which is where the author is going next. */
+    function enterBody() {
+        const range = nodeRange();
+        if (!range) { return; }
+        open = true;
+        paint();
+        const inside = editor.state.doc.resolve(range.pos + 2);
+        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(inside)));
+        editor.view.focus();
+    }
+
+    twisty.addEventListener('mousedown', event => event.preventDefault());
+    twisty.addEventListener('click', event => {
+        event.preventDefault();
+        open = !open;
+        paint();
+        if (open) { return; }
+        /*
+         * Collapsing with the caret inside leaves the selection in a
+         * display: none subtree: the caret vanishes, typing still edits the
+         * hidden body, and ProseMirror tries to scroll a zero-height box into
+         * view. Park it after the toggle instead.
+         */
+        const range = nodeRange();
+        if (!range) { return; }
+        const { from } = editor.state.selection;
+        if (from <= range.pos || from >= range.pos + range.node.nodeSize) { return; }
+        const after = editor.state.doc.resolve(Math.min(range.pos + range.node.nodeSize, editor.state.doc.content.size));
+        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(after, 1)));
+    });
+
+    title.addEventListener('blur', commitTitle);
+    title.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); commitTitle(); enterBody(); return; }
+        if (event.key === 'Escape') { event.preventDefault(); title.textContent = summary; title.blur(); return; }
+        // A paste or a stray Tab must not be able to put a second line in here.
+        if (event.key === 'Tab') { event.preventDefault(); commitTitle(); enterBody(); }
+    });
+    title.addEventListener('paste', event => {
+        event.preventDefault();
+        const text = (event.clipboardData && event.clipboardData.getData('text/plain')) || '';
+        title.textContent = (title.textContent + text.replace(/\s+/g, ' ')).trim();
+    });
+
+    return {
+        dom,
+        contentDOM: body,
+        update(updated) {
+            if (updated.type.name !== 'toggle') { return false; }
+            if (updated.attrs.summary !== summary) {
+                summary = updated.attrs.summary;
+                // Never while the author is typing in it: writing textContent
+                // under a live caret collapses the selection to the start.
+                if (document.activeElement !== title) { title.textContent = summary; }
+            }
+            return true;
+        },
+        // Everything in head is chrome. Without this the twisty's aria state
+        // and every keystroke in the title register as document mutations.
+        ignoreMutation(mutation) {
+            return !body.contains(mutation.target) || mutation.type === 'selection';
+        },
+        // ...and without this ProseMirror handles those keystrokes as document
+        // input: Enter in the title split the toggle in two, Backspace at its
+        // start deleted the node.
+        stopEvent(event) {
+            return !!event.target && head.contains(event.target);
+        }
+    };
+}
+
 const Toggle = Node.create({
-    name: 'toggle', group: 'block', content: 'block+', isolating: true,
+    // `defining`, not `isolating` — see callout-view.js's note: isolating
+    // makes liftTarget return null, which left a toggle with no way back to
+    // plain text and no way to Backspace out of.
+    name: 'toggle', group: 'block', content: 'block+', defining: true,
     addAttributes() { return { summary: { default: 'Toggle' } }; },
     parseHTML() {
         return [{
@@ -106,9 +304,13 @@ const Toggle = Node.create({
             getAttrs: element => ({ summary: element.querySelector('summary')?.textContent || 'Toggle' })
         }];
     },
+    // Copy/paste and the tracked-changes page both go through the static spec,
+    // never through the node view above, so this has to stand on its own.
     renderHTML({ HTMLAttributes }) {
-        return ['details', ['summary', HTMLAttributes.summary], ['div', { 'data-studio-toggle-body': '' }, 0]];
-    }
+        return ['details', { open: 'true' }, ['summary', HTMLAttributes.summary],
+            ['div', { 'data-studio-toggle-body': '' }, 0]];
+    },
+    addNodeView() { return toggleNodeView; }
 });
 
 /*
@@ -209,6 +411,42 @@ const CommentMark = Mark.create({
     parseHTML() { return [{ tag: 'span[data-comment-id]' }]; },
     renderHTML({ HTMLAttributes }) {
         return ['span', mergeAttributes(HTMLAttributes, { class: 'studio-comment-mark' }), 0];
+    }
+});
+
+/*
+ * `==x==`, md-schema.js's `highlight` row, no attrs — the mdast side already
+ * takes GFM's own `<mark>` as the accept form, so this parses `<mark>`
+ * first and its own class second, and renders `<mark>` so a document pasted
+ * elsewhere still reads as a highlight without this product's CSS.
+ */
+const Highlight = Mark.create({
+    name: 'highlight',
+    parseHTML() { return [{ tag: 'mark' }, { tag: 'span.studio-highlight' }]; },
+    renderHTML({ HTMLAttributes }) {
+        return ['mark', mergeAttributes(HTMLAttributes, { class: 'studio-highlight' }), 0];
+    },
+    /*
+     * WITHOUT THIS THE HIGHLIGHT BUTTON THREW.
+     *
+     * Mark.create does NOT synthesise set/unset/toggle commands — every
+     * StarterKit mark writes its own, which is why Bold and Italic worked and
+     * this one did not. The selection toolbar dispatches marks generically as
+     * `chain().focus()['toggle' + Key]()`, so a missing `toggleHighlight` was
+     * not a no-op like the callouts above: it was `undefined(...)`, a
+     * TypeError thrown out of the click handler, which also abandoned the
+     * updateBubble() call after it.
+     */
+    addCommands() {
+        return {
+            setHighlight: () => ({ commands }) => commands.setMark(this.name),
+            unsetHighlight: () => ({ commands }) => commands.unsetMark(this.name),
+            toggleHighlight: () => ({ commands }) => commands.toggleMark(this.name)
+        };
+    },
+    // The toolbar's tooltip already promised this key.
+    addKeyboardShortcuts() {
+        return { 'Mod-Shift-h': () => this.editor.commands.toggleHighlight() };
     }
 });
 
@@ -338,8 +576,17 @@ function qualityShorten(text, limit = 60) {
 /* GitHub's heading-anchor rule, which is what a Markdown reader will resolve the
  * link against. Not a general slugifier — only what a heading needs. */
 function qualitySlug(text) {
+    /*
+     * \p{L}\p{N} and not \w. JavaScript's `\w` is ASCII-only, so the ASCII
+     * form of this rule deleted every letter of a non-Latin heading: "Обзор —
+     * часть 2" slugged to "-2" and "Стратегическое делегирование" to "-".
+     * Every heading in a Russian document was therefore unaddressable — it got
+     * an empty slug, which linkTargets drops, so the link editor offered a
+     * document's own sections and silently offered none of them. GitHub's own
+     * slugifier keeps Unicode letters; this now does too.
+     */
     return String(text || '').toLowerCase().trim()
-        .replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-');
+        .replace(/[^\p{L}\p{N}\- ]+/gu, '').replace(/\s+/g, '-');
 }
 
 /*
@@ -381,14 +628,61 @@ function qualityFixInstruction(finding, relPath) {
         ' Do not paraphrase the copy you keep.';
 }
 
+/* The block types an empty-block hint is true for. See the Placeholder
+ * configuration below: every other node gets the empty string. */
+const HINTED_EMPTY_BLOCKS = new Set(['paragraph', 'heading']);
+
+/* ...and the parents that are too narrow to hold it. The hint is a float, so
+ * in a 90px table cell it does not wrap or clip, it runs out over the next
+ * column. Every cell of an empty table is also an empty paragraph, so before
+ * this the caret moving across a fresh table dragged the sentence with it. */
+const UNHINTED_PARENTS = new Set(['tableCell', 'tableHeader']);
+
+function hintFor(editor, node, pos) {
+    if (!HINTED_EMPTY_BLOCKS.has(node.type.name)) { return ''; }
+    try {
+        if (UNHINTED_PARENTS.has(editor.state.doc.resolve(pos).parent.type.name)) { return ''; }
+    } catch (e) { /* a stale decoration position; the hint is not worth a throw */ }
+    return "Type '/' for blocks…";
+}
+
 function buildExtensions(widget) {
     return [
         saveShortcut(widget),
-        StarterKit.configure({ heading: { levels: [1, 2, 3, 4] }, code: false, codeBlock: false }),
+        // `strike` is a StarterKit member left at its default (only `code`
+        // and `codeBlock` are turned off above), so md-schema.js's `strike`
+        // row already had a live PM mark to target — nothing to flip here.
+        // `highlight` has no StarterKit equivalent, hence its own extension.
+        // `hardBreak` is off so StudioHardBreak can take its place: StarterKit's
+        // copy declares itself the schema's linebreakReplacement, which is what
+        // turned every soft line ending in a hand-wrapped paragraph into a hard
+        // break the moment somebody typed in it.
+        StarterKit.configure({ heading: { levels: [1, 2, 3, 4, 5, 6] }, code: false, codeBlock: false, hardBreak: false }),
         DocumentCodeBlock,
+        CodeHighlight,
         CoexistingCode,
+        StudioHardBreak,
         Link.configure({ openOnClick: false, autolink: false, validate: () => true, isAllowedUri: () => true }),
-        Placeholder.configure({ placeholder: "Type '/' for blocks…" }),
+        /*
+         * includeChildren, and a hint only for the textblock the caret is in.
+         *
+         * The plugin's descendants() walk returns `includeChildren`, so with it
+         * off the walk never went below the top level. A callout or a toggle
+         * holding one empty paragraph IS empty by isNodeEmpty, so the
+         * decoration landed on the CONTAINER — and the hint is a zero-height
+         * left float, which then painted at the top of the container box,
+         * straight through the callout's tone label and the toggle's title.
+         *
+         * Recursing puts it on the empty paragraph where the caret actually is.
+         * The container still matches the walk, hence the type test: its hint
+         * is the empty string, which `content: attr(data-placeholder)` renders
+         * as nothing. Code and maths are textblocks too and are left out on
+         * purpose — "/" opens no menu inside them, so offering it would lie.
+         */
+        Placeholder.configure({
+            includeChildren: true,
+            placeholder: ({ editor, node, pos }) => hintFor(editor, node, pos)
+        }),
         TaskList,
         TaskItem.configure({ nested: true }),
         Toggle,
@@ -396,6 +690,12 @@ function buildExtensions(widget) {
         FootnoteDef,
         StudioImage.configure({ inline: false, allowBase64: false, documentUri: widget && widget.uri }),
         CommentMark,
+        Highlight,
+        Callout,
+        MathBlock,
+        MathInline,
+        RawBlock.configure({ widget }),
+        RawInline.configure({ widget }),
         /*
          * Live tracked marks, and the reason this is a callback rather than a
          * value: the plugin asks on every transaction, so the widget owns when
@@ -417,31 +717,14 @@ function buildExtensions(widget) {
     ];
 }
 
-const SLASH_ITEMS = [
-    { key: 'text', label: 'Text', hint: 'Plain paragraph', icon: 'T', run: c => c.setParagraph() },
-    { key: 'h1', label: 'Heading 1', hint: 'Large section title', icon: 'H1', run: c => c.setNode('heading', { level: 1 }) },
-    { key: 'h2', label: 'Heading 2', hint: 'Medium section title', icon: 'H2', run: c => c.setNode('heading', { level: 2 }) },
-    { key: 'h3', label: 'Heading 3', hint: 'Small section title', icon: 'H3', run: c => c.setNode('heading', { level: 3 }) },
-    { key: 'h4', label: 'Heading 4', hint: 'Small subsection title', icon: 'H4', run: c => c.setNode('heading', { level: 4 }) },
-    { key: 'bullet', label: 'Bulleted list', hint: 'Simple bulleted list', icon: '•', run: c => c.toggleBulletList() },
-    { key: 'ordered', label: 'Numbered list', hint: 'List with ordering', icon: '1.', run: c => c.toggleOrderedList() },
-    { key: 'task', label: 'Checklist', hint: 'Task list with checkboxes', icon: '☑', run: c => c.toggleTaskList() },
-    { key: 'quote', label: 'Quote', hint: 'Capture a citation', icon: '"', run: c => c.toggleBlockquote() },
-    { key: 'code', label: 'Code block', hint: 'Preformatted code', icon: '{}', run: c => c.toggleCodeBlock() },
-    { key: 'toggle', label: 'Toggle', hint: 'Collapsible details', icon: '›', run: c => c.setNode('toggle', { summary: 'Toggle' }) },
-    { key: 'image', label: 'Image', hint: 'Add an image from this project', icon: '▧', defer: true, run: (_, widget) => widget.importImage() },
-    { key: 'diagram', label: 'Diagram', hint: 'Mermaid diagram', icon: '◇', run: c => c.insertContent({ type: 'codeBlock', attrs: { language: 'mermaid' }, content: [{ type: 'text', text: 'graph TD;\n  A[Start] --> B[Finish];' }] }) },
-    /*
-     * `defer` means "this one opens a surface of its own": the slash text is
-     * deleted, the menu closes, and the item takes over. Two items need it and
-     * the second one is why it is a flag rather than a special case — the image
-     * picker was special-cased in applySlash, and adding a second special case
-     * beside it is how a switch statement starts.
-     */
-    { key: 'figure', label: 'Interactive figure', hint: 'Describe one, or start from a template', icon: '◈', defer: true, run: (_, widget) => widget.createFigure() },
-    { key: 'table', label: 'Table', hint: 'Data table', icon: '▦', run: c => c.insertContent(tableContent(3, 2)) },
-    { key: 'divider', label: 'Divider', hint: 'Horizontal rule', icon: '—', run: c => c.setHorizontalRule() }
-];
+/*
+ * The block list itself now lives in blocks.js as BLOCKS, shared with the
+ * selection toolbar's block selector -- a block reachable from one menu and
+ * missing from the other is exactly the drift a single registry exists to
+ * prevent. `defer` keeps its old meaning here: the item opens a surface of
+ * its own (the image picker, the figure prompt), so the slash text is
+ * deleted and the menu closed BEFORE `run` takes over, in applySlash below.
+ */
 
 const MODES = [
     { key: 'rich', label: 'Rich', hint: 'Edit the rendered document' },
@@ -498,6 +781,252 @@ const EXTERNAL_POLL_MS = 2000;
  */
 const SUGGEST_DELAY_MS = 1100;
 
+/*
+ * A sentinel row key for the slash/block-selector empty state's "Ask AI"
+ * row. Namespaced well past anything a real BLOCKS entry could ever be
+ * named, so it can share applySlash's `BLOCKS.find(...)` dispatch as a
+ * single extra `if` rather than a parallel code path.
+ */
+const ASK_AI_SLASH_KEY = '__studio_ask_ai__';
+
+/** A block's label with the matched substring wrapped in <mark>, for the slash/block-selector rows. */
+function highlightMatch(label, query) {
+    if (!query) { return escapeHtml(label); }
+    const at = label.toLowerCase().indexOf(query.toLowerCase());
+    if (at === -1) { return escapeHtml(label); }
+    return escapeHtml(label.slice(0, at)) + '<mark>' + escapeHtml(label.slice(at, at + query.length)) + '</mark>' +
+        escapeHtml(label.slice(at + query.length));
+}
+
+/*
+ * Which BLOCKS entry a resolved position is "inside", for the selection
+ * toolbar's block selector label. Walked shallow -> deep on purpose: a
+ * position inside a list item's paragraph is inside a BULLETED LIST as far
+ * as the person editing is concerned, so the first (outermost) match wins
+ * rather than the paragraph three levels further down always winning.
+ */
+function blockKeyAt($pos) {
+    for (let d = 0; d <= $pos.depth; d++) {
+        const node = $pos.node(d);
+        switch (node.type.name) {
+            case 'heading': return 'h' + node.attrs.level;
+            case 'paragraph': return 'text';
+            case 'bulletList': return 'bullet';
+            case 'orderedList': return 'ordered';
+            case 'taskList': return 'task';
+            case 'blockquote': return 'quote';
+            case 'codeBlock': return 'code';
+            case 'toggle': return 'toggle';
+            case 'callout': return 'callout-' + (node.attrs.tone || 'note');
+            case 'mathBlock': return 'math-block';
+            default: break;
+        }
+    }
+    return 'text';
+}
+
+/*
+ * The marks the selection toolbar can toggle, in display order. Bold and
+ * italic use their own letterform per the brief -- everyone recognises "B"
+ * and "I" from every other editor -- and every other mark is a Lucide icon
+ * rather than a hand-picked glyph, so the toolbar does not acquire a second
+ * visual language next to the rest of the product. `strike` and `highlight`
+ * are filtered out below when the schema does not carry them yet, the same
+ * guard BLOCKS entries get in blocks.js.
+ */
+const MARK_DEFS = [
+    { key: 'bold', letters: 'B', label: 'Bold', title: 'Bold · ⌘B' },
+    { key: 'italic', letters: 'I', label: 'Italic', title: 'Italic · ⌘I' },
+    { key: 'strike', icon: 'strikethrough', label: 'Strikethrough', title: 'Strikethrough · ⌘⇧S' },
+    { key: 'code', icon: 'code', label: 'Code', title: 'Code · ⌘E' },
+    { key: 'link', icon: 'link', label: 'Link', title: 'Link · ⌘K' },
+    { key: 'highlight', icon: 'highlight', label: 'Highlight', title: 'Highlight · ⌘⇧H' }
+];
+
+/*
+ * The three functions below build markup from plain data only — no Editor,
+ * no ProseMirror state, no `this` — so blocks-toolbar.test.js can assert on
+ * exactly which buttons/rows a state produces without booting a real Tiptap
+ * editor inside a Theia Widget, which is not a small thing to stand up
+ * under plain jsdom. updateBubble/renderSlashList reduce the live editor
+ * down to these plain shapes and call straight through.
+ */
+
+/** `marks`: [{ key, letters?, icon?, label, title, active }], already filtered to what the schema carries. */
+function bubbleButtonsHtml({ locked, inCode, inCell, blockLabel, marks }) {
+    let html = '';
+    if (!locked && !inCode && !inCell) {
+        html += '<button class="studio-bubble-btn blocksel" type="button" data-bsel="1" aria-haspopup="listbox">' +
+            '<span>' + escapeHtml(blockLabel) + '</span>' + ICONS.chevronDown + '</button>' +
+            '<span class="studio-bubble-sep"></span>';
+    }
+    if (!locked && !inCode) {
+        html += marks.map(m => {
+            const glyph = m.letters
+                ? '<span class="studio-bubble-glyph studio-bubble-glyph-' + m.key + '">' + m.letters + '</span>'
+                : ICONS[m.icon];
+            return '<button class="studio-bubble-btn' + (m.active ? ' on' : '') + '" type="button" data-mark="' + m.key +
+                '" title="' + m.title + '" aria-label="' + m.label + '" aria-pressed="' + m.active + '">' + glyph + '</button>';
+        }).join('') + '<span class="studio-bubble-sep"></span>';
+    }
+    /*
+     * Comment and Ask AI are the only two actions legal on a document the
+     * fidelity gate locked or a proposal is holding for review — the P0 fix;
+     * see the matching guard on the mark branch of onClick, which is the
+     * half of this that stops a locked document from actually being mutated
+     * by a click here. Both stay live inside a code block too, where the
+     * toolbar used to hide outright — a code block that cannot be commented
+     * on is a defect, not a safety rail.
+     */
+    html += '<button class="studio-bubble-btn comment act" type="button" data-mark="comment" title="Comment · ⌘⌥M">' +
+        ICONS.comment + ' Comment</button>' +
+        '<button class="studio-bubble-btn ai act" type="button" data-mark="ai" title="Ask AI to edit this selection">' +
+        ICONS.spark + ' Ask AI</button>';
+    return html;
+}
+
+/** `rows`: rankBlocks()'s own [{ block, group, score }]; `selIndex`: which row carries .sel and the hint. */
+function slashListHtml(rows, query, selIndex) {
+    let html = '';
+    let lastGroup;
+    rows.forEach((r, i) => {
+        if (!query && r.group !== lastGroup) { html += '<div class="studio-slash-group">' + escapeHtml(r.group) + '</div>'; }
+        lastGroup = r.group;
+        const sel = i === selIndex;
+        html += '<div class="studio-slash-item' + (sel ? ' sel' : '') + '" data-slash="' + r.block.key +
+            '" role="option" aria-selected="' + sel + '">' +
+            '<span class="studio-slash-icon">' + r.block.icon + '</span>' +
+            '<span class="studio-slash-label">' + highlightMatch(r.block.label, query) + '</span>' +
+            (sel ? '<span class="studio-slash-hint">' + escapeHtml(r.block.hint) + '</span>' : '') +
+            '</div>';
+    });
+    return html;
+}
+
+/** Not a dead end: one actionable row that hands the typed text to an assistant. */
+function slashEmptyHtml(query, mode) {
+    const askLabel = mode === 'convert'
+        ? 'Ask AI to turn this into “' + escapeHtml(query) + '”'
+        : 'Ask AI to insert “' + escapeHtml(query) + '”';
+    return '<div class="studio-slash-empty">No block matches «' + escapeHtml(query) + '»</div>' +
+        '<div class="studio-slash-item sel" data-slash="' + ASK_AI_SLASH_KEY + '" role="option" aria-selected="true">' +
+        '<span class="studio-slash-icon">' + ICONS.spark + '</span>' +
+        '<span class="studio-slash-label">' + askLabel + '</span></div>';
+}
+
+/*
+ * THE LINK EDITOR's markup.
+ *
+ * Two fields, the text over the target, because that is the whole of what a
+ * Markdown link is -- and the reported defect was that there was no surface
+ * for either: the toolbar's link button and the /link row both called
+ * window.prompt(), which ELECTRON DOES NOT IMPLEMENT. It returns null and logs
+ * "prompt() is and will not be supported", so in the desktop build the button
+ * did nothing at all and there was no way to make a link.
+ *
+ * A sibling of the other two popovers rather than a dialog: it is anchored to
+ * the text it is about, and a modal would take the selection it acts on.
+ *
+ * A function rather than a literal in the constructor so link-editor.test.js
+ * can stand the panel up without a Theia widget around it -- the same reason
+ * the builders below are free functions.
+ */
+function linkEditorHtml() {
+    return '<div class="studio-link" hidden>' +
+        '<input class="studio-link-text" type="text" spellcheck="false" autocomplete="off"' +
+        ' placeholder="Text" aria-label="Link text">' +
+        '<div class="studio-link-row">' +
+        '<input class="studio-link-href" type="text" spellcheck="false" autocomplete="off"' +
+        ' placeholder="Paste a link, or pick a heading" aria-label="Link target">' +
+        '<button class="studio-link-btn" type="button" data-link="remove"' +
+        ' title="Remove this link and keep the text" aria-label="Remove link">' + ICONS.unlink + '</button>' +
+        '<button class="studio-link-btn go" type="button" data-link="apply"' +
+        ' title="Apply · ⏎" aria-label="Apply">' + ICONS.check + '</button>' +
+        '</div>' +
+        '<div class="studio-link-targets" role="listbox" aria-label="Headings in this file" hidden></div>' +
+        '</div>';
+}
+
+/* ==========================================================================
+ * LINKS: the three pure pieces.
+ *
+ * Kept out of the widget for the same reason bubbleButtonsHtml is (see the
+ * note above it): a link is now a small form with a filtered list in it, and
+ * "which headings does this file offer, under this query, with which row
+ * highlighted" is exactly the kind of thing that should be assertable without
+ * standing up a Theia widget.
+ * ========================================================================== */
+
+/*
+ * The headings this file offers as link targets, with the anchor a Markdown
+ * link has to use to reach them.
+ *
+ * The slug is qualitySlug's, which is this product's one implementation of the
+ * GitHub rule, plus GitHub's own disambiguation for repeats: the second
+ * "Overview" is `#overview-1`. Getting that wrong would produce a link that
+ * looks right and lands on the wrong section, which is worse than no feature.
+ */
+function linkTargets(doc) {
+    const out = [];
+    const seen = new Map();
+    doc.descendants((node, pos) => {
+        if (node.type.name !== 'heading') { return true; }
+        const text = node.textContent.trim();
+        if (!text) { return false; }
+        const base = qualitySlug(text);
+        if (!base) { return false; }
+        const n = seen.get(base) || 0;
+        seen.set(base, n + 1);
+        out.push({ level: (node.attrs && node.attrs.level) || 1, text, slug: n ? base + '-' + n : base, pos });
+        return false;
+    });
+    return out;
+}
+
+/*
+ * Which headings a typed target matches.
+ *
+ * The empty field lists every heading — that is what makes the feature
+ * discoverable at all, since nothing in a text field announces that it also
+ * accepts a section. A '#' prefix is the explicit form and filters on what
+ * follows it. Anything else is a URL being typed, and a URL has no business
+ * bringing up a list of headings under it.
+ */
+function filterLinkTargets(targets, query) {
+    const raw = String(query || '').trim();
+    if (!raw) { return targets; }
+    if (raw[0] !== '#') { return []; }
+    const needle = raw.slice(1).toLowerCase();
+    if (!needle) { return targets; }
+    return targets.filter(t => t.text.toLowerCase().includes(needle) || t.slug.includes(needle));
+}
+
+/** `rows`: filterLinkTargets()'s output; `index`: the armed row, or -1 for none. */
+function linkTargetsHtml(rows, index) {
+    return rows.map((t, i) => '<div class="studio-link-target' + (i === index ? ' sel' : '') +
+        '" data-link-target="' + escapeHtml(t.slug) + '" role="option" aria-selected="' + (i === index) + '">' +
+        '<span class="studio-link-level">H' + t.level + '</span>' +
+        '<span class="studio-link-name">' + escapeHtml(t.text) + '</span></div>').join('');
+}
+
+/*
+ * The range a link edit applies to.
+ *
+ * A caret INSIDE an existing link means that whole link — nobody selects the
+ * words of a link they want to repoint, they click it — so the range grows to
+ * the mark's own extent. Everywhere else the selection is the range, including
+ * when it is empty, which is the "insert a new link here" case.
+ */
+function linkRange(state) {
+    const { selection, schema } = state;
+    const { $from, from, to, empty } = selection;
+    const type = schema.marks.link;
+    if (!type || !empty) { return { from, to }; }
+    // getMarkRange is Tiptap's own; a link's text can be several text nodes
+    // (one bold word inside it makes two) and this is the helper that knows it.
+    return getMarkRange($from, type) || { from, to };
+}
+
 function buildTextIndex(doc) {
     let text = '';
     const map = [];
@@ -530,10 +1059,72 @@ const openEditors = new Map();
  * ol, blockquote, pre, table — becomes exactly one top-level ProseMirror node,
  * and neither side puts a separator between the items inside one.
  */
-function plainBlockText(html) {
-    const host = document.createElement('div');
-    host.innerHTML = html;
-    return [...host.children].map(el => el.textContent).join('\n');
+/*
+ * The document's top-level blocks as one line of text each.
+ *
+ * Takes a ProseMirror document rather than an HTML string, because the engine
+ * no longer produces HTML on the way in — mdast maps straight to the editor
+ * document (see markdown.js's header). It used to build a detached <div>, set
+ * innerHTML and read textContent off each child; walking the document reaches
+ * the same answer without a parse and without a DOM, and it is the same answer
+ * the live editor would give, which is the property suggestBaseline needs.
+ *
+ * Concatenation with no separators, matching textContent's own behaviour: a
+ * table row's cells run together exactly as they did before, so the baseline
+ * this feeds is comparable with the ones already recorded.
+ */
+function nodeText(node) {
+    if (!node) { return ''; }
+    if (node.type === 'text') { return node.text || ''; }
+    /*
+     * A hard break IS a line break here, not nothing. Returning '' glues the
+     * word before it to the word after ("a" + "rail" becomes "arail") and the
+     * live marks then report a word change nobody made. suggest-marks.js's
+     * collect() has to agree with this function exactly, or suggestBaseline
+     * compares two different string shapes for one document and paints the
+     * whole thing as edited.
+     */
+    if (node.type === 'hardBreak') { return '\n'; }
+    return (node.content || []).map(nodeText).join('');
+}
+
+/*
+ * Markdown -> HTML, for the tracked-changes review surface only.
+ *
+ * The engine has no markdown-to-HTML function any more and should not grow
+ * one: mdast maps straight to the editor document, and an HTML intermediate is
+ * exactly the lossy step going through mdast removed. But tracked-changes.js
+ * genuinely needs HTML -- it marks the SOURCE with control-character sentinels
+ * and rewrites them into <del>/<ins> after rendering, because mapping Markdown
+ * offsets to DOM positions is the thing that has no cheap correct version (its
+ * own header explains this at length).
+ *
+ * So the review surface renders through the EDITOR's schema, which is strictly
+ * better than the hand-written converter it replaces: the tracked page and the
+ * live document are now produced by one code path and cannot drift, which is
+ * the drift the ":is(.ProseMirror, .studio-tracked-page)" selector in
+ * editor-css.js exists to paper over.
+ *
+ * The sentinels survive this. Measured, not assumed -- all seven control
+ * characters and the unit separator come through micromark, the mdast bridge
+ * and renderHTML untouched, and a marked heading is still a heading.
+ *
+ * `undefined` as the widget: this list is wanted for its SCHEMA, and passing a
+ * widget would arm the quality and suggest mark plugins against a document
+ * nobody is editing. Memoised because renderTracked runs on every decision.
+ */
+let reviewExtensions;
+
+function renderReviewHtml(md) {
+    if (!reviewExtensions) { reviewExtensions = buildExtensions(undefined); }
+    return generateHTML(markdownToDoc(md).doc, reviewExtensions);
+}
+
+function plainBlockText(doc) {
+    /* Trailing whitespace trimmed per block, exactly as collect() does it — the
+     * two reducers describe one document to one diff, and any disagreement
+     * between them paints text nobody touched. */
+    return ((doc && doc.content) || []).map(node => nodeText(node).replace(/[ \t]+$/, '')).join('\n');
 }
 
 function timeLabel(iso) {
@@ -787,8 +1378,24 @@ class MarkdownEditorWidget extends Widget {
             '    <div class="studio-rail-foot-note"></div>' +
             '  </aside>' +
             '</div>' +
-            '<div class="studio-slash" hidden></div>' +
+            /*
+             * .studio-slash serves BOTH the '/' trigger (query parsed out of
+             * the document text, .studio-slash-input a readonly echo of it)
+             * and the selection toolbar's block selector (a real, focusable
+             * input, opened via openBlockSelector). One popup rather than
+             * two -- see the "same searchable, grouped list" requirement --
+             * so the row markup, the ranking and the keyboard handling in
+             * attachSlashKeys are written once.
+             */
+            '<div class="studio-slash" hidden>' +
+            '  <div class="studio-slash-query" hidden>' +
+            '    <span class="studio-slash-mark">/</span>' +
+            '    <input class="studio-slash-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search blocks…" aria-label="Search blocks">' +
+            '  </div>' +
+            '  <div class="studio-slash-list" role="listbox" aria-label="Blocks"></div>' +
+            '</div>' +
             '<div class="studio-bubble" hidden></div>' +
+            linkEditorHtml() +
             '<div class="studio-table-bar" hidden></div>';
 
         this.statusEl = this.node.querySelector('.studio-doc-status');
@@ -811,7 +1418,14 @@ class MarkdownEditorWidget extends Widget {
         this.listEl = this.node.querySelector('.studio-rail-list');
         this.footEl = this.node.querySelector('.studio-rail-foot-note');
         this.slashEl = this.node.querySelector('.studio-slash');
+        this.slashQueryEl = this.node.querySelector('.studio-slash-query');
+        this.slashInputEl = this.node.querySelector('.studio-slash-input');
+        this.slashListEl = this.node.querySelector('.studio-slash-list');
         this.bubbleEl = this.node.querySelector('.studio-bubble');
+        this.linkEl = this.node.querySelector('.studio-link');
+        this.linkTextEl = this.node.querySelector('.studio-link-text');
+        this.linkHrefEl = this.node.querySelector('.studio-link-href');
+        this.linkTargetsEl = this.node.querySelector('.studio-link-targets');
         this.tableBarEl = this.node.querySelector('.studio-table-bar');
 
         this.renderSegmented();
@@ -886,10 +1500,35 @@ class MarkdownEditorWidget extends Widget {
             this.addMessage(th.getAttribute('data-thread'), t.value);
         });
         // Clicking the floating toolbars must not blur the editor, or the
-        // selection is gone before the handler reads it.
-        for (const floating of [this.bubbleEl, this.slashEl, this.tableBarEl]) {
-            floating.addEventListener('mousedown', e => e.preventDefault());
+        // selection is gone before the handler reads it. The block
+        // selector's search box is the one exception: it is a real input,
+        // and it has to be able to take a native text caret on click like
+        // any other -- preventing its own mousedown would leave it
+        // focusable only by the setTimeout() in openBlockSelector, with no
+        // way to click back into typed text to fix a typo.
+        for (const floating of [this.bubbleEl, this.slashEl, this.tableBarEl, this.linkEl]) {
+            floating.addEventListener('mousedown', e => {
+                if (e.target === this.slashInputEl || e.target === this.linkTextEl || e.target === this.linkHrefEl) { return; }
+                e.preventDefault();
+            });
         }
+        this.linkEl.addEventListener('keydown', e => this.onLinkKeyDown(e));
+        this.linkHrefEl.addEventListener('input', () => {
+            if (!this.linkEdit) { return; }
+            /*
+             * A '#' means the person is picking a section, so the first row is
+             * armed and Enter takes it; anything else disarms, so Enter means
+             * the URL they typed. See the index note in openLinkEditor.
+             */
+            this.linkEdit.index = this.linkHrefEl.value.trim()[0] === '#' ? 0 : -1;
+            this.renderLinkTargets();
+        });
+        this.slashInputEl.addEventListener('input', () => {
+            if (this.slashMode !== 'convert') { return; }
+            this.slashQuery = this.slashInputEl.value;
+            this.slashIndex = 0;
+            this.renderSlashList();
+        });
 
         // The source pane is a plain textarea, so it needs its own handler for
         // the shortcut the ProseMirror keymap covers in Rich mode.
@@ -956,6 +1595,21 @@ class MarkdownEditorWidget extends Widget {
             this.hideTableBar();
         };
         document.addEventListener('pointerdown', this.outsidePointerHandler, true);
+
+        /*
+         * A click anywhere but inside the link editor APPLIES it, which is the
+         * third of the three ways the report asked for (checkmark, Enter, click
+         * away). Its own handler rather than a branch in the two above, because
+         * the rule is different: those two dismiss on a click outside the
+         * WIDGET, and this one has to fire for a click back into the document
+         * as well — that is the commonest way a person finishes a link.
+         */
+        this.linkOutsideHandler = e => {
+            if (!this.node.isConnected || !this.linkEl || this.linkEl.hidden) { return; }
+            if (this.linkEl.contains(e.target)) { return; }
+            this.commitLinkEditor();
+        };
+        document.addEventListener('pointerdown', this.linkOutsideHandler, true);
     }
 
     onAfterAttach(msg) {
@@ -969,6 +1623,7 @@ class MarkdownEditorWidget extends Widget {
         if (this.selectionChangeHandler) { document.removeEventListener('selectionchange', this.selectionChangeHandler); }
         if (this.keyHandler) { document.removeEventListener('keydown', this.keyHandler, true); }
         if (this.outsidePointerHandler) { document.removeEventListener('pointerdown', this.outsidePointerHandler, true); }
+        if (this.linkOutsideHandler) { document.removeEventListener('pointerdown', this.linkOutsideHandler, true); }
         for (const d of this.disposables) { try { d.dispose(); } catch (e) { /* already gone */ } }
         this.disposables = [];
         clearInterval(this.pollTimer);
@@ -1011,28 +1666,110 @@ class MarkdownEditorWidget extends Widget {
      */
     checkFidelity(body) {
         try {
-            const found = unsupportedConstructs(body);
+            /*
+             * Stage N runs HERE, and this is the only place it runs (decision
+             * D-05: normalise on import, never on save).
+             *
+             * Before the gate, not after, because the gate's own subject is the
+             * document the editor will actually hold. An agent interrupted
+             * mid-write leaves an unterminated fence, which IS on the shortlist
+             * — asking the question of the raw bytes would lock that file
+             * read-only when closing the fence is exactly what repair is for.
+             */
+            const repaired = repairMarkdown(body);
+            const found = unsupportedConstructs(repaired);
             if (found.length) { return { lossless: false, identical: false, reason: found.join(', ') }; }
 
-            const exts = this.buildExtensions();
-            const first = generateJSON(markdownToHtml(body), exts);
-            const roundTripped = jsonToMarkdown(first);
-            const second = generateJSON(markdownToHtml(roundTripped), exts);
+            /*
+             * No `generateJSON` and no HTML intermediate: markdownToDoc lands
+             * on editor JSON directly. The extension list is no longer needed
+             * here either, which removes the thing the old comment above was
+             * anxious about — the check and the editor can no longer disagree
+             * about the schema, because the check no longer has one of its own.
+             * schema-coverage.test.js is what holds the engine and the editor
+             * to the same node set now.
+             */
+            const first = markdownToDoc(repaired).doc;
+            const roundTripped = docToMarkdown(first);
+            const second = markdownToDoc(roundTripped).doc;
 
-            const wBefore = contentWords(body);
-            const wAfter = contentWords(roundTripped);
-            if (wBefore !== wAfter) {
-                const a = wBefore.split(' '), bb = wAfter.split(' ');
-                let k = 0; while (k < a.length && a[k] === bb[k]) { k++; }
-                console.info('[studio][fidelity] content mismatch in', this.uri.path.base,
-                    '\n  at word', k, '\n  before:', a.slice(Math.max(0, k - 4), k + 6).join(' '),
-                    '\n  after :', bb.slice(Math.max(0, k - 4), k + 6).join(' '));
-                return { lossless: false, identical: false, reason: 'text would be lost or reordered' };
-            }
+            /*
+             * The word comparison runs against the REPAIRED text, not the
+             * bytes on disk, and getting that wrong is a real trap.
+             *
+             * contentWords strips fenced code through stripCode, whose regex
+             * only matches a CLOSED fence. So for a file an agent left
+             * mid-write, the unterminated fence's contents count as prose on
+             * the disk side and are stripped as code on the round-tripped side
+             * — the check then reports "text would be lost" for a document
+             * where the only thing that happened is that repair closed the
+             * fence, and the file opens read-only. Measured on
+             * "some **unfinished\n\n```js\nconst a = 1;": four words apparently
+             * vanished, all of them the code sample.
+             *
+             * The question this check exists to ask is whether the ENGINE loses
+             * anything between the document it opened and the document it would
+             * save, so both sides must be the document it opened. Repair is a
+             * deliberate, banner-announced change, and it is held to its own
+             * corpus and idempotence tests in test/markdown-roundtrip.test.js.
+             */
+            /*
+             * THE STRUCTURAL COMPARISON IS THE WHOLE CHECK, and dropping the
+             * word-level one beside it is a deliberate simplification.
+             *
+             * `first` and `second` are the document before and after one save.
+             * Comparing them is EXACT: nothing can be lost, added or reordered
+             * between them without this failing, because a ProseMirror document
+             * has no incidental fields for a difference to hide in.
+             *
+             * The word-level check that used to sit here compared the file's
+             * TEXT against the round-tripped text, and text cannot survive
+             * canonicalisation — that is the point of canonicalisation. Every
+             * notation the parser accepts and the serialiser rewrites made the
+             * two sides disagree, and each disagreement locked a legitimate
+             * document read-only. Measured, in one sitting: a ```math fence
+             * becoming `$$` (maths counted as prose on one side, stripped as
+             * code on the other); `\(x\)` becoming `$x$`; `2.` becoming `1.`
+             * under the pinned `incrementListMarker`; an indented code block
+             * becoming fenced; a Pandoc `^[note]` gaining a slugified label.
+             * Five false positives, each one a file nobody could edit, and each
+             * "fix" traded one asymmetry for another — stripping by indentation
+             * to catch the fourth broke the first three, because list nesting
+             * indent is itself something the serialiser rewrites.
+             *
+             * What it was originally protecting against is worth naming, since
+             * it is not nothing: a construct that PARSES into something simpler
+             * (the old converter turned a table into paragraphs) round-trips
+             * perfectly while destroying the document. Three things cover that
+             * now and none of them are heuristics — the X-01 fallback preserves
+             * an unmodelled construct verbatim instead of degrading it,
+             * assertion 5 of the corpus proves every fixture's document is
+             * valid in the editor's own schema (so nothing is dropped on load),
+             * and `unsupportedConstructs` still refuses the two constructs that
+             * are genuinely unrepresentable.
+             *
+             * contentWords survives as the DIAGNOSTIC below: when the exact
+             * check does fail, the first differing word is what makes the
+             * failure readable in a console.
+             */
             if (JSON.stringify(first) !== JSON.stringify(second)) {
+                const a = contentWords(repaired).split(' ');
+                const b = contentWords(roundTripped).split(' ');
+                let k = 0; while (k < a.length && a[k] === b[k]) { k++; }
+                console.info('[studio][fidelity] unstable round trip in', this.uri.path.base,
+                    '\n  first differing word:', k,
+                    '\n  before:', a.slice(Math.max(0, k - 4), k + 6).join(' '),
+                    '\n  after :', b.slice(Math.max(0, k - 4), k + 6).join(' '));
                 return { lossless: false, identical: false, reason: 'the round trip is not stable' };
             }
-            return { lossless: true, identical: roundTripped.replace(/\s+$/, '') === body.replace(/\s+$/, ''), roundTripped };
+            return {
+                lossless: true,
+                identical: roundTripped.replace(/\s+$/, '') === body.replace(/\s+$/, ''),
+                roundTripped,
+                // What the editor should open, which is the repaired text and
+                // not the bytes on disk when the two differ.
+                repaired
+            };
         } catch (e) {
             console.error('[studio] fidelity check failed', e);
             return { lossless: false, identical: false, reason: 'the fidelity check itself failed' };
@@ -1070,6 +1807,21 @@ class MarkdownEditorWidget extends Widget {
         }
     }
 
+    /*
+     * The text the rich surface is seeded from.
+     *
+     * The repaired text when stage N changed anything, the file's own bytes
+     * otherwise -- including for a document the gate opened read-only, which
+     * has no repaired form because the gate answered before repair could be
+     * trusted. One accessor rather than the branch written twice, because the
+     * editor is seeded in two places (first open, and reload after an external
+     * change) and those two drifting apart is how a reload silently reverts a
+     * repair.
+     */
+    editorBody() {
+        return this.repairedBody === undefined ? this.originalBody : this.repairedBody;
+    }
+
     async loadDocument() {
         const stat = await this.fileService.resolve(this.uri, { resolveMetadata: true });
         this.knownMtime = stat.mtime;
@@ -1085,8 +1837,27 @@ class MarkdownEditorWidget extends Widget {
         this.readOnly = !fidelity.lossless;
         this.readOnlyReason = fidelity.reason;
         this.willReformat = fidelity.lossless && !fidelity.identical;
+        /*
+         * What stage N made of the file, when it made anything of it.
+         *
+         * Kept beside originalBody rather than replacing it: originalBody is
+         * what is on disk and is what `identical` and the external-change
+         * watcher compare against, while this is what the editor opens. They
+         * differ only for a file that needed repairing, and in that case the
+         * "Formatting will normalize on save" banner is already saying so.
+         */
+        this.repairedBody = fidelity.repaired;
 
-        this.sourceEl.value = this.originalBody;
+        /*
+         * The source pane shows what the SESSION is editing, which is the
+         * repaired text -- not the bytes on disk.
+         *
+         * Showing disk bytes here while the rich surface held the repaired
+         * document would make Raw and Rich two different documents, and
+         * onSourceInput makes Raw the source of truth on the first keystroke:
+         * one character typed in Raw would silently throw the repair away.
+         */
+        this.sourceEl.value = this.editorBody();
         this.autosave = fileTypeSettings.autosaveForFile(this.uri);
         this.reviewStyle = fileTypeSettings.changeReviewForFile(this.uri);
 
@@ -1128,7 +1899,7 @@ class MarkdownEditorWidget extends Widget {
             element: this.pageEl,
             extensions: this.buildExtensions(),
             editable: !this.readOnly,
-            content: markdownToHtml(this.originalBody),
+            content: markdownToDoc(this.editorBody()).doc,
             onUpdate: ({ transaction }) => {
                 this.sourceOfTruth = 'rich';
                 this.onDocChanged(transaction);
@@ -1138,12 +1909,23 @@ class MarkdownEditorWidget extends Widget {
             onBlur: () => { setTimeout(() => { this.hideBubble(); }, 150); }
         });
 
-        // A native selection may collapse without a ProseMirror transaction
-        // when a drag finishes outside the editable surface. The previous
-        // toolbar only watched editor callbacks, so it could remain stale.
+        /*
+         * A native selection may collapse without a ProseMirror transaction
+         * when a drag finishes outside the editable surface. The previous
+         * toolbar only watched editor callbacks, so it could remain stale.
+         *
+         * Containment is against the PAGE, not the ProseMirror node, and either
+         * endpoint counts. While a drag is still being read into ProseMirror the
+         * browser reports the range against a container node — commonly
+         * .studio-doc-page itself when the drag began in its padding — and a
+         * test that only accepted nodes inside the editor read that as "the
+         * selection has gone" and hid a toolbar that was about to be correct.
+         */
         this.selectionChangeHandler = () => {
             const selection = document.getSelection();
-            if (!selection || selection.isCollapsed || !this.editor || !this.editor.view.dom.contains(selection.anchorNode)) {
+            const onPage = node => !!node && !!this.pageEl && this.pageEl.contains(node);
+            if (!this.editor || !selection || selection.isCollapsed ||
+                !(onPage(selection.anchorNode) || onPage(selection.focusNode))) {
                 this.hideBubble();
             }
         };
@@ -1203,7 +1985,7 @@ class MarkdownEditorWidget extends Widget {
         // The save path is armed only after load-time normalisation and the
         // re-anchor transaction have settled. Opening a file must never write
         // to it.
-        this.lastSavedBody = jsonToMarkdown(this.editor.getJSON());
+        this.lastSavedBody = docToMarkdown(this.editor.getJSON());
         setTimeout(() => { this.armed = true; }, 0);
         this.setSaveState(this.readOnly ? 'read-only' : 'clean');
         this.applyReviewLock();
@@ -1411,14 +2193,23 @@ class MarkdownEditorWidget extends Widget {
     currentBody() {
         if (this.mode === 'raw') { return this.sourceEl.value; }
         if (this.mode === 'split' && this.sourceOfTruth === 'raw') { return this.sourceEl.value; }
-        return this.editor ? jsonToMarkdown(this.editor.getJSON()) : this.sourceEl.value;
+        if (!this.editor) { return this.sourceEl.value; }
+        /*
+         * docToMarkdown reflows every block it serialises, so a document that
+         * was hand-wrapped at ~80 columns comes back rewrapped in full even
+         * where nothing changed — one keystroke in one paragraph recorded the
+         * whole file as touched. preserveWrapping diffs against the reviewed
+         * body and restores the original line breaks for every block whose
+         * content is unchanged, so a save rewraps only what was edited.
+         */
+        return preserveWrapping(this.reviewedBody(), docToMarkdown(this.editor.getJSON()));
     }
 
     /** Push a body into the rich surface without it counting as a user edit. */
     setRichContent(body) {
         if (!this.editor) { return; }
         this.internalUpdate = true;
-        this.editor.commands.setContent(markdownToHtml(body), false);
+        this.editor.commands.setContent(markdownToDoc(body).doc, false);
         this.internalUpdate = false;
         this.reanchorThreads();
     }
@@ -1458,7 +2249,7 @@ class MarkdownEditorWidget extends Widget {
         if (!this.armed || this.readOnly || this.reviewing || this.internalUpdate) { return; }
         if (transaction && transaction.getMeta('studio-internal')) { return; }
         if (transaction && !transaction.docChanged) { return; }
-        const body = jsonToMarkdown(this.editor.getJSON());
+        const body = docToMarkdown(this.editor.getJSON());
         if (body === this.lastSavedBody) { return; }
         if (this.mode === 'split') { this.sourceEl.value = body; }
         this.markDirty();
@@ -2026,7 +2817,7 @@ class MarkdownEditorWidget extends Widget {
         const body = this.reviewedBody();
         if (this.baselineBody === body && this.baselineText !== undefined) { return this.baselineText; }
         this.baselineBody = body;
-        this.baselineText = plainBlockText(markdownToHtml(body));
+        this.baselineText = plainBlockText(markdownToDoc(body).doc);
         return this.baselineText;
     }
 
@@ -2149,8 +2940,13 @@ class MarkdownEditorWidget extends Widget {
     /** Unanswered suggestion hunks, for the rail count and the banner. */
     pendingSuggestionCount() {
         const documentBody = this.reviewedBody();
+        /* A conflicted hunk cannot be accepted -- decideSuggestion refuses it
+           outright -- so counting it as pending disagrees with change-log.js's
+           openHunks(), which already excludes it from the per-suggestion
+           badge, and leaves the document's headline count one higher than
+           anything the reviewer can actually clear. */
         return this.suggestions.reduce((sum, p) =>
-            sum + suggestionHunks(p, documentBody, this.rejections).filter(h => !h.rejected).length, 0);
+            sum + suggestionHunks(p, documentBody, this.rejections).filter(h => !h.rejected && !h.conflicted).length, 0);
     }
 
     /**
@@ -2190,8 +2986,35 @@ class MarkdownEditorWidget extends Widget {
                 return;
             }
         } else {
-            const body = applyHunks(documentBody, hunks, [hunk.id]);
-            const written = await this.writeDecidedBody(body);
+            /*
+             * applyHunks rebuilds the WHOLE body from every hunk in the set, not
+             * just the one being accepted — for every other hunk it writes back
+             * h.oldLines, which is this suggestion's OWN recorded base, not
+             * whatever is actually at that position in the document now. A
+             * conflicted hunk's oldStart is not even re-anchored (see
+             * suggestionHunks in change-log.js), so that stale text can land
+             * squarely on top of a colleague's unrelated edit — accepting one
+             * hunk would silently revert another author's accepted change.
+             * Splicing just this hunk into the live document's own lines is
+             * what leaves every other line, including one somebody else just
+             * changed, untouched.
+             *
+             * The guard below re-checks the anchor against the document one
+             * more time rather than trusting `hunk.oldStart`: it costs nothing
+             * on the common path (a pure insertion has oldCount 0 and an empty
+             * oldLines, so it always passes) and it is the only thing standing
+             * between a stale hunk and overwriting text it no longer describes.
+             */
+            const lines = splitLines(documentBody);
+            const oldCount = hunk.oldCount !== undefined ? hunk.oldCount : hunk.oldLines.length;
+            const actual = lines.slice(hunk.oldStart, hunk.oldStart + oldCount);
+            if (actual.join('\n') !== hunk.oldLines.join('\n')) {
+                this.messageService.warn('That suggestion no longer matches the document. ' +
+                    'Its author will need to make it again.');
+                return;
+            }
+            lines.splice(hunk.oldStart, oldCount, ...hunk.newLines);
+            const written = await this.writeDecidedBody(lines.join('\n'));
             if (!written) { return; }
         }
 
@@ -2367,7 +3190,7 @@ class MarkdownEditorWidget extends Widget {
          * so the two coincide, and a suggestion is derived against the live
          * document by definition.
          */
-        this.trackedEl.innerHTML = trackedHtml(this.reviewedBody(), this.trackedEntries(), markdownToHtml);
+        this.trackedEl.innerHTML = trackedHtml(this.reviewedBody(), this.trackedEntries(), renderReviewHtml);
         this.highlightTracked();
     }
 
@@ -2641,7 +3464,12 @@ class MarkdownEditorWidget extends Widget {
                     historyStore: this.historyStore, uri: file.uri, verdict,
                     splitFrontmatter, joinFrontmatter
                 });
-                total += result.hunks;
+                /* The index prunes a row once its document is gone, but this can
+                   still be asked to resolve one in the gap before that happens.
+                   `missing` says there was nothing left to resolve -- it is not a
+                   failure, so it must neither raise an error nor pad the "resolved
+                   N changes" total with a file nobody touched. */
+                if (!result.missing) { total += result.hunks; }
             } catch (e) {
                 console.error('[studio] could not resolve', file.path, e);
                 this.messageService.error('Could not resolve pending changes in ' + file.path + '.');
@@ -4861,41 +5689,183 @@ class MarkdownEditorWidget extends Widget {
         this.messageService.info(reportPath + ' is not in this project.');
     }
 
-    // -- slash menu ----------------------------------------------------------
+    // -- slash menu ------------------------------------------------------------
+    //
+    // .studio-slash serves two entry points: the '/' trigger below
+    // (updateSlash, query parsed out of the document itself) and the
+    // selection toolbar's block selector (openBlockSelector, query typed
+    // into .studio-slash-input). `this.slashMode` is which one is live;
+    // renderSlashList, the keyboard handling in attachSlashKeys and applySlash
+    // below are shared by both rather than duplicated per entry point.
 
     updateSlash() {
-        if (!this.editor || this.mode === 'raw') { return this.hideSlash(); }
+        if (!this.editor || this.mode === 'raw' || this.readOnly || this.reviewing) { return this.hideSlash(); }
         const { state } = this.editor;
         const { $from, empty } = state.selection;
         if (!empty || this.editor.isActive('codeBlock')) { return this.hideSlash(); }
         const start = $from.start();
         const before = state.doc.textBetween(start, $from.pos, '\n', '\n');
+        /*
+         * `$` anchors the match to the caret, which is what makes two cases
+         * fall out for free rather than needing their own code: typing a
+         * space after the query ("and /or ") no longer ends at `$` with a
+         * trailing space unmatched, so the menu dismisses instead of
+         * hijacking the sentence; and backspacing the '/' itself removes the
+         * match on the very same transaction, so hideSlash() runs as an
+         * ordinary side effect of the edit rather than as a second,
+         * separately-undoable step.
+         */
         const m = before.match(/(?:^|\s)\/([A-Za-z0-9]*)$/);
         if (!m) { return this.hideSlash(); }
+        this.slashMode = 'insert';
         this.slashFrom = $from.pos - m[1].length - 1;
-        const q = m[1].toLowerCase();
-        const items = SLASH_ITEMS.filter(i => !q || i.label.toLowerCase().includes(q) || i.key.startsWith(q));
-        if (!items.length) { return this.hideSlash(); }
-        this.slashItems = items;
+        this.slashQuery = m[1].toLowerCase();
         this.slashIndex = 0;
-        this.slashEl.innerHTML = items.map((i, n) =>
-            '<div class="studio-slash-item' + (n === 0 ? ' sel' : '') + '" data-slash="' + i.key + '">' +
-            '<span class="studio-slash-icon">' + i.icon + '</span>' +
-            '<span class="studio-slash-label">' + i.label + '<em>' + i.hint + '</em></span></div>').join('');
-        const rect = this.editor.view.coordsAtPos($from.pos);
-        const host = this.node.getBoundingClientRect();
-        this.slashEl.style.left = Math.round(rect.left - host.left) + 'px';
-        this.slashEl.style.top = Math.round(rect.bottom - host.top + 6) + 'px';
-        this.slashEl.hidden = false;
+        this.slashQueryEl.hidden = false;
+        this.slashInputEl.value = this.slashQuery;
+        this.slashInputEl.readOnly = true;
+        this.slashInputEl.tabIndex = -1;
+        this.renderSlashList();
+        this.placeSlash($from.pos, undefined);
     }
 
-    hideSlash() { if (this.slashEl) { this.slashEl.hidden = true; } this.slashItems = undefined; }
+    hideSlash() {
+        const wasConvert = this.slashMode === 'convert';
+        if (this.slashEl) { this.slashEl.hidden = true; }
+        if (this.slashQueryEl) { this.slashQueryEl.hidden = true; }
+        if (this.slashListEl) { this.slashListEl.innerHTML = ''; }
+        this.slashItems = undefined;
+        this.slashMode = undefined;
+        this.slashAnchorEl = undefined;
+        // The block selector's search box can hold real DOM focus; the '/'
+        // trigger never moves focus off the document, so only the convert
+        // path needs to hand it back.
+        if (wasConvert && this.editor) { this.editor.commands.focus(); }
+    }
+
+    /*
+     * Build the grouped, ranked row markup into .studio-slash-list and set
+     * this.slashItems to whatever attachSlashKeys should move a cursor
+     * through -- the real ranked rows, or the single synthetic "Ask AI" row
+     * when nothing matched. One function for both call sites (the '/'
+     * trigger and the block selector's input) is what keeps the empty state,
+     * the highlight-on-selected-row-only hint and the match emphasis from
+     * having two, eventually-different implementations.
+     */
+    renderSlashList() {
+        const q = this.slashQuery || '';
+        const convert = this.slashMode === 'convert';
+        const pool = blocksFor(this.editor.schema, { convertOnly: convert });
+        const rows = rankBlocks(q, { recent: this.recentBlocks || [], blocks: pool });
+        if (this.slashIndex >= rows.length) { this.slashIndex = Math.max(0, rows.length - 1); }
+
+        if (!rows.length) {
+            this.slashItems = [{ block: { key: ASK_AI_SLASH_KEY }, group: '', score: 0 }];
+            this.slashIndex = 0;
+            this.slashListEl.innerHTML = slashEmptyHtml(q, this.slashMode);
+            return;
+        }
+
+        this.slashItems = rows;
+        this.slashListEl.innerHTML = slashListHtml(rows, q, this.slashIndex);
+    }
+
+    /*
+     * Opened from the selection toolbar's block selector button. Same popup,
+     * same ranking, filtered to convert:true and driven by a real input
+     * instead of document text -- there is no caret-following query to
+     * parse when the trigger was a click on a toolbar button.
+     */
+    openBlockSelector(anchorEl) {
+        if (!this.editor || this.mode === 'raw' || this.readOnly || this.reviewing) { return; }
+        if (cellContext(this.editor.state)) { return; } // the table bar owns structure inside a cell
+        this.slashMode = 'convert';
+        this.slashFrom = undefined;
+        this.slashQuery = '';
+        this.slashIndex = 0;
+        this.slashAnchorEl = anchorEl;
+        this.slashQueryEl.hidden = false;
+        this.slashInputEl.value = '';
+        this.slashInputEl.readOnly = false;
+        this.slashInputEl.tabIndex = 0;
+        this.renderSlashList();
+        this.placeSlash(undefined, anchorEl);
+        setTimeout(() => this.slashInputEl.focus(), 0);
+    }
+
+    /*
+     * Flip above the caret/anchor when placing below would spill past the
+     * bottom of the widget; clamp both axes inside it either way. Same
+     * argument updateTableBar makes for the opposite edge (a toolbar cannot
+     * cover the thing it edits) — here a menu that opens off the bottom of a
+     * 320px box is a menu nobody below the fold can reach.
+     */
+    placeSlash(pos, anchorEl) {
+        const rect = anchorEl ? anchorEl.getBoundingClientRect() : this.editor.view.coordsAtPos(pos);
+        const host = this.node.getBoundingClientRect();
+        this.slashEl.hidden = false;
+        const width = this.slashEl.offsetWidth || 280;
+        const height = this.slashEl.offsetHeight || 320;
+
+        let left = Math.round(rect.left - host.left);
+        left = Math.max(8, Math.min(left, Math.round(host.width - width - 8)));
+
+        const below = Math.round(rect.bottom - host.top + 6);
+        const above = Math.round(rect.top - host.top - height - 6);
+        const top = (below + height <= host.height - 8) ? below : Math.max(8, above);
+
+        this.slashEl.style.left = left + 'px';
+        this.slashEl.style.top = Math.max(8, top) + 'px';
+    }
+
+    /** The last four blocks used, most recent first — the empty-query "Recent" group. */
+    noteRecentBlock(key) {
+        const recent = (this.recentBlocks || []).filter(k => k !== key);
+        recent.unshift(key);
+        this.recentBlocks = recent.slice(0, 4);
+    }
 
     applySlash(key) {
-        const item = SLASH_ITEMS.find(i => i.key === key);
+        if (key === ASK_AI_SLASH_KEY) {
+            const convert = this.slashMode === 'convert';
+            const query = this.slashQuery || '';
+            const excerpt = convert
+                ? this.editor.state.doc.textBetween(this.editor.state.selection.from, this.editor.state.selection.to, ' ')
+                : '';
+            if (!convert && this.slashFrom !== undefined) {
+                this.editor.chain().focus().deleteRange({ from: this.slashFrom, to: this.editor.state.selection.from }).run();
+            }
+            // caretAnchor() only after the delete above: it reads the live
+            // selection, and the delete is what moves that selection to
+            // where the '/query' text used to be.
+            const anchor = convert ? this.slashAnchorEl : this.caretAnchor();
+            this.hideSlash();
+            openAiPrompt(this.node, anchor, {
+                title: convert ? 'Ask AI to turn this into “' + query + '”' : 'Ask AI to insert “' + query + '”',
+                excerpt,
+                placeholder: 'What should it say?'
+            }, {
+                onSubmit: (kind, instruction) => this.startChangeRequest(kind, instruction, excerpt, undefined)
+            });
+            /*
+             * openAiPrompt's textarea takes free text for a FURTHER
+             * instruction; it has no argument for a starting value, so the
+             * typed query is written in after the popover exists rather than
+             * threading it through a second, near-identical prompt surface
+             * just to accept a default.
+             */
+            const textarea = this.node.querySelector('.studio-ai-popover.prompt textarea');
+            if (textarea && query) { textarea.value = query; textarea.select(); }
+            return;
+        }
+
+        const item = BLOCKS.find(b => b.key === key);
         if (!item) { return; }
-        const chain = this.editor.chain().focus().deleteRange({ from: this.slashFrom, to: this.editor.state.selection.from });
-        if (item.defer) {
+        const convert = this.slashMode === 'convert';
+        const chain = convert
+            ? this.editor.chain().focus()
+            : this.editor.chain().focus().deleteRange({ from: this.slashFrom, to: this.editor.state.selection.from });
+        if (item.defer && !convert) {
             // The range has to go BEFORE the surface opens: a popover positioned
             // at the caret has to be positioned at where the caret ends up, and
             // an image picker that returns to a document still holding `/image`
@@ -4903,10 +5873,325 @@ class MarkdownEditorWidget extends Widget {
             chain.run();
             this.hideSlash();
             item.run(undefined, this);
+            this.noteRecentBlock(key);
             return;
         }
         item.run(chain, this).run();
         this.hideSlash();
+        this.noteRecentBlock(key);
+        if (convert) { this.updateBubble(); }
+    }
+
+    /*
+     * A LINK IN THE DOCUMENT IS CLICKABLE.
+     *
+     * `Link.configure({ openOnClick: false })` is deliberate and stays: with
+     * it true, Tiptap opens the target on every click INCLUDING the click that
+     * is only trying to put the caret inside the link text, so a link becomes
+     * uneditable. But nothing else was listening, so a rendered link did
+     * nothing at all — it looked like a link, and it was decoration.
+     *
+     * So the widget handles it, which also means the tracked-changes review
+     * page (plain HTML, no Tiptap at all) gets working links for free.
+     * Option/Alt-click is the escape hatch that still just places the caret.
+     *
+     * Routing through openerService rather than window.open: it is the one
+     * thing that knows both halves of the job — an http(s) target goes to the
+     * system browser (and in Electron that is the shell, not a bare Chromium
+     * window with node integration), and a relative target resolves against
+     * THIS document's directory and opens in the workspace, which is what a
+     * link between two files in a repository means.
+     */
+    async openLink(href) {
+        const raw = String(href || '').trim();
+        if (!raw) { return; }
+        /*
+         * A FRAGMENT IS A PLACE IN THIS DOCUMENT, not a file.
+         *
+         * `#5-success-signal` fell through to the branch below, which resolves
+         * a relative path against this document's directory — so a link to a
+         * heading looked for a FILE called "#5-success-signal" next to the
+         * file, found none, and reported "Could not open #5-success-signal".
+         * The link the editor wrote was correct; opening it was not.
+         */
+        if (raw[0] === '#') { return this.goToAnchor(raw.slice(1)); }
+        try {
+            // A bare `google.com` is what a person types and what our own
+            // autolink-free configuration preserves verbatim. Left alone it
+            // resolves as a RELATIVE PATH and the opener looks for a file of
+            // that name next to the document.
+            const looksAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+            const looksBareHost = !looksAbsolute && /^[^/\s]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(raw);
+            /*
+             * A fragment on ANOTHER file's path is stripped before resolving.
+             * `guide.md#setup` is one path and one anchor, and the workspace
+             * opener takes paths only — with the anchor left on, it looked for
+             * a file whose name ends in "#setup" and failed the same way the
+             * bare fragment above did. Opening the file at the right heading
+             * would need the other editor to accept a position; opening the
+             * file is the part that works, and it is what the link means.
+             */
+            const path = looksAbsolute || looksBareHost ? raw : raw.replace(/#.*$/, '');
+            const target = looksAbsolute ? new URI(raw)
+                : looksBareHost ? new URI('https://' + raw)
+                    : this.uri.parent.resolve(path);
+            if (!this.openerService) { return; }
+            const opener = await this.openerService.getOpener(target);
+            await opener.open(target);
+        } catch (e) {
+            console.error('[studio] could not open link', raw, e);
+            this.messageService.error('Could not open ' + raw + '.');
+        }
+    }
+
+    /*
+     * Go to one of this document's own headings.
+     *
+     * Resolved against linkTargets(), which is the same function the link
+     * editor offered the anchor from — so what the popover writes and what a
+     * click resolves cannot drift apart. A percent-encoded fragment is decoded
+     * first: this product writes them raw (`#обзор`), but a link pasted from a
+     * browser's address bar arrives encoded and means the same heading.
+     *
+     * The tracked review page is handled separately and deliberately: it is
+     * plain HTML with no Tiptap in it (see .studio-tracked-page), so there is
+     * no document position to select — the heading element itself is the
+     * destination, and matching it by its own slugged text is what keeps the
+     * review page's links working, which is the whole reason link clicks are
+     * handled by this widget rather than by the editor.
+     */
+    goToAnchor(fragment) {
+        let slug = String(fragment || '').trim();
+        if (!slug) { return; }
+        try { slug = decodeURIComponent(slug); } catch (e) { /* a literal '%' in a heading */ }
+        slug = slug.toLowerCase();
+
+        const reviewing = this.trackedEl && !this.trackedEl.hidden;
+        if (reviewing) {
+            const heading = [...this.trackedEl.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+                .find(el => qualitySlug(el.textContent) === slug);
+            if (!heading) { return this.noSuchAnchor(slug); }
+            // Guarded, like the editor branch below: scrollIntoView is the one
+            // DOM method jsdom does not implement, and a missing scroll must
+            // not throw out of a click handler.
+            if (heading.scrollIntoView) { heading.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+            return;
+        }
+
+        if (!this.editor) { return; }
+        const target = linkTargets(this.editor.state.doc).find(t => t.slug === slug);
+        if (!target) { return this.noSuchAnchor(slug); }
+        // The caret goes to the heading as well as the scroll: it is the
+        // feedback that the jump happened, and it leaves the keyboard where the
+        // reader is now rather than where they were.
+        this.editor.chain().focus().setTextSelection(target.pos + 1).run();
+        const node = this.editor.view.nodeDOM(target.pos);
+        const el = node && node.nodeType === 1 ? node : this.editor.view.domAtPos(target.pos + 1).node;
+        const box = el && el.nodeType === 1 ? el : el && el.parentElement;
+        if (box && box.scrollIntoView) { box.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    }
+
+    noSuchAnchor(slug) {
+        // warn, not error: the link is legal Markdown and may well resolve
+        // wherever this document is published. What is missing is a heading
+        // HERE, which is a fact about this file and not a failure to open it.
+        this.messageService.warn('No heading in this document matches #' + slug + '.');
+    }
+
+    // -- the link editor -----------------------------------------------------
+
+    /*
+     * THE ONE ENTRY POINT for making, repointing and removing a link: the
+     * selection toolbar's button, ⌘K, and the slash menu's `/link` row all
+     * land here. Called with a caret inside an existing link it EDITS that
+     * link, which is the other half of the reported defect — there was no way
+     * to change a link's target either.
+     */
+    openLinkEditor() {
+        if (this.readOnly || this.reviewing || !this.editor || this.mode === 'raw') { return; }
+        /*
+         * Not inside a fence. Markdown has no link there, the schema carries no
+         * marks on a code block's text, and the apply path would therefore
+         * insert the LABEL as code and drop the link — so ⌘K in a code block
+         * has to do nothing rather than something almost right. The selection
+         * toolbar already hides its mark buttons in code, for the same reason.
+         */
+        if (this.editor.isActive('codeBlock')) { return; }
+        const { state } = this.editor;
+        const range = linkRange(state);
+        const href = this.editor.getAttributes('link').href || '';
+        const text = state.doc.textBetween(range.from, range.to, ' ');
+
+        this.hideBubble();
+        this.hideSlash();
+        this.hideTableBar();
+
+        this.linkEdit = {
+            from: range.from, to: range.to, text, href,
+            targets: linkTargets(state.doc),
+            /*
+             * -1, so Enter means "use what I typed" and not "take the first
+             * heading in the file". The list is on screen from the moment the
+             * editor opens (that is how a person finds out a section is a legal
+             * target at all), and a highlighted row in a list nobody has
+             * touched would turn Enter into a link to whatever is at the top.
+             */
+            index: -1
+        };
+        this.linkTextEl.value = text;
+        this.linkHrefEl.value = href;
+        this.renderLinkTargets();
+        this.linkEl.hidden = false;
+        this.positionLinkEditor(this.rangeRect(range.from, range.to));
+        // The target is what the person came here to type; the text is already
+        // right whenever there was a selection to open this on.
+        const field = text ? this.linkHrefEl : this.linkTextEl;
+        field.focus();
+        field.select();
+    }
+
+    renderLinkTargets() {
+        if (!this.linkEdit) { return; }
+        const rows = filterLinkTargets(this.linkEdit.targets, this.linkHrefEl.value);
+        this.linkEdit.rows = rows;
+        if (this.linkEdit.index >= rows.length) { this.linkEdit.index = rows.length - 1; }
+        this.linkTargetsEl.innerHTML = linkTargetsHtml(rows, this.linkEdit.index);
+        this.linkTargetsEl.hidden = !rows.length;
+        const sel = this.linkTargetsEl.querySelector('.studio-link-target.sel');
+        if (sel && sel.scrollIntoView) { sel.scrollIntoView({ block: 'nearest' }); }
+    }
+
+    /*
+     * BELOW the text by default, where the bubble goes above it: the two are
+     * open at different times but anchored to the same words, and a form that
+     * replaces the toolbar in place would look like the toolbar changed shape.
+     * Flips above when there is no room, and clamps inside the widget on both
+     * axes — the same rule as positionBubble.
+     */
+    positionLinkEditor(box) {
+        const host = this.node.getBoundingClientRect();
+        this.linkEl.hidden = false;
+        const width = this.linkEl.offsetWidth || 300;
+        const height = this.linkEl.offsetHeight || 96;
+
+        let left = Math.round(box.left - host.left);
+        left = Math.max(8, Math.min(left, Math.round(host.width - width - 8)));
+
+        const below = Math.round(box.bottom - host.top + 8);
+        const above = Math.round(box.top - host.top - height - 8);
+        const top = below + height + 8 <= host.height ? below : Math.max(8, above);
+
+        this.linkEl.style.left = left + 'px';
+        this.linkEl.style.top = top + 'px';
+    }
+
+    /** A document range's box, from the view's own coordinates. */
+    rangeRect(from, to) {
+        const a = this.editor.view.coordsAtPos(from);
+        const b = this.editor.view.coordsAtPos(to);
+        const left = Math.min(a.left, b.left);
+        const top = Math.min(a.top, b.top);
+        return { left, top, right: Math.max(a.right, b.right), bottom: Math.max(a.bottom, b.bottom),
+            width: Math.max(a.right, b.right) - left, height: Math.max(a.bottom, b.bottom) - top };
+    }
+
+    pickLinkTarget(slug) {
+        if (!this.linkEdit) { return; }
+        this.linkHrefEl.value = '#' + slug;
+        this.commitLinkEditor();
+    }
+
+    /*
+     * APPLY. Reached from the checkmark, from Enter in either field, and from
+     * a click anywhere outside the popover — all three are "I am done", which
+     * is what the report asked for; Escape is the one that abandons.
+     */
+    commitLinkEditor() {
+        const edit = this.linkEdit;
+        if (!edit || !this.editor) { return; }
+        const href = this.linkHrefEl.value.trim();
+        const text = this.linkTextEl.value.trim();
+        this.closeLinkEditor();
+        if (this.readOnly || this.reviewing) { return; }
+
+        const range = { from: edit.from, to: Math.min(edit.to, this.editor.state.doc.content.size) };
+        if (!href) {
+            // An emptied target on an existing link is the same request as the
+            // unlink button; on a link that never existed there is nothing to
+            // apply and nothing to undo.
+            if (edit.href) { this.unlinkRange(range); }
+            return;
+        }
+        const label = text || href;
+        const chain = this.editor.chain().focus();
+        if (range.to > range.from && label === edit.text) {
+            // The words did not change, so the mark goes ON them — which keeps
+            // the bold, the code and the comment marks that are already there.
+            chain.setTextSelection(range).setLink({ href }).run();
+            return;
+        }
+        /*
+         * The text changed (or there was none), so it is replaced. That drops
+         * any other marks over the old words, which is correct: they belonged
+         * to text the author has just retyped.
+         */
+        chain.insertContentAt(range, {
+            type: 'text', text: label, marks: [{ type: 'link', attrs: { href } }]
+        }).run();
+    }
+
+    /** The crossed-link button: the words stay, the link goes, the popover closes. */
+    removeLinkFromEditor() {
+        const edit = this.linkEdit;
+        if (!edit) { return; }
+        this.closeLinkEditor();
+        if (this.readOnly || this.reviewing || !this.editor) { return; }
+        this.unlinkRange({ from: edit.from, to: Math.min(edit.to, this.editor.state.doc.content.size) });
+    }
+
+    unlinkRange(range) {
+        const chain = this.editor.chain().focus();
+        if (range.to > range.from) { chain.setTextSelection(range); }
+        chain.unsetLink().run();
+    }
+
+    closeLinkEditor() {
+        this.linkEdit = undefined;
+        if (!this.linkEl) { return; }
+        this.linkEl.hidden = true;
+        this.linkTargetsEl.innerHTML = '';
+        this.linkTargetsEl.hidden = true;
+    }
+
+    /*
+     * Escape abandons, Enter applies, the arrows walk the heading list, and Tab
+     * moves between the two fields the way it does in any form. Every one of
+     * them is stopped here: this popover sits inside the editor's own node, so
+     * an unhandled Enter reaches the ProseMirror keymap and splits the block
+     * behind it.
+     */
+    onLinkKeyDown(e) {
+        if (!this.linkEdit) { return; }
+        const rows = this.linkEdit.rows || [];
+        if (e.key === 'Escape') {
+            e.preventDefault(); e.stopPropagation();
+            this.closeLinkEditor();
+            this.editor.commands.focus();
+            return;
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault(); e.stopPropagation();
+            const picked = this.linkEdit.index >= 0 ? rows[this.linkEdit.index] : undefined;
+            if (picked) { this.pickLinkTarget(picked.slug); } else { this.commitLinkEditor(); }
+            return;
+        }
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && rows.length && e.target === this.linkHrefEl) {
+            e.preventDefault(); e.stopPropagation();
+            const step = e.key === 'ArrowDown' ? 1 : -1;
+            const next = this.linkEdit.index + step;
+            this.linkEdit.index = next < 0 ? rows.length - 1 : next >= rows.length ? 0 : next;
+            this.renderLinkTargets();
+        }
     }
 
     async importImage() {
@@ -4981,29 +6266,89 @@ class MarkdownEditorWidget extends Widget {
 
     // -- selection toolbar ---------------------------------------------------
 
-    updateBubble() {
-        if (!this.editor || this.mode === 'raw') { return this.hideBubble(); }
-        const { state } = this.editor;
-        const { from, to, empty } = state.selection;
-        if (empty || this.editor.isActive('codeBlock')) { return this.hideBubble(); }
-        const marks = [
-            ['bold', 'B', this.editor.isActive('bold')],
-            ['italic', 'I', this.editor.isActive('italic')],
-            ['code', '&lt;/&gt;', this.editor.isActive('code')],
-            ['link', 'Link', this.editor.isActive('link')]
-        ];
-        this.bubbleEl.innerHTML = marks.map(([k, label, active]) =>
-            '<button class="studio-bubble-btn' + (active ? ' on' : '') + '" data-mark="' + k + '">' + label + '</button>').join('') +
-            '<span class="studio-bubble-sep"></span>' +
-            '<button class="studio-bubble-btn comment" data-mark="comment">Comment</button>' +
-            '<button class="studio-bubble-btn ai" data-mark="ai" title="Ask AI to edit this selection">' + ICONS.spark + ' Ask AI</button>';
-        const start = this.editor.view.coordsAtPos(from);
-        const end = this.editor.view.coordsAtPos(to);
+    /** The block selector's label: the selection's block type, or "Mixed" when it spans more than one. */
+    currentBlockLabel() {
+        const { $from, $to } = this.editor.state.selection;
+        const a = blockKeyAt($from);
+        const b = blockKeyAt($to);
+        if (a !== b) { return 'Mixed'; }
+        const block = BLOCKS.find(x => x.key === a);
+        return block ? block.label : 'Text';
+    }
+
+    /*
+     * The selection's own bounding rectangle, not the average of its two
+     * endpoints -- averaging start.left and end.left puts the toolbar in the
+     * middle of nowhere whenever the selection spans more than one line.
+     * The live DOM Selection mirrors the editor's own selection while the
+     * ProseMirror view is focused, so its Range gives the true box; the
+     * coordsAtPos union below is only a fallback for a selection set
+     * programmatically, with nothing in document.getSelection() yet.
+     */
+    selectionBoundingRect(from, to) {
+        const domSelection = window.getSelection && window.getSelection();
+        if (domSelection && domSelection.rangeCount) {
+            const rect = domSelection.getRangeAt(0).getBoundingClientRect();
+            if (rect && (rect.width || rect.height)) { return rect; }
+        }
+        return this.rangeRect(from, to);
+    }
+
+    /*
+     * Above with an 8px gap; below when above would leave the widget. Both
+     * axes clamp inside the widget -- the old rule never clamped `top` at
+     * all, so a selection near the top of the page in Split mode pushed the
+     * toolbar out of it.
+     */
+    positionBubble(box) {
         const host = this.node.getBoundingClientRect();
+        const wasHidden = this.bubbleEl.hidden;
         this.bubbleEl.hidden = false;
         const width = this.bubbleEl.offsetWidth || 320;
-        this.bubbleEl.style.left = Math.max(8, Math.round((start.left + end.left) / 2 - host.left - width / 2)) + 'px';
-        this.bubbleEl.style.top = Math.round(start.top - host.top - 46) + 'px';
+        const height = this.bubbleEl.offsetHeight || 32;
+
+        let left = Math.round(box.left + box.width / 2 - host.left - width / 2);
+        left = Math.max(8, Math.min(left, Math.round(host.width - width - 8)));
+
+        const above = Math.round(box.top - host.top - height - 8);
+        const below = Math.round(box.bottom - host.top + 8);
+        const top = above >= 8 ? above : Math.min(below, Math.round(host.height - height - 8));
+
+        this.bubbleEl.style.left = left + 'px';
+        this.bubbleEl.style.top = Math.max(8, top) + 'px';
+
+        /*
+         * The entrance rise/fade plays once, on the hidden -> visible edge
+         * only. Every later reposition this same tick — extending the
+         * selection a word at a time — is a plain style write with no
+         * transition on left/top, so the toolbar tracks the pointer instead
+         * of visibly chasing it.
+         */
+        if (wasHidden) {
+            this.bubbleEl.classList.remove('studio-bubble-in');
+            requestAnimationFrame(() => this.bubbleEl.classList.add('studio-bubble-in'));
+        }
+    }
+
+    updateBubble() {
+        if (!this.editor || this.mode === 'raw') { return this.hideBubble(); }
+        // The link editor is anchored to the same words and is a form: putting
+        // the toolbar back over it would cover the fields being typed in.
+        if (this.linkEl && !this.linkEl.hidden) { return; }
+        const { state } = this.editor;
+        const { from, to, empty } = state.selection;
+        if (empty) { return this.hideBubble(); }
+        const box = this.selectionBoundingRect(from, to);
+        if (!box || (!box.width && !box.height)) { return this.hideBubble(); }
+
+        const locked = this.readOnly || this.reviewing;
+        const inCode = this.editor.isActive('codeBlock');
+        const inCell = !!cellContext(state);
+        const marks = MARK_DEFS.filter(m => !!state.schema.marks[m.key])
+            .map(m => ({ ...m, active: this.editor.isActive(m.key) }));
+
+        this.bubbleEl.innerHTML = bubbleButtonsHtml({ locked, inCode, inCell, blockLabel: this.currentBlockLabel(), marks });
+        this.positionBubble(box);
     }
 
     /*
@@ -5015,6 +6360,7 @@ class MarkdownEditorWidget extends Widget {
     hideBubble() {
         if (!this.bubbleEl) { return; }
         this.bubbleEl.hidden = true;
+        this.bubbleEl.classList.remove('studio-bubble-in');
         this.bubbleEl.innerHTML = '';
     }
 
@@ -5127,6 +6473,19 @@ class MarkdownEditorWidget extends Widget {
             this.save();
             return;
         }
+        /*
+         * ⌘K, which the selection toolbar's tooltip had been promising since it
+         * was written and nothing bound. Claimed here rather than in the
+         * ProseMirror keymap for the same reason ⌘S is claimed at the document
+         * level: Theia's keybinding service listens there too, and it treats
+         * ⌘K as a chord prefix.
+         */
+        if (meta && !e.altKey && key === 'k') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.openLinkEditor();
+            return;
+        }
         if (meta && e.shiftKey && e.key.toLowerCase() === 'z' && this.decisionJournal.length && this.reviewing) {
             e.preventDefault();
             this.undoLastDecision();
@@ -5142,12 +6501,57 @@ class MarkdownEditorWidget extends Widget {
      * matches are required to live inside this widget: either fix alone would
      * do, but the pair means a future attribute name cannot resurrect it.
      */
+    /*
+     * The current selection with its outer whitespace removed, or undefined
+     * when there is nothing to trim.
+     *
+     * Restricted to a selection inside ONE text block, because that is the
+     * only case where offsets into `textBetween` and document positions are
+     * the same number: across blocks textBetween inserts its own separators
+     * and the arithmetic below would land the selection in the wrong place.
+     * A single dragged line is the reported case and is always same-parent.
+     */
+    trimmedMarkRange() {
+        if (!this.editor) { return undefined; }
+        const { state } = this.editor;
+        const { from, to, empty } = state.selection;
+        if (empty) { return undefined; }
+        const $from = state.doc.resolve(from);
+        const $to = state.doc.resolve(to);
+        if (!$from.sameParent($to)) { return undefined; }
+        const text = state.doc.textBetween(from, to);
+        const lead = text.length - text.replace(/^\s+/, '').length;
+        const trail = text.length - text.replace(/\s+$/, '').length;
+        if (!lead && !trail) { return undefined; }
+        const start = from + lead;
+        const end = to - trail;
+        return end > start ? { from: start, to: end } : undefined;
+    }
+
     closestIn(target, selector) {
         const found = target.closest ? target.closest(selector) : undefined;
         return found && this.node.contains(found) ? found : undefined;
     }
 
     onClick(e) {
+        /*
+         * A link opens, FIRST, before any of the toolbar/selection logic
+         * below — a click on a link is not a click into the prose, and
+         * letting the branches below run would collapse the selection and
+         * dismiss the toolbar on the way to opening a new tab anyway.
+         *
+         * Both surfaces: the live ProseMirror document and the read-only
+         * tracked review page. Option/Alt-click falls through to normal caret
+         * placement, which is the way to get INTO a link's text to edit it.
+         */
+        const anchor = this.closestIn(e.target, 'a[href]');
+        if (anchor && !e.altKey && this.closestIn(e.target, '.studio-doc-scroll')) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.openLink(anchor.getAttribute('href'));
+            return;
+        }
+
         /*
          * Any click outside the rendered text dismisses the selection toolbar.
          *
@@ -5156,11 +6560,47 @@ class MarkdownEditorWidget extends Widget {
          * on the rail and the topbar, hanging over the document long after the
          * user had moved on. The toolbar's own buttons are excluded, since
          * they act ON that selection.
+         *
+         * TWO conditions, and the second one is a fix: this branch used to test
+         * `e.target` against the ProseMirror node alone, and a click event
+         * produced by a DRAG targets the common ancestor of where the pointer
+         * went down and where it came up. .studio-doc-page carries the page's
+         * 32px side padding, so selecting a line INCLUDING its first character —
+         * which means starting the drag a few pixels left of that character, in
+         * the padding — made that ancestor .studio-doc-page, outside the editor
+         * node, and this branch dismissed the toolbar in the same tick that
+         * updateBubble had just shown it. Selecting the same line from its
+         * second character worked, which is the shape the bug was reported in.
+         *
+         * So containment is tested against the whole document surface, and the
+         * live editor selection decides whether the toolbar still has a subject.
+         * A click that collapses the selection still dismisses it (the editor's
+         * own selection goes empty); a click on product chrome still dismisses
+         * it (outside the surface); a drag that merely started in the margin
+         * does not.
+         *
+         * `.studio-slash` is excluded on the same terms as `.studio-bubble`
+         * itself: when the block selector is open, its popup is logically
+         * part of the bubble (it was opened from a button inside it), not a
+         * click that left the toolbar. Without this, choosing a row in that
+         * popup — which sits outside .studio-doc-scroll, as a sibling of
+         * .studio-doc-body — dismissed the bubble in the same tick the row
+         * click was still being handled below.
          */
         if (this.bubbleEl && !this.bubbleEl.hidden &&
-            !this.closestIn(e.target, '.studio-bubble') &&
-            !(this.editor && this.editor.view.dom.contains(e.target))) {
-            this.hideBubble();
+            !this.closestIn(e.target, '.studio-bubble') && !this.closestIn(e.target, '.studio-slash')) {
+            const onSurface = !!this.closestIn(e.target, '.studio-doc-scroll');
+            const hasSubject = !!this.editor && !this.editor.state.selection.empty;
+            if (!onSurface || !hasSubject) { this.hideBubble(); }
+        }
+
+        // The block selector, on the same "outside dismisses" rule as the
+        // bubble above — but scoped to convert mode, so a click elsewhere
+        // while the plain '/' menu is open does not fight updateSlash's own
+        // caret-driven dismissal.
+        if (this.slashEl && !this.slashEl.hidden && this.slashMode === 'convert' &&
+            !this.closestIn(e.target, '.studio-slash') && !this.closestIn(e.target, '[data-bsel]')) {
+            this.hideSlash();
         }
 
         // A click inside a composer must never trigger a re-render: rebuilding
@@ -5193,8 +6633,30 @@ class MarkdownEditorWidget extends Widget {
         const tableCmd = this.closestIn(e.target, '[data-tcmd]');
         if (tableCmd) { e.preventDefault(); this.runTableCommand(tableCmd.getAttribute('data-tcmd')); return; }
 
+        const bsel = this.closestIn(e.target, '[data-bsel]');
+        if (bsel) {
+            e.preventDefault();
+            // Toggle: clicking the button that opened the popup closes it,
+            // the same as the mode segment and the slot cluster elsewhere in
+            // this handler.
+            if (this.slashMode === 'convert' && this.slashEl && !this.slashEl.hidden) { this.hideSlash(); }
+            else { this.openBlockSelector(bsel); }
+            return;
+        }
+
         const slash = this.closestIn(e.target, '[data-slash]');
         if (slash) { e.preventDefault(); this.applySlash(slash.getAttribute('data-slash')); return; }
+
+        const linkTarget = this.closestIn(e.target, '[data-link-target]');
+        if (linkTarget) { e.preventDefault(); this.pickLinkTarget(linkTarget.getAttribute('data-link-target')); return; }
+
+        const linkAct = this.closestIn(e.target, '[data-link]');
+        if (linkAct) {
+            e.preventDefault();
+            if (linkAct.getAttribute('data-link') === 'remove') { this.removeLinkFromEditor(); }
+            else { this.commitLinkEditor(); }
+            return;
+        }
 
         const mark = this.closestIn(e.target, '[data-mark]');
         if (mark) {
@@ -5202,13 +6664,37 @@ class MarkdownEditorWidget extends Widget {
             const k = mark.getAttribute('data-mark');
             if (k === 'comment') { this.createThreadFromSelection(); return; }
             if (k === 'ai') { this.askAiForSelection(mark); return; }
-            if (k === 'link') {
-                const href = window.prompt('Link URL', this.editor.getAttributes('link').href || 'https://');
-                if (href === null) { return; }
-                if (!href) { this.editor.chain().focus().unsetLink().run(); } else { this.editor.chain().focus().setLink({ href }).run(); }
-                return;
-            }
-            this.editor.chain().focus()['toggle' + k[0].toUpperCase() + k.slice(1)]().run();
+            /*
+             * P0: this document's mutating buttons were rendered regardless
+             * of readOnly/reviewing, and Tiptap's CommandManager does not
+             * gate a command on isEditable (verified directly against
+             * @tiptap/core/dist/index.cjs — see the report) — so clicking
+             * Bold on a document the fidelity gate locked actually mutated
+             * it, marked it dirty, and autosave wrote the mutation. updateBubble
+             * now omits these buttons entirely when locked, which is the real
+             * fix; this is the second half of it; belt-and-braces in case a
+             * button somehow survives in the DOM past a state change mid-click.
+             */
+            if (this.readOnly || this.reviewing) { return; }
+            if (k === 'link') { this.openLinkEditor(); return; }
+            /*
+             * The mark goes on the words, not on the space after them.
+             *
+             * A drag-selected line almost always ends with a trailing space,
+             * and CommonMark forbids a closing `**` preceded by whitespace —
+             * so remark had to emit the space as an HTML entity to keep the
+             * emphasis legal, and `**Some **starting` came back out of the
+             * editor as `**Some&#x20;**&#x73;tarting`. Correct, unreadable,
+             * and the source of the stray `&#x20;` in saved documents.
+             *
+             * Every editor trims the range for exactly this reason; doing it
+             * here means the fix covers all five marks and the keyboard
+             * shortcuts that route through them.
+             */
+            const trimmed = this.trimmedMarkRange();
+            const chain = this.editor.chain().focus();
+            if (trimmed) { chain.setTextSelection(trimmed); }
+            chain['toggle' + k[0].toUpperCase() + k.slice(1)]().run();
             this.updateBubble();
             return;
         }
@@ -5359,25 +6845,47 @@ class MarkdownEditorWidget extends Widget {
 }
 
 // keyboard for the slash menu has to sit on the widget node because ProseMirror
-// swallows keydown inside the editable area
+// swallows keydown inside the editable area, and the block selector's own
+// search input needs the same interception -- see the header note on
+// .studio-slash for why one popup serves both.
 function attachSlashKeys(widget) {
     widget.node.addEventListener('keydown', e => {
-        if (!widget.slashItems || widget.slashEl.hidden) { return; }
+        if (!widget.slashItems || !widget.slashEl || widget.slashEl.hidden) { return; }
         if (e.key === 'Escape') { widget.hideSlash(); e.preventDefault(); return; }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
             const n = widget.slashItems.length;
             widget.slashIndex = (widget.slashIndex + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-            [...widget.slashEl.children].forEach((c, i) => c.classList.toggle('sel', i === widget.slashIndex));
+            widget.renderSlashList();
+            const sel = widget.slashListEl.querySelector('.studio-slash-item.sel');
+            /*
+             * `block: 'nearest'`, not the default `'start'` — arrowing one
+             * row past the bottom of the 320px box should reveal exactly
+             * that row, not re-centre the whole list and send the reader's
+             * eye hunting for where the selection went. Before this the
+             * ninth item in a taller-than-the-box menu was reachable by
+             * keyboard but never scrolled into view at all.
+             */
+            if (sel) { sel.scrollIntoView({ block: 'nearest' }); }
             return;
         }
-        if (e.key === 'Enter') {
+        // Tab applies like Enter — muscle memory from every other block
+        // editor, and there is nothing else in this popup for Tab to do.
+        if (e.key === 'Enter' || e.key === 'Tab') {
             e.preventDefault();
-            widget.applySlash(widget.slashItems[widget.slashIndex].key);
+            const row = widget.slashItems[widget.slashIndex];
+            if (row) { widget.applySlash(row.block.key); }
         }
     }, true);
 }
 
 const EDITOR_CSS = require('./editor-css').EDITOR_CSS;
 
-module.exports = { MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, SLASH_ITEMS, buildExtensions };
+module.exports = {
+    MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, buildExtensions,
+    // Pure markup builders, exported for blocks-toolbar.test.js — see the
+    // comment above bubbleButtonsHtml for why these are free functions
+    // rather than only reachable through a live widget instance.
+    bubbleButtonsHtml, slashListHtml, slashEmptyHtml, blockKeyAt, MARK_DEFS, ASK_AI_SLASH_KEY,
+    linkEditorHtml, linkTargets, filterLinkTargets, linkTargetsHtml, linkRange
+};

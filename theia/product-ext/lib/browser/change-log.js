@@ -321,9 +321,13 @@ class ChangeLog {
      * mode revises this record on every pause, so a second one per author would
      * put a card on the rail per keystroke burst.
      *
-     * `proposedBody === documentBody` withdraws it. An author who undoes their
-     * own suggestion back to the document has no suggestion, and leaving an
-     * empty proposal open would put a card with nothing in it on the rail.
+     * An empty diff between the proposal and the document withdraws it. An
+     * author who undoes their own suggestion back to the document has no
+     * suggestion, and leaving one open would put a card with nothing in it on
+     * the rail. This is intentionally NOT `proposedBody === documentBody`: a
+     * round-trip through re-wrapping or re-serialisation can change the exact
+     * string without changing a single line the reviewer would see, which used
+     * to leave an unkillable card behind.
      */
     async upsert(docUri, author, { documentBody, proposedBody, title, origin, instruction, commentId, inReplyTo }) {
         const record = authorRecord(author);
@@ -331,7 +335,7 @@ class ChangeLog {
         const open = file.proposals.find(p => p.status !== 'withdrawn');
         const now = new Date().toISOString();
 
-        if (proposedBody === documentBody) {
+        if (diffHunks(documentBody, proposedBody).hunks.length === 0) {
             if (!open) { return undefined; }
             file.proposals = file.proposals.filter(p => p !== open);
             await this.saveFile(docUri, record, file);

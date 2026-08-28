@@ -373,8 +373,8 @@ const AI_MENU_CSS = `
   padding:6px 10px; border-radius:6px; border:0; background:transparent; cursor:pointer;
   color:var(--studio-text); font:500 12px/1.3 inherit;
 }
-.studio-ai-popover button:hover { background:var(--studio-surface); color:var(--studio-amber); }
-.studio-ai-popover button:focus-visible { outline:2px solid var(--studio-amber); outline-offset:-2px; }
+.studio-ai-popover button:hover { background:var(--studio-surface); color:var(--studio-accent); }
+.studio-ai-popover button:focus-visible { outline:2px solid var(--studio-accent); outline-offset:-2px; }
 
 .studio-ai-popover.prompt { width:282px; gap:7px; transform-origin:top left; }
 .studio-ai-title { font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--studio-muted); padding:1px 2px; }
@@ -392,7 +392,7 @@ const AI_MENU_CSS = `
 }
 .studio-ai-row { display:flex; gap:5px; }
 .studio-ai-row button {
-  flex:1; text-align:center; background:var(--studio-amber); color:#fff; font-weight:600; padding:6px 8px;
+  flex:1; text-align:center; background:var(--studio-accent); color:#fff; font-weight:600; padding:6px 8px;
 }
 .studio-ai-row button:hover { background:var(--studio-accent-hover); color:#fff; }
 .studio-ai-secondary { font-size:11.5px !important; color:var(--studio-muted) !important; text-align:center !important; }

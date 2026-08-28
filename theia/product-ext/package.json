@@ -18,6 +18,24 @@
       "backend": "lib/node/flow-backend"
     }
   ],
+  "scripts": {
+    "build:engine": "node build/build-engine.mjs",
+    "test:markdown": "node test/markdown-roundtrip.test.js",
+    "test:blocks": "node test/blocks-ranking.test.js",
+    "test:blocks-toolbar": "node test/blocks-toolbar.test.js",
+    "test:schema": "node test/schema-coverage.test.js",
+    "test:rewrap": "node test/md-rewrap.test.js",
+    "test:suggestion": "node test/suggestion-review.test.js",
+    "test": "node test/markdown-roundtrip.test.js && node test/markdown-gate.test.js && node test/math-repair.test.js && node test/serialize-escaping.test.js && node test/blocks-ranking.test.js && node test/blocks-toolbar.test.js && node test/block-commands.test.js && node test/node-views.test.js && node test/code-block.test.js && node test/link-editor.test.js && node test/schema-coverage.test.js && node test/integration.test.js && node test/md-rewrap.test.js && node test/suggestion-review.test.js",
+    "test:markdown-gate": "node test/markdown-gate.test.js",
+    "test:node-views": "node test/node-views.test.js",
+    "test:code-block": "node test/code-block.test.js",
+    "test:link-editor": "node test/link-editor.test.js",
+    "test:math-repair": "node test/math-repair.test.js",
+    "test:serialize": "node test/serialize-escaping.test.js",
+    "test:block-commands": "node test/block-commands.test.js",
+    "test:integration": "node test/integration.test.js"
+  },
   "dependencies": {
     "@tiptap/core": "^2.11.5",
     "@tiptap/extension-code": "^2.11.5",
@@ -33,6 +51,21 @@
     "@tiptap/pm": "^2.11.5",
     "@tiptap/starter-kit": "^2.11.5",
     "flicker-dot": "^0.1.4",
-    "mermaid": "^11.16.1"
+    "mermaid": "^11.16.1",
+    "mdast-util-highlight-mark": "^1.2.2",
+    "mdast-util-to-string": "^4.0.0",
+    "micromark-extension-highlight-mark": "^1.2.0",
+    "unist-util-visit": "^5.0.0",
+    "remark-directive": "^3.0.1",
+    "remark-frontmatter": "^5.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "unified": "^11.0.5",
+    "prismjs": "^1.30.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }

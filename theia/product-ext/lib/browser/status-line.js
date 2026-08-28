@@ -124,17 +124,17 @@ const STATUS_LINE_CSS = `
 }
 #theia-statusBar .element.hasCommand:hover,
 #theia-statusBar .element[onclick]:hover { background: var(--studio-surface-raised); color: var(--studio-text); cursor: pointer; }
-#theia-statusBar .element:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: -2px; }
+#theia-statusBar .element:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 /* The terminal toggle: a glyph, and lit while its panel is open so the button
    states which way it will act. Same 22px box as every other entry. */
 #theia-statusBar .element.studio-status-terminal { padding: 0 6px; color: var(--studio-muted) !important; }
 #theia-statusBar .element.studio-status-terminal:hover { color: var(--studio-text) !important; }
 #theia-statusBar .element.studio-status-terminal.is-open { color: var(--studio-text) !important; background: var(--studio-surface-raised); }
 /* The one field that is a count rather than a fact reads as a count. */
-#theia-statusBar .element.studio-status-pending { color: var(--studio-amber); font-weight: 600; }
+#theia-statusBar .element.studio-status-pending { color: var(--studio-accent); font-weight: 600; }
 #theia-statusBar .element.studio-status-saving.state-conflict,
 #theia-statusBar .element.studio-status-saving.state-error { color: var(--studio-danger) !important; font-weight: 650; }
-#theia-statusBar .element.studio-status-saving.state-dirty { color: var(--studio-amber) !important; }
+#theia-statusBar .element.studio-status-saving.state-dirty { color: var(--studio-accent) !important; }
 /* The settings field is a glyph, not a word: it sits immediately after the
    project name it configures, and a labelled "Project settings" field would have
    said "project" twice inside 200px. The codicon carries the meaning and the

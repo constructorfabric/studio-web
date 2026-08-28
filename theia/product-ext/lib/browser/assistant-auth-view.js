@@ -306,8 +306,8 @@ const ASSISTANT_AUTH_CSS = `
 .studio-assistant-head { display: flex; align-items: baseline; gap: 10px; }
 .studio-assistant-name { font-weight: 600; }
 .studio-assistant-state { font-size: 12px; color: var(--studio-muted); }
-.studio-assistant-state.tone-ok { color: var(--studio-success, var(--studio-text)); }
-.studio-assistant-state.tone-warn { color: var(--studio-amber); }
+.studio-assistant-state.tone-ok { color: var(--studio-verified); }
+.studio-assistant-state.tone-warn { color: var(--studio-accent); }
 .studio-assistant-actions { margin-top: 8px; display: flex; gap: 8px; }
 .studio-assistant-key { margin-top: 8px; }
 .studio-assistant-key > summary { font-size: 12px; color: var(--studio-muted); cursor: pointer; }
@@ -317,7 +317,7 @@ const ASSISTANT_AUTH_CSS = `
 /* The code is the thing the person has to carry to another device, so it is
    the largest text on the page and selectable as one word. */
 .studio-assistant-code {
-  margin: 0 0 8px; font-family: var(--studio-mono, ui-monospace, monospace);
+  margin: 0 0 8px; font-family: var(--studio-mono);
   font-size: 22px; letter-spacing: 2px; font-weight: 650; user-select: all;
 }
 .studio-assistant-link { font-size: 13px; }
@@ -327,7 +327,7 @@ const ASSISTANT_AUTH_CSS = `
 .studio-assistant-wait .studio-loading-caption { font-size: 11.5px; }
 .studio-assistant-output {
   margin: 8px 0; padding: 8px; max-height: 140px; overflow: auto;
-  background: var(--studio-surface-sunken, var(--studio-surface-raised));
+  background: var(--studio-surface-sunken);
   border-radius: 6px; font-size: 11px; white-space: pre-wrap; color: var(--studio-muted);
 }
 `;

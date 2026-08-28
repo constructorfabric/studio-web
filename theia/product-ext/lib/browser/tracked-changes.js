@@ -51,7 +51,7 @@
  * marks on its own.
  */
 
-const { splitLines } = require('./diff');
+const { splitLines, coalesceParts } = require('./diff');
 const { ICONS } = require('./icons');
 const { avatarHtml } = require('./comment-ui');
 const { authorRecord } = require('./identity');
@@ -104,59 +104,6 @@ function markLine(open, mid, end, id, line) {
     // renders as an empty tag that the reader cannot see but the parser can.
     if (!rest) { return line; }
     return prefix + open + id + mid + rest + end;
-}
-
-/*
- * Coalescing, and why this style needs it and the diff queue does not.
- *
- * diff.js's word diff is a plain LCS over tokens, so on a rewritten clause it
- * finds every coincidental match. "tell you too much" → "tell, i want to
- * change this" matches the spaces, and `i` against the `i` inside nothing, and
- * comes back as eight alternating fragments:
- *
- *   tell +[,] -[you]+[i] -[too]+[want] -[much]+[to change this] about
- *
- * In the queue's two stacked monospace rows that is fine — the reader has the
- * whole old line and the whole new line and the emphasis only points at the
- * differences. Inline, on one line, it is unreadable: the eye has to reassemble
- * two sentences that have been shuffled together.
- *
- * So for this surface, a common run too short to be a word in its own right is
- * treated as part of the change on BOTH sides, which collapses the alternation
- * into one deletion followed by one insertion:
- *
- *   tell -[ you too much]+[, i want to change this] about
- *
- * That is what Word and Docs show, and it is what the screenshot this style was
- * asked for shows. It changes no decision — the hunk, its id and its two bodies
- * are untouched; only where the marks fall inside one line changes.
- */
-const BRIDGE_MAX = 3;
-
-function coalesceParts(parts) {
-    const bridge = parts.map((part, i) =>
-        part.type === '=' && part.text.trim().length <= BRIDGE_MAX &&
-        i > 0 && i < parts.length - 1 &&
-        parts[i - 1].type !== '=' && parts[i + 1].type !== '=');
-
-    const out = [];
-    let removed = '', added = '';
-    const flush = () => {
-        if (removed) { out.push({ type: '-', text: removed }); }
-        if (added) { out.push({ type: '+', text: added }); }
-        removed = ''; added = '';
-    };
-    parts.forEach((part, i) => {
-        if (part.type === '=' && !bridge[i]) {
-            flush();
-            out.push(part);
-            return;
-        }
-        if (part.type === '=') { removed += part.text; added += part.text; return; }
-        if (part.type === '-') { removed += part.text; } else { added += part.text; }
-    });
-    flush();
-    return out;
 }
 
 /**
@@ -573,7 +520,7 @@ const AUTHOR_SLOTS = ['solid', 'dashed', 'dotted', 'double'];
 /*
  * Colour is borrowed, not invented.
  *
- * The diff queue already taught this product that --studio-amber is the
+ * The diff queue already taught this product that --studio-accent is the
  * incoming side (and the accept control) and --studio-danger is the outgoing
  * side (and the reject control). A reviewer who switches a project to this
  * style should not have to learn a second colour language for the same two
@@ -611,8 +558,8 @@ const TRACKED_CSS = `
   text-decoration: underline;
   text-decoration-thickness: 1.5px;
   text-underline-offset: 2px;
-  color: var(--studio-amber);
-  background: color-mix(in srgb, var(--studio-amber) 12%, transparent);
+  color: var(--studio-accent);
+  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
 }
 /* A mark whose whole content is a space has no glyph to strike through, and
    deleting a stray space is the single most common edit an assistant makes to
@@ -621,7 +568,7 @@ const TRACKED_CSS = `
    a multi-word deletion still has to break across lines like the text it is
    part of. */
 .studio-tc { white-space: pre-wrap; }
-.studio-tc-settled { background: color-mix(in srgb, var(--studio-amber) 7%, transparent); }
+.studio-tc-settled { background: color-mix(in srgb, var(--studio-accent) 7%, transparent); }
 .studio-tc-settled.rejected { background: color-mix(in srgb, var(--studio-danger) 6%, transparent); opacity: .75; }
 .studio-tc.current, .studio-tc[data-current="true"] {
   box-shadow: 0 0 0 3px var(--studio-focus); border-radius: 3px;
@@ -632,12 +579,12 @@ const TRACKED_CSS = `
   border: 1px solid var(--studio-line); border-radius: 10px; background: var(--studio-surface);
   padding: 9px 10px 10px; margin-bottom: 8px; cursor: pointer;
 }
-.studio-change-card:hover { border-color: color-mix(in srgb, var(--studio-amber) 40%, var(--studio-line)); }
+.studio-change-card:hover { border-color: color-mix(in srgb, var(--studio-accent) 40%, var(--studio-line)); }
 .studio-change-card.current {
-  border-color: var(--studio-amber); box-shadow: 0 0 0 3px var(--studio-focus);
+  border-color: var(--studio-accent); box-shadow: 0 0 0 3px var(--studio-focus);
 }
 .studio-change-card.decided { opacity: .62; }
-.studio-change-card.decided.accepted { border-color: color-mix(in srgb, var(--studio-amber) 55%, var(--studio-line)); }
+.studio-change-card.decided.accepted { border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-line)); }
 .studio-change-card.decided.rejected { border-color: color-mix(in srgb, var(--studio-danger) 45%, var(--studio-line)); }
 .studio-change-head { display: flex; align-items: center; gap: 8px; }
 .studio-change-who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
@@ -645,7 +592,7 @@ const TRACKED_CSS = `
 .studio-change-who time { font-size: 10.5px; color: var(--studio-muted); font-variant-numeric: tabular-nums; }
 .studio-change-spacer { flex: 1; }
 .studio-change-verdict { font-size: 11px; font-weight: 650; color: var(--studio-muted); }
-.studio-change-card.accepted .studio-change-verdict { color: var(--studio-amber); }
+.studio-change-card.accepted .studio-change-verdict { color: var(--studio-accent); }
 .studio-change-card.rejected .studio-change-verdict { color: var(--studio-danger); }
 .studio-change-action { margin: 9px 0 3px; font-size: 12.5px; font-weight: 640; }
 .studio-change-detail { font-size: 12px; line-height: 1.55; color: var(--studio-muted); }
@@ -659,10 +606,10 @@ const TRACKED_CSS = `
    card with a mark without clicking either. Left edge rather than a full border:
    the border already carries decided/current state and cannot carry both. */
 .studio-change-card { border-left-width: 3px; }
-.studio-change-card[data-slot="0"] { border-left-color: var(--studio-amber); }
-.studio-change-card[data-slot="1"] { border-left-style: dashed; border-left-color: var(--studio-amber); }
-.studio-change-card[data-slot="2"] { border-left-style: dotted; border-left-color: var(--studio-amber); }
-.studio-change-card[data-slot="3"] { border-left-style: double; border-left-color: var(--studio-amber); }
+.studio-change-card[data-slot="0"] { border-left-color: var(--studio-accent); }
+.studio-change-card[data-slot="1"] { border-left-style: dashed; border-left-color: var(--studio-accent); }
+.studio-change-card[data-slot="2"] { border-left-style: dotted; border-left-color: var(--studio-accent); }
+.studio-change-card[data-slot="3"] { border-left-style: double; border-left-color: var(--studio-accent); }
 
 /* -- a suggestion answering another suggestion -- */
 .studio-change-card.reply { margin-left: 14px; }
@@ -682,7 +629,7 @@ const TRACKED_CSS = `
   margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--studio-line);
   font-size: 11px; line-height: 1.5; color: var(--studio-muted);
 }
-.studio-change-card.mine { background: color-mix(in srgb, var(--studio-amber) 4%, var(--studio-surface)); }
+.studio-change-card.mine { background: color-mix(in srgb, var(--studio-accent) 4%, var(--studio-surface)); }
 
 /* -- the empty state, and the mode's own banner -- */
 .studio-suggesting-note {

@@ -13,7 +13,9 @@
  */
 
 const { CodeBlock } = require('@tiptap/extension-code-block');
+const { TextSelection } = require('@tiptap/pm/state');
 const { showLoading } = require('./loader');
+const { LANGUAGE_MENU, grammarFor, detectLanguage } = require('./code-highlight');
 
 const MERMAID_LANGUAGES = ['mermaid'];
 
@@ -106,6 +108,27 @@ function button(label, title) {
  * told to ignore — which is what `ignoreMutation` below is for. Without it,
  * every SVG the renderer injects would look like a user edit.
  */
+/*
+ * ONE datalist for every code block in the session.
+ *
+ * A <datalist> per node view would put thirty-nine <option>s into the document
+ * for each fence, and they are identical. The element is referenced by id, so
+ * one shared list is what the platform expects here.
+ */
+const LANGUAGE_LIST_ID = 'studio-code-languages';
+
+function ensureLanguageList() {
+    if (document.getElementById(LANGUAGE_LIST_ID)) { return; }
+    const list = document.createElement('datalist');
+    list.id = LANGUAGE_LIST_ID;
+    for (const name of LANGUAGE_MENU) {
+        const option = document.createElement('option');
+        option.value = name;
+        list.appendChild(option);
+    }
+    document.body.appendChild(list);
+}
+
 function mermaidNodeView({ node, editor, getPos }) {
     const dom = document.createElement('div');
     dom.className = 'studio-codeblock';
@@ -120,10 +143,49 @@ function mermaidNodeView({ node, editor, getPos }) {
     const diagramBtn = button('Diagram', 'Show the rendered diagram');
     const copyBtn = button('Copy SVG', 'Copy the rendered diagram as SVG');
     tools.append(diagramBtn, sourceBtn, copyBtn);
-    head.append(name, tools);
+
+    /*
+     * THE LANGUAGE FIELD, and why a code block needs one at all.
+     *
+     * Syntax highlighting is driven entirely by the fence's info string, and
+     * before this there was no way to set it: `/code` and the block selector
+     * both produce a fence with no language, the head was hidden for anything
+     * that was not Mermaid, and Raw mode was the only place a language could be
+     * typed. So a code block created in the editor could never be highlighted,
+     * which made the highlighting look broken rather than unconfigured.
+     *
+     * Free text over a <select>: the grammar set is 106 names deep and a
+     * document may legitimately name one that is not in the picker at all
+     * (`text`, a language we do not ship, a made-up tag someone's toolchain
+     * reads). The datalist suggests; it does not restrict.
+     */
+    ensureLanguageList();
+    const lang = document.createElement('input');
+    lang.className = 'studio-code-lang';
+    lang.setAttribute('list', LANGUAGE_LIST_ID);
+    lang.setAttribute('spellcheck', 'false');
+    lang.setAttribute('autocomplete', 'off');
+    lang.placeholder = 'plain text';
+    lang.title = 'Language for syntax highlighting';
+
+    const copyCode = button('Copy', 'Copy this code');
+    const codeTools = document.createElement('div');
+    codeTools.className = 'studio-diagram-tools';
+    codeTools.append(copyCode);
+
+    head.append(name, lang, tools, codeTools);
 
     const pre = document.createElement('pre');
     const code = document.createElement('code');
+    /*
+     * No spelling underlines inside code. The editable region is one
+     * contenteditable for the whole document, so the browser's spellchecker
+     * treats a fence like prose and dots every identifier in it -- `numpy` came
+     * back from the report underlined in red, which reads as an error in the
+     * code rather than as a dictionary miss. setAttribute rather than the
+     * property: jsdom implements only the attribute, and the tests read it.
+     */
+    code.setAttribute('spellcheck', 'false');
     pre.appendChild(code);
 
     const preview = document.createElement('div');
@@ -198,15 +260,98 @@ function mermaidNodeView({ node, editor, getPos }) {
         }
     }
 
+    /*
+     * WHAT THE FIELD SAYS WHEN NOBODY NAMED A LANGUAGE.
+     *
+     * The block is highlighted from a guess when the fence carries no info
+     * string (see detectLanguage in code-highlight.js), and a colour appearing
+     * with nothing anywhere saying why is worse than no colour: the reader
+     * cannot tell a detected language from a stored one, and cannot tell a
+     * WRONG guess from a bug. So the guess is the field's placeholder --
+     * present, in the field that would hold the real answer, and in the
+     * placeholder's own muted italic so it never reads as a value that was
+     * saved. Clicking the field and pressing Enter is what turns it into one.
+     */
+    function showDetected(current, language) {
+        const detected = language ? '' : detectLanguage(current.textContent);
+        lang.placeholder = detected || 'plain text';
+        lang.classList.toggle('is-detected', !!detected);
+        lang.title = detected
+            ? 'Highlighted as ' + detected + ' (detected) — type a language to set it'
+            : 'Language for syntax highlighting';
+    }
+
+    /*
+     * PUTTING THE CARET BACK IN THE CODE.
+     *
+     * Two shipped defects were this one function's absence. The Enter handler
+     * used to run `editor.chain().focus().setTextSelection(getPos() + 1)`:
+     *
+     *  - `getPos() + 1` is the START of the block, not where the caret was, so
+     *    naming the language of a block you had already written moved your
+     *    cursor to the top of it and the next line you typed landed above the
+     *    first one. That is the reported "I can't add more lines, it just jumps
+     *    somewhere" -- and the same jump is what put the caret at position 0 of
+     *    the block, where Backspace joins the block into the paragraph above,
+     *    which is the reported "it jumps to previous block".
+     *  - `chain().focus()` defers the DOM focus to a requestAnimationFrame, so
+     *    for one frame after Enter the language <input> still had it. Measured
+     *    in a real browser: typing `py`, Enter, `import numpy` produced a fence
+     *    whose LANGUAGE was `pyimport numpy` and whose body was empty.
+     *
+     * `view.focus()` is synchronous, and the position defaults to the end of
+     * the block's text -- which is where a person who just named the language
+     * of a block they are about to write expects to be.
+     */
+    function caretInside() {
+        if (typeof getPos !== 'function') { return undefined; }
+        const pos = getPos();
+        const current = pos === undefined || pos === null ? undefined : editor.state.doc.nodeAt(pos);
+        if (!current) { return undefined; }
+        const from = editor.state.selection.from;
+        return from > pos && from < pos + current.nodeSize ? from : undefined;
+    }
+
+    function returnCaret(remembered) {
+        if (typeof getPos !== 'function') { return; }
+        const pos = getPos();
+        if (pos === undefined || pos === null) { return; }
+        const current = editor.state.doc.nodeAt(pos);
+        if (!current || current.type.name !== node.type.name) { return; }
+        const end = pos + 1 + current.content.size;
+        const at = Math.min(Math.max(remembered === undefined ? end : remembered, pos + 1), end);
+        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, at)));
+        editor.view.focus();
+    }
+
     function applyMode(current) {
         const mermaid = isMermaid(current);
+        const language = (current.attrs && current.attrs.language) || '';
         dom.classList.toggle('is-diagram', mermaid);
-        head.hidden = !mermaid;
+        dom.classList.toggle('is-code', !mermaid);
+        /*
+         * The head is no longer Mermaid-only — a plain fence shows its
+         * language and a copy button instead. `is-quiet` is how it stays out
+         * of the way: an unset language renders the head at low opacity until
+         * the block is hovered or the field is focused, so a document full of
+         * fences does not become a document full of chrome, while a fence that
+         * HAS a language always shows it (that is information about the
+         * content, not a control).
+         */
+        head.hidden = false;
+        name.hidden = !mermaid;
+        tools.hidden = !mermaid;
+        lang.hidden = mermaid;
+        codeTools.hidden = mermaid;
         if (!mermaid) {
+            if (document.activeElement !== lang) { lang.value = language; }
+            dom.classList.toggle('is-quiet', !language);
+            showDetected(current, language);
             pre.hidden = false;
             preview.hidden = true;
             return;
         }
+        dom.classList.remove('is-quiet');
         name.textContent = 'Mermaid diagram';
         const asDiagram = showing === 'diagram';
         pre.hidden = asDiagram;
@@ -233,10 +378,76 @@ function mermaidNodeView({ node, editor, getPos }) {
         showing = 'source';
         applyMode(node);
         // Put the caret in the source the user just asked to edit.
-        if (typeof getPos === 'function') {
-            editor.chain().focus().setTextSelection(getPos() + 1).run();
+        if (typeof getPos === 'function') { returnCaret(getPos() + 1); }
+    });
+    /*
+     * Writing the language back into the document.
+     *
+     * setNodeMarkup on this node's own position, dispatched straight through
+     * the view rather than as a chained command, because a chain focuses the
+     * editor and focusing it would take the caret out of the field the user is
+     * still typing in.
+     *
+     * `commit` runs on `change` (blur, Enter, or a datalist pick) and not on
+     * every `input` event: an intermediate value like "pyth" is not a language
+     * anybody meant, and a transaction per keystroke would put thirty
+     * indistinguishable steps in the undo history for one word.
+     */
+    function commitLanguage() {
+        if (typeof getPos !== 'function') { return; }
+        const pos = getPos();
+        if (pos === undefined || pos === null) { return; }
+        const current = editor.state.doc.nodeAt(pos);
+        if (!current || current.type.name !== node.type.name) { return; }
+        const next = lang.value.trim().toLowerCase();
+        if (((current.attrs && current.attrs.language) || '') === next) { return; }
+        const tr = editor.state.tr.setNodeMarkup(pos, undefined,
+            Object.assign({}, current.attrs, { language: next || null }));
+        editor.view.dispatch(tr);
+    }
+
+    /*
+     * Where the caret was when the field took focus, so Enter and Escape can
+     * both give it back. Undefined means it was not in this block at all --
+     * clicking the field of a fence you were not editing -- and then the end of
+     * the block is the right destination rather than a position from some other
+     * part of the document.
+     */
+    let caretWas;
+    lang.addEventListener('focus', () => { caretWas = caretInside(); });
+    lang.addEventListener('change', commitLanguage);
+    lang.addEventListener('blur', commitLanguage);
+    lang.addEventListener('keydown', event => {
+        // Enter commits and returns the caret to the code; Escape abandons the
+        // edit. Both are stopped here so ProseMirror never sees them — Enter in
+        // particular would otherwise split the block.
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            commitLanguage();
+            returnCaret(caretWas);
+            return;
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            lang.value = (node.attrs && node.attrs.language) || '';
+            returnCaret(caretWas);
         }
     });
+
+    copyCode.addEventListener('click', async event => {
+        event.preventDefault();
+        const source = (typeof getPos === 'function' && editor.state.doc.nodeAt(getPos()) || node).textContent;
+        try {
+            await navigator.clipboard.writeText(source);
+            copyCode.textContent = 'Copied';
+            setTimeout(() => { copyCode.textContent = 'Copy'; }, 1400);
+        } catch (e) {
+            console.error('[studio] could not copy the code', e);
+        }
+    });
+
     copyBtn.addEventListener('click', async event => {
         event.preventDefault();
         if (!lastSvg) { return; }
@@ -266,12 +477,24 @@ function mermaidNodeView({ node, editor, getPos }) {
         update(updated) {
             if (updated.type.name !== node.type.name) { return false; }
             const wasMermaid = isMermaid(node);
+            const hadLanguage = (node.attrs && node.attrs.language) || '';
             node = updated;
             if (isMermaid(updated) !== wasMermaid) { applyMode(updated); return true; }
+            // The language can change from outside this view — Raw mode, undo,
+            // a paste — and the field has to follow it. applyMode already
+            // leaves a focused field alone, so this cannot fight typing.
+            if (((updated.attrs && updated.attrs.language) || '') !== hadLanguage) { applyMode(updated); return true; }
             if (isMermaid(updated)) {
                 head.hidden = false;
                 scheduleRender(updated);
+                return true;
             }
+            /*
+             * A plain fence's placeholder is a function of its TEXT, so it has
+             * to follow every edit and not only a language change -- typing the
+             * first line of a python block is exactly when the guess appears.
+             */
+            showDetected(updated, hadLanguage);
             return true;
         },
         // Everything the renderer writes lives outside contentDOM; without
@@ -279,6 +502,16 @@ function mermaidNodeView({ node, editor, getPos }) {
         // fight the editor's own state.
         ignoreMutation(mutation) {
             return !code.contains(mutation.target) || mutation.type === 'selection';
+        },
+        /*
+         * The language field is a real <input> inside the node view, so
+         * ProseMirror must keep its hands off every event that happens in it —
+         * otherwise arrow keys move the document selection instead of the text
+         * cursor, and a click is read as a click on the node.
+         */
+        stopEvent(event) {
+            const target = event.target;
+            return !!target && (target === lang || (lang.contains && lang.contains(target)));
         },
         destroy() {
             destroyed = true;
@@ -303,7 +536,51 @@ const DIAGRAM_CSS = `
   border-bottom: 1px solid var(--studio-line); background: var(--studio-surface);
 }
 .studio-diagram-name { flex: 1; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--studio-muted); }
+/* --- a plain fence ------------------------------------------------------
+   The block owns the border and the radius; the <pre> inside it drops both,
+   so the head and the code read as one object rather than as a box inside a
+   box. editor-css.js gives the bare <pre> its own border for the cases a node
+   view never runs (the tracked review page), and this overrides it here. */
+.studio-codeblock.is-code {
+  border: 1px solid var(--studio-line); border-radius: 8px; overflow: hidden;
+  background: var(--studio-surface-sunken);
+}
+.studio-doc :is(.ProseMirror, .studio-tracked-page) .studio-codeblock.is-code > pre {
+  border: none; border-radius: 0; background: transparent;
+}
+.studio-codeblock.is-code .studio-diagram-head {
+  justify-content: flex-end; gap: 4px; padding: 4px 6px 4px 10px;
+  background: transparent; border-bottom: 1px solid var(--studio-line);
+  /* A row of controls must never be taller than the code it labels. */
+  min-height: 30px;
+}
+/* An unset language is a control, so it recedes until wanted. A set language
+   is information about the content, so it always shows. */
+.studio-codeblock.is-code.is-quiet .studio-diagram-head { opacity: .45; }
+.studio-codeblock.is-code.is-quiet:hover .studio-diagram-head,
+.studio-codeblock.is-code.is-quiet:focus-within .studio-diagram-head { opacity: 1; }
+.studio-code-lang {
+  font: inherit; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  width: 108px; padding: 2px 7px; border-radius: 5px; text-align: right;
+  border: 1px solid transparent; background: transparent; color: var(--studio-muted);
+}
+.studio-code-lang::placeholder { color: var(--studio-muted); opacity: .7; }
+/* A DETECTED language shows in the placeholder, so it has to be legible as a
+   guess and not as a value: italic, and never the field's own text colour.
+   (No backticks in this file: the CSS is a template literal.) */
+.studio-code-lang.is-detected::placeholder { font-style: italic; opacity: .9; }
+.studio-code-lang:hover { border-color: var(--studio-line); background: var(--studio-surface); }
+.studio-code-lang:focus {
+  outline: none; text-align: left; border-color: var(--studio-accent);
+  background: var(--studio-surface); color: var(--studio-text);
+}
 .studio-diagram-tools { display: flex; gap: 2px; }
+/* A display:flex declaration beats the hidden attribute, and the shell's own
+   global hidden rule lives in a different stylesheet -- a node view that
+   toggles .hidden must not depend on stylesheet load order to actually hide
+   anything. applyMode hides exactly these three when the block is not a
+   diagram. (No backticks in this file: the CSS is a template literal.) */
+.studio-diagram-tools[hidden], .studio-diagram-preview[hidden], .studio-code-lang[hidden] { display: none !important; }
 .studio-diagram-btn {
   font: inherit; font-size: 11.5px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
   border: 1px solid transparent; background: transparent; color: var(--studio-muted);

@@ -12,6 +12,7 @@
  */
 
 const { ICONS } = require('./icons');
+const { coalesceParts } = require('./diff');
 
 function escapeHtml(text) {
     return String(text === undefined || text === null ? '' : text)
@@ -23,7 +24,12 @@ function lineHtml(kind, number, text, parts, keep) {
     const gutter = number === undefined ? '' : String(number);
     let body;
     if (parts) {
-        body = parts
+        // Coalesced rather than the raw per-token diff, so a rewritten clause
+        // reads as one highlighted span instead of the alternating fragments
+        // a plain LCS returns (see coalesceParts in diff.js) — and so this
+        // row and the tracked page's inline rendering of the same hunk, plus
+        // the card summary built from the same runs, all narrate one edit.
+        body = coalesceParts(parts)
             .filter(p => p.type === '=' || p.type === keep)
             .map(p => p.type === '='
                 ? escapeHtml(p.text)
@@ -101,9 +107,9 @@ const DIFF_CSS = `
   background: var(--studio-surface);
 }
 .studio-hunk.decided { opacity: .58; }
-.studio-hunk.decided.accepted { border-color: color-mix(in srgb, var(--studio-amber) 55%, var(--studio-line)); }
+.studio-hunk.decided.accepted { border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-line)); }
 .studio-hunk.decided.rejected { border-color: color-mix(in srgb, var(--studio-danger) 45%, var(--studio-line)); }
-.studio-hunk.current { border-color: var(--studio-amber); box-shadow: 0 0 0 3px var(--studio-focus); }
+.studio-hunk.current { border-color: var(--studio-accent); box-shadow: 0 0 0 3px var(--studio-focus); }
 .studio-hunk-head {
   display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
   border-bottom: 1px solid var(--studio-line); background: var(--studio-surface-raised);
@@ -112,9 +118,9 @@ const DIFF_CSS = `
 .studio-hunk-index { font-size: 10.5px; color: var(--studio-muted); font-variant-numeric: tabular-nums; }
 .studio-hunk-summary { font-size: 11.5px; color: var(--studio-muted); }
 .studio-hunk-verdict { font-size: 11px; font-weight: 650; color: var(--studio-muted); padding-right: 6px; }
-.studio-hunk.accepted .studio-hunk-verdict { color: var(--studio-amber); }
+.studio-hunk.accepted .studio-hunk-verdict { color: var(--studio-accent); }
 .studio-hunk.rejected .studio-hunk-verdict { color: var(--studio-danger); }
-.studio-icon-btn.accept:hover { background: color-mix(in srgb, var(--studio-amber) 16%, transparent); color: var(--studio-amber); }
+.studio-icon-btn.accept:hover { background: color-mix(in srgb, var(--studio-accent) 16%, transparent); color: var(--studio-accent); }
 
 .studio-diff {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.8px; line-height: 1.65;
@@ -129,11 +135,11 @@ const DIFF_CSS = `
 .studio-diff-text { flex: 1; padding-right: 12px; white-space: pre-wrap; word-break: break-word; }
 /* Line level first: an inserted or removed line is legible as such before any
    word inside it is read. Word emphasis then explains it, one step quieter. */
-.studio-diff-line.ins { background: color-mix(in srgb, var(--studio-amber) 11%, transparent); }
+.studio-diff-line.ins { background: color-mix(in srgb, var(--studio-accent) 11%, transparent); }
 .studio-diff-line.del { background: color-mix(in srgb, var(--studio-danger) 10%, transparent); }
 .studio-diff-line.del .studio-diff-text { text-decoration: none; }
 .studio-diff-word { background: transparent; color: inherit; border-radius: 3px; padding: 0 1px; font-weight: 650; }
-.studio-diff-line.ins .studio-diff-word { background: color-mix(in srgb, var(--studio-amber) 30%, transparent); }
+.studio-diff-line.ins .studio-diff-word { background: color-mix(in srgb, var(--studio-accent) 30%, transparent); }
 .studio-diff-line.del .studio-diff-word { background: color-mix(in srgb, var(--studio-danger) 26%, transparent); }
 .studio-diff-empty { font-size: 12.5px; color: var(--studio-muted); padding: 10px 2px; }
 .studio-diff-heading { font-size: 11.5px; color: var(--studio-muted); margin: 0 0 8px; }

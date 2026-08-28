@@ -16,8 +16,12 @@ const {
     OpenHandler,
     ApplicationShell,
     LabelProvider,
-    OpenerService
+    OpenerService,
+    PreferenceService
 } = require('@theia/core/lib/browser');
+/* PreferenceContribution is not re-exported from the browser barrel; it lives
+   with the schema types it belongs to. */
+const { PreferenceContribution } = require('@theia/core/lib/common/preferences/preference-schema');
 const { CommandRegistry, CommandContribution } = require('@theia/core/lib/common/command');
 const { KeybindingContribution } = require('@theia/core/lib/browser/keybinding');
 const { TabBarToolbarContribution } = require('@theia/core/lib/browser/shell/tab-bar-toolbar');
@@ -53,6 +57,7 @@ const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
 const { ChangeLog } = require('./change-log');
+const { ChangesLifecycle } = require('./changes-lifecycle');
 const { HistoryStore } = require('./history-store');
 const { AI_MENU_CSS, seedClaude } = require('./ai-context');
 const { slotStrip, SLOT_STRIP_CSS } = require('./slot-strip');
@@ -213,15 +218,15 @@ function monacoColors(t) {
         'descriptionForeground': t.muted, 'errorForeground': t.danger,
         'sideBar.background': t.surface, 'sideBar.foreground': t.text, 'sideBar.border': t.line,
         'activityBar.background': t.bg, 'activityBar.foreground': t.muted,
-        'activityBarBadge.background': t.accent, 'activityBarBadge.foreground': '#ffffff',
+        'activityBarBadge.background': t.accent, 'activityBarBadge.foreground': t.onAccent,
         'statusBar.background': t.surface, 'statusBar.foreground': t.text,
         'titleBar.activeBackground': t.bg, 'titleBar.activeForeground': t.text,
         'panel.background': t.surface, 'panel.border': t.line, 'panelInput.border': t.line,
         'editorWidget.background': t.surfaceRaised, 'editorWidget.border': t.line,
         'editorGroupHeader.tabsBackground': t.surface,
         'tab.activeBackground': t.surfaceRaised, 'tab.inactiveBackground': t.surface,
-        'focusBorder': t.accent, 'button.background': t.accent, 'button.foreground': '#ffffff',
-        'button.hoverBackground': t.accentHover, 'badge.background': t.accent, 'badge.foreground': '#ffffff',
+        'focusBorder': t.accent, 'button.background': t.accent, 'button.foreground': t.onAccent,
+        'button.hoverBackground': t.accentHover, 'badge.background': t.accent, 'badge.foreground': t.onAccent,
         'input.background': t.bg, 'input.foreground': t.text, 'input.border': t.line,
         'input.placeholderForeground': t.muted,
         'dropdown.background': t.surfaceRaised, 'dropdown.border': t.line, 'dropdown.foreground': t.text,
@@ -235,24 +240,207 @@ function monacoColors(t) {
     };
 }
 
-const MONACO_LIGHT = monacoColors({
-    bg: '#ffffff', surface: '#ffffff', surfaceRaised: '#f6f7f9', surfaceSunken: '#f0f2f5', line: '#e1e4e8',
-    text: '#1f2328', muted: '#6e7781', accent: '#0b2275', accentHover: '#091d64', selection: '#e9edfb',
-    danger: '#b3261e', scrollbar: '#c7ccd4aa', scrollbarHover: '#aeb6c2aa', scrollbarActive: '#8e98a6aa'
-});
-const MONACO_DARK = monacoColors({
-    bg: '#14161c', surface: '#1a1c23', surfaceRaised: '#23262f', surfaceSunken: '#0f1014', line: '#2d303c',
-    text: '#e7e9ee', muted: '#8b90a3', accent: '#5b73e8', accentHover: '#7f93f0', selection: '#232a48',
-    danger: '#e5534b', scrollbar: '#333748aa', scrollbarHover: '#3f4459aa', scrollbarActive: '#4c516aaa'
-});
+/*
+ * THE BRAND, AND WHY IT IS RESOLVED RATHER THAN WRITTEN.
+ *
+ * The accent is expected to move: it tracks the portal's Studio primary, and
+ * that value is owned by studio-web, not by this file. So the accent is
+ * RESOLVED at boot from, in order:
+ *
+ *   1. window.STUDIO_BRAND  -- the runtime seam. The portal already ships an
+ *      env.js that the container entrypoint rewrites per environment; brand
+ *      belongs in the file that already exists rather than in a second one.
+ *   2. the studio.brand.accent preference -- so a deployment can adjust
+ *      without a rebuild, and the value is inspectable where every other
+ *      Theia setting is.
+ *   3. the compiled-in default below.
+ *
+ * Everything downstream -- hover, soft, selection, focus halo -- is color-mix()
+ * of --studio-accent in CSS, so setting that ONE property moves the whole
+ * family. This function therefore only ever writes one property per theme.
+ */
+const BRAND_DEFAULT = { accent: '#7147d2', accentDark: '#a589e6' };
+const BRAND_STYLE_ID = 'studio-brand-vars';
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/* WCAG relative luminance, used only for the guardrail below. */
+function relativeLuminance(hex) {
+    const ch = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+function contrastRatio(a, b) {
+    const la = relativeLuminance(a), lb = relativeLuminance(b);
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/*
+ * The guardrail. Once every accent state derives from one authored value, a bad
+ * accent does not break one component -- it breaks the palette. An accent that
+ * cannot carry text is rejected here rather than discovered on screen, and the
+ * product says so out loud: this file's own rule is that the interface admits
+ * what it cannot prove.
+ */
+function usableAccent(candidate, ground, label) {
+    if (typeof candidate !== 'string' || !HEX_RE.test(candidate.trim())) { return undefined; }
+    const hex = candidate.trim().toLowerCase();
+    const ratio = contrastRatio(hex, ground);
+    if (ratio < 4.5) {
+        console.warn('[studio] ignoring configured ' + label + ' ' + hex + ': ' +
+            ratio.toFixed(2) + ':1 against ' + ground + ' is below the 4.5:1 needed to carry text.');
+        return undefined;
+    }
+    return hex;
+}
+
+function resolveBrand(preferences) {
+    const configured = (typeof window !== 'undefined' && window.STUDIO_BRAND) || {};
+    const fromPref = key => {
+        try { return preferences && preferences.get ? preferences.get(key) : undefined; }
+        catch (e) { return undefined; }
+    };
+    return {
+        accent: usableAccent(configured.accent, '#ffffff', 'accent')
+            || usableAccent(fromPref('studio.brand.accent'), '#ffffff', 'studio.brand.accent')
+            || BRAND_DEFAULT.accent,
+        accentDark: usableAccent(configured.accentDark, '#14161c', 'accentDark')
+            || usableAccent(fromPref('studio.brand.accentDark'), '#14161c', 'studio.brand.accentDark')
+            || BRAND_DEFAULT.accentDark
+    };
+}
+
+/*
+ * The preference form of the same two values, so a deployment can retune the
+ * brand from Settings without a rebuild and the value is discoverable where
+ * every other Theia setting is. No explicit scope: PreferenceScope has no
+ * application-wide member (Default/User/Workspace/Folder/Session), and the
+ * default resolution order already lets a User setting stand for the install.
+ */
+const BRAND_PREFERENCE_SCHEMA = {
+    properties: {
+        'studio.brand.accent': {
+            type: 'string',
+            pattern: '^#[0-9a-fA-F]{6}$',
+            default: BRAND_DEFAULT.accent,
+            description: 'Accent colour for light theme, as #rrggbb. Every other accent state '
+                + '(hover, selection, focus halo) is derived from this one value. Ignored with a '
+                + 'console warning if it cannot carry text at 4.5:1 on white.'
+        },
+        'studio.brand.accentDark': {
+            type: 'string',
+            pattern: '^#[0-9a-fA-F]{6}$',
+            default: BRAND_DEFAULT.accentDark,
+            description: 'Accent colour for dark theme, as #rrggbb. Authored separately rather '
+                + 'than lightened, because no mix of the light accent stays legible on the dark ground.'
+        }
+    }
+};
+
+/*
+ * THE MARK, AS A FAVICON, BUILT HERE RATHER THAN SHIPPED AS A FILE.
+ *
+ * The session tab had no favicon at all -- @theia/application-manager's
+ * compileIndexHead() emits charset, viewport and <title> and nothing else, so
+ * there is no generator option to pass one, and src-gen/frontend/index.html is
+ * rewritten on every build, which makes editing it there a change that lasts
+ * until the next bundle. Injecting the link from the contribution that already
+ * injects this extension's stylesheet is the one place it survives.
+ *
+ * The art is icon.svg's flip-dot S: the 5x5 field drawn whole, lit and unlit,
+ * so the bounding box IS the field and the mark cannot drift off centre. At
+ * 16px the unlit layer falls below the threshold of visibility and the S is
+ * left clean, which is the behaviour that file was designed around.
+ *
+ * Drawn from the brand colour rather than a constant, so a configured accent
+ * reaches the browser tab like everything else.
+ */
+const MARK_LIT = [[0, 1], [0, 2], [0, 3], [0, 4], [1, 0], [2, 1], [2, 2], [2, 3],
+    [3, 4], [4, 0], [4, 1], [4, 2], [4, 3]];
+
+function markSvg(plate) {
+    const at = n => 512 + (n - 2) * 152;
+    const lit = [], off = [];
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const dot = '<circle cx="' + at(col) + '" cy="' + at(row) + '" r="47"/>';
+            (MARK_LIT.some(p => p[0] === row && p[1] === col) ? lit : off).push(dot);
+        }
+    }
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">'
+        + '<rect width="1024" height="1024" rx="228" fill="' + plate + '"/>'
+        + '<g fill="#ffffff" opacity=".13">' + off.join('') + '</g>'
+        + '<g fill="#ffffff">' + lit.join('') + '</g></svg>';
+}
+
+function applyFavicon(plate) {
+    const href = 'data:image/svg+xml,' + encodeURIComponent(markSvg(plate));
+    let link = document.querySelector('link[rel="icon"]');
+    if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+    }
+    link.type = 'image/svg+xml';
+    link.href = href;
+}
+
+let BRAND = { ...BRAND_DEFAULT };
+
+/* One property per theme. The CSS derives the other four. */
+function applyBrand(brand) {
+    BRAND = brand;
+    const root = document.documentElement;
+    root.style.setProperty('--studio-accent', brand.accent);
+    root.style.setProperty('--studio-mark', brand.accent);
+    const sheet = document.getElementById(BRAND_STYLE_ID) || (() => {
+        const el = document.createElement('style');
+        el.id = BRAND_STYLE_ID;
+        document.head.appendChild(el);
+        return el;
+    })();
+    // The dark accent cannot be an inline property on the same element: it has
+    // to win only under the dark attribute, which an inline style cannot express.
+    sheet.textContent = 'body[data-studio-theme="dark"] { --studio-accent: ' +
+        brand.accentDark + '; --studio-mark: ' + brand.accentDark + '; }';
+    /* The tab icon is painted from the light plate in both themes: a favicon
+       sits on the browser's chrome, not on the product's ground, so it should
+       not follow the in-application theme. */
+    applyFavicon(brand.accent);
+    defineStudioMonacoThemes();
+}
+
+/*
+ * Monaco is built FROM the resolved brand rather than from a second copy of the
+ * palette. Monaco does not read CSS custom properties -- WebviewThemeDataProvider
+ * resolves colours through IStandaloneThemeService, entirely outside this page's
+ * cascade -- so it is the one surface that has to be told the accent explicitly.
+ * Deriving it here is what stops the editor and its webviews being the one place
+ * that ignores a configured brand.
+ */
+function monacoLight() {
+    return monacoColors({
+        bg: '#ffffff', surface: '#ffffff', surfaceRaised: '#f6f7f9', surfaceSunken: '#f0f2f5', line: '#e1e4e8',
+        text: '#1f2328', muted: '#616973', accent: BRAND.accent, accentHover: BRAND.accent, selection: '#e9edfb',
+        onAccent: '#ffffff',
+        danger: '#b3261e', scrollbar: '#c7ccd4aa', scrollbarHover: '#aeb6c2aa', scrollbarActive: '#8e98a6aa'
+    });
+}
+function monacoDark() {
+    return monacoColors({
+        bg: '#14161c', surface: '#1a1c23', surfaceRaised: '#23262f', surfaceSunken: '#0f1014', line: '#2d303c',
+        text: '#e7e9ee', muted: '#8b90a3', accent: BRAND.accentDark, accentHover: BRAND.accentDark, selection: '#232a48',
+        onAccent: '#14161c',
+        danger: '#e5534b', scrollbar: '#333748aa', scrollbarHover: '#3f4459aa', scrollbarActive: '#4c516aaa'
+    });
+}
 
 // monaco.editor.defineTheme() "auto refreshes a theme with new data" per
 // @theia/monaco's own MonacoThemeRegistry.setTheme() — redefining the
 // currently active theme id repaints live, no separate setTheme() call
 // needed for that half; setTheme() below is only to flip WHICH id is active.
 function defineStudioMonacoThemes() {
-    monaco.editor.defineTheme('light-theia', { base: 'vs', inherit: true, rules: [], colors: MONACO_LIGHT });
-    monaco.editor.defineTheme('dark-theia', { base: 'vs-dark', inherit: true, rules: [], colors: MONACO_DARK });
+    monaco.editor.defineTheme('light-theia', { base: 'vs', inherit: true, rules: [], colors: monacoLight() });
+    monaco.editor.defineTheme('dark-theia', { base: 'vs-dark', inherit: true, rules: [], colors: monacoDark() });
 }
 
 function loadStoredTheme() {
@@ -387,12 +575,75 @@ const SHELL_CSS = `
    */
   --studio-edge: #c8cfd9;
   --studio-text: #1f2328;
-  --studio-muted: #6e7781;
-  --studio-amber: #0b2275;
-  --studio-cyan: #0b2275;
-  --studio-green: #0b2275;
-  --studio-accent-hover: #091d64;
-  --studio-selection-bg: #e9edfb;
+  /*
+   * Darkened from #6e7781. That value measured 4.55:1 on --studio-bg and passed,
+   * but muted text is not only ever drawn on the page ground: on
+   * --studio-surface-raised it measured 4.24:1 and on --studio-chrome 4.05:1,
+   * both under AA. status-line.js:79-88 records this exact failure being found
+   * and fixed for the status bar alone; this is the same fix for every other
+   * place muted text lands. #616973 clears AA on all three grounds (5.56 / 5.19
+   * / 4.96) and is a small enough shift to leave the tone recognisably itself.
+   */
+  --studio-muted: #616973;
+  /*
+   * ONE ACCENT, AND EVERY STATE DERIVED FROM IT.
+   *
+   * This was three tokens -- --studio-amber, --studio-cyan, --studio-green --
+   * all holding the same value, because an earlier amber/cyan/green palette was
+   * collapsed into a single accent and only the VALUES were updated. The names
+   * outlived the palette they described, and downstream code ended up reading
+   * the accent by the name of a colour it had not been for a long time.
+   *
+   * Worse, the collapse took the product's whole vocabulary for STATE with it:
+   * with amber and green gone there was no token meaning "in progress" or
+   * "verified", so roughly 140 hand-mixed hex literals grew in their place.
+   * --studio-warning and --studio-verified below are that vocabulary, restored.
+   *
+   * The accent is #7147D2, the Studio primary -- the same value the portal's
+   * theme is meant to carry, so a session and the portal that launched it are
+   * finally the same colour. It measures 5.94:1 on --studio-bg.
+   *
+   * DERIVED, NOT AUTHORED. hover/soft/selection/focus are color-mix() of the
+   * accent rather than five hand-picked hexes, which is what lets the accent be
+   * REPLACED at runtime (see applyBrand below) without anyone having to find
+   * its relatives. Change one value and the whole family follows.
+   */
+  --studio-accent: #7147d2;
+  /*
+   * What is legible ON the accent, which is not the same answer in both themes
+   * and must not be hardcoded to white. White on the light accent is 5.94:1 and
+   * fine; white on the DARK accent is 2.87:1 and is not, which is how the
+   * previous dark palette shipped every primary button and badge under AA.
+   */
+  --studio-on-accent: #ffffff;
+  --studio-accent-hover: color-mix(in srgb, var(--studio-accent) 84%, #000);
+  --studio-accent-soft: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-bg));
+  --studio-selection-bg: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-bg));
+  /*
+   * The two states the collapse deleted. Both are values that were already in
+   * the tree as untokenised literals -- the team reached for them by hand
+   * (#1a7f4b appears as a --studio-positive fallback in flow-rail.js) -- so
+   * this is naming what is already in use, not inventing a palette.
+   * 4.87:1 and 5.02:1 on --studio-bg respectively.
+   */
+  --studio-warning: #9a6700;
+  --studio-verified: #1a7f4b;
+  /* Older names for the same two, kept as aliases so a missed call site
+     degrades to the right colour instead of to nothing. */
+  --studio-positive: var(--studio-verified);
+  --studio-success: var(--studio-verified);
+  /*
+   * THE MARK IS NOT THE ACCENT, and must not follow it. The accent is
+   * deployment-configurable; a logo that changes with a tenant's theme is not a
+   * logo. Same value today, deliberately separate token.
+   */
+  --studio-mark: #7147d2;
+  /* Referenced by assistant-auth-view.js since it was written; never defined
+     until now, so it has always silently resolved to its inline fallback. */
+  --studio-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* slot-strip.js draws this ring with no fallback, so an undefined token made
+     the declaration invalid and the ring simply did not render. */
+  --studio-slot-ring: var(--studio-accent);
   --studio-scrollbar: #c7ccd4;
   --studio-scrollbar-hover: #aeb6c2;
   --studio-scrollbar-active: #8e98a6;
@@ -401,15 +652,43 @@ const SHELL_CSS = `
      "select" or "primary". Everything else in the palette stays monochrome
      plus the single blue accent; this is the one deliberate second color. */
   --studio-danger: #b3261e;
-  --studio-focus: rgba(11, 34, 117, .22);
+  /* Derived like the rest, so a configured accent carries its own halo.
+     NOTE the name is historical: this is the SELECTION halo (diff-view,
+     editor-css, tracked-changes), not the focus ring. The focus ring is
+     --studio-accent directly. Renaming it is a separate sweep. */
+  --studio-focus: color-mix(in srgb, var(--studio-accent) 22%, transparent);
   /* Elevation, not a hue — the one shadow color, so a raised surface reads as
      raised in both themes instead of each surface inventing its own mix. */
   --studio-shadow: rgba(31, 35, 40, .16);
   --studio-radius: 8px;
   /*
+   * The code palette (code-highlight.js).
+   *
+   * Five hues, which is the minimum a grammar needs to separate keyword,
+   * string, number, identifier and comment -- anything fewer and Python's
+   * def, its quoted strings and its integers all share a colour. Three of the
+   * five are the product's own (accent, verified, danger) so a code block
+   * reads as part of this document rather than as an embedded gist; the blue
+   * is new because both product hues are already spoken for by then.
+   *
+   * Restated in the dark block below rather than aliased, for the reason the
+   * loader pair explains at length: a custom property whose value is
+   * var(--other) resolves in the scope it is DECLARED in.
+   *
+   * (No backticks anywhere in this comment: it lives inside a template
+   * literal, as this file's own header warns.)
+   */
+  --studio-code-comment: #6b7280;
+  --studio-code-punct: #57606a;
+  --studio-code-keyword: #7147d2;
+  --studio-code-string: #14713f;
+  --studio-code-number: #0550ae;
+  --studio-code-fn: #8a4c00;
+  --studio-code-tag: #b3261e;
+  /*
    * The loading indicator's two colours (loader.js).
    *
-   * WRITTEN OUT, not aliased to --studio-amber and --studio-line, and the same
+   * WRITTEN OUT, not aliased to --studio-accent and --studio-line, and the same
    * two lines appear again in the dark block below. That looks like duplication
    * and is not: a custom property whose value is var(--other) is substituted in
    * the scope it is DECLARED in, so declaring it only here would freeze both
@@ -421,7 +700,7 @@ const SHELL_CSS = `
    * colour as everything else that is "active". The unlit field is the line
    * tone: present, structural, not competing with the arc travelling over it.
    */
-  --studio-loader-on: #0b2275;
+  --studio-loader-on: #7147d2;
   --studio-loader-off: #e1e4e8;
 }
 
@@ -444,21 +723,58 @@ body[data-studio-theme="dark"] {
   --studio-edge: #343a48;
   --studio-text: #e7e9ee;
   --studio-muted: #8b90a3;
-  --studio-amber: #5b73e8;
-  --studio-cyan: #5b73e8;
-  --studio-green: #5b73e8;
-  --studio-accent-hover: #7f93f0;
-  --studio-selection-bg: #232a48;
+  /*
+   * The dark accent is AUTHORED, not lightened from the light one. No mix of
+   * #7147D2 toward white lands somewhere legible on a #14161c ground and stays
+   * on hue; #A589E6 is the same hue at a lightness chosen for this ground, and
+   * measures 6.30:1 on --studio-bg.
+   *
+   * It also fixes a real failure. The previous dark accent #5b73e8 carried
+   * white button text at 4.15:1 -- under AA -- on every primary button and
+   * badge in dark mode. White on #A589E6 is a non-starter for the same reason,
+   * so dark buttons take --studio-bg as their foreground instead; see
+   * --theia-button-foreground below.
+   */
+  --studio-accent: #a589e6;
+  /* Dark text on a light accent: 6.30:1, where white would have been 2.87:1. */
+  --studio-on-accent: #14161c;
+  --studio-accent-hover: color-mix(in srgb, var(--studio-accent) 82%, #fff);
+  --studio-accent-soft: color-mix(in srgb, var(--studio-accent) 16%, var(--studio-bg));
+  --studio-selection-bg: color-mix(in srgb, var(--studio-accent) 20%, var(--studio-bg));
+  --studio-warning: #d8a63c;
+  --studio-verified: #4bb96a;
+  --studio-mark: #a589e6;
+  /*
+   * Restated, not inherited, for the reason the loader's two colours are
+   * restated below: a custom property whose value is var(--other) is
+   * substituted in the scope it is DECLARED in. Declared only in the light
+   * block above, each of these would inherit its LIGHT-resolved value here and
+   * the dark theme would paint a slot ring in the light accent.
+   */
+  --studio-slot-ring: var(--studio-accent);
+  --studio-positive: var(--studio-verified);
+  --studio-success: var(--studio-verified);
   --studio-scrollbar: #333748;
   --studio-scrollbar-hover: #3f4459;
   --studio-scrollbar-active: #4c516a;
   --studio-danger: #e5534b;
-  --studio-focus: rgba(91, 115, 232, .35);
+  --studio-focus: color-mix(in srgb, var(--studio-accent) 30%, transparent);
   --studio-shadow: rgba(0, 0, 0, .55);
   /* The dark half of the pair declared in :root above. See the note there for
      why this is restated rather than aliased. */
-  --studio-loader-on: #5b73e8;
+  --studio-loader-on: #a589e6;
   --studio-loader-off: #2d303c;
+  /* The dark half of the code palette declared in :root above. Lifted rather
+     than inverted: on a #1a1c23 ground the light values fall to 2:1 or worse,
+     so each hue is taken to the tint that clears 4.5:1 on that ground while
+     staying recognisably the same colour. */
+  --studio-code-comment: #8b90a3;
+  --studio-code-punct: #9aa0b4;
+  --studio-code-keyword: #b79bf0;
+  --studio-code-string: #6ed08a;
+  --studio-code-number: #79c0ff;
+  --studio-code-fn: #ffb86b;
+  --studio-code-tag: #ff8d84;
 }
 body, body * { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease; }
 :root {
@@ -479,14 +795,14 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-list-hoverBackground: var(--studio-surface-raised);
   --theia-list-activeSelectionBackground: var(--studio-selection-bg);
   --theia-list-activeSelectionForeground: var(--studio-text);
-  --theia-focusBorder: var(--studio-amber);
-  --theia-button-background: var(--studio-amber);
-  --theia-button-foreground: #ffffff;
+  --theia-focusBorder: var(--studio-accent);
+  --theia-button-background: var(--studio-accent);
+  --theia-button-foreground: var(--studio-on-accent);
   --theia-button-hoverBackground: var(--studio-accent-hover);
-  --theia-badge-background: var(--studio-cyan);
-  --theia-badge-foreground: #ffffff;
-  --theia-activityBarBadge-background: var(--studio-cyan);
-  --theia-activityBarBadge-foreground: #ffffff;
+  --theia-badge-background: var(--studio-accent);
+  --theia-badge-foreground: var(--studio-on-accent);
+  --theia-activityBarBadge-background: var(--studio-accent);
+  --theia-activityBarBadge-foreground: var(--studio-on-accent);
 
   /* Inputs, transient dialogs, and notifications share the Studio elevation model. */
   --theia-input-background: var(--studio-bg);
@@ -494,7 +810,7 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-input-border: var(--studio-line);
   --theia-input-placeholderForeground: var(--studio-muted);
   --theia-inputOption-activeBackground: var(--studio-selection-bg);
-  --theia-inputOption-activeBorder: var(--studio-amber);
+  --theia-inputOption-activeBorder: var(--studio-accent);
   --theia-inputOption-activeForeground: var(--studio-text);
   --theia-panelInput-border: var(--studio-line);
   --theia-dropdown-border: var(--studio-line);
@@ -508,7 +824,7 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-menu-border: var(--studio-line);
   --theia-menu-foreground: var(--studio-text);
   --theia-menu-selectionBackground: var(--studio-selection-bg);
-  --theia-menu-selectionBorder: var(--studio-amber);
+  --theia-menu-selectionBorder: var(--studio-accent);
   --theia-menu-selectionForeground: var(--studio-text);
   --theia-menu-separatorBackground: var(--studio-line);
   --theia-notifications-background: var(--studio-surface-raised);
@@ -517,19 +833,19 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-notificationCenterHeader-background: var(--studio-surface);
   --theia-notificationCenterHeader-foreground: var(--studio-text);
   --theia-notificationToast-border: var(--studio-line);
-  --theia-notificationLink-foreground: var(--studio-cyan);
-  --theia-notificationsInfoIcon-foreground: var(--studio-cyan);
-  --theia-notificationsWarningIcon-foreground: var(--studio-amber);
+  --theia-notificationLink-foreground: var(--studio-accent);
+  --theia-notificationsInfoIcon-foreground: var(--studio-accent);
+  --theia-notificationsWarningIcon-foreground: var(--studio-warning);
   --theia-notificationsErrorIcon-foreground: var(--studio-danger);
-  --theia-textLink-foreground: var(--studio-cyan);
+  --theia-textLink-foreground: var(--studio-accent);
   --theia-textLink-activeForeground: var(--studio-accent-hover);
   --theia-textLink-active-foreground: var(--studio-accent-hover);
 
   /* Theia widgets not covered by the basic surface aliases. */
   --theia-list-inactiveSelectionBackground: var(--studio-surface-sunken);
-  --theia-list-focusAndSelectionOutline: var(--studio-amber);
-  --theia-list-activeSelectionIconForeground: var(--studio-amber);
-  --theia-editorSuggestWidget-selectedBackground: var(--studio-amber);
+  --theia-list-focusAndSelectionOutline: var(--studio-accent);
+  --theia-list-activeSelectionIconForeground: var(--studio-accent);
+  --theia-editorSuggestWidget-selectedBackground: var(--studio-accent);
   --theia-editorSuggestWidget-selectedForeground: #ffffff;
   --theia-editorSuggestWidget-selectedIconForeground: #ffffff;
   --theia-button-secondaryBackground: var(--studio-surface-sunken);
@@ -538,8 +854,8 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-secondaryButton-background: var(--studio-surface-sunken);
   --theia-secondaryButton-foreground: var(--studio-text);
   --theia-secondaryButton-hoverBackground: var(--studio-line);
-  --theia-sash-activeBorder: var(--studio-amber);
-  --theia-sash-hoverBorder: var(--studio-amber);
+  --theia-sash-activeBorder: var(--studio-accent);
+  --theia-sash-hoverBorder: var(--studio-accent);
   --theia-scrollbarSlider-background: var(--studio-scrollbar);
   --theia-scrollbarSlider-hoverBackground: var(--studio-scrollbar-hover);
   --theia-scrollbarSlider-activeBackground: var(--studio-scrollbar-active);
@@ -565,13 +881,13 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
 .studio-icon-btn:hover { background: var(--studio-surface-raised); color: var(--studio-text); }
 .studio-icon-btn:active { transform: scale(0.92); }
 .studio-icon-btn:focus-visible {
-  outline: 2px solid var(--studio-amber); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-amber) 24%, transparent);
+  outline: 2px solid var(--studio-accent); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent) 24%, transparent);
 }
-.studio-icon-btn.resolved { color: var(--studio-amber); }
+.studio-icon-btn.resolved { color: var(--studio-accent); }
 .studio-icon-btn.danger:hover { background: color-mix(in srgb, var(--studio-danger) 14%, transparent); color: var(--studio-danger); }
 .studio-icon-btn.danger.confirm { background: var(--studio-danger); color: #fff; }
 .studio-icon-btn.danger.confirm:hover { background: var(--studio-danger); }
-.studio-icon-btn.send { background: var(--studio-amber); color: #fff; align-self: flex-end; }
+.studio-icon-btn.send { background: var(--studio-accent); color: #fff; align-self: flex-end; }
 .studio-icon-btn.send:hover { background: var(--studio-accent-hover); }
 
 /* Themes load after frontend contributions; make product-owned semantic aliases win. */
@@ -581,7 +897,7 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-input-border: var(--studio-line) !important;
   --theia-input-placeholderForeground: var(--studio-muted) !important;
   --theia-inputOption-activeBackground: var(--studio-selection-bg) !important;
-  --theia-inputOption-activeBorder: var(--studio-amber) !important;
+  --theia-inputOption-activeBorder: var(--studio-accent) !important;
   --theia-inputOption-activeForeground: var(--studio-text) !important;
   --theia-dropdown-background: var(--studio-surface-raised) !important;
   --theia-dropdown-border: var(--studio-line) !important;
@@ -595,7 +911,7 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-menu-border: var(--studio-line) !important;
   --theia-menu-foreground: var(--studio-text) !important;
   --theia-menu-selectionBackground: var(--studio-selection-bg) !important;
-  --theia-menu-selectionBorder: var(--studio-amber) !important;
+  --theia-menu-selectionBorder: var(--studio-accent) !important;
   --theia-menu-selectionForeground: var(--studio-text) !important;
   --theia-menu-separatorBackground: var(--studio-line) !important;
   --theia-notifications-background: var(--studio-surface-raised) !important;
@@ -604,28 +920,28 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
   --theia-notificationCenterHeader-background: var(--studio-surface) !important;
   --theia-notificationCenterHeader-foreground: var(--studio-text) !important;
   --theia-notificationToast-border: var(--studio-line) !important;
-  --theia-notificationLink-foreground: var(--studio-cyan) !important;
-  --theia-notificationsInfoIcon-foreground: var(--studio-cyan) !important;
-  --theia-notificationsWarningIcon-foreground: var(--studio-amber) !important;
+  --theia-notificationLink-foreground: var(--studio-accent) !important;
+  --theia-notificationsInfoIcon-foreground: var(--studio-accent) !important;
+  --theia-notificationsWarningIcon-foreground: var(--studio-warning) !important;
   --theia-notificationsErrorIcon-foreground: var(--studio-danger) !important;
-  --theia-textLink-foreground: var(--studio-cyan) !important;
+  --theia-textLink-foreground: var(--studio-accent) !important;
   --theia-textLink-activeForeground: var(--studio-accent-hover) !important;
   --theia-textLink-active-foreground: var(--studio-accent-hover) !important;
   --theia-list-activeSelectionBackground: var(--studio-selection-bg) !important;
   --theia-list-activeSelectionForeground: var(--studio-text) !important;
   --theia-list-inactiveSelectionBackground: var(--studio-surface-sunken) !important;
-  --theia-list-focusAndSelectionOutline: var(--studio-amber) !important;
-  --theia-button-background: var(--studio-amber) !important;
+  --theia-list-focusAndSelectionOutline: var(--studio-accent) !important;
+  --theia-button-background: var(--studio-accent) !important;
   --theia-button-hoverBackground: var(--studio-accent-hover) !important;
-  --theia-button-foreground: #ffffff !important;
+  --theia-button-foreground: var(--studio-on-accent) !important;
   --theia-button-secondaryBackground: var(--studio-surface-sunken) !important;
   --theia-button-secondaryForeground: var(--studio-text) !important;
   --theia-button-secondaryHoverBackground: var(--studio-line) !important;
   --theia-secondaryButton-background: var(--studio-surface-sunken) !important;
   --theia-secondaryButton-foreground: var(--studio-text) !important;
   --theia-secondaryButton-hoverBackground: var(--studio-line) !important;
-  --theia-sash-activeBorder: var(--studio-amber) !important;
-  --theia-sash-hoverBorder: var(--studio-amber) !important;
+  --theia-sash-activeBorder: var(--studio-accent) !important;
+  --theia-sash-hoverBorder: var(--studio-accent) !important;
   --theia-scrollbarSlider-background: var(--studio-scrollbar) !important;
   --theia-scrollbarSlider-hoverBackground: var(--studio-scrollbar-hover) !important;
   --theia-scrollbarSlider-activeBackground: var(--studio-scrollbar-active) !important;
@@ -801,11 +1117,11 @@ body, .theia-ApplicationShell {
 #theia-main-content-panel .lm-TabBar.theia-app-main { background: var(--studio-chrome) !important; }
 #theia-main-content-panel .lm-TabBar.theia-app-main .lm-TabBar-tab.lm-mod-current {
   background: var(--studio-surface-raised);
-  box-shadow: inset 0 2px 0 0 var(--studio-amber);
+  box-shadow: inset 0 2px 0 0 var(--studio-accent);
 }
 .theia-TreeNode { padding: 3px 6px; border-radius: 6px; }
 .theia-TreeNode:hover { background: var(--studio-surface-raised); }
-body :focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+body :focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 /* --- a focus ring is for keyboard navigation ------------------------------- *
  *
@@ -834,7 +1150,23 @@ body :focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2p
  * the element out of the tab order mid-flow and break keyboard activation of the
  * same button. Nothing here changes what has focus -- only what is painted.
  */
-body[data-studio-input="pointer"] :focus-visible { outline: none !important; }
+/*
+ * SCOPED TO THIS PRODUCT'S OWN CONTROLS, and the scope is the whole point.
+ *
+ * This selector was bare :focus-visible, which with !important removed the
+ * focus indicator from EVERY element in the application while the last input
+ * was a pointer -- Monaco, plugin webviews, the file tree, extension UI, all of
+ * it. That is WCAG 2.4.7 (Focus Visible), and it lands hardest on the people
+ * least able to absorb it: a magnifier user who navigates by mouse and reads by
+ * keyboard focus, head-pointer and eye-tracker users, switch access. All of them
+ * leave the modality flag on "pointer" and then have no positional feedback.
+ *
+ * Every control this rule was written for carries a studio- class (they are the
+ * only elements in the product that define their own :focus-visible ring), so
+ * the fix is to say so. Nothing outside this extension's own chrome is touched,
+ * and Tab still brings every ring back everywhere via trackInputModality.
+ */
+body[data-studio-input="pointer"] [class*="studio-"]:focus-visible { outline: none !important; }
 /* The two product controls whose focus ring is a box-shadow rather than an
    outline. Listed explicitly rather than suppressing box-shadow globally, which
    would also erase real elevation on any focused card. */
@@ -888,8 +1220,8 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
 }
 .lm-TabBar.theia-app-sides .lm-TabBar-tab[id^="shell-tab-studio-"] .lm-TabBar-tabIcon::before { content: none !important; }
 .lm-TabBar.theia-app-sides .lm-TabBar-tab[id^="shell-tab-studio-"].lm-mod-current .lm-TabBar-tabIcon {
-  background-color: var(--studio-amber);
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--studio-amber) 45%, transparent));
+  background-color: var(--studio-accent);
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--studio-accent) 45%, transparent));
 }
 #shell-tab-studio-repositories { --studio-rail-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='4'/%3E%3Cpath d='M8 9h8M8 15h5'/%3E%3C/svg%3E"); }
 /* Eliminate the dark native resize strip and make webview scrollbars neutral. */
@@ -923,7 +1255,7 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
 .studio-rail-btn:hover { background: var(--studio-surface-raised); color: var(--studio-text); }
 .studio-rail-btn:active { transform: scale(0.9); }
 .studio-rail-btn:focus-visible {
-  outline: 2px solid var(--studio-amber); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-amber) 24%, transparent);
+  outline: 2px solid var(--studio-accent); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent) 24%, transparent);
 }
 
 /* --- the startup splash -------------------------------------------------- *
@@ -1139,7 +1471,15 @@ class ProductChromeContribution {
         patchNavigatorFilter(this.container);
         document.head.appendChild(style);
         themeService = this.container.get(ThemeService);
-        defineStudioMonacoThemes();
+        /*
+         * Before the first Monaco theme is defined, because applyBrand() defines
+         * them from the resolved accent. Guarded: a container without a
+         * PreferenceService still boots on window.STUDIO_BRAND or the default,
+         * which is the case in the tests and in any host that strips preferences.
+         */
+        let preferences;
+        try { preferences = this.container.get(PreferenceService); } catch (e) { preferences = undefined; }
+        applyBrand(resolveBrand(preferences));
         themeService.onDidColorThemeChange(() => syncTheme());
         // A best-effort initial nudge from our own localStorage flag, applied
         // before the shell layout exists so there is no light-then-dark flash.
@@ -2057,6 +2397,31 @@ function qualityProjectHandler(container) {
 
 const mod = new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toDynamicValue(ctx => new ProductChromeContribution(ctx.container)).inSingletonScope();
+    /*
+     * Pending-change sidecars (changes-store.js, change-log.js) live beside the
+     * document they describe and nothing ever taught them to notice the
+     * document being renamed or deleted — see changes-lifecycle.js's own
+     * header for the real repository this broke and why the fix orphans
+     * rather than deletes. A second, independent FrontendApplicationContribution
+     * rather than a method tacked onto ProductChromeContribution: this one
+     * subscribes to FileService's own operation signal for the life of the
+     * session and has nothing to do with chrome, theming or layout.
+     */
+    bind(FrontendApplicationContribution).toDynamicValue(ctx => {
+        const lifecycle = new ChangesLifecycle(ctx.container.get(FileService), ctx.container.get(WorkspaceService));
+        let listener;
+        return {
+            onStart() {
+                listener = lifecycle.start();
+                // Not awaited: a slow or damaged workspace must never hold up
+                // the rest of the frontend's own startup on this repair pass.
+                lifecycle.sweepAll().catch(e => console.warn('[studio] changes-lifecycle: startup sweep failed', e));
+            },
+            onStop() {
+                if (listener) { listener.dispose(); listener = undefined; }
+            }
+        };
+    }).inSingletonScope();
     bind(CommandContribution).toDynamicValue(ctx => ({
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
@@ -2124,6 +2489,8 @@ const mod = new ContainerModule(bind => {
             });
         }
     })).inSingletonScope();
+    /* Brand is a real, documented setting rather than a magic global. */
+    bind(PreferenceContribution).toConstantValue({ schema: BRAND_PREFERENCE_SCHEMA });
     bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, MARKDOWN_SPEC)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, HTML_SPEC)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(ctx => makeOpenHandler(ctx.container, TABLE_SPEC)).inSingletonScope();

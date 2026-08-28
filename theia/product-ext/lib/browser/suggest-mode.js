@@ -132,8 +132,8 @@ const SUGGEST_MODE_CSS = `
   color: var(--studio-muted); cursor: pointer; font: 600 11px/1.45 inherit; white-space: nowrap;
 }
 .studio-suggest-btn:hover { color: var(--studio-text); }
-.studio-suggest-btn[aria-pressed="true"] { background: var(--studio-amber); color: var(--studio-bg); }
-.studio-suggest-btn:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-suggest-btn[aria-pressed="true"] { background: var(--studio-accent); color: var(--studio-bg); }
+.studio-suggest-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 `;
 
 module.exports = { suggestMode, suggestSwitchHtml, SUGGEST_MODE_CSS };

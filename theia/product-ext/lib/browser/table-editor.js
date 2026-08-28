@@ -1251,10 +1251,10 @@ const TABLE_EDITOR_CSS = `
 .studio-table .studio-table-grid .pad { background: color-mix(in srgb, var(--studio-muted) 6%, transparent); }
 .studio-table .studio-table-grid [contenteditable]:focus,
 .studio-table .studio-table-grid [contenteditable]:focus-visible {
-  outline: 2px solid var(--studio-amber); outline-offset: -2px;
+  outline: 2px solid var(--studio-accent); outline-offset: -2px;
 }
-.studio-table .studio-table-grid .current { background: color-mix(in srgb, var(--studio-amber) 8%, transparent); }
-.studio-table .studio-table-grid th.current { background: color-mix(in srgb, var(--studio-amber) 14%, var(--studio-surface-raised)); }
+.studio-table .studio-table-grid .current { background: color-mix(in srgb, var(--studio-accent) 8%, transparent); }
+.studio-table .studio-table-grid th.current { background: color-mix(in srgb, var(--studio-accent) 14%, var(--studio-surface-raised)); }
 
 .studio-table .studio-table-more {
   display: flex; align-items: center; gap: 8px; padding: 12px 16px 40px;

@@ -240,15 +240,19 @@ function findSection(body, sectionPath) {
 
 /*
  * GitHub's heading-anchor slugifier, and nothing fancier: lower-case, trim,
- * drop everything but word characters/hyphens/spaces, collapse whitespace to
+ * drop everything but letters/digits/hyphens/spaces, collapse whitespace to
  * a hyphen. The same rule markdown-editor.js's `qualitySlug` already applies
- * for its tier-1 dedupe link, reimplemented rather than imported because that
- * file is not pure — pulling it in would drag Theia and the DOM behind it for
- * one string transform.
+ * for its tier-1 dedupe link and for the link editor's heading targets,
+ * reimplemented rather than imported because that file is not pure — pulling
+ * it in would drag Theia and the DOM behind it for one string transform.
+ *
+ * \p{L}\p{N} rather than \w, in both copies: `\w` is ASCII-only, so the
+ * earlier form deleted every letter of a non-Latin heading and slugged
+ * "Стратегическое делегирование" to "-".
  */
 function slugify(text) {
     return String(text == null ? '' : text).toLowerCase().trim()
-        .replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-');
+        .replace(/[^\p{L}\p{N}\- ]+/gu, '').replace(/\s+/g, '-');
 }
 
 /** The last path segment, without requiring node's own `path` module — see the

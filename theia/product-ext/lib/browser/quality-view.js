@@ -1003,18 +1003,18 @@ const QUALITY_CSS = `
 .studio-quality-run-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .studio-quality-run.failed .studio-quality-run-text { color: var(--studio-danger); }
 .studio-quality-run-cancel {
-  flex: none; font: inherit; font-size: 11.5px; color: var(--studio-cyan); background: none; border: none;
+  flex: none; font: inherit; font-size: 11.5px; color: var(--studio-accent); background: none; border: none;
   padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
 }
-.studio-quality-run-cancel:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-quality-run-cancel:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 .studio-quality-tabs { display: flex; gap: 14px; }
 .studio-quality-tab {
   font: inherit; font-size: 12px; padding: 2px 0 6px; border: none; background: transparent;
   color: var(--studio-muted); cursor: pointer; border-bottom: 2px solid transparent;
 }
-.studio-quality-tab.on { color: var(--studio-text); font-weight: 620; border-bottom-color: var(--studio-amber); }
-.studio-quality-tab:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-quality-tab.on { color: var(--studio-text); font-weight: 620; border-bottom-color: var(--studio-accent); }
+.studio-quality-tab:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 /* Tabular figures: this badge sits beside a tab label that otherwise shifts
    width every time a finding resolves, which reads as the tab itself moving. */
 .studio-quality-tab-count { font-variant-numeric: tabular-nums; color: var(--studio-muted); }
@@ -1057,7 +1057,7 @@ const QUALITY_CSS = `
   position: relative; border-radius: 10px; padding: 10px 11px 11px; margin-bottom: 8px;
   background: var(--studio-surface); border: 1px solid var(--studio-line); cursor: pointer;
 }
-.studio-quality-card.active { background: var(--studio-selection-bg); border-color: var(--studio-amber); }
+.studio-quality-card.active { background: var(--studio-selection-bg); border-color: var(--studio-accent); }
 /* A stale finding gets a dashed edge rather than a second banner colour — the
    danger token is reserved for the purpose gate and for delete, and staleness
    is "go check", not "something is wrong". */
@@ -1067,10 +1067,10 @@ const QUALITY_CSS = `
 .studio-quality-anchor { flex: none; font-variant-numeric: tabular-nums; color: var(--studio-muted); font-size: 11.5px; }
 .studio-quality-rule { flex: 1 1 auto; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--studio-text); }
 .studio-quality-why {
-  flex: none; font: inherit; font-size: 11.5px; color: var(--studio-cyan); background: none; border: none;
+  flex: none; font: inherit; font-size: 11.5px; color: var(--studio-accent); background: none; border: none;
   padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
 }
-.studio-quality-why:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-quality-why:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 .studio-quality-quote {
   margin: 0 0 8px; padding: 0 0 0 10px; border-left: 2px solid var(--studio-line);
@@ -1082,14 +1082,14 @@ const QUALITY_CSS = `
 
 .studio-quality-occurrences { margin: 0 0 8px; font-size: 11.5px; color: var(--studio-muted); overflow-wrap: anywhere; }
 .studio-quality-occ-link {
-  font: inherit; font-size: 11.5px; color: var(--studio-cyan); background: none; border: none; padding: 0;
+  font: inherit; font-size: 11.5px; color: var(--studio-accent); background: none; border: none; padding: 0;
   cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
 }
 .studio-quality-occ-other { color: var(--studio-muted); }
 
 .studio-quality-badge {
   flex: none; align-self: center; font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--studio-amber); border: 1px solid var(--studio-amber); border-radius: 999px; padding: 1px 6px;
+  color: var(--studio-accent); border: 1px solid var(--studio-accent); border-radius: 999px; padding: 1px 6px;
 }
 /* The action row is the shared rail toolbar, whose 8px/10px margins are sized
    for sitting loose in a rail — inside a card they stack with the card's own
@@ -1099,7 +1099,7 @@ const QUALITY_CSS = `
 .studio-quality-note { margin: 0 0 8px; font-size: 11.5px; color: var(--studio-muted); font-style: italic; }
 .studio-quality-note.stale { color: var(--studio-text); font-style: normal; }
 .studio-quality-inline-link {
-  font: inherit; color: var(--studio-cyan); background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--studio-accent); background: none; border: none; padding: 0; cursor: pointer;
   text-decoration: underline; text-underline-offset: 2px;
 }
 
@@ -1139,7 +1139,7 @@ const QUALITY_CSS = `
 .studio-quality-footrows { margin-top: 10px; }
 .studio-quality-notrun { font-size: 11px; color: var(--studio-muted); padding: 6px 2px; }
 .studio-quality-project-link {
-  display: block; width: 100%; text-align: left; font: inherit; font-size: 11.5px; color: var(--studio-cyan);
+  display: block; width: 100%; text-align: left; font: inherit; font-size: 11.5px; color: var(--studio-accent);
   background: none; border: none; padding: 6px 2px; cursor: pointer;
 }
 
@@ -1167,7 +1167,7 @@ const QUALITY_CSS = `
 .studio-quality-spark-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .studio-quality-spark { flex: none; display: flex; align-items: flex-end; gap: 2px; height: 24px; width: 72px; }
 .studio-quality-bar { flex: 1 1 auto; background: var(--studio-line); border-radius: 1px; min-height: 8%; }
-.studio-quality-bar.marked { background: var(--studio-amber); }
+.studio-quality-bar.marked { background: var(--studio-accent); }
 .studio-quality-spark-caption { flex: 1 1 auto; min-width: 0; color: var(--studio-muted); font-size: 11px; line-height: 1.4; }
 
 .studio-quality-explain-scale { color: var(--studio-muted); line-height: 1.5; margin-bottom: 6px; }
@@ -1187,13 +1187,13 @@ const QUALITY_CSS = `
 .studio-quality-reason-row:hover { background: var(--studio-surface-raised); }
 .studio-quality-reason-row.on { font-weight: 620; }
 .studio-quality-reason-bullet { flex: none; color: var(--studio-muted); }
-.studio-quality-reason-row.on .studio-quality-reason-bullet { color: var(--studio-amber); }
+.studio-quality-reason-row.on .studio-quality-reason-bullet { color: var(--studio-accent); }
 .studio-quality-picker-note {
   display: block; width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; resize: vertical;
   font: inherit; font-size: 12px; border-radius: 6px; border: 1px solid var(--studio-line);
   background: var(--studio-bg); color: var(--studio-text);
 }
-.studio-quality-picker-note:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 1px; }
+.studio-quality-picker-note:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 `;
 
 module.exports = {

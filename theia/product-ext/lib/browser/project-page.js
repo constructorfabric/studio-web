@@ -773,28 +773,28 @@ class ProjectPageWidget extends Widget {
  *   - --studio-edge is the SHELL seam (panel against panel, rail against
  *     content). Every divider INSIDE this page uses --studio-line, which is why
  *     nothing here reads as heavily as the boundary around it.
- *   - The palette is monochrome plus one accent (--studio-amber) plus one
+ *   - The palette is monochrome plus one accent (--studio-accent) plus one
  *     danger (--studio-danger). No new hues are introduced, so the accent still
  *     means "this is interactive or current" wherever it appears.
  */
 const PROJECT_PAGE_CSS = ASSISTANT_AUTH_CSS + `
-.studio-project-page { height:100%; overflow:auto; background:var(--studio-bg, #16171c); color:var(--studio-text, #f1eee7); }
+.studio-project-page { height:100%; overflow:auto; background:var(--studio-bg); color:var(--studio-text); }
 /* A centred, measured column. A settings page that stretches to a 1400px dock
    puts the label and its control at opposite ends of the screen. */
 .studio-page-column { max-width:720px; margin:0 auto; padding:34px 28px 56px; }
 .studio-page-head h2 { margin:0; font:600 20px/1.25 inherit; letter-spacing:-.01em; }
-.studio-page-lede { margin:8px 0 0; max-width:60ch; color:var(--studio-muted, #9298a8); font:400 12.5px/1.6 inherit; }
-.studio-page-lede code { font:400 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--studio-text, #f1eee7); }
-.studio-page-empty { margin-top:26px; padding-top:20px; border-top:1px solid var(--studio-line, #e1e4e8); color:var(--studio-muted, #9298a8); font:400 13px/1.6 inherit; }
+.studio-page-lede { margin:8px 0 0; max-width:60ch; color:var(--studio-muted); font:400 12.5px/1.6 inherit; }
+.studio-page-lede code { font:400 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--studio-text); }
+.studio-page-empty { margin-top:26px; padding-top:20px; border-top:1px solid var(--studio-line); color:var(--studio-muted); font:400 13px/1.6 inherit; }
 
 /* Sections are told apart by a hairline and by tone. Boxing each one made
    three settings read as three unrelated apps in a previous round. */
-.studio-settings-section { padding:26px 0 0; margin-top:26px; border-top:1px solid var(--studio-line, #e1e4e8); }
+.studio-settings-section { padding:26px 0 0; margin-top:26px; border-top:1px solid var(--studio-line); }
 .studio-settings-section:first-child { margin-top:22px; }
 .studio-settings-section h3 { margin:0; font:600 13px/1.3 inherit; letter-spacing:.01em; }
-.studio-settings-help { margin:6px 0 0; max-width:62ch; color:var(--studio-muted, #9298a8); font:400 12px/1.6 inherit; }
+.studio-settings-help { margin:6px 0 0; max-width:62ch; color:var(--studio-muted); font:400 12px/1.6 inherit; }
 .studio-settings-row { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:16px; }
-.studio-settings-note { flex:1 1 20ch; min-width:0; color:var(--studio-muted, #9298a8); font:400 11.5px/1.55 inherit; }
+.studio-settings-note { flex:1 1 20ch; min-width:0; color:var(--studio-muted); font:400 11.5px/1.55 inherit; }
 
 /* You. The disc beside the field is the same one the comment surfaces draw, so
    what you are setting and what the next person sees are the same object rather
@@ -805,65 +805,65 @@ const PROJECT_PAGE_CSS = ASSISTANT_AUTH_CSS + `
 .studio-settings-you .studio-settings-note { flex:none; margin:10px 0 0; max-width:62ch; }
 .studio-input {
   flex:0 1 240px; min-width:0; padding:7px 10px;
-  border:1px solid var(--studio-line, #30333d); border-radius:6px;
-  background:var(--studio-surface, #16171c); color:var(--studio-text, #f1eee7);
+  border:1px solid var(--studio-line); border-radius:6px;
+  background:var(--studio-surface); color:var(--studio-text);
   font:400 13px/1.4 inherit;
 }
-.studio-input::placeholder { color:var(--studio-muted, #9298a8); }
-.studio-input:hover { border-color:color-mix(in srgb, var(--studio-amber, #d59b3b) 45%, var(--studio-line, #30333d)); }
-.studio-input:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:1px; border-color:var(--studio-amber, #d59b3b); }
+.studio-input::placeholder { color:var(--studio-muted); }
+.studio-input:hover { border-color:color-mix(in srgb, var(--studio-accent) 45%, var(--studio-line)); }
+.studio-input:focus-visible { outline:2px solid var(--studio-accent); outline-offset:1px; border-color:var(--studio-accent); }
 
 /* Identity: name as the heading it is, path as something you compare rather
    than read, on a sunken tone instead of inside another bordered box. */
-.studio-project-identity { margin-top:14px; padding:12px 14px; border-radius:var(--studio-radius, 8px); background:var(--studio-surface-sunken, #f0f2f5); }
+.studio-project-identity { margin-top:14px; padding:12px 14px; border-radius:var(--studio-radius); background:var(--studio-surface-sunken); }
 .studio-project-title { font:600 15px/1.3 inherit; }
-.studio-project-location { margin-top:4px; color:var(--studio-muted, #9298a8); font:400 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap:anywhere; }
+.studio-project-location { margin-top:4px; color:var(--studio-muted); font:400 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap:anywhere; }
 
 /* The filter, finally wide enough to scan. auto-fill rather than a fixed count
    so a narrow dock degrades to fewer columns instead of scrolling sideways. */
 .studio-types-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:6px; margin-top:16px; }
-.studio-type { display:flex; align-items:center; gap:7px; min-width:0; padding:7px 9px; border:1px solid var(--studio-line, #30333d); border-radius:6px; background:var(--studio-surface, #16171c); color:var(--studio-muted, #9298a8); cursor:pointer; font:400 12px/1 inherit; }
-.studio-type:hover { border-color:var(--studio-amber, #d59b3b); color:var(--studio-text, #f1eee7); }
-.studio-type.on { border-color:color-mix(in srgb, var(--studio-amber, #d59b3b) 45%, var(--studio-line, #30333d)); background:var(--studio-surface-raised, #202127); color:var(--studio-text, #f1eee7); }
-.studio-type input { flex:none; margin:0; accent-color:var(--studio-amber, #d59b3b); }
-.studio-type input:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+.studio-type { display:flex; align-items:center; gap:7px; min-width:0; padding:7px 9px; border:1px solid var(--studio-line); border-radius:6px; background:var(--studio-surface); color:var(--studio-muted); cursor:pointer; font:400 12px/1 inherit; }
+.studio-type:hover { border-color:var(--studio-accent); color:var(--studio-text); }
+.studio-type.on { border-color:color-mix(in srgb, var(--studio-accent) 45%, var(--studio-line)); background:var(--studio-surface-raised); color:var(--studio-text); }
+.studio-type input { flex:none; margin:0; accent-color:var(--studio-accent); }
+.studio-type input:focus-visible { outline:2px solid var(--studio-accent); outline-offset:2px; }
 .studio-type-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
 .studio-types-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:12px; }
 
 /* The saving policy, now shaped like the toggle it always was. The track is a
    pseudo-element on purpose: renderAutosave sets textContent, which would wipe
    any real child node, and the label text is pinned by a regression suite. */
-.studio-switch { position:relative; display:inline-flex; align-items:center; gap:9px; padding:6px 13px 6px 9px; border:1px solid var(--studio-line, #30333d); border-radius:999px; background:var(--studio-surface-raised, #202127); color:var(--studio-text, #f1eee7); cursor:pointer; font:600 12px/1.2 inherit; }
-.studio-switch::before { content:""; flex:none; width:26px; height:15px; border-radius:999px; background:var(--studio-line, #30333d); transition:background-color 140ms ease; }
-.studio-switch::after { content:""; position:absolute; left:11px; top:50%; width:11px; height:11px; margin-top:-5.5px; border-radius:999px; background:var(--studio-muted, #9298a8); transition:transform 140ms cubic-bezier(0.23,1,0.32,1), background-color 140ms ease; }
-.studio-switch[aria-pressed="true"] { border-color:color-mix(in srgb, var(--studio-amber, #d59b3b) 55%, var(--studio-line, #30333d)); }
-.studio-switch[aria-pressed="true"]::before { background:var(--studio-amber, #d59b3b); }
+.studio-switch { position:relative; display:inline-flex; align-items:center; gap:9px; padding:6px 13px 6px 9px; border:1px solid var(--studio-line); border-radius:999px; background:var(--studio-surface-raised); color:var(--studio-text); cursor:pointer; font:600 12px/1.2 inherit; }
+.studio-switch::before { content:""; flex:none; width:26px; height:15px; border-radius:999px; background:var(--studio-line); transition:background-color 140ms ease; }
+.studio-switch::after { content:""; position:absolute; left:11px; top:50%; width:11px; height:11px; margin-top:-5.5px; border-radius:999px; background:var(--studio-muted); transition:transform 140ms cubic-bezier(0.23,1,0.32,1), background-color 140ms ease; }
+.studio-switch[aria-pressed="true"] { border-color:color-mix(in srgb, var(--studio-accent) 55%, var(--studio-line)); }
+.studio-switch[aria-pressed="true"]::before { background:var(--studio-accent); }
 /* --studio-bg on amber is the pairing the primary button already uses, so the
    knob stays readable in both themes without a new token. */
-.studio-switch[aria-pressed="true"]::after { transform:translateX(11px); background:var(--studio-bg, #16171c); }
-.studio-switch:hover { border-color:var(--studio-amber, #d59b3b); }
-.studio-switch:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+.studio-switch[aria-pressed="true"]::after { transform:translateX(11px); background:var(--studio-bg); }
+.studio-switch:hover { border-color:var(--studio-accent); }
+.studio-switch:focus-visible { outline:2px solid var(--studio-accent); outline-offset:2px; }
 
 /* A two-option choice, not a toggle. One track, both labels legible, and the
    pressed half filled — the same amber-on-bg pairing the switch knob and the
    primary button use, so nothing new has to be learned to read it. Segments
    share a single border rather than each having one, so the pair reads as one
    control with two states and not as two independent buttons. */
-.studio-choice { display:inline-flex; border:1px solid var(--studio-line, #30333d); border-radius:999px; padding:2px; background:var(--studio-surface-raised, #202127); }
-.studio-choice-btn { border:0; border-radius:999px; padding:6px 14px; background:transparent; color:var(--studio-muted, #9298a8); cursor:pointer; font:600 12px/1.2 inherit; }
-.studio-choice-btn:hover { color:var(--studio-text, #f1eee7); }
-.studio-choice-btn[aria-pressed="true"] { background:var(--studio-amber, #d59b3b); color:var(--studio-bg, #16171c); }
-.studio-choice-btn:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+.studio-choice { display:inline-flex; border:1px solid var(--studio-line); border-radius:999px; padding:2px; background:var(--studio-surface-raised); }
+.studio-choice-btn { border:0; border-radius:999px; padding:6px 14px; background:transparent; color:var(--studio-muted); cursor:pointer; font:600 12px/1.2 inherit; }
+.studio-choice-btn:hover { color:var(--studio-text); }
+.studio-choice-btn[aria-pressed="true"] { background:var(--studio-accent); color:var(--studio-bg); }
+.studio-choice-btn:focus-visible { outline:2px solid var(--studio-accent); outline-offset:2px; }
 /* This note is a full sentence about a consequence, so it sits under the
    control on its own line rather than competing with it for the row. */
 .studio-settings-section .studio-settings-note[data-page-review-note] { flex:none; margin:10px 0 0; max-width:64ch; }
 
 /* Danger reads as danger only once armed: an outline button first, filled on
    the confirming click, so the loud state is the one that actually removes. */
-.studio-project-page .studio-btn.danger { border-color:color-mix(in srgb, var(--studio-danger, #e5534b) 45%, var(--studio-line, #30333d)); background:transparent; color:var(--studio-danger, #e5534b); }
-.studio-project-page .studio-btn.danger:hover { border-color:var(--studio-danger, #e5534b); background:color-mix(in srgb, var(--studio-danger, #e5534b) 12%, transparent); }
-.studio-project-page .studio-btn.danger.confirm { background:var(--studio-danger, #e5534b); border-color:var(--studio-danger, #e5534b); color:#fff; }
-.studio-project-page .studio-btn:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
+.studio-project-page .studio-btn.danger { border-color:color-mix(in srgb, var(--studio-danger) 45%, var(--studio-line)); background:transparent; color:var(--studio-danger); }
+.studio-project-page .studio-btn.danger:hover { border-color:var(--studio-danger); background:color-mix(in srgb, var(--studio-danger) 12%, transparent); }
+.studio-project-page .studio-btn.danger.confirm { background:var(--studio-danger); border-color:var(--studio-danger); color:#fff; }
+.studio-project-page .studio-btn:focus-visible { outline:2px solid var(--studio-accent); outline-offset:2px; }
 `;
 
 module.exports = { ProjectPageWidget, PROJECT_PAGE_CSS };

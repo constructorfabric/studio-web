@@ -1,23 +1,41 @@
 /*
- * Minimal outline glyphs for comment-thread actions.
+ * The product's icon set: Lucide, inlined.
  *
- * Drawn in the same stroke language as the activity-rail mark in
- * product-frontend-module.js (viewBox 0 0 24 24, 1.8 stroke, round caps and
- * joins) rather than pulling in an icon font or library — one vector
- * language for the whole product, colored through `currentColor` so button
- * states (hover, danger, resolved) recolor the glyph for free.
+ * Every glyph below is Lucide's own geometry, taken verbatim from
+ * `lucide-static` v1.34.0 (ISC) and reduced to the children of its <svg>. The
+ * trailing comment on each line is the Lucide icon name, which is the only
+ * thing needed to re-derive it.
+ *
+ * INLINED RATHER THAN IMPORTED, and that is the constraint and not a
+ * preference. The browser build is an IIFE, so esbuild does not split dynamic
+ * imports and anything reachable from a require() lands in the first parse --
+ * the note in mermaid-entry.mjs measured this. `require('lucide')` would put
+ * two thousand icons in the bundle to render sixty-five, and Lucide's own
+ * tree-shaking needs an ESM output this application cannot have while the
+ * Monaco and plugin-host workers are classic scripts.
+ *
+ * ON UPDATING: re-run the extraction against a newer lucide-static and keep
+ * the key -> name mapping. Do not redraw. A key whose Lucide name no longer
+ * exists has been renamed upstream, not deleted -- look it up rather than
+ * substituting a shape.
+ *
+ * One vector language for the whole product, at Lucide's own stroke weight of
+ * 2 on a 24 viewBox with round caps and joins, colored through `currentColor`
+ * so button states (hover, danger, resolved) recolor the glyph for free. The
+ * exceptions are the two VENDOR MARKS at the foot of this file, which are
+ * filled logos and belong to their vendors, and the loader in loader.js, which
+ * is not an icon.
  */
 
 function svg(paths) {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
 }
 
 /*
- * A FILLED glyph, for the one class of icon this product does not draw: a
- * vendor's own logo (see VENDOR MARKS below). Everything else here is a 1.8px
- * stroke on an empty fill, because that is the product's language; a logo
- * arrives as a solid silhouette and redrawing it in strokes is redrawing it.
+ * A FILLED glyph, for the one class of icon this product does not take from
+ * Lucide: a vendor's own logo (see VENDOR MARKS below). A logo arrives as a
+ * solid silhouette and redrawing it in strokes is redrawing it.
  * `currentColor` is what lets the rail state the mark muted at rest and in the
  * vendor's colour when it is hovered or open, from CSS, with no second asset.
  */
@@ -26,81 +44,123 @@ function mark(paths) {
 }
 
 const ICONS = {
-    trash: svg('<path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M9 7h6m-9 0 1.1 12.1A2 2 0 0 0 9.1 21h5.8a2 2 0 0 0 2-1.9L18 7M10 11v6M14 11v6"/>'),
-    circle: svg('<circle cx="12" cy="12" r="8"/>'),
-    checkCircle: svg('<circle cx="12" cy="12" r="8"/><path d="m9 12 2 2 4-4"/>'),
-    close: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
-    send: svg('<path d="M11 13 20 4M20 4l-6.5 16-3-6.5L4 10.5 20 4Z"/>'),
-    sun: svg('<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
-    moon: svg('<path d="M20 14.2A8.5 8.5 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2Z"/>'),
-    spark: svg('<path d="M12 3c.7 3.6 2.1 5.9 5.8 6.7-3.7.8-5.1 3.1-5.8 6.7-.7-3.6-2.1-5.9-5.8-6.7 3.7-.8 5.1-3.1 5.8-6.7Z"/>'),
-    check: svg('<path d="m5 12.5 4.5 4.5L19 7"/>'),
-    undo: svg('<path d="M4 9h11a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4"/>'),
-    history: svg('<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 5v4h4"/><path d="M12 8v4.5l3 1.8"/>'),
-    plus: svg('<path d="M12 5v14M5 12h14"/>'),
-    chevronLeft: svg('<path d="m14 6-6 6 6 6"/>'),
-    chevronRight: svg('<path d="m10 6 6 6-6 6"/>'),
-    /* A refresh, as an icon rather than as the "\u27f3" character it used to be:
-       that glyph renders at the button's font size in whatever face the system
-       picks for it, which put a thin, undersized mark next to a panel of 15px
-       SVGs. */
-    refresh: svg('<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4.5h-4.5"/>'),
-    /* "Not run" — distinct from `circle`, which is an EMPTY state and reads as
-       an unselected radio button when five of them stack up in a gate list. */
-    minusCircle: svg('<circle cx="12" cy="12" r="8"/><path d="M9 12h6"/>'),
-    restore: svg('<path d="M12 7v5l3 2"/><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1M20.5 5v4h-4"/>'),
-    docComment: svg('<path d="M4 5h16v11H9l-4 4V5Z"/><path d="M8 9h8M8 12.5h5"/>'),
-    save: svg('<path d="M5 4h11l3 3v13H5V4Z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>'),
+
+    /* chrome and review actions */
+    trash:            svg('<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),   // trash-2
+    circle:           svg('<circle cx="12" cy="12" r="10"/>'),   // circle
+    checkCircle:      svg('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),   // circle-check
+    close:            svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),   // x
+    send:             svg('<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>'),   // send
+    sun:              svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'),   // sun
+    moon:             svg('<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>'),   // moon
+    spark:            svg('<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>'),   // sparkles
+    check:            svg('<path d="M20 6 9 17l-5-5"/>'),   // check
+    undo:             svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>'),   // undo-2
+    history:          svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>'),   // history
+    plus:             svg('<path d="M5 12h14"/><path d="M12 5v14"/>'),   // plus
+    chevronLeft:      svg('<path d="m15 18-6-6 6-6"/>'),   // chevron-left
+    chevronRight:     svg('<path d="m9 18 6-6-6-6"/>'),   // chevron-right
+    chevronDown:      svg('<path d="m6 9 6 6 6-6"/>'),   // chevron-down
+    refresh:          svg('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),   // refresh-cw
+    minusCircle:      svg('<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>'),   // circle-minus
+    restore:          svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),   // rotate-ccw
+    docComment:       svg('<path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/><path d="M7 11h10"/><path d="M7 15h6"/><path d="M7 7h8"/>'),   // message-square-text
+    comment:          svg('<path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/>'),   // message-square
+    save:             svg('<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'),   // save
+    changes:          svg('<circle cx="5" cy="6" r="3"/><path d="M12 6h5a2 2 0 0 1 2 2v7"/><path d="m15 9-3-3 3-3"/><circle cx="19" cy="18" r="3"/><path d="M12 18H7a2 2 0 0 1-2-2V9"/><path d="m9 15 3 3-3 3"/>'),   // git-compare-arrows
+    sliders:          svg('<path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/>'),   // sliders-horizontal
+    more:             svg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'),   // ellipsis
+    home:             svg('<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),   // house
+    pencil:           svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'),   // pencil
+    search:           svg('<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>'),   // search
+    gauge:            svg('<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'),   // gauge
+
+    /* document blocks */
+    blockText:        svg('<path d="M12 4v16"/><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><path d="M9 20h6"/>'),   // type
+    heading1:         svg('<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="m17 12 3-2v8"/>'),   // heading-1
+    heading2:         svg('<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="M21 18h-4c0-4 4-3 4-6 0-1.5-2-2.5-4-1"/>'),   // heading-2
+    heading3:         svg('<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="M17.5 10.5c1.7-1 3.5 0 3.5 1.5a2 2 0 0 1-2 2"/><path d="M17 17.5c2 1.5 4 .3 4-1.5a2 2 0 0 0-2-2"/>'),   // heading-3
+    heading4:         svg('<path d="M12 18V6"/><path d="M17 10v3a1 1 0 0 0 1 1h3"/><path d="M21 10v8"/><path d="M4 12h8"/><path d="M4 18V6"/>'),   // heading-4
+    heading5:         svg('<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="M17 13v-3h4"/><path d="M17 17.7c.4.2.8.3 1.3.3 1.5 0 2.7-1.1 2.7-2.5S19.8 13 18.3 13H17"/>'),   // heading-5
+    heading6:         svg('<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><circle cx="19" cy="16" r="2"/><path d="M20 10c-2 2-3 3.5-3 6"/>'),   // heading-6
+    bulletList:       svg('<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/>'),   // list
+    orderedList:      svg('<path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/>'),   // list-ordered
+    taskList:         svg('<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><rect x="3" y="4" width="6" height="6" rx="1"/>'),   // list-todo
+    // `quote`, not `text-quote`: text-quote is three lines and a vertical bar,
+    // which at 13px is another list glyph among the four already in the menu.
+    // Actual quotation marks are unambiguous at any size.
+    quote:            svg('<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>'),   // quote
+    divider:          svg('<path d="M5 12h14"/>'),   // minus
+    calloutNote:      svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),   // info
+    calloutTip:       svg('<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>'),   // lightbulb
+    calloutImportant: svg('<path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/><path d="M12 15h.01"/><path d="M12 7v4"/>'),   // message-square-warning
+    calloutWarning:   svg('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),   // triangle-alert
+    calloutCaution:   svg('<path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"/>'),   // octagon-alert
+    // `square-chevron-right`, not `list-collapse`, and measured at 13px like
+    // the three deletes below. list-collapse is three lines plus two chevrons;
+    // at the size the slash menu ships the chevrons disappear and it is
+    // indistinguishable from orderedList and taskList a few rows away. A box
+    // with a chevron in it shares no silhouette with any list glyph and reads
+    // as the disclosure control a toggle actually is.
+    toggle:           svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m10 8 4 4-4 4"/>'),   // square-chevron-right
+    table:            svg('<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>'),   // table
+    definitionList:   svg('<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>'),   // book-a
+    footnote:         svg('<path d="m4 19 8-8"/><path d="m12 19-8-8"/><path d="M20 12h-4c0-1.5.442-2 1.5-2.5S20 8.334 20 7.002c0-.472-.17-.93-.484-1.29a2.105 2.105 0 0 0-2.617-.436c-.42.239-.738.614-.899 1.06"/>'),   // superscript
+    codeBlock:        svg('<path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/>'),   // square-code
+    mathBlock:        svg('<path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2"/>'),   // sigma
+    mathInline:       svg('<path d="M3 12h3.28a1 1 0 0 1 .948.684l2.298 7.934a.5.5 0 0 0 .96-.044L13.82 4.771A1 1 0 0 1 14.792 4H21"/>'),   // radical
+    image:            svg('<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>'),   // image
+    figure:           svg('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16c.5-2 1.5-7 4-7 2 0 2 3 4 3 2.5 0 4.5-5 5-7"/>'),   // chart-spline
+    diagram:          svg('<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>'),   // workflow
+    frontmatter:      svg('<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>'),   // braces
+    toc:              svg('<path d="M8 5h13"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="M3 10a2 2 0 0 0 2 2h3"/><path d="M3 5v12a2 2 0 0 0 2 2h3"/>'),   // list-tree
+    preserved:        svg('<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/>'),   // file-code
+
+    /* text marks */
+    bold:             svg('<path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/>'),   // bold
+    italic:           svg('<line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/>'),   // italic
+    strikethrough:    svg('<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/>'),   // strikethrough
+    code:             svg('<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>'),   // code
+    link:             svg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),   // link
+    /* link-2-off rather than `unlink`: both are Lucide's, and at the 14px this
+       product renders icons at, unlink's four detached ticks around a broken
+       chain read as noise. This one is a link with a line through it, which is
+       what the request drew and what survives the size. */
+    unlink:           svg('<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>'),   // link-2-off
+    highlight:        svg('<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>'),   // highlighter
+    turnInto:         svg('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>'),   // arrow-right-left
+
+    /* table operations (editor-tables.js). Fifteen buttons in one strip, so
+     each has to be tellable apart at 15px: the between-* pair carries the axis
+     an insert happens on, the arrows carry a move, and fold-* collapses the
+     band being removed -- three trash cans in a row would not distinguish
+     row, column and table */
+    tableRowBefore:   svg('<rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/>'),   // between-horizontal-start
+    tableRowAfter:    svg('<rect width="13" height="7" x="3" y="3" rx="1"/><path d="m22 15-3-3 3-3"/><rect width="13" height="7" x="3" y="14" rx="1"/>'),   // between-horizontal-end
+    tableRowUp:       svg('<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>'),   // arrow-up
+    tableRowDown:     svg('<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'),   // arrow-down
     /*
-     * The slot's three document destinations (slot-strip.js). They have to be
-     * tellable apart at 18px in one cluster, so each is a different silhouette
-     * rather than a variation on one: a lined bubble, a merging branch, a clock.
+     * THE THREE DELETES AND `turnInto` WERE CHOSEN BY LOOKING AT THEM AT 13px,
+     * WHICH IS THE SIZE THEY SHIP AT.
      *
-     * The two ASSISTANTS used to be here too, as `spark` and `brackets`, on the
-     * argument that the vendors' logos are colored marks and the rail is one
-     * stroke language. That was the right trade while they were 28px tiles at the
-     * foot of the rail and the wrong one the moment they became extensions in the
-     * rail's navigation: two abstract glyphs said "IDE tool palette", which is
-     * the one thing this product's chrome exists to not be. They are VENDOR MARKS
-     * below now. `brackets` went with them -- nothing else used it.
+     * `replace`, `fold-vertical` and `fold-horizontal` are the semantically
+     * obvious picks and all three are illegible at the size the selection
+     * toolbar and the table bar actually render: scattered two-pixel dashes
+     * that read as dirt on the glass rather than as a symbol. `list-x`,
+     * `grid-2x2-x` and `arrow-right-left` survive the reduction. If one of
+     * these is ever swapped for a better name, render it at 13px first.
      */
-    changes: svg('<path d="M6 4v10a3 3 0 0 0 3 3h9"/><path d="m15 14 3 3-3 3"/><path d="M6 4 3 7m3-3 3 3"/>'),
-    sliders: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
-    more: svg('<circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>'),
-    home: svg('<path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/>'),
-    /* Suggest a change to a suggestion: a nib, not a plus. The action is
-       "write my version of this", not "add something". */
-    pencil: svg('<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 6.5 3 3"/>'),
-    /*
-     * Search (search-view.js). A magnifier, and deliberately the most literal
-     * shape in this file — every other glyph here is abstract because it names
-     * something only this product has, while "look for a word" is a universal
-     * that people find by silhouette and not by reading a label. The lens is
-     * off-centre towards the top-left with the handle to the bottom-right, which
-     * is the orientation of every magnifier anyone has used; the mirrored
-     * version reads as a stray letter at 19px.
-     */
-    search: svg('<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4.5 4.5"/>'),
-    /*
-     * Quality (quality-view.js, quality-project-view.js). A gauge: a half arc
-     * with a needle off the vertical.
-     *
-     * A GAUGE AND NOT A WARNING TRIANGLE, which is what a "quality issues" panel
-     * wants to be given. The panel's own governing rule is that a number earns a
-     * place by crossing a line somebody drew, and 14 of the 86 real documents
-     * have nothing to act on at all — an alert triangle on the resting state of a
-     * clean document says the opposite of what is true, and it says it in the one
-     * place a reader cannot dismiss it. A gauge is neutral about its reading, and
-     * this destination is measurement before it is alarm.
-     *
-     * The needle points up-left rather than straight up so the glyph reads as a
-     * dial with a value on it rather than as an umbrella at 18px, which is what
-     * a centred needle in a 24px box does. It also has to be tellable apart from
-     * the three destinations beside it (a lined bubble, a merging branch, a
-     * clock) by silhouette alone, in one cluster, at 18px — an arc plus one
-     * diagonal shares nothing with any of them.
-     */
-    gauge: svg('<path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 17 4.2-5.4"/><circle cx="12" cy="17" r="1.4"/>'),
+    tableRowDelete:   svg('<path d="M16 5H3"/><path d="M11 12H3"/><path d="M16 19H3"/><path d="m15.5 9.5 5 5"/><path d="m20.5 9.5-5 5"/>'),   // list-x
+    tableColBefore:   svg('<rect width="7" height="13" x="3" y="8" rx="1"/><path d="m15 2-3 3-3-3"/><rect width="7" height="13" x="14" y="8" rx="1"/>'),   // between-vertical-start
+    tableColAfter:    svg('<rect width="7" height="13" x="3" y="3" rx="1"/><path d="m9 22 3-3 3 3"/><rect width="7" height="13" x="14" y="3" rx="1"/>'),   // between-vertical-end
+    tableColLeft:     svg('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),   // arrow-left
+    tableColRight:    svg('<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>'),   // arrow-right
+    tableColDelete:   svg('<path d="M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3"/><path d="m16 16 5 5"/><path d="m16 21 5-5"/>'),   // grid-2x2-x
+    alignLeft:        svg('<path d="M21 5H3"/><path d="M15 12H3"/><path d="M17 19H3"/>'),   // align-left
+    alignCenter:      svg('<path d="M21 5H3"/><path d="M17 12H7"/><path d="M19 19H5"/>'),   // align-center
+    alignRight:       svg('<path d="M21 5H3"/><path d="M21 12H9"/><path d="M21 19H7"/>'),   // align-right
+    tableHeaderRow:   svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),   // panel-top
+    tableDelete:      svg('<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),   // trash-2
 
     /* --- VENDOR MARKS ----------------------------------------------------- *
      *

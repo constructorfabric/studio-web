@@ -32,6 +32,7 @@
  * "fix" a future feature that wants to read the frame's DOM. Do not.
  */
 
+const { TextSelection } = require('@tiptap/pm/state');
 const { DiagramCodeBlock, mermaidNodeView, renderMermaid } = require('./mermaid-view');
 const {
     isFigureLanguage, CHART_TOKENS, SURFACE_TOKENS, TOKEN_ALIASES, STARTERS, figureLabel
@@ -142,115 +143,115 @@ html, body { margin: 0; padding: 0; background: transparent; }
 html { overflow-x: hidden; }
 body {
   font: 13px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: var(--studio-text, #1f2328);
+  color: var(--studio-text);
   -webkit-font-smoothing: antialiased;
 }
 .fig { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; }
 .fig-title { font-size: 13px; font-weight: 650; letter-spacing: -.005em; }
 .fig-panes { display: flex; flex-direction: column; gap: 10px; }
 .fig-pane { position: relative; min-width: 0; }
-.fig-pane-label { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--studio-muted, #6e7781); margin-bottom: 3px; }
+.fig-pane-label { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--studio-muted); margin-bottom: 3px; }
 .fig-canvas { display: block; width: 100%; }
 .fig-canvas.clickable { cursor: pointer; }
-.fig-missing { font-size: 12px; color: var(--studio-muted, #6e7781); padding: 20px 0; }
+.fig-missing { font-size: 12px; color: var(--studio-muted); padding: 20px 0; }
 
 .fig-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.fig-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--studio-muted, #6e7781); }
+.fig-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--studio-muted); }
 .fig-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
 
 /* The metric strip: the figure's headline numbers, in a row that wraps rather
    than scrolls, so nothing is hidden off the right edge in a narrow column. */
-.fig-hud { display: flex; flex-wrap: wrap; gap: 2px 26px; padding: 9px 0 0; border-top: 1px solid var(--studio-line, #e1e4e8); }
+.fig-hud { display: flex; flex-wrap: wrap; gap: 2px 26px; padding: 9px 0 0; border-top: 1px solid var(--studio-line); }
 .fig-hud-cell { min-width: 74px; }
-.fig-hud-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted, #6e7781); }
+.fig-hud-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted); }
 .fig-hud-value { font-size: 15px; font-weight: 620; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 
 .fig-controls { display: flex; flex-direction: column; gap: 9px; padding-top: 3px; }
 .fig-control { display: flex; flex-direction: column; gap: 4px; }
 .fig-control-header {
-  font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted, #6e7781);
-  padding-top: 5px; border-top: 1px solid var(--studio-line, #e1e4e8);
+  font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted);
+  padding-top: 5px; border-top: 1px solid var(--studio-line);
 }
-.fig-control-label { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--studio-muted, #6e7781); }
-.fig-control-value { font-variant-numeric: tabular-nums; color: var(--studio-text, #1f2328); font-weight: 600; }
+.fig-control-label { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--studio-muted); }
+.fig-control-value { font-variant-numeric: tabular-nums; color: var(--studio-text); font-weight: 600; }
 
 /* One accent, and it is the host's own. A figure's controls are chrome; the
    colour budget belongs to the drawing. */
 .fig-range { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; }
-.fig-range::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--studio-line, #e1e4e8); }
+.fig-range::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--studio-line); }
 .fig-range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
-  border-radius: 50%; background: var(--studio-amber, #0b2275); border: 2px solid var(--studio-surface, #fff);
+  border-radius: 50%; background: var(--studio-accent); border: 2px solid var(--studio-surface);
   box-shadow: 0 1px 3px rgba(0,0,0,.2); cursor: pointer;
 }
-.fig-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--studio-amber, #0b2275); outline-offset: 2px; }
+.fig-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 .fig-switch {
   position: relative; width: 34px; height: 19px; flex: none; padding: 0; cursor: pointer;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 999px; background: var(--studio-surface-raised, #f6f7f9);
+  border: 1px solid var(--studio-line); border-radius: 999px; background: var(--studio-surface-raised);
   transition: background 140ms ease, border-color 140ms ease;
 }
 .fig-switch::after {
   content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
-  background: var(--studio-muted, #6e7781); transition: transform 140ms cubic-bezier(.23,1,.32,1), background 140ms ease;
+  background: var(--studio-muted); transition: transform 140ms cubic-bezier(.23,1,.32,1), background 140ms ease;
 }
-.fig-switch.on { background: var(--studio-amber, #0b2275); border-color: var(--studio-amber, #0b2275); }
+.fig-switch.on { background: var(--studio-accent); border-color: var(--studio-accent); }
 .fig-switch.on::after { transform: translateX(15px); background: #fff; }
 
-.fig-segmented, .fig-steps, .fig-stepper { display: inline-flex; align-self: flex-start; border: 1px solid var(--studio-line, #e1e4e8); border-radius: 7px; overflow: hidden; }
+.fig-segmented, .fig-steps, .fig-stepper { display: inline-flex; align-self: flex-start; border: 1px solid var(--studio-line); border-radius: 7px; overflow: hidden; }
 .fig-seg, .fig-step, .fig-step-btn {
   font: inherit; font-size: 11.5px; padding: 4px 11px; cursor: pointer; border: 0; background: transparent;
-  color: var(--studio-muted, #6e7781); border-left: 1px solid var(--studio-line, #e1e4e8);
+  color: var(--studio-muted); border-left: 1px solid var(--studio-line);
 }
 .fig-seg:first-child, .fig-step:first-child, .fig-step-btn:first-child { border-left: 0; }
-.fig-seg:hover, .fig-step:hover, .fig-step-btn:hover { background: var(--studio-surface-raised, #f6f7f9); color: var(--studio-text, #1f2328); }
-.fig-seg.on, .fig-step.on { background: var(--studio-amber, #0b2275); color: #fff; font-weight: 600; }
-.fig-step.done { color: var(--studio-text, #1f2328); }
-.fig-step-value { display: inline-flex; align-items: center; padding: 0 12px; font-size: 11.5px; font-variant-numeric: tabular-nums; border-left: 1px solid var(--studio-line, #e1e4e8); }
+.fig-seg:hover, .fig-step:hover, .fig-step-btn:hover { background: var(--studio-surface-raised); color: var(--studio-text); }
+.fig-seg.on, .fig-step.on { background: var(--studio-accent); color: #fff; font-weight: 600; }
+.fig-step.done { color: var(--studio-text); }
+.fig-step-value { display: inline-flex; align-items: center; padding: 0 12px; font-size: 11.5px; font-variant-numeric: tabular-nums; border-left: 1px solid var(--studio-line); }
 
 .fig-button, .fig-play {
   align-self: flex-start; font: inherit; font-size: 11.5px; font-weight: 600; padding: 5px 13px; cursor: pointer;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 7px;
-  background: var(--studio-surface-raised, #f6f7f9); color: var(--studio-text, #1f2328);
+  border: 1px solid var(--studio-line); border-radius: 7px;
+  background: var(--studio-surface-raised); color: var(--studio-text);
 }
-.fig-button:hover, .fig-play:hover { border-color: var(--studio-amber, #0b2275); color: var(--studio-amber, #0b2275); }
-.fig-play.on { background: var(--studio-amber, #0b2275); border-color: var(--studio-amber, #0b2275); color: #fff; }
+.fig-button:hover, .fig-play:hover { border-color: var(--studio-accent); color: var(--studio-accent); }
+.fig-play.on { background: var(--studio-accent); border-color: var(--studio-accent); color: #fff; }
 
 .fig-input, .fig-select {
   font: inherit; font-size: 12px; padding: 4px 8px; align-self: flex-start; min-width: 140px;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 7px;
-  background: var(--studio-bg, #fff); color: var(--studio-text, #1f2328);
+  border: 1px solid var(--studio-line); border-radius: 7px;
+  background: var(--studio-bg); color: var(--studio-text);
 }
 
-.fig-inspector { border-left: 2px solid var(--studio-amber, #0b2275); padding: 2px 0 2px 10px; }
+.fig-inspector { border-left: 2px solid var(--studio-accent); padding: 2px 0 2px 10px; }
 .fig-inspector-title { font-size: 11.5px; font-weight: 650; }
 .fig-inspector-value { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.fig-inspector-text { font-size: 12px; color: var(--studio-muted, #6e7781); line-height: 1.55; }
+.fig-inspector-text { font-size: 12px; color: var(--studio-muted); line-height: 1.55; }
 
 .fig-stats { display: flex; flex-wrap: wrap; gap: 10px; }
 .fig-stat {
   flex: 1 1 120px; min-width: 120px; padding: 10px 12px;
-  border: 1px solid var(--studio-line, #e1e4e8); border-radius: 9px; background: var(--studio-surface-raised, #f6f7f9);
+  border: 1px solid var(--studio-line); border-radius: 9px; background: var(--studio-surface-raised);
 }
-.fig-stat-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted, #6e7781); }
+.fig-stat-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--studio-muted); }
 .fig-stat-value { font-size: 22px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .fig-stat-delta { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.fig-stat-note { font-size: 11px; color: var(--studio-muted, #6e7781); margin-top: 3px; line-height: 1.45; }
+.fig-stat-note { font-size: 11px; color: var(--studio-muted); margin-top: 3px; line-height: 1.45; }
 
 .fig-table-wrap { overflow-x: auto; }
 .fig-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .fig-table th {
   text-align: left; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; font-weight: 650;
-  color: var(--studio-muted, #6e7781); padding: 5px 10px 5px 0; border-bottom: 1px solid var(--studio-line, #e1e4e8);
+  color: var(--studio-muted); padding: 5px 10px 5px 0; border-bottom: 1px solid var(--studio-line);
 }
-.fig-table td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--studio-line, #e1e4e8); }
+.fig-table td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--studio-line); }
 .fig-table tr:last-child td { border-bottom: 0; }
 
 .fig-mermaid { display: flex; justify-content: center; }
 .fig-mermaid svg { max-width: 100%; height: auto; }
-.fig-mermaid.failed { font-size: 12px; color: var(--studio-muted, #6e7781); }
+.fig-mermaid.failed { font-size: 12px; color: var(--studio-muted); }
 
-.fig-caption { font-size: 11.5px; line-height: 1.55; color: var(--studio-muted, #6e7781); }
+.fig-caption { font-size: 11.5px; line-height: 1.55; color: var(--studio-muted); }
 `;
 
 /**
@@ -616,8 +617,117 @@ function codeBlockNodeView(props) {
     return view;
 }
 
+/*
+ * THE KEYBOARD INSIDE A CODE BLOCK.
+ *
+ * Three of the four reported "code blocks are completely broken" defects were
+ * keys, and all three came from the same place: a code block is a ProseMirror
+ * text block, so it inherits the keymap that is right for PROSE and wrong for
+ * code. What that produced, in a real browser:
+ *
+ *  - TAB moved focus out of the document entirely. Nothing in the editor
+ *    claimed it, so the browser did what it does with an unclaimed Tab and
+ *    advanced to the next focusable element -- which is the language <input>
+ *    in this block's own head, three pixels away. The caret vanished and the
+ *    next thing typed went into the language attribute.
+ *  - BACKSPACE at the start of a block joined it into the paragraph above:
+ *    `before` + a python listing became one paragraph of prose, the fence
+ *    gone, the language gone, and the newlines with it. That is a destructive
+ *    default (it is correct for a quote or a heading, where the text is
+ *    prose either way) and it is the reported "it jumps to previous block".
+ *  - MOD-ENTER had no way out of a fence that is the last block in the
+ *    document, which is the one place ArrowDown cannot escape from either.
+ *
+ * `this.parent()` is spread first so CodeBlock's own bindings survive -- an
+ * addKeyboardShortcuts in an extend REPLACES the parent's rather than merging
+ * with it, and the parent carries the toggle shortcut and the triple-Enter
+ * exit. The three keys below then override the specific ones they name.
+ */
+const CODE_INDENT = '  ';
+
 const DocumentCodeBlock = DiagramCodeBlock.extend({
-    addNodeView() { return codeBlockNodeView; }
+    addNodeView() { return codeBlockNodeView; },
+    addKeyboardShortcuts() {
+        const inCode = () => this.editor.isActive(this.name);
+        /*
+         * insertText on a transaction, not insertContent -- inside a code block
+         * the inserted string carries newlines, and insertContent parses its
+         * argument as content, which turns those newlines into new BLOCKS. The
+         * `keepSelection` flag re-covers the replaced range so indenting a
+         * three-line selection leaves it selected and Tab can be pressed twice.
+         */
+        const replace = (from, to, text, keepSelection) => this.editor.commands.command(({ tr, dispatch }) => {
+            if (!dispatch) { return true; }
+            tr.insertText(text, from, to);
+            if (keepSelection) { tr.setSelection(TextSelection.create(tr.doc, from, from + text.length)); }
+            return true;
+        });
+        const lines = (from, to) => this.editor.state.doc.textBetween(from, to, '\n', '\n');
+        return {
+            ...this.parent?.(),
+            /*
+             * Two spaces, and the same two on every line of a multi-line
+             * selection -- the unit is a guess for any given language, and it
+             * is a guess in every editor; what matters is that the key indents
+             * instead of leaving the document.
+             */
+            Tab: () => {
+                if (!inCode()) { return false; }
+                const { from, to, empty } = this.editor.state.selection;
+                if (empty) { return replace(from, from, CODE_INDENT); }
+                const text = lines(from, to);
+                return replace(from, to, CODE_INDENT + text.split('\n').join('\n' + CODE_INDENT), true);
+            },
+            'Shift-Tab': () => {
+                if (!inCode()) { return false; }
+                const { $from, from, to, empty } = this.editor.state.selection;
+                if (empty) {
+                    /*
+                     * Leading whitespace only. Shift-Tab with the caret inside
+                     * a word is a no-op rather than a delete -- the key means
+                     * "less indentation", and there is none to take here.
+                     */
+                    const before = $from.parent.textBetween(0, $from.parentOffset);
+                    const line = before.slice(before.lastIndexOf('\n') + 1);
+                    if (!line || /\S/.test(line)) { return true; }
+                    const back = /(\t| {1,2})$/.exec(line);
+                    return !back ? true : replace(from - back[0].length, from, '');
+                }
+                const text = lines(from, to);
+                return replace(from, to, text.split('\n').map(l => l.replace(/^(\t| {1,2})/, '')).join('\n'), true);
+            },
+            /*
+             * At the very start of a NON-EMPTY fence, Backspace does nothing.
+             *
+             * The alternatives are worse rather than merely different: joining
+             * into the block above destroys the fence (above), and turning the
+             * block into a paragraph destroys its line structure, since a
+             * paragraph cannot hold the newlines.
+             *
+             * An EMPTY fence is the opposite case -- there is nothing to lose
+             * and the block is in the way -- so it clears to a paragraph, which
+             * is how a fence opened by mistake is closed. That branch restates
+             * CodeBlock's own binding rather than delegating to it: a key in
+             * this object REPLACES the parent's, so returning false here would
+             * fall past it to the base keymap and join the empty fence into the
+             * paragraph above, which is the very thing being fixed.
+             */
+            Backspace: ({ editor }) => {
+                const { empty, $anchor } = editor.state.selection;
+                if (!empty || $anchor.parent.type.name !== this.name) { return false; }
+                if (!$anchor.parent.textContent.length) { return editor.commands.clearNodes(); }
+                return $anchor.parentOffset === 0;
+            },
+            /*
+             * The way out, for the fence that is the last block in the file.
+             * ArrowDown exits a code block (CodeBlock's own exitOnArrowDown)
+             * only when there is something after it to exit INTO; typing three
+             * Enters works but leaves two blank lines in the code. Mod-Enter is
+             * what every editor with an embedded block uses for this.
+             */
+            'Mod-Enter': () => inCode() && this.editor.commands.exitCode()
+        };
+    }
 });
 
 /* ==========================================================================
@@ -673,7 +783,7 @@ const FIGURE_CSS = `
   border: 1px solid var(--studio-line); background: var(--studio-surface); color: var(--studio-text);
   width: auto !important; text-align: center !important;
 }
-.studio-figure-starters button:hover { border-color: var(--studio-amber); color: var(--studio-amber); background: var(--studio-surface); }
+.studio-figure-starters button:hover { border-color: var(--studio-accent); color: var(--studio-accent); background: var(--studio-surface); }
 `;
 
 module.exports = {

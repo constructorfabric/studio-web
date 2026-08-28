@@ -150,7 +150,8 @@ const CHART_TOKENS = {
 const SURFACE_TOKENS = [
     '--studio-bg', '--studio-surface', '--studio-surface-raised', '--studio-surface-sunken',
     '--studio-line', '--studio-edge', '--studio-text', '--studio-muted',
-    '--studio-amber', '--studio-danger', '--studio-focus', '--studio-radius'
+    '--studio-accent', '--studio-warning', '--studio-verified',
+    '--studio-danger', '--studio-focus', '--studio-radius'
 ];
 
 /*

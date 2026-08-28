@@ -222,7 +222,7 @@ const SLOT_STRIP_CSS = `
 .studio-slot-btn svg { width: 18px; height: 18px; display: block; }
 .studio-slot-btn:hover:not(.off) { background: var(--studio-surface-sunken); color: var(--studio-text); }
 .studio-slot-btn:active:not(.off) { transform: scale(.94); }
-.studio-slot-btn:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: -2px; }
+.studio-slot-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 /* OPEN means "the panel is showing this", and it is the accent doing the work in
    both channels at once: a selection-tinted tile AND an accent glyph. The strip
    deliberately kept its label in --studio-text on a mixed tile, because tiny
@@ -231,10 +231,10 @@ const SLOT_STRIP_CSS = `
    --studio-selection-bg rather than a color-mix of amber: it is the product's
    existing "this one is current" ground, already themed in both palettes. */
 .studio-slot-btn.on {
-  background: var(--studio-selection-bg); color: var(--studio-amber);
+  background: var(--studio-selection-bg); color: var(--studio-accent);
   --studio-slot-ring: var(--studio-selection-bg);
 }
-.studio-slot-btn.on:hover { background: var(--studio-selection-bg); color: var(--studio-amber); }
+.studio-slot-btn.on:hover { background: var(--studio-selection-bg); color: var(--studio-accent); }
 /* Unavailable, NOT removed, and not the HTML disabled attribute either.
  *
  * The whole point of fixed membership is that the entry stays reachable enough
@@ -255,7 +255,7 @@ const SLOT_STRIP_CSS = `
 .studio-slot-count {
   position: absolute; top: 0; right: 0; box-sizing: border-box;
   min-width: 13px; height: 13px; padding: 0 3px;
-  border-radius: 999px; background: var(--studio-amber); color: var(--studio-bg);
+  border-radius: 999px; background: var(--studio-accent); color: var(--studio-bg);
   font-size: 9px; line-height: 13px; font-weight: 700; text-align: center;
   box-shadow: 0 0 0 1.5px var(--studio-slot-ring);
   pointer-events: none;

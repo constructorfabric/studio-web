@@ -22,6 +22,7 @@ const { TableCell } = require('@tiptap/extension-table-cell');
 const { TableHeader } = require('@tiptap/extension-table-header');
 const { Extension } = require('@tiptap/core');
 const { Plugin } = require('@tiptap/pm/state');
+const { ICONS } = require('./icons');
 
 /*
  * Markdown stores alignment once per column, in the delimiter row;
@@ -262,21 +263,21 @@ function tableContent(columns, rows) {
  * built from this list alone rather than from a parallel set of DOM handlers.
  */
 const TABLE_COMMANDS = [
-    { key: 'row-before', group: 'row', label: 'Insert row above', icon: '⤒', run: e => e.chain().focus().addRowBefore().run() },
-    { key: 'row-after', group: 'row', label: 'Insert row below', icon: '⤓', run: e => e.chain().focus().addRowAfter().run() },
-    { key: 'row-up', group: 'row', label: 'Move row up', icon: '↑', run: e => moveRow(e, -1) },
-    { key: 'row-down', group: 'row', label: 'Move row down', icon: '↓', run: e => moveRow(e, 1) },
-    { key: 'row-delete', group: 'row', label: 'Delete row', icon: '⌫', run: e => e.chain().focus().deleteRow().run() },
-    { key: 'col-before', group: 'col', label: 'Insert column left', icon: '⇤', run: e => e.chain().focus().addColumnBefore().run() },
-    { key: 'col-after', group: 'col', label: 'Insert column right', icon: '⇥', run: e => e.chain().focus().addColumnAfter().run() },
-    { key: 'col-left', group: 'col', label: 'Move column left', icon: '←', run: e => moveColumn(e, -1) },
-    { key: 'col-right', group: 'col', label: 'Move column right', icon: '→', run: e => moveColumn(e, 1) },
-    { key: 'col-delete', group: 'col', label: 'Delete column', icon: '⌦', run: e => e.chain().focus().deleteColumn().run() },
-    { key: 'align-left', group: 'align', label: 'Align column left', icon: '⯇', run: e => setColumnAlign(e, 'left') },
-    { key: 'align-center', group: 'align', label: 'Align column centre', icon: '≡', run: e => setColumnAlign(e, 'center') },
-    { key: 'align-right', group: 'align', label: 'Align column right', icon: '⯈', run: e => setColumnAlign(e, 'right') },
-    { key: 'header-row', group: 'table', label: 'Toggle header row', icon: 'H', run: e => e.chain().focus().toggleHeaderRow().run() },
-    { key: 'table-delete', group: 'table', label: 'Delete table', icon: '✕', run: e => e.chain().focus().deleteTable().run() }
+    { key: 'row-before', group: 'row', label: 'Insert row above', icon: ICONS.tableRowBefore, run: e => e.chain().focus().addRowBefore().run() },
+    { key: 'row-after', group: 'row', label: 'Insert row below', icon: ICONS.tableRowAfter, run: e => e.chain().focus().addRowAfter().run() },
+    { key: 'row-up', group: 'row', label: 'Move row up', icon: ICONS.tableRowUp, run: e => moveRow(e, -1) },
+    { key: 'row-down', group: 'row', label: 'Move row down', icon: ICONS.tableRowDown, run: e => moveRow(e, 1) },
+    { key: 'row-delete', group: 'row', label: 'Delete row', icon: ICONS.tableRowDelete, run: e => e.chain().focus().deleteRow().run() },
+    { key: 'col-before', group: 'col', label: 'Insert column left', icon: ICONS.tableColBefore, run: e => e.chain().focus().addColumnBefore().run() },
+    { key: 'col-after', group: 'col', label: 'Insert column right', icon: ICONS.tableColAfter, run: e => e.chain().focus().addColumnAfter().run() },
+    { key: 'col-left', group: 'col', label: 'Move column left', icon: ICONS.tableColLeft, run: e => moveColumn(e, -1) },
+    { key: 'col-right', group: 'col', label: 'Move column right', icon: ICONS.tableColRight, run: e => moveColumn(e, 1) },
+    { key: 'col-delete', group: 'col', label: 'Delete column', icon: ICONS.tableColDelete, run: e => e.chain().focus().deleteColumn().run() },
+    { key: 'align-left', group: 'align', label: 'Align column left', icon: ICONS.alignLeft, run: e => setColumnAlign(e, 'left') },
+    { key: 'align-center', group: 'align', label: 'Align column centre', icon: ICONS.alignCenter, run: e => setColumnAlign(e, 'center') },
+    { key: 'align-right', group: 'align', label: 'Align column right', icon: ICONS.alignRight, run: e => setColumnAlign(e, 'right') },
+    { key: 'header-row', group: 'table', label: 'Toggle header row', icon: ICONS.tableHeaderRow, run: e => e.chain().focus().toggleHeaderRow().run() },
+    { key: 'table-delete', group: 'table', label: 'Delete table', icon: ICONS.tableDelete, run: e => e.chain().focus().deleteTable().run() }
 ];
 
 const TABLE_EXTENSIONS = [StudioTable, TableRow, AlignedTableCell, AlignedTableHeader, TabularPaste];

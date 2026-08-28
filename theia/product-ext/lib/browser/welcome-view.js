@@ -362,7 +362,7 @@ const WELCOME_CSS = `
 }
 .studio-welcome-cta { margin-top: 22px; }
 .studio-welcome-cta .studio-btn { padding: 9px 17px; font-size: 12.5px; border-radius: 7px; }
-.studio-welcome-cta .studio-btn:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-welcome-cta .studio-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 /* --- the three columns ---------------------------------------------------- */
 .studio-welcome-cols {

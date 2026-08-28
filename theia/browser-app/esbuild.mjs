@@ -45,6 +45,35 @@ const mermaidOptions = {
 };
 
 /*
+ * KaTeX as its own script, for the same reason as mermaid above and with one
+ * addition of its own.
+ *
+ * Math is a document construct, not an application one: a project can go a
+ * whole session without opening a file that contains an equation. So the
+ * renderer and its stylesheet load on the first math node and never otherwise.
+ *
+ * THE FONTS ARE FILES, NOT DATA URLS, and that is the addition. KaTeX's
+ * stylesheet declares twenty font faces in three formats each; with the
+ * generated `.woff2: dataurl` loader they base64 into the CSS and it measures
+ * 1.46 MB, all of it fetched to render one fraction. As files it measures
+ * 23 KB and the browser fetches only the two or three faces an equation
+ * actually uses. Same correction, same reasoning, as `.wasm: file` below.
+ */
+const katexOptions = {
+    entryPoints: { katex: '../katex-entry.mjs' },
+    bundle: true,
+    format: 'iife',
+    globalName: 'studioKatex',
+    outdir: 'lib/frontend',
+    assetNames: '[name]',
+    platform: 'browser',
+    mainFields: ['browser', 'module', 'main'],
+    loader: { ...browserOptions.loader, '.woff2': 'file', '.woff': 'file', '.ttf': 'file' },
+    minify,
+    sourcemap
+};
+
+/*
  * Two corrections to the generated browser options.
  *
  * `.wasm` as a data URL: vscode-oniguruma's 616 KB grammar engine was being
@@ -71,12 +100,14 @@ const correctedBrowserOptions = {
 const browserContext = await esbuild.context(correctedBrowserOptions);
 const nodeContext = await esbuild.context(nodeOptions);
 const mermaidContext = await esbuild.context(mermaidOptions);
+const katexContext = await esbuild.context(katexOptions);
 
 if (watch) {
     await Promise.all([
         browserContext.watch(),
         nodeContext.watch(),
         mermaidContext.watch(),
+        katexContext.watch(),
     ]);
 } else {
     try {
@@ -86,6 +117,8 @@ if (watch) {
         await nodeContext.dispose();
         await mermaidContext.rebuild();
         await mermaidContext.dispose();
+        await katexContext.rebuild();
+        await katexContext.dispose();
     } catch {
         process.exit(1);
     }

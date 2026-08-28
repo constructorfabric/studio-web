@@ -86,19 +86,19 @@ function commentCount(threads) {
 const FRAME_CSS = `
 html.studio-commenting * { cursor: crosshair !important; }
 html.studio-commenting .studio-hover {
-  outline: 2px solid var(--studio-cyan) !important; outline-offset: 1px !important;
-  background: color-mix(in srgb, var(--studio-cyan) 12%, transparent) !important;
+  outline: 2px solid var(--studio-accent) !important; outline-offset: 1px !important;
+  background: color-mix(in srgb, var(--studio-accent) 12%, transparent) !important;
 }
 /* outline + ::after badge only: neither takes part in layout, so the page
    renders exactly as it does in a browser */
 .studio-commented {
-  outline: 2px solid var(--studio-amber) !important; outline-offset: 1px !important;
-  background: color-mix(in srgb, var(--studio-amber) 14%, transparent) !important;
+  outline: 2px solid var(--studio-accent) !important; outline-offset: 1px !important;
+  background: color-mix(in srgb, var(--studio-accent) 14%, transparent) !important;
 }
 .studio-commented::after {
   content: attr(data-studio-count); position: absolute; margin: -10px 0 0 -10px;
   min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
-  border-radius: 9px; background: var(--studio-amber); color: var(--studio-bg); z-index: 2147483000;
+  border-radius: 9px; background: var(--studio-accent); color: var(--studio-bg); z-index: 2147483000;
   font: 600 10.5px/17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   text-align: center; cursor: pointer;
 }
@@ -351,7 +351,7 @@ class HtmlViewerWidget extends Widget {
     // with the product theme without owning a second palette.
     syncFrameTokens(doc) {
         const shell = getComputedStyle(document.documentElement);
-        for (const token of ['--studio-bg', '--studio-surface', '--studio-surface-raised', '--studio-line', '--studio-text', '--studio-muted', '--studio-amber', '--studio-cyan', '--studio-green', '--studio-danger']) {
+        for (const token of ['--studio-bg', '--studio-surface', '--studio-surface-raised', '--studio-line', '--studio-text', '--studio-muted', '--studio-accent', '--studio-on-accent', '--studio-warning', '--studio-verified', '--studio-danger']) {
             const value = shell.getPropertyValue(token).trim();
             if (value) { doc.documentElement.style.setProperty(token, value); }
         }
@@ -851,7 +851,7 @@ const HTML_VIEWER_CSS = `
 }
 .studio-html iframe { width: 100%; height: 100%; border: none; background: var(--studio-surface); display: block; }
 .studio-html-hint { font-size: 11.5px; color: var(--studio-muted); margin-right: 4px; }
-.studio-html .studio-btn.on { background: var(--studio-amber); color: var(--studio-bg); border-color: var(--studio-amber); }
+.studio-html .studio-btn.on { background: var(--studio-accent); color: var(--studio-bg); border-color: var(--studio-accent); }
 
 /* Comment cards float in their own layer above the iframe. They are outside
    the previewed document entirely, so they cannot reflow it. */
@@ -885,7 +885,7 @@ const HTML_VIEWER_CSS = `
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 .studio-card textarea:focus, .studio-card textarea:focus-visible {
-  outline: none; border-color: var(--studio-amber); box-shadow: 0 0 0 3px var(--studio-focus);
+  outline: none; border-color: var(--studio-accent); box-shadow: 0 0 0 3px var(--studio-focus);
 }
 .studio-card .sth-orphan { color: var(--studio-danger); font-weight: 600; }
 `;

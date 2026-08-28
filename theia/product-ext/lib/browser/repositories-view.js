@@ -869,23 +869,23 @@ async function firstResolvableFolder(uris, resolve) {
 }
 
 const REPOS_CSS = `
-.studio-repos { display:flex; flex-direction:column; height:100%; min-width:0; background:var(--studio-surface, #16171c); color:var(--studio-text, #f1eee7); }
-.studio-project-head { padding:16px 14px 10px; border-bottom:1px solid var(--studio-line, #e1e4e8); }
-.studio-project-switch-label { display:block; margin:0 0 6px; color:var(--studio-muted, #9298a8); font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.studio-repos { display:flex; flex-direction:column; height:100%; min-width:0; background:var(--studio-surface); color:var(--studio-text); }
+.studio-project-head { padding:16px 14px 10px; border-bottom:1px solid var(--studio-line); }
+.studio-project-switch-label { display:block; margin:0 0 6px; color:var(--studio-muted); font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
 /* One control, the full width of the column. The row survives the ⋯ button's
    removal because the selector still wants a flex parent that cannot let it
    overflow a 257px rail; what changed is that nothing competes with it. */
 .studio-project-switch-row { display:flex; align-items:center; }
-.studio-project-switcher { flex:1; min-width:0; appearance:none; border:1px solid var(--studio-line, #30333d); border-radius:7px; background:var(--studio-surface-raised, #202127); color:var(--studio-text, #f1eee7); font:600 13px/1.2 inherit; padding:8px 28px 8px 10px; background-image:linear-gradient(45deg,transparent 50%,var(--studio-muted,#9298a8) 50%),linear-gradient(135deg,var(--studio-muted,#9298a8) 50%,transparent 50%); background-position:calc(100% - 14px) 50%,calc(100% - 10px) 50%; background-size:4px 4px,4px 4px; background-repeat:no-repeat; }
-.studio-project-switcher:focus-visible, .studio-project-entry:focus-visible, .studio-project-breadcrumb button:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:2px; }
-.studio-file-operations-menu { position:fixed; z-index:10000; width:176px; padding:4px; border:1px solid var(--studio-edge, var(--studio-line, #d7dbe1)); border-radius:7px; background:var(--studio-surface-raised, #fff); box-shadow:0 8px 24px var(--studio-shadow, rgba(15,23,42,.16)); }
-.studio-file-operations-menu button { display:block; width:100%; border:0; border-radius:4px; background:transparent; color:var(--studio-text, #1f2328); cursor:pointer; font:500 12px/1 inherit; padding:8px 9px; text-align:left; }
-.studio-file-operations-menu button:hover, .studio-file-operations-menu button:focus-visible { background:var(--studio-selection-bg, #e9edfb); color:var(--studio-text, #1f2328); outline:none; }
-.studio-file-operations-menu button[data-file-op="delete"] { color:var(--studio-danger, #c43d36); }
-.studio-file-operations-menu button[data-file-op="delete"]:hover, .studio-file-operations-menu button[data-file-op="delete"]:focus-visible { background:color-mix(in srgb, var(--studio-danger, #c43d36) 10%, transparent); color:var(--studio-danger, #c43d36); }
+.studio-project-switcher { flex:1; min-width:0; appearance:none; border:1px solid var(--studio-line); border-radius:7px; background:var(--studio-surface-raised); color:var(--studio-text); font:600 13px/1.2 inherit; padding:8px 28px 8px 10px; background-image:linear-gradient(45deg,transparent 50%,var(--studio-muted) 50%),linear-gradient(135deg,var(--studio-muted) 50%,transparent 50%); background-position:calc(100% - 14px) 50%,calc(100% - 10px) 50%; background-size:4px 4px,4px 4px; background-repeat:no-repeat; }
+.studio-project-switcher:focus-visible, .studio-project-entry:focus-visible, .studio-project-breadcrumb button:focus-visible { outline:2px solid var(--studio-accent); outline-offset:2px; }
+.studio-file-operations-menu { position:fixed; z-index:10000; width:176px; padding:4px; border:1px solid var(--studio-edge); border-radius:7px; background:var(--studio-surface-raised); box-shadow:0 8px 24px var(--studio-shadow); }
+.studio-file-operations-menu button { display:block; width:100%; border:0; border-radius:4px; background:transparent; color:var(--studio-text); cursor:pointer; font:500 12px/1 inherit; padding:8px 9px; text-align:left; }
+.studio-file-operations-menu button:hover, .studio-file-operations-menu button:focus-visible { background:var(--studio-selection-bg); color:var(--studio-text); outline:none; }
+.studio-file-operations-menu button[data-file-op="delete"] { color:var(--studio-danger); }
+.studio-file-operations-menu button[data-file-op="delete"]:hover, .studio-file-operations-menu button[data-file-op="delete"]:focus-visible { background:color-mix(in srgb, var(--studio-danger) 10%, transparent); color:var(--studio-danger); }
 .studio-project-breadcrumb {
   position:relative; display:flex; align-items:center; gap:4px; min-height:39px;
-  padding:0 12px; border-bottom:1px solid var(--studio-line, #e1e4e8); white-space:nowrap;
+  padding:0 12px; border-bottom:1px solid var(--studio-line); white-space:nowrap;
   /* Collapsing the middle into "…" keeps this from overflowing in the common
      case; overflow can still scroll for a rail this narrow with long names,
      but the scrollbar itself stays invisible — a visible one is the thing
@@ -893,29 +893,29 @@ const REPOS_CSS = `
   overflow-x:auto; overflow-y:hidden; scrollbar-width:none;
 }
 .studio-project-breadcrumb::-webkit-scrollbar { display:none; }
-.studio-project-breadcrumb button { flex:0 0 auto; border:0; background:transparent; color:var(--studio-muted, #9298a8); cursor:pointer; font:500 11.5px/1 inherit; padding:4px 2px; border-radius:4px; }
-.studio-project-breadcrumb button[aria-current="page"] { color:var(--studio-text, #f1eee7); font-weight:600; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
-.studio-project-breadcrumb button:hover { color:var(--studio-amber, #d59b3b); }
-.studio-project-back { margin-right:5px !important; color:var(--studio-cyan, #61c9d7) !important; }
+.studio-project-breadcrumb button { flex:0 0 auto; border:0; background:transparent; color:var(--studio-muted); cursor:pointer; font:500 11.5px/1 inherit; padding:4px 2px; border-radius:4px; }
+.studio-project-breadcrumb button[aria-current="page"] { color:var(--studio-text); font-weight:600; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+.studio-project-breadcrumb button:hover { color:var(--studio-accent); }
+.studio-project-back { margin-right:5px !important; color:var(--studio-accent) !important; }
 /* The root crumb carries a home glyph instead of the project name, which the
    switcher 30px above already states. The element, its target, and its
    aria-current are unchanged -- the name lives in aria-label. */
 .studio-project-crumb-root { display:inline-flex; align-items:center; padding:4px !important; }
 .studio-project-crumb-root svg { width:13px; height:13px; display:block; }
-.studio-project-separator { color:var(--studio-line, #30333d); }
+.studio-project-separator { color:var(--studio-line); }
 .studio-project-crumb-more {
   min-width:22px; height:20px; padding:0 4px !important; border-radius:5px; letter-spacing:.02em;
-  background:var(--studio-surface-raised, #202127); border:1px solid var(--studio-line, #30333d) !important;
+  background:var(--studio-surface-raised); border:1px solid var(--studio-line) !important;
 }
-.studio-project-crumb-more[aria-expanded="true"] { color:var(--studio-amber, #d59b3b); border-color:var(--studio-amber, #d59b3b) !important; }
+.studio-project-crumb-more[aria-expanded="true"] { color:var(--studio-accent); border-color:var(--studio-accent) !important; }
 /* One popover, one user now: the breadcrumb's overflow menu. The project-actions
    menu that shared these rules is gone (its two actions moved to the bottom line
    and the panel's title bar), and its right-anchored variant went with it. */
 .studio-crumb-popover {
   position:absolute; z-index:30; min-width:140px; max-width:260px;
   display:flex; flex-direction:column; padding:5px; border-radius:9px;
-  background:var(--studio-surface-raised, #202127); border:1px solid var(--studio-line, #30333d);
-  box-shadow:0 10px 28px color-mix(in srgb, var(--studio-bg, #16171c) 78%, transparent);
+  background:var(--studio-surface-raised); border:1px solid var(--studio-line);
+  box-shadow:0 10px 28px color-mix(in srgb, var(--studio-bg) 78%, transparent);
   opacity:0; transform:scale(.95); transform-origin:top left;
   transition:opacity 140ms cubic-bezier(0.23,1,0.32,1), transform 140ms cubic-bezier(0.23,1,0.32,1);
 }
@@ -923,19 +923,19 @@ const REPOS_CSS = `
 .studio-crumb-popover button {
   display:block; width:100%; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   padding:6px 8px; border-radius:6px; border:0; background:transparent; cursor:pointer;
-  color:var(--studio-text, #f1eee7); font:500 12px/1.3 inherit;
+  color:var(--studio-text); font:500 12px/1.3 inherit;
 }
-.studio-crumb-popover button:hover { background:var(--studio-surface, #16171c); color:var(--studio-amber, #d59b3b); }
-.studio-crumb-popover button:focus-visible { outline:2px solid var(--studio-amber, #d59b3b); outline-offset:-2px; }
+.studio-crumb-popover button:hover { background:var(--studio-surface); color:var(--studio-accent); }
+.studio-crumb-popover button:focus-visible { outline:2px solid var(--studio-accent); outline-offset:-2px; }
 .studio-project-browser { flex:1; min-height:0; overflow:auto; padding:8px; }
 .studio-project-entries { display:flex; flex-direction:column; gap:2px; }
-.studio-project-entry { display:grid; grid-template-columns:18px minmax(0,1fr) auto auto; align-items:center; min-height:32px; width:100%; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--studio-text, #f1eee7); cursor:pointer; font:500 12.5px/1.2 inherit; padding:0 8px; text-align:left; }
-.studio-project-entry:hover { border-color:var(--studio-line, #30333d); background:var(--studio-surface-raised, #202127); }
-.studio-entry-icon { width:13px; height:10px; box-sizing:border-box; border:1.5px solid var(--studio-muted, #9298a8); border-radius:2px; opacity:.9; }
-.studio-project-entry.folder .studio-entry-icon { position:relative; border-color:var(--studio-amber, #d59b3b); }
-.studio-project-entry.folder .studio-entry-icon::before { content:""; position:absolute; left:1px; top:-4px; width:5px; height:3px; border:1.5px solid var(--studio-amber, #d59b3b); border-bottom:0; border-radius:2px 2px 0 0; }
-.studio-project-entry.file .studio-entry-icon { position:relative; width:11px; height:14px; border-radius:1px; border-color:var(--studio-muted, #6e7781); }
-.studio-project-entry.file .studio-entry-icon::after { position:absolute; left:50%; top:50%; transform:translate(-50%,-48%); color:var(--studio-muted, #6e7781); content:"·"; font:700 9px/1 ui-sans-serif,system-ui,sans-serif; }
+.studio-project-entry { display:grid; grid-template-columns:18px minmax(0,1fr) auto auto; align-items:center; min-height:32px; width:100%; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--studio-text); cursor:pointer; font:500 12.5px/1.2 inherit; padding:0 8px; text-align:left; }
+.studio-project-entry:hover { border-color:var(--studio-line); background:var(--studio-surface-raised); }
+.studio-entry-icon { width:13px; height:10px; box-sizing:border-box; border:1.5px solid var(--studio-muted); border-radius:2px; opacity:.9; }
+.studio-project-entry.folder .studio-entry-icon { position:relative; border-color:var(--studio-accent); }
+.studio-project-entry.folder .studio-entry-icon::before { content:""; position:absolute; left:1px; top:-4px; width:5px; height:3px; border:1.5px solid var(--studio-accent); border-bottom:0; border-radius:2px 2px 0 0; }
+.studio-project-entry.file .studio-entry-icon { position:relative; width:11px; height:14px; border-radius:1px; border-color:var(--studio-muted); }
+.studio-project-entry.file .studio-entry-icon::after { position:absolute; left:50%; top:50%; transform:translate(-50%,-48%); color:var(--studio-muted); content:"·"; font:700 9px/1 ui-sans-serif,system-ui,sans-serif; }
 .studio-project-entry.file .studio-entry-icon.icon-markdown::after { content:"M"; font-size:7px; }
 .studio-project-entry.file .studio-entry-icon.icon-html::after, .studio-project-entry.file .studio-entry-icon.icon-markup::after { content:"<>"; font-size:5px; letter-spacing:-1px; }
 .studio-project-entry.file .studio-entry-icon.icon-data::after { content:"{}"; font-size:6px; letter-spacing:-1px; }
@@ -949,11 +949,11 @@ const REPOS_CSS = `
 .studio-project-entry.file .studio-entry-icon.icon-image::after { content:"◒"; font-size:9px; }
 .studio-project-entry.file .studio-entry-icon.icon-pdf::after { content:"P"; font-size:7px; }
 .studio-project-entry.file .studio-entry-icon.icon-package::after { content:"□"; font-size:8px; }
-.studio-project-entry.file .studio-entry-icon.icon-markdown, .studio-project-entry.file .studio-entry-icon.icon-html, .studio-project-entry.file .studio-entry-icon.icon-typescript, .studio-project-entry.file .studio-entry-icon.icon-javascript, .studio-project-entry.file .studio-entry-icon.icon-python, .studio-project-entry.file .studio-entry-icon.icon-package { border-color:var(--studio-amber, #0b2275); }
-.studio-project-entry.file .studio-entry-icon.icon-markdown::after, .studio-project-entry.file .studio-entry-icon.icon-html::after, .studio-project-entry.file .studio-entry-icon.icon-typescript::after, .studio-project-entry.file .studio-entry-icon.icon-javascript::after, .studio-project-entry.file .studio-entry-icon.icon-python::after, .studio-project-entry.file .studio-entry-icon.icon-package::after { color:var(--studio-amber, #0b2275); }
-.studio-entry-forward { color:var(--studio-muted, #9298a8); font-size:18px; line-height:1; }
-.studio-entry-badge { flex:none; font-size:10px; font-weight:650; min-width:16px; text-align:center; padding:1px 5px; margin-left:auto; border-radius:999px; background:var(--studio-amber, #d59b3b); color:#fff; font-variant-numeric:tabular-nums; }
-.studio-project-empty { padding:16px 8px; color:var(--studio-muted, #9298a8); font-size:12px; line-height:1.45; }
+.studio-project-entry.file .studio-entry-icon.icon-markdown, .studio-project-entry.file .studio-entry-icon.icon-html, .studio-project-entry.file .studio-entry-icon.icon-typescript, .studio-project-entry.file .studio-entry-icon.icon-javascript, .studio-project-entry.file .studio-entry-icon.icon-python, .studio-project-entry.file .studio-entry-icon.icon-package { border-color:var(--studio-accent); }
+.studio-project-entry.file .studio-entry-icon.icon-markdown::after, .studio-project-entry.file .studio-entry-icon.icon-html::after, .studio-project-entry.file .studio-entry-icon.icon-typescript::after, .studio-project-entry.file .studio-entry-icon.icon-javascript::after, .studio-project-entry.file .studio-entry-icon.icon-python::after, .studio-project-entry.file .studio-entry-icon.icon-package::after { color:var(--studio-accent); }
+.studio-entry-forward { color:var(--studio-muted); font-size:18px; line-height:1; }
+.studio-entry-badge { flex:none; font-size:10px; font-weight:650; min-width:16px; text-align:center; padding:1px 5px; margin-left:auto; border-radius:999px; background:var(--studio-accent); color:#fff; font-variant-numeric:tabular-nums; }
+.studio-project-empty { padding:16px 8px; color:var(--studio-muted); font-size:12px; line-height:1.45; }
 /* The waiting twin of .studio-project-empty: the panel is 257px wide and the
    folder name in the caption can be longer than that, so it wraps and breaks
    rather than pushing a horizontal scrollbar into a column that has none. */
@@ -964,10 +964,10 @@ const REPOS_CSS = `
    footer, the file-type filter, and the autosave toggle that used to live down
    there are gone; their styles moved to project-page.js with their controls. */
 .studio-project-entries .studio-btn.primary { align-self:start; margin:0 8px; }
-.studio-btn { border:1px solid var(--studio-line, #30333d); border-radius:6px; background:var(--studio-surface-raised, #202127); color:var(--studio-text, #f1eee7); cursor:pointer; font:600 11.5px/1 inherit; padding:7px 9px; }
-.studio-btn:hover { border-color:var(--studio-amber, #d59b3b); }
-.studio-btn.primary { background:var(--studio-amber, #d59b3b); border-color:var(--studio-amber, #d59b3b); color:var(--studio-bg, #101116); }
-.studio-btn.ghost { background:transparent; color:var(--studio-muted, #9298a8); }
+.studio-btn { border:1px solid var(--studio-line); border-radius:6px; background:var(--studio-surface-raised); color:var(--studio-text); cursor:pointer; font:600 11.5px/1 inherit; padding:7px 9px; }
+.studio-btn:hover { border-color:var(--studio-accent); }
+.studio-btn.primary { background:var(--studio-accent); border-color:var(--studio-accent); color:var(--studio-bg); }
+.studio-btn.ghost { background:transparent; color:var(--studio-muted); }
 `;
 
 module.exports = { RepositoriesWidget, REPOS_CSS, firstResolvableFolder };

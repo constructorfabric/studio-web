@@ -621,7 +621,7 @@ const MEASURES_CSS = `
 /* --- the Measured tab (quality-measures.js) ------------------------------- *
  *
  * THE SEGMENT PALETTE. CONTRACT-quality.md §1 fixes the product's whole
- * palette at monochrome plus one accent (--studio-amber) plus one danger
+ * palette at monochrome plus one accent (--studio-accent) plus one danger
  * (--studio-danger); a four-way stacked bar still needs four segments a
  * reader can tell apart without a legend, so these four stops are DERIVED
  * from the three tokens the contract already allows (amber, muted, line)
@@ -635,8 +635,8 @@ const MEASURES_CSS = `
  * cannot separate the two middle stops by eye alone.
  */
 :root {
-  --studio-quality-seg-1: var(--studio-amber);
-  --studio-quality-seg-2: color-mix(in srgb, var(--studio-amber) 55%, var(--studio-muted) 45%);
+  --studio-quality-seg-1: var(--studio-accent);
+  --studio-quality-seg-2: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-muted) 45%);
   --studio-quality-seg-3: color-mix(in srgb, var(--studio-muted) 60%, var(--studio-line) 40%);
   --studio-quality-seg-4: var(--studio-line);
 }
@@ -667,7 +667,7 @@ const MEASURES_CSS = `
 .studio-quality-doctype-origin { grid-column: 1 / -1; font-size: 11.5px; color: var(--studio-muted); }
 .studio-quality-doctype-toggle {
   grid-column: 2; display: inline-flex; align-items: center; gap: 3px; background: none; border: none;
-  cursor: pointer; font-size: 12px; color: var(--studio-amber); padding: 2px 0; justify-self: end;
+  cursor: pointer; font-size: 12px; color: var(--studio-accent); padding: 2px 0; justify-self: end;
 }
 .studio-quality-doctype-toggle svg { width: 12px; height: 12px; transform: rotate(90deg); }
 .studio-quality-doctype-toggle[aria-expanded="true"] svg { transform: rotate(-90deg); }
@@ -717,7 +717,7 @@ const MEASURES_CSS = `
 /* --- the click-through: what a segment is made of ------------------------- */
 .studio-quality-segment-sections {
   margin-top: 8px; padding: 8px 10px; background: var(--studio-surface-sunken);
-  border-left: 2px solid var(--studio-amber); border-radius: 0 5px 5px 0;
+  border-left: 2px solid var(--studio-accent); border-radius: 0 5px 5px 0;
 }
 .studio-quality-segment-title { margin: 0 0 4px; font-size: 11.5px; font-weight: 700; color: var(--studio-text); }
 .studio-quality-segment-empty { margin: 0; font-size: 12px; color: var(--studio-muted); }
@@ -741,14 +741,14 @@ const MEASURES_CSS = `
 .studio-quality-quantity-flag { display: inline-flex; align-items: center; }
 .studio-quality-quantity-flag svg { width: 13px; height: 13px; }
 .studio-quality-quantity-flag.over { color: var(--studio-danger); }
-.studio-quality-quantity-flag.within { color: var(--studio-green); }
+.studio-quality-quantity-flag.within { color: var(--studio-accent); }
 .studio-quality-quantity-rank, .studio-quality-quantity-note {
   margin: 3px 0 0; font-size: 11.5px; color: var(--studio-muted);
 }
 .studio-quality-quantity-spark { margin-top: 4px; }
 
 /* --- the sparkline: history, and named as such ---------------------------- */
-.studio-quality-sparkline { display: inline-flex; align-items: center; gap: 6px; color: var(--studio-amber); }
+.studio-quality-sparkline { display: inline-flex; align-items: center; gap: 6px; color: var(--studio-accent); }
 .studio-quality-spark-svg { display: block; }
 .studio-quality-spark-label { font-size: 11px; color: var(--studio-muted); font-variant-numeric: tabular-nums; }
 
@@ -765,7 +765,7 @@ const MEASURES_CSS = `
 .studio-quality-gate { display: contents; }
 .studio-quality-gate-icon { display: inline-flex; flex: none; }
 .studio-quality-gate-icon svg { width: 15px; height: 15px; }
-.studio-quality-gate-pass .studio-quality-gate-icon { color: var(--studio-green); }
+.studio-quality-gate-pass .studio-quality-gate-icon { color: var(--studio-accent); }
 .studio-quality-gate-fail .studio-quality-gate-icon { color: var(--studio-danger); }
 .studio-quality-gate-skipped .studio-quality-gate-icon { color: var(--studio-muted); }
 .studio-quality-gate-name { font-weight: 600; color: var(--studio-text); }

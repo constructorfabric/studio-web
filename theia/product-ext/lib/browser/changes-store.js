@@ -167,27 +167,85 @@ class ChangesStore {
     /**
      * Every file with pending changes, for the changed-file list and the
      * Projects badges. Reads one small file rather than the whole tree.
+     *
+     * The index is a derived cache (see header) and nothing keeps it in step
+     * with a document being deleted out from under it — a deleted document
+     * leaves its row behind forever otherwise, stuck in the review queue with
+     * nothing left to review. So every listed row is checked against the
+     * filesystem here and a row whose document is gone is dropped from the
+     * result AND rewritten out of index.json, so the repair sticks instead of
+     * being redone on every read.
+     *
+     * Only a definite `false` prunes a row. `exists` throwing — a transient
+     * filesystem hiccup, a permissions blip — is not evidence the document is
+     * gone, and treating it as such would delete somebody's pending work from
+     * the index over a glitch; such a row is kept. The index is rewritten only
+     * when a row was actually dropped, so an ordinary read that finds nothing
+     * stale stays a read.
      */
-    async pendingFilesStatus(anyUri) {
+    async pendingFilesStatus(anyUri, options) {
         const root = await this.rootFor(anyUri);
-        const data = await this.readJson(this.indexUri(root), undefined);
+        const indexUri = this.indexUri(root);
+        const data = await this.readJson(indexUri, undefined);
         if (!data || typeof data !== 'object' || Array.isArray(data) || data.version !== 1 ||
             !data.files || typeof data.files !== 'object' || Array.isArray(data.files)) {
             return { available: false, files: [] };
         }
-        return { available: true, files: Object.entries(data.files)
+
+        const rows = Object.entries(data.files)
             .filter(([path, info]) => typeof path === 'string' && Number.isInteger(info?.pending) && info.pending > 0)
             .map(([path, info]) => ({
                 path,
                 pending: info.pending,
                 proposals: Number.isInteger(info.proposals) && info.proposals >= 0 ? info.proposals : 0,
                 uri: new URI(root.toString() + '/' + path)
-            }))
-            .sort((a, b) => a.path.localeCompare(b.path)) };
+            }));
+
+        /*
+         * Pruning is for the QUEUE, which must never list a row a reviewer
+         * cannot open. It is wrong for a caller asking "is every member of this
+         * linked group still here" — there, a document that has gone missing is
+         * the answer, and hiding it turns a group that must refuse whole into
+         * one that silently resolves its surviving half. See proposalsInGroup.
+         */
+        if (options && options.prune === false) {
+            return { available: true, files: rows.sort((a, b) => a.path.localeCompare(b.path)) };
+        }
+
+        const files = [];
+        const gone = [];
+        for (const row of rows) {
+            let stillThere = true;
+            try {
+                stillThere = await this.fileService.exists(row.uri);
+            } catch (e) {
+                stillThere = true; // unknown, not gone — see header
+            }
+            if (stillThere) { files.push(row); } else { gone.push(row.path); }
+        }
+
+        if (gone.length) {
+            for (const path of gone) { delete data.files[path]; }
+            /*
+             * The repair is best-effort, and that is the whole point of the
+             * catch. Pruning the file on disk only makes the fix PERMANENT —
+             * the answer this call returns is already correct without it — so a
+             * read-only checkout, a lost lock or a filesystem that refuses the
+             * write must not turn reading the review queue into an exception.
+             * The rows are dropped again on the next read at no cost.
+             */
+            try {
+                await this.writeJson(indexUri, data);
+            } catch (e) {
+                console.warn('[studio] could not prune the pending index', indexUri.toString(), e);
+            }
+        }
+
+        return { available: true, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
     }
 
-    async pendingFiles(anyUri) {
-        return (await this.pendingFilesStatus(anyUri)).files;
+    async pendingFiles(anyUri, options) {
+        return (await this.pendingFilesStatus(anyUri, options)).files;
     }
 
     /**
@@ -219,7 +277,10 @@ class ChangesStore {
      */
     async proposalsInGroup(anyUri, groupId) {
         if (groupId === undefined || groupId === null) { return { members: [], expected: 0, partial: false }; }
-        const files = await this.pendingFiles(anyUri);
+        /* Unpruned on purpose: a member whose document is gone must still be
+         * FOUND, so resolveGroup can refuse the whole move rather than apply
+         * the half of it that still resolves. */
+        const files = await this.pendingFiles(anyUri, { prune: false });
         const members = [];
         for (const file of files) {
             const { proposals } = await this.load(file.uri);
@@ -247,6 +308,19 @@ class ChangesStore {
 async function resolveFile({ fileService, changesStore, historyStore, uri, verdict, splitFrontmatter, joinFrontmatter }) {
     const store = await changesStore.load(uri);
     if (!store.proposals.length) { return { changed: false, hunks: 0 }; }
+
+    /* A document that is gone cannot have hunks applied to it — there is no
+     * body left to compose. This used to fall through to fileService.read()
+     * below and throw; the caller (decideAllFiles in markdown-editor.js)
+     * turned that into an error toast and left the index row alone, which is
+     * exactly why "reject all, everywhere" could not clear a stuck row for a
+     * deleted document either. Clearing it through the same save([]) path an
+     * ordinary resolution uses (it prunes an index entry whose pending count
+     * drops to zero) is what makes the bulk action actually finish the job. */
+    if (!(await fileService.exists(uri))) {
+        await changesStore.save(uri, []);
+        return { changed: false, hunks: 0, missing: true };
+    }
 
     const current = await fileService.read(uri);
     const split = splitFrontmatter(current.value);

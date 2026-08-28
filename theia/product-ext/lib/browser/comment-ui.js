@@ -136,7 +136,7 @@ const COMMENT_UI_CSS = `
   display: inline-block; max-width: 100%; vertical-align: bottom;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12px; line-height: 1.5; color: var(--studio-muted);
-  border-bottom: 1.5px solid color-mix(in srgb, var(--studio-amber) 45%, transparent);
+  border-bottom: 1.5px solid color-mix(in srgb, var(--studio-accent) 45%, transparent);
   padding-bottom: 1px;
 }
 .document > .studio-quote-text { border-bottom-style: dashed; font-style: italic; }
@@ -148,13 +148,13 @@ const COMMENT_UI_CSS = `
   flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%;
   display: grid; place-items: center; user-select: none;
   font-size: 9px; font-weight: 700; letter-spacing: .03em;
-  border: 1.5px solid var(--studio-amber); color: var(--studio-amber); background: transparent;
+  border: 1.5px solid var(--studio-accent); color: var(--studio-accent); background: transparent;
 }
-.studio-avatar.self { background: var(--studio-amber); color: var(--studio-bg); border-color: var(--studio-amber); }
+.studio-avatar.self { background: var(--studio-accent); color: var(--studio-bg); border-color: var(--studio-accent); }
 /* An agent: dashed, never filled. Distinguishable from "another person" by
    line style rather than by a hue, because the palette has no spare hue and an
    unverified name has no business claiming one. */
-.studio-avatar.agent { border-style: dashed; background: transparent; color: var(--studio-amber); }
+.studio-avatar.agent { border-style: dashed; background: transparent; color: var(--studio-accent); }
 .studio-msg-main { flex: 1; min-width: 0; }
 .studio-msg-meta { font-size: 11px; line-height: 1.45; color: var(--studio-muted); margin-bottom: 1px; }
 .studio-msg-meta b { color: var(--studio-text); font-weight: 600; }

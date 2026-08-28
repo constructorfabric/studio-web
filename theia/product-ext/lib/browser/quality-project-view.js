@@ -1188,12 +1188,12 @@ const QUALITY_PROJECT_CSS = `
   border-radius: var(--studio-radius); border: 1px solid var(--studio-line);
   background: var(--studio-surface-raised); color: var(--studio-text);
 }
-.studio-qp-runbtn:hover { border-color: var(--studio-amber); }
+.studio-qp-runbtn:hover { border-color: var(--studio-accent); }
 .studio-qp-runbtn.link {
-  border: none; background: none; padding: 0; color: var(--studio-cyan);
+  border: none; background: none; padding: 0; color: var(--studio-accent);
   text-decoration: underline; text-underline-offset: 2px;
 }
-.studio-qp-runbtn:focus-visible { outline: 2px solid var(--studio-amber); outline-offset: 2px; }
+.studio-qp-runbtn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .studio-qp-picker-label { flex: none; padding: 8px 20px 0; display: block; }
 .studio-qp-picker {
   font-size: 12px; padding: 4px 8px; border-radius: var(--studio-radius);
@@ -1215,7 +1215,7 @@ const QUALITY_PROJECT_CSS = `
   font-size: 11px; padding: 3px 8px; border-radius: var(--studio-radius);
   border: 1px solid var(--studio-line); background: var(--studio-surface); color: var(--studio-muted); cursor: pointer;
 }
-.studio-qp-sortbtn.on { color: var(--studio-text); border-color: var(--studio-amber); background: var(--studio-selection-bg); }
+.studio-qp-sortbtn.on { color: var(--studio-text); border-color: var(--studio-accent); background: var(--studio-selection-bg); }
 .studio-qp-hint { font-size: 12.5px; color: var(--studio-muted); margin: 0; }
 
 /* --- shared cards ------------------------------------------------------ */
@@ -1238,13 +1238,13 @@ const QUALITY_PROJECT_CSS = `
   border: 1px solid var(--studio-line); background: var(--studio-surface-raised); color: var(--studio-text);
   border-radius: 999px; padding: 2px 9px; font-size: 11px; cursor: pointer;
 }
-.studio-qp-occ:hover { border-color: var(--studio-amber); color: var(--studio-amber); }
+.studio-qp-occ:hover { border-color: var(--studio-accent); color: var(--studio-accent); }
 .studio-qp-more { display: inline; }
 .studio-qp-more summary {
   display: inline; cursor: pointer; color: var(--studio-muted); font-size: 11px; list-style: none;
 }
 .studio-qp-more summary::-webkit-details-marker { display: none; }
-.studio-qp-more summary:hover { color: var(--studio-amber); }
+.studio-qp-more summary:hover { color: var(--studio-accent); }
 .studio-qp-more-list { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; margin-left: 6px; }
 
 /* --- document rows ------------------------------------------------------ */
@@ -1257,7 +1257,7 @@ const QUALITY_PROJECT_CSS = `
   flex: none; border: none; background: none; padding: 0; font: inherit; font-weight: 600; font-size: 13px;
   color: var(--studio-text); cursor: pointer; text-decoration: none;
 }
-.studio-qp-rowpath:hover { color: var(--studio-amber); text-decoration: underline; }
+.studio-qp-rowpath:hover { color: var(--studio-accent); text-decoration: underline; }
 .studio-qp-rowdesc { font-size: 12.5px; color: var(--studio-muted); }
 .studio-qp-bulk {
   margin-left: auto; font-size: 11px; border: 1px solid var(--studio-line); background: var(--studio-surface);
