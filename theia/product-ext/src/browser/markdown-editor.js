@@ -41,7 +41,7 @@ const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
 const { diffHunks, applyHunks, countPending, splitLines } = require('./diff');
 const { preserveWrapping } = require('./md-rewrap');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
-const { trackedHtml, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
+const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
 const { suggestMarksExtension, refreshSuggestMarks, collect } = require('./suggest-marks');
@@ -1051,44 +1051,6 @@ function buildTextIndex(doc) {
 const openEditors = new Map();
 
 /*
- * A rendered body reduced to the same string shape suggest-marks.js's collect()
- * produces from a ProseMirror document: the text of each top-level block, joined
- * by a newline.
- *
- * The correspondence holds because every block the renderer emits — p, h1-h4, ul,
- * ol, blockquote, pre, table — becomes exactly one top-level ProseMirror node,
- * and neither side puts a separator between the items inside one.
- */
-/*
- * The document's top-level blocks as one line of text each.
- *
- * Takes a ProseMirror document rather than an HTML string, because the engine
- * no longer produces HTML on the way in — mdast maps straight to the editor
- * document (see markdown.js's header). It used to build a detached <div>, set
- * innerHTML and read textContent off each child; walking the document reaches
- * the same answer without a parse and without a DOM, and it is the same answer
- * the live editor would give, which is the property suggestBaseline needs.
- *
- * Concatenation with no separators, matching textContent's own behaviour: a
- * table row's cells run together exactly as they did before, so the baseline
- * this feeds is comparable with the ones already recorded.
- */
-function nodeText(node) {
-    if (!node) { return ''; }
-    if (node.type === 'text') { return node.text || ''; }
-    /*
-     * A hard break IS a line break here, not nothing. Returning '' glues the
-     * word before it to the word after ("a" + "rail" becomes "arail") and the
-     * live marks then report a word change nobody made. suggest-marks.js's
-     * collect() has to agree with this function exactly, or suggestBaseline
-     * compares two different string shapes for one document and paints the
-     * whole thing as edited.
-     */
-    if (node.type === 'hardBreak') { return '\n'; }
-    return (node.content || []).map(nodeText).join('');
-}
-
-/*
  * Markdown -> HTML, for the tracked-changes review surface only.
  *
  * The engine has no markdown-to-HTML function any more and should not grow
@@ -1118,13 +1080,6 @@ let reviewExtensions;
 function renderReviewHtml(md) {
     if (!reviewExtensions) { reviewExtensions = buildExtensions(undefined); }
     return generateHTML(markdownToDoc(md).doc, reviewExtensions);
-}
-
-function plainBlockText(doc) {
-    /* Trailing whitespace trimmed per block, exactly as collect() does it — the
-     * two reducers describe one document to one diff, and any disagreement
-     * between them paints text nobody touched. */
-    return ((doc && doc.content) || []).map(node => nodeText(node).replace(/[ \t]+$/, '')).join('\n');
 }
 
 function timeLabel(iso) {
@@ -2061,7 +2016,7 @@ class MarkdownEditorWidget extends Widget {
      * would take the only route to Comments, Changes and History with it, which
      * is round two's mistake with a worse blast radius.
      *
-     * The cost is deliberate and worth naming: an ordinary document shows a 42px
+     * The cost is deliberate and worth naming: an ordinary document shows a 30px
      * bar it did not before the mode switch landed. That is a charge against the
      * empty-chrome work (D10–D19), and this change is what pays for it — the
      * 48px right-hand column that held the same buttons is gone, so the document
@@ -2374,6 +2329,11 @@ class MarkdownEditorWidget extends Widget {
             const written = await this.writeBody(body);
             this.lastSavedBody = body;
             this.setSaveState('saved', timeLabel(new Date(written.mtime).toISOString()));
+            /* The reviewed body just moved, which is what editBaseline is
+               anchored to and what stood the marks down while this edit was
+               dirty. Nothing about the DOCUMENT changed in this step, so there
+               is no transaction for the plugin to notice. */
+            refreshSuggestMarks(this.editor);
             await this.historyStore.record(this.uri, {
                 kind: 'edit', title: 'Edited ' + this.uri.path.base, detail: 'Manual edit', body
             }).then(entries => { this.historyEntries = entries; if (this.rail === 'history') { this.renderRail(); } });
@@ -2804,21 +2764,90 @@ class MarkdownEditorWidget extends Widget {
      *   holding the document. Exact by construction, because it comes from the
      *   same extraction the plugin uses.
      *
-     *   DERIVED — the reviewed body rendered to HTML and reduced to block text.
-     *   Needed when the editor has never held the document in this session, which
-     *   happens when Suggesting is entered with a suggestion already open and the
-     *   editor is seeded with that instead. It matches the captured form because
-     *   ProseMirror's top-level blocks correspond to the renderer's top-level
-     *   elements, but it is the fallback rather than the first choice precisely
-     *   because that correspondence is an assumption and the capture is not.
+     *   DERIVED — the reviewed body parsed to the SAME mdast-JSON shape the
+     *   editor itself would be seeded with, turned into a real ProseMirror node
+     *   with the editor's own schema, and reduced by the very same `collect()`
+     *   the plugin diffs against. Needed when the editor has never held the
+     *   document in this session, which happens when Suggesting is entered with
+     *   a suggestion already open and the editor is seeded with that instead.
+     *
+     *   This used to be a SECOND reduction (`plainBlockText`/`nodeText`, walking
+     *   the mdast JSON directly instead of a ProseMirror node) whose only
+     *   guarantee of agreeing with `collect()` was a comment saying it must.
+     *   `markdownToDoc(body).doc` is JSON, not a node — that mismatch is why the
+     *   duplicate existed — but `schema.nodeFromJSON` closes it for nothing: one
+     *   reduction, fed a real node, agreeing with itself by construction. If the
+     *   JSON does not parse as this schema — a malformed suggestion body, a
+     *   schema drift — no marks is the answer, not a second, independently
+     *   maintained guess at what the text would have been: the 0.85 guard above
+     *   makes this exact trade for a diff that cannot be trusted, and a baseline
+     *   that cannot even be built is the same case, one step earlier.
      */
     suggestBaseline() {
-        if (!this.suggestingNow()) { return undefined; }
+        if (!this.suggestingNow()) { return this.editBaseline(); }
         const body = this.reviewedBody();
         if (this.baselineBody === body && this.baselineText !== undefined) { return this.baselineText; }
         this.baselineBody = body;
-        this.baselineText = plainBlockText(markdownToDoc(body).doc);
+        try {
+            this.baselineText = collect(this.editor.schema.nodeFromJSON(markdownToDoc(body).doc)).text;
+        } catch (e) {
+            console.warn('suggestBaseline: could not derive a baseline from the reviewed body', e);
+            this.baselineText = undefined;
+        }
         return this.baselineText;
+    }
+
+    /**
+     * The baseline for OTHER PEOPLE'S suggestions, while I am editing.
+     *
+     * The same plugin, the same diff, the same widgets — pointed the other way
+     * round. Suggesting measures the document against where it started, so what
+     * is in the document and not in the baseline is something I added. Editing
+     * measures the document against where the open suggestions would take it,
+     * so what is in the document and not in that baseline is what somebody is
+     * proposing to REMOVE, and what is in the baseline and not in the document
+     * is what they propose to ADD. Hence `invert` — see FORWARD/INVERTED in
+     * suggest-marks.js, which is the only place the polarity is spelled out.
+     *
+     * WHY THE MARKS STAND DOWN WHILE I TYPE. The suggestions are anchored to
+     * the SAVED document (`reviewedBody`), and between a keystroke and the
+     * autosave 700ms later the editor holds text that no suggestion has been
+     * re-anchored into yet. Diffing against a baseline built from the saved
+     * text would report my own half-typed word as a proposed deletion — my
+     * text, struck through, in somebody else's colour. So a dirty document
+     * gets no marks at all and they come back a moment later, re-anchored, by
+     * `suggestionHunks` re-finding its text in what I actually saved. Nothing
+     * false is ever drawn; the cost is that the marks blink while I write,
+     * which is the honest trade until suggestions are anchored to positions
+     * rather than to a recorded base.
+     */
+    editBaseline() {
+        if (this.reviewStyle !== 'inline' || this.readOnly || this.reviewing) { return undefined; }
+        if (!this.suggestions.length) { return undefined; }
+        if (this.saveState === 'dirty' || this.saveState === 'saving' || this.saveState === 'conflict') {
+            return undefined;
+        }
+        const body = this.reviewedBody();
+        /* Cheap enough to run per transaction; everything below it is not.
+           `updatedAt` moves whenever a suggestion's content does, and the
+           rejection set is the other input suggestionHunks reads. */
+        const signature = body.length + '\u0000' + body + '\u0000'
+            + this.suggestions.map(p => p.id + ':' + p.updatedAt).join(',')
+            + '\u0000' + Object.keys(this.rejections || {}).sort().join(',');
+        if (this.editBaselineKey === signature) { return this.editBaselineValue; }
+        this.editBaselineKey = signature;
+        this.editBaselineValue = undefined;
+        try {
+            const suggested = suggestedMarkdown(body, this.trackedEntries());
+            if (suggested !== body) {
+                const text = collect(this.editor.schema.nodeFromJSON(markdownToDoc(suggested).doc)).text;
+                this.editBaselineValue = { text, invert: true };
+            }
+        } catch (e) {
+            // Same trade as the derived baseline above: no marks beats guessed ones.
+            console.warn('editBaseline: could not derive a baseline from the open suggestions', e);
+        }
+        return this.editBaselineValue;
     }
 
     /**
@@ -2885,6 +2914,9 @@ class MarkdownEditorWidget extends Widget {
             this.currentHunkIndex = total ? total - 1 : 0;
         }
         this.renderTracked();
+        // A suggestion arriving, being withdrawn or being answered changes what
+        // the live marks measure against, and changes no text in the editor.
+        refreshSuggestMarks(this.editor);
         this.renderRail();
         this.renderBanners();
     }
@@ -3161,7 +3193,40 @@ class MarkdownEditorWidget extends Widget {
          * model rather than a second rendering of it.
          */
         if (this.reviewStyle !== 'inline' || this.readOnly || this.suggestingNow()) { return false; }
-        return !!this.openProposal() || this.suggestions.length > 0;
+        /*
+         * AN ASSISTANT PROPOSAL IS THE ONLY THING THAT PUTS THIS PAGE UP, and
+         * that is by design: every hunk under review describes a recorded base,
+         * so a free edit would move the document out from under the diff the
+         * reader is deciding on. applyReviewLock sets `reviewing` from exactly
+         * this, and the editor is genuinely not editable while it holds. Page
+         * and lock therefore agree, which is the property this whole method
+         * exists to keep.
+         *
+         * A HUMAN SUGGESTION MUST NOT REACH HERE, and this used to read
+         * `|| this.suggestions.length > 0`, which locked the document in effect
+         * while every other part of the widget believed it had not.
+         *
+         * The contradiction was internal and total: `reviewing` is false for a
+         * human suggestion, so applyReviewLock computed `editable = true` and
+         * left ProseMirror editable -- and then renderTracked hid the editable
+         * page behind this one anyway (see the `.tracked-review` rules in
+         * tracked-changes.js, which set `display:none` on the real page). The
+         * editor was live, focusable and willing; it simply was not on screen.
+         * Reported as "I do one suggestion, go back to Editing, and I can't edit
+         * the file until I accept or decline all changes" -- exactly right,
+         * because emptying `suggestions` is what let this go false again.
+         *
+         * A suggestion is a COURTESY toward the document's other readers, not a
+         * claim on the file: Docs lets everyone keep typing with suggestions
+         * open, and so must this. Keying the page to the changes rail instead
+         * was a first attempt at that and was not good enough -- the rail is
+         * where the suggestions ARE, so the one thing a reader does before
+         * wanting to type is the thing that stopped them. What other people
+         * have suggested now shows as live marks over the editable document
+         * (suggestBaseline, below), which is what Docs actually does, and this
+         * page is left to the one case that really is a lock.
+         */
+        return !!this.openProposal();
     }
 
     /**
@@ -3530,22 +3595,22 @@ class MarkdownEditorWidget extends Widget {
         if (this.duplicateSession) {
             banners.push({
                 tone: 'warn',
-                html: '<b>This document is already open in another tab.</b> ' +
+                html: '<b>Already open in another tab.</b> ' +
                     (this.duplicateSession.dirty
-                        ? 'That tab has unsaved edits. Continuing here risks losing them.'
-                        : 'That tab has no unsaved edits.') +
+                        ? 'It has unsaved edits — continuing here risks losing them.'
+                        : 'It has no unsaved edits.') +
                     ' <button class="studio-btn" data-act="dup-switch">Go to that tab</button>' +
                     ' <button class="studio-btn" data-act="dup-resume">Keep both open</button>' +
                     ' <button class="studio-btn" data-act="dup-takeover">Take over here</button>'
             });
         }
         if (this.yielded) {
-            banners.push({ tone: 'block', html: '<b>Taken over elsewhere.</b> Another tab is now editing this document. Close and reopen this one to continue here.' });
+            banners.push({ tone: 'block', html: '<b>Taken over elsewhere.</b> Another tab is editing this document — reopen to continue here.' });
         }
         if (this.conflict) {
             banners.push({
                 tone: 'block',
-                html: '<b>This file changed on disk while you were editing.</b> Autosave is paused so neither version is lost. ' +
+                html: '<b>Changed on disk.</b> Autosave is paused so neither version is lost. ' +
                     '<button class="studio-btn" data-act="conflict-compare">Compare</button>' +
                     ' <button class="studio-btn" data-act="conflict-mine">Keep mine</button>' +
                     ' <button class="studio-btn" data-act="conflict-theirs">Take theirs</button>'
@@ -3557,14 +3622,14 @@ class MarkdownEditorWidget extends Widget {
             banners.push({
                 tone: 'info',
                 html: '<b>' + escapeHtml(proposal.title) + '</b> — ' + pending + ' change' + (pending === 1 ? '' : 's') +
-                    ' awaiting your review. ' +
+                    ' awaiting review · ' +
                     (this.trackedActive()
-                        /* The tracked document is not the file. Saying so here is
-                           the whole reason this banner has a second sentence: a
-                           reader looking at struck-through text they did not
-                           write needs to know that nothing on disk says that. */
-                        ? 'They are shown in the document below; the file on disk is still at its reviewed state. '
-                        : 'The file is held at its reviewed state and editing is paused until you decide. ') +
+                        /* The tracked document is not the file, and that clause
+                           stays however short this gets: a reader looking at
+                           struck-through text they did not write needs to know
+                           nothing on disk says that. */
+                        ? 'the file on disk is unchanged. '
+                        : 'editing is paused until you decide. ') +
                     '<button class="studio-btn" data-act="rail-changes">Review</button>' +
                     ' <button class="studio-btn" data-act="accept-all">Accept all</button>' +
                     ' <button class="studio-btn" data-act="reject-all">Reject all</button>'
@@ -3583,7 +3648,7 @@ class MarkdownEditorWidget extends Widget {
             banners.push({
                 tone: 'info',
                 html: '<b>' + escapeHtml(names.join(', ')) + '</b> suggested ' + waiting +
-                    ' change' + (waiting === 1 ? '' : 's') + '. The document is unchanged until you accept them. ' +
+                    ' change' + (waiting === 1 ? '' : 's') + ' · not applied until you accept. ' +
                     '<button class="studio-btn" data-act="rail-changes">Review</button>'
             });
         }
@@ -3599,20 +3664,29 @@ class MarkdownEditorWidget extends Widget {
         if (this.suggestingNow() && !this.mySuggestion()) {
             banners.push({
                 tone: 'note',
-                html: 'Suggesting · What you type is recorded for review, and this file is not changed.'
+                html: 'Suggesting · recorded for review, not written to the file.'
             });
         }
         if (this.readOnly && !this.yielded) {
             banners.push({
                 tone: 'block',
+                /*
+                 * The caution moved ONTO the button rather than being deleted.
+                 * "Unlock only if you intend to review the change as a diff
+                 * before committing" is advice about a decision, and it was
+                 * being read (or skipped) two sentences before anyone reached
+                 * the control it applies to. On the button's own tooltip it
+                 * arrives at the moment it is about, and the band is one line.
+                 */
                 html: '<b>Read-only</b> &mdash; ' + escapeHtml(this.readOnlyReason || 'unsupported Markdown') +
-                    '. Saving would rewrite this file lossily. Unlock only if you intend to review the change as a diff ' +
-                    'before committing. <button class="studio-btn" data-act="unlock">Edit anyway</button>'
+                    '; saving would rewrite this file. ' +
+                    '<button class="studio-btn" data-act="unlock" title="Unlock only if you intend to review the ' +
+                    'change as a diff before committing.">Edit anyway</button>'
             });
         } else if (this.willReformat) {
             banners.push({
                 tone: 'note',
-                html: 'Formatting will normalize on save · No content is lost.'
+                html: 'Formatting normalizes on save · no content is lost.'
             });
         }
 
@@ -3732,6 +3806,36 @@ class MarkdownEditorWidget extends Widget {
     scrollThreadIntoView(id) {
         const el = this.listEl.querySelector('[data-thread="' + id + '"]');
         if (el) { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    }
+
+    /*
+     * The DOCUMENT side of selecting a thread, and the half that was missing.
+     *
+     * scrollThreadIntoView moves the rail to the card. Nothing moved the
+     * document to the passage the card is ABOUT, so clicking a comment
+     * re-rendered the rail and left the reader looking at whichever part of the
+     * file happened to be on screen -- which for any thread more than a screen
+     * away is indistinguishable from the click doing nothing.
+     *
+     * Three cases go nowhere, all silently: a document-scope thread is about the
+     * whole file and has no anchor; a thread whose quoted text has since been
+     * edited away has no mark left (the rail already says so on the card); and a
+     * mark inside a hidden pane -- source mode, or the tracked-changes page
+     * showing in place of the editor -- reports no offsetParent, where scrolling
+     * would move nothing while looking like it worked.
+     *
+     * READ-ONLY against ProseMirror's DOM, like every other reveal in this file.
+     * Marking the passage would mean writing an attribute into a subtree PM owns
+     * and watches, and PM's observer treats that as a change to re-parse.
+     */
+    scrollDocumentToThread(id) {
+        if (!this.editor || !this.editor.view) { return; }
+        const thread = this.threads.find(t => t.id === id);
+        if (!thread || thread.scope === 'document') { return; }
+        const mark = this.editor.view.dom.querySelector('.studio-comment-mark[data-comment-id="' + id + '"]');
+        if (mark && mark.offsetParent && mark.scrollIntoView) {
+            mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
     }
 
     // -- the single right slot -----------------------------------------------
@@ -4439,8 +4543,7 @@ class MarkdownEditorWidget extends Widget {
         this.openResolvedThreadId = id;
         this.activeThreadId = id;
         this.renderRail();
-        const anchor = this.editor && this.editor.view.dom.querySelector('.studio-comment-mark[data-comment-id="' + id + '"]');
-        if (anchor) { anchor.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+        this.scrollDocumentToThread(id);
     }
 
     threadHtml(th) {
@@ -6815,9 +6918,14 @@ class MarkdownEditorWidget extends Widget {
         const threadEl = this.closestIn(e.target, '[data-thread]');
         if (threadEl) {
             const id = threadEl.getAttribute('data-thread');
-            if (id === this.activeThreadId) { return; }     // no needless re-render
+            // The early return guards the RE-RENDER, and the reveal stays behind
+            // it deliberately: a click inside the card that is already open is
+            // somebody reaching for its textarea, and yanking the document out
+            // from under them mid-reply is worse than not scrolling at all.
+            if (id === this.activeThreadId) { return; }
             this.activeThreadId = id;
             this.renderRail();
+            this.scrollDocumentToThread(id);
             return;
         }
 
@@ -6826,6 +6934,10 @@ class MarkdownEditorWidget extends Widget {
             this.activeThreadId = inMark.getAttribute('data-comment-id');
             this.openSlot('comments');
             this.renderRail();
+            // The gutter branch below calls this and says it shares this path;
+            // it did not. A rail scrolled to some other thread's card is the
+            // same defect in the other direction.
+            this.scrollThreadIntoView(this.activeThreadId);
             return;
         }
 

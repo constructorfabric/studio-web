@@ -735,8 +735,40 @@ function bulletOrOrderedToMdast(node, ctx, ordered) {
 /** The `code` mark turns a text leaf into an mdast inlineCode leaf, not a wrap. */
 function hasCodeMark(marks) { return (marks || []).some(m => m.type === 'code'); }
 
+/*
+ * `<br>`, `<br/>`, `<br />` — any case, any amount of space before the
+ * (optional) slash — is inline HTML that means exactly one thing: a hard
+ * line break. Left to fall through to `__html_inline` below, it becomes a
+ * `rawInline` atom, and `rawInline` renders its `source` attribute verbatim
+ * — so the tag itself sat mid-sentence as literal text in the editor
+ * instead of breaking the line, which is the defect this row exists to
+ * fix. Anchored (`^…$`) against the WHOLE node value, not just tested for
+ * a match anywhere in it, because a genuinely unknown tag such as
+ * `<span class="x">` must still fall through to `rawInline` unchanged —
+ * this is one case removed from that fallback, not a loosening of it.
+ */
+const HARD_BREAK_HTML = /^<br\s*\/?\s*>$/i;
+
+/*
+ * Checked HERE, inside `inlineFromMdast`, rather than as an earlier
+ * normalisation over the whole tree in md-parse.js (the more general-looking
+ * option, and where `splitWikilinks` does its equivalent work for `[[x]]`):
+ * this is the ONE place in the module that already knows, by construction,
+ * that an `html` node was reached through an INLINE children array rather
+ * than a block one — see the comment on the `html` row above on why mdast
+ * cannot tell the two apart by inspecting the node itself. A standalone
+ * `<br>` line (blank line before and after) parses as a BLOCK-position
+ * `html` node — measured directly against the vendored parser — and that
+ * one must keep going to `rawBlock`, not become an inline `hardBreak` sitting
+ * where a block node is expected. A tree-wide rewrite in md-parse.js would
+ * have to reconstruct that same block/inline distinction from scratch to
+ * avoid corrupting that case; here it is already free.
+ */
 function inlineFromMdast(node, ctx, marks) {
     if (node.type === 'html') {
+        if (HARD_BREAK_HTML.test(node.value || '')) {
+            return [applyMarks({ type: 'hardBreak' }, marks)];
+        }
         const row = BY_MDAST.get('__html_inline');
         return [applyMarks(row.fromMdast(node, ctx), marks)];
     }
@@ -788,7 +820,7 @@ function leafToMdast(node, ctx) {
 
 /*
  * Marks that WRAP the leaf in mdast, in the fixed nesting order this module
- * always uses (innermost first here; applyMarkLevel below walks it outermost
+ * always uses (innermost first here; applyMarkNesting below breaks ties outermost
  * first). `code` is excluded — it decided the leaf's mdast TYPE above, not a
  * wrapper — and `comment` is excluded because it must never reach the file
  * (see markdown.js's original header, carried forward): filtering it out
@@ -807,47 +839,94 @@ function wrappableMarks(marks) {
 /*
  * The grouping algorithm. mdast marks are nested containers; PM marks are a
  * flat set per leaf. Converting back has to reconstruct nesting from a flat
- * run of leaves that may each carry a different SUBSET of the mark alphabet —
+ * run of leaves that may each carry a different SUBSET of the mark alphabet --
  * "bold, then bold+italic, then bold" has to become one <strong> whose middle
  * child is wrapped in <em>, not three separate bold runs.
  *
- * Walking MARK_TABLE_ORDER outermost-first and, at each level, grouping the
- * current sequence into runs that do/do not carry that mark — wrapping the
- * "do" runs and recursing into both — produces exactly that nesting, and
- * produces the SAME nesting every time for the same mark set, which is what
- * determinism (assertion 4 in the corpus test) requires: two different
- * orderings that render identically are not an option here, only one is ever
- * chosen.
+ * THE OUTER MARK IS THE ONE THAT REACHES FURTHEST, decided per position. This
+ * used to walk MARK_TABLE_ORDER outermost-first, a fixed nesting order, and a
+ * fixed order cannot express both of the two shapes the file format has:
+ *
+ *   **see [the docs](x) for more**     bold outside, link inside
+ *   [**the docs**](x)                  link outside, bold inside
+ *
+ * With `link` pinned outermost, the first one came apart at the link into
+ * three groups that each got their own <strong> -- `**see **[**the docs**]
+ * (x)** for more**` -- which is the same shipped defect the run-grouping fix
+ * below addresses, reached by a different route. Both halves matter: this one
+ * picks WHICH mark wraps, the run scan picks HOW FAR it wraps.
+ *
+ * Greedy-longest is deterministic (assertion 4 in the corpus test), because
+ * the choice is a pure function of the leaves: the run lengths are counted,
+ * the longest wins, and MARK_TABLE_ORDER breaks a tie -- so two renderings
+ * that would look identical are never both reachable, only one is ever
+ * chosen. It also terminates by construction: wrapping strips that mark from
+ * every leaf in the run, and a leaf with no marks left emits its own node.
  */
-function applyMarkLevel(items, orderIndex) {
-    if (orderIndex >= MARK_TABLE_ORDER.length) { return items.map(i => i.node); }
-    const markName = MARK_TABLE_ORDER[orderIndex];
-    const markRow = MARK_BY_PM.get(markName);
+function markOf(item, markName) { return item.marks.find(m => m.type === markName); }
+
+/*
+ * Two leaves belong to the SAME wrapper only if they carry the same mark with
+ * the same attributes. Presence alone is not enough: `[a](x)[b](y)` is two
+ * PM leaves each carrying a `link` mark, and merging them by presence would
+ * serialise both words inside the FIRST href and silently lose the second.
+ * Everything but `link` has no attributes, so this is a cheap `undefined ===
+ * undefined` for them.
+ */
+function sameMarkAttrs(a, b) {
+    const left = a && a.attrs, right = b && b.attrs;
+    if (!left || !right) { return !left && !right; }
+    const keys = Object.keys(left);
+    if (keys.length !== Object.keys(right).length) { return false; }
+    return keys.every(k => left[k] === right[k]);
+}
+
+/** How many leaves from `i` carry the same mark, with the same attributes, without a break. */
+function runLength(items, i, markName) {
+    const mark = markOf(items[i], markName);
+    if (!mark) { return 0; }
+    let j = i;
+    while (j < items.length) {
+        const next = markOf(items[j], markName);
+        if (!next || !sameMarkAttrs(next, mark)) { break; }
+        j++;
+    }
+    return j - i;
+}
+
+function applyMarkNesting(items) {
     const out = [];
     let i = 0;
     while (i < items.length) {
-        const has = items[i].marks.some(m => m.type === markName);
-        if (!has) {
-            out.push(...applyMarkLevel([items[i]], orderIndex + 1));
-            i++;
-            continue;
+        /*
+         * THE RUN OF LEAVES CARRYING NO MARK AT ALL IS EMITTED WHOLE, one leaf
+         * at a time but without recursing -- there is nothing left to wrap.
+         */
+        if (!items[i].marks.length) { out.push(items[i].node); i++; continue; }
+
+        let best, bestLength = 0;
+        for (const name of MARK_TABLE_ORDER) {
+            const length = runLength(items, i, name);
+            if (length > bestLength) { best = name; bestLength = length; }
         }
-        let j = i;
-        const attrs = items[i].marks.find(m => m.type === markName).attrs;
-        while (j < items.length && items[j].marks.some(m => m.type === markName)) { j++; }
-        const run = items.slice(i, j).map(item => Object.assign({}, item, {
-            marks: item.marks.filter(m => m.type !== markName)
+        if (!best) {
+            /* A mark on the leaf that MARK_TABLE_ORDER does not name cannot be
+               wrapped; the leaf still has to be emitted rather than looped on. */
+            out.push(items[i].node); i++; continue;
+        }
+        const mark = markOf(items[i], best);
+        const run = items.slice(i, i + bestLength).map(item => Object.assign({}, item, {
+            marks: item.marks.filter(m => m.type !== best)
         }));
-        const children = applyMarkLevel(run, orderIndex + 1);
-        out.push(markRow.wrapMdast(children, attrs));
-        i = j;
+        out.push(MARK_BY_PM.get(best).wrapMdast(applyMarkNesting(run), mark.attrs));
+        i += bestLength;
     }
     return out;
 }
 
 function inlineToMdastList(pmNodes, ctx) {
     const items = (pmNodes || []).map(n => leafToMdast(n, ctx));
-    return applyMarkLevel(items, 0);
+    return applyMarkNesting(items);
 }
 
 /** A table cell's paragraphs collapsed onto one phrasing run (see md-schema's table row). */

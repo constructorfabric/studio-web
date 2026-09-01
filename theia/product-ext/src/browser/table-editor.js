@@ -1066,8 +1066,7 @@ class TableEditorWidget extends Widget {
         if (this.conflict) {
             banners.push({
                 tone: 'block',
-                html: '<b>' + escapeHtml(this.uri.path.base) + ' changed on disk</b> while you were editing it. ' +
-                    'Your version was not saved. ' +
+                html: '<b>Changed on disk.</b> Your version was not saved. ' +
                     '<button class="studio-btn" data-tact="take-theirs">Take theirs</button>' +
                     '<button class="studio-btn" data-tact="keep-mine">Keep mine</button>'
             });
@@ -1075,14 +1074,17 @@ class TableEditorWidget extends Widget {
         if (this.readOnly) {
             banners.push({
                 tone: 'block',
+                // Same move as the Markdown editor's: the caution about
+                // reviewing the diff lives on the control it is about.
                 html: '<b>Read-only</b> &mdash; ' + escapeHtml(this.readOnlyReason || 'this file could not be read as a table') +
-                    ', so the grid is not a faithful picture of it. Unlock only if you intend to review the change as a diff ' +
-                    'before committing. <button class="studio-btn" data-tact="unlock">Edit anyway</button>'
+                    '; the grid is not a faithful picture of it. ' +
+                    '<button class="studio-btn" data-tact="unlock" title="Unlock only if you intend to review the ' +
+                    'change as a diff before committing.">Edit anyway</button>'
             });
         } else if (this.willReformat) {
             banners.push({
                 tone: 'note',
-                html: 'Quoting will normalize on save · No data is lost.'
+                html: 'Quoting normalizes on save · no data is lost.'
             });
         }
         if (this.reloadedAt && !this.conflict) {

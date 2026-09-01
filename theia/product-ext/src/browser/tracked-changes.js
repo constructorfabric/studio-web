@@ -197,6 +197,39 @@ function trackedMarkdown(baseBody, entries) {
     return out.join('\n');
 }
 
+/**
+ * The document as it would read if every open change were taken.
+ *
+ * The SAME walk as `trackedMarkdown` above -- same ordering, same overlap rule,
+ * same "an answered entry shows the side that won" -- with the sentinels left
+ * out. That is the point of putting it here rather than deriving it separately
+ * in the editor: the marked-up page and the live marks would otherwise be two
+ * independent opinions about which of two authors' overlapping suggestions is
+ * the one being drawn, and a reader comparing the rail to the prose would be
+ * the one who found out they disagreed.
+ *
+ * A `conflicted` hunk -- one whose text is no longer in the document -- is
+ * skipped rather than applied at its stale offset. `orderEntries` cannot see
+ * that condition (it is a property of the anchoring, decided in change-log.js),
+ * and applying a hunk whose `oldLines` are not what is actually there would
+ * splice the replacement over whatever now occupies those line numbers.
+ */
+function suggestedMarkdown(baseBody, entries) {
+    const lines = splitLines(baseBody);
+    const out = [];
+    let cursor = 0;
+    for (const entry of orderEntries(entries)) {
+        if (entry.overlapped) { continue; }
+        const hunk = entry.hunk;
+        if (hunk.conflicted || hunk.oldStart < cursor) { continue; }
+        out.push(...lines.slice(cursor, hunk.oldStart));
+        out.push(...(entry.decision === 'rejected' ? hunk.oldLines : hunk.newLines));
+        cursor = hunk.oldStart + hunk.oldCount;
+    }
+    out.push(...lines.slice(cursor));
+    return out.join('\n');
+}
+
 /** Rewrite the sentinels the renderer carried through into real elements. */
 function substituteMarks(html) {
     const attrs = spec => {
@@ -518,18 +551,31 @@ function changeCardHtml(hunk, decision, proposal, options) {
 const AUTHOR_SLOTS = ['solid', 'dashed', 'dotted', 'double'];
 
 /*
- * Colour is borrowed, not invented.
+ * Colour is borrowed, not invented — but not from where this used to borrow.
  *
- * The diff queue already taught this product that --studio-accent is the
- * incoming side (and the accept control) and --studio-danger is the outgoing
- * side (and the reject control). A reviewer who switches a project to this
- * style should not have to learn a second colour language for the same two
- * facts, so an insertion is underlined amber and a deletion is struck through
- * in danger, exactly as the `+` and `−` rows are tinted in the queue.
+ * This used to reuse --studio-accent for an insertion and --studio-danger for
+ * a deletion, on the theory that the accept/reject control colours were the
+ * same fact as inserted/deleted content. They are not: --studio-accent is
+ * this product's one navigational blue, so in any document with real
+ * hyperlinks an inserted word and a link became the same colour — reported as
+ * "I can't tell what was added from what I can click." Every other review
+ * tool (GitHub, GitLab, Word compare, CKEditor) puts inserted/deleted on
+ * green/red and leaves accept/reject-style blue-vs-red for the DECISION, not
+ * the content, which is the distinction restored here.
+ *
+ * --studio-ins and --studio-del (product-frontend-module.js) are aliases of
+ * --studio-verified and --studio-danger — reusing this palette's existing
+ * green and red rather than a new pair — so an insertion is underlined green
+ * and a deletion struck through in red, and the diff queue's own accept/
+ * reject colouring is untouched: accepting a deletion still shows as an
+ * accent-coloured "Accepted", not a red one, because the decision and the
+ * content it decided on are different facts. See .studio-tc-settled and
+ * .studio-change-verdict below, which stay on accent/danger on purpose.
  *
  * Underline and strikethrough carry the meaning on their own, which is the
  * accessibility floor this needs: the two states are still distinguishable
- * with no colour perception at all.
+ * with no colour perception at all, and it is what keeps the per-author
+ * dashed/dotted/double variants (below) legible under either colour.
  */
 const TRACKED_CSS = `
 /* -- the document, marked in place -- */
@@ -551,15 +597,15 @@ const TRACKED_CSS = `
 .studio-tc-del {
   text-decoration: line-through;
   text-decoration-thickness: 1.5px;
-  color: var(--studio-danger);
-  background: color-mix(in srgb, var(--studio-danger) 9%, transparent);
+  color: var(--studio-del);
+  background: color-mix(in srgb, var(--studio-del) 9%, transparent);
 }
 .studio-tc-ins {
   text-decoration: underline;
   text-decoration-thickness: 1.5px;
   text-underline-offset: 2px;
-  color: var(--studio-accent);
-  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
+  color: var(--studio-ins);
+  background: color-mix(in srgb, var(--studio-ins) 12%, transparent);
 }
 /* A mark whose whole content is a space has no glyph to strike through, and
    deleting a stray space is the single most common edit an assistant makes to
@@ -568,6 +614,11 @@ const TRACKED_CSS = `
    a multi-word deletion still has to break across lines like the text it is
    part of. */
 .studio-tc { white-space: pre-wrap; }
+/* Deliberately still --studio-accent/--studio-danger, NOT --studio-ins/-del:
+   a settled mark has already been decided, so its tint reports the VERDICT
+   (accepted vs rejected), not what kind of edit it was. A settled deletion
+   that was accepted must not look red just because deletions are red while
+   they are still live. */
 .studio-tc-settled { background: color-mix(in srgb, var(--studio-accent) 7%, transparent); }
 .studio-tc-settled.rejected { background: color-mix(in srgb, var(--studio-danger) 6%, transparent); opacity: .75; }
 .studio-tc.current, .studio-tc[data-current="true"] {
@@ -584,6 +635,9 @@ const TRACKED_CSS = `
   border-color: var(--studio-accent); box-shadow: 0 0 0 3px var(--studio-focus);
 }
 .studio-change-card.decided { opacity: .62; }
+/* accent/danger here too, same reason as .studio-tc-settled above: a card's
+   border reports what the REVIEWER decided, not whether the underlying edit
+   was an insertion or a deletion. */
 .studio-change-card.decided.accepted { border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-line)); }
 .studio-change-card.decided.rejected { border-color: color-mix(in srgb, var(--studio-danger) 45%, var(--studio-line)); }
 .studio-change-head { display: flex; align-items: center; gap: 8px; }
@@ -640,6 +694,6 @@ const TRACKED_CSS = `
 `;
 
 module.exports = {
-    trackedHtml, trackedMarkdown, substituteMarks, orderEntries,
+    trackedHtml, trackedMarkdown, suggestedMarkdown, substituteMarks, orderEntries,
     changeCardHtml, changeSummary, changeSummaryText, changeStamp, TRACKED_CSS, AUTHOR_SLOTS
 };
