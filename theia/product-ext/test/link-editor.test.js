@@ -39,8 +39,8 @@ const { Editor } = require('@tiptap/core');
 const {
     MarkdownEditorWidget, buildExtensions, linkEditorHtml,
     linkTargets, filterLinkTargets, linkTargetsHtml, linkRange
-} = require('../lib/browser/markdown-editor');
-const { markdownToDoc, docToMarkdown } = require('../lib/browser/markdown');
+} = require('../src/browser/markdown-editor');
+const { markdownToDoc, docToMarkdown } = require('../src/browser/markdown');
 const URI = require('@theia/core/lib/common/uri').default;
 
 let pass = 0;

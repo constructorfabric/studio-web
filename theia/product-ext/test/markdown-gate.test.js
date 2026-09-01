@@ -20,7 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { unsupportedConstructs } = require('../lib/browser/markdown');
+const { unsupportedConstructs } = require('../src/browser/markdown');
 
 let pass = 0;
 const failures = [];

@@ -29,8 +29,8 @@
  * Run: `node test/math-repair.test.js`.
  */
 
-const { normaliseDisplayMath, closeOpenMath } = require('../lib/browser/md-repair');
-const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../lib/browser/markdown');
+const { normaliseDisplayMath, closeOpenMath } = require('../src/browser/md-repair');
+const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../src/browser/markdown');
 
 let pass = 0;
 const failures = [];

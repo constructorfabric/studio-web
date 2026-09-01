@@ -33,10 +33,10 @@ const { Link } = require('@tiptap/extension-link');
 const { Image } = require('@tiptap/extension-image');
 const { TaskList } = require('@tiptap/extension-task-list');
 const { TaskItem } = require('@tiptap/extension-task-item');
-const { TABLE_EXTENSIONS } = require('../lib/browser/editor-tables');
+const { TABLE_EXTENSIONS } = require('../src/browser/editor-tables');
 
 const { markdownToHtml, jsonToMarkdown } = require('./legacy/markdown-legacy');
-const { markdownToDoc, docToMarkdown } = require('../lib/browser/markdown');
+const { markdownToDoc, docToMarkdown } = require('../src/browser/markdown');
 
 // Same shape as markdown-editor.js's Toggle/FootnoteRef/FootnoteDef — see
 // that file for the reasoning behind each; copied rather than imported (see

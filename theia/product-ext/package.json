@@ -2,20 +2,20 @@
   "name": "studio-product-ext",
   "version": "0.0.0",
   "private": true,
-  "main": "lib/browser/product-frontend-module.js",
+  "main": "src/browser/product-frontend-module.js",
   "theiaExtensions": [
     {
-      "frontend": "lib/browser/product-frontend-module",
-      "backend": "lib/node/preview-endpoint"
+      "frontend": "src/browser/product-frontend-module",
+      "backend": "src/node/preview-endpoint"
     },
     {
-      "backend": "lib/node/viewer-credentials"
+      "backend": "src/node/viewer-credentials"
     },
     {
-      "backend": "lib/node/quality-backend"
+      "backend": "src/node/quality-backend"
     },
     {
-      "backend": "lib/node/flow-backend"
+      "backend": "src/node/flow-backend"
     }
   ],
   "scripts": {

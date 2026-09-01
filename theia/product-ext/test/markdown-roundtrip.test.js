@@ -43,7 +43,7 @@ global.DragEvent = dom.window.Event;
 global.ClipboardEvent = dom.window.Event;
 global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 
-const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../lib/browser/markdown');
+const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../src/browser/markdown');
 
 /*
  * ASSERTION 5: the document the engine produces is one the EDITOR will accept.
@@ -60,7 +60,7 @@ const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../lib/browser
  * schema, so it runs over every fixture.
  */
 const { getSchema } = require('@tiptap/core');
-const { buildExtensions } = require('../lib/browser/markdown-editor');
+const { buildExtensions } = require('../src/browser/markdown-editor');
 const EDITOR_SCHEMA = getSchema(buildExtensions(undefined));
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');

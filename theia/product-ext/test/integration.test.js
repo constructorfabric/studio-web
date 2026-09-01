@@ -7,10 +7,10 @@ global.window = dom.window; global.document = dom.window.document; global.naviga
 global.DragEvent = dom.window.Event; global.ClipboardEvent = dom.window.Event;
 global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 
-const me = require('../lib/browser/markdown-editor.js');
-const { trackedHtml } = require('../lib/browser/tracked-changes.js');
+const me = require('../src/browser/markdown-editor.js');
+const { trackedHtml } = require('../src/browser/tracked-changes.js');
 const { generateHTML } = require('@tiptap/core');
-const { markdownToDoc } = require('../lib/browser/markdown.js');
+const { markdownToDoc } = require('../src/browser/markdown.js');
 const { MarkdownEditorWidget } = me;
 
 let pass = 0; const fail = [];

@@ -7,7 +7,7 @@
         "rule": "side-tab",
         "value": "*",
         "files": [
-          "theia/product-ext/lib/browser/tracked-changes.js"
+          "theia/product-ext/src/browser/tracked-changes.js"
         ],
         "createdAt": "2026-08-28T07:59:04.206Z",
         "reason": "Not decoration: the left edge carries the author slot (AUTHOR_SLOTS solid/dashed/dotted/double, tracked-changes.js:518). Its STYLE is the data channel pairing a card with its mark in the document without a click; the file's own comment at L601-607 records why it is the left edge rather than the full border."

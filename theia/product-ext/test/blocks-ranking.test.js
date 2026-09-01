@@ -7,7 +7,7 @@
  */
 
 const assert = require('assert');
-const { BLOCKS, rankBlocks } = require('../lib/browser/blocks');
+const { BLOCKS, rankBlocks } = require('../src/browser/blocks');
 
 let passed = 0;
 const failures = [];

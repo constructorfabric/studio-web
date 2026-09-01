@@ -227,10 +227,19 @@ npm run build:electron
 npm run start:electron
 ```
 
-The extension entry points are:
+### The two extensions, and their opposite layouts
+
+`studio/` and `drawio-editor/` are TypeScript: source in `src/`, `tsc` output in
+`lib/`, which is generated and git-ignored. Its entry points are:
 
 - frontend: `studio/lib/browser/studio-frontend-module`;
 - backend: `studio/lib/node/studio-backend-module`.
+
+`product-ext/` is the opposite: hand-written JavaScript with **no build step**,
+so its `src/` is the code that runs and is edited directly. It has its own
+`README.md`; read that before changing anything in it, because the package is
+vendored from `studio-desktop` and an unported change here is lost on the next
+sync.
 
 The frontend contains browser UI only. Filesystem, process, Git, and other
 host integrations remain in the Node backend and are exposed through typed

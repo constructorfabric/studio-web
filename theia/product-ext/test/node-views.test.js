@@ -33,8 +33,8 @@ dom.window.requestAnimationFrame = global.requestAnimationFrame;
 dom.window.cancelAnimationFrame = global.cancelAnimationFrame;
 
 const { Editor } = require('@tiptap/core');
-const { buildExtensions } = require('../lib/browser/markdown-editor');
-const { markdownToDoc, docToMarkdown } = require('../lib/browser/markdown');
+const { buildExtensions } = require('../src/browser/markdown-editor');
+const { markdownToDoc, docToMarkdown } = require('../src/browser/markdown');
 
 let pass = 0;
 const failures = [];

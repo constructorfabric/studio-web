@@ -29,8 +29,8 @@ global.DragEvent = class DragEvent extends dom.window.Event {};
 global.ClipboardEvent = class ClipboardEvent extends dom.window.Event {};
 
 const { bubbleButtonsHtml, slashListHtml, slashEmptyHtml, blockKeyAt, MARK_DEFS, ASK_AI_SLASH_KEY } =
-    require('../lib/browser/markdown-editor');
-const { BLOCKS, rankBlocks, blocksFor } = require('../lib/browser/blocks');
+    require('../src/browser/markdown-editor');
+const { BLOCKS, rankBlocks, blocksFor } = require('../src/browser/blocks');
 
 let passed = 0;
 const failures = [];

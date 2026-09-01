@@ -22,8 +22,8 @@
  * Run: `node test/serialize-escaping.test.js`.
  */
 
-const { unescapeIntrawordUnderscore } = require('../lib/browser/md-serialize');
-const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../lib/browser/markdown');
+const { unescapeIntrawordUnderscore } = require('../src/browser/md-serialize');
+const { markdownToDoc, docToMarkdown, repairMarkdown } = require('../src/browser/markdown');
 
 let pass = 0;
 const failures = [];

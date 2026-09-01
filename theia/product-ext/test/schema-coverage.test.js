@@ -38,8 +38,8 @@ global.ResizeObserver = class ResizeObserver { observe() {} unobserve() {} disco
 global.IntersectionObserver = class IntersectionObserver { observe() {} unobserve() {} disconnect() {} };
 
 const { getSchema } = require('@tiptap/core');
-const { buildExtensions } = require('../lib/browser/markdown-editor');
-const { markdownToDoc, docToMarkdown } = require('../lib/browser/markdown');
+const { buildExtensions } = require('../src/browser/markdown-editor');
+const { markdownToDoc, docToMarkdown } = require('../src/browser/markdown');
 
 let passed = 0;
 const failures = [];

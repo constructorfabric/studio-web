@@ -2,13 +2,13 @@
  * ESM entry for the vendored markdown engine.
  *
  * unified, remark-parse, remark-stringify and the remark-* dialect plugins are
- * ESM-only (see their package.json `"type": "module"`), and `lib/browser/*.js`
+ * ESM-only (see their package.json `"type": "module"`), and `src/browser/*.js`
  * is hand-written CommonJS with no build step of its own — the whole extension
  * loads as `require()`d files in an IIFE browser bundle (browser-app/esbuild.mjs)
  * and again under plain Node for the corpus test. Neither can `import()` these
  * packages at the point they need them (module init, synchronously), so this
  * file is the one place ESM is allowed to exist: build-engine.mjs bundles it
- * to a single CJS file that lib/browser/vendor/markdown-engine.js requires
+ * to a single CJS file that src/browser/vendor/markdown-engine.js requires
  * like anything else in this package.
  *
  * Only the building blocks are re-exported, not an assembled processor —

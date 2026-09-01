@@ -1,12 +1,10 @@
 node_modules
 .browser_modules
+# Compiled TypeScript output: studio/lib and drawio-editor/lib. Matches at
+# any depth. product-ext is hand-written JavaScript and lives under src/,
+# so nothing here touches it — which is exactly why it was moved out of a
+# directory called lib/, where it read as build output and was skipped.
 lib
-# ...except product-ext's, which is hand-written JavaScript rather than tsc
-# output like studio/lib. The bare `lib` above matches at any depth, so
-# without these two lines the extension commits as a package.json with
-# nothing behind it — and the build still "succeeds", just with no shell.
-!product-ext/lib
-!product-ext/lib/**
 *.log
 *-app/*
 !*-app/package.json
@@ -452,3 +450,7 @@ browser-app/scripts/*
 .windsurf/workflows/cf-write-skills.md
 .windsurf/workflows/cf.md
 # END Constructor Studio
+
+# A capture left behind by a debugging session, and a file created by a shell
+# expansion that never ran. Neither belongs in the tree.
+*.har

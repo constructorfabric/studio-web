@@ -1,6 +1,6 @@
 /*
  * Bundles the ESM-only remark/unified stack (see markdown-engine.mjs) into
- * one CommonJS file that `lib/browser/*.js` can `require()` directly, the
+ * one CommonJS file that `src/browser/*.js` can `require()` directly, the
  * same way mermaid-entry.mjs exists to give the browser build a script-tag
  * entry point instead of an inlined dependency (see that file's header).
  *

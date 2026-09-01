@@ -1,11 +1,8 @@
 node_modules
 **/node_modules
+# Compiled TypeScript output. product-ext's hand-written JavaScript is under
+# src/ and is copied in whole by the COPY product-ext/ line in the Dockerfile.
 **/lib
-# product-ext ships hand-written JavaScript: its lib/ is SOURCE, not tsc
-# output like studio/lib is. Without this exception the extension arrives in
-# the image as a package.json with nothing behind it, and the app builds
-# "successfully" with no product shell in it.
-!product-ext/lib
 browser-app/src-gen
 browser-app/gen-webpack*
 plugins

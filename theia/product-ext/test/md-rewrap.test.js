@@ -8,7 +8,7 @@
  */
 
 const assert = require('assert');
-const { preserveWrapping } = require('../lib/browser/md-rewrap');
+const { preserveWrapping } = require('../src/browser/md-rewrap');
 
 let passed = 0;
 const failures = [];
