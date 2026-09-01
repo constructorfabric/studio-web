@@ -259,7 +259,7 @@ function monacoColors(t) {
  * of --studio-accent in CSS, so setting that ONE property moves the whole
  * family. This function therefore only ever writes one property per theme.
  */
-const BRAND_DEFAULT = { accent: '#7147d2', accentDark: '#a589e6' };
+const BRAND_DEFAULT = { accent: '#0065e3', accentDark: '#64a6f7' };
 const BRAND_STYLE_ID = 'studio-brand-vars';
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -599,21 +599,28 @@ const SHELL_CSS = `
    * "verified", so roughly 140 hand-mixed hex literals grew in their place.
    * --studio-warning and --studio-verified below are that vocabulary, restored.
    *
-   * The accent is #7147D2, the Studio primary -- the same value the portal's
+   * The accent is #0065E3, the Studio primary -- the same value the portal's
    * theme is meant to carry, so a session and the portal that launched it are
-   * finally the same colour. It measures 5.94:1 on --studio-bg.
+   * finally the same colour. It measures 5.29:1 on --studio-bg, which clears AA
+   * for body text and for UI components alike.
+   *
+   * (It replaced #7147D2, a violet at 5.94:1. The drop is real but stays above
+   * the 4.5:1 floor everywhere the accent carries text. One knock-on: the code
+   * palette's keyword hue IS the accent, and its number hue was already a blue
+   * -- so the two collided. They swapped rather than one being re-picked; see
+   * --studio-code-keyword below.)
    *
    * DERIVED, NOT AUTHORED. hover/soft/selection/focus are color-mix() of the
    * accent rather than five hand-picked hexes, which is what lets the accent be
    * REPLACED at runtime (see applyBrand below) without anyone having to find
    * its relatives. Change one value and the whole family follows.
    */
-  --studio-accent: #7147d2;
+  --studio-accent: #0065e3;
   /*
    * What is legible ON the accent, which is not the same answer in both themes
-   * and must not be hardcoded to white. White on the light accent is 5.94:1 and
-   * fine; white on the DARK accent is 2.87:1 and is not, which is how the
-   * previous dark palette shipped every primary button and badge under AA.
+   * and must not be hardcoded to white. White on the light accent is 5.29:1 and
+   * fine; white on the DARK accent is 2.51:1 and is not, which is how an earlier
+   * dark palette shipped every primary button and badge under AA.
    */
   --studio-on-accent: #ffffff;
   --studio-accent-hover: color-mix(in srgb, var(--studio-accent) 84%, #000);
@@ -637,7 +644,7 @@ const SHELL_CSS = `
    * deployment-configurable; a logo that changes with a tenant's theme is not a
    * logo. Same value today, deliberately separate token.
    */
-  --studio-mark: #7147d2;
+  --studio-mark: #0065e3;
   /* Referenced by assistant-auth-view.js since it was written; never defined
      until now, so it has always silently resolved to its inline fallback. */
   --studio-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -649,9 +656,40 @@ const SHELL_CSS = `
   --studio-scrollbar-active: #8e98a6;
   /* A real, desaturated red — distinct from the navigational accent above —
      so destructive actions (delete) and error states read differently from
-     "select" or "primary". Everything else in the palette stays monochrome
-     plus the single blue accent; this is the one deliberate second color. */
+     "select" or "primary". Was described here as "the one deliberate second
+     color"; it no longer is — see --studio-ins/--studio-del just below for
+     the third, and why it earns its place instead of reusing this one. */
   --studio-danger: #b3261e;
+  /*
+   * INSERTED/DELETED IS A DIFFERENT FACT FROM ACCEPTED/REJECTED, and
+   * tracked-changes.js used to paint both with the same two tokens as if
+   * they were the same fact: an insertion in --studio-accent, a deletion in
+   * --studio-danger. In a document full of real hyperlinks that made every
+   * inserted word read as a link — "insert" and "navigate" were sharing a
+   * hue — which is the bug that was reported, not a cosmetic complaint.
+   *
+   * Named for what they mean, not for their hex, and ALIASED rather than
+   * given fresh values: green-added/red-removed is exactly the fact
+   * --studio-verified/--studio-danger already carry (5.02:1 light /
+   * 7.27:1 dark for verified, 6.54:1 light / 4.88:1 dark for danger, all
+   * measured against --studio-bg and clear of the 4.5:1 floor), and this
+   * palette's rule is one token per fact, reused, rather than a fresh hex
+   * per screen that wants to say the same thing. Aliasing also means a
+   * future re-tuning of "verified green" or "danger red" carries tracked
+   * changes with it, which is correct — they are the same green and the
+   * same red on purpose, not a coincidence to be re-derived by hand later.
+   *
+   * This makes THREE deliberate hues where the comment above used to claim
+   * two, and that is the honest count now. What does NOT move here:
+   * accepted/rejected, the outcome of a review decision, stays on
+   * accent/danger exactly as before — accepting a DELETION is not a red
+   * outcome, so decision colour and content colour have to be free to
+   * differ. tracked-changes.js's own comment records which classes are
+   * which; .studio-tc-ins/.studio-tc-del take these two, .studio-tc-settled
+   * and the change-card verdict colours stay on accent/danger.
+   */
+  --studio-ins: var(--studio-verified);
+  --studio-del: var(--studio-danger);
   /* Derived like the rest, so a configured accent carries its own halo.
      NOTE the name is historical: this is the SELECTION halo (diff-view,
      editor-css, tracked-changes), not the focus ring. The focus ring is
@@ -668,8 +706,16 @@ const SHELL_CSS = `
    * string, number, identifier and comment -- anything fewer and Python's
    * def, its quoted strings and its integers all share a colour. Three of the
    * five are the product's own (accent, verified, danger) so a code block
-   * reads as part of this document rather than as an embedded gist; the blue
-   * is new because both product hues are already spoken for by then.
+   * reads as part of this document rather than as an embedded gist.
+   *
+   * KEYWORD AND NUMBER SWAPPED when the accent moved from violet to #0065E3.
+   * Keyword is the accent by rule, and number was already a blue (#0550AE) --
+   * so the new accent landed a hue-step away from it and the two stopped being
+   * separable, which is the one thing this palette exists to guarantee. Rather
+   * than pick a sixth colour, number took the retired violet: it is a hue this
+   * product already owned, it is nowhere near the accent, and it was already
+   * contrast-vetted at 5.94:1 on --studio-bg. The dark block does the same
+   * swap with its own pair.
    *
    * Restated in the dark block below rather than aliased, for the reason the
    * loader pair explains at length: a custom property whose value is
@@ -680,9 +726,9 @@ const SHELL_CSS = `
    */
   --studio-code-comment: #6b7280;
   --studio-code-punct: #57606a;
-  --studio-code-keyword: #7147d2;
+  --studio-code-keyword: #0065e3;
   --studio-code-string: #14713f;
-  --studio-code-number: #0550ae;
+  --studio-code-number: #7147d2;
   --studio-code-fn: #8a4c00;
   --studio-code-tag: #b3261e;
   /*
@@ -700,7 +746,7 @@ const SHELL_CSS = `
    * colour as everything else that is "active". The unlit field is the line
    * tone: present, structural, not competing with the arc travelling over it.
    */
-  --studio-loader-on: #7147d2;
+  --studio-loader-on: #0065e3;
   --studio-loader-off: #e1e4e8;
 }
 
@@ -725,25 +771,27 @@ body[data-studio-theme="dark"] {
   --studio-muted: #8b90a3;
   /*
    * The dark accent is AUTHORED, not lightened from the light one. No mix of
-   * #7147D2 toward white lands somewhere legible on a #14161c ground and stays
-   * on hue; #A589E6 is the same hue at a lightness chosen for this ground, and
-   * measures 6.30:1 on --studio-bg.
+   * #0065E3 toward white lands somewhere legible on a #14161c ground and stays
+   * on hue; #64A6F7 is the same hue -- 213 degrees, the light accent's own --
+   * at a lightness chosen for this ground, and measures 7.18:1 on --studio-bg
+   * (6.76:1 on --studio-surface, the ground it actually sits on most often).
    *
-   * It also fixes a real failure. The previous dark accent #5b73e8 carried
-   * white button text at 4.15:1 -- under AA -- on every primary button and
-   * badge in dark mode. White on #A589E6 is a non-starter for the same reason,
-   * so dark buttons take --studio-bg as their foreground instead; see
-   * --theia-button-foreground below.
+   * It also preserves a rule earlier palettes broke. White button text on this
+   * accent is 2.52:1, far under AA, exactly as it was on the violet that came
+   * before it -- so dark buttons take --studio-bg as their foreground instead,
+   * at 7.18:1; see --theia-button-foreground below. The foreground token is the
+   * mechanism that makes a blue accent safe here, and it must not be
+   * hardcoded back to white.
    */
-  --studio-accent: #a589e6;
-  /* Dark text on a light accent: 6.30:1, where white would have been 2.87:1. */
+  --studio-accent: #64a6f7;
+  /* Dark text on a light accent: 7.18:1, where white would have been 2.52:1. */
   --studio-on-accent: #14161c;
   --studio-accent-hover: color-mix(in srgb, var(--studio-accent) 82%, #fff);
   --studio-accent-soft: color-mix(in srgb, var(--studio-accent) 16%, var(--studio-bg));
   --studio-selection-bg: color-mix(in srgb, var(--studio-accent) 20%, var(--studio-bg));
   --studio-warning: #d8a63c;
   --studio-verified: #4bb96a;
-  --studio-mark: #a589e6;
+  --studio-mark: #64a6f7;
   /*
    * Restated, not inherited, for the reason the loader's two colours are
    * restated below: a custom property whose value is var(--other) is
@@ -758,11 +806,22 @@ body[data-studio-theme="dark"] {
   --studio-scrollbar-hover: #3f4459;
   --studio-scrollbar-active: #4c516a;
   --studio-danger: #e5534b;
+  /* Restated, not aliased across the block boundary — same reason
+     --studio-slot-ring, the loader pair and the code palette are restated
+     here rather than inherited from :root above: a custom property whose
+     value is var(--other) resolves in the scope it is DECLARED in, so
+     declaring these only in the light block would freeze both at their
+     light values and an inserted word would stay light-green on a dark
+     ground. See the light block's comment for the contrast numbers and the
+     accepted/rejected-vs-inserted/deleted distinction; both hold unchanged
+     here, just against this theme's verified/danger. */
+  --studio-ins: var(--studio-verified);
+  --studio-del: var(--studio-danger);
   --studio-focus: color-mix(in srgb, var(--studio-accent) 30%, transparent);
   --studio-shadow: rgba(0, 0, 0, .55);
   /* The dark half of the pair declared in :root above. See the note there for
      why this is restated rather than aliased. */
-  --studio-loader-on: #a589e6;
+  --studio-loader-on: #64a6f7;
   --studio-loader-off: #2d303c;
   /* The dark half of the code palette declared in :root above. Lifted rather
      than inverted: on a #1a1c23 ground the light values fall to 2:1 or worse,
@@ -770,9 +829,9 @@ body[data-studio-theme="dark"] {
      staying recognisably the same colour. */
   --studio-code-comment: #8b90a3;
   --studio-code-punct: #9aa0b4;
-  --studio-code-keyword: #b79bf0;
+  --studio-code-keyword: #79c0ff;
   --studio-code-string: #6ed08a;
-  --studio-code-number: #79c0ff;
+  --studio-code-number: #b79bf0;
   --studio-code-fn: #ffb86b;
   --studio-code-tag: #ff8d84;
 }

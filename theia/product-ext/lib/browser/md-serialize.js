@@ -263,6 +263,58 @@ function trimTrailingWhitespace(node) {
     for (const child of (node.children || [])) { trimTrailingWhitespace(child); }
 }
 
+/*
+ * A GFM table row is one line of text — the row ends at the first newline,
+ * whatever produced it (see md-schema.js's table row comment on why a
+ * ragged/rectangular row has to be settled before this point, for the same
+ * reason: PM and GFM disagree about tables in a way that has to be resolved
+ * at a single boundary, not left to whichever code path happens to run
+ * first). mdast-util-to-markdown's ordinary handling of a `break` node is a
+ * backslash followed by a real "\n" — correct everywhere else, and fatal
+ * here: that newline ends the row early and shifts every following row's
+ * cells one column left, silently, with no error anywhere in the pipeline.
+ *
+ * This is not only the `hardBreak` a user typed as `<br>` (see md-schema.js's
+ * `inlineFromMdast` for where that one is recognised on the way in).
+ * `cellToPhrasing` (md-schema.js) also emits a bare `break` node to join a
+ * cell's second and later paragraphs — a table cell only ever gets more than
+ * one paragraph by pasting one in, since a cell's own PM content type is a
+ * single paragraph, but the schema tolerates it defensively — and that break
+ * is exactly as destructive to the row if left unconverted. Both kinds are
+ * indistinguishable by the time they reach here (both are just `{ type:
+ * 'break' }`), and both need the same fix, so there is only one rule:
+ * every `break` inside a `tableCell` becomes the literal HTML it has to be
+ * instead, `<br>` — the one spelling a GFM table row can actually contain.
+ *
+ * Done as a walk over the FINISHED mdast tree, scoped to `tableCell`, rather
+ * than by giving `toMdast` a context argument threaded down from the table
+ * row (the alternative the schema's marks already support one direction of,
+ * via `fromMdast`'s `ctx`): this way the `break` row in md-schema.js stays
+ * one line, correct in every position it can occur, and nothing about a hard
+ * break in ordinary prose changes by so much as reading this function's
+ * name. A `break` reached through anything other than a `table` node's cells
+ * is left completely alone.
+ */
+function convertTableCellBreaks(node) {
+    if (!Array.isArray(node.children)) { return; }
+    node.children = node.children.map(child => (child && child.type === 'break') ? { type: 'html', value: '<br>' } : child);
+    for (const child of node.children) { convertTableCellBreaks(child); }
+}
+
+function convertTableBreaksToHtml(tree) {
+    const walk = node => {
+        if (!node || typeof node !== 'object') { return; }
+        if (node.type === 'table') {
+            for (const row of (node.children || [])) {
+                for (const cell of (row.children || [])) { convertTableCellBreaks(cell); }
+            }
+            return; // tables cannot nest another table; nothing further underneath needs this walk
+        }
+        for (const child of (node.children || [])) { walk(child); }
+    };
+    walk(tree);
+}
+
 /**
  * ProseMirror document JSON -> mdast root. Exported mainly for the corpus
  * test, which needs to compare TREES, not just text, for the round-trip and
@@ -272,6 +324,7 @@ function docToMdast(doc, warnings) {
     const ctx = makeCtx(warnings || []);
     const blocks = (doc && doc.content) || [];
     const tree = { type: 'root', children: blockToMdastList(blocks, ctx) };
+    convertTableBreaksToHtml(tree);
     trimTrailingWhitespace(tree);
     return tree;
 }

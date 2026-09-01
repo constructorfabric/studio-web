@@ -89,7 +89,19 @@ const suggestMode = {
 };
 
 /*
- * The control, as a two-option pill.
+ * The control, as a segmented control — the SAME one as Rich/Split/Raw.
+ *
+ * This used to be its own rounded pill (.studio-suggest-switch/-btn) with a
+ * solid accent fill on the pressed segment, styled from scratch a few lines
+ * from the .studio-seg control it sits right next to in the topbar and looks
+ * nothing like. editor-css.js's own comment on .studio-seg warns about this
+ * exact failure by name — "two near-identical rule sets is how the old
+ * per-surface pills drifted apart" — so re-skinning the pill to merely
+ * resemble .studio-seg would have been repeating the mistake the comment
+ * describes, not fixing it. This emits .studio-seg / .studio-seg-btn
+ * directly and defines no shape, colour or spacing of its own; there is
+ * nothing left here to drift out of sync with the view switcher, because it
+ * is not a second copy of it.
  *
  * Same reasoning as the Project page's review-style choice: neither mode is the
  * absence of the other, so both are named and the pressed one is the state.
@@ -98,42 +110,50 @@ const suggestMode = {
  * It lives in the document topbar rather than in a menu because it changes what
  * the next keystroke DOES, and a mode with that much consequence has to be
  * visible without being opened — the same argument that put the save status
- * there. It is also why the pill turns solid in Suggesting: the quiet state is
- * the one where nothing unusual is happening.
+ * there. `.on` carries the shared visual state, the same class Rich/Split/Raw
+ * use, so this paints identically to them; `aria-pressed` stays too, because
+ * it is the better-considered ARIA of the two switches in this file's
+ * history and is what a screen reader actually announces. Both are written
+ * from the one `on` boolean below, so the visual state and the announced
+ * state cannot fall out of agreement with each other.
  */
 function suggestSwitchHtml() {
     const on = suggestMode.suggesting();
-    return '<div class="studio-suggest-switch' + (on ? ' on' : '') + '" role="group" ' +
+    return '<div class="studio-seg" role="group" ' +
         'aria-label="How your edits are recorded">' +
-        '<button class="studio-suggest-btn" data-act="suggest-mode" data-mode="edit" ' +
+        '<button class="studio-seg-btn' + (on ? '' : ' on') + '" data-act="suggest-mode" data-mode="edit" ' +
         'aria-pressed="' + String(!on) + '" title="Your edits change the document">Editing</button>' +
-        '<button class="studio-suggest-btn" data-act="suggest-mode" data-mode="suggest" ' +
+        '<button class="studio-seg-btn' + (on ? ' on' : '') + '" data-act="suggest-mode" data-mode="suggest" ' +
         'aria-pressed="' + String(on) + '" title="Your edits are recorded as suggestions for review">Suggesting</button>' +
         '</div>';
 }
 
 const SUGGEST_MODE_CSS = `
 /*
- * Sized to the topbar, not to its own importance.
+ * One rule, not a pill's worth.
  *
- * The first version was a 36px pill with a heavy accent border on top of a filled
- * segment, beside a status that says the same thing — three emphatic treatments of
- * one fact, which read as louder than the document. "This seems overloaded", and
- * it was. What carries the state is the FILLED SEGMENT and nothing else: no ring
- * on the container, no border colour change, and the same type size as the save
- * status it sits next to.
+ * Everything else about this control's look — track, segment shape, the
+ * pressed segment's raised-surface treatment — is .studio-seg / .studio-seg-
+ * btn from editor-css.js, verbatim, not restyled here. What is genuinely
+ * specific to THIS switch is that Suggesting is consequential in a way
+ * "Split view" is not: it changes what the next keystroke does to the
+ * document. The neutral .on treatment the view switcher uses for its own
+ * state is quieter than the solid accent fill this pill used to have — and a
+ * version of this control that answered that by adding a heavy accent
+ * BORDER on top of a filled segment, beside a save-status field that already
+ * says the same thing in words, was reviewed and rejected as three emphatic
+ * treatments of one fact ("this seems overloaded", and it was). So: exactly
+ * one added cue, not zero and not that pile of three — the label itself
+ * tints to the accent when Suggesting is on, echoing
+ * .studio-doc-status.state-suggesting right next to it (editor-css.js), so
+ * the two places that both answer "is what I type going into the file" say
+ * so with the one signal this palette already spends on "something is
+ * happening", instead of a second ring or a border colour change.
  */
-.studio-suggest-switch {
-  display: inline-flex; flex: none; padding: 1px; border-radius: 999px;
-  border: 1px solid var(--studio-line); background: var(--studio-surface-raised);
+.studio-seg-btn.on[data-mode="suggest"],
+.studio-seg-btn[aria-pressed="true"][data-mode="suggest"] {
+  color: var(--studio-accent);
 }
-.studio-suggest-btn {
-  border: 0; border-radius: 999px; padding: 2px 8px; background: transparent;
-  color: var(--studio-muted); cursor: pointer; font: 600 11px/1.45 inherit; white-space: nowrap;
-}
-.studio-suggest-btn:hover { color: var(--studio-text); }
-.studio-suggest-btn[aria-pressed="true"] { background: var(--studio-accent); color: var(--studio-bg); }
-.studio-suggest-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 `;
 
 module.exports = { suggestMode, suggestSwitchHtml, SUGGEST_MODE_CSS };

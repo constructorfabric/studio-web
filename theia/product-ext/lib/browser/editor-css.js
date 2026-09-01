@@ -41,11 +41,20 @@ const WIDGET_CSS = `
  * The seams stay hairline --studio-line, per constraint 24; the separation is
  * carried by the tones, which is exactly what lets the lines stay quiet.
  */
+/* 30px, the same height as the Projects rail's path bar. Document chrome is one
+   height across the product now; 42px was a toolbar's worth of air for a row
+   that holds a mode pill, a five-word status and three 24px tiles. Twelve
+   pixels back, on every document, permanently. */
 .studio-doc-topbar {
-  display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 12px; flex: none;
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; flex: none;
   background: var(--studio-surface-raised);
   border-bottom: 1px solid var(--studio-line); font-size: 12px; color: var(--studio-muted);
 }
+/* The tile shrinks WITH the bar rather than the bar being sized to fit the tile.
+   Scoped to this host: the same button renders in the activity rail, where the
+   column is wider and 28px is right. */
+.studio-doc-topbar .studio-slot-btn { width: 24px; height: 24px; border-radius: 6px; }
+.studio-doc-topbar .studio-slot-btn svg { width: 16px; height: 16px; }
 .studio-doc-topbar[hidden] { display: none; }
 .studio-doc-spacer { flex: 1; }
 .studio-doc-status { font-size: 11.5px; color: var(--studio-muted); white-space: nowrap; }
@@ -74,7 +83,13 @@ const WIDGET_CSS = `
   background: transparent; color: var(--studio-muted); white-space: nowrap;
 }
 .studio-seg-btn:hover { color: var(--studio-text); }
-.studio-seg-btn.on { background: var(--studio-bg); color: var(--studio-text); font-weight: 620; box-shadow: 0 1px 2px color-mix(in srgb, var(--studio-text) 8%, transparent); }
+/* [aria-pressed="true"] is listed alongside .on, not instead of it: Rich/
+   Split/Raw and the table mode segment carry only .on and never set
+   aria-pressed, while the Editing/Suggesting segment (suggest-mode.js) sets
+   both from the same boolean. Selecting both here means whichever attribute
+   a given segment happens to carry still paints the pressed state, so the
+   two can never visually disagree for the segment that has both. */
+.studio-seg-btn.on, .studio-seg-btn[aria-pressed="true"] { background: var(--studio-bg); color: var(--studio-text); font-weight: 620; box-shadow: 0 1px 2px color-mix(in srgb, var(--studio-text) 8%, transparent); }
 .studio-seg-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 
 /* The slot selector is not a segmented control here and never will be again:
@@ -105,7 +120,7 @@ const WIDGET_CSS = `
  * this the last button floated ~7px off the window's right edge while the mode
  * segment sat flush on the left. */
 .studio-slot-divider {
-  flex: none; width: 1px; height: 18px; background: var(--studio-line); margin: 0 2px;
+  flex: none; width: 1px; height: 14px; background: var(--studio-line); margin: 0 2px;
 }
 /* --studio-slot-ring is restated rather than inherited: the badge has to read as
  * sitting on THIS bar, and the cluster's own default is the same tone only by
@@ -160,8 +175,12 @@ const WIDGET_CSS = `
  * the notice louder than the document.
  */
 .studio-doc-banners { flex: none; }
+/* A NOTICE, NOT A PANEL. These stack -- a suggestion banner over a formatting
+   note is the common case -- and at 9px/1.6 with a 26px button in them two of
+   them took 70px off the document before a word of it was on screen. The band
+   still reads as a band; it just stops being furniture. */
 .studio-doc-banner {
-  padding: 9px 16px; font-size: 12.5px; line-height: 1.6;
+  padding: 5px 12px; font-size: 12px; line-height: 1.45;
   background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-surface)); color: var(--studio-text);
   border-bottom: 1px solid color-mix(in srgb, var(--studio-accent) 22%, transparent);
 }
@@ -171,10 +190,15 @@ const WIDGET_CSS = `
 }
 .studio-doc-banner.info { background: var(--studio-surface-raised); border-bottom-color: var(--studio-line); }
 .studio-doc-banner.note {
-  padding: 4px 16px; font-size: 11.5px; line-height: 1.45;
+  padding: 2px 12px; font-size: 11px; line-height: 1.4;
   background: transparent; border-bottom-color: var(--studio-line); color: var(--studio-muted);
 }
-.studio-doc-banner .studio-btn { margin-left: 4px; vertical-align: baseline; }
+/* The button is what SETS the band's height once the padding is this small, so
+   it is sized here rather than left at the dialog default -- a 26px control in a
+   28px band is the band being built around the button again. */
+.studio-doc-banner .studio-btn {
+  margin-left: 4px; vertical-align: baseline; padding: 1px 8px; font-size: 11.5px; border-radius: 5px;
+}
 
 /* --- body layout: the three authoring modes ---
  *

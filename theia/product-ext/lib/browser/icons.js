@@ -162,6 +162,31 @@ const ICONS = {
     tableHeaderRow:   svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),   // panel-top
     tableDelete:      svg('<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),   // trash-2
 
+    /* --- DIRECTORY LISTING ------------------------------------------------ *
+     *
+     * The Projects browser used to be the one surface in this product that did
+     * NOT speak the language declared at the top of this file. Its rows drew a
+     * file as a hand-built CSS box -- a 11x14px border with a letter pushed
+     * through ::after: "M" for markdown, "TS", "JS", ">_", a lozenge for SVG.
+     * At the 5-7px those glyphs were set to, "TS" and "JS" were two grey
+     * smudges, and eleven of them meant eleven more rules in REPOS_CSS.
+     *
+     * These are the replacement, extracted the way this file's header
+     * prescribes rather than redrawn. Deliberately COARSE: one glyph per broad
+     * kind, not per extension. A directory listing is scanned for names, so the
+     * glyph answers "folder or not, and roughly what kind" and then gets out of
+     * the way. Adding a per-language icon here is how the rainbow comes back.
+     */
+    folder:           svg('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),   // folder
+    file:             svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>'),   // file
+    fileText:         svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'),   // file-text
+    fileCode:         svg('<path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>'),   // file-code
+    fileData:         svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"/><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"/>'),   // file-json-2
+    fileTable:        svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>'),   // file-spreadsheet
+    fileImage:        svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="10" cy="12" r="2"/><path d="m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22"/>'),   // file-image
+    sortAsc:          svg('<path d="m3 8 4-4 4 4"/><path d="M7 4v16"/><path d="M11 12h4"/><path d="M11 16h7"/><path d="M11 20h10"/>'),   // arrow-up-narrow-wide
+    sortDesc:         svg('<path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M11 4h10"/><path d="M11 8h7"/><path d="M11 12h4"/>'),   // arrow-down-wide-narrow
+
     /* --- VENDOR MARKS ----------------------------------------------------- *
      *
      * NOT DRAWN HERE. Both paths are copied verbatim from the extension's own
