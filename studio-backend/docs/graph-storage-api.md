@@ -149,7 +149,9 @@ trait mirrors REST one to one — `register_types`, `get_type`, `list_types`,
 same `CanonicalError` taxonomy. Types live in `graph_storage_sdk::models`.
 
 Three consumers in this repository show the pattern: `connectors/graph_sync.rs`
-(a repository walked into `repository / directory / file / person` nodes),
+(a repository walked into `repository / directory / file / person` nodes, run
+as a background task with a poll endpoint because embedding on write takes
+longer than the gateway deadline for a few hundred files),
 `artifact_ingest/graph_backend.rs` (issues, PRs, files, comments, commits) and
 `gears_catalog/service.rs` (crates.io gears and versions). Each registers its
 types on every write — cheap, because registration converges — and declares

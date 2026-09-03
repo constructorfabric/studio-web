@@ -41,6 +41,7 @@ removed; file content reaches search through a bounded `text_excerpt`.
 | Semantic search | "how the service is deployed to kubernetes" → `service.yaml`, `deployment.yaml`; "license terms" → `LICENSE`; "unit tests for the parser" → `tests` |
 | Second consumer | artifact-ingest stored 845 issues and answers hybrid search over them semantically |
 | Third consumer | gears-catalog: 75 gears, 754 versions, 754 `has_version` edges from crates.io |
+| Background import | `POST …/graph-sync` returns a task id at once; the poll shows the phases (`reading the repository tree` 0.1 s → `reading the contributors` 3.7 s → `writing nodes 1-500 of 824` 14.9 s → `writing nodes 501-824` 24.3 s → `succeeded` 26.5 s); no gateway deadline involved |
 | Provider switch guard | see the last section |
 
 ## Problems found
@@ -85,15 +86,15 @@ removed; file content reaches search through a bounded `text_excerpt`.
 
 ### Found by the real-data run, still open
 
-10. **Synchronous import can exceed the gateway deadline.** The first graph-sync
-    of an 800-entry repository answered `504 Deadline Exceeded` after 30 001 ms
-    while the gear was still embedding; the handler was cancelled after the node
-    batches and before any edge batch, leaving 824 nodes and 0 edges until the
-    next run. A later import of the same repository on an idle host took 12.6 s,
-    and with the vector arm blocked (no embedding) 3.1 s — so embedding is the
-    cost, and the margin under 30 s depends on host load. Options: run graph-sync
-    as a background task with a task id (artifact-ingest already works that way),
-    raise the deadline for this route, or embed asynchronously.
+10. **Synchronous import could exceed the gateway deadline — fixed.** The first
+    graph-sync of an 800-entry repository answered `504 Deadline Exceeded` after
+    30 001 ms while the gear was still embedding; the handler was cancelled after
+    the node batches and before any edge batch, leaving 824 nodes and 0 edges
+    until the next run (12.6 s on an idle host, 3.1 s with no embedding — the
+    margin depended on host load). `POST …/graph-sync` now enqueues a background
+    task and returns a `task_id`; `GET /studio-connector/v1/graph-sync/tasks/{id}`
+    reports the phase and the outcome, the shape artifact-ingest already used.
+    `wait: true` keeps the inline behaviour for small repositories.
 11. **A no-op re-sync costs as much as a first import.** `EmbeddingCoordinator::plan`
     embeds every node before comparing input hashes, so unchanged nodes are
     re-embedded on every sync: 25 s under load, 10.5 s idle, against 3 s when no
@@ -143,5 +144,4 @@ at boot, confined to the vector arm, and reversible.
 - Live `remote` run with a key OpenAI accepts (`STUDIO_EMBEDDING_PROVIDER=remote`), on a fresh graph database.
 - Upstream: gears-rust PR for the gear once #4639 merges (remove `publish = false`,
   release-plz publishes); then studio-web drops the `[patch]` block.
-- Make graph-sync asynchronous or long-deadline (finding 10).
 - Push the studio-web branch and open the PR.

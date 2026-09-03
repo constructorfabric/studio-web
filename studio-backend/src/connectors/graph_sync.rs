@@ -134,6 +134,11 @@ pub struct SyncOutcome {
 
 /// Walk `request.repo_full_path` and write it into the caller's graph.
 ///
+/// `progress` is told what phase the walk is in; the REST layer runs this as a
+/// background task and surfaces those phases to a polling client, because the
+/// gear embeds every node on write and a few hundred files take longer than
+/// the gateway's request deadline.
+///
 /// # Errors
 /// Returns an error when the provider call fails, when the connection cannot
 /// be resolved, or when the graph rejects a batch.
@@ -142,14 +147,17 @@ pub async fn sync_repository(
     graph: &Arc<dyn GraphStorageClientV1>,
     ctx: &SecurityContext,
     request: &SyncRequest<'_>,
+    progress: &(dyn Fn(String) + Sync),
 ) -> anyhow::Result<SyncOutcome> {
     let (driver, auth, _connection) = connectors
         .driver_and_auth(ctx, request.tenant, request.connection_id)
         .await?;
 
+    progress("reading the repository tree".to_owned());
     let tree = driver
         .repo_tree(&auth, request.repo_full_path, request.git_ref)
         .await?;
+    progress("reading the contributors".to_owned());
     let people = driver
         .contributors(&auth, request.repo_full_path, request.max_contributors)
         .await?;
@@ -177,6 +185,7 @@ pub async fn sync_repository(
         schema: schema_of(leaf, family, search),
     })
     .collect();
+    progress("registering the graph types".to_owned());
     graph.register_types(ctx, types).await?;
 
     let repo = request.repo_full_path;
@@ -329,14 +338,26 @@ pub async fn sync_repository(
         replace_scope: None,
         idempotency_key: None,
     };
-    for chunk in nodes.chunks(BATCH) {
+    let total_nodes = nodes.len();
+    for (i, chunk) in nodes.chunks(BATCH).enumerate() {
+        progress(format!(
+            "writing nodes {}-{} of {total_nodes} (the gear embeds each one)",
+            i * BATCH + 1,
+            i * BATCH + chunk.len()
+        ));
         let counts = graph
             .ingest(ctx, batch(chunk.to_vec(), Vec::new()))
             .await?
             .counts;
         outcome.nodes_upserted += counts.nodes_inserted + counts.nodes_updated;
     }
-    for chunk in edges.chunks(BATCH) {
+    let total_edges = edges.len();
+    for (i, chunk) in edges.chunks(BATCH).enumerate() {
+        progress(format!(
+            "writing edges {}-{} of {total_edges}",
+            i * BATCH + 1,
+            i * BATCH + chunk.len()
+        ));
         let counts = graph
             .ingest(ctx, batch(Vec::new(), chunk.to_vec()))
             .await?

@@ -19,7 +19,9 @@ use uuid::Uuid;
 
 use super::driver::{DriverIdentity, RemoteRepo};
 #[cfg(feature = "graph")]
-use super::graph_sync::{SyncRequest, sync_repository};
+use super::graph_sync::{SyncOutcome, SyncRequest, sync_repository};
+#[cfg(feature = "graph")]
+use super::graph_sync_tasks::TaskRegistry;
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
@@ -55,7 +57,11 @@ impl Connectors {
 /// without the `graph` feature it carries nothing and no route reads it.
 #[cfg(feature = "graph")]
 #[derive(Clone)]
-pub struct GraphSink(pub Option<Arc<dyn GraphStorageClientV1>>);
+pub struct GraphSink {
+    client: Option<Arc<dyn GraphStorageClientV1>>,
+    /// The background imports this process has run, for the poll endpoint.
+    tasks: Arc<TaskRegistry>,
+}
 
 #[cfg(not(feature = "graph"))]
 #[derive(Clone)]
@@ -63,8 +69,15 @@ pub struct GraphSink;
 
 #[cfg(feature = "graph")]
 impl GraphSink {
+    pub fn new(client: Option<Arc<dyn GraphStorageClientV1>>) -> Self {
+        Self {
+            client,
+            tasks: Arc::new(TaskRegistry::default()),
+        }
+    }
+
     fn get(&self) -> ApiResult<&Arc<dyn GraphStorageClientV1>> {
-        self.0.as_ref().ok_or_else(|| {
+        self.client.as_ref().ok_or_else(|| {
             CanonicalError::service_unavailable()
                 .with_detail("the knowledge graph is not available in this deployment")
                 .create()
@@ -634,11 +647,16 @@ pub fn register_routes(
     #[cfg(feature = "graph")]
     let router = OperationBuilder::post("/studio-connector/v1/connections/{id}/graph-sync")
         .operation_id("studio_connector.graph_sync")
-        .summary("Import a repository into the knowledge graph")
+        .summary("Import a repository into the knowledge graph (background task)")
         .description(
             "Reads the repository's file tree and contributor list through this \
-             connection and upserts them as typed nodes and edges. Node keys are \
-             derived, so re-running converges instead of duplicating.",
+             connection and upserts them as typed nodes and edges; the graph \
+             embeds every node on write. The import runs in the background — \
+             this returns a task id at once, poll `GET /graph-sync/tasks/{task_id}` \
+             for the phase and the outcome. Node keys are derived, so re-running \
+             converges instead of duplicating. `wait: true` runs the import \
+             inline instead and answers with the outcome, which fits the gateway \
+             deadline only for small repositories.",
         )
         .tag("StudioConnectors")
         .authenticated()
@@ -646,12 +664,33 @@ pub fn register_routes(
         .path_param("id", "Connection id")
         .json_request::<GraphSyncRequest>(openapi, "What to import")
         .handler(graph_sync)
-        .json_response_with_schema::<GraphSyncResultDto>(
+        .json_response_with_schema::<GraphSyncAcceptedDto>(
             openapi,
             StatusCode::OK,
-            "What the import wrote",
+            "The task id to poll, or (with `wait`) the outcome",
         )
         .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    #[cfg(feature = "graph")]
+    let router = OperationBuilder::get("/studio-connector/v1/graph-sync/tasks/{task_id}")
+        .operation_id("studio_connector.graph_sync_task")
+        .summary("Poll a repository import")
+        .description(
+            "The status of a background import: `queued`, `running` (with the \
+             current phase in `message`), `succeeded` (with `outcome`) or `failed` \
+             (with the error in `message`). Tasks live in this process's memory: \
+             a restart forgets them, and an import is cheap to re-run.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("task_id", "Task id returned by the import call")
+        .handler(graph_sync_task)
+        .json_response_with_schema::<GraphSyncTaskDto>(openapi, StatusCode::OK, "Task status")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -673,7 +712,7 @@ pub struct GraphSyncRequest {
     #[serde(default)]
     pub git_ref: Option<String>,
     /// Cap on tree entries turned into nodes. A large repository is truncated
-    /// rather than refused, and the response says so.
+    /// rather than refused, and the outcome says so.
     #[serde(default = "default_max_entries")]
     pub max_entries: usize,
     /// Cap on contributors turned into nodes.
@@ -690,6 +729,11 @@ pub struct GraphSyncRequest {
     #[schema(value_type = Option<String>)]
     #[serde(default)]
     pub tenant: Option<Uuid>,
+    /// Run inline and answer with the outcome instead of a task id. The import
+    /// then has to finish within the gateway's request deadline, which a
+    /// repository of a few hundred files does not reliably do.
+    #[serde(default)]
+    pub wait: bool,
 }
 
 #[cfg(feature = "graph")]
@@ -708,7 +752,7 @@ const fn default_max_contributors() -> u32 {
 pub struct GraphSyncResultDto {
     /// Ref the tree was actually read at.
     pub git_ref: String,
-    /// Node key of the repository — seed a traversal or a subgraph with it.
+    /// Node key of the repository — seed a traversal or a neighbourhood with it.
     pub repo_node_key: String,
     pub nodes_upserted: u64,
     pub edges_upserted: u64,
@@ -719,7 +763,97 @@ pub struct GraphSyncResultDto {
     pub truncated: bool,
 }
 
-/// Walk a repository and write it into the caller's knowledge graph.
+#[cfg(feature = "graph")]
+impl From<SyncOutcome> for GraphSyncResultDto {
+    fn from(o: SyncOutcome) -> Self {
+        Self {
+            git_ref: o.git_ref,
+            repo_node_key: o.repo_node_key,
+            nodes_upserted: o.nodes_upserted,
+            edges_upserted: o.edges_upserted,
+            files: o.files,
+            directories: o.directories,
+            contributors: o.contributors,
+            truncated: o.truncated,
+        }
+    }
+}
+
+/// What the import call answers: a task to poll, or — with `wait` — the
+/// finished outcome under the same shape (`status: succeeded`).
+#[cfg(feature = "graph")]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GraphSyncAcceptedDto {
+    pub task_id: String,
+    /// `queued` | `running` | `succeeded` | `failed`.
+    pub status: String,
+    pub repo_full_path: String,
+    /// Present with `wait: true`.
+    pub outcome: Option<GraphSyncResultDto>,
+}
+
+#[cfg(feature = "graph")]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GraphSyncTaskDto {
+    pub task_id: String,
+    #[schema(value_type = String)]
+    pub connection_id: Uuid,
+    pub repo_full_path: String,
+    /// `queued` | `running` | `succeeded` | `failed`.
+    pub status: String,
+    /// The current phase while running; the error once failed.
+    pub message: Option<String>,
+    /// What the import wrote, once succeeded.
+    pub outcome: Option<GraphSyncResultDto>,
+}
+
+/// Everything a background import needs, owned: the request is gone by the
+/// time the task runs.
+#[cfg(feature = "graph")]
+struct ImportJob {
+    connection_id: Uuid,
+    tenant: Uuid,
+    repo_full_path: String,
+    git_ref: Option<String>,
+    max_entries: usize,
+    max_contributors: u32,
+    project_id: Option<Uuid>,
+    project_name: Option<String>,
+}
+
+#[cfg(feature = "graph")]
+impl ImportJob {
+    async fn run(
+        &self,
+        svc: &ConnectorService,
+        graph: &Arc<dyn GraphStorageClientV1>,
+        ctx: &SecurityContext,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> anyhow::Result<SyncOutcome> {
+        sync_repository(
+            svc,
+            graph,
+            ctx,
+            &SyncRequest {
+                connection_id: self.connection_id,
+                tenant: self.tenant,
+                repo_full_path: &self.repo_full_path,
+                git_ref: self.git_ref.as_deref(),
+                max_entries: self.max_entries,
+                max_contributors: self.max_contributors,
+                project_id: self.project_id,
+                project_name: self.project_name.as_deref(),
+            },
+            progress,
+        )
+        .await
+    }
+}
+
+/// Walk a repository and write it into the caller's knowledge graph — in the
+/// background by default, inline on request.
 #[cfg(feature = "graph")]
 async fn graph_sync(
     Extension(ctx): Extension<SecurityContext>,
@@ -727,40 +861,112 @@ async fn graph_sync(
     Extension(graph): Extension<GraphSink>,
     Path(id): Path<Uuid>,
     Json(body): Json<GraphSyncRequest>,
-) -> ApiResult<JsonBody<GraphSyncResultDto>> {
-    let svc = connectors.get()?;
-    let sink = graph.get()?;
+) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
+    let svc = Arc::clone(connectors.get()?);
+    let sink = Arc::clone(graph.get()?);
+    let job = ImportJob {
+        connection_id: id,
+        tenant: body.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+        repo_full_path: body.repo_full_path.trim().to_owned(),
+        git_ref: body.git_ref,
+        max_entries: body.max_entries,
+        max_contributors: body.max_contributors,
+        project_id: body.project_id,
+        project_name: body.project_name,
+    };
+    if job.repo_full_path.is_empty() {
+        return Err(StudioConnectorError::invalid_argument()
+            .with_constraint("repo_full_path must not be empty")
+            .create());
+    }
+    // The connection is resolved up front, with the request's own context, so a
+    // wrong id or an unreadable token is answered now rather than found by a
+    // poll later.
+    svc.driver_and_auth(&ctx, job.tenant, job.connection_id)
+        .await
+        .map_err(|e| {
+            StudioConnectorError::invalid_argument()
+                .with_constraint(format!("repository sync failed: {e:#}"))
+                .create()
+        })?;
 
-    let outcome = sync_repository(
-        svc,
-        sink,
-        &ctx,
-        &SyncRequest {
-            connection_id: id,
-            tenant: body.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
-            repo_full_path: &body.repo_full_path,
-            git_ref: body.git_ref.as_deref(),
-            max_entries: body.max_entries,
-            max_contributors: body.max_contributors,
-            project_id: body.project_id,
-            project_name: body.project_name.as_deref(),
-        },
-    )
-    .await
-    .map_err(|e| {
-        StudioConnectorError::invalid_argument()
-            .with_constraint(format!("repository sync failed: {e:#}"))
+    let tasks = Arc::clone(&graph.tasks);
+    let task_id = tasks.create(job.connection_id, &job.repo_full_path);
+
+    if body.wait {
+        let progress = |phase: String| tasks.progress(&task_id, &phase);
+        return match job.run(&svc, &sink, &ctx, &progress).await {
+            Ok(outcome) => {
+                tasks.succeed(&task_id, outcome.clone());
+                Ok(Json(GraphSyncAcceptedDto {
+                    task_id,
+                    status: "succeeded".to_owned(),
+                    repo_full_path: job.repo_full_path,
+                    outcome: Some(outcome.into()),
+                }))
+            }
+            Err(e) => {
+                tasks.fail(&task_id, &format!("{e:#}"));
+                Err(StudioConnectorError::invalid_argument()
+                    .with_constraint(format!("repository sync failed: {e:#}"))
+                    .create())
+            }
+        };
+    }
+
+    let repo_full_path = job.repo_full_path.clone();
+    let spawned_id = task_id.clone();
+    tokio::spawn(async move {
+        let progress = |phase: String| tasks.progress(&spawned_id, &phase);
+        match job.run(&svc, &sink, &ctx, &progress).await {
+            Ok(outcome) => {
+                tracing::info!(
+                    task_id = %spawned_id,
+                    repo = %job.repo_full_path,
+                    nodes = outcome.nodes_upserted,
+                    edges = outcome.edges_upserted,
+                    "studio-connector: repository import finished"
+                );
+                tasks.succeed(&spawned_id, outcome);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    task_id = %spawned_id,
+                    repo = %job.repo_full_path,
+                    error = %format!("{e:#}"),
+                    "studio-connector: repository import failed"
+                );
+                tasks.fail(&spawned_id, &format!("{e:#}"));
+            }
+        }
+    });
+
+    Ok(Json(GraphSyncAcceptedDto {
+        task_id,
+        status: "queued".to_owned(),
+        repo_full_path,
+        outcome: None,
+    }))
+}
+
+/// The state of one background import.
+#[cfg(feature = "graph")]
+async fn graph_sync_task(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(graph): Extension<GraphSink>,
+    Path(task_id): Path<String>,
+) -> ApiResult<JsonBody<GraphSyncTaskDto>> {
+    let rec = graph.tasks.get(&task_id).ok_or_else(|| {
+        StudioConnectorError::not_found("no such import task")
+            .with_resource(task_id.clone())
             .create()
     })?;
-
-    Ok(Json(GraphSyncResultDto {
-        git_ref: outcome.git_ref,
-        repo_node_key: outcome.repo_node_key,
-        nodes_upserted: outcome.nodes_upserted,
-        edges_upserted: outcome.edges_upserted,
-        files: outcome.files,
-        directories: outcome.directories,
-        contributors: outcome.contributors,
-        truncated: outcome.truncated,
+    Ok(Json(GraphSyncTaskDto {
+        task_id: rec.id,
+        connection_id: rec.connection_id,
+        repo_full_path: rec.repo_full_path,
+        status: rec.status.as_str().to_owned(),
+        message: rec.message,
+        outcome: rec.outcome.map(Into::into),
     }))
 }

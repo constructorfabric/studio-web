@@ -162,15 +162,25 @@ curl -s "${H[@]}" http://127.0.0.1:8090/cf/studio-connector/v1/connections \
   | python3 -c 'import json,sys; [print(c["id"], c["owner_tenant_id"], c["provider"]) for c in json.load(sys.stdin)["items"]]'
 ```
 
-3. Import. `tenant` is the connection's `owner_tenant_id`.
+3. Import. `tenant` is the connection's `owner_tenant_id`. The import runs in
+   the background — the gear embeds every node it writes, which for a few
+   hundred files takes longer than the gateway's 30 s deadline — so the call
+   returns a task id and you poll it:
 
 ```bash
-curl -s -X POST "${H[@]}" -d '{
+TASK=$(curl -s -X POST "${H[@]}" -d '{
   "repo_full_path": "constructorfabric/insight",
   "tenant": "<owner_tenant_id>",
   "max_entries": 800
-}' "http://127.0.0.1:8090/cf/studio-connector/v1/connections/<connection-id>/graph-sync"
+}' "http://127.0.0.1:8090/cf/studio-connector/v1/connections/<connection-id>/graph-sync" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+
+# status: queued | running (message = current phase) | succeeded (outcome) | failed (message)
+curl -s "${H[@]}" "http://127.0.0.1:8090/cf/studio-connector/v1/graph-sync/tasks/$TASK"
 ```
+
+`"wait": true` in the body runs the import inline and answers with the outcome;
+fine for a small repository, a 504 for a large one.
 
 Reference run: 824 nodes, 823 edges (622 files, 178 directories, 23
 contributors). Re-running converges — the counts come back as `unchanged` and
