@@ -30,17 +30,22 @@ TOKENIZER_SHA256="${TOKENIZER_SHA256:-be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27
 target="${MODELS_DIR}/${MODEL_NAME}"
 mkdir -p "${target}"
 
+# The digest of a file, portable across GNU coreutils and BusyBox (whose
+# sha256sum has no --status).
+digest_of() { sha256sum "$1" | cut -d' ' -f1; }
+
 # Download `url` to `path` unless a file with the pinned digest is already there.
 fetch() {
   url="$1"; path="$2"; digest="$3"
-  if [ -f "${path}" ] && echo "${digest}  ${path}" | sha256sum -c --status; then
+  if [ -f "${path}" ] && [ "$(digest_of "${path}")" = "${digest}" ]; then
     echo "embedding-model: ${path} present (sha256 ${digest})"
     return 0
   fi
   echo "embedding-model: fetching ${url}"
   curl -sSL --fail --retry 3 -o "${path}.part" "${url}"
-  if ! echo "${digest}  ${path}.part" | sha256sum -c --status; then
-    echo "embedding-model: ${url} does not match the pinned sha256 ${digest}; refusing to install it" >&2
+  actual="$(digest_of "${path}.part")"
+  if [ "${actual}" != "${digest}" ]; then
+    echo "embedding-model: ${url} has sha256 ${actual}, not the pinned ${digest}; refusing to install it" >&2
     rm -f "${path}.part"
     exit 1
   fi

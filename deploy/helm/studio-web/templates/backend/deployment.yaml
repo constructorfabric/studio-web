@@ -50,10 +50,11 @@ spec:
               set -eu
               target=/models/minilm
               mkdir -p "$target"
+              digest_of() { sha256sum "$1" | cut -d' ' -f1; }
               fetch() {
-                if [ -f "$2" ] && echo "$3  $2" | sha256sum -c --status; then echo "present: $2"; return 0; fi
+                if [ -f "$2" ] && [ "$(digest_of "$2")" = "$3" ]; then echo "present: $2"; return 0; fi
                 curl -sSL --fail --retry 3 -o "$2.part" "$1"
-                echo "$3  $2.part" | sha256sum -c --status || { echo "checksum mismatch for $1" >&2; exit 1; }
+                [ "$(digest_of "$2.part")" = "$3" ] || { echo "checksum mismatch for $1: $(digest_of "$2.part")" >&2; exit 1; }
                 mv "$2.part" "$2"; echo "installed: $2"
               }
               fetch {{ .Values.backend.embedding.model.url | quote }} "$target/model.onnx" {{ .Values.backend.embedding.model.sha256 | quote }}
