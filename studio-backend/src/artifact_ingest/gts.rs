@@ -71,14 +71,29 @@ pub const ALL_EDGE_TYPES: [&str; 8] = [
     REL_COMMENT_ON,
 ];
 
-/// The type id the graph-storage gear stores this artifact type under. The gear
-/// keeps its own type table and its ids omit the `gts.` scheme token (its own
-/// examples are `cf.studio.kg.file.v1~`), so we strip it.
+/// The graph-storage families our types derive from.
+///
+/// Derivation is not decoration: `family` is declared required with no default
+/// on the two bases, so a type deriving straight from a base resolves no family
+/// and cannot be instantiated. Artifacts are *owned* nodes — the graph is their
+/// system of record here — and the relations are *static* edges, replaced
+/// wholesale by a re-sync.
+const OWNED_NODE_FAMILY: &str = "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~";
+const STATIC_EDGE_FAMILY: &str = "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~";
+
+/// The type id the graph-storage gear stores this artifact type under.
+///
+/// A derived type carries its ancestry in the identifier: our
+/// `gts.cf.studio.artifact.file.v1~` becomes
+/// `gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file.v1~`.
 pub fn graph_type_id(our_type: &str) -> String {
-    our_type
-        .strip_prefix("gts.")
-        .unwrap_or(our_type)
-        .to_string()
+    let leaf = our_type.strip_prefix("gts.").unwrap_or(our_type);
+    let family = if ALL_EDGE_TYPES.contains(&our_type) {
+        STATIC_EDGE_FAMILY
+    } else {
+        OWNED_NODE_FAMILY
+    };
+    format!("{family}{leaf}")
 }
 
 /// Reverse of [`graph_type_id`]: map a graph-storage type id back to our
@@ -89,59 +104,151 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
         .find(|t| graph_type_id(t) == graph_type)
 }
 
-/// GTS Type Schemas registered at gear init. Declared free-form (`type:
-/// object`) — the same shape the studio types use in `config/*.yaml` — so
-/// registration never trips the closed-envelope narrowing check; the full
-/// property schemas live alongside as JSON files and are the graph contract.
+/// The node types, with a title and a description each.
+const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+    (
+        REPO_TYPE,
+        "Repository",
+        "A source repository ingested from a connector.",
+    ),
+    (
+        ISSUE_TYPE,
+        "Issue",
+        "An issue pulled from the connector API.",
+    ),
+    (
+        PULL_REQUEST_TYPE,
+        "PullRequest",
+        "A pull/merge request pulled from the connector API.",
+    ),
+    (
+        FILE_TYPE,
+        "File",
+        "A file in the repository tree pulled from the connector API.",
+    ),
+    (
+        USER_TYPE,
+        "User",
+        "An account that authored issues, pull requests, comments or commits.",
+    ),
+    (
+        SPEC_FINDING_TYPE,
+        "SpecFinding",
+        "A spec-quality finding (bloat/traceability/leak/purpose) about a document.",
+    ),
+    (
+        COMMENT_TYPE,
+        "Comment",
+        "A comment on an issue or pull request pulled from the connector API.",
+    ),
+    (
+        COMMIT_TYPE,
+        "Commit",
+        "A commit in the repository pulled from the connector API.",
+    ),
+];
+
+/// GTS Type Schemas registered with the **platform types-registry** at gear
+/// init. Declared free-form (`type: object`) — the same shape the studio types
+/// use in `config/*.yaml` — so registration never trips the closed-envelope
+/// narrowing check; the full property schemas live alongside as JSON files and
+/// are the graph contract.
 pub fn type_schemas() -> Vec<Value> {
-    [
-        (
-            REPO_TYPE,
-            "Repository",
-            "A source repository ingested from a connector.",
-        ),
-        (
-            ISSUE_TYPE,
-            "Issue",
-            "An issue pulled from the connector API.",
-        ),
-        (
-            PULL_REQUEST_TYPE,
-            "PullRequest",
-            "A pull/merge request pulled from the connector API.",
-        ),
-        (
-            FILE_TYPE,
-            "File",
-            "A file in the repository tree pulled from the connector API.",
-        ),
-        (
-            SPEC_FINDING_TYPE,
-            "SpecFinding",
-            "A spec-quality finding (bloat/traceability/leak/purpose) about a document.",
-        ),
-        (
-            COMMENT_TYPE,
-            "Comment",
-            "A comment on an issue or pull request pulled from the connector API.",
-        ),
-        (
-            COMMIT_TYPE,
-            "Commit",
-            "A commit in the repository pulled from the connector API.",
-        ),
-    ]
-    .into_iter()
-    .map(|(id, title, description)| {
-        json!({
-            "$id": format!("gts://{id}"),
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "title": title,
-            "description": description,
-            "type": "object",
+    NODE_TYPE_DOCS
+        .into_iter()
+        .filter(|(id, _, _)| *id != USER_TYPE)
+        .map(|(id, title, description)| {
+            json!({
+                "$id": format!("gts://{id}"),
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": title,
+                "description": description,
+                "type": "object",
+            })
         })
+        .collect()
+}
+
+/// Payload paths the gear indexes for lexical search, declared once on every
+/// artifact type. The gear composes the search text from these on write, so a
+/// producer no longer supplies a `search_text` string; a path a node's payload
+/// does not have is simply skipped.
+const FULL_TEXT_PATHS: [&str; 12] = [
+    "/payload/title",
+    "/payload/path",
+    "/payload/full_path",
+    "/payload/state",
+    "/payload/author",
+    "/payload/login",
+    "/payload/labels",
+    "/payload/body",
+    "/payload/message",
+    "/payload/summary",
+    "/payload/severity",
+    "/payload/text_excerpt",
+];
+
+/// Payload paths the gear embeds — what a node "is about", so a semantic hit
+/// and a keyword hit agree on the same content. Identifiers and states carry
+/// no meaning a vector could rank, so they stay lexical-only.
+const VECTOR_PATHS: [&str; 8] = [
+    "/payload/title",
+    "/payload/path",
+    "/payload/full_path",
+    "/payload/body",
+    "/payload/message",
+    "/payload/summary",
+    "/payload/login",
+    "/payload/text_excerpt",
+];
+
+/// The same types as **graph-storage** ontology entries.
+///
+/// A separate document set, because the two registries answer different
+/// questions: the platform registry catalogs what a studio artifact is, while
+/// graph-storage needs a type that derives from one of its families — a type
+/// deriving straight from a base fixes no `family` and is refused, and one
+/// declared free-form has no chain to validate against at all. The traits
+/// declare which payload paths the gear searches and embeds.
+pub fn graph_node_type_schemas() -> Vec<Value> {
+    NODE_TYPE_DOCS
+        .into_iter()
+        .map(|(id, title, description)| {
+            let mut schema = derived_schema(id, title, description, OWNED_NODE_FAMILY);
+            schema["x-gts-traits"] = json!({
+                "full_text_search": FULL_TEXT_PATHS,
+                "vector_search": VECTOR_PATHS,
+            });
+            schema
+        })
+        .collect()
+}
+
+/// The relation types, deriving from the static-edge family: they are replaced
+/// by a scope re-sync, unlike analysis edges.
+pub fn graph_edge_type_schemas() -> Vec<Value> {
+    ALL_EDGE_TYPES
+        .into_iter()
+        .map(|id| {
+            derived_schema(
+                id,
+                "Relation",
+                "A relation between two artifact nodes.",
+                STATIC_EDGE_FAMILY,
+            )
+        })
+        .collect()
+}
+
+fn derived_schema(id: &str, title: &str, description: &str, family: &str) -> Value {
+    json!({
+        "$id": format!("gts://{}", graph_type_id(id)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": title,
+        "description": description,
+        "type": "object",
+        "allOf": [{ "$ref": format!("gts://{family}") }],
     })
-    .collect()
 }
 
 /// Deterministic instance id from a stable composite key.
@@ -565,6 +672,17 @@ mod tests {
 
         assert_eq!(first.instance_id, second.instance_id);
         assert_ne!(first.value["object_ref"], second.value["object_ref"]);
+    }
+
+    #[test]
+    fn graph_type_ids_derive_from_a_family_and_round_trip() {
+        let id = graph_type_id(FILE_TYPE);
+        assert!(id.starts_with(OWNED_NODE_FAMILY), "{id}");
+        assert!(id.ends_with("cf.studio.artifact.file.v1~"), "{id}");
+        assert_eq!(our_type_from_graph(&id), Some(FILE_TYPE));
+        assert!(graph_type_id(REL_CONTAINS).starts_with(STATIC_EDGE_FAMILY));
+        assert_eq!(graph_node_type_schemas().len(), ALL_NODE_TYPES.len());
+        assert_eq!(graph_edge_type_schemas().len(), ALL_EDGE_TYPES.len());
     }
 
     #[test]

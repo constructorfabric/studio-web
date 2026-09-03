@@ -23,7 +23,6 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::clone;
-use super::embed::Embedder;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
 use super::tasks::{TaskRecord, TaskRegistry};
@@ -61,45 +60,6 @@ fn is_parseable_doc(path: &str) -> bool {
     DOC_EXT.contains(&ext.as_str())
 }
 
-/// Cap on the file-content slice fed to the embedder. Embedding models have a
-/// token limit (~8k tokens ≈ ~32k chars for the common ones); stay well under.
-const MAX_EMBED_TEXT_CHARS: usize = 8_000;
-
-/// The text an embedder sees for a node — the fields lexical search composes
-/// (title/path/body/message/…) plus a bounded slice of a file's `text` content,
-/// so a semantic hit and a keyword hit agree on what the node "is about" and
-/// vector search reaches *inside* files, not just their names.
-fn node_text(n: &GtsNode) -> String {
-    let v = &n.value;
-    let mut parts: Vec<String> = Vec::new();
-    for key in [
-        "title",
-        "path",
-        "full_path",
-        "body",
-        "message",
-        "summary",
-        "login",
-    ] {
-        if let Some(s) = v.get(key).and_then(serde_json::Value::as_str) {
-            parts.push(s.to_string());
-        }
-    }
-    // File content (connector-cloned, hand-added, or file-parser-extracted),
-    // bounded to the model's input budget on a char boundary.
-    if let Some(s) = v.get("text").and_then(serde_json::Value::as_str)
-        && !s.trim().is_empty()
-    {
-        let end = s
-            .char_indices()
-            .map(|(i, _)| i)
-            .nth(MAX_EMBED_TEXT_CHARS)
-            .unwrap_or(s.len());
-        parts.push(s[..end].to_string());
-    }
-    parts.join("\n")
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct SyncSummary {
     pub issues: usize,
@@ -112,10 +72,6 @@ pub struct IngestService {
     /// provider key (`github`, …) → driver.
     drivers: HashMap<String, Arc<dyn ConnectorDriver>>,
     graph: Arc<dyn GraphStore>,
-    /// Computes node embeddings for the graph's vector column. `NoopEmbedder`
-    /// until a real model is wired — its `dimensions() == 0` short-circuits the
-    /// embedding step, so ingest and search behave exactly as before.
-    embedder: Arc<dyn Embedder>,
     /// The file-parser gear, when linked: extracts text (Markdown) from binary
     /// documents (PDF/docx/…) so their content is indexed for search. `None`
     /// leaves binary files as metadata-only, exactly as before.
@@ -170,7 +126,6 @@ impl IngestService {
         credstore: Arc<dyn CredStoreClientV1>,
         drivers: HashMap<String, Arc<dyn ConnectorDriver>>,
         graph: Arc<dyn GraphStore>,
-        embedder: Arc<dyn Embedder>,
         file_parser: Option<Arc<dyn FileParserClientV1>>,
         workspaces_root: Option<PathBuf>,
         work_root: Option<PathBuf>,
@@ -179,7 +134,6 @@ impl IngestService {
             credstore,
             drivers,
             graph,
-            embedder,
             file_parser,
             workspaces_root,
             work_root,
@@ -887,9 +841,9 @@ impl IngestService {
         }
     }
 
-    /// Tag a batch of freshly-built nodes with their tenant scope, embed them
-    /// (a no-op until a real embedder is wired), and upsert them to the graph
-    /// in bounded chunks. Factored out of the final flush so a sync can store
+    /// Tag a batch of freshly-built nodes with their tenant scope and upsert
+    /// them to the graph in bounded chunks. The graph embeds each node itself
+    /// from the payload paths its type declares. Factored out of the final flush so a sync can store
     /// its objects batch-by-batch as it pulls them, not only at the end.
     async fn store_node_batch(
         &self,
@@ -919,26 +873,8 @@ impl IngestService {
                 }
             }
         }
-        let embed_dims = self.embedder.dimensions();
         for chunk in batch.chunks(NODE_CHUNK) {
-            // Embed the chunk when a real embedder is wired; NoopEmbedder reports
-            // 0 dimensions, so this stays a no-op (empty embeddings → NULL
-            // vector) until a model lands.
-            let embeddings: Vec<Option<Vec<f32>>> = if embed_dims > 0 {
-                let texts: Vec<String> = chunk.iter().map(node_text).collect();
-                self.embedder.embed(&texts).await.unwrap_or_else(|e| {
-                    tracing::warn!(
-                        error = %e,
-                        "studio-artifact-ingest: embedding failed — storing chunk without vectors"
-                    );
-                    vec![None; chunk.len()]
-                })
-            } else {
-                Vec::new()
-            };
-            self.graph
-                .upsert_nodes_embedded(ctx, chunk, &embeddings)
-                .await?;
+            self.graph.upsert_nodes(ctx, chunk).await?;
         }
         Ok(())
     }
@@ -1023,29 +959,17 @@ impl IngestService {
         self.graph.list_relations(ctx).await
     }
 
-    /// Search the artifact graph. When an embedder is wired, the query is
-    /// embedded and the store runs hybrid (semantic) retrieval; otherwise it
-    /// falls back to a lexical match — so this upgrades to semantic automatically
-    /// the moment a model lands behind the [`Embedder`] seam.
+    /// Search the artifact graph. The graph-storage store runs hybrid
+    /// retrieval — it embeds the query with the same provider that embedded
+    /// the nodes and fuses the vector and lexical arms; the in-memory fallback
+    /// matches text.
     pub async fn search(
         &self,
         ctx: &SecurityContext,
         text: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<GtsNode>> {
-        let query_vector: Option<Vec<f32>> = if self.embedder.dimensions() > 0 {
-            let one = [text.to_string()];
-            self.embedder
-                .embed(&one)
-                .await
-                .ok()
-                .and_then(|mut v| v.pop().flatten())
-        } else {
-            None
-        };
-        self.graph
-            .search(ctx, query_vector.as_deref(), text, limit)
-            .await
+        self.graph.search(ctx, text, limit).await
     }
 
     /// Register a user-uploaded or Studio-generated project artifact after its

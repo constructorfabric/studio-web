@@ -140,7 +140,7 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
         #[cfg(feature = "graph")]
         let graph = rest::GraphSink(
             ctx.client_hub()
-                .get::<dyn crate::graph_storage::sdk::GraphStorageClientV1>()
+                .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
                 .inspect_err(|_| {
                     warn!(
                         "studio-connector: graph-storage client not registered — \

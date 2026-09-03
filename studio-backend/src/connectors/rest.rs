@@ -22,7 +22,7 @@ use super::driver::{DriverIdentity, RemoteRepo};
 use super::graph_sync::{SyncRequest, sync_repository};
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
-use crate::graph_storage::sdk::GraphStorageClientV1;
+use graph_storage_sdk::GraphStorageClientV1;
 
 /// Errors attributable to a connection as a resource.
 #[resource_error(gts_id!("cf.studio.connector.connection.v1~"))]

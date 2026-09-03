@@ -54,3 +54,10 @@ use static_credstore_plugin as _;
 use api_egress as _;
 #[cfg(feature = "llm")]
 use mini_chat as _;
+
+// Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
+// hybrid retrieval (cf-gears-graph-storage). Behind the `graph` feature: the
+// gear runs only against PostgreSQL 19 with pgvector, and its migrations run
+// during boot, so a deployment without that server must not link it.
+#[cfg(feature = "graph")]
+use graph_storage as _;

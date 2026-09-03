@@ -29,6 +29,12 @@ pub const REL_HAS_VERSION: &str = "gts.cf.studio.catalog.rel.has_version.v1~";
 /// Every catalog relation type, for registering in the graph.
 pub const ALL_EDGE_TYPES: [&str; 1] = [REL_HAS_VERSION];
 
+/// The graph-storage families the catalog's types derive from. Catalog rows
+/// are *owned* nodes (the graph is where they live) joined by *static* edges
+/// (replaced wholesale by a re-sync).
+const OWNED_NODE_FAMILY: &str = "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~";
+const STATIC_EDGE_FAMILY: &str = "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~";
+
 /// A GTS node to persist: type id, deterministic instance id, and payload.
 #[derive(Debug, Clone)]
 pub struct GtsNode {
@@ -45,14 +51,20 @@ pub struct GtsEdge {
     pub to: String,
 }
 
-/// The type id the graph-storage gear stores this type under. The gear keeps
-/// its own type table and its ids omit the `gts.` scheme token, so we strip it
-/// (same convention as artifact-ingest).
+/// The type id the graph-storage gear stores this type under.
+///
+/// Graph-storage requires every producer type to derive from one of its
+/// families, and a derived type carries its ancestry in the identifier: our
+/// `gts.cf.studio.catalog.gear.v1~` becomes
+/// `gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.gear.v1~`.
 pub fn graph_type_id(our_type: &str) -> String {
-    our_type
-        .strip_prefix("gts.")
-        .unwrap_or(our_type)
-        .to_string()
+    let leaf = our_type.strip_prefix("gts.").unwrap_or(our_type);
+    let family = if ALL_EDGE_TYPES.contains(&our_type) {
+        STATIC_EDGE_FAMILY
+    } else {
+        OWNED_NODE_FAMILY
+    };
+    format!("{family}{leaf}")
 }
 
 /// Reverse of [`graph_type_id`]: map a graph-storage type id back to our
@@ -63,37 +75,94 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
         .find(|t| graph_type_id(t) == graph_type)
 }
 
-/// GTS type schemas registered at gear init (free-form `type: object`, same
-/// shape the studio types use, so registration never trips the narrowing check).
+/// The node types, with a title and a description each.
+const NODE_TYPE_DOCS: [(&str, &str, &str); 3] = [
+    (
+        GEAR_TYPE,
+        "Gear",
+        "A published crate — one of our gears on crates.io.",
+    ),
+    (
+        CRATE_VERSION_TYPE,
+        "CrateVersion",
+        "One published version of a gear crate.",
+    ),
+    (
+        GEAR_PROFILE_TYPE,
+        "GearProfile",
+        "Editable Studio metadata for one gear, kept separately from crates.io sync data.",
+    ),
+];
+
+/// GTS type schemas registered with the **platform types-registry** at gear
+/// init (free-form `type: object`, same shape the studio types use, so
+/// registration never trips the narrowing check).
 pub fn type_schemas() -> Vec<Value> {
-    [
-        (
-            GEAR_TYPE,
-            "Gear",
-            "A published crate — one of our gears on crates.io.",
-        ),
-        (
-            CRATE_VERSION_TYPE,
-            "CrateVersion",
-            "One published version of a gear crate.",
-        ),
-        (
-            GEAR_PROFILE_TYPE,
-            "GearProfile",
-            "Editable Studio metadata for one gear, kept separately from crates.io sync data.",
-        ),
-    ]
-    .into_iter()
-    .map(|(id, title, description)| {
-        json!({
-            "$id": format!("gts://{id}"),
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "title": title,
-            "description": description,
-            "type": "object",
+    NODE_TYPE_DOCS
+        .into_iter()
+        .map(|(id, title, description)| {
+            json!({
+                "$id": format!("gts://{id}"),
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": title,
+                "description": description,
+                "type": "object",
+            })
         })
-    })
-    .collect()
+        .collect()
+}
+
+/// The payload paths that make a catalog node findable, declared once on the
+/// type: the gear composes the lexical search text and the embedding input
+/// from these, so a producer no longer hands over a `search_text` string.
+const SEARCHABLE_PATHS: [&str; 8] = [
+    "/payload/name",
+    "/payload/description",
+    "/payload/kind",
+    "/payload/keywords",
+    "/payload/categories",
+    "/payload/crate",
+    "/payload/num",
+    "/payload/license",
+];
+
+/// The same types as **graph-storage** ontology entries: each derives from a
+/// graph-storage family and declares which payload paths are searched.
+pub fn graph_node_type_schemas() -> Vec<Value> {
+    NODE_TYPE_DOCS
+        .into_iter()
+        .map(|(id, title, description)| {
+            json!({
+                "$id": format!("gts://{}", graph_type_id(id)),
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": title,
+                "description": description,
+                "type": "object",
+                "x-gts-traits": {
+                    "full_text_search": SEARCHABLE_PATHS,
+                    "vector_search": ["/payload/name", "/payload/description", "/payload/keywords", "/payload/categories"],
+                },
+                "allOf": [{ "$ref": format!("gts://{OWNED_NODE_FAMILY}") }],
+            })
+        })
+        .collect()
+}
+
+/// The relation types as graph-storage ontology entries.
+pub fn graph_edge_type_schemas() -> Vec<Value> {
+    ALL_EDGE_TYPES
+        .into_iter()
+        .map(|id| {
+            json!({
+                "$id": format!("gts://{}", graph_type_id(id)),
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "HasVersion",
+                "description": "A version published under a gear crate.",
+                "type": "object",
+                "allOf": [{ "$ref": format!("gts://{STATIC_EDGE_FAMILY}") }],
+            })
+        })
+        .collect()
 }
 
 /// Deterministic instance id from a stable composite key.
@@ -150,5 +219,19 @@ pub fn has_version_edge(gear_id: &str, version_id: &str) -> GtsEdge {
         type_id: REL_HAS_VERSION,
         from: gear_id.to_string(),
         to: version_id.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_type_ids_derive_from_a_family_and_round_trip() {
+        let id = graph_type_id(GEAR_TYPE);
+        assert!(id.starts_with(OWNED_NODE_FAMILY), "{id}");
+        assert!(id.ends_with("cf.studio.catalog.gear.v1~"), "{id}");
+        assert_eq!(our_type_from_graph(&id), Some(GEAR_TYPE));
+        assert!(graph_type_id(REL_HAS_VERSION).starts_with(STATIC_EDGE_FAMILY));
     }
 }
