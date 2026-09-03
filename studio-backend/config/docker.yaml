@@ -146,6 +146,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Platform root tenant type (root-only)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
           x-gts-traits:
             allowed_parent_types: []
             idp_provisioning: false
@@ -153,6 +157,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio organization tenant"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
             idp_provisioning: false
@@ -160,6 +168,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace tenant (product-line context)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
@@ -176,6 +188,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio project tenant (a codebase context inside an organization or a workspace)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
           x-gts-traits:
             allowed_parent_types:
               - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
@@ -186,10 +202,18 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio source connector provider plugin specification"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.toolkit.plugins.plugin.v1~"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio source connections (free-form until gears issue #4)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             # inherit: a workspace sees its organization's connections.
             # The nearest row wins whole (AM does not merge across the
@@ -205,6 +229,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace settings (free-form until gears issue #4)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
@@ -214,12 +242,20 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio project attributes (mode, stages, status, source) — free-form until gears issue #4"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Desired Constructor Studio kit installations for one project"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"
@@ -229,6 +265,10 @@ gears:
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio organization access model + roles (free-form)"
           type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "inherit"
 
