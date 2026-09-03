@@ -24,7 +24,11 @@ pub const GEAR_PROFILE_TYPE: &str = "gts.cf.studio.catalog.gear_profile.v1~";
 pub const ALL_NODE_TYPES: [&str; 3] = [GEAR_TYPE, CRATE_VERSION_TYPE, GEAR_PROFILE_TYPE];
 
 /// gear → crate_version — a version published under this crate.
-pub const REL_HAS_VERSION: &str = "gts.cf.studio.catalog.rel.has_version.v1~";
+///
+/// Four name tokens (`vendor.package.namespace.type`), not five: the v1 gear
+/// interned any string as a type, the v2 gear parses identifiers with the
+/// platform's GTS grammar and refused `cf.studio.catalog.rel.has_version`.
+pub const REL_HAS_VERSION: &str = "gts.cf.studio.catalog.has_version.v1~";
 
 /// Every catalog relation type, for registering in the graph.
 pub const ALL_EDGE_TYPES: [&str; 1] = [REL_HAS_VERSION];
@@ -225,6 +229,20 @@ pub fn has_version_edge(gear_id: &str, version_id: &str) -> GtsEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The GTS grammar allows exactly four name tokens before the version in
+    /// each `~`-segment; the v2 gear enforces it where the v1 gear did not.
+    #[test]
+    fn every_type_leaf_is_a_valid_gts_segment() {
+        for id in ALL_NODE_TYPES.into_iter().chain(ALL_EDGE_TYPES) {
+            let leaf = id.strip_prefix("gts.").unwrap_or(id).trim_end_matches('~');
+            let tokens: Vec<&str> = leaf.split('.').collect();
+            assert!(
+                tokens.len() == 5 && tokens[4].starts_with('v'),
+                "{id}: expected vendor.package.namespace.type.vN, got {tokens:?}"
+            );
+        }
+    }
 
     #[test]
     fn graph_type_ids_derive_from_a_family_and_round_trip() {

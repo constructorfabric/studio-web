@@ -208,7 +208,8 @@ impl CatalogSink for GraphSink {
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>> {
         use toolkit_odata::{CursorV1, ODataQuery};
-        const PAGE: u64 = 500;
+        // The gear's `projection_max_page`; a larger `$top` is refused, not clamped.
+        const PAGE: u64 = 200;
         let patterns: Vec<String> = gts::ALL_NODE_TYPES
             .into_iter()
             .filter(|t| type_filter.is_none_or(|f| t.contains(f)))

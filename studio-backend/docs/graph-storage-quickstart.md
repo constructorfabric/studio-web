@@ -153,14 +153,16 @@ curl -s -X POST "${H[@]}" "$B/ingest" -d "{
 1. In the portal (`http://localhost:8080`) add a GitHub connection with a PAT.
    A classic token with `repo` reaches private repositories; public ones need no
    scopes.
-2. Take the connection id and its owner tenant:
+2. Take the connection id and its owner tenant from the connector API (or
+   create the connection there: `POST /connections` with `provider`, `label`
+   and `token`):
 
 ```bash
-docker exec studio-graph-pg psql -U studio -d studio_account_management -tAc \
-  "select value from tenant_metadata where value::text like '%github%';" | head -1
+curl -s "${H[@]}" http://127.0.0.1:8090/cf/studio-connector/v1/connections \
+  | python3 -c 'import json,sys; [print(c["id"], c["owner_tenant_id"], c["provider"]) for c in json.load(sys.stdin)["items"]]'
 ```
 
-3. Import. `tenant` is the `owner_tenant_id` in that row.
+3. Import. `tenant` is the connection's `owner_tenant_id`.
 
 ```bash
 curl -s -X POST "${H[@]}" -d '{
@@ -227,17 +229,19 @@ docker exec -it studio-graph-pg psql -U studio -d graph_storage
 ```
 
 ```sql
--- the property graph is a schema object, relkind 'g'
+-- the property graph is a schema object, relkind 'g' (named `kb`)
 SELECT relname, relkind FROM pg_class WHERE relkind = 'g';
 
 -- which nodes carry a current vector, and in which embedding space
 SELECT node_key, embedding_epoch, embedding IS NOT NULL AS has_vector FROM node LIMIT 5;
 SELECT identity_hash, model_artifact, status FROM embedding_space;
 
--- one hop, directly
-SELECT * FROM GRAPH_TABLE (kb_pgq
-  MATCH (a IS node WHERE a.node_key = 'repo:constructorfabric/insight') -[e IS edge]-> (b IS node)
-  COLUMNS (b.node_key AS neighbour)) ORDER BY neighbour LIMIT 10;
+-- one hop, directly. Only the columns the DDL lists as PROPERTIES are
+-- addressable inside MATCH (ids, tenant, type), so resolve keys outside it.
+SELECT b.node_key FROM GRAPH_TABLE (kb
+  MATCH (a IS node WHERE a.id = (SELECT id FROM node WHERE node_key = 'repo:constructorfabric/insight'))
+        -[e IS edge]-> (x IS node)
+  COLUMNS (x.id AS nid)) g JOIN node b ON b.id = g.nid ORDER BY 1 LIMIT 10;
 ```
 
 Two things worth knowing if you experiment with patterns:

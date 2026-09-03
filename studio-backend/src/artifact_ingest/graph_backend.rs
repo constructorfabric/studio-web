@@ -29,8 +29,9 @@ use graph_storage_sdk::models::{
 /// Nodes per ingest batch. Under the gear's `ingest_max_nodes` (10k) with room
 /// to spare, so a repo with many files still commits in a few atomic batches.
 const INGEST_CHUNK: usize = 2_000;
-/// Page size when reading nodes back for the portal.
-const LIST_PAGE: u32 = 500;
+/// Page size when reading nodes back for the portal. At the gear's
+/// `projection_max_page` (200): a larger `$top` is refused, not clamped.
+const LIST_PAGE: u32 = 200;
 /// Incident edges to read per node. Above the fan-out of an issue or PR in
 /// this graph (author, repo, changed files), and truncation is logged rather
 /// than silently dropping relations.
