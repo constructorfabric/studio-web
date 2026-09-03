@@ -85,16 +85,19 @@ removed; file content reaches search through a bounded `text_excerpt`.
 
 ### Found by the real-data run, still open
 
-10. **Synchronous import exceeds the gateway deadline.** The first graph-sync of
-    an 800-entry repository answered `504 Deadline Exceeded` after 30 001 ms while
-    the gear was still embedding; the handler was cancelled after the node batches
-    and before any edge batch, leaving 824 nodes and 0 edges until the next run.
-    Options: run graph-sync as a background task with a task id (artifact-ingest
-    already works that way), raise the deadline for this route, or embed
-    asynchronously.
-11. **A no-op re-sync costs ~25 s.** `EmbeddingCoordinator::plan` embeds every
-    node before comparing input hashes, so unchanged nodes are re-embedded on every
-    sync (ONNX in this container: ~35–40 nodes/s). Gear gap, recorded as D-027.
+10. **Synchronous import can exceed the gateway deadline.** The first graph-sync
+    of an 800-entry repository answered `504 Deadline Exceeded` after 30 001 ms
+    while the gear was still embedding; the handler was cancelled after the node
+    batches and before any edge batch, leaving 824 nodes and 0 edges until the
+    next run. A later import of the same repository on an idle host took 12.6 s,
+    and with the vector arm blocked (no embedding) 3.1 s — so embedding is the
+    cost, and the margin under 30 s depends on host load. Options: run graph-sync
+    as a background task with a task id (artifact-ingest already works that way),
+    raise the deadline for this route, or embed asynchronously.
+11. **A no-op re-sync costs as much as a first import.** `EmbeddingCoordinator::plan`
+    embeds every node before comparing input hashes, so unchanged nodes are
+    re-embedded on every sync: 25 s under load, 10.5 s idle, against 3 s when no
+    embedding happens. Gear gap, recorded as D-027.
 12. **Lexical search misses identifiers in file names.** PostgreSQL's parser
     emits `README.md` and `rust-watch.Dockerfile` as single `file` tokens:
     `Dockerfile` matches, `README` and `rust` do not. Gear gap, D-028.
@@ -104,10 +107,15 @@ removed; file content reaches search through a bounded `text_excerpt`.
 14. **Remote provider without an egress policy** (gears-rust D-025): selecting
     `remote` sends every tenant's node and query text to the one configured
     endpoint; ADR-0004's per-tenant policy is not built. Prototype posture.
-15. **Not verifiable here:** the gear's PostgreSQL conformance lane needs an image
-    with the official `docker-entrypoint`; the CNPG-based `studio-graph-postgres`
-    is not one (D-003 stays open). The remote provider was tested against a mock
-    endpoint only; a live run needs `STUDIO_EMBED_API_KEY` in `.env`.
+15. **Remote provider: wiring verified, credential not.** With
+    `STUDIO_EMBEDDING_PROVIDER=remote` the backend booted, named the space
+    `text-embedding-3-small@api.openai.com/v1/embeddings` and opened epoch 1; the
+    first embedding call was refused with `401 Incorrect API key provided`, which a
+    direct `curl` from inside the container with the same key reproduced (egress
+    itself works). The gear reported it as `503 Service Unavailable` on search and
+    ingest failed cleanly; nothing was written half-embedded. A live run needs a
+    valid key in `.env`. Separately, the gear's PostgreSQL conformance lane cannot
+    run against the CNPG-based `studio-graph-postgres` image (D-003 stays open).
 16. **Stale documentation**: `docs/gear-intelligence-sync.md` says the Kubernetes
     release runs without graph-storage — `release.yml` builds `--features graph`
     and Deploy Infra provisions the graph PostgreSQL.
@@ -132,7 +140,7 @@ at boot, confined to the vector arm, and reversible.
 
 ## Still to do
 
-- Live `remote` run once a key is in `.env` (`STUDIO_EMBEDDING_PROVIDER=remote`).
+- Live `remote` run with a key OpenAI accepts (`STUDIO_EMBEDDING_PROVIDER=remote`), on a fresh graph database.
 - Upstream: gears-rust PR for the gear once #4639 merges (remove `publish = false`,
   release-plz publishes); then studio-web drops the `[patch]` block.
 - Make graph-sync asynchronous or long-deadline (finding 10).
