@@ -41,9 +41,37 @@ backend:
   # [required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
-  # spec_quality_api_key [optional; enables the external detector wrapper]).
+  # spec_quality_api_key [optional; enables the external detector wrapper],
+  # embed_api_key [required when embedding.provider=remote]).
   appSecrets:
     existingSecret: "studio-web-app"
+  # Knowledge-graph embeddings (graph-storage gear). ONE provider per
+  # deployment; switching it over a populated graph blocks vector search until
+  # the graph is re-embedded, and the backend logs that at boot.
+  #   onnx   — a MiniLM model in the backend process. An init container fetches
+  #            the pinned artifacts into an emptyDir; the ONNX Runtime library
+  #            is in the backend image. Budget ~300 MiB of extra RSS.
+  #   remote — an OpenAI-compatible /embeddings endpoint; needs the
+  #            `embed_api_key` app secret. Nothing leaves the pod except the
+  #            node text being embedded (ADR-0004 calls this governed egress).
+  #   fake   — deterministic hash; vectors carry no meaning. Write-path only.
+  embedding:
+    provider: "onnx"
+    remote:
+      baseUrl: "https://api.openai.com/v1"
+      model: "text-embedding-3-small"   # must yield 384 dimensions (see config)
+    # sentence-transformers/all-MiniLM-L6-v2, same pins as docker-compose and
+    # the gears-rust CI lane. Change together with the gear's re-embedding.
+    model:
+      url: "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+      sha256: "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+    tokenizer:
+      url: "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+      sha256: "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+    fetchImage: "curlimages/curl:8.14.1"
+    fetchResources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
   # S3-backed file-storage data plane. The sidecar binary is built from the
   # exact gears-rust revision pinned by studio-backend/Cargo.lock. Secrets are
   # synchronized by deploy.yml from the selected GitHub Environment.

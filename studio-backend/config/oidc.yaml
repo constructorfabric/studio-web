@@ -612,3 +612,16 @@ gears:
       # portable fallback and `cte` is deliberately absent while the pinned
       # gears-rust revision predates the safe-CTE API it needs.
       traversal_hop: pgq
+      # Embedding provider for a backend run on the host. Defaults to the
+      # deterministic `fake` so `cargo run` needs no model artifacts; set
+      # STUDIO_EMBEDDING_PROVIDER=onnx with STUDIO_EMBED_MODEL_PATH /
+      # STUDIO_EMBED_TOKENIZER_PATH (and ORT_DYLIB_PATH) for the real model,
+      # or `remote` with the STUDIO_EMBED_* endpoint settings. One provider
+      # per deployment; see config/docker.yaml for the full note.
+      embedding_dimension: 384
+      embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-fake}"
+      embedding_model_path: "${STUDIO_EMBED_MODEL_PATH:-}"
+      embedding_tokenizer_path: "${STUDIO_EMBED_TOKENIZER_PATH:-}"
+      embedding_remote_base_url: "${STUDIO_EMBED_BASE_URL:-https://api.openai.com/v1}"
+      embedding_remote_model: "${STUDIO_EMBED_MODEL:-text-embedding-3-small}"
+      embedding_remote_api_key_env: "STUDIO_EMBED_API_KEY"

@@ -34,21 +34,66 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if eq .Values.backend.embedding.provider "onnx" }}
+      # The graph-storage `onnx` embedding provider loads its model at boot and
+      # refuses to start without it, so the artifacts are fetched first, into
+      # an emptyDir the backend reads at /app/models. Pinned by SHA-256: the
+      # gear names the embedding space by the bytes it loads, and a different
+      # model would block vector search until the graph is re-embedded.
+      initContainers:
+        - name: embedding-model
+          image: {{ .Values.backend.embedding.fetchImage | quote }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              target=/models/minilm
+              mkdir -p "$target"
+              fetch() {
+                if [ -f "$2" ] && echo "$3  $2" | sha256sum -c --status; then echo "present: $2"; return 0; fi
+                curl -sSL --fail --retry 3 -o "$2.part" "$1"
+                echo "$3  $2.part" | sha256sum -c --status || { echo "checksum mismatch for $1" >&2; exit 1; }
+                mv "$2.part" "$2"; echo "installed: $2"
+              }
+              fetch {{ .Values.backend.embedding.model.url | quote }} "$target/model.onnx" {{ .Values.backend.embedding.model.sha256 | quote }}
+              fetch {{ .Values.backend.embedding.tokenizer.url | quote }} "$target/tokenizer.json" {{ .Values.backend.embedding.tokenizer.sha256 | quote }}
+          volumeMounts:
+            - name: embedding-models
+              mountPath: /models
+          resources: {{- toYaml .Values.backend.embedding.fetchResources | nindent 12 }}
+      {{- end }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required (immutable, fixed at chart publication)" .Values.backend.image.tag }}"
           imagePullPolicy: Always
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "run"]
-          {{- if .Values.backend.configOverride.existingConfigMap }}
           volumeMounts:
+            {{- if .Values.backend.configOverride.existingConfigMap }}
             - name: backend-config
               mountPath: /app/config/{{ .Values.backend.configProfile }}.yaml
               subPath: {{ .Values.backend.configProfile }}.yaml
               readOnly: true
-          {{- end }}
+            {{- end }}
+            {{- if eq .Values.backend.embedding.provider "onnx" }}
+            - name: embedding-models
+              mountPath: /app/models
+              readOnly: true
+            {{- end }}
           ports: [{ name: http, containerPort: {{ .Values.backend.port }} }]
           env:
+            # Knowledge-graph embeddings: one provider per deployment
+            # (backend.embedding.provider). `remote` reads its key from the
+            # `embed_api_key` app secret; `onnx` needs the init container above.
+            - name: STUDIO_EMBEDDING_PROVIDER
+              value: {{ .Values.backend.embedding.provider | quote }}
+            - name: STUDIO_EMBED_BASE_URL
+              value: {{ .Values.backend.embedding.remote.baseUrl | quote }}
+            - name: STUDIO_EMBED_MODEL
+              value: {{ .Values.backend.embedding.remote.model | quote }}
+            - name: STUDIO_EMBED_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: embed_api_key, optional: true } }
             - name: STUDIO_ENVIRONMENT
               value: {{ .Values.global.environmentName | quote }}
             - name: STUDIO_SESSION_ENABLED
@@ -161,9 +206,17 @@ spec:
           livenessProbe: { httpGet: { path: /healthz, port: file-storage }, initialDelaySeconds: 10, periodSeconds: 20 }
           resources: {{- toYaml .Values.backend.fileStorage.resources | nindent 12 }}
         {{- end }}
-      {{- if .Values.backend.configOverride.existingConfigMap }}
       volumes:
+        {{- if .Values.backend.configOverride.existingConfigMap }}
         - name: backend-config
           configMap:
             name: {{ .Values.backend.configOverride.existingConfigMap }}
-      {{- end }}
+        {{- end }}
+        {{- if eq .Values.backend.embedding.provider "onnx" }}
+        # ~90 MB of model artifacts, re-fetched on every pod start (cheap, and
+        # the checksums make it reproducible). A PVC would spare the download
+        # at the cost of a per-environment claim; not worth it at this size.
+        - name: embedding-models
+          emptyDir:
+            sizeLimit: 512Mi
+        {{- end }}

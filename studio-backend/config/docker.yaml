@@ -614,3 +614,17 @@ gears:
       # portable fallback and `cte` is deliberately absent while the pinned
       # gears-rust revision predates the safe-CTE API it needs.
       traversal_hop: pgq
+      # The deployment's single embedding space: 384-wide, fixed at migration
+      # time, and ONE provider computes every vector in it. `onnx` runs the
+      # MiniLM model from the models volume in this process; `remote` calls an
+      # OpenAI-compatible /embeddings endpoint (the key stays in the process
+      # environment, named here, never written into this file); `fake` is a
+      # deterministic hash for exercising the write path. Switching providers
+      # over a populated graph blocks vector search until it is re-embedded.
+      embedding_dimension: 384
+      embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-onnx}"
+      embedding_model_path: "/app/models/minilm/model.onnx"
+      embedding_tokenizer_path: "/app/models/minilm/tokenizer.json"
+      embedding_remote_base_url: "${STUDIO_EMBED_BASE_URL:-https://api.openai.com/v1}"
+      embedding_remote_model: "${STUDIO_EMBED_MODEL:-text-embedding-3-small}"
+      embedding_remote_api_key_env: "STUDIO_EMBED_API_KEY"
