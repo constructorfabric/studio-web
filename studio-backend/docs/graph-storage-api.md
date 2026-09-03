@@ -1,300 +1,218 @@
 # Graph Storage — API reference for consumers
 
-From: Studio backend integration (`studio-web/studio-backend`, branch
-`feature/graph-storage-gear`) · Updated: 2026-08-20
+From: Studio backend integration (`studio-web/studio-backend`) · Updated: 2026-09-03
 
-The graph-storage gear is vendored into the Studio assembly
-(`src/graph_storage`, copied from `gears-rust/gears/graph-storage`) and pointed
-at a dedicated PostgreSQL 19 + pgvector server. This document is what another
-developer needs to build on it: the whole surface, the semantics that are not
-obvious from the shapes, and what is still missing.
-
-Everything here was checked against the running integration. Reference import:
-`constructorfabric/insight` @ `main` → 824 nodes, 823 edges (622 files, 178
-directories, 23 contributors) in 2.4 s, traversal served by the SQL/PGQ
-`GRAPH_TABLE` backend with no fallback.
+The graph-storage gear (`cf-gears-graph-storage`, gears-rust
+`gears/graph-storage`) is linked into the Studio assembly as a crate behind the
+`graph` feature and pointed at the PostgreSQL 19 + pgvector server. This
+document is what another developer needs to build on it from inside this
+assembly: the surface, the semantics that are not obvious from the shapes, and
+what is still missing. The normative description is the gear's own
+`docs/DESIGN.md`; the exact request and response schemas are in the OpenAPI
+document at `/cf/docs`.
 
 ---
 
-## 1. REST
+## 1. The model in five sentences
 
-Base path `/graph-storage/v1`, under the gateway prefix (`/cf` in this
-assembly). Every operation is authenticated and scoped to the caller's tenant.
+Everything is a typed **node** or **edge**, addressed by a producer-chosen
+`node_key` (unique per tenant) or a derived `edge_key`. A type is a GTS JSON
+Schema that **derives from one of the gear's families** — `owned_node`,
+`reference_node`, `phantom_node` for nodes; `static_edge`, `analysis_edge` for
+edges — and its identifier carries that ancestry:
+`gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file.v1~`.
+A type declares, as traits, **which payload paths are searched** (`full_text_search`)
+**and embedded** (`vector_search`); the gear composes both texts from the node's
+name plus those paths on every write, so a producer never supplies a search
+string or a vector. Every write moves a per-tenant **revision** that every read
+reports back. Ingest is one atomic batch that **converges**: a byte-identical
+re-run changes nothing and says so.
 
-### Counters
+## 2. REST
 
-| Method | Path | Response |
-| --- | --- | --- |
-| `GET` | `/stats` | `{ nodes, edges, graph_revision }` |
-
-`graph_revision` is a real per-tenant counter, bumped inside the same
-transaction as the write it describes. **This is the change-detection
-mechanism** — poll it to learn that the graph moved. The upsert counts are not a
-change feed (see § 3).
+Base path `/graph-storage/v1`, under the gateway prefix (`/cf`). Every
+operation is authenticated and scoped to the caller's tenant; a row the caller
+may not see reads like an absent one.
 
 ### Types
 
 | Method | Path | Request | Response |
 | --- | --- | --- | --- |
-| `GET` | `/types` | — | `{ items: [{ id, type_id, kind, json_schema }] }` |
-| `POST` | `/types` | `{ type_id, kind, json_schema? }` | `{ id }` |
+| `POST` | `/types` | `{ types: [{ type_id, schema }] }` | `[TypeRecord]` |
+| `GET` | `/types` | `?kind=node\|edge&pattern=…&top=&cursor=` | `{ items: [TypeRecord], next_cursor, revision }` |
+| `GET` | `/types/{type_id}` | — | `TypeRecord` |
 
-`kind` is `node`, `edge` or `attribute`. Registration is idempotent: an
-already-registered type keeps its interned id. Sending a `json_schema` for an
-existing type replaces it, which is how a type gains a schema after the fact. A
-schema that is not compilable is refused at registration rather than at the
-first ingest, where it would read as the producer's fault.
+`TypeRecord` = `{ type_id, type_uuid, kind, is_abstract, schema, effective_traits: { family, index, full_text_search, vector_search, src_types, dst_types, … } }`.
 
-`json_schema` comes back `null` for a type that declares no constraints — which
-is the difference between "your payloads are checked" and "they are not".
+Registration is atomic over the batch and idempotent on identical bytes; a
+different schema under a registered id is a `409` conflict. The nine base
+schemas are published by the gear itself on a tenant's first registration. A
+type that does not derive from a family is refused.
 
 ### Write
 
 | Method | Path | Request | Response |
 | --- | --- | --- | --- |
-| `POST` | `/ingest` | see below | `{ nodes_upserted, edges_upserted, graph_revision }` |
+| `POST` | `/ingest` | `IngestRequest` | `IngestOutcome` |
+| `DELETE` | `/nodes/{node_key}` | — | `{ revision, tombstoned_nodes, tombstoned_edges }` |
+| `DELETE` | `/edges/{edge_key}` | — | same |
 
 ```jsonc
+// IngestRequest
 {
-  "nodes": [{
-    "node_key": "file:owner/repo:src/main.rs",  // stable, unique in the tenant
-    "type_id":  "cf.studio.kg.file.v1~",        // a registered node type
-    "name":     "main.rs",
-    "search_text": "src/main.rs main.rs rs owner/repo",  // optional
-    "payload":  { "path": "src/main.rs" },      // optional, object only
-    "embedding": [0.01, -0.2]                   // optional, exact dimension
-  }],
-  "edges": [{
-    "type_id": "cf.studio.kg.contains.v1~",
-    "from":    "dir:owner/repo:src",            // endpoints are node KEYS
-    "to":      "file:owner/repo:src/main.rs",
-    "payload": { "since": "2026-01-01" }        // optional
-  }]
+  "nodes": [{ "node_key": "file:o/r:src/main.rs", "type_id": "…file.v1~",
+              "name": "main.rs", "payload": { "path": "src/main.rs" },
+              "expected_version": null }],
+  "edges": [{ "type_id": "…contains.v1~", "src_node_key": "dir:o/r:src",
+              "dst_node_key": "file:o/r:src/main.rs", "discriminator": null, "payload": null }],
+  "options": { "create_phantoms": false, "report_per_item": false, "embed": true },
+  "replace_scope": null,
+  "idempotency_key": null
 }
+// IngestOutcome
+{ "revision": { "source_epoch": 1, "revision": 42 }, "replayed": false,
+  "counts": { "nodes_inserted", "nodes_updated", "nodes_unchanged",
+              "edges_inserted", "edges_updated", "edges_unchanged",
+              "phantoms_created", "phantoms_materialized", … },
+  "per_item_nodes": null, "per_item_edges": null }
 ```
 
-**Atomic.** The whole batch commits or nothing does — types, nodes, edges and
-the revision bump are one transaction.
-
-**Convergent.** Nodes conflict on `(tenant, node_key)`, edges on a derived key
-of `(type, from, to)`. Repeating a batch does not duplicate.
-
-**Endpoints resolve within the batch.** An edge may name a node that arrives in
-the same call or already exists; anything else is a 400 naming the key.
-
-### Delete
-
-| Method | Path | Request | Response |
-| --- | --- | --- | --- |
-| `DELETE` | `/nodes?key=…` | — | `{ nodes_deleted, edges_deleted, graph_revision }` |
-| `DELETE` | `/edges/{id}` | — | same |
-| `POST` | `/prune` | `{ type_id?, node_key_prefix?, not_seen_since? }` | same |
-
-Nodes are addressed by key, as a query parameter rather than a path segment,
-because keys carry slashes and colons — `file:owner/repo:src/main.rs` is a
-normal one.
-
-Deleting a node detaches its incident edges first, in the same transaction: the
-endpoint foreign keys are `RESTRICT` by design, because removing a static node
-must not silently destroy analysis edges attached to it.
-
-`prune` is the sweep an importer runs after a re-import. Filters are ANDed and
-**at least one is required** — a prune with none would take the tenant's whole
-graph, which is not an operation offered by accident. The idiomatic use:
-
-```jsonc
-{ "node_key_prefix": "file:owner/repo:", "not_seen_since": "2026-08-20T10:00:00Z" }
-```
-
-Re-import, then prune everything under your own prefix that the import did not
-refresh. `updated_at` is stamped on every touched row, so this removes exactly
-what disappeared upstream.
+- **Payload is replace, not merge.** `payload: null` clears it. Send the whole
+  object every time.
+- **Endpoints must exist** — in storage or in the same batch — unless
+  `create_phantoms` is on, in which case a `phantom_node` is created and later
+  *materialised* when the real node arrives. The Studio consumers turn phantoms
+  off: a dangling endpoint is a pipeline bug, and a phantom would hide it.
+- **`embed`** decides whether this batch's nodes get vectors. `false` keeps the
+  existing vector when the text is unchanged (*preserved*) and marks it *stale*
+  when the text changed — the node then stops ranking in the vector arm but is
+  otherwise untouched.
+- **Failure is per item and total**: a violation anywhere rolls the whole batch
+  back, and the error names every failing item by index and JSON pointer.
+- Bounds (configurable): 10k nodes / 20k edges per batch, 64 KiB per payload.
 
 ### Read
 
-| Method | Path | Response |
-| --- | --- | --- |
-| `GET` | `/nodes?type_id=&key=&cursor=&limit=&include_payload=` | `{ items: [node], next_cursor }` |
-| `GET` | `/nodes/{id}?include_payload=` | one node, or 404 |
-| `GET` | `/nodes/{id}/edges?direction=&cursor=&limit=&include_payload=` | `{ items: [edge], next_cursor }` |
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| `GET` | `/nodes/{node_key}` | `?adjacency_limit=` | `NodeView` |
+| `GET` | `/nodes` | `?type_pattern=…` + OData `$filter`, `$orderby`, `$top`, `$skiptoken` | `{ items: [NodeRow], page_info: { next_cursor } }` |
+| `GET` | `/revision` | — | `{ source_epoch, revision }` |
 
-`GET /nodes` with `key=` answers in the listing shape with zero or one item, so
-a client that renders pages needs no second code path for one node.
+`NodeView` = `{ node_key, type_id, name, payload, has_embedding, adjacency:
+[{ edge_key, edge_type_id, direction, neighbor_key, neighbor_type_id }],
+adjacency_truncated, envelope }`. The **envelope** carries `tenant_id`, `key`,
+`created_at/by`, `updated_at/by`, `deleted_at/by` and the `graph_revision` the
+read observed.
 
-Listings are **keyset-paginated on the surrogate id**, not `OFFSET`, so a page
-boundary cannot drift under concurrent writes. `next_cursor` is absent on the
-last page. A cursor this gear did not issue is a 400, never a silent reset.
+The projection's `$filter`/`$orderby` accept `node_key`, `name`, `created_at`,
+`updated_at`. **Payload attributes are not filterable** yet (see § 6).
 
-A node addressed directly and not visible is **404, not 403**: telling a caller
-that a node exists but is not theirs is itself a disclosure.
+### Search and traversal
 
-### Traverse and search
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| `POST` | `/search` | `{ mode: "lexical"\|"vector"\|"hybrid", query, arm_limit?, limit?, type_patterns: [] }` | `{ hits: [{ node_key, type_id, name, score, arms: [{ arm, rank, score }], snippet }], revision }` |
+| `POST` | `/graph/traverse` | `{ seeds: [node_key], depth, edge_type_patterns: [], node_type_patterns: [], max_nodes? }` | `TraversalResponse` |
+| `POST` | `/graph/neighborhood` | `{ root, depth, node_budget?, include_phantoms }` | `TraversalResponse` |
 
-| Method | Path | Response |
-| --- | --- | --- |
-| `GET` | `/neighbours?seeds=&depth=&direction=&edge_types=` | `{ nodes: [i64], truncated }` |
-| `GET` | `/subgraph?seeds=&depth=&direction=&edge_types=&include_payload=` | `{ nodes, edges, truncated }` |
-| `GET` | `/search?q=&limit=&include_payload=` | `{ nodes: [node] }` |
-| `POST` | `/hybrid` | `{ nodes: [{ id, distance }] }` |
+`TraversalResponse` = `{ nodes: [NodeView], edges: [{ edge_key, edge_type_id,
+src, dst }], truncated: null | reason, revision }`.
 
-`direction` is `out`, `in` or `both` (default). An unrecognised value is a 400,
-not a silent `both` — a typo that widens a traversal is the kind of bug that
-looks like data.
+- **The query is embedded by the gear**, with the same provider that embedded
+  the nodes, so `vector` and `hybrid` need only text. `hybrid` fuses the two
+  arms by reciprocal rank; each hit says which arms ranked it and where.
+- A vector or hybrid search while the stored vectors belong to a *different*
+  embedding space than the configured provider answers
+  `400 EMBEDDING_SPACE_MISMATCH`; lexical search is unaffected.
+- Traversal is bounded by depth, node count, frontier and edges scanned; a
+  stop reports its reason in `truncated` rather than returning a partial graph
+  silently. Each hop runs as one SQL/PGQ `GRAPH_TABLE` statement; a scope the
+  pattern cannot carry is served by the two-query hop with a logged reason.
+- Type patterns are GTS patterns resolved against the registered types; they
+  are never compiled into SQL.
 
-`edge_types` is a comma-separated list of GTS edge types the walk may follow;
-absent means any.
+## 3. In-process client
 
-`depth` is clamped to `traversal_max_depth` and the result to
-`traversal_max_nodes`; `truncated` says the budget cut it.
-
-`subgraph` returns the same node set as `neighbours`, resolved into names and
-types, plus the edges between them. An edge is included only when **both** its
-endpoints are authorised — one visible endpoint would draw a line to a node the
-caller cannot see and disclose that it exists.
-
-`POST /hybrid` takes `{ query_vector, text, seed_limit, limit }`: vector
-similarity picks the seeds, the graph expands around them, and a full-text
-predicate filters what is reached, in one SQL/PGQ statement. It needs ingested
-nodes to carry embeddings — the gear has no model and never computes one, in
-either direction, so the query vector is the caller's too.
-
-### Payloads are opt-in everywhere
-
-`include_payload` defaults to **false** on every read. The drawing path fetches
-hundreds of nodes to render names and types and should not pay to transfer
-attributes it will not display.
-
----
-
-## 2. In-process client
-
-`GraphStorageClientV1`, published to `ClientHub`, mirrors the REST surface
-method for method — fifteen operations: `stats`, `register_type`, `types`,
-`ingest`, `delete_node`, `delete_edge`, `prune`, `node_by_key`, `node_by_id`,
-`list_nodes`, `list_edges`, `neighbours`, `subgraph`, `search`, `hybrid`.
+Consumers inside the assembly do not go through REST:
 
 ```rust
-use crate::graph_storage::sdk::{GraphStorageClientV1, TraversalQuery, Direction};
-
+use graph_storage_sdk::GraphStorageClientV1;
 let graph = ctx.client_hub().get::<dyn GraphStorageClientV1>()?;
-let sub = graph.subgraph(&ctx, &TraversalQuery {
-    seeds: &[repo_id],
-    depth: 2,
-    direction: Direction::Outgoing,
-    edge_types: &["cf.studio.kg.contains.v1~".to_owned()],
-    include_payload: false,
-}).await?;
 ```
 
-Every method is a straight delegation to the same domain service the REST
-handlers call, so the two surfaces cannot diverge in behaviour or in what they
-enforce. Resolve the client in the REST phase or later, not in `init` — that way
-it does not depend on gear initialisation order.
+Resolve it in the REST phase, not in `init`: gear initialisation order is not
+guaranteed and the client is registered when graph-storage initialises. The
+trait mirrors REST one to one — `register_types`, `get_type`, `list_types`,
+`ingest`, `delete_node`, `delete_edge`, `get_node`, `project_nodes`, `search`,
+`traverse`, `neighborhood`, `revision` — with the same admission limits and the
+same `CanonicalError` taxonomy. Types live in `graph_storage_sdk::models`.
 
----
+Three consumers in this repository show the pattern: `connectors/graph_sync.rs`
+(a repository walked into `repository / directory / file / person` nodes),
+`artifact_ingest/graph_backend.rs` (issues, PRs, files, comments, commits) and
+`gears_catalog/service.rs` (crates.io gears and versions). Each registers its
+types on every write — cheap, because registration converges — and declares
+its searchable and embeddable payload paths in the type schema.
 
-## 3. Semantics worth knowing before you build
+## 4. Embeddings
 
-**Node ids are surrogate and per-tenant.** They are not stable across tenants
-and are not your key. Address nodes by `node_key` on write; ids come back from
-reads. Keep your key derivation deterministic and you never need an id table.
+**One provider per deployment.** The gear computes every vector — for nodes on
+write and for queries on search — with the provider selected in configuration,
+so all vectors in a graph are comparable by construction:
 
-**`nodes_upserted` / `edges_upserted` count what the statement wrote**, not the
-batch size — but for nodes the conflict action is `DO UPDATE` and fires on every
-conflicting row, so a re-ingest of unchanged nodes still counts them. For edges
-the action is `DO NOTHING`, so only genuinely new edges are counted. **Use
-`graph_revision` for change detection**, not the counts.
+| `embedding_provider` | Implementation | Identity of the space |
+| --- | --- | --- |
+| `onnx` | `all-MiniLM-L6-v2` through ONNX Runtime, in-process (plugin `cf-gears-graph-storage-onnx-embedding-plugin`) | SHA-256 of the model and tokenizer bytes loaded |
+| `remote` | an OpenAI-compatible `/embeddings` endpoint (plugin `cf-gears-graph-storage-remote-embedding-plugin`) | model name at endpoint host at width |
+| `fake` | deterministic hash | fixed |
 
-**Payload semantics.** Absent means "no opinion — leave what is stored";
-`{}` means "clear the attributes". A supplied payload **replaces** the stored
-one rather than merging into it. Merging looks friendlier and is the wrong
-default: ADR-0003 requires that nothing is stored without passing validation,
-and under a merge the *result* is what would have to validate — so an ingest
-could fail because of data a different producer wrote earlier. Replace keeps a
-clean invariant: the stored payload is always exactly one producer's validated
-document. Genuine multi-producer merging belongs in a namespaced payload
-(`payload.<producer> = {...}`), which is a modelling decision for those types,
-not a default for all of them.
+The space identity is recorded on first use. A later boot with a different
+provider **does not** open a new space: it logs the mismatch and blocks the
+vector arm until the graph is re-embedded, and every other path keeps working.
+Re-embedding today means starting the graph database over; the model-change
+lifecycle (backfill, cutover) is not built.
 
-**Payload limits.** Objects only; a scalar or array is refused. Size is capped
-by `ingest_max_payload_bytes` (64 KiB by default), measured on the serialized
-form, and the error names the offending node key so a large batch tells you
-which row was refused. Long-form content belongs in the file-storage gear,
-referenced from the payload by identifier — the ceiling is what stops the graph
-becoming the platform's accidental blob store.
+What is embedded for a node: its `name` plus the payload values at the paths
+its type declares in `vector_search`, joined, capped at
+`embedding_input_max_bytes` (8 KiB). File *content* therefore reaches the
+vector only through the bounded `text_excerpt` artifact-ingest stores.
 
-**Payload validation.** When a node's type declares a `json_schema`, payloads
-are validated against it and violations are reported with the JSON pointer of
-the offending location. Types without a schema accept anything, so this is
-additive.
-
-**Embeddings.** Optional on ingest, dimension-checked against the column
-(`embedding_dimensions`, 384) with a clear error rather than a database failure.
-The gear never computes them.
-
-**Scoping is by construction.** Every query goes through the secure ORM.
-Element keys are composite `(tenant_id, id)`, so an edge structurally cannot
-join a node of another tenant even before a scope predicate is applied.
-
-**Traversal backend selection.** `traversal_hop` picks `two_query`, `cte` or
-`pgq`. A request whose scope cannot be reduced to a set of tenants is served by
-`two_query` rather than refused, and the substitution is logged at `warn` — a
-deployment configured for `pgq` and silently served by `two_query` would make
-any measurement taken from it meaningless.
-
----
-
-## 4. Configuration
+## 5. Configuration (`config/*.yaml`, gear `graph-storage`)
 
 ```yaml
 graph-storage:
-  database:
-    server: "pg_graph"          # PostgreSQL 19 + pgvector; the gear cannot run elsewhere
-    dbname: "graph_storage"
+  database: { server: "pg_graph", dbname: "graph_storage" }
   config:
-    ingest_max_nodes: 10000
-    ingest_max_edges: 20000
-    ingest_max_payload_bytes: 65536
-    embedding_dimensions: 384
-    default_page_size: 50
-    max_page_size: 500
-    traversal_max_depth: 5
-    traversal_max_nodes: 1000
-    traversal_hop: pgq
+    traversal_hop: pgq                # pgq | two_query
+    embedding_dimension: 384          # fixed at migration time
+    embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-onnx}"   # fake | onnx | remote
+    embedding_model_path: "/app/models/minilm/model.onnx"
+    embedding_tokenizer_path: "/app/models/minilm/tokenizer.json"
+    embedding_remote_base_url: "${STUDIO_EMBED_BASE_URL:-https://api.openai.com/v1}"
+    embedding_remote_model: "${STUDIO_EMBED_MODEL:-text-embedding-3-small}"
+    embedding_remote_api_key_env: "STUDIO_EMBED_API_KEY"   # the NAME of the variable
 ```
 
-The gear needs `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH` (SQL/PGQ,
-PostgreSQL 19+) and an HNSW index, none of which the assembly's main 16-alpine
-server has. `docker-compose.yml` provides `graph-postgres` for it; nothing else
-in the assembly is exposed to a beta PostgreSQL.
+The ONNX runtime library ships in the backend image (`ORT_DYLIB_PATH`); the
+model artifacts are deployment data — the compose `embedding-model` service and
+the Helm init container fetch them, pinned by SHA-256. The remote credential is
+read from the process environment by name and never enters the configuration.
 
----
+## 6. What is still missing
 
-## 5. What is still missing
+Recorded in the gear's `dev/DEVIATIONS.md`; the ones a consumer here meets:
 
-**ADR-0003 annotations and the index lifecycle.** The accepted design has GTS
-schemas annotate attributes as `x-gts-indexed` and `x-gts-vectorized`, with a
-versioned annotation vocabulary published as a meta-schema, and a durable index
-activation lifecycle (`requested → building → active`, `retiring → removed`)
-running `CREATE INDEX CONCURRENTLY` in a background worker — with filters
-admitted only while the supporting index is `active`. None of that exists. Until
-it does:
-
-- payload attributes are stored and returned but **not indexed**, so filtering
-  on them is not offered rather than offered slowly;
-- validation walks the **leaf type only**, not the full GTS derivation chain, so
-  a derived type does not yet inherit its ancestors' constraints;
-- `search_text` is producer-supplied. ADR-0003 has the gear composing it from
-  the vectorized annotations, which will retire the field.
-
-**Tabular projection.** `cpt-cf-graph-storage-fr-tabular-projection` — OData
-filters over annotated attributes — depends on the above.
-
-**Embedding production.** Nothing in this assembly computes embeddings, so the
-hybrid endpoint works only for callers that bring their own vectors on both
-sides. Deciding where embeddings come from is a product question, not a gear
-one.
-
-**Prune is bounded.** One call removes at most `ingest_max_nodes` nodes; a
-larger sweep needs repeating until it reports zero. It reports what it removed,
-so the loop is easy, but it is not a single-shot operation on a large graph.
+- **Payload attributes are not filterable** in the projection: `$filter` on
+  `payload/...` is refused. The `index` trait is stored but not wired to the
+  filter surface (platform limitation in the OData binding).
+- **No egress policy for the remote provider.** Selecting `remote` sends every
+  tenant's node text and query text to the one configured endpoint; ADR-0004's
+  per-tenant default-deny policy is not built.
+- **No re-embedding lifecycle.** A provider or model change blocks the vector
+  arm; recovery is manual.
+- **Scope replacement removes nothing.** `replace_scope` fences generations but
+  does not delete stale rows; re-syncs converge on keys instead.
+- **No readiness endpoint** reporting the active embedding space and the SQL/PGQ
+  capability; both are in the boot log only.
+- **No labels, chunks or change events** yet; the shapes leave room for them.
