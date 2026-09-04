@@ -42,6 +42,7 @@ removed; file content reaches search through a bounded `text_excerpt`.
 | Second consumer | artifact-ingest stored 845 issues and answers hybrid search over them semantically |
 | Third consumer | gears-catalog: 75 gears, 754 versions, 754 `has_version` edges from crates.io |
 | Background import | `POST …/graph-sync` returns a task id at once; the poll shows the phases (`reading the repository tree` 0.1 s → `reading the contributors` 3.7 s → `writing nodes 1-500 of 824` 14.9 s → `writing nodes 501-824` 24.3 s → `succeeded` 26.5 s); no gateway deadline involved |
+| Re-sync after D-027 | identical re-import through the task: 4.3 s, `nodes_upserted 0, edges_upserted 0`, revision unchanged (23.8 s before) |
 | Provider switch guard | see the last section |
 
 ## Problems found
@@ -95,10 +96,16 @@ removed; file content reaches search through a bounded `text_excerpt`.
     task and returns a `task_id`; `GET /studio-connector/v1/graph-sync/tasks/{id}`
     reports the phase and the outcome, the shape artifact-ingest already used.
     `wait: true` keeps the inline behaviour for small repositories.
-11. **A no-op re-sync costs as much as a first import.** `EmbeddingCoordinator::plan`
-    embeds every node before comparing input hashes, so unchanged nodes are
-    re-embedded on every sync: 25 s under load, 10.5 s idle, against 3 s when no
-    embedding happens. Gear gap, recorded as D-027.
+11. **A no-op re-sync cost as much as a first import — fixed in the gear (D-027).**
+    `EmbeddingCoordinator::plan` embedded every node before comparing input
+    hashes: 25 s under load, 10.5 s idle, against 3 s when no embedding happens.
+    The gear (tag `v0.1.1`) now reads the stored hash and epoch per key first and
+    embeds only what changed. On the stand: full import 16.7 s, an identical
+    re-sync **4.3 s** (was 23.8 s through the task), 0 nodes / 0 edges upserted,
+    revision unchanged. Covered by a conformance case run against both stores,
+    and the PostgreSQL lane ran green for the first time (26 cases) against a
+    PG19 + pgvector image built on the official base — the CNPG operand image
+    cannot serve that lane.
 12. **Lexical search misses identifiers in file names.** PostgreSQL's parser
     emits `README.md` and `rust-watch.Dockerfile` as single `file` tokens:
     `Dockerfile` matches, `README` and `rust` do not. Gear gap, D-028.
@@ -142,6 +149,7 @@ at boot, confined to the vector arm, and reversible.
 ## Still to do
 
 - Live `remote` run with a key OpenAI accepts (`STUDIO_EMBEDDING_PROVIDER=remote`), on a fresh graph database.
+- Fold the PG19 + pgvector test image (official base + pgvector, `dev/pg19-pgvector-test.Dockerfile` in gears-rust) into `libs/test-containers` so the gear's PostgreSQL lane runs in CI (D-003).
 - Upstream: gears-rust PR for the gear once #4639 merges (remove `publish = false`,
   release-plz publishes); then studio-web drops the `[patch]` block.
 - Push the studio-web branch and open the PR.
