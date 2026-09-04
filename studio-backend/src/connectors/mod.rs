@@ -27,6 +27,8 @@ mod github;
 mod gitlab;
 #[cfg(feature = "graph")]
 mod graph_sync;
+#[cfg(feature = "graph")]
+mod graph_sync_tasks;
 mod gts;
 mod plugin;
 mod rest;
@@ -138,9 +140,9 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
         // happening to come first in the topological order. A deployment
         // without it keeps the route mounted and answers 503.
         #[cfg(feature = "graph")]
-        let graph = rest::GraphSink(
+        let graph = rest::GraphSink::new(
             ctx.client_hub()
-                .get::<dyn crate::graph_storage::sdk::GraphStorageClientV1>()
+                .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
                 .inspect_err(|_| {
                     warn!(
                         "studio-connector: graph-storage client not registered — \

@@ -7,6 +7,23 @@
 # (glibc 2.39) and bookworm's glibc 2.36 cannot load it — the container
 # died at start with "version GLIBC_2.39 not found". trixie ships 2.41;
 # keep this base and release.yml's backend-binary runner in step.
+# ONNX Runtime for the graph-storage gear's in-process embedding provider
+# (`ort` is pinned `load-dynamic`; the library is dlopen'ed from ORT_DYLIB_PATH).
+# Same version and checksum as Dockerfile.src and the gears-rust CI lane. The
+# model artifacts are deployment data, not image content: the Helm chart's
+# init container fetches them into an emptyDir (see deploy/helm).
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS onnxruntime
+ARG ONNXRUNTIME_VERSION=1.29.0
+ARG ONNXRUNTIME_SHA256=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -sSL --fail -o /tmp/onnxruntime.tgz \
+      "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+ && echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.tgz" | sha256sum --check \
+ && mkdir -p /opt/onnxruntime \
+ && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
+ && rm /tmp/onnxruntime.tgz
+
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 RUN apt-get update \
@@ -18,6 +35,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY .release/studio-backend /app/studio-backend
 COPY config/ /app/config/
+COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime/lib/
+ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app
 
 # Numeric on purpose: with `runAsNonRoot: true` the kubelet must prove the

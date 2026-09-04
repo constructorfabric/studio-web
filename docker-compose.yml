@@ -168,6 +168,21 @@ services:
       # and keep it: a different key makes the stored values unreadable.
       #   openssl rand -base64 32
       STUDIO_CREDSTORE_KEY: ${STUDIO_CREDSTORE_KEY:-}
+      # Knowledge-graph embeddings (graph-storage gear). ONE provider per
+      # deployment — switching it over a populated graph blocks vector search
+      # until the graph is re-embedded, and the backend says so at boot.
+      #   onnx   (default) a MiniLM model in-process, from the models volume
+      #                    the `embedding-model` service fills below.
+      #   remote           an OpenAI-compatible /embeddings endpoint; set the
+      #                    three STUDIO_EMBED_* values in .env. The model must
+      #                    return 384-dimensional vectors (text-embedding-3-*
+      #                    honour the requested width; a fixed-width model
+      #                    needs embedding_dimension changed in the config).
+      #   fake             deterministic hash, for exercising the write path.
+      STUDIO_EMBEDDING_PROVIDER: ${STUDIO_EMBEDDING_PROVIDER:-onnx}
+      STUDIO_EMBED_BASE_URL: ${STUDIO_EMBED_BASE_URL:-https://api.openai.com/v1}
+      STUDIO_EMBED_MODEL: ${STUDIO_EMBED_MODEL:-text-embedding-3-small}
+      STUDIO_EMBED_API_KEY: ${STUDIO_EMBED_API_KEY:-}
       # The Theia session image lives in a private ghcr repo. The Docker API
       # ignores the CLI credential store, so the gear needs its own pair —
       # without them a session launch fails with a bare "unauthorized".
@@ -191,6 +206,11 @@ services:
       # http for IdP endpoints, so the self-signed chain has to be trusted
       # explicitly — the paths are named in overrides.docker/*.yaml.
       - ./docker/keycloak/certs/dev-ca.pem:/app/certs/dev-ca.pem:ro
+      # Embedding model artifacts for the graph-storage `onnx` provider, read
+      # at /app/models/minilm (config/docker.yaml names the paths). Filled by
+      # the `embedding-model` service; the ONNX Runtime library itself is in
+      # the image (ORT_DYLIB_PATH), because its version is bound to the code.
+      - studio_models:/app/models:ro
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:
@@ -199,6 +219,12 @@ services:
       # databases are not reachable.
       graph-postgres:
         condition: service_healthy
+      # The `onnx` provider loads its model at boot and fails the boot when the
+      # artifacts are missing (deliberately: a graph silently without vectors
+      # is the failure the gear exists to prevent). So the fetch has to have
+      # finished; on a warm volume it verifies the checksums and exits at once.
+      embedding-model:
+        condition: service_completed_successfully
       # Keycloak only has to be STARTED, not healthy. Nothing in the backend's
       # init path talks to it: oidc-authn-plugin just builds an HTTP client and
       # registers itself (discovery + JWKS are fetched lazily, on the first
@@ -270,6 +296,25 @@ services:
       keycloak:
         condition: service_healthy
 
+  # Embedding model for the graph-storage `onnx` provider — a one-shot fetch
+  # into the `studio_models` volume, pinned by SHA-256 (see the script). Runs
+  # on every `up`; on a warm volume it only verifies the checksums. The model
+  # is deployment data rather than image content so that the same backend
+  # image serves the `remote` provider too, and a model swap needs no rebuild.
+  # With STUDIO_EMBEDDING_PROVIDER=remote the fetch still runs (it is cheap
+  # once cached) and the artifacts simply go unused.
+  embedding-model:
+    image: curlimages/curl:8.14.1
+    container_name: studio-embedding-model
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/usr/local/bin/fetch-embedding-model.sh"]
+    environment:
+      MODELS_DIR: /models
+    volumes:
+      - studio_models:/models
+      - ./studio-backend/docker/fetch-embedding-model.sh:/usr/local/bin/fetch-embedding-model.sh:ro
+
   frontend:
     build:
       context: .
@@ -312,3 +357,6 @@ volumes:
   # volume (postgres:16) is retired; on an existing machine it simply goes
   # unused — data now lives here on the PG19 instance.
   studio_graph_pg_data:
+  # Embedding model artifacts (graph-storage `onnx` provider), ~90 MB, filled
+  # by the `embedding-model` service. Drop it to force a re-fetch.
+  studio_models:

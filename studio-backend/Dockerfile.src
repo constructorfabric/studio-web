@@ -59,6 +59,24 @@ ARG CARGO_FEATURES=""
 RUN cargo build --locked --release ${CARGO_FEATURES} \
  && cp target/release/studio-backend /studio-backend
 
+# ONNX Runtime, for the graph-storage gear's in-process embedding provider.
+# The gear's `ort` crate is pinned `load-dynamic`: nothing links the runtime at
+# build time, it is dlopen'ed at first use from ORT_DYLIB_PATH. The library
+# version is bound to that crate pin (api-24 → 1.29.x), so it belongs in the
+# image beside the binary; the model artifacts do NOT — they are deployment
+# data and arrive through the models volume (see docker-compose.yml).
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS onnxruntime
+ARG ONNXRUNTIME_VERSION=1.29.0
+ARG ONNXRUNTIME_SHA256=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -sSL --fail -o /tmp/onnxruntime.tgz \
+      "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+ && echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.tgz" | sha256sum --check \
+ && mkdir -p /opt/onnxruntime \
+ && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
+ && rm /tmp/onnxruntime.tgz
+
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 # gosu drops privileges in the entrypoint without the signal-forwarding and
 # TTY quirks of su/sudo — the process it execs stays PID 1.
@@ -69,6 +87,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1000 studio \
  && useradd --system --uid 1000 --gid 1000 --create-home --home /app studio
+COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime/lib/
+ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 # uid/gid 1000 is not cosmetic: workspace directories this server creates are
 # bind-mounted into the Theia session containers, which run as `node` (uid
 # 1000) and must be able to write clones into them. A `--system` uid would

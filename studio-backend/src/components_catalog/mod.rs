@@ -64,7 +64,7 @@ fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
     {
         match ctx
             .client_hub()
-            .get::<dyn crate::graph_storage::sdk::GraphStorageClientV1>()
+            .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
         {
             Ok(client) => {
                 info!(

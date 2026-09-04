@@ -104,50 +104,15 @@ fn node_name(value: &Value) -> String {
     String::new()
 }
 
-/// Free text for lexical search: name plus description/taxonomy/version fields.
-#[cfg(feature = "graph")]
-fn search_text(value: &Value) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    for key in [
-        "title",
-        "name",
-        "description",
-        "num",
-        "crate",
-        "license",
-        "rust_version",
-        "kind",
-    ] {
-        if let Some(s) = value.get(key).and_then(Value::as_str) {
-            parts.push(s.to_string());
-        }
-    }
-    for arr_key in ["keywords", "categories"] {
-        if let Some(arr) = value.get(arr_key).and_then(Value::as_array) {
-            for v in arr {
-                if let Some(s) = v.as_str() {
-                    parts.push(s.to_string());
-                }
-            }
-        }
-    }
-    let joined = parts.join(" ");
-    if joined.trim().is_empty() {
-        None
-    } else {
-        Some(joined)
-    }
-}
-
 /// The real graph-storage backend. Behind the `graph` feature (the gear is).
 #[cfg(feature = "graph")]
 pub(crate) struct GraphSink {
-    client: Arc<dyn crate::graph_storage::sdk::GraphStorageClientV1>,
+    client: Arc<dyn graph_storage_sdk::GraphStorageClientV1>,
 }
 
 #[cfg(feature = "graph")]
 impl GraphSink {
-    pub(crate) fn new(client: Arc<dyn crate::graph_storage::sdk::GraphStorageClientV1>) -> Self {
+    pub(crate) fn new(client: Arc<dyn graph_storage_sdk::GraphStorageClientV1>) -> Self {
         Self { client }
     }
 }
@@ -155,19 +120,28 @@ impl GraphSink {
 #[cfg(feature = "graph")]
 #[async_trait]
 impl CatalogSink for GraphSink {
+    /// One atomic batch, idempotent: a byte-identical re-registration
+    /// converges. Each type derives from a graph-storage family — a free-form
+    /// type has no chain to validate against and is refused.
     async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
-        for t in gts::ALL_NODE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "node", None)
-                .await
-                .map_err(|e| anyhow!("register type {t}: {e}"))?;
-        }
-        for t in gts::ALL_EDGE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "edge", None)
-                .await
-                .map_err(|e| anyhow!("register edge type {t}: {e}"))?;
-        }
+        use graph_storage_sdk::models::TypeRegistration;
+        let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
+            .into_iter()
+            .chain(gts::graph_edge_type_schemas())
+            .map(|schema| TypeRegistration {
+                type_id: schema
+                    .get("$id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim_start_matches("gts://")
+                    .to_string(),
+                schema,
+            })
+            .collect();
+        self.client
+            .register_types(ctx, batch)
+            .await
+            .map_err(|e| anyhow!("register catalog types: {e}"))?;
         Ok(())
     }
 
@@ -177,34 +151,48 @@ impl CatalogSink for GraphSink {
         nodes: &[GtsNode],
         edges: &[GtsEdge],
     ) -> anyhow::Result<()> {
-        use crate::graph_storage::sdk::{EdgeInput, NodeInput};
+        use graph_storage_sdk::models::{EdgeSpec, IngestOptions, IngestRequest, NodeSpec};
         if nodes.is_empty() && edges.is_empty() {
             return Ok(());
         }
-        let node_inputs: Vec<NodeInput> = nodes
+        let node_specs: Vec<NodeSpec> = nodes
             .iter()
-            .map(|n| NodeInput {
+            .map(|n| NodeSpec {
                 node_key: n.instance_id.clone(),
                 type_id: gts::graph_type_id(n.type_id),
-                name: node_name(&n.value),
-                search_text: search_text(&n.value),
+                name: Some(node_name(&n.value)),
                 payload: Some(n.value.clone()),
-                embedding: None,
+                expected_version: None,
             })
             .collect();
-        let edge_inputs: Vec<EdgeInput> = edges
+        let edge_specs: Vec<EdgeSpec> = edges
             .iter()
-            .map(|e| EdgeInput {
+            .map(|e| EdgeSpec {
                 type_id: gts::graph_type_id(e.type_id),
-                from: e.from.clone(),
-                to: e.to.clone(),
+                src_node_key: e.from.clone(),
+                dst_node_key: e.to.clone(),
+                discriminator: None,
                 payload: None,
             })
             .collect();
         // One atomic ingest: the gear upserts nodes then wires the edges to the
-        // keys just written, so a gear and its versions commit together.
+        // keys just written, so a gear and its versions commit together. No
+        // phantoms: an edge whose endpoint is not in the batch is our bug.
         self.client
-            .ingest(ctx, &node_inputs, &edge_inputs)
+            .ingest(
+                ctx,
+                IngestRequest {
+                    nodes: node_specs,
+                    edges: edge_specs,
+                    options: IngestOptions {
+                        create_phantoms: Some(false),
+                        report_per_item: false,
+                        embed: Some(true),
+                    },
+                    replace_scope: None,
+                    idempotency_key: None,
+                },
+            )
             .await
             .map_err(|e| anyhow!("graph-storage ingest: {e}"))?;
         Ok(())
@@ -215,39 +203,45 @@ impl CatalogSink for GraphSink {
         ctx: &SecurityContext,
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>> {
-        const PAGE: u32 = 500;
-        let types: Vec<&'static str> = gts::ALL_NODE_TYPES
+        use toolkit_odata::{CursorV1, ODataQuery};
+        // The gear's `projection_max_page`; a larger `$top` is refused, not clamped.
+        const PAGE: u64 = 200;
+        let patterns: Vec<String> = gts::ALL_NODE_TYPES
             .into_iter()
             .filter(|t| type_filter.is_none_or(|f| t.contains(f)))
+            .map(gts::graph_type_id)
             .collect();
+        if patterns.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut out: Vec<GtsNode> = Vec::new();
-        for our_type in types {
-            let graph_type = gts::graph_type_id(our_type);
-            let mut cursor: Option<String> = None;
-            loop {
-                let page = self
-                    .client
-                    .list_nodes(ctx, Some(&graph_type), cursor.as_deref(), PAGE, true)
-                    .await
-                    .map_err(|e| anyhow!("graph-storage list_nodes: {e}"))?;
-                for view in page.items {
-                    let type_id = gts::our_type_from_graph(&view.type_id).unwrap_or(our_type);
-                    out.push(GtsNode {
-                        type_id,
-                        instance_id: view.node_key,
-                        value: view.payload.unwrap_or_else(|| json!({})),
-                    });
-                }
-                match page.next_cursor {
-                    Some(c) => cursor = Some(c),
-                    None => break,
-                }
+        let mut query = ODataQuery::default().with_limit(PAGE);
+        loop {
+            let page = self
+                .client
+                .project_nodes(ctx, &patterns, query.clone())
+                .await
+                .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
+            for row in page.items {
+                let Some(type_id) = gts::our_type_from_graph(&row.type_id) else {
+                    continue;
+                };
+                out.push(GtsNode {
+                    type_id,
+                    instance_id: row.node_key,
+                    value: row.payload.unwrap_or_else(|| json!({})),
+                });
             }
+            let Some(next) = page.page_info.next_cursor else {
+                break;
+            };
+            let cursor = CursorV1::decode(&next)
+                .map_err(|e| anyhow!("graph-storage returned an undecodable cursor: {e}"))?;
+            query = ODataQuery::default().with_limit(PAGE).with_cursor(cursor);
         }
         Ok(out)
     }
 }
-
 // ── Service ─────────────────────────────────────────────────────────────────
 
 /// A repository source the caller selected on the Gears page.

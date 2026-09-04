@@ -1,10 +1,11 @@
-//! The real graph store: the vendored graph-storage gear.
+//! The real graph store: the graph-storage gear, through its published SDK.
 //!
 //! Adapts our [`GraphStore`] contract onto `GraphStorageClientV1` (in-process,
 //! tenant-scoped). Artifact nodes become graph-storage nodes keyed on their
 //! deterministic instance id, so a re-sync converges. File *content* never goes
-//! into the graph — it is stripped here (the graph is not a blob store; the doc
-//! caps a payload at 64 KiB) — only the metadata.
+//! into the graph as such — the graph is not a blob store, and a payload is
+//! capped at 64 KiB — only the metadata plus a bounded excerpt of the text,
+//! which is what lexical and vector search index.
 //!
 //! Only compiled with the `graph` feature (the gear itself is behind it).
 
@@ -13,28 +14,39 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use toolkit_security::SecurityContext;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use toolkit_odata::ODataQuery;
 
 use super::graph::{GraphStore, GtsEdge, GtsEdgeView, GtsNode};
 use super::gts;
-use crate::graph_storage::sdk::{
-    Direction, EdgeInput, GraphStorageClientV1, HybridQuery, NodeInput, NodeView, SearchQuery,
+use graph_storage_sdk::GraphStorageClientV1;
+use graph_storage_sdk::models::{
+    AdjacencySide, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest,
+    TypeRegistration,
 };
 
 /// Nodes per ingest batch. Under the gear's `ingest_max_nodes` (10k) with room
 /// to spare, so a repo with many files still commits in a few atomic batches.
 const INGEST_CHUNK: usize = 2_000;
-/// Page size when reading nodes back for the portal.
-const LIST_PAGE: u32 = 500;
+/// Page size when reading nodes back for the portal. At the gear's
+/// `projection_max_page` (200): a larger `$top` is refused, not clamped.
+const LIST_PAGE: u32 = 200;
+/// Incident edges to read per node. Above the fan-out of an issue or PR in
+/// this graph (author, repo, changed files), and truncation is logged rather
+/// than silently dropping relations.
+const ADJACENCY_LIMIT: u32 = 100;
 /// Keep a node payload comfortably under the gear's 64 KiB ceiling; an oversized
 /// one would fail the whole atomic batch.
 const MAX_PAYLOAD_BYTES: usize = 60_000;
-/// Upper bound on the free-text we hand graph-storage as `search_text` per node.
-/// graph-storage builds the FTS tsvector from this on save (the on-save "vector
-/// index"), so this is what makes a file's *content* searchable — but a whole
-/// large file would bloat the index, so cap it. Body/content beyond this is
-/// truncated (on a char boundary); metadata always fits first.
-const MAX_SEARCH_TEXT_BYTES: usize = 32_000;
+/// How much of a file's text travels into the graph as `text_excerpt`. It is
+/// what search — lexical and semantic — sees of a file's *content*; the whole
+/// file stays in file storage. The gear itself caps the embedding input at its
+/// `embedding_input_max_bytes` (8 KiB by default), so more than this would
+/// bloat the lexical index without reaching the vector.
+const MAX_TEXT_EXCERPT_CHARS: usize = 8_000;
+/// Per-arm candidate count for hybrid search, before fusion.
+const SEARCH_ARM_LIMIT: u32 = 50;
 
 pub struct GraphStorageBackend {
     client: Arc<dyn GraphStorageClientV1>,
@@ -45,22 +57,54 @@ impl GraphStorageBackend {
         Self { client }
     }
 
-    /// Register our artifact node and relation types (idempotent — the gear
-    /// interns them). Nodes as `node`, relations as `edge`.
+    /// Register our artifact node and relation types.
+    ///
+    /// One atomic batch, idempotent: a byte-identical re-registration
+    /// converges, so this runs before every write without cost. Each type
+    /// derives from a graph-storage family — a free-form type has no chain to
+    /// validate against and is refused.
     async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
-        for t in gts::ALL_NODE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "node", None)
-                .await
-                .map_err(|e| anyhow::anyhow!("register type {t}: {e}"))?;
-        }
-        for t in gts::ALL_EDGE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "edge", None)
-                .await
-                .map_err(|e| anyhow::anyhow!("register edge type {t}: {e}"))?;
-        }
+        let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
+            .into_iter()
+            .chain(gts::graph_edge_type_schemas())
+            .map(|schema| TypeRegistration {
+                type_id: schema
+                    .get("$id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim_start_matches("gts://")
+                    .to_string(),
+                schema,
+            })
+            .collect();
+        self.client
+            .register_types(ctx, batch)
+            .await
+            .map_err(|e| anyhow::anyhow!("register artifact types: {e}"))?;
         Ok(())
+    }
+
+    /// A node with its payload, by key. The search surface returns keys and
+    /// names only; the portal wants the normalized value too.
+    async fn node_by_key(
+        &self,
+        ctx: &SecurityContext,
+        key: &str,
+        type_id: &str,
+    ) -> anyhow::Result<Option<GtsNode>> {
+        let Some(our_type) = gts::our_type_from_graph(type_id) else {
+            return Ok(None);
+        };
+        let view = self
+            .client
+            .get_node(ctx, &key.to_owned(), Some(1))
+            .await
+            .map_err(|e| anyhow::anyhow!("graph-storage node read: {e}"))?;
+        Ok(Some(GtsNode {
+            type_id: our_type,
+            instance_id: view.node_key,
+            value: view.payload.unwrap_or_else(|| json!({})),
+        }))
     }
 }
 
@@ -78,63 +122,41 @@ fn node_name(value: &Value) -> String {
     String::new()
 }
 
-/// Free text for lexical search. graph-storage builds the FTS tsvector from this
-/// on save, so it is the search surface: identifying metadata first (always
-/// indexed), then the node's *content* — an issue/PR `body`, a file's `text`
-/// (connector-cloned, hand-added, or file-parser-extracted) — so search reaches
-/// what's *inside* a file, not just its name. The whole thing is capped at
-/// [`MAX_SEARCH_TEXT_BYTES`] so one big file can't bloat the index.
-fn search_text(value: &Value) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    // Identifying fields first — small and always worth indexing.
-    for key in ["title", "path", "full_path", "state", "author"] {
-        if let Some(s) = value.get(key).and_then(Value::as_str) {
-            parts.push(s.to_string());
-        }
-    }
-    if let Some(labels) = value.get("labels").and_then(Value::as_array) {
-        for l in labels {
-            if let Some(s) = l.as_str() {
-                parts.push(s.to_string());
-            }
-        }
-    }
-    // Content next — this is what makes search look *inside* the artifact.
-    for key in ["body", "text"] {
-        if let Some(s) = value.get(key).and_then(Value::as_str)
-            && !s.trim().is_empty()
-        {
-            parts.push(s.to_string());
-        }
-    }
-    let joined = parts.join(" ");
-    truncate_on_char_boundary(&joined, MAX_SEARCH_TEXT_BYTES)
-}
-
-/// Truncate `s` to at most `max_bytes`, never splitting a UTF-8 char.
-fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> String {
-    if s.len() <= max_bytes {
-        return s.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+/// Truncate `s` to at most `max_chars` characters.
+fn excerpt(s: &str, max_chars: usize) -> String {
+    let end = s
+        .char_indices()
+        .map(|(i, _)| i)
+        .nth(max_chars)
+        .unwrap_or(s.len());
     s[..end].to_string()
 }
 
-/// The payload to store: the node value minus file content, bounded to the
-/// gear's per-node ceiling (drop the free-text `body` if it pushes us over).
+/// The payload to store: the node value minus file content, plus a bounded
+/// `text_excerpt` of that content, all under the gear's per-node ceiling
+/// (drop the free-text `body` if it pushes us over).
 fn bounded_payload(value: &Value) -> Value {
     let mut obj = match value {
         Value::Object(m) => m.clone(),
         _ => serde_json::Map::new(),
     };
-    // File content is referenced by has_text, never stored in the graph.
-    obj.remove("text");
+    // File content is referenced by has_text, never stored whole in the graph.
+    // What search sees of it is the excerpt, which the type declares as a
+    // searchable and vectorizable path.
+    if let Some(text) = obj.remove("text").as_ref().and_then(Value::as_str)
+        && !text.trim().is_empty()
+    {
+        obj.insert(
+            "text_excerpt".to_string(),
+            Value::String(excerpt(text, MAX_TEXT_EXCERPT_CHARS)),
+        );
+    }
     let too_big = |m: &serde_json::Map<String, Value>| {
         serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0) > MAX_PAYLOAD_BYTES
     };
+    if too_big(&obj) {
+        obj.remove("text_excerpt");
+    }
     if too_big(&obj) {
         obj.remove("body");
     }
@@ -147,34 +169,42 @@ fn bounded_payload(value: &Value) -> Value {
     Value::Object(obj)
 }
 
-fn to_node_input(n: &GtsNode) -> NodeInput {
-    NodeInput {
+/// The searchable text and the embedding input are composed by the gear from
+/// the payload paths the type declares, so neither is supplied per node.
+fn to_node_spec(n: &GtsNode) -> NodeSpec {
+    NodeSpec {
         node_key: n.instance_id.clone(),
         type_id: gts::graph_type_id(n.type_id),
-        name: node_name(&n.value),
-        search_text: Some(search_text(&n.value)).filter(|s| !s.is_empty()),
+        name: Some(node_name(&n.value)).filter(|s| !s.is_empty()),
         payload: Some(bounded_payload(&n.value)),
-        embedding: None,
+        expected_version: None,
     }
 }
 
-/// Map a graph-storage node view back to our [`GtsNode`] (reverse of
-/// [`to_node_input`]); used by search/hybrid results.
-fn view_to_node(view: NodeView) -> GtsNode {
-    let type_id = gts::our_type_from_graph(&view.type_id).unwrap_or(gts::REPO_TYPE);
-    GtsNode {
-        type_id,
-        instance_id: view.node_key,
-        value: view.payload.unwrap_or_else(|| json!({})),
-    }
-}
-
-fn to_edge_input(e: &GtsEdge) -> EdgeInput {
-    EdgeInput {
+fn to_edge_spec(e: &GtsEdge) -> EdgeSpec {
+    EdgeSpec {
         type_id: gts::graph_type_id(e.type_id),
-        from: e.from.clone(),
-        to: e.to.clone(),
+        src_node_key: e.from.clone(),
+        dst_node_key: e.to.clone(),
+        discriminator: None,
         payload: None,
+    }
+}
+
+/// One ingest batch. Phantom endpoints are disabled: an edge whose endpoint is
+/// missing is a bug in the pipeline's ordering, and a phantom would hide it.
+/// Nodes are embedded by the gear on write.
+fn batch(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>) -> IngestRequest {
+    IngestRequest {
+        nodes,
+        edges,
+        options: IngestOptions {
+            create_phantoms: Some(false),
+            report_per_item: false,
+            embed: Some(true),
+        },
+        replace_scope: None,
+        idempotency_key: None,
     }
 }
 
@@ -196,17 +226,17 @@ impl GraphStore for GraphStorageBackend {
         }
         self.register_types(ctx).await?;
 
-        let inputs: Vec<NodeInput> = nodes.iter().map(to_node_input).collect();
+        let specs: Vec<NodeSpec> = nodes.iter().map(to_node_spec).collect();
         let mut upserted = 0u64;
-        let mut revision = 0u64;
-        for chunk in inputs.chunks(INGEST_CHUNK) {
+        let mut revision = 0i64;
+        for chunk in specs.chunks(INGEST_CHUNK) {
             let res = self
                 .client
-                .ingest(ctx, chunk, &[])
+                .ingest(ctx, batch(chunk.to_vec(), Vec::new()))
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage ingest: {e}"))?;
-            upserted += res.nodes_upserted;
-            revision = res.graph_revision;
+            upserted += res.counts.nodes_inserted + res.counts.nodes_updated;
+            revision = res.revision.revision;
         }
         tracing::info!(
             batch = nodes.len(),
@@ -217,97 +247,41 @@ impl GraphStore for GraphStorageBackend {
         Ok(())
     }
 
-    async fn upsert_nodes_embedded(
-        &self,
-        ctx: &SecurityContext,
-        nodes: &[GtsNode],
-        embeddings: &[Option<Vec<f32>>],
-    ) -> anyhow::Result<()> {
-        if nodes.is_empty() {
-            return Ok(());
-        }
-        self.register_types(ctx).await?;
-
-        // Same as `upsert_nodes` but attaches the aligned embedding (when any) to
-        // each node input, so the graph's VECTOR column is populated.
-        let inputs: Vec<NodeInput> = nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| {
-                let mut input = to_node_input(n);
-                input.embedding = embeddings.get(i).cloned().flatten();
-                input
-            })
-            .collect();
-        let mut upserted = 0u64;
-        for chunk in inputs.chunks(INGEST_CHUNK) {
-            let res = self
-                .client
-                .ingest(ctx, chunk, &[])
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage ingest: {e}"))?;
-            upserted += res.nodes_upserted;
-        }
-        tracing::info!(
-            batch = nodes.len(),
-            nodes_upserted = upserted,
-            "studio-artifact-ingest: graph-storage upsert (embedded)"
-        );
-        Ok(())
-    }
-
+    /// Hybrid retrieval: the gear embeds the query with the deployment's
+    /// provider, ranks the vector and lexical arms and fuses them. Hits carry
+    /// keys and names; the payload comes from a node read per hit.
     async fn search(
         &self,
         ctx: &SecurityContext,
-        query_vector: Option<&[f32]>,
         text: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<GtsNode>> {
         self.register_types(ctx).await?;
-        // With a query vector: hybrid (vector seeds + graph + text). Hybrid hits
-        // carry only ids, so resolve each to its node for the payload.
-        if let Some(vec) = query_vector.filter(|v| !v.is_empty()) {
-            let hits = self
-                .client
-                .hybrid(
-                    ctx,
-                    &HybridQuery {
-                        query_vector: vec,
-                        text,
-                        seed_limit: limit.max(20),
-                        limit,
-                    },
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage hybrid: {e}"))?;
-            let mut out = Vec::with_capacity(hits.len());
-            for hit in hits {
-                if let Some(view) = self
-                    .client
-                    .node_by_id(ctx, hit.id, true)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage node_by_id: {e}"))?
-                {
-                    out.push(view_to_node(view));
-                }
+        let patterns: Vec<String> = gts::ALL_NODE_TYPES
+            .into_iter()
+            .map(gts::graph_type_id)
+            .collect();
+        let response = self
+            .client
+            .search(
+                ctx,
+                SearchRequest {
+                    mode: SearchMode::Hybrid,
+                    query: Some(text.to_owned()),
+                    arm_limit: SEARCH_ARM_LIMIT.max(limit),
+                    limit,
+                    type_patterns: patterns,
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("graph-storage search: {e}"))?;
+        let mut out = Vec::with_capacity(response.hits.len());
+        for hit in response.hits {
+            if let Some(node) = self.node_by_key(ctx, &hit.node_key, &hit.type_id).await? {
+                out.push(node);
             }
-            Ok(out)
-        } else {
-            // No vector (no embedder wired): lexical full-text search.
-            let views = self
-                .client
-                .search(
-                    ctx,
-                    &SearchQuery {
-                        text,
-                        limit,
-                        include_payload: true,
-                    },
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage search: {e}"))?;
-            Ok(views.into_iter().map(view_to_node).collect())
         }
+        Ok(out)
     }
 
     async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()> {
@@ -316,15 +290,15 @@ impl GraphStore for GraphStorageBackend {
         }
         self.register_types(ctx).await?;
 
-        let inputs: Vec<EdgeInput> = edges.iter().map(to_edge_input).collect();
+        let specs: Vec<EdgeSpec> = edges.iter().map(to_edge_spec).collect();
         let mut upserted = 0u64;
-        for chunk in inputs.chunks(INGEST_CHUNK) {
+        for chunk in specs.chunks(INGEST_CHUNK) {
             let res = self
                 .client
-                .ingest(ctx, &[], chunk)
+                .ingest(ctx, batch(Vec::new(), chunk.to_vec()))
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage edge ingest: {e}"))?;
-            upserted += res.edges_upserted;
+            upserted += res.counts.edges_inserted + res.counts.edges_updated;
         }
         tracing::info!(
             batch = edges.len(),
@@ -339,40 +313,43 @@ impl GraphStore for GraphStorageBackend {
         ctx: &SecurityContext,
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>> {
-        // Ensure our types exist before filtering by them, so a read before the
+        // Ensure our types exist before narrowing by them, so a read before the
         // first ingest returns empty rather than tripping on an unknown type.
         self.register_types(ctx).await?;
 
-        // Which of our types to read: those whose id contains the filter
-        // substring, or all of them.
-        let types: Vec<&'static str> = gts::ALL_NODE_TYPES
+        let patterns: Vec<String> = gts::ALL_NODE_TYPES
             .into_iter()
             .filter(|t| type_filter.is_none_or(|f| t.contains(f)))
+            .map(gts::graph_type_id)
             .collect();
+        if patterns.is_empty() {
+            return Ok(Vec::new());
+        }
 
         let mut out: Vec<GtsNode> = Vec::new();
-        for our_type in types {
-            let graph_type = gts::graph_type_id(our_type);
-            let mut cursor: Option<String> = None;
-            loop {
-                let page = self
-                    .client
-                    .list_nodes(ctx, Some(&graph_type), cursor.as_deref(), LIST_PAGE, true)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage list_nodes: {e}"))?;
-                for view in page.items {
-                    let type_id = gts::our_type_from_graph(&view.type_id).unwrap_or(our_type);
-                    out.push(GtsNode {
-                        type_id,
-                        instance_id: view.node_key,
-                        value: view.payload.unwrap_or_else(|| json!({})),
-                    });
-                }
-                match page.next_cursor {
-                    Some(c) => cursor = Some(c),
-                    None => break,
-                }
+        let mut query = ODataQuery::default().with_limit(u64::from(LIST_PAGE));
+        loop {
+            let page = self
+                .client
+                .project_nodes(ctx, &patterns, query.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("graph-storage projection: {e}"))?;
+            for row in page.items {
+                let Some(type_id) = gts::our_type_from_graph(&row.type_id) else {
+                    continue;
+                };
+                out.push(GtsNode {
+                    type_id,
+                    instance_id: row.node_key,
+                    value: row.payload.unwrap_or_else(|| json!({})),
+                });
             }
+            let Some(next) = page.page_info.next_cursor else {
+                break;
+            };
+            query = ODataQuery::default()
+                .with_limit(u64::from(LIST_PAGE))
+                .with_cursor(parse_cursor(&next)?);
         }
         Ok(out)
     }
@@ -380,77 +357,79 @@ impl GraphStore for GraphStorageBackend {
     async fn list_relations(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsEdgeView>> {
         self.register_types(ctx).await?;
 
-        // One light pass over the nodes: a surrogate-id → instance-key map, and
-        // the ids of issue/PR nodes — the sources of the cross-relations we show.
-        let mut id_to_key: HashMap<i64, String> = HashMap::new();
-        let mut seeds: Vec<i64> = Vec::new();
-        for our_type in gts::ALL_NODE_TYPES {
-            let graph_type = gts::graph_type_id(our_type);
-            // Seed every type that can be an edge *source* so all our relations
-            // are read back: repo→file (contains), issue/PR→repo/user/file,
-            // comment→issue/PR (+author), commit→repo (+author), finding→doc.
-            // Users are only edge targets; files are excluded here to avoid a
-            // per-file edge walk on large repos (file↔file duplicate links are
-            // the one relation this omits — a known follow-up).
-            let is_seed = our_type != gts::USER_TYPE && our_type != gts::FILE_TYPE;
-            let mut cursor: Option<String> = None;
-            loop {
-                let page = self
-                    .client
-                    .list_nodes(ctx, Some(&graph_type), cursor.as_deref(), LIST_PAGE, false)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage list_nodes: {e}"))?;
-                for view in page.items {
-                    if is_seed {
-                        seeds.push(view.id);
-                    }
-                    id_to_key.insert(view.id, view.node_key);
-                }
-                match page.next_cursor {
-                    Some(c) => cursor = Some(c),
-                    None => break,
-                }
-            }
-        }
+        // The sources of the cross-relations the portal draws. Their outgoing
+        // edges come back with the node itself: a node read carries bounded
+        // adjacency, so the relations need no separate edge listing. Users are
+        // only edge targets; files are excluded to avoid a per-file read on
+        // large repos (file↔file duplicate links are the one relation this
+        // omits — a known follow-up).
+        let seeds: Vec<String> = self
+            .list(ctx, None)
+            .await?
+            .into_iter()
+            .filter(|n| n.type_id != gts::USER_TYPE && n.type_id != gts::FILE_TYPE)
+            .map(|n| n.instance_id)
+            .collect();
 
-        // The outgoing edges of each issue/PR: authored_by, artifact_of, modifies.
         let mut seen: HashSet<String> = HashSet::new();
         let mut out: Vec<GtsEdgeView> = Vec::new();
-        for id in seeds {
-            let mut cursor: Option<String> = None;
-            loop {
-                let page = self
-                    .client
-                    .list_edges(
-                        ctx,
-                        id,
-                        Direction::Outgoing,
-                        cursor.as_deref(),
-                        LIST_PAGE,
-                        false,
-                    )
-                    .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage list_edges: {e}"))?;
-                for e in page.items {
-                    let (Some(from), Some(to)) = (id_to_key.get(&e.src), id_to_key.get(&e.dst))
-                    else {
-                        continue;
-                    };
-                    let type_id = our_edge_type(&e.type_id);
-                    if seen.insert(format!("{type_id}|{from}|{to}")) {
-                        out.push(GtsEdgeView {
-                            type_id,
-                            from: from.clone(),
-                            to: to.clone(),
-                        });
-                    }
+        for key in seeds {
+            let view = self
+                .client
+                .get_node(ctx, &key, Some(ADJACENCY_LIMIT))
+                .await
+                .map_err(|e| anyhow::anyhow!("graph-storage node read: {e}"))?;
+            if view.adjacency_truncated {
+                tracing::warn!(
+                    node = %key,
+                    limit = ADJACENCY_LIMIT,
+                    "studio-artifact-ingest: adjacency truncated; some relations are not shown"
+                );
+            }
+            for entry in view.adjacency {
+                if entry.side != AdjacencySide::Outgoing {
+                    continue;
                 }
-                match page.next_cursor {
-                    Some(c) => cursor = Some(c),
-                    None => break,
+                let type_id = our_edge_type(&entry.edge_type_id);
+                let to = entry.neighbor_key;
+                if seen.insert(format!("{type_id}|{key}|{to}")) {
+                    out.push(GtsEdgeView {
+                        type_id,
+                        from: key.clone(),
+                        to,
+                    });
                 }
             }
         }
         Ok(out)
+    }
+}
+
+/// Decode a `CursorV1` continuation token handed back by the projection.
+fn parse_cursor(raw: &str) -> anyhow::Result<toolkit_odata::CursorV1> {
+    toolkit_odata::CursorV1::decode(raw)
+        .map_err(|e| anyhow::anyhow!("graph-storage returned an undecodable cursor: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_text_becomes_a_bounded_excerpt() {
+        let long = "x".repeat(MAX_TEXT_EXCERPT_CHARS + 100);
+        let payload = bounded_payload(&json!({ "path": "a.md", "text": long, "has_text": true }));
+        assert!(payload.get("text").is_none());
+        assert_eq!(
+            payload["text_excerpt"].as_str().map(str::len),
+            Some(MAX_TEXT_EXCERPT_CHARS)
+        );
+        assert_eq!(payload["path"], "a.md");
+    }
+
+    #[test]
+    fn an_empty_text_leaves_no_excerpt() {
+        let payload = bounded_payload(&json!({ "path": "a.bin", "text": "  " }));
+        assert!(payload.get("text_excerpt").is_none());
     }
 }

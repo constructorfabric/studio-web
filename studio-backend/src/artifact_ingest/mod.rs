@@ -12,7 +12,6 @@
 //! `hypothesis/graph-storage` adapter lands).
 
 mod clone;
-mod embed;
 mod graph;
 #[cfg(feature = "graph")]
 mod graph_backend;
@@ -37,7 +36,6 @@ use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use crate::connectors::driver::ConnectorDriver;
-use embed::Embedder;
 use graph::InMemoryGraphStore;
 use service::IngestService;
 
@@ -77,7 +75,7 @@ fn build_graph_store(ctx: &GearCtx) -> Arc<dyn graph::GraphStore> {
     {
         match ctx
             .client_hub()
-            .get::<dyn crate::graph_storage::sdk::GraphStorageClientV1>()
+            .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
         {
             Ok(client) => {
                 info!(
@@ -173,26 +171,6 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 None => None,
             };
 
-            // Embedding seam: a real OpenAI-compatible embedder when configured
-            // (STUDIO_EMBED_*), so search becomes semantic (hybrid); otherwise
-            // NoopEmbedder (dimensions 0) and search stays lexical. Turning on
-            // semantic search is pure configuration — no code change.
-            let embedder: Arc<dyn embed::Embedder> = match embed::OpenAiEmbedder::from_env() {
-                Some(e) => {
-                    info!(
-                        dimensions = e.dimensions(),
-                        "studio-artifact-ingest: embeddings endpoint configured — semantic (hybrid) search enabled"
-                    );
-                    Arc::new(e)
-                }
-                None => {
-                    info!(
-                        "studio-artifact-ingest: no embeddings endpoint (STUDIO_EMBED_*) — search stays lexical"
-                    );
-                    Arc::new(embed::NoopEmbedder)
-                }
-            };
-
             // File-parser gear: extracts text from binary documents (PDF/docx/…)
             // so their content is indexed for search. Optional — when the gear
             // is not linked/available, binary files stay metadata-only.
@@ -213,7 +191,6 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 credstore,
                 drivers,
                 graph,
-                embedder,
                 file_parser,
                 workspaces_root,
                 work_root,

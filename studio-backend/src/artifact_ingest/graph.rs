@@ -8,6 +8,12 @@
 //!
 //! Every operation carries the caller's [`SecurityContext`] because the real
 //! store is tenant-scoped; the in-memory fallback ignores it.
+//!
+//! Vectors are the store's business, not the producer's: the graph-storage
+//! gear computes a node's embedding itself from the payload paths its type
+//! declares, with the one provider the deployment runs, so the same model
+//! embeds both the stored text and the query. This contract therefore carries
+//! text only.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -56,27 +62,13 @@ pub trait GraphStore: Send + Sync {
     /// bug, so implementations may drop or reject such an edge.
     async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()>;
 
-    /// Upsert nodes with an aligned embedding per node (`embeddings[i]` is the
-    /// vector for `nodes[i]`, `None` when none was computed). Defaulted to
-    /// ignore the embeddings and delegate to [`Self::upsert_nodes`], so a store
-    /// without vector support (the in-memory one) needs no change.
-    async fn upsert_nodes_embedded(
-        &self,
-        ctx: &SecurityContext,
-        nodes: &[GtsNode],
-        _embeddings: &[Option<Vec<f32>>],
-    ) -> anyhow::Result<()> {
-        self.upsert_nodes(ctx, nodes).await
-    }
-
-    /// Rank nodes by relevance to a query. With `query_vector = Some(_)` the
-    /// store may use vector similarity (hybrid retrieval); otherwise it falls
-    /// back to a lexical match on `text`. Defaulted to empty for a store with no
-    /// search.
+    /// Rank nodes by relevance to a query. The real store runs hybrid
+    /// retrieval — lexical and vector arms fused — embedding the query with
+    /// the same provider that embedded the nodes. Defaulted to empty for a
+    /// store with no search.
     async fn search(
         &self,
         _ctx: &SecurityContext,
-        _query_vector: Option<&[f32]>,
         _text: &str,
         _limit: u32,
     ) -> anyhow::Result<Vec<GtsNode>> {
@@ -97,8 +89,8 @@ pub trait GraphStore: Send + Sync {
 }
 
 /// In-memory store: keyed by instance id, so a re-sync upserts. Not persistent
-/// — it resets when the backend restarts. Swap for the real graph-storage
-/// adapter once its API lands.
+/// — it resets when the backend restarts. The fallback for a build without the
+/// graph-storage gear.
 #[derive(Default)]
 pub struct InMemoryGraphStore {
     nodes: Mutex<HashMap<String, GtsNode>>,
@@ -182,11 +174,9 @@ impl GraphStore for InMemoryGraphStore {
     }
 
     /// Naive lexical fallback: substring match over each node's serialized value.
-    /// The in-memory store holds no embeddings, so `query_vector` is ignored.
     async fn search(
         &self,
         _ctx: &SecurityContext,
-        _query_vector: Option<&[f32]>,
         text: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<GtsNode>> {
