@@ -7,9 +7,9 @@ import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
-import { GearsCatalog } from "./gears-catalog";
+import { ComponentsCatalog } from "./components-catalog";
 import { ProjectKits } from "./kits";
-import { DocumentsTab } from "./documents";
+import { DocumentsTab, DocumentTypesTab } from "./documents";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -96,6 +96,10 @@ interface Filters {
   sort: "name-asc" | "name-desc";
   model: string; // chats: filter by model_id
   sections: { gears: boolean; upstreams: boolean; entities: boolean }; // system
+  gearKind: string; // gears: filter by crate kind
+  gearSort: "name-asc" | "name-desc" | "downloads-desc"; // gears
+  gearHideSdk: boolean; // gears: hide *-sdk crates
+  gearCategory: string; // gears: filter by category/domain
 }
 
 const DEFAULT_FILTERS: Filters = {
@@ -105,6 +109,10 @@ const DEFAULT_FILTERS: Filters = {
   sort: "name-asc",
   model: "",
   sections: { gears: true, upstreams: true, entities: true },
+  gearKind: "",
+  gearSort: "name-asc",
+  gearHideSdk: false,
+  gearCategory: "",
 };
 
 type PanelView = View | "dashboard";
@@ -118,6 +126,12 @@ function activeFilterCount(view: PanelView, f: Filters): number {
   }
   if (view === "chats" && f.model) n++;
   if (view === "system") n += Object.values(f.sections).filter((v) => !v).length;
+  if (view === "gears") {
+    if (f.gearKind) n++;
+    if (f.gearSort !== "name-asc") n++;
+    if (f.gearHideSdk) n++;
+    if (f.gearCategory.trim()) n++;
+  }
   return n;
 }
 
@@ -417,7 +431,7 @@ const NAV_SECTIONS: {
     items: [
       // Our published gears (crates.io → graph), and the system observability
       // surface.
-      { id: "gears", icon: "package", label: "Gears" },
+      { id: "gears", icon: "package", label: "Components" },
       { id: "system", icon: "cog", label: "System" },
     ],
   },
@@ -788,6 +802,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     });
   }, [token]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [componentCategories, setComponentCategories] = useState<string[]>([]);
   const [panelOpen, setPanelOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem("studio.filterPanel") !== "collapsed";
@@ -1607,7 +1622,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {/* The tenant hierarchy renders only inside the Admin area, under the flag. */}
         {view === "chats" && <ChatsView token={token} filters={filters} />}
         {view === "files" && <FilesView token={token} filters={filters} />}
-        {view === "gears" && <GearsCatalog token={token} />}
+        {view === "gears" && (
+          <ComponentsCatalog
+            token={token}
+            tenantId={orgAsSpace?.id}
+            query={filters.query}
+            kindFilter={filters.gearKind}
+            sortMode={filters.gearSort}
+            hideSdk={filters.gearHideSdk}
+            categoryFilter={filters.gearCategory}
+            onCategories={setComponentCategories}
+          />
+        )}
         {view === "system" && <SystemView token={token} filters={filters} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
@@ -1630,6 +1656,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           onChange={setFilters}
           open={panelOpen}
           onToggle={() => setPanelOpen((v) => !v)}
+          componentCategories={componentCategories}
         />
       )}
     </div>
@@ -1645,6 +1672,7 @@ function FilterPanel({
   onChange,
   open,
   onToggle,
+  componentCategories,
 }: {
   view: PanelView;
   token: string;
@@ -1652,6 +1680,7 @@ function FilterPanel({
   onChange: (f: Filters) => void;
   open: boolean;
   onToggle: () => void;
+  componentCategories: string[];
 }) {
   const [models, setModels] = useState<import("./api").Model[]>([]);
 
@@ -1668,7 +1697,7 @@ function FilterPanel({
 
   const count = activeFilterCount(view, filters);
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
-  const noFilters = view === "profile" || view === "dashboard" || view === "gears";
+  const noFilters = view === "profile" || view === "dashboard";
   const hasSearch = !noFilters && view !== "system";
 
   if (!open) {
@@ -1738,6 +1767,62 @@ function FilterPanel({
                   <option value="name-asc">Name A → Z</option>
                   <option value="name-desc">Name Z → A</option>
                 </select>
+              </div>
+            </>
+          )}
+
+          {view === "gears" && (
+            <>
+              <div className="filter-group">
+                <span className="lbl">Kind</span>
+                <select value={filters.gearKind} onChange={(e) => set({ gearKind: e.target.value })}>
+                  <option value="">All kinds</option>
+                  <option value="gear">gear</option>
+                  <option value="sdk">sdk</option>
+                  <option value="plugin">plugin</option>
+                  <option value="toolkit">toolkit</option>
+                  <option value="frontx">frontx</option>
+                </select>
+              </div>
+              <div className="filter-group">
+                <span className="lbl">Category</span>
+                <select
+                  value={filters.gearCategory}
+                  onChange={(e) => set({ gearCategory: e.target.value })}
+                >
+                  <option value="">All categories</option>
+                  {componentCategories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                  {filters.gearCategory && !componentCategories.includes(filters.gearCategory) && (
+                    <option value={filters.gearCategory}>{filters.gearCategory}</option>
+                  )}
+                </select>
+              </div>
+              <div className="filter-group">
+                <span className="lbl">Sort</span>
+                <select
+                  value={filters.gearSort}
+                  onChange={(e) => set({ gearSort: e.target.value as Filters["gearSort"] })}
+                >
+                  <option value="name-asc">Name A → Z</option>
+                  <option value="name-desc">Name Z → A</option>
+                  <option value="downloads-desc">Downloads</option>
+                </select>
+              </div>
+              <div className="filter-group">
+                <span className="lbl">Show</span>
+                <div className="chipset">
+                  <button
+                    type="button"
+                    className={`chip ${filters.gearHideSdk ? "on" : ""}`}
+                    onClick={() => set({ gearHideSdk: !filters.gearHideSdk })}
+                  >
+                    hide SDK crates
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -2260,6 +2345,9 @@ function ProjectsView({
         }}
         onChanged={onChanged}
       />
+      <div style={{ marginTop: 20 }}>
+        <DocumentTypesTab token={token} workspaceId={root.id} />
+      </div>
     </>
   );
 }
@@ -2282,7 +2370,16 @@ function WorkspaceProjects({
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newMode, setNewMode] = useState<import("./api").ProjectMode>("greenfield");
+  const [newKind, setNewKind] = useState<import("./api").ProjectKind>("new_gears");
+  const [conns, setConns] = useState<import("./api").Connection[]>([]);
+  const [connId, setConnId] = useState("");
+  const [repoMode, setRepoMode] = useState<"create" | "existing">("create");
+  const [repoName, setRepoName] = useState("");
+  const [owner, setOwner] = useState("");
+  const [isOrg, setIsOrg] = useState(false);
+  const [priv, setPriv] = useState(true);
+  const [remoteRepos, setRemoteRepos] = useState<import("./api").RemoteRepo[]>([]);
+  const [pickedRepo, setPickedRepo] = useState("");
   // Inline row editing (rename) + per-row busy for edit/delete.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -2306,6 +2403,35 @@ function WorkspaceProjects({
     void reload();
   }, [reload]);
 
+  // Load the workspace's connections when the create card opens.
+  useEffect(() => {
+    if (!creating) return;
+    api
+      .connections(token, workspace.id)
+      .then((r) => setConns(r.items ?? []))
+      .catch(() => {});
+  }, [creating, token, workspace.id]);
+
+  // Repo mode allowed per project kind: product always creates a new repo,
+  // an imported existing app always picks one, new-gears defaults to create.
+  useEffect(() => {
+    if (newKind === "product") setRepoMode("create");
+    else if (newKind === "existing") setRepoMode("existing");
+    else setRepoMode("create");
+  }, [newKind]);
+
+  // When picking an existing repo, list the chosen connection's repositories.
+  useEffect(() => {
+    if (!creating || repoMode !== "existing" || !connId) return;
+    api
+      .connectionRepositories(token, connId, workspace.id)
+      .then((r) => setRemoteRepos(r.items ?? []))
+      .catch(() => setRemoteRepos([]));
+  }, [creating, repoMode, connId, token, workspace.id]);
+
+  const repoDir = (fullPath: string) =>
+    (fullPath.split("/").pop() ?? fullPath).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+
   const create = async () => {
     const name = newName.trim();
     if (!name) return;
@@ -2318,9 +2444,63 @@ function WorkspaceProjects({
         tenant_type: TENANT_TYPES.project,
       });
       await api
-        .putProjectConfig(token, tenant.id, { mode: newMode, stages: [], status: "draft" })
+        .putProjectConfig(token, tenant.id, {
+          mode: newKind === "existing" ? "modernize" : "greenfield",
+          kind: newKind,
+          stages: [],
+          status: "draft",
+        })
         .catch(() => {});
+
+      // Resolve the project's repository: create a new one, or attach an existing.
+      const conn = conns.find((c) => c.id === connId);
+      let repoFull = "";
+      let branch = "main";
+      let cloneUrl = "";
+      if (repoMode === "create") {
+        if (!repoName.trim()) throw new Error("enter a name for the new repository");
+        const r = await api.createProjectRepo(token, tenant.id, {
+          tenant: workspace.id,
+          connection_id: connId || null,
+          owner: isOrg ? owner.trim() : undefined,
+          is_org: isOrg,
+          name: repoName.trim(),
+          private: priv,
+        });
+        repoFull = r.full_name;
+        branch = r.default_branch || "main";
+        cloneUrl = `https://github.com/${r.full_name}.git`;
+      } else {
+        const picked = remoteRepos.find((r) => r.full_path === pickedRepo);
+        if (!picked) throw new Error("pick a repository to attach");
+        repoFull = picked.full_path;
+        branch = picked.default_branch || "main";
+        cloneUrl = picked.clone_url;
+        await api.setProjectGearRepo(token, tenant.id, {
+          tenant: workspace.id,
+          connection_id: connId || null,
+          repo: repoFull,
+          branch,
+        });
+      }
+
+      // Add it to the project's repositories list (shown by Repositories/Sources).
+      const s = (await api.workspaceSettings(token, tenant.id).catch(() => null)) ?? {};
+      const entry: import("./api").RepoEntry = {
+        name: repoDir(repoFull),
+        source: "github",
+        url: cloneUrl,
+        target: repoDir(repoFull),
+        branch,
+        token_ref: conn?.secret_ref,
+      };
+      await api
+        .putWorkspaceSettings(token, tenant.id, { ...s, repos: [...(s.repos ?? []), entry] })
+        .catch(() => {});
+
       setNewName("");
+      setRepoName("");
+      setPickedRepo("");
       setCreating(false);
       await reload();
       onChanged();
@@ -2391,25 +2571,112 @@ function WorkspaceProjects({
           <div className="card-head">
             <h2>New project</h2>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
             <input
               placeholder="Project name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
-            <select
-              value={newMode}
-              onChange={(e) => setNewMode(e.target.value as import("./api").ProjectMode)}
-            >
-              <option value="greenfield">Build something new</option>
-              <option value="modernize">Modernize existing</option>
-            </select>
-            <button className="primary" onClick={() => void create()} disabled={!newName.trim() || busy}>
-              {busy ? "Creating…" : "Create"}
-            </button>
-            <button className="ghost" onClick={() => setCreating(false)}>
-              Cancel
-            </button>
+
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {(
+                  [
+                    ["new_gears", "New Gears", "Build new gears. Create a new repo, or use an existing gear store."],
+                    ["product", "Product from Gears", "Assemble a product from gears. A new repository is created."],
+                    ["existing", "Existing Gears app", "Import a gears-based app already built. Attach its repository."],
+                  ] as [import("./api").ProjectKind, string, string][]
+                ).map(([k, title, desc]) => (
+                  <label
+                    key={k}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "flex-start",
+                      padding: "8px 10px",
+                      border: "1px solid var(--border,#e2e4e9)",
+                      borderRadius: 8,
+                      background: newKind === k ? "var(--accent-soft,#eef2ff)" : "transparent",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="pkind"
+                      checked={newKind === k}
+                      onChange={() => setNewKind(k)}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>{desc}</div>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Repository</div>
+              <select value={connId} onChange={(e) => setConnId(e.target.value)} style={{ marginBottom: 8, width: "100%" }}>
+                <option value="">First GitHub connection</option>
+                {conns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label} · {c.provider} · {c.account}
+                  </option>
+                ))}
+              </select>
+
+              {newKind === "new_gears" && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 12 }}>
+                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    <input type="radio" name="repomode" checked={repoMode === "create"} onChange={() => setRepoMode("create")} />
+                    Create new
+                  </label>
+                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    <input type="radio" name="repomode" checked={repoMode === "existing"} onChange={() => setRepoMode("existing")} />
+                    Use existing gear store
+                  </label>
+                </div>
+              )}
+
+              {repoMode === "create" ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <input placeholder="new repo name" value={repoName} onChange={(e) => setRepoName(e.target.value)} />
+                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    <input type="checkbox" checked={isOrg} onChange={(e) => setIsOrg(e.target.checked)} />
+                    under org
+                  </label>
+                  {isOrg && (
+                    <input placeholder="org login" value={owner} onChange={(e) => setOwner(e.target.value)} style={{ width: 140 }} />
+                  )}
+                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    <input type="checkbox" checked={priv} onChange={(e) => setPriv(e.target.checked)} />
+                    private
+                  </label>
+                </div>
+              ) : (
+                <select value={pickedRepo} onChange={(e) => setPickedRepo(e.target.value)} style={{ width: "100%" }} disabled={!connId}>
+                  <option value="">{connId ? "— select a repository —" : "pick a connection first"}</option>
+                  {remoteRepos.map((r) => (
+                    <option key={r.id} value={r.full_path}>
+                      {r.full_path}
+                      {r.visibility ? ` · ${r.visibility}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="primary" onClick={() => void create()} disabled={!newName.trim() || busy}>
+                {busy ? "Creating…" : "Create project"}
+              </button>
+              <button className="ghost" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3214,8 +3481,13 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
 
   const count = (v: unknown): string => {
     if (Array.isArray(v)) return String(v.length);
-    if (v && typeof v === "object" && "items" in v && Array.isArray((v as { items: unknown[] }).items))
-      return String((v as { items: unknown[] }).items.length);
+    if (v && typeof v === "object") {
+      // Different gears wrap their list under different keys; accept the common ones.
+      for (const key of ["items", "gears", "nodes", "data"]) {
+        const arr = (v as Record<string, unknown>)[key];
+        if (Array.isArray(arr)) return String(arr.length);
+      }
+    }
     return "—";
   };
 
@@ -3750,28 +4022,60 @@ function IngestedArtifacts({
   scope?: string;
   refreshKey: number;
 }) {
+  const PAGE = 50;
   const [nodes, setNodes] = useState<import("./api").ArtifactNode[] | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [repoFilter, setRepoFilter] = useState("");
+  const [sort, setSort] = useState<"updated" | "">("updated");
+  const [qInput, setQInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [repos, setRepos] = useState<import("./api").ArtifactNode[]>([]);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"issue" | "pull_request" | "file">("issue");
 
-  const reload = useCallback(() => {
-    setErr(null);
-    setNodes(null);
-    setNextCursor(undefined);
-    api
-      .listArtifactNodes(token, tab, scope, undefined, 50)
-      .then((r) => {
-        setNodes(r.nodes ?? []);
-        setNextCursor(r.next_cursor);
-      })
-      .catch((e) => setErr(errText(e)));
-  }, [token, scope, tab]);
+  const load = useCallback(
+    (nextOffset: number) => {
+      setErr(null);
+      setBusy(true);
+      api
+        .listArtifactNodes(token, tab, scope, undefined, PAGE, {
+          repo: repoFilter || undefined,
+          sort: sort || undefined,
+          q: query || undefined,
+          offset: nextOffset,
+        })
+        .then((r) => {
+          setNodes(r.nodes ?? []);
+          setTotal(r.total ?? (r.nodes?.length ?? 0));
+          setOffset(nextOffset);
+        })
+        .catch((e) => setErr(errText(e)))
+        .finally(() => setBusy(false));
+    },
+    [token, scope, tab, repoFilter, sort, query],
+  );
 
+  // First page whenever the tab, scope, repo filter or sort changes.
   useEffect(() => {
-    reload();
-  }, [reload, refreshKey]);
+    setNodes(null);
+    load(0);
+  }, [load, refreshKey]);
+
+  // The repositories in scope, for the repo-filter dropdown.
+  useEffect(() => {
+    let alive = true;
+    api
+      .listArtifactNodes(token, "repo", scope, undefined, 200)
+      .then((r) => {
+        if (alive) setRepos(r.nodes ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [token, scope]);
 
   const rows = nodes ?? [];
 
@@ -3793,12 +4097,12 @@ function IngestedArtifacts({
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Ingested{nodes ? ` · ${nodes.length}${nextCursor ? "+" : ""}` : ""}</h2>
+        <h2>Ingested{total != null ? ` · ${total}` : ""}</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="ghost" onClick={openGraphInStudio} title="Open the Workspace Graph in the embedded Studio IDE">
             Open graph in Studio
           </button>
-          <button className="ghost" onClick={reload}>
+          <button className="ghost" onClick={() => load(offset)} disabled={busy}>
             Refresh
           </button>
         </div>
@@ -3821,6 +4125,52 @@ function IngestedArtifacts({
           Files
         </button>
       </div>
+      <div className="row" style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label style={{ fontSize: 12, opacity: 0.7 }}>Repo</label>
+        <select value={repoFilter} onChange={(e) => setRepoFilter(e.target.value)} disabled={busy}>
+          <option value="">All repositories</option>
+          {repos.map((r) => (
+            <option key={r.instance_id} value={r.instance_id}>
+              {String(r.value.full_path ?? r.value.name ?? r.instance_id)}
+            </option>
+          ))}
+        </select>
+        <label style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>Sort</label>
+        <select value={sort} onChange={(e) => setSort(e.target.value as "updated" | "")} disabled={busy}>
+          <option value="updated">Updated (newest)</option>
+          <option value="">Default</option>
+        </select>
+        <form
+          style={{ display: "flex", gap: 6, marginLeft: "auto" }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            setQuery(qInput.trim());
+          }}
+        >
+          <input
+            placeholder="Search title / author…"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            style={{ minWidth: 180 }}
+          />
+          <button className="ghost" type="submit" disabled={busy}>
+            Search
+          </button>
+          {query && (
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setQInput("");
+                setQuery("");
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </form>
+      </div>
       {err && <p className="error">{err}</p>}
       {nodes === null ? (
         <p className="empty">Loading artifacts…</p>
@@ -3830,10 +4180,7 @@ function IngestedArtifacts({
         </p>
       ) : tab === "file" ? (
         <ul className="rows">
-          {rows
-            .slice()
-            .sort((a, b) => (a.value.path ?? "").localeCompare(b.value.path ?? ""))
-            .map((n) => {
+          {rows.map((n) => {
               const v = n.value;
               const kb = typeof v.size === "number" ? `${(v.size / 1024).toFixed(1)} KB` : "";
               return (
@@ -3862,10 +4209,7 @@ function IngestedArtifacts({
         </ul>
       ) : (
         <ul className="rows">
-          {rows
-            .slice()
-            .sort((a, b) => (b.value.number ?? 0) - (a.value.number ?? 0))
-            .map((n) => {
+          {rows.map((n) => {
               const v = n.value;
               const url = typeof v.url === "string" ? v.url : undefined;
               return (
@@ -3897,26 +4241,21 @@ function IngestedArtifacts({
             })}
         </ul>
       )}
-      {nextCursor && (
-        <div style={{ marginTop: 12 }}>
+      {total != null && total > PAGE && (
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <button className="ghost" disabled={busy || offset === 0} onClick={() => load(Math.max(0, offset - PAGE))}>
+            ← Prev
+          </button>
+          <span style={{ fontSize: 12, opacity: 0.7 }}>
+            {rows.length > 0 ? `${offset + 1}–${offset + rows.length}` : "0"} of {total} ·
+            {" "}page {Math.floor(offset / PAGE) + 1} of {Math.max(1, Math.ceil(total / PAGE))}
+          </span>
           <button
             className="ghost"
-            disabled={loadingMore}
-            onClick={async () => {
-              setLoadingMore(true);
-              setErr(null);
-              try {
-                const page = await api.listArtifactNodes(token, tab, scope, nextCursor, 50);
-                setNodes((current) => [...(current ?? []), ...(page.nodes ?? [])]);
-                setNextCursor(page.next_cursor);
-              } catch (e) {
-                setErr(errText(e));
-              } finally {
-                setLoadingMore(false);
-              }
-            }}
+            disabled={busy || offset + PAGE >= total}
+            onClick={() => load(offset + PAGE)}
           >
-            {loadingMore ? "Loading…" : "Load more"}
+            Next →
           </button>
         </div>
       )}

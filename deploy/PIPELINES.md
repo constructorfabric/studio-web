@@ -192,3 +192,19 @@ Migration order:
 4. Split the Helm releases and migrate dev ownership.
 5. Promote the proven model to test.
 6. Design and provision production separately.
+## Service image and deployment policy
+
+`Build Images` runs after tests for every internal branch push. It calculates
+the changed service components and rebuilds only those; the other components
+are copied from the last known-good `edge` snapshot so every commit still gets
+a complete immutable `sha-<full-commit>` image set.
+
+- A branch snapshot may be deployed only to `dev`. In **Deploy Services**, set
+  `source_ref` to the branch name and leave `image_tag` empty; the workflow
+  resolves the exact commit and its `sha-…` tag.
+- A stable release tag such as `v1.4.0` may be deployed to `dev` or `test` and
+  advances `latest` only after all images are published.
+- A prerelease tag such as `v1.4.0-rc.1` may also be deployed to `dev` or
+  `test`, but never changes `latest`.
+- `image_tag`, when supplied, must exactly match the resolved `source_ref`.
+  This prevents deploying an image built from a different commit by mistake.

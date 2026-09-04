@@ -1,19 +1,19 @@
 name: Build Images
 
 # Four ways in:
-#   * a `v*` tag — build service images, publish `latest`, and create a release.
+#   * a stable `v*` tag — build service images, publish `latest`, and create a release.
+#   * a prerelease `v*-<label>` tag — build service images and create a
+#     prerelease without changing the stable `latest` channel.
 #   * an `infra-v*` tag — build graph PostgreSQL and Keycloak images, publish
 #     `infra-latest`, and create a separate infrastructure release.
-#   * a push to main — images only, tagged `edge` and `sha-<full-commit>`, so there is
-#     something to pull between releases (studio-session already expects an
-#     `:edge` tag for the Theia image; this gives the stack the same habit).
-#   * manual — publish an immutable service snapshot for the selected branch.
-#     A feature branch NEVER moves `edge` or `latest`, and its sha tag may be
-#     deployed only to dev (enforced independently by deploy.yml).
+#   * a branch push — publish a complete immutable `sha-<full-commit>` snapshot.
+#     Main also advances `edge`; a feature branch never moves `edge` or `latest`
+#     and its snapshot may be deployed only to dev (enforced by deploy.yml).
+#   * manual — rebuild an immutable snapshot for the selected ref.
 on:
   push:
     tags: ["v*", "infra-v*"]
-    branches: ["main"]
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       publish_latest:
@@ -57,7 +57,7 @@ jobs:
             scope=services
           elif [[ "${{ github.ref_name }}" =~ ^infra-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             scope=infra
-          elif [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+          elif [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
             scope=services
           else
             echo "Unsupported release tag: ${{ github.ref_name }}" >&2
@@ -151,7 +151,7 @@ jobs:
             fi
           }
 
-          backend="$(selected '^studio-backend/')"
+          backend="$(selected '^(studio-backend/|rust-toolchain\.toml$)')"
           frontend="$(selected '^studio-frontend/')"
           prototype="$(selected '^studio-frontend-prototype/')"
           theia="$(selected '^theia/')"
@@ -371,7 +371,13 @@ jobs:
           set -euo pipefail
           immutable="sha-$GITHUB_SHA"
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            promotions="${{ github.ref_name }} latest"
+            # A prerelease is deployable by its immutable human-readable tag,
+            # but it must never replace the stable production/default channel.
+            if [[ "${{ github.ref_name }}" == *-* ]]; then
+              promotions="${{ github.ref_name }}"
+            else
+              promotions="${{ github.ref_name }} latest"
+            fi
           elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
             if [ "${{ inputs.publish_latest }}" = "true" ]; then
               promotions="edge latest"

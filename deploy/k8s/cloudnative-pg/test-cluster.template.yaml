@@ -38,21 +38,9 @@ spec:
     initdb:
       database: studio
       owner: studio
-      # Run as postgres against the postgres database; each statement is sent
-      # separately, which is required because CREATE DATABASE cannot run in a
-      # transaction block.
-      postInitSQL:
-        - CREATE DATABASE studio_types_registry OWNER studio
-        - CREATE DATABASE studio_nodes_registry OWNER studio
-        - CREATE DATABASE studio_resource_group OWNER studio
-        - CREATE DATABASE studio_account_management OWNER studio
-        - CREATE DATABASE studio_settings OWNER studio
-        - CREATE DATABASE studio_file_storage OWNER studio
-        - CREATE DATABASE studio_mini_chat OWNER studio
-        - CREATE DATABASE studio_credstore OWNER studio
-        - CREATE DATABASE studio_credstore_values OWNER studio
-        - CREATE DATABASE graph_storage OWNER studio
-        - CREATE DATABASE studio_documents OWNER studio
+      # Per-gear databases are deliberately not listed here: Studio's Helm
+      # bootstrap Job discovers them from the effective backend config on every
+      # upgrade, so adding a gear never requires recreating this cluster.
   storage:
     storageClass: cinder-postgres
     size: 20Gi

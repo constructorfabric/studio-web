@@ -30,6 +30,7 @@ jobs:
           filters: |
             backend:
               - 'studio-backend/**'
+              - 'rust-toolchain.toml'
               - '.github/workflows/**'
             frontend:
               - 'studio-frontend/**'

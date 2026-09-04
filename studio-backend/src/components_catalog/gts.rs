@@ -19,9 +19,17 @@ pub const CRATE_VERSION_TYPE: &str = "gts.cf.studio.catalog.crate_version.v1~";
 /// Studio-managed, editable catalog metadata for one gear. It is stored
 /// independently from crates.io data, so a sync cannot erase it.
 pub const GEAR_PROFILE_TYPE: &str = "gts.cf.studio.catalog.gear_profile.v1~";
+/// The gear repository connected to one project — where that project's gears
+/// live and where scaffolded gears are written. Keyed on the project id.
+pub const PROJECT_GEAR_REPO_TYPE: &str = "gts.cf.studio.catalog.project_gear_repo.v1~";
 
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 3] = [GEAR_TYPE, CRATE_VERSION_TYPE, GEAR_PROFILE_TYPE];
+pub const ALL_NODE_TYPES: [&str; 4] = [
+    GEAR_TYPE,
+    CRATE_VERSION_TYPE,
+    GEAR_PROFILE_TYPE,
+    PROJECT_GEAR_REPO_TYPE,
+];
 
 /// gear → crate_version — a version published under this crate.
 ///
@@ -80,7 +88,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 3] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 4] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -95,6 +103,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 3] = [
         GEAR_PROFILE_TYPE,
         "GearProfile",
         "Editable Studio metadata for one gear, kept separately from crates.io sync data.",
+    ),
+    (
+        PROJECT_GEAR_REPO_TYPE,
+        "ProjectGearRepo",
+        "The gear repository connected to a project (connector, repo, branch).",
     ),
 ];
 
@@ -213,6 +226,21 @@ pub fn gear_profile_node(name: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: GEAR_PROFILE_TYPE,
         instance_id: gear_profile_instance_id(name),
+        value,
+    }
+}
+
+/// The instance id of a project's gear-repo node (keyed on the project id).
+pub fn project_gear_repo_instance_id(project_id: &str) -> String {
+    anon_id(&["project_gear_repo", project_id])
+}
+
+/// The gear repository connected to one project. `value` carries `project_id`
+/// plus `{connection_id, repo, branch}`.
+pub fn project_gear_repo_node(project_id: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: PROJECT_GEAR_REPO_TYPE,
+        instance_id: project_gear_repo_instance_id(project_id),
         value,
     }
 }

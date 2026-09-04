@@ -33,6 +33,22 @@ backend:
       user: user
       password: password
       dbname: dbname
+  # Run an idempotent pre-install/pre-upgrade Job before the backend Deployment.
+  # It discovers all PostgreSQL gear databases from config/k8s.yaml, creates
+  # only missing databases, and runs forward migrations. Existing databases,
+  # schemas and data are never removed. Leave existingSecret empty to reuse the
+  # app connection; set a dedicated CREATEDB-capable role for least privilege.
+  bootstrap:
+    enabled: true
+    existingSecret: ""
+    keys:
+      host: host
+      port: port
+      user: user
+      password: password
+      dbname: dbname
+    backoffLimit: 1
+    activeDeadlineSeconds: 600
   # Platform IDP (OIDC issuer + client) — external, per-service Secret
   # (keys: issuer_url, client_id, client_secret).
   auth:

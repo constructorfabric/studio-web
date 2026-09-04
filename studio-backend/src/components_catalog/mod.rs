@@ -1,4 +1,4 @@
-//! studio-gears-catalog — a connector to crates.io that catalogues "our gears".
+//! studio-components-catalog — a connector to crates.io that catalogues "our gears".
 //!
 //! Lists every crate under a keyword (constructorfabric), pulls each crate's
 //! detail and version history from the public crates.io API, and stores them in
@@ -9,7 +9,9 @@
 
 mod cratesio;
 mod gts;
+mod repo_enrich;
 mod rest;
+mod scaffold;
 mod service;
 mod tasks;
 
@@ -28,28 +30,28 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use service::CatalogService;
 
 /// Default crates.io keyword to catalogue. Overridable via
-/// `STUDIO_GEARS_CATALOG_KEYWORD`.
+/// `STUDIO_COMPONENTS_CATALOG_KEYWORD`.
 const DEFAULT_KEYWORD: &str = "constructorfabric";
 
 #[toolkit::gear(
-    name = "studio-gears-catalog",
-    deps = [types_registry],
+    name = "studio-components-catalog",
+    deps = [types_registry, account_management, credstore],
     capabilities = [rest]
 )]
 #[derive(Default)]
-pub struct StudioGearsCatalogGear {
+pub struct StudioComponentsCatalogGear {
     service: std::sync::OnceLock<Arc<CatalogService>>,
 }
 
 #[async_trait]
-impl Gear for StudioGearsCatalogGear {
+impl Gear for StudioComponentsCatalogGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         // Register the catalog GTS type schemas (idempotent). The graph store is
         // resolved later, in the REST phase, where every gear is initialized.
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry.register(gts::type_schemas()).await?;
         RegisterResult::ensure_all_ok(&results)?;
-        info!("studio-gears-catalog: types registered");
+        info!("studio-components-catalog: types registered");
         Ok(())
     }
 }
@@ -65,12 +67,14 @@ fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
             .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
         {
             Ok(client) => {
-                info!("studio-gears-catalog: using the graph-storage gear as the catalog store");
+                info!(
+                    "studio-components-catalog: using the graph-storage gear as the catalog store"
+                );
                 return Arc::new(service::GraphSink::new(client));
             }
             Err(e) => warn!(
                 error = %e,
-                "studio-gears-catalog: graph-storage client unavailable — using the in-memory store"
+                "studio-components-catalog: graph-storage client unavailable — using the in-memory store"
             ),
         }
     }
@@ -78,23 +82,54 @@ fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
     Arc::new(service::MemorySink::default())
 }
 
+/// Build the repository enricher when a GitHub connector is linked and the
+/// catalogue tenant is configured (see [`repo_enrich`]). Best-effort: any
+/// missing piece disables enrichment, leaving a crates.io-only catalogue.
+fn build_connectors(ctx: &GearCtx) -> Option<Arc<crate::connectors::service::ConnectorService>> {
+    use crate::connectors::driver::ConnectorDriver;
+    let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
+    for id in crate::connectors::source_driver_ids() {
+        if let Ok(d) = ctx
+            .client_hub()
+            .get_scoped::<dyn ConnectorDriver>(&toolkit::client_hub::ClientScope::gts_id(id))
+        {
+            drivers.push((id.to_string(), d));
+        }
+    }
+    if drivers.is_empty() {
+        return None;
+    }
+    let am = ctx
+        .client_hub()
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+        .ok()?;
+    let credstore = ctx
+        .client_hub()
+        .get::<dyn credstore_sdk::CredStoreClientV1>()
+        .ok()?;
+    Some(crate::connectors::service::ConnectorService::new(
+        am, credstore, drivers,
+    ))
+}
+
 #[async_trait]
-impl RestApiCapability for StudioGearsCatalogGear {
+impl RestApiCapability for StudioComponentsCatalogGear {
     fn register_rest(
         &self,
         ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
-        let keyword = std::env::var("STUDIO_GEARS_CATALOG_KEYWORD")
+        let keyword = std::env::var("STUDIO_COMPONENTS_CATALOG_KEYWORD")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_KEYWORD.to_string());
-        info!(keyword = %keyword, "studio-gears-catalog: cataloguing crates.io keyword");
+        info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
         let sink = build_sink(ctx);
-        let service = Arc::new(CatalogService::new(sink, keyword));
+        let connectors = build_connectors(ctx);
+        let service = Arc::new(CatalogService::new(sink, keyword, connectors));
         let _ = self.service.set(service.clone());
         Ok(rest::register_routes(router, openapi, service))
     }

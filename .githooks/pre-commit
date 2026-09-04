@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+# Pre-commit hook: block a commit when studio-backend is not rustfmt-clean, so
+# CI's `cargo fmt --check` gate never trips again.
+#
+# Enable once per clone (shared, tracked hooks):
+#   git config core.hooksPath .githooks
+#
+# Emergency bypass (use sparingly):
+#   git commit --no-verify
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+manifest="$root/studio-backend/Cargo.toml"
+
+# Nothing to check if the backend manifest isn't here.
+[ -f "$manifest" ] || exit 0
+
+# On machines without the Rust toolchain (e.g. some CI-less checkouts) skip
+# gracefully — CI still enforces the gate as the last line of defence.
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "pre-commit: cargo not found — skipping Rust fmt check (CI still enforces it)."
+  exit 0
+fi
+
+if ! cargo fmt --manifest-path "$manifest" --all -- --check >/dev/null 2>&1; then
+  echo "──────────────────────────────────────────────────────────────"
+  echo "pre-commit: studio-backend is NOT rustfmt-clean — commit blocked."
+  echo
+  echo "  Fix it:   cargo fmt --manifest-path studio-backend/Cargo.toml --all"
+  echo "  Re-stage: git add -u  &&  git commit"
+  echo "  Bypass:   git commit --no-verify   (only if you must)"
+  echo "──────────────────────────────────────────────────────────────"
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,82 @@
+{{- if .Values.backend.bootstrap.enabled }}
+{{- $bootstrapSecret := default .Values.backend.database.existingSecret .Values.backend.bootstrap.existingSecret }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "studio-web.fullname" . }}-database-bootstrap
+  labels:
+    {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database-bootstrap
+  annotations:
+    # Run before regular release resources. A failed bootstrap blocks the
+    # upgrade, leaving the currently running backend untouched.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.backend.bootstrap.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.backend.bootstrap.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database-bootstrap
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: database-bootstrap
+          image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required for database bootstrap" .Values.backend.image.tag }}"
+          imagePullPolicy: Always
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "bootstrap", "--apply"]
+          env:
+            - name: STUDIO_SESSION_ENABLED
+              value: {{ .Values.backend.sessions.enabled | quote }}
+            - name: STUDIO_SESSION_IMAGE
+              value: "{{ .Values.backend.sessions.image.repository }}:{{ default .Values.backend.image.tag .Values.backend.sessions.image.tag }}"
+            - name: STUDIO_SESSION_GATEWAY_URL
+              value: "http://{{ include "studio-web.fullname" . }}-backend/cf"
+            # The application connection is still required to expand the
+            # backend config and to run all gear migrations after provisioning.
+            - name: STUDIO_PG_HOST
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.host }} } }
+            - name: STUDIO_PG_PORT
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.port }} } }
+            - name: STUDIO_PG_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.user }} } }
+            - name: STUDIO_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.password }} } }
+            - name: STUDIO_PG_DBNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.dbname }} } }
+            - name: STUDIO_OIDC_ISSUER
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
+            - name: STUDIO_IDP_ADMIN_BASE_URL
+              value: {{ .Values.backend.idpAdmin.baseUrl | quote }}
+            - name: STUDIO_IDP_ADMIN_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: idp_admin_secret, optional: true } }
+            - name: STUDIO_FS_SIGNING_SEED
+              {{- if .Values.backend.fileStorage.enabled }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: signing_seed } }
+              {{- else }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
+              {{- end }}
+            # Optional dedicated CREATEDB-capable provisioner. The code falls
+            # back to STUDIO_PG_* when this secret is the app secret.
+            - name: STUDIO_PG_BOOTSTRAP_HOST
+              valueFrom: { secretKeyRef: { name: {{ $bootstrapSecret }}, key: {{ .Values.backend.bootstrap.keys.host }} } }
+            - name: STUDIO_PG_BOOTSTRAP_PORT
+              valueFrom: { secretKeyRef: { name: {{ $bootstrapSecret }}, key: {{ .Values.backend.bootstrap.keys.port }} } }
+            - name: STUDIO_PG_BOOTSTRAP_USER
+              valueFrom: { secretKeyRef: { name: {{ $bootstrapSecret }}, key: {{ .Values.backend.bootstrap.keys.user }} } }
+            - name: STUDIO_PG_BOOTSTRAP_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $bootstrapSecret }}, key: {{ .Values.backend.bootstrap.keys.password }} } }
+            - name: STUDIO_PG_BOOTSTRAP_DBNAME
+              valueFrom: { secretKeyRef: { name: {{ $bootstrapSecret }}, key: {{ .Values.backend.bootstrap.keys.dbname }} } }
+            - name: STUDIO_PG_DATABASE_OWNER
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: {{ .Values.backend.database.keys.user }} } }
+{{- end }}

@@ -1,0 +1,907 @@
+{
+ "version": "1.0",
+ "commit": "53fbda07",
+ "readAt": "2026-09-02",
+ "repo": "constructorfabric/gears-rust",
+ "sourceClasses": {
+  "repo": {
+   "label": "In the tree",
+   "hint": "Read from a file at the pinned commit."
+  },
+  "api": {
+   "label": "GitHub or crates.io",
+   "hint": "Read from the GitHub API, tags, or the registry."
+  },
+  "manual": {
+   "label": "Manual entry",
+   "hint": "No file holds it; someone records it once."
+  },
+  "none": {
+   "label": "No source",
+   "hint": "Nothing in the repository defines it today."
+  }
+ },
+ "groups": [
+  {
+   "id": "summary",
+   "title": "Summary",
+   "icon": "S",
+   "fields": [
+    {
+     "key": "description",
+     "label": "Description",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "category",
+     "label": "Category / domain",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml"
+     },
+     "kind": "label",
+     "lamp": false
+    },
+    {
+     "key": "path",
+     "label": "Repository path",
+     "source": {
+      "class": "repo",
+      "ref": "workspace tree"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "crates",
+     "label": "Crates",
+     "source": {
+      "class": "repo",
+      "ref": "Cargo.toml"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "version",
+     "label": "Version",
+     "source": {
+      "class": "repo",
+      "ref": "Cargo.toml"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "published",
+     "label": "Published",
+     "source": {
+      "class": "api",
+      "ref": "git tags"
+     },
+     "kind": "bool",
+     "lamp": true
+    },
+    {
+     "key": "runtime",
+     "label": "Runtime form",
+     "source": {
+      "class": "repo",
+      "ref": "crate layout"
+     },
+     "kind": "label",
+     "lamp": false
+    },
+    {
+     "key": "lifecycle",
+     "label": "Lifecycle status",
+     "source": {
+      "class": "repo",
+      "ref": "rule over tags and E2E"
+     },
+     "example": "in requirements \u00b7 in design \u00b7 in development \u00b7 in qa \u00b7 in prod \u00b7 mature",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "ordered": true,
+      "values": [
+       "in requirements",
+       "in design",
+       "in development",
+       "in qa",
+       "in prod",
+       "mature"
+      ],
+      "format": "one value",
+      "wouldComeFrom": "a lifecycle field in gear.toml; until then, a rule over spec presence, release tags and test depth",
+      "derivable": "by rule"
+     }
+    }
+   ]
+  },
+  {
+   "id": "responsibility",
+   "title": "Responsibility",
+   "icon": "R",
+   "fields": [
+    {
+     "key": "owner",
+     "label": "Path owner",
+     "source": {
+      "class": "repo",
+      "ref": "CODEOWNERS"
+     },
+     "kind": "status",
+     "lamp": true
+    },
+    {
+     "key": "maintainer",
+     "label": "Maintainer approval",
+     "source": {
+      "class": "repo",
+      "ref": "MAINTAINERS.md"
+     },
+     "kind": "status",
+     "lamp": false
+    },
+    {
+     "key": "experts",
+     "label": "Code experts",
+     "source": {
+      "class": "api",
+      "ref": "commit history"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "pm",
+     "label": "Product manager",
+     "source": {
+      "class": "none",
+      "ref": "no source"
+     },
+     "example": "the PM who owns this Gear's roadmap line",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "person",
+      "format": "@handle or Name <email>",
+      "wouldComeFrom": "a product-manager field in gear.toml, or an OWNERS-style file",
+      "derivable": "no"
+     }
+    },
+    {
+     "key": "archreviewer",
+     "label": "Architecture reviewer",
+     "source": {
+      "class": "none",
+      "ref": "no source"
+     },
+     "example": "named per change type",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "person",
+      "format": "@handle or @org/team",
+      "wouldComeFrom": "a review-routing map, or a CODEOWNERS entry scoped to docs/DESIGN.md and docs/ADR/",
+      "derivable": "no"
+     }
+    },
+    {
+     "key": "support",
+     "label": "3rd-line support",
+     "source": {
+      "class": "none",
+      "ref": "no source"
+     },
+     "example": "the on-call rota for this Gear",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "person",
+      "format": "@org/team or a rota name",
+      "wouldComeFrom": "an on-call declaration; nothing in the repository names one",
+      "derivable": "no"
+     }
+    }
+   ]
+  },
+  {
+   "id": "spec",
+   "title": "Specification",
+   "icon": "P",
+   "fields": [
+    {
+     "key": "prd",
+     "label": "PRD",
+     "source": {
+      "class": "repo",
+      "ref": "docs/PRD.md"
+     },
+     "kind": "docstate",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "values": [
+       "done",
+       "in progress",
+       "N/A"
+      ],
+      "format": "one value",
+      "wouldComeFrom": "a status field in the document's front matter; until then, presence plus open TBD/TODO markers",
+      "derivable": "by rule"
+     }
+    },
+    {
+     "key": "design",
+     "label": "Design",
+     "source": {
+      "class": "repo",
+      "ref": "docs/DESIGN.md"
+     },
+     "kind": "docstate",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "values": [
+       "done",
+       "in progress",
+       "N/A"
+      ],
+      "format": "one value",
+      "wouldComeFrom": "a status field in the document's front matter; until then, presence plus open TBD/TODO markers",
+      "derivable": "by rule"
+     }
+    },
+    {
+     "key": "decomp",
+     "label": "Decomposition",
+     "source": {
+      "class": "repo",
+      "ref": "docs/DECOMPOSITION.md"
+     },
+     "kind": "docstate",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "values": [
+       "done",
+       "in progress",
+       "N/A"
+      ],
+      "format": "one value",
+      "wouldComeFrom": "a status field in the document's front matter; until then, presence plus open TBD/TODO markers",
+      "derivable": "by rule"
+     }
+    },
+    {
+     "key": "upstream",
+     "label": "Upstream requirements",
+     "source": {
+      "class": "repo",
+      "ref": "docs/UPSTREAM_REQS.md"
+     },
+     "kind": "docstate",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "values": [
+       "done",
+       "in progress",
+       "N/A"
+      ],
+      "format": "one value",
+      "wouldComeFrom": "a status field in the document's front matter; until then, presence plus open TBD/TODO markers",
+      "derivable": "by rule"
+     }
+    },
+    {
+     "key": "adr",
+     "label": "ADRs",
+     "source": {
+      "class": "repo",
+      "ref": "docs/ADR/"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "features",
+     "label": "Feature specs",
+     "source": {
+      "class": "repo",
+      "ref": "docs/features/"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "cpt",
+     "label": "Traceability IDs",
+     "source": {
+      "class": "repo",
+      "ref": "cpt-* in specs"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "diagrams",
+     "label": "UML diagrams",
+     "source": {
+      "class": "repo",
+      "ref": "mermaid in docs"
+     },
+     "kind": "metric",
+     "lamp": false
+    }
+   ]
+  },
+  {
+   "id": "contracts",
+   "title": "Contracts and dependencies",
+   "icon": "C",
+   "fields": [
+    {
+     "key": "sdk",
+     "label": "Public SDK surface",
+     "source": {
+      "class": "repo",
+      "ref": "SDK crate"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "openapi",
+     "label": "API spec",
+     "source": {
+      "class": "repo",
+      "ref": "generated OpenAPI"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "deps",
+     "label": "Depends on",
+     "source": {
+      "class": "repo",
+      "ref": "toolkit::gear(deps)"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "consumers",
+     "label": "Dependent components",
+     "source": {
+      "class": "repo",
+      "ref": "reverse workspace deps"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "events",
+     "label": "Events published",
+     "source": {
+      "class": "repo",
+      "ref": "events module"
+     },
+     "example": "ledger.posted, ledger.reversed",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "list",
+      "format": "<gear>.<entity>.<verb>, e.g. ledger.entry.posted",
+      "wouldComeFrom": "an [events] publishes = [...] block in gear.toml, or the event-broker publish call sites",
+      "derivable": "partly, from call sites"
+     }
+    },
+    {
+     "key": "gts",
+     "label": "Extension points (GTS)",
+     "source": {
+      "class": "repo",
+      "ref": "toolkit-gts"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "gtstypes",
+     "label": "GTS base data types",
+     "kind": "label",
+     "lamp": false,
+     "source": {
+      "class": "repo",
+      "ref": "gts:: symbols in the crate"
+     },
+     "example": "TenantRef, UserRef \u2014 the types this Gear registers",
+     "domain": {
+      "type": "list",
+      "format": "one type name per entry",
+      "wouldComeFrom": "a types block in gear.toml, or the gts-validation workflow's own output",
+      "derivable": "yes, from the gts:: symbols the crate references"
+     }
+    },
+    {
+     "key": "flags",
+     "label": "Feature flags",
+     "source": {
+      "class": "repo",
+      "ref": "Cargo [features]"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "dbs",
+     "label": "Supported databases",
+     "source": {
+      "class": "repo",
+      "ref": "Cargo manifests"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "plugins",
+     "label": "Plugins",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml + manifests"
+     },
+     "kind": "status",
+     "lamp": true
+    }
+   ]
+  },
+  {
+   "id": "qa",
+   "title": "Quality assurance",
+   "icon": "Q",
+   "fields": [
+    {
+     "key": "unitmods",
+     "label": "Unit test modules",
+     "source": {
+      "class": "repo",
+      "ref": "*_tests.rs"
+     },
+     "kind": "metric",
+     "lamp": true
+    },
+    {
+     "key": "integfiles",
+     "label": "Integration test files",
+     "source": {
+      "class": "repo",
+      "ref": "tests/"
+     },
+     "kind": "metric",
+     "lamp": true
+    },
+    {
+     "key": "e2e",
+     "label": "E2E suite",
+     "source": {
+      "class": "repo",
+      "ref": "testing/e2e/suites/"
+     },
+     "kind": "bool",
+     "lamp": true
+    },
+    {
+     "key": "fuzz",
+     "label": "Fuzz targets",
+     "source": {
+      "class": "repo",
+      "ref": "fuzz targets"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "coverage",
+     "label": "Code coverage",
+     "source": {
+      "class": "manual",
+      "ref": "manual entry"
+     },
+     "example": "78% lines, from a published llvm-cov run",
+     "kind": "metric",
+     "lamp": true,
+     "domain": {
+      "type": "percent",
+      "range": [
+       0,
+       100
+      ],
+      "format": "NN% lines, measured YYYY-MM-DD",
+      "wouldComeFrom": "a cargo llvm-cov JSON artifact kept by CI; the tooling is wired, the artifact is discarded",
+      "derivable": "no, nothing publishes it"
+     }
+    }
+   ]
+  },
+  {
+   "id": "size",
+   "title": "Size",
+   "icon": "L",
+   "fields": [
+    {
+     "key": "specloc",
+     "label": "Spec LOC",
+     "source": {
+      "class": "repo",
+      "ref": "docs/**/*.md"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "codeloc",
+     "label": "Code LOC",
+     "source": {
+      "class": "repo",
+      "ref": "src/**/*.rs"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "unitloc",
+     "label": "Unit test LOC",
+     "source": {
+      "class": "repo",
+      "ref": "*_tests.rs"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "integloc",
+     "label": "Integration LOC",
+     "source": {
+      "class": "repo",
+      "ref": "tests/ + e2e"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "e2eloc",
+     "label": "E2E LOC",
+     "kind": "metric",
+     "lamp": false,
+     "source": {
+      "class": "repo",
+      "ref": "testing/e2e/suites/"
+     }
+    },
+    {
+     "key": "ratio",
+     "label": "Spec to code",
+     "source": {
+      "class": "repo",
+      "ref": "computed"
+     },
+     "kind": "metric",
+     "lamp": false
+    }
+   ]
+  },
+  {
+   "id": "delivery",
+   "title": "Delivery health",
+   "icon": "D",
+   "fields": [
+    {
+     "key": "prs",
+     "label": "PRs sampled",
+     "source": {
+      "class": "api",
+      "ref": "GitHub API"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "firstreview",
+     "label": "First review, median",
+     "source": {
+      "class": "api",
+      "ref": "GitHub API"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "opentomerge",
+     "label": "Open to merge, median",
+     "source": {
+      "class": "api",
+      "ref": "GitHub API"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "lastrelease",
+     "label": "Last release",
+     "source": {
+      "class": "api",
+      "ref": "git tags"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "changelog",
+     "label": "Changelog entries",
+     "source": {
+      "class": "repo",
+      "ref": "CHANGELOG.md"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "lastchange",
+     "label": "Last change",
+     "source": {
+      "class": "api",
+      "ref": "commit history"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "milestone",
+     "label": "Milestone / progress",
+     "source": {
+      "class": "api",
+      "ref": "GitHub milestones"
+     },
+     "example": "P2 complete, P3 at 40%",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "enum+progress",
+      "values": [
+       "P1",
+       "P2",
+       "P3",
+       "P4"
+      ],
+      "format": "<phase> complete, <phase> at NN%",
+      "wouldComeFrom": "a GitHub milestone on the Gear's issues, or a milestone field in gear.toml; today the phase lives in prose inside the specs",
+      "derivable": "partly, from the specs"
+     }
+    },
+    {
+     "key": "progress",
+     "label": "Progress: spec, SDK, code",
+     "kind": "metric",
+     "lamp": false,
+     "source": {
+      "class": "repo",
+      "ref": "ticked markers in the specs"
+     },
+     "example": "spec done, SDK 80%, code 60%",
+     "domain": {
+      "type": "triple",
+      "format": "a percentage or state for each of spec, SDK and code",
+      "wouldComeFrom": "a milestone field per area in gear.toml, or a decomposition unit checklist that is actually ticked",
+      "derivable": "yes, from ticked p1/p2/p3 requirement markers"
+     }
+    },
+    {
+     "key": "issues",
+     "label": "GitHub issues",
+     "source": {
+      "class": "api",
+      "ref": "GitHub issues"
+     },
+     "example": "open under a gear:<name> label",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "count",
+      "format": "N open, N closed under label gear:<slug>",
+      "wouldComeFrom": "GitHub issues filtered by a per-Gear label",
+      "derivable": "only once the label exists"
+     }
+    }
+   ]
+  },
+  {
+   "id": "security",
+   "title": "Security and compliance",
+   "icon": "K",
+   "fields": [
+    {
+     "key": "dco",
+     "label": "DCO sign-off",
+     "source": {
+      "class": "api",
+      "ref": "commit trailers"
+     },
+     "kind": "status",
+     "lamp": true
+    },
+    {
+     "key": "licence",
+     "label": "Licence",
+     "source": {
+      "class": "repo",
+      "ref": "workspace Cargo.toml"
+     },
+     "kind": "label",
+     "lamp": false
+    },
+    {
+     "key": "codeql",
+     "label": "CodeQL",
+     "source": {
+      "class": "api",
+      "ref": "codeql.yml runs"
+     },
+     "example": "passing, last run 2026-08-31",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "enum+date",
+      "values": [
+       "passing",
+       "failing",
+       "not run"
+      ],
+      "format": "<state>, last run YYYY-MM-DD, N open alerts",
+      "wouldComeFrom": "the CodeQL workflow run conclusion plus the code-scanning alerts API",
+      "derivable": "yes, repository-wide"
+     }
+    },
+    {
+     "key": "advisories",
+     "label": "Advisories / SBOM",
+     "source": {
+      "class": "repo",
+      "ref": ".github/workflows"
+     },
+     "example": "0 open advisories, SBOM published",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "count",
+      "format": "N open (by severity), SBOM YYYY-MM-DD",
+      "wouldComeFrom": "Dependabot alerts scoped to the Gear's crates, plus an SBOM job that does not exist yet",
+      "derivable": "repository-wide only, not per Gear"
+     }
+    }
+   ]
+  },
+  {
+   "id": "ops",
+   "title": "Operations",
+   "icon": "O",
+   "fields": [
+    {
+     "key": "config",
+     "label": "Configuration surface",
+     "source": {
+      "class": "repo",
+      "ref": "config module"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "guideline",
+     "label": "Configuration guideline",
+     "source": {
+      "class": "repo",
+      "ref": "docs/"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "migrations",
+     "label": "Migrations",
+     "source": {
+      "class": "repo",
+      "ref": "migrations/"
+     },
+     "kind": "metric",
+     "lamp": false
+    },
+    {
+     "key": "metrics",
+     "label": "Observability metrics",
+     "source": {
+      "class": "repo",
+      "ref": "metrics code"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "health",
+     "label": "Health checks",
+     "source": {
+      "class": "repo",
+      "ref": "infra layer"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "deployment",
+     "label": "Deployment targets",
+     "source": {
+      "class": "api",
+      "ref": "deployments API"
+     },
+     "example": "Kubernetes (GCP), Kubernetes (Virtuozzo)",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "table",
+      "format": "product / location / environment / runtime, one row per target",
+      "wouldComeFrom": "the GitHub environments or deployments API, or a deploy manifest in the repository",
+      "derivable": "only if something deploys from this repository"
+     }
+    }
+   ]
+  }
+ ],
+ "statusLegend": {
+  "good": "The repository's own rule is satisfied",
+  "watch": "Present, but qualified \u2014 read the value",
+  "bad": "A documented rule or expectation is unmet",
+  "grey": "No data for this field"
+ },
+ "kindNote": "This is an information page about one Gear. Nothing is scored against other Gears; a light marks only a rule this Gear does or does not meet.",
+ "composition": [
+  {
+   "key": "specloc",
+   "label": "Spec",
+   "color": "var(--studio-accent)"
+  },
+  {
+   "key": "codeloc",
+   "label": "Code",
+   "color": "color-mix(in srgb, var(--studio-accent) 45%, var(--studio-muted))"
+  },
+  {
+   "key": "unitloc",
+   "label": "Unit tests",
+   "color": "var(--studio-verified)"
+  },
+  {
+   "key": "integloc",
+   "label": "Integration",
+   "color": "color-mix(in srgb, var(--studio-verified) 55%, var(--studio-muted))"
+  },
+  {
+   "key": "e2eloc",
+   "label": "E2E",
+   "color": "color-mix(in srgb, var(--studio-verified) 28%, var(--studio-muted))"
+  }
+ ],
+ "docStateLegend": {
+  "done": "present, no open markers",
+  "in progress": "present, with TBD or TODO left in it",
+  "N/A": "not present \u2014 a conditional artifact this Gear does not need"
+ }
+}

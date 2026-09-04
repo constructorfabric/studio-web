@@ -21,9 +21,14 @@ on:
           - frontend
           - prototype
       image_tag:
-        description: Full sha-<commit> snapshot or v* release tag
+        description: Optional immutable sha-<commit> snapshot or v* release tag; leave empty to derive it from source_ref
+        type: string
+        required: false
+      source_ref:
+        description: Branch, release tag, or commit SHA to deploy (for example main, feature/catalog, v0.2.0-rc.1)
         type: string
         required: true
+        default: main
 
 permissions:
   contents: read
@@ -40,8 +45,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy ${{ inputs.component }} ${{ inputs.image_tag }} to ${{ inputs.environment }}
-    if: github.ref == 'refs/heads/main'
+    name: Deploy ${{ inputs.component }} from ${{ inputs.source_ref }} to ${{ inputs.environment }}
     runs-on: ubuntu-24.04
     environment:
       name: ${{ inputs.environment }}
@@ -51,30 +55,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate target and immutable tag
+      - name: Resolve source and validate target
         id: target
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$IMAGE_TAG" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]; then
-            resolved="$(git rev-parse --verify "refs/tags/${IMAGE_TAG}^{commit}")"
+          source_ref='${{ inputs.source_ref }}'
+          git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*'
+
+          if [[ "$source_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            resolved="$(git rev-parse --verify "refs/tags/${source_ref}^{commit}")"
             if ! git merge-base --is-ancestor "$resolved" origin/main; then
-              echo "Release tag $IMAGE_TAG does not point to a commit on main" >&2
+              echo "Release tag $source_ref does not point to a commit on main" >&2
               exit 1
             fi
             source_kind=release
-          elif [[ "$IMAGE_TAG" =~ ^sha-[0-9a-f]{7,40}$ ]]; then
-            commit="${IMAGE_TAG#sha-}"
-            resolved="$(git rev-parse --verify "${commit}^{commit}")"
+            derived_tag="$source_ref"
+          elif [[ "$source_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            resolved="$(git rev-parse --verify "${source_ref}^{commit}")"
             source_kind=snapshot
-            if [ "${{ inputs.environment }}" != "dev" ]; then
-              echo "Branch/main snapshots may be deployed only to dev; use a v* release tag for ${{ inputs.environment }}" >&2
+            derived_tag="sha-$resolved"
+          else
+            resolved="$(git rev-parse --verify "origin/${source_ref}^{commit}")"
+            source_kind=snapshot
+            derived_tag="sha-$resolved"
+          fi
+
+          if [ -n "$IMAGE_TAG" ]; then
+            if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ && ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "image_tag must be a full sha-<40-hex> tag or a semver v* release tag" >&2
+              exit 1
+            fi
+            if [ "$IMAGE_TAG" != "$derived_tag" ]; then
+              echo "image_tag must match source_ref: expected $derived_tag, got $IMAGE_TAG" >&2
               exit 1
             fi
           else
-            echo "image_tag must be sha-<commit> or a v* release tag" >&2
-            exit 1
+            IMAGE_TAG="$derived_tag"
           fi
+
+          if [ "$source_kind" = snapshot ]; then
+            if [ "${{ inputs.environment }}" != "dev" ]; then
+              echo "Branch snapshots may be deployed only to dev; use a v* release tag for ${{ inputs.environment }}" >&2
+              exit 1
+            fi
+          fi
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
 
           case "${{ inputs.environment }}" in
             dev)
@@ -92,6 +119,7 @@ jobs:
           echo "url=https://$host" >> "$GITHUB_OUTPUT"
           echo "source_kind=$source_kind" >> "$GITHUB_OUTPUT"
           echo "source_commit=$resolved" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-kubectl@v4
         with:

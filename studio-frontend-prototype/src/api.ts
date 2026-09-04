@@ -55,9 +55,16 @@ export const TENANT_TYPES = {
 export const PROJECT_CONFIG_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 
+/** What the project is for, chosen at creation:
+ *  - `new_gears`  — build new gears (repo: create new, or an existing gear store);
+ *  - `product`    — assemble a product from gears (repo: always a new one);
+ *  - `existing`   — import a gears-based app already built (repo: its existing one). */
+export type ProjectKind = "new_gears" | "product" | "existing";
+
 /** The project attributes carried in PROJECT_CONFIG_TYPE metadata. */
 export interface ProjectConfig {
   mode?: ProjectMode;
+  kind?: ProjectKind;
   stages?: string[];
   status?: ProjectStatus;
   /** Seed source: a git url, a brief, or an uploaded file id. */
@@ -207,6 +214,8 @@ export interface ArtifactNode {
 
 export interface ArtifactNodePage {
   nodes: ArtifactNode[];
+  /** Total artifacts matching the type/scope filter across every page. */
+  total: number;
   /** Opaque cursor for the next page, omitted when this is the last page. */
   next_cursor?: string;
 }
@@ -738,6 +747,19 @@ export interface DocRules {
   forbid_placeholders: boolean;
   min_title_words: number;
 }
+export type DocQuestionKind = "text" | "long_text" | "bool" | "single" | "multi";
+export interface DocQuestion {
+  id: string;
+  prompt: string;
+  kind: DocQuestionKind;
+  options: string[];
+  required: boolean;
+  /** Capability tag this answer seeds for the Composer. */
+  capability?: string | null;
+  /** Section key the answer is written under when the document is generated. */
+  section?: string | null;
+  help?: string | null;
+}
 export interface DocType {
   key: string;
   name: string;
@@ -748,6 +770,8 @@ export interface DocType {
   body: string;
   sections: DocSection[];
   rules: DocRules;
+  /** Intake questionnaire; empty for types without one. */
+  questionnaire?: DocQuestion[];
 }
 export interface Doc {
   id: string;
@@ -775,6 +799,16 @@ export interface DocValidation {
   conforms: boolean;
   sections: DocSectionStatus[];
   issues: string[];
+}
+
+/** The gear repository connected to a project — where its gears live and where
+ *  scaffolded gears are written. */
+export interface ProjectGearRepo {
+  project_id?: string;
+  tenant?: string;
+  connection_id?: string | null;
+  repo?: string;
+  branch?: string;
 }
 
 export const api = {
@@ -1281,11 +1315,22 @@ export const api = {
   /** Read back the ingested artifact nodes, optionally filtered by type
    * substring (`issue`, `pull_request`, `file`, `repo`) and scoped to a tenant
    * (`scope` matches a node's workspace_id OR project_id). */
-  listArtifactNodes: (token: string, type?: string, scope?: string, cursor?: string, limit?: number) => {
+  listArtifactNodes: (
+    token: string,
+    type?: string,
+    scope?: string,
+    cursor?: string,
+    limit?: number,
+    opts?: { repo?: string; sort?: "updated"; offset?: number; q?: string },
+  ) => {
     const qs = new URLSearchParams();
     if (type) qs.set("type", type);
     if (scope) qs.set("scope", scope);
-    if (cursor) qs.set("cursor", cursor);
+    if (opts?.repo) qs.set("repo", opts.repo);
+    if (opts?.sort) qs.set("sort", opts.sort);
+    if (opts?.q) qs.set("q", opts.q);
+    if (opts?.offset != null) qs.set("offset", String(opts.offset));
+    else if (cursor) qs.set("cursor", cursor);
     if (limit) qs.set("limit", String(limit));
     const suffix = qs.toString();
     return request<ArtifactNodePage>(
@@ -1349,14 +1394,27 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  /* ── studio-gears-catalog gear: crates.io → graph (our published gears) ── */
+  /* ── studio-components-catalog gear: crates.io → graph (our published gears) ── */
   /** Enqueue a background sync of the crates.io keyword into the graph. */
-  syncGears: (token: string) =>
-    request<{ task_id: string; status: string }>("/studio-gears-catalog/v1/sync", token, {
+  syncComponents: (
+    token: string,
+    body?: {
+      crates_io: string | null;
+      repositories: {
+        tenant: string;
+        connection_id: string | null;
+        repo: string;
+        git_ref: string | null;
+        mode: string;
+      }[];
+    },
+  ) =>
+    request<{ task_id: string; status: string }>("/studio-components-catalog/v1/sync", token, {
       method: "POST",
+      ...(body ? { body: JSON.stringify(body) } : {}),
     }),
   /** Poll a background catalog sync task. */
-  gearsCatalogTask: (token: string, taskId: string) =>
+  componentsCatalogTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
       status: "queued" | "running" | "succeeded" | "failed";
@@ -1364,24 +1422,72 @@ export const api = {
       gears: number;
       versions: number;
       stored: number;
-    }>(`/studio-gears-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
+    }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
   /** Read back the ingested gear crates. */
-  listGears: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-gears-catalog/v1/gears", token),
+  listComponents: (token: string) =>
+    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/components", token),
   /** Read Studio-managed delivery metadata for catalogued Gears. */
-  listGearProfiles: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-gears-catalog/v1/profiles", token),
+  listComponentProfiles: (token: string) =>
+    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/profiles", token),
   /** Replace Studio-managed delivery metadata for one Gear. */
-  saveGearProfile: (token: string, name: string, profile: Record<string, unknown>) =>
-    request<CatalogNode>(`/studio-gears-catalog/v1/gears/${encodeURIComponent(name)}/profile`, token, {
+  saveComponentProfile: (token: string, name: string, profile: Record<string, unknown>) =>
+    request<CatalogNode>(`/studio-components-catalog/v1/components/${encodeURIComponent(name)}/profile`, token, {
       method: "POST",
       body: JSON.stringify({ profile }),
     }),
   /** Read back crate versions, optionally filtered to one crate. */
-  listGearVersions: (token: string, crate?: string) =>
+  listComponentVersions: (token: string, crate?: string) =>
     request<{ nodes: CatalogNode[] }>(
-      `/studio-gears-catalog/v1/versions${crate ? `?crate=${encodeURIComponent(crate)}` : ""}`,
+      `/studio-components-catalog/v1/versions${crate ? `?crate=${encodeURIComponent(crate)}` : ""}`,
       token,
+    ),
+
+  /** The gear repository connected to a project (0 or 1 node). */
+  getProjectGearRepo: (token: string, projectId: string) =>
+    request<{ nodes: { value: ProjectGearRepo }[] }>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
+      token,
+    ),
+  /** Connect (or update) the gear repository for a project. */
+  setProjectGearRepo: (
+    token: string,
+    projectId: string,
+    body: { tenant: string; connection_id?: string | null; repo: string; branch?: string },
+  ) =>
+    request<CatalogNode>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Write a scaffolded gear skeleton into the project's connected gear repo
+   *  (branch off the connected base branch, one commit, optional PR). */
+  scaffoldGearToRepo: (
+    token: string,
+    projectId: string,
+    body: { slug: string; files: { path: string; content: string }[]; open_pr?: boolean },
+  ) =>
+    request<{ branch: string; commit_sha: string; pr_url?: string | null }>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Create a new repository via the connector and set it as the project's gear repo. */
+  createProjectRepo: (
+    token: string,
+    projectId: string,
+    body: {
+      tenant: string;
+      connection_id?: string | null;
+      owner?: string;
+      is_org?: boolean;
+      name: string;
+      private?: boolean;
+    },
+  ) =>
+    request<{ full_name: string; html_url: string; default_branch: string }>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/create-repo`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
     ),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */

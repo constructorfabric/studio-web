@@ -112,8 +112,8 @@ services:
       context: studio-backend/docker/graph-postgres
     container_name: studio-graph-pg
     # The single instance for the whole assembly (Variant B). User/db renamed to
-    # `studio` so the gear databases (created by the init script) and graph_storage
-    # all share one superuser; graph_storage is created by the init script now.
+    # `studio` is the application owner. The backend bootstrap discovers and
+    # creates any missing gear database from effective config on every start.
     environment:
       POSTGRES_USER: studio
       POSTGRES_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
@@ -124,7 +124,8 @@ services:
       # postgres:18+ images keep data in a versioned subdirectory and expect
       # the mount one level up, which also leaves room for pg_upgrade.
       - studio_graph_pg_data:/var/lib/postgresql
-      # Per-gear databases + graph_storage, created once on first volume init.
+      # Kept as a no-op compatibility mount; database provisioning is performed
+      # by backend-bootstrap, not by one-time PostgreSQL init scripts.
       - ./studio-backend/docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U studio -d studio"]

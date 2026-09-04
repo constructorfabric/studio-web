@@ -15,7 +15,9 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::model::{DocStatus, Document, DocumentType, Owner, Rules, Section, TemplateSpec};
+use super::model::{
+    DocStatus, Document, DocumentType, Owner, Question, QuestionKind, Rules, Section, TemplateSpec,
+};
 use super::service::DocumentsService;
 use super::validate::{SectionStatus, ValidationReport};
 
@@ -52,6 +54,20 @@ pub struct RulesDto {
 }
 
 #[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct QuestionDto {
+    pub id: String,
+    pub prompt: String,
+    /// "text" | "long_text" | "bool" | "single" | "multi".
+    pub kind: String,
+    pub options: Vec<String>,
+    pub required: bool,
+    pub capability: Option<String>,
+    pub section: Option<String>,
+    pub help: Option<String>,
+}
+
+#[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct DocumentTypeDto {
     pub key: String,
@@ -64,6 +80,8 @@ pub struct DocumentTypeDto {
     pub body: String,
     pub sections: Vec<SectionDto>,
     pub rules: RulesDto,
+    /// Intake questionnaire (empty for types without one).
+    pub questionnaire: Vec<QuestionDto>,
 }
 
 #[derive(Debug)]
@@ -126,6 +144,8 @@ pub struct UpsertTypeDto {
     pub body: String,
     pub sections: Vec<SectionDto>,
     pub rules: Option<RulesDto>,
+    /// Intake questionnaire; omitted or empty for types without one.
+    pub questionnaire: Option<Vec<QuestionDto>>,
 }
 
 #[derive(Debug)]
@@ -170,6 +190,54 @@ impl From<Rules> for RulesDto {
     }
 }
 
+fn question_kind_str(k: QuestionKind) -> &'static str {
+    match k {
+        QuestionKind::Text => "text",
+        QuestionKind::LongText => "long_text",
+        QuestionKind::Bool => "bool",
+        QuestionKind::Single => "single",
+        QuestionKind::Multi => "multi",
+    }
+}
+
+fn question_kind_from_str(s: &str) -> QuestionKind {
+    match s {
+        "long_text" => QuestionKind::LongText,
+        "bool" => QuestionKind::Bool,
+        "single" => QuestionKind::Single,
+        "multi" => QuestionKind::Multi,
+        _ => QuestionKind::Text,
+    }
+}
+
+impl From<Question> for QuestionDto {
+    fn from(q: Question) -> Self {
+        Self {
+            id: q.id,
+            prompt: q.prompt,
+            kind: question_kind_str(q.kind).to_string(),
+            options: q.options,
+            required: q.required,
+            capability: q.capability,
+            section: q.section,
+            help: q.help,
+        }
+    }
+}
+
+fn question_from_dto(q: QuestionDto) -> Question {
+    Question {
+        kind: question_kind_from_str(&q.kind),
+        id: q.id,
+        prompt: q.prompt,
+        options: q.options,
+        required: q.required,
+        capability: q.capability,
+        section: q.section,
+        help: q.help,
+    }
+}
+
 impl From<DocumentType> for DocumentTypeDto {
     fn from(t: DocumentType) -> Self {
         let (owner, owner_tenant_id) = match t.owner {
@@ -186,6 +254,12 @@ impl From<DocumentType> for DocumentTypeDto {
             body: t.template.body,
             sections: t.template.sections.into_iter().map(Into::into).collect(),
             rules: t.template.rules.into(),
+            questionnaire: t
+                .template
+                .questionnaire
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -325,6 +399,12 @@ async fn upsert_type(
             body: body.body,
             sections: body.sections.into_iter().map(section_from_dto).collect(),
             rules: body.rules.map(rules_from_dto).unwrap_or_default(),
+            questionnaire: body
+                .questionnaire
+                .unwrap_or_default()
+                .into_iter()
+                .map(question_from_dto)
+                .collect(),
         },
     };
     let saved = service

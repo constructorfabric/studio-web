@@ -14,7 +14,8 @@ use serde::Deserialize;
 /// Default API root. Overridable via `STUDIO_CRATES_IO_BASE` (tests / mirrors).
 const DEFAULT_BASE: &str = "https://crates.io/api/v1";
 /// Descriptive UA — crates.io rejects requests without one.
-const USER_AGENT: &str = "constructor-studio-gears-catalog (https://github.com/constructorfabric)";
+const USER_AGENT: &str =
+    "constructor-studio-components-catalog (https://github.com/constructorfabric)";
 /// Page size for the keyword listing (crates.io caps this at 100).
 const PER_PAGE: u32 = 100;
 /// Backstop on listing pages, so a bad loop can't hammer the API.

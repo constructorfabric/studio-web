@@ -74,8 +74,13 @@ helm upgrade --install studio-web deploy/helm/studio-web \
 ```
 
 Prerequisites: the three Secrets from `values-dmz.example.yaml`, an OIDC
-realm (issuer must serve real TLS), and a Postgres with a CREATEDB-capable
-app user. Per-gear databases are NOT auto-provisioned: `auto_provision` only creates SQLite directories, so the databases come from the initdb list in k8s/postgres.yaml, which runs once on an empty volume — add one by hand if you introduce a gear later.
+realm (issuer must serve real TLS), and PostgreSQL credentials with `CREATEDB`
+for the bootstrap Job. The Job runs before every install and upgrade: it
+discovers PostgreSQL databases from the effective `gears.*.database` config,
+creates only missing databases, then runs forward migrations. It never drops
+or alters existing databases or data. For least privilege, set
+`backend.bootstrap.existingSecret` to a dedicated provisioner secret; leaving
+it empty reuses `backend.database.existingSecret`.
 
 ## GitHub deployment
 

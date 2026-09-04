@@ -125,7 +125,24 @@ pub struct NodesQuery {
     /// project tenant to see just that project. Omitted = no scoping.
     #[serde(default)]
     pub scope: Option<String>,
-    /// Opaque continuation cursor returned by the preceding response.
+    /// Filter to one repository — the repo node's instance id (the `repo`
+    /// field carried by issue/pull_request/file/comment/commit nodes).
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Sort order: `updated` (newest `updated_at` first) or the default stable
+    /// order by instance id.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Case-insensitive substring search over title / author / path / number.
+    /// Applied before pagination, so `total` reflects the matches.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Zero-based offset for classic paginator pagination (page = offset/limit).
+    /// Takes precedence over `cursor` when both are present.
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// Opaque continuation cursor returned by the preceding response (legacy;
+    /// `offset` is preferred).
     #[serde(default)]
     pub cursor: Option<String>,
     /// Number of nodes to return. Defaults to 50 and is capped at 200.
@@ -173,6 +190,9 @@ pub struct ArtifactNodeDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ArtifactNodeListResponse {
     pub nodes: Vec<ArtifactNodeDto>,
+    /// Total number of artifacts matching the type/scope filter across every
+    /// page, so a caller can show "N of M" without walking the whole cursor.
+    pub total: u32,
     /// Present when another page is available. Pass it as `cursor` unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
@@ -430,9 +450,43 @@ async fn list_nodes(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let repo = q.repo.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let needle =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
     let mut nodes: Vec<_> = nodes
         .into_iter()
         .filter(|n| node_in_scope(&n.value, scope))
+        // Optional repository filter: keep nodes whose `repo` matches. Repo
+        // nodes themselves carry no `repo` field, so they drop out when a repo
+        // filter is set — which is the intent (you're listing its contents).
+        .filter(|n| match repo {
+            Some(r) => n.value.get("repo").and_then(Value::as_str) == Some(r),
+            None => true,
+        })
+        // Optional text search over the human-facing fields.
+        .filter(|n| match &needle {
+            None => true,
+            Some(needle) => {
+                let v = &n.value;
+                let hay = [
+                    v.get("title").and_then(Value::as_str).unwrap_or(""),
+                    v.get("author").and_then(Value::as_str).unwrap_or(""),
+                    v.get("path").and_then(Value::as_str).unwrap_or(""),
+                    v.get("full_path").and_then(Value::as_str).unwrap_or(""),
+                ]
+                .join(" ")
+                .to_lowercase();
+                let num = v
+                    .get("number")
+                    .and_then(Value::as_i64)
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                hay.contains(needle.as_str()) || num.contains(needle.as_str())
+            }
+        })
         .map(|n| {
             // File nodes carry full text content; drop it from the listing
             // so the payload stays small (`has_text` still flags it). A
@@ -448,20 +502,43 @@ async fn list_nodes(
             }
         })
         .collect();
-    // The graph adapters may return storage pages in different orders. Sort by
-    // stable instance id here, then use the last returned id as the opaque
-    // continuation token; the API stays deterministic across adapters.
-    nodes.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
-    let start = q
-        .cursor
-        .as_deref()
-        .and_then(|cursor| {
-            nodes
-                .iter()
-                .position(|node: &ArtifactNodeDto| node.instance_id == cursor)
-        })
-        .map(|index| index + 1)
-        .unwrap_or(0);
+    // Order: newest `updated_at` first when asked, else a stable order by
+    // instance id (the graph adapters may return storage pages in any order).
+    // ISO-8601 timestamps sort lexically, so a string compare is chronological.
+    if q.sort.as_deref() == Some("updated") {
+        nodes.sort_by(|a, b| {
+            let ua = a
+                .value
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let ub = b
+                .value
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            ub.cmp(ua).then_with(|| a.instance_id.cmp(&b.instance_id))
+        });
+    } else {
+        nodes.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
+    }
+    // The full filtered set is the total; pagination only slices a window of it.
+    let total = nodes.len() as u32;
+    // Offset wins when present (classic paginator); otherwise resolve the legacy
+    // cursor to the position just after it.
+    let start = match q.offset {
+        Some(offset) => offset.min(nodes.len()),
+        None => q
+            .cursor
+            .as_deref()
+            .and_then(|cursor| {
+                nodes
+                    .iter()
+                    .position(|node: &ArtifactNodeDto| node.instance_id == cursor)
+            })
+            .map(|index| index + 1)
+            .unwrap_or(0),
+    };
     let end = (start + limit).min(nodes.len());
     let page = nodes[start..end].to_vec();
     let next_cursor = (end < nodes.len())
@@ -469,6 +546,7 @@ async fn list_nodes(
         .flatten();
     Ok(Json(ArtifactNodeListResponse {
         nodes: page,
+        total,
         next_cursor,
     }))
 }
@@ -605,21 +683,23 @@ async fn search(
         .search(&ctx, req.text.trim(), limit)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let items: Vec<ArtifactNodeDto> = nodes
+        .into_iter()
+        .map(|n| {
+            let mut value = n.value;
+            if let Some(obj) = value.as_object_mut() {
+                obj.remove("text");
+            }
+            ArtifactNodeDto {
+                type_id: n.type_id.to_string(),
+                instance_id: n.instance_id,
+                value,
+            }
+        })
+        .collect();
     Ok(Json(ArtifactNodeListResponse {
-        nodes: nodes
-            .into_iter()
-            .map(|n| {
-                let mut value = n.value;
-                if let Some(obj) = value.as_object_mut() {
-                    obj.remove("text");
-                }
-                ArtifactNodeDto {
-                    type_id: n.type_id.to_string(),
-                    instance_id: n.instance_id,
-                    value,
-                }
-            })
-            .collect(),
+        total: items.len() as u32,
+        nodes: items,
         next_cursor: None,
     }))
 }

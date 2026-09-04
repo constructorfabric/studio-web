@@ -78,6 +78,55 @@ impl Default for Rules {
     }
 }
 
+/// How a questionnaire answer is captured in the UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionKind {
+    /// One-line free text.
+    Text,
+    /// Multi-line free text.
+    LongText,
+    /// Yes / no.
+    Bool,
+    /// Pick exactly one option.
+    Single,
+    /// Pick any number of options.
+    Multi,
+}
+
+fn default_question_kind() -> QuestionKind {
+    QuestionKind::Text
+}
+
+/// One question of a type's intake questionnaire. Answering the questionnaire is
+/// how a document of this type is produced: each answer both seeds a capability
+/// (for the Composer) and is written into a section of the generated document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Question {
+    /// Stable id, used to key the answer.
+    pub id: String,
+    /// The question shown to the person.
+    pub prompt: String,
+    #[serde(default = "default_question_kind")]
+    pub kind: QuestionKind,
+    /// Options for `single` / `multi`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub required: bool,
+    /// Capability tag this answer seeds for the Composer (free-form, e.g.
+    /// `tenancy`, `auth`, `billing`). Answers with a tag feed gear matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<String>,
+    /// Section key (in this type's checklist) the answer is written under when
+    /// the document is generated from the questionnaire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+    /// Short helper text shown under the question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+}
+
 /// A template: the starting body plus the checklist and rules it is judged by.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateSpec {
@@ -88,6 +137,10 @@ pub struct TemplateSpec {
     /// Conformance rules.
     #[serde(default)]
     pub rules: Rules,
+    /// Optional intake questionnaire. When present, a document of this type is
+    /// produced by answering it rather than editing the skeleton by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questionnaire: Vec<Question>,
 }
 
 /// A document type registered in the platform (its `gts_type_id` is registered
@@ -185,6 +238,7 @@ fn builtin(
             body: body.to_string(),
             sections,
             rules,
+            questionnaire: Vec::new(),
         },
     }
 }
@@ -196,6 +250,74 @@ fn sec(key: &str, title: &str, required: bool, min_words: Option<usize>) -> Sect
         required,
         min_words,
         description: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn q(
+    id: &str,
+    prompt: &str,
+    kind: QuestionKind,
+    options: &[&str],
+    required: bool,
+    capability: Option<&str>,
+    section: &str,
+    help: Option<&str>,
+) -> Question {
+    Question {
+        id: id.to_string(),
+        prompt: prompt.to_string(),
+        kind,
+        options: options.iter().map(|s| s.to_string()).collect(),
+        required,
+        capability: capability.map(str::to_string),
+        section: Some(section.to_string()),
+        help: help.map(str::to_string),
+    }
+}
+
+/// The App Spec type: requirements intake for a new application. Unlike the KIT
+/// chain it is filled by answering a questionnaire, and each answer both seeds a
+/// capability for the Composer and lands in a section of the generated document.
+fn app_spec_type() -> DocumentType {
+    DocumentType {
+        key: "app_spec".to_string(),
+        name: "App Spec".to_string(),
+        description:
+            "Requirements intake for a new app — answered as a questionnaire, then composed from gears."
+                .to_string(),
+        gts_type_id: type_gts_id("app_spec"),
+        owner: Owner::Builtin,
+        template: TemplateSpec {
+            body: "---\nstatus: draft\nowner: \n---\n\n# App Spec — <title>\n\n## Overview\n\n## Users & Tenancy\n\n## Authentication & Authorization\n\n## Data & Storage\n\n## Integrations & External Systems\n\n## Billing\n\n## Compliance\n\n## Deployment\n".to_string(),
+            sections: vec![
+                sec("overview", "Overview", true, Some(15)),
+                sec("users_tenancy", "Users & Tenancy", true, None),
+                sec("auth", "Authentication & Authorization", true, None),
+                sec("data", "Data & Storage", true, None),
+                sec("integrations", "Integrations & External Systems", false, None),
+                sec("billing", "Billing", false, None),
+                sec("compliance", "Compliance", false, None),
+                sec("deployment", "Deployment", true, None),
+            ],
+            rules: Rules {
+                front_matter: vec!["status".into()],
+                ..Rules::default()
+            },
+            questionnaire: vec![
+                q("product", "What are we building? Describe the product and its core domain.", QuestionKind::LongText, &[], true, Some("domain"), "overview", None),
+                q("primary_users", "Who are the primary users?", QuestionKind::Text, &[], true, None, "users_tenancy", None),
+                q("tenancy", "What is the tenancy model?", QuestionKind::Single, &["Single-tenant", "Multi-tenant", "Hierarchical tenants"], true, Some("tenancy"), "users_tenancy", None),
+                q("auth", "How do users authenticate?", QuestionKind::Single, &["None", "Username & password", "SSO / OIDC (Keycloak)", "External IdP"], true, Some("auth"), "auth", None),
+                q("rbac", "Do you need roles and access control (RBAC)?", QuestionKind::Bool, &[], false, Some("authz"), "auth", None),
+                q("storage", "What data does the app store?", QuestionKind::Multi, &["Relational (Postgres)", "Documents / graph", "Files / blobs", "Full-text search"], true, Some("storage"), "data", None),
+                q("integrations", "Which external systems do you integrate with or wrap?", QuestionKind::LongText, &[], false, Some("connectors"), "integrations", Some("e.g. GitHub, GitLab, Salesforce, Stripe")),
+                q("facade", "Is part of the product a facade over an existing system?", QuestionKind::Bool, &[], false, Some("facade"), "integrations", None),
+                q("billing", "Do you need billing or metering?", QuestionKind::Bool, &[], false, Some("billing"), "billing", None),
+                q("compliance", "Any compliance requirements?", QuestionKind::Multi, &["GDPR", "SOC 2", "HIPAA", "None"], false, Some("compliance"), "compliance", None),
+                q("deploy", "Target deployment?", QuestionKind::Single, &["Docker Compose", "Kubernetes", "Managed cloud"], true, Some("deploy"), "deployment", None),
+            ],
+        },
     }
 }
 
@@ -303,5 +425,6 @@ pub fn builtin_types() -> Vec<DocumentType> {
                 ..Rules::default()
             },
         ),
+        app_spec_type(),
     ]
 }

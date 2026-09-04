@@ -20,6 +20,9 @@ set -u
 HEALTH_URL="http://127.0.0.1:8090/cf/health"
 MAX_WAIT_SECS="${SEED_MAX_WAIT_SECS:-360}"
 
+echo "bootstrap: provisioning configured PostgreSQL databases and applying migrations"
+/app/studio-backend --config /app/config/docker.yaml bootstrap --apply
+
 echo "seed: starting no-LLM backend to seed the platform root tenant"
 /app/studio-backend --config /app/config/docker.yaml run &
 BACKEND_PID=$!
