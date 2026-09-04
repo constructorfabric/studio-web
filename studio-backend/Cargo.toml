@@ -146,8 +146,8 @@ resource_group_sdk = { package = "cf-gears-resource-group-sdk", git = "https://g
 #
 # NB: this gear runs ONLY against `pg_graph` (PostgreSQL 19 + pgvector) — see
 # the graph-postgres service in docker-compose.yml.
-graph_storage = { package = "cf-gears-graph-storage", git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0", optional = true }
-graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0", optional = true }
+graph_storage = { package = "cf-gears-graph-storage", git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1", optional = true }
+graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1", optional = true }
 
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", git = "https://github.com/constructorfabric/gears-rust", branch = "main", features = ["bootstrap"] }
@@ -227,62 +227,62 @@ hyper = { version = "1.11.0", features = ["client", "http1"] }
 # Drop this block once the gear is upstream, then `cargo update` the git
 # dependencies and commit the lockfile.
 [patch."https://github.com/constructorfabric/gears-rust"]
-cf-gears-account-management = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-account-management-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-api-gateway = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-authn-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-authn-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-authz-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-authz-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-credstore = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-credstore-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-event-broker-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-file-parser-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-file-storage = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-file-storage-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-gear-orchestrator = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-grpc-hub = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-keycloak-idp-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-mini-chat = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-mini-chat-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-nodes-registry = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-nodes-registry-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-oagw = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-oagw-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-oidc-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-resource-group = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-resource-group-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-simple-user-settings = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-simple-user-settings-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-static-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-static-authz-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-static-credstore-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-static-idp-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-system-sdk-directory = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-system-sdks = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-tenant-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-tenant-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-auth = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-canonical-errors = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-canonical-errors-macro = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-contract = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-contract-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-db = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-db-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-gateway = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-gts = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-gts-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-http = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-http-middleware = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-node-info = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-odata = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-odata-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-security = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-stable-hash = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-transport-grpc = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-toolkit-utils = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-types-registry = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
-cf-gears-types-registry-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.0" }
+cf-gears-account-management = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-account-management-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-api-gateway = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-authn-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-authn-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-authz-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-authz-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-credstore = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-credstore-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-event-broker-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-file-parser-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-file-storage = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-file-storage-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-gear-orchestrator = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-grpc-hub = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-keycloak-idp-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-mini-chat = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-mini-chat-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-nodes-registry = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-nodes-registry-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-oagw = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-oagw-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-oidc-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-resource-group = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-resource-group-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-simple-user-settings = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-simple-user-settings-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-static-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-static-authz-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-static-credstore-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-static-idp-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-system-sdk-directory = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-system-sdks = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-tenant-resolver = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-tenant-resolver-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-auth = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-canonical-errors = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-canonical-errors-macro = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-contract = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-contract-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-db = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-db-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-gateway = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-gts = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-gts-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-http = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-http-middleware = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-node-info = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-odata = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-odata-macros = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-security = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-stable-hash = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-transport-grpc = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-toolkit-utils = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-types-registry = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
+cf-gears-types-registry-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }

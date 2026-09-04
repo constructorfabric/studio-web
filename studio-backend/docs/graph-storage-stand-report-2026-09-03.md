@@ -1,7 +1,7 @@
 # Graph Storage — integration as a dependency, and what the stand found
 
 Date: 2026-09-03 · Branches: studio-web `feature/graph-storage-gear-dependency`,
-gears-rust fork `feature/graph-storage-v2` (tag `cf-gears-graph-storage-v0.1.0`)
+gears-rust fork `feature/graph-storage-v2` (tag `cf-gears-graph-storage-v0.1.1`)
 
 ## What changed
 

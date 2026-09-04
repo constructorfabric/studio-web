@@ -15,7 +15,7 @@ feature (**on by default**) exactly like every other gear in
 are marked in `Cargo.toml`:
 
 - the crate is pulled from the fork `vasylcf/gears-rust` at the release tag
-  `cf-gears-graph-storage-v0.1.0`, because upstream `main` does not yet carry
+  `cf-gears-graph-storage-v0.1.1`, because upstream `main` does not yet carry
   the SQL/PGQ layer it needs (gears-rust PR #4639);
 - a `[patch]` block moves every other gears-rust crate to the same tag, so the
   binary links one toolkit.
