@@ -49,9 +49,14 @@ alias  (gts.cf.studio.identity.alias.v1~)  -- (kind, external_id) -> user.
                                                A NON-login identifier attributed
                                                to a user; confidence confirmed |
                                                suggested (this realizes ADR-0001).
+membership (gts.cf.studio.identity.membership.v1~)
+                                            -- (user, org) -> role held THERE.
+                                               One person, many memberships; this
+                                               is where per-org role lives.
 ```
 
-Edges `has_login` and `has_alias` connect a user to its identities.
+Edges `has_login`, `has_alias` and `has_membership` connect a user to its
+identities and organization memberships.
 
 The **identity mapper** is the gear's service: `resolve(provider, subject) ->
 user_id`, provisioning a user the first time an identity is seen (JIT). Profile
@@ -111,16 +116,36 @@ caller.
 - (−) The single-home `tenant_id` assumption and the PDP grant keys still stand;
   they are addressed in Phase 2, not here.
 
-## Follow-ups (Phase 2)
+## Implementation status
 
-1. **Membership as a first-class entity** `(user, org, role)` — derived from the
-   existing tenant grants at first, then owned. This is where "different role in
-   different org" lives explicitly.
-2. **Active-organization context.** Carry the person in the token and make the
-   active org a session context the PDP clamps to, replacing the single home
-   assumption.
-3. **Move grants onto `user_id`** lane by lane, with the mapper as the single
-   resolution point.
+- **Phase 1 (done):** `user` / `login` / `alias`, the mapper (`resolve` + JIT
+  provisioning), self-service profile, and admin alias + merge.
+- **Phase 2 (done here):** `membership` as a first-class node with per-org role,
+  self and admin read (`/me/memberships`, `/users/{id}/memberships`) and admin
+  write/remove (`PUT`/`DELETE …/memberships/{org_id}`); a `resolve` endpoint for
+  the authentication edge and tooling. Merge moves memberships too.
+- **Not yet wired (needs a compiler in the loop):** automatic population of
+  memberships from the real assignment path, and the PDP change — see below.
+
+## Follow-ups (remaining)
+
+1. **Populate memberships from the real assignment path.** When an identity is
+   assigned to an org (`identity_directory.assign`, or the portal's People
+   screen), also `resolve` the canonical user and record the membership. Options:
+   the portal calls `PUT …/memberships/{org}` after assignment (no backend
+   coupling), or `studio-user` publishes an SDK client that `identity_directory`
+   depends on and calls in-process. The second needs gear-lifecycle care (the
+   graph store resolves in the REST phase), so land it against a compiler.
+2. **PDP dual-key match (non-breaking).** Today `studio_authz_plugin` matches
+   grants by the IdP subject id, and `privilege_for` maps no Studio resource yet
+   (the role path is dormant). When the first Studio resource is role-mapped,
+   resolve `subject -> user_id` via the mapper and match a grant whose
+   `subjectId` is EITHER the subject or the `user_id` — old grants keep working,
+   new `user_id`-keyed grants start working. This is gated on there being a
+   mapped resource, so it is deliberately not written blind.
+3. **Active-organization context.** Carry the person in the token and make the
+   active org a session context the PDP clamps to, replacing the single-home
+   `tenant_id` assumption.
 4. **Provisioning at the authn edge** (authn-resolver plugin) so `/me` is not the
    only path that mints a user; feed `identity_directory`'s unassigned view from
-   unmapped identities.
+   unmapped identities. The `resolve` endpoint is the seam for this.

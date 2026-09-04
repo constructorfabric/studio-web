@@ -15,7 +15,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
 use super::service::{
-    IdentityService, LoginView, PLATFORM_ROOT_TENANT_ID, ProfilePatch, UserProfile,
+    IdentityService, LoginView, MembershipView, PLATFORM_ROOT_TENANT_ID, ProfilePatch, UserProfile,
 };
 
 /// Provider tag for a token minted through Studio's Keycloak realm. Every
@@ -95,6 +95,46 @@ pub struct MergeRequest {
 pub struct MergeResultDto {
     pub logins_moved: u32,
     pub aliases_moved: u32,
+    pub memberships_moved: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MembershipDto {
+    pub user_id: String,
+    pub org_id: String,
+    pub role: String,
+    pub source: String,
+    pub created_at_epoch_ms: i64,
+    pub updated_at_epoch_ms: i64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MembershipListDto {
+    pub items: Vec<MembershipDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PutMembershipRequest {
+    /// The role this person holds in THIS organization.
+    pub role: String,
+    /// How the membership was established: "assignment", "grant", "manual".
+    pub source: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ResolveRequest {
+    pub provider: String,
+    pub subject: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResolveResultDto {
+    pub user_id: String,
 }
 
 fn to_dto(profile: UserProfile) -> UserProfileDto {
@@ -116,6 +156,17 @@ fn login_to_dto(login: LoginView) -> LoginDto {
         subject: login.subject,
         verified: login.verified,
         linked_at_epoch_ms: login.linked_at_epoch_ms,
+    }
+}
+
+fn membership_to_dto(m: MembershipView) -> MembershipDto {
+    MembershipDto {
+        user_id: m.user_id,
+        org_id: m.org_id,
+        role: m.role,
+        source: m.source,
+        created_at_epoch_ms: m.created_at_epoch_ms,
+        updated_at_epoch_ms: m.updated_at_epoch_ms,
     }
 }
 
@@ -240,7 +291,80 @@ async fn merge_users(
     Ok(Json(MergeResultDto {
         logins_moved: result.logins_moved as u32,
         aliases_moved: result.aliases_moved as u32,
+        memberships_moved: result.memberships_moved as u32,
     }))
+}
+
+async fn get_my_memberships(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<IdentityService>>,
+) -> ApiResult<JsonBody<MembershipListDto>> {
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let items = service
+        .list_memberships(&ctx, &user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(membership_to_dto)
+        .collect();
+    Ok(Json(MembershipListDto { items }))
+}
+
+async fn get_user_memberships(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<IdentityService>>,
+    Path(user_id): Path<String>,
+) -> ApiResult<JsonBody<MembershipListDto>> {
+    require_platform_admin(&ctx)?;
+    let items = service
+        .list_memberships(&ctx, &user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(membership_to_dto)
+        .collect();
+    Ok(Json(MembershipListDto { items }))
+}
+
+async fn put_membership(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<IdentityService>>,
+    Path((user_id, org_id)): Path<(String, String)>,
+    Json(req): Json<PutMembershipRequest>,
+) -> ApiResult<JsonBody<MembershipDto>> {
+    require_platform_admin(&ctx)?;
+    let source = req.source.unwrap_or_else(|| "manual".to_string());
+    let membership = service
+        .record_membership(&ctx, &user_id, &org_id, &req.role, &source)
+        .await
+        .map_err(internal)?;
+    Ok(Json(membership_to_dto(membership)))
+}
+
+async fn delete_membership(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<IdentityService>>,
+    Path((user_id, org_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    require_platform_admin(&ctx)?;
+    service
+        .remove_membership(&ctx, &user_id, &org_id)
+        .await
+        .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn resolve_identity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<IdentityService>>,
+    Json(req): Json<ResolveRequest>,
+) -> ApiResult<JsonBody<ResolveResultDto>> {
+    require_platform_admin(&ctx)?;
+    let user_id = service
+        .resolve_or_provision(&ctx, &req.provider, &req.subject, None, None, true)
+        .await
+        .map_err(internal)?;
+    Ok(Json(ResolveResultDto { user_id }))
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────

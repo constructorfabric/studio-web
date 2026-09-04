@@ -23,17 +23,23 @@ pub const LOGIN_TYPE: &str = "gts.cf.studio.identity.login.v1~";
 /// A non-login external identifier attributed to a user (commit author, chat
 /// handle, external system id). Confidence marks confirmed vs suggested.
 pub const ALIAS_TYPE: &str = "gts.cf.studio.identity.alias.v1~";
+/// A person's membership in one organization, carrying the role held THERE. The
+/// same person holds different memberships (and roles) in different orgs — this
+/// is where "different role in different org" lives, never in the profile.
+pub const MEMBERSHIP_TYPE: &str = "gts.cf.studio.identity.membership.v1~";
 
 /// Every identity node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 3] = [USER_TYPE, LOGIN_TYPE, ALIAS_TYPE];
+pub const ALL_NODE_TYPES: [&str; 4] = [USER_TYPE, LOGIN_TYPE, ALIAS_TYPE, MEMBERSHIP_TYPE];
 
 /// user → login — a sign-in method that resolves to this user.
 pub const REL_HAS_LOGIN: &str = "gts.cf.studio.identity.rel.has_login.v1~";
 /// user → alias — an external identifier attributed to this user.
 pub const REL_HAS_ALIAS: &str = "gts.cf.studio.identity.rel.has_alias.v1~";
+/// user → membership — this user's membership in an organization.
+pub const REL_HAS_MEMBERSHIP: &str = "gts.cf.studio.identity.rel.has_membership.v1~";
 
 /// Every identity relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 2] = [REL_HAS_LOGIN, REL_HAS_ALIAS];
+pub const ALL_EDGE_TYPES: [&str; 3] = [REL_HAS_LOGIN, REL_HAS_ALIAS, REL_HAS_MEMBERSHIP];
 
 /// A GTS node to persist: type id, instance id, and payload.
 #[derive(Debug, Clone)]
@@ -87,6 +93,11 @@ pub fn type_schemas() -> Vec<Value> {
             ALIAS_TYPE,
             "Alias",
             "A non-login external identifier attributed to a user.",
+        ),
+        (
+            MEMBERSHIP_TYPE,
+            "Membership",
+            "A person's membership in one organization, carrying the role held there.",
         ),
     ]
     .into_iter()
@@ -142,6 +153,21 @@ pub fn alias_node(kind: &str, external_id: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: ALIAS_TYPE,
         instance_id: alias_instance_id(kind, external_id),
+        value,
+    }
+}
+
+/// The node key of a membership, keyed on `(user_id, org_id)` so re-recording a
+/// person's role in an org upserts the one membership rather than duplicating.
+pub fn membership_instance_id(user_id: &str, org_id: &str) -> String {
+    anon_id(&["membership", user_id, org_id])
+}
+
+/// Build a `membership` node.
+pub fn membership_node(user_id: &str, org_id: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: MEMBERSHIP_TYPE,
+        instance_id: membership_instance_id(user_id, org_id),
         value,
     }
 }

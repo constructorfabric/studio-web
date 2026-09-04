@@ -74,6 +74,20 @@ pub struct LoginView {
     pub linked_at_epoch_ms: i64,
 }
 
+/// A person's membership in one organization, carrying the role held there.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MembershipView {
+    pub user_id: String,
+    pub org_id: String,
+    pub role: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub created_at_epoch_ms: i64,
+    #[serde(default)]
+    pub updated_at_epoch_ms: i64,
+}
+
 /// A patch to a profile; `None` fields are left untouched.
 #[derive(Clone, Debug, Default)]
 pub struct ProfilePatch {
@@ -88,6 +102,7 @@ pub struct ProfilePatch {
 pub struct MergeResult {
     pub logins_moved: usize,
     pub aliases_moved: usize,
+    pub memberships_moved: usize,
 }
 
 // ── Sink ────────────────────────────────────────────────────────────────────
@@ -105,6 +120,7 @@ pub(crate) trait IdentitySink: Send + Sync {
     ) -> Result<()>;
     async fn node(&self, ctx: &SecurityContext, node_key: &str) -> Result<Option<GtsNode>>;
     async fn list(&self, ctx: &SecurityContext, type_id: &'static str) -> Result<Vec<GtsNode>>;
+    async fn delete(&self, ctx: &SecurityContext, node_key: &str) -> Result<()>;
 }
 
 /// In-memory store, keyed by instance id so a re-touch upserts. Resets on
@@ -154,6 +170,15 @@ impl IdentitySink for MemorySink {
             .filter(|n| n.type_id == type_id)
             .cloned()
             .collect())
+    }
+
+    async fn delete(&self, _ctx: &SecurityContext, node_key: &str) -> Result<()> {
+        let mut map = self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow!("identity store lock poisoned"))?;
+        map.remove(node_key);
+        Ok(())
     }
 }
 
@@ -298,6 +323,14 @@ impl IdentitySink for GraphSink {
             }
         }
         Ok(out)
+    }
+
+    async fn delete(&self, ctx: &SecurityContext, node_key: &str) -> Result<()> {
+        self.client
+            .delete_node(ctx, node_key)
+            .await
+            .map_err(|e| anyhow!("graph-storage delete_node: {e}"))?;
+        Ok(())
     }
 }
 
@@ -552,6 +585,79 @@ impl IdentityService {
         Ok(())
     }
 
+    /// Record (upsert) a person's membership in an organization with the role
+    /// held there. The first-class home for "different role in different org";
+    /// role never goes on the profile. `source` records how it was established
+    /// ("assignment", "grant", "manual").
+    pub async fn record_membership(
+        &self,
+        caller: &SecurityContext,
+        user_id: &str,
+        org_id: &str,
+        role: &str,
+        source: &str,
+    ) -> Result<MembershipView> {
+        let root = self.root_ctx(caller);
+        if self.sink.node(&root, user_id).await?.is_none() {
+            return Err(anyhow!("user {user_id} does not exist"));
+        }
+        let now = now_ms();
+        let created = self
+            .sink
+            .node(&root, &gts::membership_instance_id(user_id, org_id))
+            .await?
+            .and_then(|n| n.value.get("created_at_epoch_ms").and_then(Value::as_i64))
+            .unwrap_or(now);
+        let value = json!({
+            "user_id": user_id,
+            "org_id": org_id,
+            "role": role,
+            "source": source,
+            "created_at_epoch_ms": created,
+            "updated_at_epoch_ms": now,
+        });
+        let node = gts::membership_node(user_id, org_id, value.clone());
+        let edge = GtsEdge {
+            type_id: gts::REL_HAS_MEMBERSHIP,
+            from: user_id.to_string(),
+            to: node.instance_id.clone(),
+        };
+        self.sink.upsert(&root, &[node], &[edge]).await?;
+        serde_json::from_value(value).map_err(|e| anyhow!("decode membership: {e}"))
+    }
+
+    /// Every organization membership of a user, with the role held in each.
+    pub async fn list_memberships(
+        &self,
+        caller: &SecurityContext,
+        user_id: &str,
+    ) -> Result<Vec<MembershipView>> {
+        let root = self.root_ctx(caller);
+        let mut out = Vec::new();
+        for node in self.sink.list(&root, gts::MEMBERSHIP_TYPE).await? {
+            if node.value.get("user_id").and_then(Value::as_str) == Some(user_id)
+                && let Ok(view) = serde_json::from_value::<MembershipView>(node.value)
+            {
+                out.push(view);
+            }
+        }
+        out.sort_by(|a, b| a.org_id.cmp(&b.org_id));
+        Ok(out)
+    }
+
+    /// Remove a person's membership in an organization.
+    pub async fn remove_membership(
+        &self,
+        caller: &SecurityContext,
+        user_id: &str,
+        org_id: &str,
+    ) -> Result<()> {
+        let root = self.root_ctx(caller);
+        self.sink
+            .delete(&root, &gts::membership_instance_id(user_id, org_id))
+            .await
+    }
+
     /// Merge `from_user` into `into_user`: repoint every login and alias, then
     /// tombstone the source with a `merged_into` pointer so reads follow it.
     pub async fn merge(
@@ -575,6 +681,7 @@ impl IdentityService {
 
         let mut nodes: Vec<GtsNode> = Vec::new();
         let mut edges: Vec<GtsEdge> = Vec::new();
+        let mut stale_membership_keys: Vec<String> = Vec::new();
         let mut result = MergeResult::default();
 
         for mut login in self.sink.list(&root, gts::LOGIN_TYPE).await? {
@@ -603,6 +710,31 @@ impl IdentityService {
             nodes.push(alias);
             result.aliases_moved += 1;
         }
+        // Membership keys embed the user id, so a moved membership is a NEW node
+        // under the target plus a delete of the source's — not an in-place edit.
+        for membership in self.sink.list(&root, gts::MEMBERSHIP_TYPE).await? {
+            if membership.value.get("user_id").and_then(Value::as_str) != Some(from_user) {
+                continue;
+            }
+            let Some(org_id) = membership.value.get("org_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let org_id = org_id.to_string();
+            let mut value = membership.value.clone();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("user_id".into(), json!(into_user));
+                obj.insert("updated_at_epoch_ms".into(), json!(now_ms()));
+            }
+            let moved = gts::membership_node(into_user, &org_id, value);
+            edges.push(GtsEdge {
+                type_id: gts::REL_HAS_MEMBERSHIP,
+                from: into_user.to_string(),
+                to: moved.instance_id.clone(),
+            });
+            nodes.push(moved);
+            stale_membership_keys.push(membership.instance_id.clone());
+            result.memberships_moved += 1;
+        }
 
         let mut tombstone = source.value;
         if let Some(obj) = tombstone.as_object_mut() {
@@ -612,6 +744,9 @@ impl IdentityService {
         nodes.push(gts::user_node(from_user, tombstone));
 
         self.sink.upsert(&root, &nodes, &edges).await?;
+        for key in &stale_membership_keys {
+            self.sink.delete(&root, key).await?;
+        }
         Ok(result)
     }
 }
