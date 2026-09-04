@@ -1,34 +1,31 @@
-//! Identity service: the canonical user, its sign-in methods and aliases, and
-//! the mapper that turns a token subject into a stable Studio user id.
+//! Identity service: the canonical user, its sign-in methods, memberships and
+//! aliases, plus the mapper that turns a token subject into a stable Studio user
+//! id. Storage is relational (see `store`); this layer holds the logic.
 //!
-//! All identity nodes live in one shared partition — the platform root tenant —
-//! so a person is a single entity across every organization. Every graph call
-//! therefore runs under a root-scoped [`SecurityContext`] derived from the
-//! caller, regardless of which organization the caller is acting in.
-//!
-//! Like the catalog it prefers the real graph-storage gear and falls back to an
-//! in-memory store when the `graph` feature is off, so the mapper still works
-//! in a graph-less profile.
+//! Authority note: per-organization operations (membership) are gated on being
+//! an OWNER of that organization, resolved here from Account Management's access
+//! config — a platform-wide admin is not required, and one org's owner cannot
+//! reach another org. Cross-org identity operations (merge) stay a narrow
+//! platform action.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use account_management_sdk::AccountManagementClient;
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use gts::GtsTypeId;
+use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gts::{self, GtsEdge, GtsNode};
+use super::store::IdentityStore;
 
-/// The shared partition every identity node lives in. Account Management seeds
-/// this tenant (id 1) as the platform root.
-pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
+/// AM tenant-metadata type holding an organization's access config (the same
+/// document the Studio PDP reads).
+const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
 
-/// Confidence of an alias attribution. `suggested` is a hypothesis and must
-/// never grant anything; only `confirmed` is trusted.
+/// Confidence of an alias attribution. `suggested` is a hypothesis and grants
+/// nothing; only `confirmed` is trusted.
 pub const ALIAS_CONFIRMED: &str = "confirmed";
 pub const ALIAS_SUGGESTED: &str = "suggested";
 
@@ -39,53 +36,51 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-// ── Views ───────────────────────────────────────────────────────────────────
+// ── Views (the service's public currency) ────────────────────────────────────
 
 /// The canonical user profile, role-free.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct UserProfile {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
-    #[serde(default)]
     pub created_at_epoch_ms: i64,
-    #[serde(default)]
     pub updated_at_epoch_ms: i64,
-    /// Set when this user was merged into another; reads should follow it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set when this user was merged into another; reads follow it.
     pub merged_into: Option<String>,
 }
 
 /// A sign-in method resolved to a user.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct LoginView {
     pub provider: String,
     pub subject: String,
     pub user_id: String,
-    #[serde(default)]
     pub verified: bool,
-    #[serde(default)]
     pub linked_at_epoch_ms: i64,
 }
 
 /// A person's membership in one organization, carrying the role held there.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct MembershipView {
     pub user_id: String,
     pub org_id: String,
     pub role: String,
-    #[serde(default)]
     pub source: String,
-    #[serde(default)]
     pub created_at_epoch_ms: i64,
-    #[serde(default)]
     pub updated_at_epoch_ms: i64,
+}
+
+/// A non-login external identifier attributed to a user.
+#[derive(Clone, Debug)]
+pub struct AliasRecord {
+    pub kind: String,
+    pub external_id: String,
+    pub user_id: String,
+    pub confidence: String,
+    pub added_at_epoch_ms: i64,
 }
 
 /// A patch to a profile; `None` fields are left untouched.
@@ -105,263 +100,59 @@ pub struct MergeResult {
     pub memberships_moved: usize,
 }
 
-// ── Sink ────────────────────────────────────────────────────────────────────
+// ── Access config (subset; mirrors the PDP's view) ───────────────────────────
 
-/// Where identity nodes and edges are written and read. Two implementations:
-/// the real graph-storage gear, and an in-memory fallback.
-#[async_trait]
-pub(crate) trait IdentitySink: Send + Sync {
-    async fn register_types(&self, ctx: &SecurityContext) -> Result<()>;
-    async fn upsert(
-        &self,
-        ctx: &SecurityContext,
-        nodes: &[GtsNode],
-        edges: &[GtsEdge],
-    ) -> Result<()>;
-    async fn node(&self, ctx: &SecurityContext, node_key: &str) -> Result<Option<GtsNode>>;
-    async fn list(&self, ctx: &SecurityContext, type_id: &'static str) -> Result<Vec<GtsNode>>;
-    async fn delete(&self, ctx: &SecurityContext, node_key: &str) -> Result<()>;
+#[derive(Debug, Clone, Deserialize, Default)]
+struct AccessConfig {
+    #[serde(default)]
+    grants: Vec<GrantDef>,
+}
+#[derive(Debug, Clone, Deserialize)]
+struct GrantDef {
+    #[serde(rename = "subjectType")]
+    subject_type: String,
+    #[serde(rename = "subjectId")]
+    subject_id: String,
+    #[serde(rename = "roleKey")]
+    role_key: String,
+    #[serde(rename = "scopeType")]
+    scope_type: String,
 }
 
-/// In-memory store, keyed by instance id so a re-touch upserts. Resets on
-/// restart — acceptable only for the graph-less dev profile.
-#[derive(Default)]
-pub(crate) struct MemorySink {
-    nodes: Mutex<HashMap<String, GtsNode>>,
-}
-
-#[async_trait]
-impl IdentitySink for MemorySink {
-    async fn register_types(&self, _ctx: &SecurityContext) -> Result<()> {
-        Ok(())
-    }
-
-    async fn upsert(
-        &self,
-        _ctx: &SecurityContext,
-        nodes: &[GtsNode],
-        _edges: &[GtsEdge],
-    ) -> Result<()> {
-        let mut map = self
-            .nodes
-            .lock()
-            .map_err(|_| anyhow!("identity store lock poisoned"))?;
-        for n in nodes {
-            map.insert(n.instance_id.clone(), n.clone());
-        }
-        Ok(())
-    }
-
-    async fn node(&self, _ctx: &SecurityContext, node_key: &str) -> Result<Option<GtsNode>> {
-        let map = self
-            .nodes
-            .lock()
-            .map_err(|_| anyhow!("identity store lock poisoned"))?;
-        Ok(map.get(node_key).cloned())
-    }
-
-    async fn list(&self, _ctx: &SecurityContext, type_id: &'static str) -> Result<Vec<GtsNode>> {
-        let map = self
-            .nodes
-            .lock()
-            .map_err(|_| anyhow!("identity store lock poisoned"))?;
-        Ok(map
-            .values()
-            .filter(|n| n.type_id == type_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn delete(&self, _ctx: &SecurityContext, node_key: &str) -> Result<()> {
-        let mut map = self
-            .nodes
-            .lock()
-            .map_err(|_| anyhow!("identity store lock poisoned"))?;
-        map.remove(node_key);
-        Ok(())
-    }
-}
-
-/// The real graph-storage backend. Behind the `graph` feature (the gear is).
-#[cfg(feature = "graph")]
-pub(crate) struct GraphSink {
-    client: Arc<dyn crate::graph_storage::sdk::GraphStorageClientV1>,
-}
-
-#[cfg(feature = "graph")]
-impl GraphSink {
-    pub(crate) fn new(client: Arc<dyn crate::graph_storage::sdk::GraphStorageClientV1>) -> Self {
-        Self { client }
-    }
-}
-
-/// Human name for a node, from its payload.
-#[cfg(feature = "graph")]
-fn node_name(value: &Value) -> String {
-    for key in ["display_name", "name", "id"] {
-        if let Some(s) = value.get(key).and_then(Value::as_str) {
-            return s.to_string();
-        }
-    }
-    String::new()
-}
-
-/// Free text for lexical search over a person: name, email, and any handles.
-#[cfg(feature = "graph")]
-fn search_text(value: &Value) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    for key in [
-        "display_name",
-        "name",
-        "email",
-        "subject",
-        "external_id",
-        "provider",
-    ] {
-        if let Some(s) = value.get(key).and_then(Value::as_str) {
-            parts.push(s.to_string());
-        }
-    }
-    let joined = parts.join(" ");
-    if joined.trim().is_empty() {
-        None
-    } else {
-        Some(joined)
-    }
-}
-
-#[cfg(feature = "graph")]
-#[async_trait]
-impl IdentitySink for GraphSink {
-    async fn register_types(&self, ctx: &SecurityContext) -> Result<()> {
-        for t in gts::ALL_NODE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "node", None)
-                .await
-                .map_err(|e| anyhow!("register type {t}: {e}"))?;
-        }
-        for t in gts::ALL_EDGE_TYPES {
-            self.client
-                .register_type(ctx, &gts::graph_type_id(t), "edge", None)
-                .await
-                .map_err(|e| anyhow!("register edge type {t}: {e}"))?;
-        }
-        Ok(())
-    }
-
-    async fn upsert(
-        &self,
-        ctx: &SecurityContext,
-        nodes: &[GtsNode],
-        edges: &[GtsEdge],
-    ) -> Result<()> {
-        use crate::graph_storage::sdk::{EdgeInput, NodeInput};
-        if nodes.is_empty() && edges.is_empty() {
-            return Ok(());
-        }
-        let node_inputs: Vec<NodeInput> = nodes
-            .iter()
-            .map(|n| NodeInput {
-                node_key: n.instance_id.clone(),
-                type_id: gts::graph_type_id(n.type_id),
-                name: node_name(&n.value),
-                search_text: search_text(&n.value),
-                payload: Some(n.value.clone()),
-                embedding: None,
-            })
-            .collect();
-        let edge_inputs: Vec<EdgeInput> = edges
-            .iter()
-            .map(|e| EdgeInput {
-                type_id: gts::graph_type_id(e.type_id),
-                from: e.from.clone(),
-                to: e.to.clone(),
-                payload: None,
-            })
-            .collect();
-        self.client
-            .ingest(ctx, &node_inputs, &edge_inputs)
-            .await
-            .map_err(|e| anyhow!("graph-storage ingest: {e}"))?;
-        Ok(())
-    }
-
-    async fn node(&self, ctx: &SecurityContext, node_key: &str) -> Result<Option<GtsNode>> {
-        let view = self
-            .client
-            .node_by_key(ctx, node_key, true)
-            .await
-            .map_err(|e| anyhow!("graph-storage node_by_key: {e}"))?;
-        Ok(view.map(|v| GtsNode {
-            type_id: gts::our_type_from_graph(&v.type_id).unwrap_or(gts::USER_TYPE),
-            instance_id: v.node_key,
-            value: v.payload.unwrap_or_else(|| json!({})),
-        }))
-    }
-
-    async fn list(&self, ctx: &SecurityContext, type_id: &'static str) -> Result<Vec<GtsNode>> {
-        const PAGE: u32 = 500;
-        let graph_type = gts::graph_type_id(type_id);
-        let mut out: Vec<GtsNode> = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let page = self
-                .client
-                .list_nodes(ctx, Some(&graph_type), cursor.as_deref(), PAGE, true)
-                .await
-                .map_err(|e| anyhow!("graph-storage list_nodes: {e}"))?;
-            for view in page.items {
-                out.push(GtsNode {
-                    type_id,
-                    instance_id: view.node_key,
-                    value: view.payload.unwrap_or_else(|| json!({})),
-                });
-            }
-            match page.next_cursor {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-        }
-        Ok(out)
-    }
-
-    async fn delete(&self, ctx: &SecurityContext, node_key: &str) -> Result<()> {
-        self.client
-            .delete_node(ctx, node_key)
-            .await
-            .map_err(|e| anyhow!("graph-storage delete_node: {e}"))?;
-        Ok(())
-    }
-}
-
-// ── Service ─────────────────────────────────────────────────────────────────
+// ── Service ──────────────────────────────────────────────────────────────────
 
 pub struct IdentityService {
-    sink: Arc<dyn IdentitySink>,
+    store: Arc<dyn IdentityStore>,
+    am: Arc<dyn AccountManagementClient>,
 }
 
 impl IdentityService {
-    pub(crate) fn new(sink: Arc<dyn IdentitySink>) -> Self {
-        Self { sink }
+    pub(crate) fn new(store: Arc<dyn IdentityStore>, am: Arc<dyn AccountManagementClient>) -> Self {
+        Self { store, am }
     }
 
-    pub async fn register_types(&self, caller: &SecurityContext) -> Result<()> {
-        self.sink.register_types(&self.root_ctx(caller)).await
-    }
-
-    /// A root-scoped context derived from the caller: same identity and token,
-    /// but pinned to the platform root tenant so all identity nodes co-locate.
-    fn root_ctx(&self, caller: &SecurityContext) -> SecurityContext {
-        // A system context in the platform root tenant. The in-process
-        // graph-storage client scopes purely by `subject_tenant_id`, so the
-        // caller's identity is carried for audit but no token forwarding is
-        // needed to reach the shared identity partition.
-        SecurityContext::builder()
-            .subject_id(caller.subject_id())
-            .subject_type("service")
-            .subject_tenant_id(PLATFORM_ROOT_TENANT_ID)
-            .build()
-            .unwrap_or_else(|_| SecurityContext::anonymous())
+    /// Is the caller an OWNER of `org_id`? Read from that organization's access
+    /// config — the same owner grant the Studio PDP recognizes. This is the
+    /// per-org authority gate: no platform-wide admin needed, and it is scoped
+    /// to the one organization.
+    pub async fn is_org_owner(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
+        let subject = ctx.subject_id().to_string();
+        let cfg = match self
+            .am
+            .resolve_metadata(ctx, org_id, GtsTypeId::new(ACCESS_METADATA_TYPE))
+            .await
+        {
+            Ok(Some(entry)) => {
+                serde_json::from_value::<AccessConfig>(entry.value).unwrap_or_default()
+            }
+            _ => return false,
+        };
+        cfg.grants.iter().any(|g| {
+            g.subject_type == "member"
+                && g.subject_id == subject
+                && g.role_key == "owner"
+                && g.scope_type == "org"
+        })
     }
 
     /// Resolve `(provider, subject)` to a canonical user id, provisioning a new
@@ -369,74 +160,53 @@ impl IdentityService {
     /// profile; on an already-known login they are ignored.
     pub async fn resolve_or_provision(
         &self,
-        caller: &SecurityContext,
         provider: &str,
         subject: &str,
         seed_display: Option<&str>,
         seed_email: Option<&str>,
         verified: bool,
     ) -> Result<String> {
-        let root = self.root_ctx(caller);
-        let login_key = gts::login_instance_id(provider, subject);
-        if let Some(node) = self.sink.node(&root, &login_key).await?
-            && let Some(uid) = node.value.get("user_id").and_then(Value::as_str)
-        {
-            return Ok(uid.to_string());
+        if let Some(login) = self.store.find_login(provider, subject).await? {
+            return Ok(login.user_id);
         }
-
         let user_id = Uuid::new_v4().to_string();
         let now = now_ms();
-        let mut profile = json!({
-            "id": user_id,
-            "created_at_epoch_ms": now,
-            "updated_at_epoch_ms": now,
-        });
-        if let Some(name) = seed_display.map(str::trim).filter(|s| !s.is_empty()) {
-            profile["display_name"] = json!(name);
-            profile["name"] = json!(name);
-        } else {
-            profile["name"] = json!(user_id);
-        }
-        if let Some(email) = seed_email.map(str::trim).filter(|s| !s.is_empty()) {
-            profile["email"] = json!(email);
-        }
-
-        let user = gts::user_node(&user_id, profile);
-        let login = gts::login_node(
-            provider,
-            subject,
-            json!({
-                "provider": provider,
-                "subject": subject,
-                "user_id": user_id,
-                "verified": verified,
-                "linked_at_epoch_ms": now,
-            }),
-        );
-        let edge = GtsEdge {
-            type_id: gts::REL_HAS_LOGIN,
-            from: user_id.clone(),
-            to: login.instance_id.clone(),
+        let profile = UserProfile {
+            id: user_id.clone(),
+            display_name: seed_display
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            email: seed_email
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            avatar_url: None,
+            locale: None,
+            created_at_epoch_ms: now,
+            updated_at_epoch_ms: now,
+            merged_into: None,
         };
-        self.sink.upsert(&root, &[user, login], &[edge]).await?;
+        self.store.upsert_user(&profile).await?;
+        let login = LoginView {
+            provider: provider.to_owned(),
+            subject: subject.to_owned(),
+            user_id: user_id.clone(),
+            verified,
+            linked_at_epoch_ms: now,
+        };
+        self.store.upsert_login(&login).await?;
         Ok(user_id)
     }
 
-    /// Read a profile by user id, following a merge pointer if present. The
-    /// walk is bounded so a corrupt cyclic pointer cannot loop forever.
-    pub async fn get_profile(
-        &self,
-        caller: &SecurityContext,
-        user_id: &str,
-    ) -> Result<Option<UserProfile>> {
-        let root = self.root_ctx(caller);
+    /// Read a profile by user id, following a merge pointer if present. Bounded
+    /// so a corrupt cyclic pointer cannot loop forever.
+    pub async fn get_profile(&self, user_id: &str) -> Result<Option<UserProfile>> {
         let mut current = user_id.to_string();
         for _ in 0..8 {
-            let Some(node) = self.sink.node(&root, &current).await? else {
+            let Some(profile) = self.store.get_user(&current).await? else {
                 return Ok(None);
             };
-            let profile: UserProfile = serde_json::from_value(node.value)
-                .map_err(|e| anyhow!("decode user profile: {e}"))?;
             match profile.merged_into.as_deref() {
                 Some(into) if into != current => current = into.to_string(),
                 _ => return Ok(Some(profile)),
@@ -446,118 +216,80 @@ impl IdentityService {
     }
 
     /// Apply a patch to a profile and return the updated view.
-    pub async fn update_profile(
-        &self,
-        caller: &SecurityContext,
-        user_id: &str,
-        patch: ProfilePatch,
-    ) -> Result<UserProfile> {
-        let root = self.root_ctx(caller);
-        let node = self
-            .sink
-            .node(&root, user_id)
+    pub async fn update_profile(&self, user_id: &str, patch: ProfilePatch) -> Result<UserProfile> {
+        let mut profile = self
+            .store
+            .get_user(user_id)
             .await?
             .ok_or_else(|| anyhow!("user {user_id} does not exist"))?;
-        let mut value = node.value;
-        let obj = value
-            .as_object_mut()
-            .ok_or_else(|| anyhow!("user node is not an object"))?;
         if let Some(v) = patch.display_name {
-            obj.insert("display_name".into(), json!(v.trim()));
-            obj.insert("name".into(), json!(v.trim()));
+            profile.display_name = Some(v.trim().to_owned());
         }
         if let Some(v) = patch.email {
-            obj.insert("email".into(), json!(v.trim()));
+            profile.email = Some(v.trim().to_owned());
         }
         if let Some(v) = patch.avatar_url {
-            obj.insert("avatar_url".into(), json!(v.trim()));
+            profile.avatar_url = Some(v.trim().to_owned());
         }
         if let Some(v) = patch.locale {
-            obj.insert("locale".into(), json!(v.trim()));
+            profile.locale = Some(v.trim().to_owned());
         }
-        obj.insert("updated_at_epoch_ms".into(), json!(now_ms()));
-        let updated: UserProfile = serde_json::from_value(value.clone())
-            .map_err(|e| anyhow!("decode updated profile: {e}"))?;
-        let user = gts::user_node(user_id, value);
-        self.sink.upsert(&root, &[user], &[]).await?;
-        Ok(updated)
+        profile.updated_at_epoch_ms = now_ms();
+        self.store.upsert_user(&profile).await?;
+        Ok(profile)
     }
 
     /// Every sign-in method that resolves to this user.
-    pub async fn list_logins(
-        &self,
-        caller: &SecurityContext,
-        user_id: &str,
-    ) -> Result<Vec<LoginView>> {
-        let root = self.root_ctx(caller);
-        let mut out = Vec::new();
-        for node in self.sink.list(&root, gts::LOGIN_TYPE).await? {
-            if node.value.get("user_id").and_then(Value::as_str) == Some(user_id)
-                && let Ok(view) = serde_json::from_value::<LoginView>(node.value)
-            {
-                out.push(view);
-            }
-        }
-        Ok(out)
+    pub async fn list_logins(&self, user_id: &str) -> Result<Vec<LoginView>> {
+        self.store.logins_of(user_id).await
     }
 
     /// Bind another sign-in method to an existing user. Refuses if the login is
-    /// already bound to a *different* user — merging those is an explicit
-    /// operation, not a silent rebind. The verified-only auto-link policy is
-    /// enforced by the caller; this records the decision it made.
+    /// already bound to a different user (merge is the explicit path). The
+    /// verified-only auto-link policy is enforced by the caller.
+    ///
+    /// Not yet exposed over REST: a caller cannot be trusted to *claim* another
+    /// identity without an identity-provider flow proving ownership (that would
+    /// be an account-takeover vector). This is the primitive the future account-
+    /// linking callback (Keycloak linking / a verified flow) will call.
+    #[allow(dead_code)]
     pub async fn link_login(
         &self,
-        caller: &SecurityContext,
         user_id: &str,
         provider: &str,
         subject: &str,
         verified: bool,
     ) -> Result<()> {
-        let root = self.root_ctx(caller);
-        let login_key = gts::login_instance_id(provider, subject);
-        if let Some(existing) = self.sink.node(&root, &login_key).await?
-            && let Some(bound) = existing.value.get("user_id").and_then(Value::as_str)
-            && bound != user_id
+        if let Some(existing) = self.store.find_login(provider, subject).await?
+            && existing.user_id != user_id
         {
             return Err(anyhow!(
                 "login {provider}:{subject} is already bound to another user; merge instead"
             ));
         }
-        if self.sink.node(&root, user_id).await?.is_none() {
+        if self.store.get_user(user_id).await?.is_none() {
             return Err(anyhow!("user {user_id} does not exist"));
         }
-        let login = gts::login_node(
-            provider,
-            subject,
-            json!({
-                "provider": provider,
-                "subject": subject,
-                "user_id": user_id,
-                "verified": verified,
-                "linked_at_epoch_ms": now_ms(),
-            }),
-        );
-        let edge = GtsEdge {
-            type_id: gts::REL_HAS_LOGIN,
-            from: user_id.to_string(),
-            to: login.instance_id.clone(),
-        };
-        self.sink.upsert(&root, &[login], &[edge]).await?;
-        Ok(())
+        self.store
+            .upsert_login(&LoginView {
+                provider: provider.to_owned(),
+                subject: subject.to_owned(),
+                user_id: user_id.to_owned(),
+                verified,
+                linked_at_epoch_ms: now_ms(),
+            })
+            .await
     }
 
-    /// Attribute a non-login external identifier to a user. `suggested`
-    /// attributions are hypotheses and never grant anything.
+    /// Attribute a non-login external identifier to a user.
     pub async fn add_alias(
         &self,
-        caller: &SecurityContext,
         user_id: &str,
         kind: &str,
         external_id: &str,
         confidence: &str,
     ) -> Result<()> {
-        let root = self.root_ctx(caller);
-        if self.sink.node(&root, user_id).await?.is_none() {
+        if self.store.get_user(user_id).await?.is_none() {
             return Err(anyhow!("user {user_id} does not exist"));
         }
         let confidence = if confidence == ALIAS_CONFIRMED {
@@ -565,188 +297,100 @@ impl IdentityService {
         } else {
             ALIAS_SUGGESTED
         };
-        let alias = gts::alias_node(
-            kind,
-            external_id,
-            json!({
-                "kind": kind,
-                "external_id": external_id,
-                "user_id": user_id,
-                "confidence": confidence,
-                "added_at_epoch_ms": now_ms(),
-            }),
-        );
-        let edge = GtsEdge {
-            type_id: gts::REL_HAS_ALIAS,
-            from: user_id.to_string(),
-            to: alias.instance_id.clone(),
-        };
-        self.sink.upsert(&root, &[alias], &[edge]).await?;
-        Ok(())
+        self.store
+            .upsert_alias(&AliasRecord {
+                kind: kind.to_owned(),
+                external_id: external_id.to_owned(),
+                user_id: user_id.to_owned(),
+                confidence: confidence.to_owned(),
+                added_at_epoch_ms: now_ms(),
+            })
+            .await
+    }
+
+    /// Every organization membership of a user, with the role held in each.
+    pub async fn list_memberships(&self, user_id: &str) -> Result<Vec<MembershipView>> {
+        let mut out = self.store.memberships_of(user_id).await?;
+        out.sort_by(|a, b| a.org_id.cmp(&b.org_id));
+        Ok(out)
     }
 
     /// Record (upsert) a person's membership in an organization with the role
-    /// held there. The first-class home for "different role in different org";
-    /// role never goes on the profile. `source` records how it was established
-    /// ("assignment", "grant", "manual").
+    /// held there. Role lives on the membership, never on the profile.
     pub async fn record_membership(
         &self,
-        caller: &SecurityContext,
         user_id: &str,
         org_id: &str,
         role: &str,
         source: &str,
     ) -> Result<MembershipView> {
-        let root = self.root_ctx(caller);
-        if self.sink.node(&root, user_id).await?.is_none() {
+        if self.store.get_user(user_id).await?.is_none() {
             return Err(anyhow!("user {user_id} does not exist"));
         }
         let now = now_ms();
-        let created = self
-            .sink
-            .node(&root, &gts::membership_instance_id(user_id, org_id))
-            .await?
-            .and_then(|n| n.value.get("created_at_epoch_ms").and_then(Value::as_i64))
-            .unwrap_or(now);
-        let value = json!({
-            "user_id": user_id,
-            "org_id": org_id,
-            "role": role,
-            "source": source,
-            "created_at_epoch_ms": created,
-            "updated_at_epoch_ms": now,
-        });
-        let node = gts::membership_node(user_id, org_id, value.clone());
-        let edge = GtsEdge {
-            type_id: gts::REL_HAS_MEMBERSHIP,
-            from: user_id.to_string(),
-            to: node.instance_id.clone(),
+        let view = MembershipView {
+            user_id: user_id.to_owned(),
+            org_id: org_id.to_owned(),
+            role: role.to_owned(),
+            source: source.to_owned(),
+            // On an update the stored created_at is preserved (the store's
+            // conflict update excludes it); this value seeds a first insert.
+            created_at_epoch_ms: now,
+            updated_at_epoch_ms: now,
         };
-        self.sink.upsert(&root, &[node], &[edge]).await?;
-        serde_json::from_value(value).map_err(|e| anyhow!("decode membership: {e}"))
-    }
-
-    /// Every organization membership of a user, with the role held in each.
-    pub async fn list_memberships(
-        &self,
-        caller: &SecurityContext,
-        user_id: &str,
-    ) -> Result<Vec<MembershipView>> {
-        let root = self.root_ctx(caller);
-        let mut out = Vec::new();
-        for node in self.sink.list(&root, gts::MEMBERSHIP_TYPE).await? {
-            if node.value.get("user_id").and_then(Value::as_str) == Some(user_id)
-                && let Ok(view) = serde_json::from_value::<MembershipView>(node.value)
-            {
-                out.push(view);
-            }
-        }
-        out.sort_by(|a, b| a.org_id.cmp(&b.org_id));
-        Ok(out)
+        self.store.upsert_membership(&view).await?;
+        Ok(view)
     }
 
     /// Remove a person's membership in an organization.
-    pub async fn remove_membership(
-        &self,
-        caller: &SecurityContext,
-        user_id: &str,
-        org_id: &str,
-    ) -> Result<()> {
-        let root = self.root_ctx(caller);
-        self.sink
-            .delete(&root, &gts::membership_instance_id(user_id, org_id))
-            .await
+    pub async fn remove_membership(&self, user_id: &str, org_id: &str) -> Result<()> {
+        self.store.delete_membership(user_id, org_id).await
     }
 
-    /// Merge `from_user` into `into_user`: repoint every login and alias, then
-    /// tombstone the source with a `merged_into` pointer so reads follow it.
-    pub async fn merge(
-        &self,
-        caller: &SecurityContext,
-        from_user: &str,
-        into_user: &str,
-    ) -> Result<MergeResult> {
+    /// Merge `from_user` into `into_user`: repoint every login, alias and
+    /// membership, then tombstone the source with a `merged_into` pointer.
+    pub async fn merge(&self, from_user: &str, into_user: &str) -> Result<MergeResult> {
         if from_user == into_user {
             return Err(anyhow!("cannot merge a user into itself"));
         }
-        let root = self.root_ctx(caller);
-        if self.sink.node(&root, into_user).await?.is_none() {
+        if self.store.get_user(into_user).await?.is_none() {
             return Err(anyhow!("target user {into_user} does not exist"));
         }
-        let source = self
-            .sink
-            .node(&root, from_user)
+        let mut source = self
+            .store
+            .get_user(from_user)
             .await?
             .ok_or_else(|| anyhow!("source user {from_user} does not exist"))?;
 
-        let mut nodes: Vec<GtsNode> = Vec::new();
-        let mut edges: Vec<GtsEdge> = Vec::new();
-        let mut stale_membership_keys: Vec<String> = Vec::new();
         let mut result = MergeResult::default();
 
-        for mut login in self.sink.list(&root, gts::LOGIN_TYPE).await? {
-            if login.value.get("user_id").and_then(Value::as_str) != Some(from_user) {
-                continue;
-            }
-            login.value["user_id"] = json!(into_user);
-            edges.push(GtsEdge {
-                type_id: gts::REL_HAS_LOGIN,
-                from: into_user.to_string(),
-                to: login.instance_id.clone(),
-            });
-            nodes.push(login);
+        for mut login in self.store.logins_of(from_user).await? {
+            login.user_id = into_user.to_owned();
+            self.store.upsert_login(&login).await?;
             result.logins_moved += 1;
         }
-        for mut alias in self.sink.list(&root, gts::ALIAS_TYPE).await? {
-            if alias.value.get("user_id").and_then(Value::as_str) != Some(from_user) {
-                continue;
-            }
-            alias.value["user_id"] = json!(into_user);
-            edges.push(GtsEdge {
-                type_id: gts::REL_HAS_ALIAS,
-                from: into_user.to_string(),
-                to: alias.instance_id.clone(),
-            });
-            nodes.push(alias);
+        for mut alias in self.store.aliases_of(from_user).await? {
+            alias.user_id = into_user.to_owned();
+            self.store.upsert_alias(&alias).await?;
             result.aliases_moved += 1;
         }
-        // Membership keys embed the user id, so a moved membership is a NEW node
-        // under the target plus a delete of the source's — not an in-place edit.
-        for membership in self.sink.list(&root, gts::MEMBERSHIP_TYPE).await? {
-            if membership.value.get("user_id").and_then(Value::as_str) != Some(from_user) {
-                continue;
-            }
-            let Some(org_id) = membership.value.get("org_id").and_then(Value::as_str) else {
-                continue;
-            };
-            let org_id = org_id.to_string();
-            let mut value = membership.value.clone();
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert("user_id".into(), json!(into_user));
-                obj.insert("updated_at_epoch_ms".into(), json!(now_ms()));
-            }
-            let moved = gts::membership_node(into_user, &org_id, value);
-            edges.push(GtsEdge {
-                type_id: gts::REL_HAS_MEMBERSHIP,
-                from: into_user.to_string(),
-                to: moved.instance_id.clone(),
-            });
-            nodes.push(moved);
-            stale_membership_keys.push(membership.instance_id.clone());
+        for membership in self.store.memberships_of(from_user).await? {
+            self.record_membership(
+                into_user,
+                &membership.org_id,
+                &membership.role,
+                &membership.source,
+            )
+            .await?;
+            self.store
+                .delete_membership(from_user, &membership.org_id)
+                .await?;
             result.memberships_moved += 1;
         }
 
-        let mut tombstone = source.value;
-        if let Some(obj) = tombstone.as_object_mut() {
-            obj.insert("merged_into".into(), json!(into_user));
-            obj.insert("updated_at_epoch_ms".into(), json!(now_ms()));
-        }
-        nodes.push(gts::user_node(from_user, tombstone));
-
-        self.sink.upsert(&root, &nodes, &edges).await?;
-        for key in &stale_membership_keys {
-            self.sink.delete(&root, key).await?;
-        }
+        source.merged_into = Some(into_user.to_owned());
+        source.updated_at_epoch_ms = now_ms();
+        self.store.upsert_user(&source).await?;
         Ok(result)
     }
 }
