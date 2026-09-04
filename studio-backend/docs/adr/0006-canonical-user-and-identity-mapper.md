@@ -35,9 +35,9 @@ Today, empirically (see `identity_directory` and `studio_authz_plugin`):
 ## Decision
 
 Introduce a Studio domain gear **`studio-user`** that owns the canonical person
-and maps identities onto it. Three GTS node types, kept in **one shared
-partition (the platform root tenant, id 1)** so a person is a single entity
-across every organization:
+and maps identities onto it. The records below are relational (see *Storage*);
+the same shapes project into the graph when a visualization/attribution need is
+real. Conceptually:
 
 ```text
 user   (gts.cf.studio.identity.user.v1~)   -- the person + profile, ROLE-FREE.
@@ -115,6 +115,75 @@ caller.
   for now, to be hardened.
 - (−) The single-home `tenant_id` assumption and the PDP grant keys still stand;
   they are addressed in Phase 2, not here.
+
+## Storage: relational is the system of record, graph is a projection
+
+Decision (revised): the canonical records — `user`, `login`, `membership`,
+`alias` — are **relational tables owned by the gear**, not generic graph nodes.
+The rule we hold: *the graph holds what we need to visualize and find paths
+through*; a person's account record is looked up and constrained, not traversed.
+Modeling it as typed JSON nodes loses exactly what this data needs — columns,
+indexes, unique constraints, foreign keys, transactions — and the prototype
+shows the cost directly: `list_logins` / `list_memberships` are full type scans,
+and uniqueness is faked with deterministic uuid5 keys instead of a real
+`UNIQUE`.
+
+So:
+
+- **Relational (SeaORM, the gear owns its own database — the `credstore_pg` /
+  `DatabaseCapability` pattern):** system of record.
+- **Graph:** a *derived projection* of the identity map (person ⇄ external
+  identities and memberships), built when the visualization / connector-
+  attribution use case is real. It references the relational `user_id`; it is
+  never the source of truth.
+
+### Schema (v0.1)
+
+```text
+identity_user
+  id            uuid  PRIMARY KEY            -- Studio-owned, IdP-independent
+  display_name  text  NULL
+  email         text  NULL
+  avatar_url    text  NULL
+  locale        text  NULL
+  merged_into   uuid  NULL  -> identity_user(id)
+  created_at / updated_at  timestamptz
+
+identity_login
+  id            uuid  PRIMARY KEY
+  provider      text  NOT NULL
+  subject       text  NOT NULL
+  user_id       uuid  NOT NULL -> identity_user(id)
+  verified      bool  NOT NULL default false
+  linked_at     timestamptz
+  UNIQUE (provider, subject)                 -- the resolve hot path
+  INDEX (user_id)
+
+identity_membership
+  id            uuid  PRIMARY KEY
+  user_id       uuid  NOT NULL -> identity_user(id)
+  org_id        uuid  NOT NULL                -- AM tenant id
+  role          text  NOT NULL
+  source        text  NOT NULL                -- assignment | grant | manual
+  created_at / updated_at  timestamptz
+  UNIQUE (user_id, org_id)
+  INDEX (org_id)                             -- "who is in this org"
+
+identity_alias
+  id            uuid  PRIMARY KEY
+  kind          text  NOT NULL                -- github | slack | ...
+  external_id   text  NOT NULL
+  user_id       uuid  NOT NULL -> identity_user(id)
+  confidence    text  NOT NULL                -- confirmed | suggested
+  added_at      timestamptz
+  UNIQUE (kind, external_id)
+```
+
+The service API (`resolve`, profile, membership ops, merge) is unchanged — only
+the storage trait behind it moves from `IdentitySink` (node/edge) to a typed
+`IdentityStore` repository with a `PgStore` (SeaORM) and a `MemoryStore` for the
+graph-less/test path. Resolve becomes an indexed `SELECT … WHERE provider=? AND
+subject=?`; the full scans disappear; uniqueness and FK integrity become real.
 
 ## Implementation status
 
