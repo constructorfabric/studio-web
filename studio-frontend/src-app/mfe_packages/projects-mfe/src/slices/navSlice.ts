@@ -1,13 +1,3 @@
-/**
- * Where this MFE is: the flat project list, or one open project and which of
- * its sections. It is MFE-local navigation on purpose — ADR-0008 puts the
- * project's 232px rail *inside* the project frame, and the shell has no router,
- * so there is no URL to own.
- *
- * `projectId === null` IS the list view; a separate `view` field could disagree
- * with it.
- */
-
 import { createSlice, type ReducerPayload } from '@gears-frontx/react';
 
 export type ProjectSection =
@@ -31,11 +21,10 @@ const initialState: NavState = {
   section: 'overview',
 };
 
-const { slice, openProject, closeProject, selectSection } = createSlice({
+const { slice, openProject, closeProject, selectSection, landOnFirstImport } = createSlice({
   name: SLICE_KEY,
   initialState,
   reducers: {
-    /** Opening always lands on the first section, never on the last one seen. */
     openProject: (state: NavState, action: ReducerPayload<string>) => {
       state.projectId = action.payload;
       state.section = 'overview';
@@ -47,11 +36,14 @@ const { slice, openProject, closeProject, selectSection } = createSlice({
     selectSection: (state: NavState, action: ReducerPayload<ProjectSection>) => {
       state.section = action.payload;
     },
+    landOnFirstImport: (state: NavState) => {
+      if (state.section === 'overview') state.section = 'artifacts';
+    },
   },
 });
 
 export const navSlice = slice;
-export { openProject, closeProject, selectSection };
+export { openProject, closeProject, selectSection, landOnFirstImport };
 export const NAV_SLICE_KEY = SLICE_KEY;
 
 declare module '@gears-frontx/react' {

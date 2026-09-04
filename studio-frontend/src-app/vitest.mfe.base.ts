@@ -44,6 +44,9 @@ export const mfeVitestBaseConfig = defineConfig({
       },
     },
     execArgv: vitestNodeWorkerExecArgv(),
+    // The inlined ui-kit is transformed per test file and grew from 20 to 63
+    // components in 0.4, which alone spends seconds before a test body runs.
+    testTimeout: 15000,
     setupFiles: [...SHARED_VITEST_SETUP_FILES],
     include: [...TEST_INCLUDE_TSX],
     exclude: [...DEFAULT_TEST_EXCLUDE],

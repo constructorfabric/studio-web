@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
@@ -13,9 +13,45 @@ import {
  * row's own test covers that) or this swap is broken.
  *
  * No API mocks on purpose: both screens fire their queries, both fail in jsdom,
- * and the chrome asserted here renders regardless of query state.
+ * and the chrome asserted here renders regardless of query state. The gears'
+ * clients are stubbed so those failures are immediate rather than real sockets.
  */
+class SilentService {
+  private readonly refuse = () => ({ fetch: () => Promise.reject(new Error('no gear in jsdom')) });
+  readonly tenant = this.refuse;
+  readonly children = this.refuse;
+  readonly projectConfig = this.refuse;
+  readonly nodes = this.refuse;
+  readonly connections = this.refuse;
+  readonly providers = this.refuse();
+}
+
+vi.mock('./api/AccountsApiService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api/AccountsApiService')>()),
+  AccountsApiService: SilentService,
+}));
+vi.mock('./api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: SilentService }));
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  ConnectorsApiService: SilentService,
+}));
+
 describe('ProjectsRoot', () => {
+  // The frame's rail is the kit's Sidebar, which measures the viewport. jsdom
+  // has no matchMedia; `vi.unstubAllGlobals` in the shared teardown restores it.
+  beforeEach(() => {
+    vi.stubGlobal(
+      'matchMedia',
+      (query: string) =>
+        ({
+          matches: false,
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList
+    );
+  });
+
   it('swaps the list for the project frame when a project is open', async () => {
     createFrontXApp({});
     const { mfeApp } = await import('./init');

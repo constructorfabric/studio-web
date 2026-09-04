@@ -1,7 +1,7 @@
 /** Step 1 — name, goal, owner, starting point. */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-owner:p1
-import React from 'react';
+import React, { useId } from 'react';
 import { FileText, Files } from 'lucide-react';
 import {
   Field,
@@ -91,21 +91,28 @@ export const DetailsStep: React.FC = () => {
   const t = useProjectCreateText();
   const dispatch = useAppDispatch();
   const draft = useAppSelector((state) => state[CREATE_SLICE_KEY].draft);
+  const ids = { name: useId(), goal: useId(), modeLabel: useId() };
 
   return (
     <>
-      <Field name="name">
-        <FieldLabel className={styles.fieldLabel}>{t('field_name')}</FieldLabel>
+      <Field>
+        <FieldLabel className={styles.fieldLabel} htmlFor={ids.name}>
+          {t('field_name')}
+        </FieldLabel>
         <Input
+          id={ids.name}
           value={draft.name}
           onChange={(event) => dispatch(editDraft({ name: event.target.value }))}
           autoFocus
         />
       </Field>
 
-      <Field name="goal">
-        <FieldLabel className={styles.fieldLabel}>{t('field_goal')}</FieldLabel>
+      <Field>
+        <FieldLabel className={styles.fieldLabel} htmlFor={ids.goal}>
+          {t('field_goal')}
+        </FieldLabel>
         <Textarea
+          id={ids.goal}
           className={styles.goal}
           rows={3}
           value={draft.goal}
@@ -115,9 +122,12 @@ export const DetailsStep: React.FC = () => {
 
       <OwnerField />
 
-      <Field name="mode">
-        <FieldLabel className={styles.fieldLabel}>{t('field_starting_point')}</FieldLabel>
+      <Field>
+        <FieldLabel className={styles.fieldLabel} id={ids.modeLabel}>
+          {t('field_starting_point')}
+        </FieldLabel>
         <RadioGroup
+          aria-labelledby={ids.modeLabel}
           className={styles.modes}
           value={draft.mode ?? ''}
           onValueChange={(value: string) => dispatch(editDraft({ mode: value as ProjectMode }))}

@@ -1,36 +1,50 @@
-/*
- * The project frame: the rail's column (empty until the kit's component lands,
- * see `ProjectScreen`) plus the section's content. Every value here is a ui-kit
- * token or a text role.
- */
-
 .frame {
   display: flex;
   align-items: stretch;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--card);
+  /* Makes the frame the containing block of the kit Sidebar's fixed panel. */
+  contain: paint;
 }
 
 .content {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.body {
+  grid-row: 3;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-6) var(--space-6);
+}
+
+/* The artifacts strip and table run edge to edge. */
+.body[data-section='artifacts'] {
+  padding: 0;
+}
+
+.repoFailure {
+  margin: 0;
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .header {
+  grid-row: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-}
-
-.headerMain {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  align-items: flex-start;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: var(--border-width) solid var(--border);
 }
 
 .title {

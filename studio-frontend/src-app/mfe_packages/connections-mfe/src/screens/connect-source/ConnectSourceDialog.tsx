@@ -4,7 +4,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-verify:p1
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-announce:p1
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-refusal:p1
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   apiRegistry,
   eventBus,
@@ -39,6 +39,7 @@ const DialogBody: React.FC = () => {
   const bridge = useMfeBridge();
   const { containerRef, dataTheme } = useHostChrome();
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
+  const ids = { provider: useId(), label: useId(), baseUrl: useId(), token: useId() };
   const attachContainer = useCallback(
     (node: HTMLDivElement | null) => {
       containerRef.current = node;
@@ -110,15 +111,17 @@ const DialogBody: React.FC = () => {
           <Skeleton className={styles.bodySkeleton} />
         ) : (
           <>
-            <Field name="provider">
-              <FieldLabel className={styles.fieldLabel}>{t('field_provider')}</FieldLabel>
+            <Field>
+              <FieldLabel className={styles.fieldLabel} htmlFor={ids.provider}>
+                {t('field_provider')}
+              </FieldLabel>
               <Select
                 value={draft.provider}
                 modal={false}
                 disabled={providersLoading}
                 onValueChange={(next) => dispatch(editDraft({ provider: next ?? '' }))}
               >
-                <SelectTrigger className={styles.providerTrigger}>
+                <SelectTrigger id={ids.provider} className={styles.providerTrigger}>
                   <SelectValue placeholder={providerPlaceholder}>
                     {(selected) =>
                       selected ? (chosen?.display_name ?? String(selected)) : providerPlaceholder
@@ -135,36 +138,44 @@ const DialogBody: React.FC = () => {
               </Select>
             </Field>
 
-            <Field name="label">
-              <FieldLabel className={styles.fieldLabel}>{t('field_label')}</FieldLabel>
+            <Field>
+              <FieldLabel className={styles.fieldLabel} htmlFor={ids.label}>
+                {t('field_label')}
+              </FieldLabel>
               <Input
+                id={ids.label}
                 value={draft.label}
                 onChange={(event) => dispatch(editDraft({ label: event.target.value }))}
               />
               <FieldDescription>{t('field_label_hint')}</FieldDescription>
             </Field>
 
-            <Field name="base_url">
-              <FieldLabel className={styles.fieldLabel}>{t('field_base_url')}</FieldLabel>
+            <Field>
+              <FieldLabel className={styles.fieldLabel} htmlFor={ids.baseUrl}>
+                {t('field_base_url')}
+              </FieldLabel>
               <Input
+                id={ids.baseUrl}
                 value={draft.baseUrl}
                 placeholder={chosen?.default_base_url ?? ''}
                 onChange={(event) => dispatch(editDraft({ baseUrl: event.target.value }))}
               />
             </Field>
 
-            <Field name="token" invalid={Boolean(tokenError)}>
-              <FieldLabel className={styles.fieldLabel}>
+            <Field data-invalid={Boolean(tokenError)}>
+              <FieldLabel className={styles.fieldLabel} htmlFor={ids.token}>
                 {chosen?.credential_label || t('field_token')}
               </FieldLabel>
               <Input
+                id={ids.token}
                 type="password"
                 autoComplete="off"
+                aria-invalid={Boolean(tokenError) || undefined}
                 value={draft.token}
                 placeholder={chosen?.credential_hint ?? ''}
                 onChange={(event) => dispatch(editDraft({ token: event.target.value }))}
               />
-              <FieldError className={styles.fieldError} match={true} title={tokenError ?? undefined}>
+              <FieldError className={styles.fieldError} title={tokenError ?? undefined}>
                 {tokenError}
               </FieldError>
             </Field>

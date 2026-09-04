@@ -9,6 +9,7 @@ import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, useHostChrome } from '@construc
 import { ProjectListScreen } from './screens/project-list/ProjectListScreen';
 import { ProjectScreen } from './screens/project/ProjectScreen';
 import { NAV_SLICE_KEY, closeProject, openProject } from './slices/navSlice';
+import { StudioScopeProvider } from './shared/workspaceProjects';
 import { publishWorkspaceScope } from './actions/workspaceActions';
 import styles from './ProjectsRoot.module.css';
 
@@ -51,7 +52,9 @@ export const ProjectsRoot: React.FC = () => {
 
   return (
     <div ref={containerRef} className={styles.root} data-theme={dataTheme}>
-      {projectId ? <ProjectScreen projectId={projectId} /> : <ProjectListScreen />}
+      <StudioScopeProvider>
+        {projectId ? <ProjectScreen projectId={projectId} /> : <ProjectListScreen />}
+      </StudioScopeProvider>
     </div>
   );
 };

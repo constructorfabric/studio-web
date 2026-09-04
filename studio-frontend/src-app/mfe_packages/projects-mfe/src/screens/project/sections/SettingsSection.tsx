@@ -42,7 +42,7 @@ export const SettingsSection: React.FC<{
                 {stages.length ? (
                   <span className={styles.chips}>
                     {stages.map((stage) => (
-                      <Badge key={stage.key} variant="muted" shape="pill">
+                      <Badge key={stage.key} variant="secondary">
                         {stage.label}
                       </Badge>
                     ))}
