@@ -61,7 +61,9 @@ export default defineConfig({
     passWithNoTests: false,
     environment: 'jsdom',
     execArgv: vitestNodeWorkerExecArgv(),
-    setupFiles: [...SHARED_VITEST_SETUP_FILES],
+    // Shared template setup + a host-app-only stub for @iconify/react whose
+    // async icon load otherwise throws an unhandled post-teardown error.
+    setupFiles: [...SHARED_VITEST_SETUP_FILES, path.resolve(__dirname, './vitest.setup.iconify.ts')],
     include: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}'],
     exclude: ['mfe_packages/**', ...DEFAULT_TEST_EXCLUDE],
     coverage: {
