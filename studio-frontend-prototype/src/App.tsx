@@ -11,6 +11,7 @@ import { ComponentsCatalog } from "./components-catalog";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
 import { makeZip } from "./zip";
+import { DomainModelGraph } from "./domain-model-graph";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -3487,6 +3488,7 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
   } | null>(null);
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
 
   const onModelFile = async (file: File) => {
     setModelErr(null);
@@ -3648,6 +3650,9 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           <button disabled={modelBusy} onClick={() => void onRegenerate()}>
             Regenerate frontend
           </button>
+          <button onClick={() => setShowGraph((v) => !v)}>
+            {showGraph ? "Hide graph" : "View graph"}
+          </button>
         </div>
         {modelErr && (
           <p className="error" style={{ marginTop: 10 }}>
@@ -3665,6 +3670,11 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
             Synced graph: <b>{modelSync.object_types}</b> object-type nodes · {modelSync.inherits}{" "}
             inherits · {modelSync.declares} declares · {modelSync.skipped_endpoints} skipped.
           </p>
+        )}
+        {showGraph && (
+          <div style={{ marginTop: 14 }}>
+            <DomainModelGraph token={token} />
+          </div>
         )}
       </div>
 
