@@ -811,6 +811,22 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
+/** What `importDomainModel` loaded. */
+export interface DomainModelImport {
+  entities: number;
+  buckets: number;
+  node_types: number;
+  edge_types: number;
+}
+
+/** What `syncDomainModel` materialized. */
+export interface DomainModelSync {
+  object_types: number;
+  inherits: number;
+  declares: number;
+  skipped_endpoints: number;
+}
+
 export const api = {
   /** Login = validate the token by asking the backend who we are. */
   me: (token: string) => request<Me>("/account-management/v1/me", token),
@@ -1259,6 +1275,26 @@ export const api = {
   gears: (token: string) => request<unknown>("/gear-orchestrator/v1/gears", token),
   oagwUpstreams: (token: string) => request<unknown>("/oagw/v1/upstreams", token),
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
+
+  // ── Domain model (studio-domain-model gear) ──
+  /** Upload a domain-model document to make it the active ontology. */
+  importDomainModel: (token: string, ontology: unknown) =>
+    request<DomainModelImport>("/studio-domain-model/v1/model/import", token, {
+      method: "POST",
+      body: JSON.stringify({ ontology }),
+    }),
+  /** The stored ontology (frontend-regen source). */
+  domainModelTypes: (token: string) =>
+    request<{ ontology: { entities: unknown[]; buckets?: unknown[] } }>(
+      "/studio-domain-model/v1/types",
+      token,
+    ),
+  /** Materialize the model as a graph (object_type nodes + inherits/declares). */
+  syncDomainModel: (token: string) =>
+    request<DomainModelSync>("/studio-domain-model/v1/model/sync", token, { method: "POST" }),
+  /** Read the model graph back out of Graph Storage. */
+  domainModelGraph: (token: string) =>
+    request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/model/graph", token),
   files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 

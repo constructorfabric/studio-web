@@ -334,22 +334,19 @@ mod graph_backend {
             for nt in node_types {
                 batch.push(TypeRegistration {
                     type_id: gts::graph_type_id(&nt.type_id),
-                    schema: gts::derived_schema(&nt.type_id, &nt.title, &nt.description),
+                    schema: gts::derived_schema(&nt.type_id),
                 });
             }
             for et in edge_types {
                 batch.push(TypeRegistration {
                     type_id: gts::graph_type_id(&et.type_id),
-                    // Register the relation with its endpoint typing (src/dst
-                    // node types) so the graph enforces which objects a
-                    // relation may connect — not as a bare verb.
-                    schema: gts::edge_derived_schema(
-                        &et.type_id,
-                        &et.relation_kind,
-                        "A relation between two domain objects.",
-                        &et.src_type_ids,
-                        &et.dst_type_ids,
-                    ),
+                    // Stable schema (no endpoint traits): a relation verb is
+                    // reused across models with different endpoints, and
+                    // graph-storage treats a registered type's schema as
+                    // immutable — baking src/dst types in would make a model
+                    // swap conflict. The endpoint typing is still computed and
+                    // surfaced by GET /relations from the active ontology.
+                    schema: gts::derived_schema(&et.type_id),
                 });
             }
             // The meta layer: the object_type node + inherits/declares edges the

@@ -119,7 +119,13 @@ pub fn type_leaf(type_id: &str) -> &str {
 /// A derived type-registration schema for the graph-storage gear: the family
 /// derivation is what makes it registrable; the payload stays open so a field
 /// can be added to the ontology without a graph migration.
-pub fn derived_schema(type_id: &str, title: &str, description: &str) -> serde_json::Value {
+///
+/// Deliberately content-free beyond the `$id` and the family `$ref`: a type id
+/// registers to the byte-identical schema regardless of the model's names or
+/// descriptions, so re-uploading an edited model (or swapping models that reuse
+/// a type id) re-registers idempotently instead of conflicting. The human names
+/// live in the ontology, not the graph type.
+pub fn derived_schema(type_id: &str) -> serde_json::Value {
     let family = if is_edge_type(type_id) {
         STATIC_EDGE_FAMILY
     } else {
@@ -128,44 +134,9 @@ pub fn derived_schema(type_id: &str, title: &str, description: &str) -> serde_js
     serde_json::json!({
         "$id": format!("gts://{}", graph_type_id(type_id)),
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": title,
-        "description": description,
         "type": "object",
         "allOf": [{ "$ref": format!("gts://{family}") }],
     })
-}
-
-/// A derived edge schema that also declares its endpoint typing via
-/// `x-gts-traits.src_types` / `dst_types` (the graph-storage gear surfaces these
-/// as effective traits — see `docs/graph-storage-api.md`). `src_types` /
-/// `dst_types` are given as *our* node type ids and converted to their graph
-/// type ids here. An empty side is left unconstrained rather than declared as
-/// "no valid endpoint", so a relation whose targets are all still cross-bucket
-/// does not reject every edge.
-pub fn edge_derived_schema(
-    type_id: &str,
-    title: &str,
-    description: &str,
-    src_type_ids: &[String],
-    dst_type_ids: &[String],
-) -> serde_json::Value {
-    let mut schema = derived_schema(type_id, title, description);
-    let mut traits = serde_json::Map::new();
-    let map_graph = |ids: &[String]| -> Vec<serde_json::Value> {
-        ids.iter()
-            .map(|t| serde_json::Value::String(graph_type_id(t)))
-            .collect()
-    };
-    if !src_type_ids.is_empty() {
-        traits.insert("src_types".to_string(), map_graph(src_type_ids).into());
-    }
-    if !dst_type_ids.is_empty() {
-        traits.insert("dst_types".to_string(), map_graph(dst_type_ids).into());
-    }
-    if !traits.is_empty() {
-        schema["x-gts-traits"] = serde_json::Value::Object(traits);
-    }
-    schema
 }
 
 /// A free-form registration schema for the platform types-registry — the same
@@ -186,26 +157,10 @@ pub fn catalog_schema(type_id: &str, title: &str, description: &str) -> serde_js
 /// edges) as `(graph type id, schema)` pairs, for registering the graph in
 /// which the model itself lives. Fixed, so registration is idempotent.
 pub fn meta_type_registrations() -> Vec<(String, serde_json::Value)> {
-    [
-        (
-            META_OBJECT_TYPE,
-            "ObjectType",
-            "A domain object type — one entity of the model.",
-        ),
-        (
-            META_INHERITS,
-            "inherits",
-            "An object type to the object type it extends.",
-        ),
-        (
-            META_DECLARES,
-            "declares",
-            "An object type to a related object type (one declared relation).",
-        ),
-    ]
-    .into_iter()
-    .map(|(id, title, desc)| (graph_type_id(id), derived_schema(id, title, desc)))
-    .collect()
+    [META_OBJECT_TYPE, META_INHERITS, META_DECLARES]
+        .into_iter()
+        .map(|id| (graph_type_id(id), derived_schema(id)))
+        .collect()
 }
 
 /// Deterministic instance id for an object of `type_id` keyed by `key`, so
