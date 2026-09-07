@@ -162,6 +162,25 @@ pub struct ModelSyncResponse {
     pub skipped_endpoints: u64,
 }
 
+/// Upload a domain model to make it the active ontology.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ImportModelRequest {
+    /// The domain-entity document (same shape as `GET /types` returns).
+    #[schema(value_type = Object)]
+    pub ontology: Value,
+}
+
+/// What an import loaded.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ImportModelResponse {
+    pub entities: u64,
+    pub buckets: u64,
+    pub node_types: u64,
+    pub edge_types: u64,
+}
+
 /// One object-type node of the model graph, read back from the store.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -334,6 +353,28 @@ async fn sync_model(
         inherits: r.inherits,
         declares: r.declares,
         skipped_endpoints: r.skipped_endpoints,
+    }))
+}
+
+async fn import_model(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<ImportModelRequest>,
+) -> ApiResult<JsonBody<ImportModelResponse>> {
+    let s = handle
+        .0
+        .import_model(&ctx, req.ontology)
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(ImportModelResponse {
+        entities: s.entities,
+        buckets: s.buckets,
+        node_types: s.node_types,
+        edge_types: s.edge_types,
     }))
 }
 
@@ -518,6 +559,30 @@ pub fn register_routes(
             StatusCode::OK,
             "Model sync counts",
         )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/model/import")
+        .operation_id("studio_domain_model.import_model")
+        .summary("Upload a domain model to make it the active ontology")
+        .description(
+            "Replaces the active ontology with an uploaded domain-entity \
+             document (the shape GET /types returns) and registers its types, \
+             so the model can be loaded through the UI rather than only from the \
+             embedded default. Follow with POST /model/sync to materialize it.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ImportModelRequest>(openapi, "The domain model to load")
+        .handler(import_model)
+        .json_response_with_schema::<ImportModelResponse>(
+            openapi,
+            StatusCode::OK,
+            "What was loaded",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

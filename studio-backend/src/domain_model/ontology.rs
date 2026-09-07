@@ -57,6 +57,29 @@ impl Ontology {
         Self { doc }
     }
 
+    /// Build an ontology from an uploaded document — the same domain-entity
+    /// shape the embedded model uses. Rejected unless it carries an `entities`
+    /// array, so a stray file cannot silently replace the model.
+    pub fn from_value(doc: Value) -> Result<Self, OntologyError> {
+        if doc.get("entities").and_then(Value::as_array).is_none() {
+            return Err(OntologyError::Malformed);
+        }
+        Ok(Self { doc })
+    }
+
+    /// The distinct buckets across the entities.
+    pub fn bucket_count(&self) -> usize {
+        let mut seen: Vec<&str> = Vec::new();
+        for e in self.entities() {
+            if let Some(b) = e.get("bucket").and_then(Value::as_str)
+                && !seen.contains(&b)
+            {
+                seen.push(b);
+            }
+        }
+        seen.len()
+    }
+
     /// The whole ontology document (what the frontend regenerates from).
     pub fn document(&self) -> &Value {
         &self.doc

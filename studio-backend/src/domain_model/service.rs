@@ -52,8 +52,18 @@ pub struct ModelSyncReport {
     pub skipped_endpoints: u64,
 }
 
+/// The outcome of importing an uploaded model.
+#[derive(Debug, Clone)]
+pub struct ImportSummary {
+    pub entities: u64,
+    pub buckets: u64,
+    pub node_types: u64,
+    pub edge_types: u64,
+}
+
 pub struct DomainModelService {
-    /// The live ontology (mutable: a field can be appended to a type).
+    /// The live ontology (mutable: a field can be appended to a type, or the
+    /// whole model replaced by an uploaded one).
     ontology: Mutex<Ontology>,
     store: Arc<dyn DomainStore>,
 }
@@ -64,6 +74,34 @@ impl DomainModelService {
             ontology: Mutex::new(Ontology::load()),
             store,
         }
+    }
+
+    /// Import an uploaded model document (the domain-entity shape), making it
+    /// the active ontology and registering its types. This is what the frontend
+    /// upload posts — the model is loaded through the UI rather than only from
+    /// the embedded default. Idempotent per type; new types are added.
+    pub async fn import_model(
+        &self,
+        ctx: &SecurityContext,
+        doc: Value,
+    ) -> anyhow::Result<ImportSummary> {
+        let ontology = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let summary = ImportSummary {
+            entities: ontology.entities().len() as u64,
+            buckets: ontology.bucket_count() as u64,
+            node_types: ontology.node_types().len() as u64,
+            edge_types: ontology.edge_types().len() as u64,
+        };
+        {
+            let mut o = self
+                .ontology
+                .lock()
+                .map_err(|_| anyhow::anyhow!("ontology lock poisoned"))?;
+            *o = ontology;
+        }
+        // Register the uploaded model's types with the graph + type-registry.
+        self.ensure_types(ctx).await?;
+        Ok(summary)
     }
 
     /// The whole ontology document — the source the frontend regenerates from.

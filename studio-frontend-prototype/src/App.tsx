@@ -3470,6 +3470,48 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
   const [upstreams, setUpstreams] = useState<unknown>(null);
   const [entities, setEntities] = useState<unknown>(null);
 
+  // Domain-model upload: load a domain-entity document as the active model,
+  // then materialize it as a graph — the studio-domain-model gear.
+  const [modelImport, setModelImport] = useState<{
+    entities: number;
+    buckets: number;
+    node_types: number;
+    edge_types: number;
+  } | null>(null);
+  const [modelSync, setModelSync] = useState<{
+    object_types: number;
+    inherits: number;
+    declares: number;
+    skipped_endpoints: number;
+  } | null>(null);
+  const [modelErr, setModelErr] = useState<string | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+
+  const onModelFile = async (file: File) => {
+    setModelErr(null);
+    setModelSync(null);
+    setModelBusy(true);
+    try {
+      const ontology = JSON.parse(await file.text());
+      setModelImport(await api.importDomainModel(token, ontology));
+    } catch (e) {
+      setModelErr(errText(e));
+    } finally {
+      setModelBusy(false);
+    }
+  };
+  const onModelSync = async () => {
+    setModelErr(null);
+    setModelBusy(true);
+    try {
+      setModelSync(await api.syncDomainModel(token));
+    } catch (e) {
+      setModelErr(errText(e));
+    } finally {
+      setModelBusy(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const grab = async (p: Promise<unknown>) => p.catch((e) => ({ error: errText(e) }));
@@ -3531,6 +3573,46 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
               </li>
             ))}
           </ul>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Domain model</h2>
+        <p className="hint">
+          Upload a domain-entity document (the shape <code>GET /studio-domain-model/v1/types</code>{" "}
+          returns) to load it as the active model, then materialize it as a graph — the
+          studio-domain-model gear registers its GTS types in Graph Storage.
+        </p>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="file"
+            accept=".json,application/json"
+            disabled={modelBusy}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onModelFile(f);
+            }}
+          />
+          <button disabled={modelBusy || !modelImport} onClick={() => void onModelSync()}>
+            Sync to graph
+          </button>
+        </div>
+        {modelErr && (
+          <p className="error" style={{ marginTop: 10 }}>
+            {modelErr}
+          </p>
+        )}
+        {modelImport && (
+          <p style={{ marginTop: 10 }}>
+            Loaded <b>{modelImport.entities}</b> entities · {modelImport.buckets} buckets ·{" "}
+            {modelImport.node_types} node types · {modelImport.edge_types} edge types.
+          </p>
+        )}
+        {modelSync && (
+          <p>
+            Synced graph: <b>{modelSync.object_types}</b> object-type nodes · {modelSync.inherits}{" "}
+            inherits · {modelSync.declares} declares · {modelSync.skipped_endpoints} skipped.
+          </p>
         )}
       </div>
 

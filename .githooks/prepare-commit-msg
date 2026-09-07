@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+# prepare-commit-msg: append a DCO `Signed-off-by` trailer when it is missing,
+# so every commit satisfies the DCO check without remembering `git commit -s`.
+#
+# Shared, tracked hook — enable once per clone (same switch as pre-commit):
+#   git config core.hooksPath .githooks
+#
+# Bypass a single commit with `git commit --no-verify`.
+
+set -eu
+
+msg_file="$1"
+
+name=$(git config user.name || true)
+email=$(git config user.email || true)
+# Without an identity there is nothing to sign off with; leave the message be
+# and let git's own author check surface the problem.
+[ -n "$name" ] && [ -n "$email" ] || exit 0
+
+sob="Signed-off-by: $name <$email>"
+# Already signed off (e.g. `git commit -s`, or an amend) — do not duplicate.
+grep -qiF "$sob" "$msg_file" 2>/dev/null && exit 0
+
+printf '\n%s\n' "$sob" >> "$msg_file"
