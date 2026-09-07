@@ -24,13 +24,15 @@
 //! the gear upserts on `(tenant, node_key)` — and two repositories that both
 //! contain `src/main.rs` stay two different nodes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::service::ConnectorService;
+use crate::identity::IdentityResolver;
+use crate::identity::resolve::{Binding, normalize};
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
     EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TypeRegistration,
@@ -126,6 +128,12 @@ pub struct SyncOutcome {
     pub directories: usize,
     /// Person nodes written.
     pub contributors: usize,
+    /// Of those, how many were keyed on a Studio subject because the person had
+    /// proved control of the account (ADR-0012). The rest stay keyed per
+    /// provider until somebody claims them.
+    pub resolved_contributors: usize,
+    /// Accounts skipped as bots, CI or shared credentials.
+    pub excluded_contributors: usize,
     /// Whether the provider truncated its tree, or `max_entries` did.
     pub truncated: bool,
     /// Node id of the repository, so a client can seed a traversal with it.
@@ -145,6 +153,7 @@ pub struct SyncOutcome {
 pub async fn sync_repository(
     connectors: &ConnectorService,
     graph: &Arc<dyn GraphStorageClientV1>,
+    identity: Option<&Arc<dyn IdentityResolver>>,
     ctx: &SecurityContext,
     request: &SyncRequest<'_>,
     progress: &(dyn Fn(String) + Sync),
@@ -152,6 +161,7 @@ pub async fn sync_repository(
     let (driver, auth, _connection) = connectors
         .driver_and_auth(ctx, request.tenant, request.connection_id)
         .await?;
+    let provider = driver.provider();
 
     progress("reading the repository tree".to_owned());
     let tree = driver
@@ -161,6 +171,19 @@ pub async fn sync_repository(
     let people = driver
         .contributors(&auth, request.repo_full_path, request.max_contributors)
         .await?;
+
+    // Who these accounts belong to, in one query, before any node is keyed.
+    // A deployment without the identity gear resolves nothing and every
+    // contributor stays keyed per provider — the same result as nobody having
+    // claimed anything, which is the honest answer in that deployment.
+    let bindings = match identity {
+        Some(resolver) => {
+            progress("resolving contributor identities".to_owned());
+            let logins: Vec<String> = people.iter().map(|p| p.login.clone()).collect();
+            resolver.bindings(request.tenant, provider, &logins).await?
+        }
+        None => BTreeMap::new(),
+    };
 
     // Every type is registered before anything references it: the gear rejects
     // a batch naming an unregistered type, and rejects it wholesale. One
@@ -288,14 +311,46 @@ pub async fn sync_repository(
         });
     }
 
+    let mut resolved_contributors = 0usize;
+    let mut excluded_contributors = 0usize;
     for person in &people {
-        let key = format!("person:{}", person.login);
+        // Absent from the map means no journal row at all, which reads the same
+        // as `Binding::Unbound` — nobody has claimed this account.
+        let binding = bindings.get(&normalize(&person.login));
+
+        // A bot, CI or shared credential is not a person, so it gets no person
+        // node and no contribution edge (ADR-0012 §4). Dropping it is the point:
+        // counting a release bot's commits as somebody's contribution is worse
+        // than not counting them.
+        if matches!(binding, Some(Binding::Excluded)) {
+            excluded_contributors += 1;
+            continue;
+        }
+
+        // A subject that proved control of this account collapses every
+        // provider account it owns onto ONE node — which is the whole reason
+        // this gear exists. An unclaimed account stays keyed per provider, and
+        // note that the provider is in the key either way: the previous
+        // `person:{login}` scheme silently made a GitHub `alice` and a GitLab
+        // `alice` the same person.
+        let (key, subject) = match binding.and_then(Binding::attributable_subject) {
+            Some(subject) => {
+                resolved_contributors += 1;
+                (format!("person:studio:{subject}"), Some(subject))
+            }
+            None => (format!("person:{provider}:{}", person.login), None),
+        };
+
         let display = person.display_name.as_deref().unwrap_or(&person.login);
         nodes.push(NodeSpec {
             node_key: key.clone(),
             type_id: node_type(T_PERSON),
             name: Some(display.to_owned()),
-            payload: Some(serde_json::json!({ "login": person.login })),
+            payload: Some(serde_json::json!({
+                "login": person.login,
+                "provider": provider,
+                "subject": subject,
+            })),
             expected_version: None,
         });
         edges.push(EdgeSpec {
@@ -317,7 +372,9 @@ pub async fn sync_repository(
         git_ref: tree.git_ref,
         files,
         directories: directories.len(),
-        contributors: people.len(),
+        contributors: people.len() - excluded_contributors,
+        resolved_contributors,
+        excluded_contributors,
         truncated: tree.truncated || truncated_by_us,
         repo_node_key: repo_key,
         ..SyncOutcome::default()

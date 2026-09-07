@@ -97,6 +97,17 @@ pub struct Connection {
     pub secret_ref: String,
     /// `personal` | `workspace` | `organization`
     pub scope: String,
+    /// Subject that created the connection, as a string principal.
+    ///
+    /// Recorded for `studio-identity` (ADR-0012 §2): a `personal` connection
+    /// passed `ConnectorDriver::test()` against the provider, so it is standing
+    /// proof that *this* person controls `account`. Without a creator the proof
+    /// has nobody to attach to, and guessing is the failure this whole flow
+    /// exists to avoid — hence `#[serde(default)]` and an explicit "unknown
+    /// owner" branch there rather than a fallback. Catalogue rows written
+    /// before this field simply carry an empty string.
+    #[serde(default)]
+    pub created_by: String,
     pub created_at_epoch_secs: u64,
 }
 
@@ -358,6 +369,7 @@ impl ConnectorService {
             base_url,
             secret_ref,
             scope: scope.as_str().to_string(),
+            created_by: ctx.subject_id().to_string(),
             created_at_epoch_secs: now_secs(),
         };
         let mut catalogue = self.load_own(ctx, owner_tenant).await?;
@@ -457,6 +469,26 @@ impl ConnectorService {
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
         let existing = self.find(ctx, tenant, id).await?;
         let driver = self.driver(&existing.provider)?;
+
+        // A personal connection is edited only by the person it belongs to.
+        //
+        // Not a general permission rule — the catalogue is otherwise
+        // tenant-visible — but this row is now evidence: `studio-identity`
+        // reads `(created_by, account)` as proof that the creator controls that
+        // account (ADR-0012 §2). Rotating the token re-stamps `account` below
+        // while `created_by` stays put, so without this guard a tenant member
+        // could point somebody else's personal connection at an account of
+        // their choosing and have the verification recorded against that
+        // person. Rows predating `created_by` carry an empty string and stay
+        // editable as before; the identity fold skips them for the same reason.
+        if existing.scope == ConnectionScope::Personal.as_str()
+            && !existing.created_by.trim().is_empty()
+            && existing.created_by != ctx.subject_id().to_string()
+        {
+            return Err(anyhow!(
+                "connection {id} is personal to another user and cannot be edited"
+            ));
+        }
 
         let label = match label {
             Some(l) => {
