@@ -106,7 +106,23 @@ adjacency_truncated, envelope }`. The **envelope** carries `tenant_id`, `key`,
 read observed.
 
 The projection's `$filter`/`$orderby` accept `node_key`, `name`, `created_at`,
-`updated_at`. **Payload attributes are not filterable** yet (see § 6).
+`updated_at` and, when `type_pattern` selects types, **any payload path every
+selected type declares in its `index` trait**, spelled as an OData path:
+
+```
+GET /nodes?type_pattern=…requirement.v1~&$filter=payload/status eq 'approved'&$orderby=payload/priority desc&$top=50
+GET /nodes?type_pattern=…finding.v1~&$filter=payload/loc/line ge 100 and payload/severity in ('high','critical')
+```
+
+The path's kind comes from the type's schema (`string`, `number`, `integer`,
+`boolean`, `date-time`), so numbers compare as numbers and a literal of the
+wrong kind is refused. Equality is served by an index; range comparison and
+ordering read the attribute over the rows the type narrowed (fine for a type's
+worth of rows, the thing to measure at scale). Rows missing the ordered
+attribute sort last in either direction; paging is forward-only over a payload
+ordering. An undeclared path, or a payload path without `type_pattern`, is a
+`400` naming the declared alternatives. A type whose `index` pointer does not
+land on a scalar in its own schema is refused at registration.
 
 ### Search and traversal
 
@@ -187,6 +203,7 @@ graph-storage:
   database: { server: "pg_graph", dbname: "graph_storage" }
   config:
     traversal_hop: pgq                # pgq | two_query
+    ontology_max_chain_depth: 8       # segments; the gear's default is 3 (base ~ family ~ type)
     embedding_dimension: 384          # fixed at migration time
     embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-onnx}"   # fake | onnx | remote
     embedding_model_path: "/app/models/minilm/model.onnx"
@@ -205,9 +222,11 @@ read from the process environment by name and never enters the configuration.
 
 Recorded in the gear's `dev/DEVIATIONS.md`; the ones a consumer here meets:
 
-- **Payload attributes are not filterable** in the projection: `$filter` on
-  `payload/...` is refused. The `index` trait is stored but not wired to the
-  filter surface (platform limitation in the OData binding).
+- **Range and order over payload paths are not index-backed.** Equality uses
+  the payload GIN; `gt`/`lt` and `$orderby` read the attribute over the rows
+  the type index narrowed. A B-tree per declared path needs `CREATE INDEX` at
+  registration, which the platform's secure ORM does not let a gear run
+  (gear D-030). A `date-time` path compares as RFC 3339 text.
 - **No egress policy for the remote provider.** Selecting `remote` sends every
   tenant's node text and query text to the one configured endpoint; ADR-0004's
   per-tenant default-deny policy is not built.
