@@ -488,6 +488,11 @@ gears:
   # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
   # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
   # it cannot run on the main server.
+  studio-user:
+    database:
+      server: "sqlite_main"
+      file: "studio_users.db"
+
   graph-storage:
     database:
       server: "pg_graph"

@@ -409,14 +409,12 @@ gears:
       server: "pg_main"
       dbname: "studio_documents"
 
-  # Self-service identity resolution (ADR-0012): the journal of external
-  # accounts claimed and proven by their owners. Its own database, like every
-  # other stateful gear here; without this section the gear is inert and
-  # contributor nodes stay keyed per provider.
-  studio-identity:
+  studio-user:
     database:
       server: "pg_main"
-      dbname: "studio_identity"
+      # Canonical identity store (users, logins, memberships, aliases).
+      # backend-bootstrap creates this database from config on start.
+      dbname: "studio_users"
 
   studio-credstore-pg:
     database:
