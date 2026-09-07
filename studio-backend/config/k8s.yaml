@@ -541,6 +541,11 @@ gears:
       dbname: "graph_storage"
     config:
       traversal_hop: pgq
+      # Longest derivation chain a registered type may have, in segments.
+      # The gear's default (3) is the GTS guideline's posture; Studio's domain
+      # model mirrors its hierarchy into the chain (family -> managed object
+      # -> document -> requirement), so it needs up to 6.
+      ontology_max_chain_depth: 8
       # One embedding provider per deployment, chosen by the chart
       # (backend.embedding.provider): `onnx` loads the MiniLM model the init
       # container fetched into /app/models; `remote` calls an OpenAI-compatible

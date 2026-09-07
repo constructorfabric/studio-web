@@ -654,6 +654,11 @@ gears:
       # portable fallback and `cte` is deliberately absent while the pinned
       # gears-rust revision predates the safe-CTE API it needs.
       traversal_hop: pgq
+      # Longest derivation chain a registered type may have, in segments.
+      # The gear's default (3) is the GTS guideline's posture; Studio's domain
+      # model mirrors its hierarchy into the chain (family -> managed object
+      # -> document -> requirement), so it needs up to 6.
+      ontology_max_chain_depth: 8
       # The deployment's single embedding space: 384-wide, fixed at migration
       # time, and ONE provider computes every vector in it. `onnx` runs the
       # MiniLM model from the models volume in this process; `remote` calls an

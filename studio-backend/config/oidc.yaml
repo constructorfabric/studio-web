@@ -652,6 +652,11 @@ gears:
       # portable fallback and `cte` is deliberately absent while the pinned
       # gears-rust revision predates the safe-CTE API it needs.
       traversal_hop: pgq
+      # Longest derivation chain a registered type may have, in segments.
+      # The gear's default (3) is the GTS guideline's posture; Studio's domain
+      # model mirrors its hierarchy into the chain (family -> managed object
+      # -> document -> requirement), so it needs up to 6.
+      ontology_max_chain_depth: 8
       # Embedding provider for a backend run on the host. Defaults to the
       # deterministic `fake` so `cargo run` needs no model artifacts; set
       # STUDIO_EMBEDDING_PROVIDER=onnx with STUDIO_EMBED_MODEL_PATH /
