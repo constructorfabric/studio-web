@@ -32,7 +32,7 @@ export function DomainModelGraph({ token }: { token: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctrlRef = useRef<Ctrl | null>(null);
   const nodesRef = useRef<Map<string, GNode>>(new Map());
-  const filterRef = useRef({ i: true, d: true, off: new Set<string>(), q: "" });
+  const filterRef = useRef({ i: true, d: true, off: new Set<string>(), q: "", focus: false });
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +123,12 @@ export function DomainModelGraph({ token }: { token: string }) {
       let hover: GNode | null = null, selected: GNode | null = null;
       const visN = (n: GNode) => !F.off.has(n.bucket);
       const visL = (l: GLink) => (l.k === "i" ? F.i : F.d) && visN(l.s) && visN(l.t);
+      // Focus mode: when on and a node is selected, isolate it + its direct
+      // neighbours (one type and its relations).
+      const focusSet = (): Set<GNode> | null =>
+        F.focus && selected
+          ? new Set<GNode>([selected, ...selected.out.map((l) => l.t), ...selected.in.map((l) => l.s)])
+          : null;
       const radius = (n: GNode) => 4 + Math.sqrt(n.fields + n.rels) * 1.1;
       const sx = (n: GNode) => n.x * view.k + view.x, sy = (n: GNode) => n.y * view.k + view.y;
 
@@ -162,10 +168,11 @@ export function DomainModelGraph({ token }: { token: string }) {
       const draw = () => {
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
         ctx.clearRect(0, 0, W, H);
+        const fs = focusSet();
         const hl = hover || selected;
         const near = hl ? new Set<GNode>([hl, ...hl.out.map((l) => l.t), ...hl.in.map((l) => l.s)]) : null;
         for (const l of links) {
-          if (!visL(l)) continue;
+          if (!visL(l) || (fs && !(fs.has(l.s) && fs.has(l.t)))) continue;
           const on = hl != null && (l.s === hl || l.t === hl);
           ctx.globalAlpha = hl && !on ? 0.06 : 1;
           ctx.beginPath(); ctx.moveTo(sx(l.s), sy(l.s)); ctx.lineTo(sx(l.t), sy(l.t));
@@ -176,7 +183,7 @@ export function DomainModelGraph({ token }: { token: string }) {
         ctx.globalAlpha = 1;
         const q = F.q.toLowerCase();
         for (const n of nodes) {
-          if (!visN(n)) continue;
+          if (!visN(n) || (fs && !fs.has(n))) continue;
           const dim = (hl != null && near != null && !near.has(n)) || (q !== "" && !(n.name.toLowerCase().includes(q) || n.id.includes(q)));
           const r = radius(n) * (n === hl ? 1.35 : 1) * view.k * 0.9 + 0.5;
           ctx.globalAlpha = dim ? 0.14 : 1;
@@ -198,8 +205,9 @@ export function DomainModelGraph({ token }: { token: string }) {
 
       const pick = (mx: number, my: number): GNode | null => {
         let best: GNode | null = null, bd = Infinity;
+        const fs = focusSet();
         for (const n of nodes) {
-          if (!visN(n)) continue;
+          if (!visN(n) || (fs && !fs.has(n))) continue;
           const dx = sx(n) - mx, dy = sy(n) - my, d = dx * dx + dy * dy;
           const rr = (radius(n) * view.k + 9) ** 2;
           if (d < rr && d < bd) { best = n; bd = d; }
@@ -295,6 +303,10 @@ export function DomainModelGraph({ token }: { token: string }) {
           <span className="dmg-kind"><span className="dmg-dot" style={{ background: colorOf(sel.bucket) }} />{sel.bucket}{sel.abstract ? " · abstract" : ""}</span>
           <h3>{sel.name}</h3>
           <div className="dmg-id">{sel.id}</div>
+          <button className={"dmg-focus" + (F.focus ? " on" : "")}
+            onClick={() => setFilter({ focus: !F.focus })}>
+            {F.focus ? "Show whole graph" : "Focus this type + relations"}
+          </button>
           {sel.ext && <div className="dmg-rel">extends <a onClick={() => selectByEntity(nodesRef.current, sel.ext!, ctrlRef.current)}>{sel.ext}</a></div>}
           <div className="dmg-stats">
             <div><b>{sel.fields}</b><span>fields</span></div>
@@ -340,6 +352,8 @@ const DMG_CSS = `
 .dmg-close { float: right; border: none; background: none; font-size: 18px; line-height: 1; color: #94a3b8; cursor: pointer; }
 .dmg-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; display: inline-flex; gap: 6px; align-items: center; }
 .dmg-detail h3 { margin: 5px 0 2px; font-size: 17px; } .dmg-id { font: 11.5px var(--mono, monospace); color: #94a3b8; word-break: break-all; }
+.dmg-focus { margin-top: 10px; width: 100%; font: 12px system-ui, sans-serif; padding: 6px 10px; border: 1px solid #d7deea; border-radius: 8px; background: #f5f7fa; color: #334155; cursor: pointer; }
+.dmg-focus:hover { border-color: #2563eb; color: #2563eb; } .dmg-focus.on { background: #2563eb; border-color: #2563eb; color: #fff; }
 .dmg-stats { display: flex; gap: 7px; margin: 12px 0; } .dmg-stats > div { flex: 1; background: #f5f7fa; border: 1px solid #e3e8ef; border-radius: 9px; padding: 7px 9px; } .dmg-stats b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; } .dmg-stats span { font-size: 10px; text-transform: uppercase; color: #94a3b8; letter-spacing: .04em; }
 .dmg-sec { margin-top: 12px; } .dmg-sec h4 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
 .dmg-rel { padding: 2px 0; display: flex; gap: 6px; } .dmg-rel a { color: #2563eb; cursor: pointer; } .dmg-rel a:hover { text-decoration: underline; } .dmg-muted { color: #94a3b8; font-size: 11.5px; }
@@ -350,5 +364,6 @@ const DMG_CSS = `
   .dmg-legend, .dmg-detail { background: rgba(21,27,36,.95); border-color: #263040; color: #e7edf6; }
   .dmg-lrow:hover { background: rgba(255,255,255,.06); }
   .dmg-stats > div { background: #10151d; border-color: #263040; }
+  .dmg-focus { background: #10151d; border-color: #2b3646; color: #cdd7e5; }
 }
 `;
