@@ -325,6 +325,10 @@ impl IdentityService {
     /// contributor list and has to key every person node before writing any of
     /// them. Accounts with no journal row are absent from the map, which the
     /// caller reads as [`Binding::Unbound`].
+    // The only consumer is the knowledge-graph sync, which lives behind the
+    // `graph` feature. A build without it still wants the method (the trait
+    // impl in `mod` exposes it) but has nothing calling it.
+    #[cfg_attr(not(feature = "graph"), allow(dead_code))]
     pub async fn resolve_bindings(
         &self,
         tenant: Uuid,

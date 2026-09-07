@@ -35,9 +35,16 @@ impl LicenseFeature for License {}
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
+/// One external account as it concerns one person.
+///
+/// **Not** `IdentityDto`: `studio-connector` already registers a schema by that
+/// name (the account a credential resolved to), and the OpenAPI registry is
+/// shared across the whole assembly — a second definition under the same name
+/// panics the boot, not the request. Nothing in `cargo build`, `clippy` or the
+/// tests catches it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct IdentityDto {
+pub struct ExternalAccountDto {
     pub provider: String,
     pub account: String,
     /// The caller's own newest assertion: `suggested` | `claimed` | `verified`
@@ -60,8 +67,8 @@ pub struct IdentityDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct IdentityListDto {
-    pub identities: Vec<IdentityDto>,
+pub struct ExternalAccountListDto {
+    pub identities: Vec<ExternalAccountDto>,
 }
 
 #[derive(Debug)]
@@ -118,8 +125,8 @@ pub struct AccountResolutionDto {
 
 // ── mapping ──────────────────────────────────────────────────────────────────
 
-fn identity_dto(view: IdentityView) -> IdentityDto {
-    IdentityDto {
+fn identity_dto(view: IdentityView) -> ExternalAccountDto {
+    ExternalAccountDto {
         provider: view.provider,
         account: view.account,
         my_kind: view.my_kind.as_str().to_owned(),
@@ -177,7 +184,7 @@ async fn list_my_identities(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<IdentityService>>,
     Path(tenant_id): Path<Uuid>,
-) -> ApiResult<JsonBody<IdentityListDto>> {
+) -> ApiResult<JsonBody<ExternalAccountListDto>> {
     service
         .authorize(&ctx, tenant_id)
         .await
@@ -186,7 +193,7 @@ async fn list_my_identities(
         .my_identities(&ctx, tenant_id)
         .await
         .map_err(invalid)?;
-    Ok(Json(IdentityListDto {
+    Ok(Json(ExternalAccountListDto {
         identities: views.into_iter().map(identity_dto).collect(),
     }))
 }
@@ -196,7 +203,7 @@ async fn claim_identity(
     Extension(service): Extension<Arc<IdentityService>>,
     Path(tenant_id): Path<Uuid>,
     Json(body): Json<AccountRefDto>,
-) -> ApiResult<JsonBody<IdentityListDto>> {
+) -> ApiResult<JsonBody<ExternalAccountListDto>> {
     service
         .authorize(&ctx, tenant_id)
         .await
@@ -209,7 +216,7 @@ async fn claim_identity(
         .my_identities(&ctx, tenant_id)
         .await
         .map_err(invalid)?;
-    Ok(Json(IdentityListDto {
+    Ok(Json(ExternalAccountListDto {
         identities: views.into_iter().map(identity_dto).collect(),
     }))
 }
@@ -219,7 +226,7 @@ async fn revoke_identity(
     Extension(service): Extension<Arc<IdentityService>>,
     Path(tenant_id): Path<Uuid>,
     Json(body): Json<AccountRefDto>,
-) -> ApiResult<JsonBody<IdentityListDto>> {
+) -> ApiResult<JsonBody<ExternalAccountListDto>> {
     service
         .authorize(&ctx, tenant_id)
         .await
@@ -232,7 +239,7 @@ async fn revoke_identity(
         .my_identities(&ctx, tenant_id)
         .await
         .map_err(invalid)?;
-    Ok(Json(IdentityListDto {
+    Ok(Json(ExternalAccountListDto {
         identities: views.into_iter().map(identity_dto).collect(),
     }))
 }
@@ -303,7 +310,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .path_param("tenant_id", "Organization tenant id")
         .handler(list_my_identities)
-        .json_response_with_schema::<IdentityListDto>(
+        .json_response_with_schema::<ExternalAccountListDto>(
             openapi,
             StatusCode::OK,
             "Accounts and their state",
@@ -323,7 +330,7 @@ pub fn register_routes(
         .path_param("tenant_id", "Organization tenant id")
         .json_request::<AccountRefDto>(openapi, "Account to claim")
         .handler(claim_identity)
-        .json_response_with_schema::<IdentityListDto>(
+        .json_response_with_schema::<ExternalAccountListDto>(
             openapi,
             StatusCode::OK,
             "Accounts and their state after the claim",
@@ -344,7 +351,7 @@ pub fn register_routes(
         .path_param("tenant_id", "Organization tenant id")
         .json_request::<AccountRefDto>(openapi, "Account to withdraw")
         .handler(revoke_identity)
-        .json_response_with_schema::<IdentityListDto>(
+        .json_response_with_schema::<ExternalAccountListDto>(
             openapi,
             StatusCode::OK,
             "Accounts and their state after the withdrawal",
