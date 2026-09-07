@@ -5,8 +5,10 @@
 //! `studio-credstore-pg` take, for the same reason.
 //!
 //! Two indexes, one per question the gear asks:
+//!
 //!   * `(tenant, provider, account)` — resolve one external account;
 //!   * `(tenant, subject)` — the "my identities" view.
+//!
 //! Uniqueness of an act needs no index of its own: it is the primary key
 //! (see `entity`).
 

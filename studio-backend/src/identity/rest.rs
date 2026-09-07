@@ -400,5 +400,7 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
-    router
+    // Without this every handler above compiles and then fails at request time
+    // on a missing extension. Applied once, after the last route.
+    router.layer(Extension(service))
 }

@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, QueryFilter};
+use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel};
 use toolkit_db::DBProvider;
 use toolkit_db::secure::{SecureEntityExt, SecureInsertExt, SecureOnConflict};
 use toolkit_security::AccessScope;

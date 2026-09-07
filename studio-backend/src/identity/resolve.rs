@@ -6,10 +6,10 @@
 //! rendering what it returns.
 //!
 //! The vocabulary lives here in both directions — [`Kind::as_i16`] /
-//! [`Kind::from_i16`] for the column, [`Kind::as_str`] / [`Kind::parse`] for the
-//! API — so the write side and the read side cannot disagree about what a row
-//! means. That is the one habit worth keeping from Insight's
-//! `domain/provenance.rs`; the policy it encodes is the opposite of theirs.
+//! [`Kind::from_i16`] for the column and [`Kind::as_str`] for the API — so the
+//! write side and the read side cannot disagree about what a row means. That is
+//! the one habit worth keeping from Insight's `domain/provenance.rs`; the policy
+//! it encodes is the opposite of theirs.
 
 use std::collections::BTreeMap;
 
@@ -43,7 +43,9 @@ pub enum Kind {
 
 impl Kind {
     /// Every variant. A new one cannot be added without updating this array,
-    /// which is what the round-trip tests iterate.
+    /// which is what the round-trip tests iterate. Test-only: nothing in the
+    /// running gear enumerates the kinds.
+    #[cfg(test)]
     pub const ALL: [Self; 4] = [
         Self::Suggested,
         Self::Claimed,
@@ -104,13 +106,6 @@ impl Kind {
             Self::Verified => "verified",
             Self::Revoked => "revoked",
         }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.as_str().eq_ignore_ascii_case(value.trim()))
     }
 }
 
@@ -510,18 +505,24 @@ mod tests {
     }
 
     #[test]
-    fn a_kind_survives_the_column_and_the_api() {
+    fn a_kind_survives_the_column() {
         for kind in Kind::ALL {
             assert_eq!(Kind::from_i16(kind.as_i16()), Some(kind));
-            assert_eq!(Kind::parse(kind.as_str()), Some(kind));
         }
-        assert_eq!(Kind::from_i16(99), None);
-        assert_eq!(Kind::parse("nonsense"), None);
+        assert_eq!(
+            Kind::from_i16(99),
+            None,
+            "a value this build does not know must be dropped, not guessed at"
+        );
     }
 
     #[test]
-    fn a_kind_is_parsed_the_way_a_human_types_it() {
-        assert_eq!(Kind::parse("  Verified "), Some(Kind::Verified));
+    fn every_kind_renders_as_its_own_name() {
+        // The API name is what a client branches on, so two kinds sharing one
+        // name would be indistinguishable to whoever renders the list.
+        let names: BTreeMap<&str, Kind> = Kind::ALL.into_iter().map(|k| (k.as_str(), k)).collect();
+        assert_eq!(names.len(), Kind::ALL.len());
+        assert!(names.keys().all(|name| !name.is_empty()));
     }
 
     #[test]
