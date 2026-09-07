@@ -10,6 +10,7 @@ import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
+import { makeZip } from "./zip";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -3512,6 +3513,54 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
     }
   };
 
+  // Regenerate the model-UI file set from the stored model and download it as a
+  // zip: one <bucket>/entities.json + <bucket>/buckets.json per bucket, plus
+  // model-manifest.json — the shape the domain-model-ui app.js loads.
+  const onRegenerate = async () => {
+    setModelErr(null);
+    setModelBusy(true);
+    try {
+      const { ontology } = await api.domainModelTypes(token);
+      const entities = (ontology.entities ?? []) as Array<{ bucket?: string }>;
+      const bucketDefs = (ontology.buckets ?? []) as Array<{ id?: string }>;
+      const byBucket = new Map<string, unknown[]>();
+      for (const e of entities) {
+        const b = e.bucket ?? "domain";
+        const arr = byBucket.get(b) ?? [];
+        arr.push(e);
+        byBucket.set(b, arr);
+      }
+      const files: { name: string; content: string }[] = [];
+      const definitionFiles: string[] = [];
+      for (const [bucket, ents] of byBucket) {
+        files.push({ name: `${bucket}/entities.json`, content: JSON.stringify(ents, null, 2) });
+        files.push({
+          name: `${bucket}/buckets.json`,
+          content: JSON.stringify(
+            bucketDefs.filter((b) => b.id === bucket),
+            null,
+            2,
+          ),
+        });
+        definitionFiles.push(`${bucket}/buckets.json`, `${bucket}/entities.json`);
+      }
+      files.push({
+        name: "model-manifest.json",
+        content: JSON.stringify({ metaFile: "core/meta.json", definitionFiles }, null, 2),
+      });
+      const url = URL.createObjectURL(makeZip(files));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "model-ui.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setModelErr(errText(e));
+    } finally {
+      setModelBusy(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const grab = async (p: Promise<unknown>) => p.catch((e) => ({ error: errText(e) }));
@@ -3595,6 +3644,9 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           />
           <button disabled={modelBusy || !modelImport} onClick={() => void onModelSync()}>
             Sync to graph
+          </button>
+          <button disabled={modelBusy} onClick={() => void onRegenerate()}>
+            Regenerate frontend
           </button>
         </div>
         {modelErr && (
