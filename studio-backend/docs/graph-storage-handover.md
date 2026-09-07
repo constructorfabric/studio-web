@@ -130,6 +130,8 @@ not on graph-storage.
 | 6 | The gear's PostgreSQL conformance lane cannot use the CNPG-based `studio-graph-postgres` image | `gears/graph-storage/dev/pg19-pgvector-test.Dockerfile` (official base) | fold into gears-rust `test-containers` (D-003) |
 | 7 | `docs/gear-intelligence-sync.md` still says the k8s release runs without graph-storage | — | update the doc |
 | 8 | A stale local `studio-graph-postgres` image runs `bash` and exits 0 silently | `docker compose build graph-postgres` | none needed; noted in the quickstart |
+| 9 | Payload paths in `$filter`/`$orderby` (gear v0.1.2): equality is served by the payload GIN, range comparison and ordering read the attribute over the type's rows without an index of their own; `date-time` compares as text; paging forward-only | declare `index` paths, always pass `type_pattern`; measure on the type's row count | a B-tree per declared path needs DDL the platform's secure ORM does not expose to a gear (gear D-030) |
+| 10 | A type registered before v0.1.2 keeps its stored traits without the resolved `index_kinds`, because a byte-identical re-registration converges and does not recompute | recreate the graph database, or register the type under a new id | refresh stored traits on re-registration (gear) |
 
 ## 6. What is still open
 
