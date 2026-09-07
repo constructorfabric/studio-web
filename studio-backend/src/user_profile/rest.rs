@@ -78,9 +78,15 @@ pub struct LoginListDto {
     pub items: Vec<LoginDto>,
 }
 
+/// A person's membership in one organization, carrying the role held there.
+///
+/// **Not** `MembershipDto`: the resource-group system gear already registers a
+/// schema by that name, and the OpenAPI registry is shared across the whole
+/// assembly — a second definition under the same name panics the boot, not the
+/// request. Nothing in `cargo build`, `clippy` or the tests catches it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct MembershipDto {
+pub struct OrgMembershipDto {
     pub user_id: String,
     pub org_id: String,
     pub role: String,
@@ -92,7 +98,7 @@ pub struct MembershipDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct MembershipListDto {
-    pub items: Vec<MembershipDto>,
+    pub items: Vec<OrgMembershipDto>,
 }
 
 #[derive(Debug)]
@@ -231,8 +237,8 @@ fn login_to_dto(l: LoginView) -> LoginDto {
     }
 }
 
-fn membership_to_dto(m: MembershipView) -> MembershipDto {
-    MembershipDto {
+fn membership_to_dto(m: MembershipView) -> OrgMembershipDto {
+    OrgMembershipDto {
         user_id: m.user_id,
         org_id: m.org_id,
         role: m.role,
@@ -418,7 +424,7 @@ async fn put_membership(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path((user_id, org_id)): Path<(String, String)>,
     Json(req): Json<PutMembershipRequest>,
-) -> ApiResult<JsonBody<MembershipDto>> {
+) -> ApiResult<JsonBody<OrgMembershipDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_owner(&ctx, &service, org).await?;
@@ -732,7 +738,7 @@ pub fn register_routes(
         .path_param("org_id", "Organization (tenant) id")
         .json_request::<PutMembershipRequest>(openapi, "The role to record")
         .handler(put_membership)
-        .json_response_with_schema::<MembershipDto>(
+        .json_response_with_schema::<OrgMembershipDto>(
             openapi,
             StatusCode::OK,
             "The recorded membership",
