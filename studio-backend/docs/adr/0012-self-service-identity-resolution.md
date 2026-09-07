@@ -1,204 +1,161 @@
-# ADR-0012: Identity resolution is self-service, and only a proof of control binds
+# ADR-0012: Attributing an external identity is self-service, and only a proof of control binds
 
-Status: **proposed** · Date: 2026-09-07 · Amends ADR-0001 · Builds on ADR-0011
+Status: **proposed** · Date: 2026-09-07 · Amends ADR-0006
 
 ## Context
 
-ADR-0001 decided that Studio needs a gear owning `external identity (system, ref) →
-platform user`, and left three follow-ups open, one of them "the connector contract
-that feeds `proposed` links". Nothing was built.
+ADR-0006 gave Studio a canonical `user` and, with `alias`, an owner for
+`external (kind, id) → user`. It left attribution a **platform-admin** act:
+`POST /studio-user/v1/users/{user_id}/aliases`, no self-service route.
 
-Meanwhile the need became concrete. `connectors/graph_sync.rs:292` keys
-knowledge-graph person nodes as `person:{login}` — a provider login string, with the
-provider not even in the key. So today:
+That is the wrong hand on the lever. Nobody but the person knows which GitLab
+account is theirs, and the person is the party with the interest in getting it
+right. An operator can only guess, and at Studio's scale there is no operator to
+do the guessing anyway.
 
-- the same human is a different person node in every provider,
-- a GitHub `alice` and a GitLab `alice` are silently the **same** node,
-- and no person node connects to a Studio identity at all.
+Two more things were missing, and they turn out to be the same problem:
 
-The neighbouring product (Insight, `services/identity-resolution`) has a mature
-implementation of this problem — ~28k lines, an append-only observation journal, a
-derived review queue, operator verbs. But its trust model is the inverse of ours, and
-that is not a UI difference. From its `domain/provenance.rs`:
+**Nothing proved control.** ADR-0006 committed to "verified-only auto-link" for
+`login`, but said nothing about where a *verified* GitHub account comes from. A
+commit author address cannot supply it — that is whatever the committer put in
+`git config user.email`, unauthenticated and trivially spoofed. Under a rule that
+lets an address bind, spoofing one is enough to be credited with someone's work.
 
-> `Resolved` — *"Matched on an address, or reused from an earlier run. The address is
-> the evidence, so nothing is left to confirm."*
-
-Insight treats an e-mail match as a settled fact and lets automation bind on it,
-because an operator stands behind the whole dataset and can correct it. Studio has no
-such operator, and cannot have one: nobody but the person knows which GitLab account
-is theirs, and the person is the party with the interest in getting it right.
-
-An e-mail match is also *not evidence* in our setting. A commit author address is
-whatever the committer put in `git config user.email` — unauthenticated, trivially
-spoofed. Under Insight's rule that value binds; under ours it can only be a guess
-shown to a human.
+**The write was unguarded.** `identity_alias`'s primary key is the v5 UUID of
+`(kind, external_id)`, so `add_alias` did not append — it *repointed*. A second
+caller writing the same external identity silently moved it off the first user,
+`confirmed` rows included. Safe only because the route was admin-only; an
+account-takeover primitive the moment it is not. And `confidence` was coerced:
+anything that was not `"confirmed"` became `"suggested"`, so a typo'd `confirmd`
+turned into a hypothesis with nobody told.
 
 ## Decision
 
-### 1. Only a proof of control binds. Everything else is a proposal.
+### 1. Three confidences, and only the strongest attributes anything
 
-Three strengths of observation, and only the strongest attributes anything:
-
-| strength | meaning | attributes? |
+| confidence | meaning | attributes? |
 |---|---|---|
-| `verified` | the provider confirmed the caller controls the account | **yes** |
-| `claimed` | the subject asserted the account is theirs, unproven | no |
-| `suggested` | the system noticed a similarity (address, login) | no |
+| `confirmed` | the provider confirmed the person controls the account | **yes** |
+| `claimed` | the person says it is theirs, unproven | no |
+| `suggested` | the system noticed a similarity | no |
 
-A `suggested` row exists to be shown to the person it is about. A `claimed` row
-records intent and survives until a ceremony upgrades it. Neither ever reaches the
-knowledge graph, an authorization decision, or a report.
+`claimed` is new. ADR-0006 had only `confirmed | suggested`, which left nowhere
+to put "this is mine, I cannot prove it yet" — the state a person is in before
+they add a credential. It records intent and grants nothing.
 
-### 2. The ceremony already exists — it was being thrown away
+An unrecognised confidence is now a 400, not a silent downgrade.
 
-`ConnectorDriver::test()` (`connectors/driver.rs`) asks the provider "who am I?" using
-the **caller's own credential** and returns `DriverIdentity { account, display_name }`:
+### 2. The proof of control already existed and was being discarded
 
-- `connectors/github.rs:205` → `GET /user` → `login`
-- `connectors/gitlab.rs:59` → `GET /api/v4/user` → `username`
-- `connectors/bitbucket.rs:99` → `GET /user`
+`ConnectorDriver::test()` asks a provider "who am I?" using **the caller's own
+credential** and returns the account it resolved to — `github.rs`, `gitlab.rs`,
+`bitbucket.rs`. A PAT is issued by the account it authenticates as, so a
+successful `test()` is a proof of control, and a stronger one than any operator
+assertion. `studio-connector` already stored the answer in `Connection.account`.
 
-A PAT is issued by the account it authenticates as, so a successful `test()` is a
-proof of control — a stronger one than any operator assertion. The result is already
-persisted in `Connection.account` ("Account the credential resolved to when it was
-verified"). What was missing is only that the connection record does not name the
-**person**: it carries `owner_tenant_id` and no `created_by`. So a verified
+What was missing is that the connection record did not name the **person**:
+it carried `owner_tenant_id` and no `created_by`. So a verified
 `(provider, account)` pair sat in the catalogue with nothing to attach it to.
+With `created_by`, `POST /studio-user/v1/me/aliases/confirm` records the proof —
+no token is read and nothing is re-probed.
 
-Keycloak `federated_identities` (already read by `identity_directory/service.rs:58`)
-is a second free channel: logging in through the GitHub broker is itself a proof of
-control over that GitHub account.
+Only a `personal` connection counts. A `workspace`- or `organization`-scoped one
+is a team or bot credential: it proves control of *an* account, not of the
+caller's own, and is skipped. So is a connection whose creator is unknown (a row
+written before `created_by`): there is a proof, but nothing says whose, and
+guessing is the failure this whole design exists to avoid.
 
-### 3. Verification-wins, and nothing else blocks
+Keycloak `federated_identities` — already read by `identity_directory` — is a
+second proof channel for whichever providers the realm brokers. Not wired here.
 
-For one `(tenant, provider, account)`:
+### 3. Only a proof displaces somebody else
 
-1. take each subject's newest observation;
-2. drop subjects whose newest observation is a revocation;
-3. the binding is the subject whose newest observation is `verified`, most recent
-   first;
-4. every other live subject is a proposal, never a binding.
+One row per external identity means a write is a contest, not an append. The
+rule, whole:
 
-An unverified claim therefore blocks nothing — it cannot deny, delay or contest a
-verification. Two live verifications on one account do not block either: the most
-recent one wins and the account is flagged `contested` for reporting.
+- unattributed → the first assertion takes it;
+- your own row → you may raise your confidence (`claimed` → `confirmed`), an
+  identical write is a no-op, and you may not lower it (that would discard your
+  own proof);
+- somebody else's row → **only `confirmed` takes it**; the one exception is a
+  machine's `suggested`, which yields to any human assertion, because a
+  hypothesis must never stand between a person and their own account.
 
-**Accepted consequence:** a credential shared by two people (a team bot PAT typed in
-twice) will flap between them. That is the price of "nothing blocks", and it is
-bounded by §4: a shared credential is not supposed to travel this path at all.
+Two `confirmed` writes on one identity mean a shared or stolen credential. The
+most recent proof wins — nothing blocks — and the displacement is reported
+(`written_over_a_proof`) rather than happening silently.
 
-### 4. Only a personal credential is a self-claim
+### 4. Attribution flows to the graph from `confirmed` only
 
-A `workspace`- or `organization`-scoped connection is a team or bot credential:
-`test()` proves control of *an* account, not of the caller's own. The fold therefore
-skips it. That is what keeps bot commits from being attributed to whoever configured
-the bot — an unclaimed account is unbound, and unbound attributes nothing.
+`connectors/graph_sync` keyed person nodes `person:{login}` — no provider in the
+key, so a GitHub `alice` and a GitLab `alice` were one node, and no node reached
+a Studio user. Now: `person:studio:{user_id}` when the identity is confirmed, so
+one human is one node across providers; `person:{provider}:{login}` otherwise.
 
-The model still carries a reserved **excluded subject** (`ffffffff-…-ffffffff`,
-unmintable because no UUID version produces all-ones) meaning "not a human", a direct
-lift of Insight's `EXCLUDED_PERSON` (`domain/resolution.rs:17`). It is what
-distinguishes *decided* not-a-human from merely unclaimed — the graph sync drops an
-excluded account's person node entirely rather than writing an unresolved one.
+The resolver handed to the graph returns confirmed rows *only*. A claim or a
+suggestion must not be readable as an attribution, and the narrow interface is
+what makes that true by construction rather than by remembering to filter.
 
-But v1 never *writes* it automatically. Marking an account as a bot from the mere
-presence of a shared connection would let a later org-scoped connection override an
-earlier personal verification (§3 says the newest verification wins), quietly turning a
-real person into "not a human" because they lent their PAT to a workspace. Recording
-an exclusion stays an explicit act, and the endpoint for it is a follow-up.
+## What this changes in ADR-0006
 
-A personal connection whose creator is unknown — a catalogue row written before
-`Connection.created_by` existed — is skipped for the same family of reason: there is a
-proof, but nothing says whose.
+- alias attribution becomes self-service (`/me/aliases`); the admin route stays
+  but goes through the same policy — an admin writing on somebody's behalf must
+  not be able to take a proven identity either;
+- `confidence` gains `claimed`;
+- `IdentityStore` gains `find_alias` / `find_aliases` / `delete_alias`. There was
+  no way to ask who holds an external identity at all — only what a given user
+  holds — so neither the policy nor graph attribution was expressible;
+- editing a `personal` connection is restricted to its creator. The record is now
+  evidence, and rotating a token re-stamps `Connection.account` while
+  `created_by` stays put; without that guard a tenant member could point somebody
+  else's personal connection at an account of their choosing and have the
+  confirmation recorded against that person.
 
-Editing a personal connection is also restricted to its creator, which it was not
-before. The record is now evidence, and rotating a token re-stamps `Connection.account`
-while `created_by` stays put; without that guard a tenant member could point somebody
-else's personal connection at an account of their choosing and have the verification
-recorded against that person.
+Everything else in ADR-0006 stands: the canonical `user` is the person, `login`
+is a way in, `membership` carries per-org role, storage is relational, merge is
+first-class.
 
-### 5. Journal, not status column
+## What was rejected
 
-One append-only table. A claim, a verification and a revocation are separate rows;
-nothing is updated in place. `UNIQUE (tenant, provider, account, subject, kind)`
-collapses a repeat of the *same* act into a touch of `observed_at`, which is what
-makes re-running suggestion generation idempotent.
+A separate `studio-identity` gear with its own append-only journal, tenant-scoped
+and keyed on the Keycloak subject. It was written first, before ADR-0006 was
+found, and it is not in this PR. Two gears owning the same mapping and two
+different person identifiers is worse than one, and ADR-0006's canonical
+`user_id` is the better anchor: it survives an IdP migration, which a Keycloak
+subject does not.
 
-This is Insight's shape and it survives the trust inversion intact, because a
-self-service flow has *more* transitions to audit than an operator one
-(`suggested → claimed → verified → revoked → verified`), and "who claimed what, when,
-and on what evidence" is precisely the question a dispute asks. It also means a
-verification outlives the connection that produced it: deleting a PAT does not
-silently un-attribute a year of commits.
-
-The trade-off: with one row per `(account, subject, kind)`, a verify → revoke → verify
-cycle keeps two rows and two timestamps, not four events. Full event history would
-drop the unique constraint and need Insight's `observation_slot.rs` collision
-allocator; that is deliberately not taken in v1.
-
-### 6. Tenant-scoped
-
-Claims are scoped by the organization tenant, like every other row in this backend.
-A human in two organizations claims twice.
-
-Rejected the alternative (a global claim store keyed by Studio identity) for three
-reasons: SecureConn is the outer boundary per ADR-0009 and this would need a
-deliberate cross-tenant authority; "this person also has this GitHub account" is a
-disclosure that should not cross an organization boundary; and the graph the claims
-feed is per-tenant regardless. Verification is cheap enough to repeat.
-
-## What is taken from Insight, and what is not
-
-**Taken (as ideas, re-implemented on Postgres):**
-
-- the append-only observation journal;
-- "derived, never stored" for the queue — an item exists only while its condition
-  holds, so a decision removes it with no item lifecycle to maintain
-  (`domain/review_queue.rs`);
-- the excluded-subject sentinel for bots and service accounts;
-- one vocabulary owned in both directions so the write and read sides cannot disagree
-  (`domain/provenance.rs`).
-
-**Not taken:**
-
-- e-mail matching as a binding rule — inverted to `suggested` (§1);
-- operator verbs `bind`/`merge`/`detach`/`exclude` — replaced by
-  `claim`/`verify`/`revoke` by the subject. `merge` has no self-service form: it is an
-  assertion about a second person;
-- `login_bootstrap` / person minting — unnecessary. Per ADR-0011 a Keycloak login
-  already establishes a stable identity, so the platform subject always exists and the
-  only open question is which external accounts attach to it;
-- `observation_slot.rs` — see §5;
-- roles, visibility, org-chart, subchart — Insight's own domain;
-- MariaDB DDL, ClickHouse ingestion, `insight_tenant_id` tenancy, and the separate
-  service host with its own pinned toolkit.
+Its journal did buy one thing this does not have: several people could hold a
+pending claim on one identity at once, and resolution decided between them. Under
+one row per identity the second claimant is refused instead, and told to prove
+control. Simpler, strictly safer, and it tells the person something actionable
+immediately.
 
 ## Consequences
 
-- (+) The person with the knowledge and the interest does the work; no operator queue
-  on the main path.
+- (+) The person with the knowledge and the interest does the work; no operator
+  queue on the main path.
 - (+) The strongest evidence available (provider-confirmed control) replaces the
   weakest (an unauthenticated commit header).
 - (+) The knowledge graph gets one person node per human across providers.
-- (−) Attribution is incomplete until people claim. Historic commits from unclaimed
-  accounts stay unattributed rather than being guessed at — the deliberate trade.
-- (−) Changing the graph person key orphans existing `person:{login}` nodes; they are
-  re-created under the new key on the next sync and the old ones need a one-off sweep.
-- (−) A contested account needs somewhere to be seen. v1 only flags it; the admin view
-  is a follow-up.
+- (+) The unguarded repoint in `add_alias` is closed on both routes.
+- (−) Attribution is incomplete until people claim and prove. Historic commits
+  from unproven accounts stay unattributed rather than guessed at — the trade.
+- (−) Changing the graph person key orphans existing `person:{login}` nodes; they
+  are re-created under the new key on the next sync and the old ones need a
+  one-off sweep.
+- (−) A displaced proof is reported in the response and nowhere else. There is no
+  admin view for it yet.
 
 ## Follow-ups
 
-1. Suggestion sources. v1 generates no `suggested` rows at all — the kind exists, is
-   resolved and is rendered, but nothing writes one yet, so the only way onto the list
-   is to claim or to verify. The sources to add: commit author addresses from the graph,
+1. **Suggestion sources.** Nothing writes `suggested` yet: the value exists,
+   resolves and renders, but the only ways onto a person's list are `claim` and
+   `confirm`. The sources to add — commit author addresses from the graph,
    Keycloak e-mail, `federated_identities`, login equality across providers.
-2. An explicit "this is a bot" act, writing the excluded subject (§4).
-3. An admin view for `contested` accounts.
-4. Sweep orphaned `person:{login}` graph nodes.
-5. Two verified accounts of one person contributing to the same repository collapse
-   onto one person node, so their two `contributed_to` edges collide on
-   `(src, dst)` and the commit count of whichever lands last wins. Needs either an edge
+2. `federated_identities` as a second proof channel, alongside the connector PAT.
+3. An admin view for displaced proofs and for identities two people contest.
+4. Sweep the orphaned `person:{login}` graph nodes.
+5. Two confirmed identities of one person contributing to the same repository
+   collapse onto one node, so their two `contributed_to` edges collide on
+   `(src, dst)` and the commit count of whichever lands last wins. Needs an edge
    discriminator or a summed count.
-6. Decide whether a verified claim should also be usable for authorization (today it is
-   attribution only).

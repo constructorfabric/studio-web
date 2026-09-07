@@ -17,7 +17,11 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::service::{IdentityService, LoginView, MembershipView, ProfilePatch, UserProfile};
+use super::alias_policy::Confidence;
+use super::service::{
+    AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, ProfilePatch,
+    UserProfile,
+};
 
 /// Provider tag for a token minted through Studio's Keycloak realm.
 const PROVIDER_KEYCLOAK: &str = "keycloak";
@@ -105,8 +109,76 @@ pub struct PutMembershipRequest {
 pub struct AddAliasRequest {
     pub kind: String,
     pub external_id: String,
-    /// "confirmed" or "suggested"; anything else is treated as "suggested".
+    /// `suggested`, `claimed` or `confirmed`. Defaults to `suggested`.
+    ///
+    /// An unrecognised value is a 400, not a silent downgrade to `suggested` —
+    /// a typo'd `confirmd` used to become a hypothesis without telling anyone.
     pub confidence: Option<String>,
+}
+
+/// The external identity a self-service call is about.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AliasRefRequest {
+    /// `github` | `gitlab` | `bitbucket` | ...
+    pub kind: String,
+    /// The provider-native login or identifier.
+    pub external_id: String,
+}
+
+/// One external identity attributed to the caller.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AliasDto {
+    pub kind: String,
+    pub external_id: String,
+    /// `suggested` | `claimed` | `confirmed`.
+    pub confidence: String,
+    /// Whether activity on this identity is attributed to the caller. True only
+    /// for `confirmed`.
+    pub attributes: bool,
+    pub added_at_epoch_ms: i64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AliasListDto {
+    pub aliases: Vec<AliasDto>,
+}
+
+/// The answer to a self-service alias write.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AliasWriteDto {
+    /// `written` | `written_over_a_proof` | `already_held` | `refused`.
+    pub outcome: String,
+    /// Present when `outcome` is `refused`: why, in terms the caller can act on.
+    pub reason: Option<String>,
+    /// The caller's identities after the write.
+    pub aliases: Vec<AliasDto>,
+}
+
+/// What one confirmation pass over the caller's connections did.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfirmReportDto {
+    pub confirmed: Vec<AliasPairDto>,
+    pub already_confirmed: i64,
+    /// Team or bot credentials: proving control of a shared account says
+    /// nothing about who the caller is.
+    pub skipped_shared: i64,
+    /// Personal connections belonging to somebody else.
+    pub skipped_other_owner: i64,
+    /// Personal connections written before the record named its creator.
+    pub skipped_unknown_owner: i64,
+    pub refused: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AliasPairDto {
+    pub kind: String,
+    pub external_id: String,
 }
 
 #[derive(Debug)]
@@ -174,6 +246,15 @@ fn membership_to_dto(m: MembershipView) -> MembershipDto {
 
 fn internal(error: anyhow::Error) -> CanonicalError {
     CanonicalError::internal(format!("identity service failed: {error:#}")).create()
+}
+
+/// A request the service rejected on its own terms — a malformed key, a missing
+/// user, no connector to confirm against. A client error, not a fault, so it
+/// must not read as a 500 the way `internal` would.
+fn invalid(error: anyhow::Error) -> CanonicalError {
+    UserProfileError::invalid_argument()
+        .with_constraint(error.to_string())
+        .create()
 }
 
 fn configured(service: Option<Arc<IdentityService>>) -> ApiResult<Arc<IdentityService>> {
@@ -364,20 +445,137 @@ async fn delete_membership(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn parse_confidence(raw: Option<&str>) -> ApiResult<Confidence> {
+    let raw = raw.unwrap_or("suggested");
+    Confidence::parse(raw).ok_or_else(|| {
+        UserProfileError::invalid_argument()
+            .with_constraint("confidence must be suggested, claimed or confirmed")
+            .create()
+    })
+}
+
+fn alias_dto(record: super::service::AliasRecord) -> AliasDto {
+    let confidence = Confidence::parse(&record.confidence);
+    AliasDto {
+        kind: record.kind,
+        external_id: record.external_id,
+        attributes: confidence.is_some_and(Confidence::attributes),
+        confidence: record.confidence,
+        added_at_epoch_ms: record.added_at_epoch_ms,
+    }
+}
+
+/// Render an outcome plus the caller's resulting identities, so the UI needs one
+/// round trip rather than a write followed by a list.
+async fn alias_write_dto(
+    service: &Arc<IdentityService>,
+    user_id: &str,
+    outcome: AliasOutcome,
+) -> ApiResult<AliasWriteDto> {
+    let aliases = service.list_aliases(user_id).await.map_err(internal)?;
+    let (name, reason) = match outcome {
+        AliasOutcome::Written => ("written", None),
+        AliasOutcome::WrittenOverAProof => ("written_over_a_proof", None),
+        AliasOutcome::AlreadyHeld => ("already_held", None),
+        AliasOutcome::Refused(reason) => ("refused", Some(reason.to_owned())),
+    };
+    Ok(AliasWriteDto {
+        outcome: name.to_owned(),
+        reason,
+        aliases: aliases.into_iter().map(alias_dto).collect(),
+    })
+}
+
+fn confirm_report_dto(report: ConfirmReport) -> ConfirmReportDto {
+    ConfirmReportDto {
+        confirmed: report
+            .confirmed
+            .into_iter()
+            .map(|(kind, external_id)| AliasPairDto { kind, external_id })
+            .collect(),
+        already_confirmed: report.already_confirmed as i64,
+        skipped_shared: report.skipped_shared as i64,
+        skipped_other_owner: report.skipped_other_owner as i64,
+        skipped_unknown_owner: report.skipped_unknown_owner as i64,
+        refused: report.refused,
+    }
+}
+
 async fn add_alias(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(user_id): Path<String>,
     Json(req): Json<AddAliasRequest>,
-) -> ApiResult<StatusCode> {
+) -> ApiResult<JsonBody<AliasWriteDto>> {
     require_platform_admin(&ctx)?;
     let service = configured(service)?;
-    let confidence = req.confidence.unwrap_or_else(|| "suggested".to_string());
-    service
-        .add_alias(&user_id, &req.kind, &req.external_id, &confidence)
+    let confidence = parse_confidence(req.confidence.as_deref())?;
+    // Through the same gate as the self-service path: an admin writing on
+    // somebody's behalf must not be able to silently take an identity another
+    // person has proven either.
+    let outcome = service
+        .attribute_alias(&user_id, &req.kind, &req.external_id, confidence)
         .await
-        .map_err(internal)?;
-    Ok(StatusCode::NO_CONTENT)
+        .map_err(invalid)?;
+    Ok(Json(alias_write_dto(&service, &user_id, outcome).await?))
+}
+
+// ── self-service (ADR-0012): the person attributes their own identities ─────
+
+async fn list_my_aliases(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<AliasListDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let aliases = service.list_aliases(&user_id).await.map_err(internal)?;
+    Ok(Json(AliasListDto {
+        aliases: aliases.into_iter().map(alias_dto).collect(),
+    }))
+}
+
+async fn claim_my_alias(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<AliasRefRequest>,
+) -> ApiResult<JsonBody<AliasWriteDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let outcome = service
+        .claim_alias(&user_id, &req.kind, &req.external_id)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(alias_write_dto(&service, &user_id, outcome).await?))
+}
+
+async fn revoke_my_alias(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<AliasRefRequest>,
+) -> ApiResult<JsonBody<AliasWriteDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let outcome = service
+        .revoke_alias(&user_id, &req.kind, &req.external_id)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(alias_write_dto(&service, &user_id, outcome).await?))
+}
+
+async fn confirm_my_aliases(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<ConfirmReportDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    // The caller's own tenant: the connection catalogue is tenant-scoped, and
+    // the credentials that prove an identity are the ones they can read.
+    let tenant = ctx.subject_tenant_id();
+    let report = service
+        .confirm_aliases_from_connections(&ctx, &user_id, tenant)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(confirm_report_dto(report)))
 }
 
 async fn merge_users(
@@ -568,7 +766,10 @@ pub fn register_routes(
         .summary("Attribute a non-login external identifier to a user (platform admin)")
         .description(
             "Records an external identifier (commit author, chat handle, external system id) as \
-             belonging to a user. 'suggested' attributions are hypotheses and grant nothing.",
+             belonging to a user. Only 'confirmed' attributes activity; 'claimed' and \
+             'suggested' are recorded and grant nothing. Subject to the same write policy as \
+             the self-service path: an identity another person has proven is not taken by an \
+             unproven assertion, whoever writes it.",
         )
         .tag("StudioUser")
         .authenticated()
@@ -576,10 +777,107 @@ pub fn register_routes(
         .path_param("user_id", "Canonical Studio user id")
         .json_request::<AddAliasRequest>(openapi, "The external identifier to attribute")
         .handler(add_alias)
-        .no_content_response(StatusCode::NO_CONTENT, "Alias recorded")
+        .json_response_with_schema::<AliasWriteDto>(
+            openapi,
+            StatusCode::OK,
+            "The outcome and the user's identities after it",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    // ── self-service (ADR-0012) ────────────────────────────────────────────
+    //
+    // The person, not an operator, attributes their own external identities:
+    // only they know which GitLab account is theirs, and they are the party
+    // with the interest in getting it right. The system may suggest; a claim
+    // records intent; only a proof of control attributes anything.
+
+    let router = OperationBuilder::get("/studio-user/v1/me/aliases")
+        .operation_id("studio_user.list_my_aliases")
+        .summary("List the external identities attributed to the caller")
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_my_aliases)
+        .json_response_with_schema::<AliasListDto>(
+            openapi,
+            StatusCode::OK,
+            "The caller's external identities",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-user/v1/me/aliases")
+        .operation_id("studio_user.claim_my_alias")
+        .summary("Claim an external identity as the caller's own (attributes nothing yet)")
+        .description(
+            "Records that the caller says this identity is theirs. It grants nothing until a \
+             proof of control confirms it — see POST /me/aliases/confirm. Refused when another \
+             person has already claimed or proven the same identity.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<AliasRefRequest>(openapi, "The external identity to claim")
+        .handler(claim_my_alias)
+        .json_response_with_schema::<AliasWriteDto>(
+            openapi,
+            StatusCode::OK,
+            "The outcome and the caller's identities after it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-user/v1/me/aliases/confirm")
+        .operation_id("studio_user.confirm_my_aliases")
+        .summary("Confirm the caller's identities from their own connector credentials")
+        .description(
+            "Every connection in the catalogue already passed the provider's \"who am I?\" \
+             check with that credential, so a personal connection is standing proof that its \
+             creator controls the account it resolved to. This records that proof; no token is \
+             read and nothing is re-probed. Team and organization credentials are skipped: they \
+             prove control of an account, not of the caller's own.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(confirm_my_aliases)
+        .json_response_with_schema::<ConfirmReportDto>(
+            openapi,
+            StatusCode::OK,
+            "What was confirmed and what was skipped",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-user/v1/me/aliases/revoke")
+        .operation_id("studio_user.revoke_my_alias")
+        .summary("Withdraw an external identity the caller holds")
+        .description(
+            "Removes the attribution, freeing the identity for whoever it really belongs to. \
+             Refused for an identity attributed to somebody else. A POST with a body rather \
+             than a DELETE with a path: a provider login is user-supplied text.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<AliasRefRequest>(openapi, "The external identity to withdraw")
+        .handler(revoke_my_alias)
+        .json_response_with_schema::<AliasWriteDto>(
+            openapi,
+            StatusCode::OK,
+            "The outcome and the caller's identities after it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));

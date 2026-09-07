@@ -155,12 +155,12 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
             // gear's REST phase. Absent when that gear is inert (no database),
             // in which case contributor nodes stay keyed per provider.
             ctx.client_hub()
-                .get_scoped::<dyn crate::identity::IdentityResolver>(&ClientScope::gts_id(
-                    crate::identity::IDENTITY_INSTANCE_ID,
+                .get_scoped::<dyn crate::user_profile::AliasResolver>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
                 ))
                 .inspect_err(|_| {
                     warn!(
-                        "studio-connector: studio-identity resolver not registered — \
+                        "studio-connector: studio-user alias resolver not registered — \
                          contributor nodes will not be resolved to Studio subjects"
                     );
                 })

@@ -11,7 +11,6 @@ mod credstore_pg; // persistent credstore value store (issue #66)
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
-mod identity; // self-service identity resolution: external accounts claimed and proven by their owner (ADR-0012)
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
 // keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in

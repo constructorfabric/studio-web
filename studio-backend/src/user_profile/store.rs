@@ -47,6 +47,16 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()>;
     async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()>;
     async fn aliases_of(&self, user_id: &str) -> Result<Vec<AliasRecord>>;
+    /// The row that attributes one external identity, if any.
+    ///
+    /// The reverse direction of `aliases_of`, and the one the write policy and
+    /// the knowledge-graph attribution both need: `aliases_of` can only answer
+    /// "what does this user hold", never "who holds this account".
+    async fn find_alias(&self, kind: &str, external_id: &str) -> Result<Option<AliasRecord>>;
+    /// Bulk `find_alias` for one kind — the graph sync keys a whole contributor
+    /// list before writing any of it.
+    async fn find_aliases(&self, kind: &str, external_ids: &[String]) -> Result<Vec<AliasRecord>>;
+    async fn delete_alias(&self, kind: &str, external_id: &str) -> Result<()>;
 }
 
 // ── conversions (row -> view) ─────────────────────────────────────────────
@@ -346,5 +356,67 @@ impl IdentityStore for PgStore {
             .into_iter()
             .map(alias_to_record)
             .collect())
+    }
+
+    async fn find_alias(&self, kind: &str, external_id: &str) -> Result<Option<AliasRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // Addressed by primary key: the id IS the v5 of (kind, external_id), so
+        // this is a point lookup and needs no second index.
+        Ok(entity::alias::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::alias::Column::Id.eq(entity::alias_id(kind, external_id))),
+            )
+            .one(&conn)
+            .await?
+            .map(alias_to_record))
+    }
+
+    async fn find_aliases(&self, kind: &str, external_ids: &[String]) -> Result<Vec<AliasRecord>> {
+        if external_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // By primary key again, so one indexed `IN` rather than a scan over the
+        // kind. Ids are derived here, which also means a caller cannot smuggle
+        // in a row of a different kind.
+        let ids: Vec<_> = external_ids
+            .iter()
+            .map(|external_id| entity::alias_id(kind, external_id))
+            .collect();
+        Ok(entity::alias::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::alias::Column::Id.is_in(ids)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(alias_to_record)
+            .collect())
+    }
+
+    async fn delete_alias(&self, kind: &str, external_id: &str) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        entity::alias::Entity::delete_many()
+            .filter(
+                Condition::all()
+                    .add(entity::alias::Column::Id.eq(entity::alias_id(kind, external_id))),
+            )
+            .secure()
+            .scope_with(&scope())
+            .exec(&conn)
+            .await?;
+        Ok(())
     }
 }

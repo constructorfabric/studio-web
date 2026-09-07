@@ -24,7 +24,7 @@ use super::graph_sync::{SyncOutcome, SyncRequest, sync_repository};
 use super::graph_sync_tasks::TaskRegistry;
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
-use crate::identity::IdentityResolver;
+use crate::user_profile::AliasResolver;
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
 
@@ -64,10 +64,10 @@ pub struct GraphSink {
     /// The background imports this process has run, for the poll endpoint.
     tasks: Arc<TaskRegistry>,
     /// Identity resolution for contributor accounts. Absent when the
-    /// studio-identity gear is inert (no database); person nodes then stay
-    /// keyed per provider. Carried here rather than as its own Extension
-    /// because it is only consulted on the graph path.
-    identity: Option<Arc<dyn IdentityResolver>>,
+    /// studio-user gear is inert (no database); person nodes then stay keyed
+    /// per provider. Carried here rather than as its own Extension because it
+    /// is only consulted on the graph path.
+    identity: Option<Arc<dyn AliasResolver>>,
 }
 
 #[cfg(not(feature = "graph"))]
@@ -78,7 +78,7 @@ pub struct GraphSink;
 impl GraphSink {
     pub fn new(
         client: Option<Arc<dyn GraphStorageClientV1>>,
-        identity: Option<Arc<dyn IdentityResolver>>,
+        identity: Option<Arc<dyn AliasResolver>>,
     ) -> Self {
         Self {
             client,
@@ -770,11 +770,9 @@ pub struct GraphSyncResultDto {
     pub files: usize,
     pub directories: usize,
     pub contributors: usize,
-    /// Of those, how many were keyed on a Studio subject because the person
-    /// had proved control of the account.
+    /// Of those, how many were keyed on a canonical Studio user because the
+    /// person had proved control of the account.
     pub resolved_contributors: usize,
-    /// Accounts skipped as bots, CI or shared credentials.
-    pub excluded_contributors: usize,
     /// Whether the provider or `max_entries` cut the tree short.
     pub truncated: bool,
 }
@@ -791,7 +789,6 @@ impl From<SyncOutcome> for GraphSyncResultDto {
             directories: o.directories,
             contributors: o.contributors,
             resolved_contributors: o.resolved_contributors,
-            excluded_contributors: o.excluded_contributors,
             truncated: o.truncated,
         }
     }
@@ -841,7 +838,7 @@ struct ImportJob {
     project_name: Option<String>,
     /// Resolver captured at request time, so the spawned task owns everything
     /// it needs (the `GraphSink` extension is gone by then).
-    identity: Option<Arc<dyn IdentityResolver>>,
+    identity: Option<Arc<dyn AliasResolver>>,
 }
 
 #[cfg(feature = "graph")]
