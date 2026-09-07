@@ -55,8 +55,12 @@ pub struct CreateObjectRequest {
     /// id (`gts.cf.studio.domain.role_assignment.v1~`) or its leaf.
     #[serde(rename = "type")]
     pub type_ref: String,
-    /// A caller-chosen stable key; the same `(type, key)` upserts.
+    /// A caller-chosen stable key; the same `(type, key, scope)` upserts.
     pub key: String,
+    /// Optional workspace/project scope. The same key in different scopes is
+    /// different objects; omitted = unscoped (tenant-wide).
+    #[serde(default)]
+    pub scope: Option<String>,
     /// The object payload. A `name` field, if present, is used as the node's
     /// display name.
     #[schema(value_type = Object)]
@@ -76,6 +80,9 @@ pub struct ObjectsQuery {
     /// domain type.
     #[serde(default)]
     pub r#type: Option<String>,
+    /// Filter to one workspace/project scope. Omitted = every scope.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// One stored object.
@@ -119,11 +126,28 @@ pub struct UnresolvedTargetDto {
     pub target: String,
 }
 
+/// One declared relation with its cardinality.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredRelationDto {
+    pub source: String,
+    pub name: String,
+    pub verb: String,
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cardinality: Option<String>,
+    pub label: String,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct RelationCatalogResponse {
-    /// Every relation with its endpoint typing (how relations are synced).
+    /// Every relation verb with its endpoint typing (how relations are synced).
     pub relations: Vec<RelationDto>,
+    /// Every declared relation as a named row, with its cardinality/label.
+    pub declared: Vec<DeclaredRelationDto>,
     /// Cross-bucket targets omitted from `dst_types` until their buckets are
     /// synced — the relations that reach beyond the current slice.
     pub unresolved: Vec<UnresolvedTargetDto>,
@@ -255,7 +279,13 @@ async fn create_object(
 ) -> ApiResult<JsonBody<CreateObjectResponse>> {
     let created = handle
         .0
-        .create_object(&ctx, req.type_ref.trim(), req.key.trim(), req.value)
+        .create_object(
+            &ctx,
+            req.type_ref.trim(),
+            req.key.trim(),
+            req.scope.as_deref(),
+            req.value,
+        )
         .await
         .map_err(|e| {
             StudioDomainModelError::invalid_argument()
@@ -274,9 +304,10 @@ async fn list_objects(
     Query(q): Query<ObjectsQuery>,
 ) -> ApiResult<JsonBody<ObjectListResponse>> {
     let filter = q.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let objects = handle
         .0
-        .list_objects(&ctx, filter)
+        .list_objects(&ctx, filter, scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let objects: Vec<ObjectDto> = objects
@@ -308,6 +339,19 @@ async fn relation_catalog(
                 type_id: r.type_id,
                 src_types: r.src_type_ids,
                 dst_types: r.dst_type_ids,
+            })
+            .collect(),
+        declared: catalog
+            .declared
+            .into_iter()
+            .map(|d| DeclaredRelationDto {
+                source: d.source,
+                name: d.name,
+                verb: d.verb,
+                target: d.target,
+                target_entity: d.target_entity,
+                cardinality: d.cardinality,
+                label: d.label,
             })
             .collect(),
         unresolved: catalog

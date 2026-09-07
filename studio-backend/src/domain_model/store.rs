@@ -38,12 +38,16 @@ pub struct NodeUpsert {
     pub payload: Value,
 }
 
-/// An edge to upsert in a batch, endpoints addressed by node key.
+/// An edge to upsert in a batch, endpoints addressed by node key. The optional
+/// `discriminator` distinguishes parallel edges of the same type between the
+/// same endpoints (e.g. two named relations both `declares` A -> B), so they
+/// are stored as distinct edges rather than collapsing to one.
 #[derive(Debug, Clone)]
 pub struct EdgeUpsert {
     pub type_id: String,
     pub from: String,
     pub to: String,
+    pub discriminator: Option<String>,
     pub payload: Option<Value>,
 }
 
@@ -238,10 +242,12 @@ impl DomainStore for InMemoryDomainStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         for e in edges {
-            map.insert(
+            let key = format!(
+                "{}|{}",
                 super::gts::edge_key(&e.type_id, &e.from, &e.to),
-                (e.type_id.clone(), e.from.clone(), e.to.clone()),
+                e.discriminator.as_deref().unwrap_or("")
             );
+            map.insert(key, (e.type_id.clone(), e.from.clone(), e.to.clone()));
         }
         Ok(edges.len() as u64)
     }
@@ -492,7 +498,7 @@ mod graph_backend {
                     type_id: gts::graph_type_id(&e.type_id),
                     src_node_key: e.from.clone(),
                     dst_node_key: e.to.clone(),
-                    discriminator: None,
+                    discriminator: e.discriminator.clone(),
                     payload: e.payload.clone(),
                 })
                 .collect();

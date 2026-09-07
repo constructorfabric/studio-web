@@ -10,9 +10,10 @@ graph-storage families and ingests instances as typed nodes/edges.
 ## The model
 
 The domain model's structured source of truth lives in a **separate repo**,
-`studio-internal/domain-model-ui` (`core/entities.json` etc.) — 133 entities in
-the domain-entity shape its `app.js` renders from. This gear embeds the full
-core model (`ontology.core.json`, all 10 buckets, 133 entities) as its ontology.
+`studio-internal/domain-model-ui` (`core/entities.json` etc.) in the
+domain-entity shape its `app.js` renders from. This gear embeds the full core
+model plus the system base types (`ontology.core.json`, 11 buckets / 140
+entities) as its ontology, so `extends` resolves to modeled bases.
 
 ## Mapping to GTS
 

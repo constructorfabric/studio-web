@@ -3,7 +3,7 @@
 //! model back so the frontend can be regenerated from it.
 //!
 //! The domain model is embedded from `studio-internal/domain-model-ui` (the
-//! full core model — all 10 buckets, 133 entities). Each entity is registered
+//! full core model + system bases — 11 buckets, 140 entities). Each entity is registered
 //! as a GTS node type derived from the graph-storage `owned_node` family, and
 //! each relation kind as an endpoint-typed edge type derived from `static_edge`;
 //! objects are typed nodes keyed on a deterministic instance id. Prefers the

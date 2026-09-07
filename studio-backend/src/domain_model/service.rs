@@ -30,11 +30,12 @@ pub struct RelationEntry {
     pub dst_type_ids: Vec<String>,
 }
 
-/// The relation catalog: every relation with its endpoints, plus the
-/// cross-bucket targets not yet resolvable in the current ontology.
+/// The relation catalog: relation verbs with their endpoints, every declared
+/// relation (with cardinality), plus the targets not yet resolvable.
 #[derive(Debug, Clone)]
 pub struct RelationCatalog {
     pub relations: Vec<RelationEntry>,
+    pub declared: Vec<super::ontology::DeclaredRelation>,
     pub unresolved: Vec<(String, String)>,
 }
 
@@ -131,9 +132,11 @@ impl DomainModelService {
                 dst_type_ids: e.dst_type_ids,
             })
             .collect();
+        let declared = o.declared_relations();
         let unresolved = o.unresolved_relation_targets();
         Ok(RelationCatalog {
             relations,
+            declared,
             unresolved,
         })
     }
@@ -163,7 +166,8 @@ impl DomainModelService {
         ctx: &SecurityContext,
         type_ref: &str,
         key: &str,
-        payload: Value,
+        scope: Option<&str>,
+        mut payload: Value,
     ) -> anyhow::Result<CreatedObject> {
         let entity_id = {
             let o = self
@@ -174,7 +178,21 @@ impl DomainModelService {
                 .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?
         };
         let type_id = gts::node_type_id(&entity_id);
-        let instance_id = gts::instance_id(&type_id, key);
+        // Types are tenant/platform-shared; an object is scoped by an optional
+        // workspace/project key, so the same `key` in two scopes is two objects
+        // and a scoped listing shows only its own. The scope is folded into the
+        // instance id and tagged on the payload (`_scope`) for filtering.
+        let scope = scope.map(str::trim).filter(|s| !s.is_empty());
+        let instance_key = match scope {
+            Some(s) => format!("{s}|{key}"),
+            None => key.to_string(),
+        };
+        let instance_id = gts::instance_id(&type_id, &instance_key);
+        if let Some(s) = scope
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert("_scope".to_string(), Value::String(s.to_string()));
+        }
         let name = payload
             .get("name")
             .and_then(Value::as_str)
@@ -220,11 +238,13 @@ impl DomainModelService {
         Ok(edge_type_id)
     }
 
-    /// List objects, optionally of one type. `None` = every domain type.
+    /// List objects, optionally of one type and/or one scope. `None` type =
+    /// every domain type; `None` scope = every scope.
     pub async fn list_objects(
         &self,
         ctx: &SecurityContext,
         type_ref: Option<&str>,
+        scope: Option<&str>,
     ) -> anyhow::Result<Vec<ObjectNode>> {
         let type_ids: Vec<String> = {
             let o = self
@@ -244,7 +264,11 @@ impl DomainModelService {
             return Ok(Vec::new());
         }
         self.ensure_types(ctx).await?;
-        self.store.list_objects(ctx, &type_ids).await
+        let mut nodes = self.store.list_objects(ctx, &type_ids).await?;
+        if let Some(scope) = scope.map(str::trim).filter(|s| !s.is_empty()) {
+            nodes.retain(|n| n.value.get("_scope").and_then(Value::as_str) == Some(scope));
+        }
+        Ok(nodes)
     }
 
     /// Sync the model *as a graph*: materialize one object-type node per entity
@@ -287,6 +311,7 @@ impl DomainModelService {
                 },
                 from: node_key(&e.from_entity),
                 to: node_key(&e.to_entity),
+                discriminator: e.discriminator.clone(),
                 payload: Some(e.payload.clone()),
             })
             .collect();

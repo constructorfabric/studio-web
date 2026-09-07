@@ -1,7 +1,7 @@
 //! The domain-model ontology: the entities, their fields and their relations.
 //!
 //! The document is embedded from `ontology.core.json` — the full Studio product
-//! core domain model (all 10 buckets, 133 entities) held in
+//! core domain model + system bases (11 buckets, 140 entities) held in
 //! `studio-internal/domain-model-ui`. Its shape is the domain-entity schema the
 //! model UI already renders from, so reading it back out of the graph is what
 //! lets the frontend be regenerated from the stored model.
@@ -180,6 +180,53 @@ impl Ontology {
             .collect()
     }
 
+    /// Every declared relation as a named row: which entity declares it, its
+    /// property name, verb, target (raw name + resolved entity id) and
+    /// cardinality/label. Surfaces the per-relation cardinality that the
+    /// verb-level edge types do not carry.
+    pub fn declared_relations(&self) -> Vec<DeclaredRelation> {
+        let mut out = Vec::new();
+        for e in self.entities() {
+            let source = e
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            for p in relation_properties(e) {
+                let target = p
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                out.push(DeclaredRelation {
+                    source: source.clone(),
+                    name: p
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    verb: p
+                        .get("relationType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    target_entity: self.target_entity_id(&target),
+                    target,
+                    cardinality: p
+                        .get("cardinality")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    label: p
+                        .get("relationLabel")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+        }
+        out
+    }
+
     /// Relation targets that name an entity outside the current ontology (a
     /// cross-bucket type not yet synced), as `(source entity, target name)`
     /// pairs. These endpoints are omitted from `dst_types` until the buckets
@@ -267,6 +314,7 @@ impl Ontology {
                         kind: ModelEdgeKind::Inherits,
                         from_entity: id.to_string(),
                         to_entity: base_id,
+                        discriminator: None,
                         payload: json!({ "base": base }),
                     }),
                     None => skipped += 1,
@@ -284,6 +332,10 @@ impl Ontology {
                         kind: ModelEdgeKind::Declares,
                         from_entity: id.to_string(),
                         to_entity: target_id,
+                        // The property name distinguishes parallel relations
+                        // between the same pair (e.g. tenant owns team *and*
+                        // tenant contains team).
+                        discriminator: p.get("name").and_then(Value::as_str).map(str::to_string),
                         payload: json!({
                             "name": p.get("name").and_then(Value::as_str).unwrap_or(""),
                             "verb": p.get("relationType").and_then(Value::as_str).unwrap_or(""),
@@ -424,13 +476,29 @@ pub struct ObjectTypeMeta {
     pub payload: Value,
 }
 
-/// One edge in the model graph, addressed by the endpoint *entity ids*.
+/// One edge in the model graph, addressed by the endpoint *entity ids*. The
+/// `discriminator` (the relation-property name for `declares`) keeps parallel
+/// relations between the same two entities distinct.
 #[derive(Debug, Clone)]
 pub struct ModelEdgeMeta {
     pub kind: ModelEdgeKind,
     pub from_entity: String,
     pub to_entity: String,
+    pub discriminator: Option<String>,
     pub payload: Value,
+}
+
+/// One declared relation, with its cardinality — the per-relation detail the
+/// verb-level edge types omit.
+#[derive(Debug, Clone)]
+pub struct DeclaredRelation {
+    pub source: String,
+    pub name: String,
+    pub verb: String,
+    pub target: String,
+    pub target_entity: Option<String>,
+    pub cardinality: Option<String>,
+    pub label: String,
 }
 
 /// The two kinds of model-graph edge.
