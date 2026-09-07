@@ -214,8 +214,7 @@ impl IdentityService {
                 continue;
             }
 
-            let Ok((provider, account)) =
-                normalize_pair(&connection.provider, &connection.account)
+            let Ok((provider, account)) = normalize_pair(&connection.provider, &connection.account)
             else {
                 continue;
             };
@@ -452,7 +451,13 @@ mod tests {
             claim_row_id(tenant, "github", "bob", "s1", Kind::Claimed.as_i16()),
             claim_row_id(tenant, "github", "alice", "s2", Kind::Claimed.as_i16()),
             claim_row_id(tenant, "github", "alice", "s1", Kind::Verified.as_i16()),
-            claim_row_id(Uuid::from_u128(8), "github", "alice", "s1", Kind::Claimed.as_i16()),
+            claim_row_id(
+                Uuid::from_u128(8),
+                "github",
+                "alice",
+                "s1",
+                Kind::Claimed.as_i16(),
+            ),
         ] {
             assert_ne!(base, other, "distinct acts must not collide");
         }

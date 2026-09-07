@@ -24,13 +24,7 @@ const CLAIM_NS: Uuid = Uuid::from_u128(0x4f2b_8c17_9a63_4d05_b1e8_37ca_6d94_02f1
 
 /// Deterministic id of one act by one subject on one account.
 #[must_use]
-pub fn claim_row_id(
-    tenant: Uuid,
-    provider: &str,
-    account: &str,
-    subject: &str,
-    kind: i16,
-) -> Uuid {
+pub fn claim_row_id(tenant: Uuid, provider: &str, account: &str, subject: &str, kind: i16) -> Uuid {
     Uuid::new_v5(
         &CLAIM_NS,
         format!("{tenant}|{provider}|{account}|{subject}|{kind}").as_bytes(),

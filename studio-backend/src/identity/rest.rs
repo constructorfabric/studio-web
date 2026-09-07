@@ -376,28 +376,29 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router =
-        OperationBuilder::get("/studio-identity/v1/tenants/{tenant_id}/accounts/{provider}/{account}")
-            .operation_id("studio_identity.resolve_account")
-            .summary("Resolve one external account to a platform subject")
-            .tag("StudioIdentity")
-            .authenticated()
-            .require_license_features::<License>([])
-            .path_param("tenant_id", "Organization tenant id")
-            .path_param("provider", "Driver key: github, gitlab, bitbucket")
-            .path_param("account", "Provider-native login or username")
-            .handler(resolve_account)
-            .json_response_with_schema::<AccountResolutionDto>(
-                openapi,
-                StatusCode::OK,
-                "Binding and proposals for the account",
-            )
-            .error_400(openapi)
-            .error_401(openapi)
-            .error_403(openapi)
-            .error_404(openapi)
-            .error_500(openapi)
-            .register(router, openapi);
+    router = OperationBuilder::get(
+        "/studio-identity/v1/tenants/{tenant_id}/accounts/{provider}/{account}",
+    )
+    .operation_id("studio_identity.resolve_account")
+    .summary("Resolve one external account to a platform subject")
+    .tag("StudioIdentity")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("tenant_id", "Organization tenant id")
+    .path_param("provider", "Driver key: github, gitlab, bitbucket")
+    .path_param("account", "Provider-native login or username")
+    .handler(resolve_account)
+    .json_response_with_schema::<AccountResolutionDto>(
+        openapi,
+        StatusCode::OK,
+        "Binding and proposals for the account",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     router
 }

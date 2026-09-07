@@ -220,7 +220,11 @@ pub fn resolve(observations: &[Observation]) -> Resolution {
         .filter(|row| row.kind == Kind::Verified)
         .collect();
     // Most recent verification first: that is the whole of verification-wins.
-    verified.sort_by(|a, b| b.observed_at.cmp(&a.observed_at).then(a.subject.cmp(&b.subject)));
+    verified.sort_by(|a, b| {
+        b.observed_at
+            .cmp(&a.observed_at)
+            .then(a.subject.cmp(&b.subject))
+    });
 
     let contested = verified.len() > 1;
     let binding = match verified.first() {
