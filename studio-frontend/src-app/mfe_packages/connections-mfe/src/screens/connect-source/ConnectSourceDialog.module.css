@@ -2,7 +2,6 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
   width: 35rem;
   height: min(34.5rem, calc(100vh - 8rem - 2px));
   padding: var(--space-8);
@@ -31,6 +30,7 @@
   min-height: 0;
   flex-direction: column;
   gap: var(--space-5);
+  margin-block-start: var(--space-5);
 }
 
 .bodySkeleton {
@@ -60,6 +60,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-block-start: var(--space-5);
 }
 
 .footerNote {
@@ -69,7 +70,7 @@
 }
 
 .error {
-  margin: 0;
+  margin: var(--space-5) 0 0;
   font-size: var(--text-label-size);
   color: var(--destructive);
 }

@@ -1,30 +1,21 @@
 import React from 'react';
-import { Badge, Skeleton } from '@gears-frontx/ui-kit';
-import { projectStatus, statusTone } from '../../../model/project';
+import { Skeleton } from '@gears-frontx/ui-kit';
+import { projectStatus } from '../../../model/project';
 import type { ProjectConfigState } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
 import type { TenantDto } from '../../../api/types';
 import { LoadFailed } from './LoadFailed';
 import styles from '../ProjectListScreen.module.css';
 
-/**
- * Everything the column can say, in one badge.
- */
+/** Everything the column can say, in one word. */
 type CellStatus = ReturnType<typeof projectStatus> | 'unset';
 
 const StatusBadge: React.FC<{ status: CellStatus }> = ({ status }) => {
   const t = useProjectListText();
 
-  return (
-    <Badge
-      className={styles.statusBadge}
-      variant={status === 'unset' ? 'muted' : statusTone(status)}
-      shape="plain"
-      dot
-    >
-      {t(`status_${status}`)}
-    </Badge>
-  );
+  // TODO: plain text until ui-kit carries a plain status badge again (0.4 dropped
+  // Badge's `shape="plain"`/`dot`). The tone mapping is kept for that swap.
+  return <>{t(`status_${status}`)}</>;
 };
 
 StatusBadge.displayName = 'StatusBadge';

@@ -25,6 +25,7 @@ mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 #[cfg(feature = "theia-bridge")]
 mod studio_theia; // ADR-0010: backend-to-backend bridge to the Theia node backend (opt-in)
+mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
 
 use std::path::{Path, PathBuf};
 

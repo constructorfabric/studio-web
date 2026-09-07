@@ -33,7 +33,11 @@ spec:
       # pull secret the pod never leaves ImagePullBackOff.
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        # `embedding-models` is an emptyDir shared with the one-shot downloader.
+        # Give its group write access without making either container root.
+        fsGroup: 1000
       {{- if eq .Values.backend.embedding.provider "onnx" }}
       # The graph-storage `onnx` embedding provider loads its model at boot and
       # refuses to start without it, so the artifacts are fetched first, into
@@ -43,7 +47,16 @@ spec:
       initContainers:
         - name: embedding-model
           image: {{ .Values.backend.embedding.fetchImage | quote }}
-          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # curlimages/curl declares USER as the name `curl_user`, which makes
+          # kubelet reject it before startup when it cannot prove that the
+          # image user is non-root. Kubernetes replaces the image entrypoint
+          # with the shell below, so a stable numeric UID/GID is safe here.
+          # fsGroup above grants that identity write access to the emptyDir.
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
           command: ["/bin/sh", "-ec"]
           args:
             - |

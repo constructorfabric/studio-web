@@ -24,6 +24,8 @@ use super::graph_sync::{SyncOutcome, SyncRequest, sync_repository};
 use super::graph_sync_tasks::TaskRegistry;
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
+use crate::user_profile::AliasResolver;
+#[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
 
 /// Errors attributable to a connection as a resource.
@@ -61,6 +63,11 @@ pub struct GraphSink {
     client: Option<Arc<dyn GraphStorageClientV1>>,
     /// The background imports this process has run, for the poll endpoint.
     tasks: Arc<TaskRegistry>,
+    /// Identity resolution for contributor accounts. Absent when the
+    /// studio-user gear is inert (no database); person nodes then stay keyed
+    /// per provider. Carried here rather than as its own Extension because it
+    /// is only consulted on the graph path.
+    identity: Option<Arc<dyn AliasResolver>>,
 }
 
 #[cfg(not(feature = "graph"))]
@@ -69,10 +76,14 @@ pub struct GraphSink;
 
 #[cfg(feature = "graph")]
 impl GraphSink {
-    pub fn new(client: Option<Arc<dyn GraphStorageClientV1>>) -> Self {
+    pub fn new(
+        client: Option<Arc<dyn GraphStorageClientV1>>,
+        identity: Option<Arc<dyn AliasResolver>>,
+    ) -> Self {
         Self {
             client,
             tasks: Arc::new(TaskRegistry::default()),
+            identity,
         }
     }
 
@@ -759,6 +770,9 @@ pub struct GraphSyncResultDto {
     pub files: usize,
     pub directories: usize,
     pub contributors: usize,
+    /// Of those, how many were keyed on a canonical Studio user because the
+    /// person had proved control of the account.
+    pub resolved_contributors: usize,
     /// Whether the provider or `max_entries` cut the tree short.
     pub truncated: bool,
 }
@@ -774,6 +788,7 @@ impl From<SyncOutcome> for GraphSyncResultDto {
             files: o.files,
             directories: o.directories,
             contributors: o.contributors,
+            resolved_contributors: o.resolved_contributors,
             truncated: o.truncated,
         }
     }
@@ -821,6 +836,9 @@ struct ImportJob {
     max_contributors: u32,
     project_id: Option<Uuid>,
     project_name: Option<String>,
+    /// Resolver captured at request time, so the spawned task owns everything
+    /// it needs (the `GraphSink` extension is gone by then).
+    identity: Option<Arc<dyn AliasResolver>>,
 }
 
 #[cfg(feature = "graph")]
@@ -835,6 +853,7 @@ impl ImportJob {
         sync_repository(
             svc,
             graph,
+            self.identity.as_ref(),
             ctx,
             &SyncRequest {
                 connection_id: self.connection_id,
@@ -873,6 +892,7 @@ async fn graph_sync(
         max_contributors: body.max_contributors,
         project_id: body.project_id,
         project_name: body.project_name,
+        identity: graph.identity.clone(),
     };
     if job.repo_full_path.is_empty() {
         return Err(StudioConnectorError::invalid_argument()

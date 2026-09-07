@@ -93,9 +93,11 @@ const ForWorkspace: React.FC<{ children: ReactNode }> = ({ children }) => {
 };
 
 export const WorkspaceProjectsProvider: React.FC<{ children: ReactNode }> = ({ children }) => (
+  <ForWorkspace>{children}</ForWorkspace>
+);
+
+export const StudioScopeProvider: React.FC<{ children: ReactNode }> = ({ children }) => (
   <OrganizationProvider>
-    <WorkspaceProvider>
-      <ForWorkspace>{children}</ForWorkspace>
-    </WorkspaceProvider>
+    <WorkspaceProvider>{children}</WorkspaceProvider>
   </OrganizationProvider>
 );

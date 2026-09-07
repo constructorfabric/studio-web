@@ -1,0 +1,218 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.totals {
+  margin: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+  color: var(--foreground);
+}
+
+.totalsDivider {
+  margin-inline: var(--space-2);
+  color: var(--muted-foreground);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.repoOptions {
+  min-width: max-content;
+  max-width: 24rem;
+}
+
+.repoOptions [role='option'] > div {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.search {
+  width: 13rem;
+  height: var(--control-height-sm);
+  border-radius: var(--radius-sm);
+}
+
+.table {
+  width: 100%;
+  table-layout: fixed;
+  border: 0;
+  border-radius: 0;
+}
+
+.colName {
+  text-align: start;
+  overflow: hidden;
+}
+
+.colRepository {
+  width: 13%;
+}
+
+.colPath {
+  width: 16%;
+}
+
+.colSync {
+  width: 16%;
+  white-space: nowrap;
+}
+
+.colUpdated {
+  width: 18%;
+  white-space: nowrap;
+}
+
+.colActions {
+  width: 5%;
+}
+
+.colRepository,
+.colPath,
+.colSync,
+.colUpdated {
+  color: var(--muted-foreground);
+}
+
+.truncate {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyCell {
+  height: calc(3 * var(--space-8));
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--control-height-lg);
+  padding-inline: var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+}
+
+.range {
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+}
+
+.pagination {
+  margin: 0;
+  width: auto;
+}
+
+.pageNumber,
+.pageStep {
+  min-width: var(--control-height-sm);
+  padding-inline: var(--space-1);
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.kindIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.nameText {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+  color: var(--foreground);
+}
+
+.actionsCell {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.actionsButton {
+  color: var(--muted-foreground);
+}
+
+.sortMark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.empty,
+.error {
+  margin: 0;
+  padding-inline: var(--space-4);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  color: var(--muted-foreground);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.retry {
+  margin-inline: var(--space-4);
+  align-self: flex-start;
+}
+
+.repoLine {
+  padding-inline: var(--space-4);
+}
+
+.importing {
+  color: var(--muted-foreground);
+}
+
+.stateBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block: var(--space-4);
+}
+
+.stripSkeleton {
+  height: var(--control-height-sm);
+  width: 20rem;
+  margin: var(--space-3) var(--space-4);
+}
+
+.tableSkeleton {
+  height: 16rem;
+  margin-inline: var(--space-4);
+}

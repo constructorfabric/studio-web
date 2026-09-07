@@ -220,14 +220,36 @@ jobs:
             *) echo "Unsupported component" >&2; exit 1 ;;
           esac
 
-          docker manifest inspect "$IMAGE_PREFIX/studio-backend:$backend_tag" >/dev/null
-          docker manifest inspect "$IMAGE_PREFIX/file-storage-sidecar:$backend_tag" >/dev/null
-          docker manifest inspect "$IMAGE_PREFIX/studio-frontend:$frontend_tag" >/dev/null
-          docker manifest inspect "$IMAGE_PREFIX/studio-frontend-prototype:$prototype_tag" >/dev/null
+          # A push can reach this manual deployment workflow a few seconds
+          # before GHCR exposes every manifest. More importantly, print the
+          # exact missing image: Docker otherwise reports only the unhelpful
+          # generic `manifest unknown`.
+          wait_for_image() {
+            local image="$1"
+            local attempts=12
+            local attempt
+            for attempt in $(seq 1 "$attempts"); do
+              if docker manifest inspect "$image" >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "$attempt" -lt "$attempts" ]; then
+                echo "Waiting for $image to become available in GHCR ($attempt/$attempts)…"
+                sleep 10
+              fi
+            done
+            echo "Required image is unavailable in GHCR: $image" >&2
+            echo "Wait for the Build Images workflow for source_ref to finish successfully, then retry Deploy Services." >&2
+            return 1
+          }
+
+          wait_for_image "$IMAGE_PREFIX/studio-backend:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/file-storage-sidecar:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/studio-frontend:$frontend_tag"
+          wait_for_image "$IMAGE_PREFIX/studio-frontend-prototype:$prototype_tag"
           # The Kubernetes session driver follows the deployed backend tag;
           # fail before Helm if the matching IDE runtime was not published.
-          docker manifest inspect "$IMAGE_PREFIX/cf-studio-theia:$backend_tag" >/dev/null
-          docker manifest inspect "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag" >/dev/null
+          wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
 
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
@@ -262,8 +284,13 @@ jobs:
           )
 
           helm lint deploy/helm/studio-web "${common_args[@]}"
+          # Helm owns pre-install/pre-upgrade hooks. Applying a rendered hook
+          # Job here tries to mutate an existing Job pod template, which the
+          # Kubernetes API correctly rejects as immutable. Helm's
+          # before-hook-creation policy deletes and recreates it during the
+          # actual upgrade, so validate only the ordinary release resources.
           helm template studio deploy/helm/studio-web \
-            -n "$NAMESPACE" "${common_args[@]}" \
+            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
             | kubectl apply --dry-run=server -n "$NAMESPACE" -f - >/dev/null
 
       - name: Deploy with automatic rollback

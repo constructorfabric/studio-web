@@ -24,13 +24,15 @@
 //! the gear upserts on `(tenant, node_key)` — and two repositories that both
 //! contain `src/main.rs` stay two different nodes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::service::ConnectorService;
+use crate::user_profile::AliasResolver;
+use crate::user_profile::normalize_key;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
     EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TypeRegistration,
@@ -126,6 +128,10 @@ pub struct SyncOutcome {
     pub directories: usize,
     /// Person nodes written.
     pub contributors: usize,
+    /// Of those, how many were keyed on a canonical Studio user because the
+    /// person had proved control of the account (ADR-0012). The rest stay keyed
+    /// per provider until somebody claims and proves them.
+    pub resolved_contributors: usize,
     /// Whether the provider truncated its tree, or `max_entries` did.
     pub truncated: bool,
     /// Node id of the repository, so a client can seed a traversal with it.
@@ -145,6 +151,7 @@ pub struct SyncOutcome {
 pub async fn sync_repository(
     connectors: &ConnectorService,
     graph: &Arc<dyn GraphStorageClientV1>,
+    identity: Option<&Arc<dyn AliasResolver>>,
     ctx: &SecurityContext,
     request: &SyncRequest<'_>,
     progress: &(dyn Fn(String) + Sync),
@@ -152,6 +159,7 @@ pub async fn sync_repository(
     let (driver, auth, _connection) = connectors
         .driver_and_auth(ctx, request.tenant, request.connection_id)
         .await?;
+    let provider = driver.provider();
 
     progress("reading the repository tree".to_owned());
     let tree = driver
@@ -161,6 +169,21 @@ pub async fn sync_repository(
     let people = driver
         .contributors(&auth, request.repo_full_path, request.max_contributors)
         .await?;
+
+    // Who these accounts belong to, in one query, before any node is keyed.
+    // Only CONFIRMED attributions come back: a claim or a suggestion grants
+    // nothing, so neither may key a node (ADR-0012). A deployment without
+    // studio-user resolves nothing and every contributor stays keyed per
+    // provider — the same result as nobody having proven anything, which is the
+    // honest answer there.
+    let owners = match identity {
+        Some(resolver) => {
+            progress("resolving contributor identities".to_owned());
+            let logins: Vec<String> = people.iter().map(|p| p.login.clone()).collect();
+            resolver.confirmed_owners(provider, &logins).await?
+        }
+        None => BTreeMap::new(),
+    };
 
     // Every type is registered before anything references it: the gear rejects
     // a batch naming an unregistered type, and rejects it wholesale. One
@@ -288,14 +311,33 @@ pub async fn sync_repository(
         });
     }
 
+    let mut resolved_contributors = 0usize;
     for person in &people {
-        let key = format!("person:{}", person.login);
+        // A user who proved control of this account collapses every provider
+        // account they own onto ONE node — the whole reason the alias map
+        // exists. An unproven account stays keyed per provider, and note that
+        // the provider is in the key either way: the previous `person:{login}`
+        // scheme silently made a GitHub `alice` and a GitLab `alice` the same
+        // person.
+        let owner = owners.get(&normalize_key(&person.login));
+        let key = match owner {
+            Some(user_id) => {
+                resolved_contributors += 1;
+                format!("person:studio:{user_id}")
+            }
+            None => format!("person:{provider}:{}", person.login),
+        };
+
         let display = person.display_name.as_deref().unwrap_or(&person.login);
         nodes.push(NodeSpec {
             node_key: key.clone(),
             type_id: node_type(T_PERSON),
             name: Some(display.to_owned()),
-            payload: Some(serde_json::json!({ "login": person.login })),
+            payload: Some(serde_json::json!({
+                "login": person.login,
+                "provider": provider,
+                "user_id": owner,
+            })),
             expected_version: None,
         });
         edges.push(EdgeSpec {
@@ -318,6 +360,7 @@ pub async fn sync_repository(
         files,
         directories: directories.len(),
         contributors: people.len(),
+        resolved_contributors,
         truncated: tree.truncated || truncated_by_us,
         repo_node_key: repo_key,
         ..SyncOutcome::default()

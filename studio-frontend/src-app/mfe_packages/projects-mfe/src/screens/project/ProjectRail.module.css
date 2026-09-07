@@ -1,0 +1,73 @@
+.provider {
+  flex: 0 0 auto;
+  width: var(--sidebar-width-icon);
+  min-height: 0;
+  align-self: stretch;
+  overflow: hidden;
+  --sidebar: var(--card);
+  --sidebar-accent: color-mix(in oklab, var(--muted) 70%, transparent);
+  --sidebar-accent-foreground: var(--foreground);
+  --rail-icon-size: 1.125rem;
+}
+
+.provider .panel {
+  transition: box-shadow 0.2s ease;
+}
+
+.provider:hover .panel,
+.provider:focus-within .panel {
+  box-shadow: var(--popover-shadow);
+}
+
+.panel .content {
+  padding-block: var(--space-2);
+}
+
+.panel .menu {
+  gap: var(--space-2);
+  padding-inline: var(--space-1);
+}
+
+.panel .menu .item {
+  width: 100%;
+  height: var(--control-height-lg);
+  padding-inline: 0;
+  gap: 0;
+  justify-content: flex-start;
+  border-radius: var(--radius-lg);
+  font-weight: var(--text-label-weight);
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: var(--control-height-lg);
+}
+
+.glyph svg {
+  inline-size: var(--rail-icon-size);
+  block-size: var(--rail-icon-size);
+  opacity: 0.68;
+}
+
+.item[data-active] .glyph svg {
+  opacity: 1;
+}
+
+.panel .menu .item[data-active] {
+  background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--primary);
+}
+
+.panel .rule[data-orientation] {
+  width: var(--space-6);
+  margin-top: var(--space-1);
+  margin-inline: var(--space-3) 0;
+  transition: width 0.2s linear;
+}
+
+.provider:hover .panel .rule[data-orientation],
+.provider:focus-within .panel .rule[data-orientation] {
+  width: calc(var(--sidebar-width) - 2 * var(--space-5));
+}

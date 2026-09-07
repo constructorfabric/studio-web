@@ -41,6 +41,13 @@ backend:
   bootstrap:
     enabled: true
     existingSecret: ""
+    # A bootstrap only creates missing databases and runs forward migrations;
+    # it does not serve traffic or load the ONNX model.  Declare resources
+    # explicitly instead of inheriting the namespace LimitRange default (4
+    # CPUs), which can make an otherwise small hook exceed the namespace quota.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
     keys:
       host: host
       port: port

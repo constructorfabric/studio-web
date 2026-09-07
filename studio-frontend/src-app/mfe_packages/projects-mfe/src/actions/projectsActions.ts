@@ -66,6 +66,43 @@ export function requestOpenProject(
   publish(bridge, { kind: 'opened', project, siblings });
 }
 
+/**
+ * The created project, announced to the shell as the open one.
+ *
+ * Called from the wizard, which is a different entry of this MFE and so a
+ * different module realm: emitting on the local `eventBus` would talk to
+ * itself. The shell hop is the whole point — it publishes the project as
+ * selected, and the screen realm's `ProjectsRoot` opens it from there.
+ *
+ * `siblings` is the switcher's list while the project is open, so it has to be
+ * the workspace's projects and not the one row the wizard knows; the caller
+ * reads them and this only makes sure the new project is among them.
+ *
+ * Awaited, because the wizard may only unmount once the shell has heard it:
+ * the overlay closes on Escape and on the scrim without asking, and the wizard
+ * is what holds the created project's identity.
+ */
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-after-create:p1
+export function announceCreatedProject(
+  bridge: ChildMfeBridge | null,
+  project: ContextEntity,
+  siblings: readonly ContextEntity[]
+): Promise<void> {
+  if (!bridge) return Promise.resolve();
+  const listed = siblings.some((sibling) => sibling.id === project.id)
+    ? [...siblings]
+    : [...siblings, project];
+  return bridge
+    .executeActionsChain({
+      action: {
+        type: CONTEXT_PUBLISH_ACTION,
+        target: SCREEN_DOMAIN,
+        payload: { kind: 'opened', project, siblings: listed },
+      },
+    })
+    .then(() => undefined);
+}
+
 export function requestCloseProject(bridge: ChildMfeBridge | null): void {
   eventBus.emit('mfe/projects/close-requested');
   publish(bridge, { kind: 'closed' });

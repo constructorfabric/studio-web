@@ -121,6 +121,7 @@ jobs:
           set -euo pipefail
 
           full=false
+          snapshot_only=false
           changed_file="$RUNNER_TEMP/service-image-paths"
           : > "$changed_file"
 
@@ -138,6 +139,12 @@ jobs:
               # build, so condition/output mistakes cannot silently skip it.
               if grep -Eq '^\.github/workflows/release\.yml$' "$changed_file"; then
                 full=true
+              # A deploy workflow or Helm-only change must still get an
+              # immutable image-set tag. It does not change image sources, so
+              # copy the last known-good component images from `edge` rather
+              # than needlessly rebuilding the backend, UI, and Theia.
+              elif grep -Eq '^(\.github/workflows/deploy\.yml|deploy/)' "$changed_file"; then
+                snapshot_only=true
               fi
             fi
           fi
@@ -155,7 +162,7 @@ jobs:
           frontend="$(selected '^studio-frontend/')"
           prototype="$(selected '^studio-frontend-prototype/')"
           theia="$(selected '^theia/')"
-          if [ "$backend" = true ] || [ "$frontend" = true ] || [ "$prototype" = true ] || [ "$theia" = true ]; then
+          if [ "$backend" = true ] || [ "$frontend" = true ] || [ "$prototype" = true ] || [ "$theia" = true ] || [ "$snapshot_only" = true ]; then
             any_service=true
           else
             any_service=false
@@ -169,7 +176,7 @@ jobs:
             echo "any_service=$any_service"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Selected: backend=$backend frontend=$frontend prototype=$prototype theia=$theia"
+          echo "Selected: backend=$backend frontend=$frontend prototype=$prototype theia=$theia snapshot_only=$snapshot_only"
 
   backend-binary:
     needs: require-ci

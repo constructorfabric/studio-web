@@ -150,6 +150,21 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
                     );
                 })
                 .ok(),
+            // Same reasoning, and safe in either order: studio-identity
+            // publishes the resolver in its `init`, which runs before any
+            // gear's REST phase. Absent when that gear is inert (no database),
+            // in which case contributor nodes stay keyed per provider.
+            ctx.client_hub()
+                .get_scoped::<dyn crate::user_profile::AliasResolver>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ))
+                .inspect_err(|_| {
+                    warn!(
+                        "studio-connector: studio-user alias resolver not registered — \
+                         contributor nodes will not be resolved to Studio subjects"
+                    );
+                })
+                .ok(),
         );
         // Built without the `graph` feature there is no knowledge graph to
         // import into, and the route is not registered at all.

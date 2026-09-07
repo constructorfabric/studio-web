@@ -399,6 +399,13 @@ gears:
       server: "pg_main"
       dbname: "studio_documents"
 
+  studio-user:
+    database:
+      server: "pg_main"
+      # Canonical identity store (users, logins, memberships, aliases).
+      # backend-bootstrap creates this database from config on start.
+      dbname: "studio_users"
+
   studio-credstore-pg:
     database:
       server: "pg_main"

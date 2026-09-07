@@ -117,6 +117,20 @@ impl GraphSink {
     }
 }
 
+/// The graph-storage gear embeds every node during ingest. A catalogue sync can
+/// contain thousands of crate-version nodes, so one all-in-one request makes
+/// the in-process ONNX provider retain an unbounded embedding batch and can
+/// OOM an otherwise healthy backend. Keep the batch deliberately below the
+/// artifact graph's generic ingest size: catalogue versions have no urgency
+/// and bounded memory is more valuable than maximum throughput.
+#[cfg(feature = "graph")]
+const NODE_INGEST_CHUNK: usize = 32;
+
+/// Edges are not embedded, so they can safely use a larger chunk after every
+/// endpoint has been written.
+#[cfg(feature = "graph")]
+const EDGE_INGEST_CHUNK: usize = 256;
+
 #[cfg(feature = "graph")]
 #[async_trait]
 impl CatalogSink for GraphSink {
@@ -155,46 +169,69 @@ impl CatalogSink for GraphSink {
         if nodes.is_empty() && edges.is_empty() {
             return Ok(());
         }
-        let node_specs: Vec<NodeSpec> = nodes
-            .iter()
-            .map(|n| NodeSpec {
-                node_key: n.instance_id.clone(),
-                type_id: gts::graph_type_id(n.type_id),
-                name: Some(node_name(&n.value)),
-                payload: Some(n.value.clone()),
-                expected_version: None,
-            })
-            .collect();
-        let edge_specs: Vec<EdgeSpec> = edges
-            .iter()
-            .map(|e| EdgeSpec {
-                type_id: gts::graph_type_id(e.type_id),
-                src_node_key: e.from.clone(),
-                dst_node_key: e.to.clone(),
-                discriminator: None,
-                payload: None,
-            })
-            .collect();
-        // One atomic ingest: the gear upserts nodes then wires the edges to the
-        // keys just written, so a gear and its versions commit together. No
-        // phantoms: an edge whose endpoint is not in the batch is our bug.
-        self.client
-            .ingest(
-                ctx,
-                IngestRequest {
-                    nodes: node_specs,
-                    edges: edge_specs,
-                    options: IngestOptions {
-                        create_phantoms: Some(false),
-                        report_per_item: false,
-                        embed: Some(true),
+        // Nodes must be written before edges. With phantom creation disabled,
+        // this preserves graph integrity even when the boundaries split a
+        // gear from one of its many crate-version nodes. Re-running after a
+        // transient failure is safe: both node keys and edge tuples upsert.
+        for chunk in nodes.chunks(NODE_INGEST_CHUNK) {
+            let node_specs: Vec<NodeSpec> = chunk
+                .iter()
+                .map(|n| NodeSpec {
+                    node_key: n.instance_id.clone(),
+                    type_id: gts::graph_type_id(n.type_id),
+                    name: Some(node_name(&n.value)),
+                    payload: Some(n.value.clone()),
+                    expected_version: None,
+                })
+                .collect();
+            self.client
+                .ingest(
+                    ctx,
+                    IngestRequest {
+                        nodes: node_specs,
+                        edges: Vec::new(),
+                        options: IngestOptions {
+                            create_phantoms: Some(false),
+                            report_per_item: false,
+                            embed: Some(true),
+                        },
+                        replace_scope: None,
+                        idempotency_key: None,
                     },
-                    replace_scope: None,
-                    idempotency_key: None,
-                },
-            )
-            .await
-            .map_err(|e| anyhow!("graph-storage ingest: {e}"))?;
+                )
+                .await
+                .map_err(|e| anyhow!("graph-storage node ingest: {e}"))?;
+        }
+
+        for chunk in edges.chunks(EDGE_INGEST_CHUNK) {
+            let edge_specs: Vec<EdgeSpec> = chunk
+                .iter()
+                .map(|e| EdgeSpec {
+                    type_id: gts::graph_type_id(e.type_id),
+                    src_node_key: e.from.clone(),
+                    dst_node_key: e.to.clone(),
+                    discriminator: None,
+                    payload: None,
+                })
+                .collect();
+            self.client
+                .ingest(
+                    ctx,
+                    IngestRequest {
+                        nodes: Vec::new(),
+                        edges: edge_specs,
+                        options: IngestOptions {
+                            create_phantoms: Some(false),
+                            report_per_item: false,
+                            embed: Some(false),
+                        },
+                        replace_scope: None,
+                        idempotency_key: None,
+                    },
+                )
+                .await
+                .map_err(|e| anyhow!("graph-storage edge ingest: {e}"))?;
+        }
         Ok(())
     }
 

@@ -26,9 +26,17 @@ use graph_storage_sdk::models::{
     TypeRegistration,
 };
 
-/// Nodes per ingest batch. Under the gear's `ingest_max_nodes` (10k) with room
-/// to spare, so a repo with many files still commits in a few atomic batches.
-const INGEST_CHUNK: usize = 2_000;
+/// Nodes per ingest batch.
+///
+/// The graph-storage gear embeds nodes in-process.  A repository may contain
+/// file excerpts close to the embedding input limit, so its protocol limit of
+/// 10k nodes is not a safe memory limit: a large ONNX tokenization batch can
+/// exceed the backend pod's memory limit before inference begins.  Keep the
+/// working set small and let a sync progress through many idempotent writes.
+const NODE_INGEST_CHUNK: usize = 32;
+/// Edges do not have embeddable text.  This only bounds request/transaction
+/// size; it deliberately need not be as small as a node embedding batch.
+const EDGE_INGEST_CHUNK: usize = 256;
 /// Page size when reading nodes back for the portal. At the gear's
 /// `projection_max_page` (200): a larger `$top` is refused, not clamped.
 const LIST_PAGE: u32 = 200;
@@ -193,15 +201,16 @@ fn to_edge_spec(e: &GtsEdge) -> EdgeSpec {
 
 /// One ingest batch. Phantom endpoints are disabled: an edge whose endpoint is
 /// missing is a bug in the pipeline's ordering, and a phantom would hide it.
-/// Nodes are embedded by the gear on write.
-fn batch(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>) -> IngestRequest {
+/// Nodes are embedded by the gear on write. Edges are structural and must not
+/// trigger an otherwise empty embedding pass.
+fn batch(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>, embed: bool) -> IngestRequest {
     IngestRequest {
         nodes,
         edges,
         options: IngestOptions {
             create_phantoms: Some(false),
             report_per_item: false,
-            embed: Some(true),
+            embed: Some(embed),
         },
         replace_scope: None,
         idempotency_key: None,
@@ -229,10 +238,10 @@ impl GraphStore for GraphStorageBackend {
         let specs: Vec<NodeSpec> = nodes.iter().map(to_node_spec).collect();
         let mut upserted = 0u64;
         let mut revision = 0i64;
-        for chunk in specs.chunks(INGEST_CHUNK) {
+        for chunk in specs.chunks(NODE_INGEST_CHUNK) {
             let res = self
                 .client
-                .ingest(ctx, batch(chunk.to_vec(), Vec::new()))
+                .ingest(ctx, batch(chunk.to_vec(), Vec::new(), true))
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage ingest: {e}"))?;
             upserted += res.counts.nodes_inserted + res.counts.nodes_updated;
@@ -292,10 +301,10 @@ impl GraphStore for GraphStorageBackend {
 
         let specs: Vec<EdgeSpec> = edges.iter().map(to_edge_spec).collect();
         let mut upserted = 0u64;
-        for chunk in specs.chunks(INGEST_CHUNK) {
+        for chunk in specs.chunks(EDGE_INGEST_CHUNK) {
             let res = self
                 .client
-                .ingest(ctx, batch(Vec::new(), chunk.to_vec()))
+                .ingest(ctx, batch(Vec::new(), chunk.to_vec(), false))
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage edge ingest: {e}"))?;
             upserted += res.counts.edges_inserted + res.counts.edges_updated;

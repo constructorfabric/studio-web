@@ -34,6 +34,7 @@ spec:
           imagePullPolicy: Always
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "bootstrap", "--apply"]
+          resources: {{- toYaml .Values.backend.bootstrap.resources | nindent 12 }}
           env:
             - name: STUDIO_SESSION_ENABLED
               value: {{ .Values.backend.sessions.enabled | quote }}

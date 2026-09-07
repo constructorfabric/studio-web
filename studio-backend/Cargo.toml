@@ -28,10 +28,15 @@ theia-bridge = []
 theia-event-broker = ["theia-bridge", "dep:event-broker-sdk"]
 # `llm` pulls in the AI chain: mini-chat, oagw (api_egress) and the in-crate
 # studio-llm-proxy. Default ON so `cargo run` / the docker-compose dev build
-# get Ask AI and the IDE proxy. The k8s release image is built
-# `--no-default-features` (see .github/workflows/release.yml): the DMZ deploy
-# has no LLM key and no IDE sessions, and dropping oagw removes the fresh-boot
-# root-tenant deadlock documented on the mini_chat/api_egress dependencies.
+# get Ask AI and the IDE proxy. The k8s release image drops it: release.yml
+# builds `--no-default-features --features graph,theia-bridge`, so `graph` and
+# the Theia bridge ARE in the release and only the LLM chain is out. The reason
+# is the fresh-boot root-tenant deadlock documented on the mini_chat/api_egress
+# dependencies below, not the deployment target — the DMZ justification that
+# used to be here is stale, that environment is no longer deployed to (the
+# Virtuozzo `studio-dev`/`studio-test` clusters are, via .github/workflows/deploy.yml).
+# Turning `llm` back on for a cluster deploy therefore needs the deadlock
+# resolved first, plus an LLM key in that environment.
 #
 # `graph` links the graph-storage gear (cf-gears-graph-storage) with both of
 # its embedding providers, and the consumers that feed it: the repository
@@ -193,9 +198,10 @@ keycloak_idp_plugin = { package = "cf-gears-keycloak-idp-plugin", git = "https:/
 # after every gear's post_init. On a fresh database the root does not exist
 # yet, so oagw's post_init fails and the boot dies before the saga can seed
 # it (a deadlock masked in docker only because the volume already held a root
-# from an earlier boot). The DMZ deploy ships no LLM key and disables IDE
-# sessions, so the release image is built `--no-default-features`: no LLM
-# chain, no oagw, the boot reaches the run phase and bootstraps its own root.
+# from an earlier boot). So the release image leaves the `llm` feature off:
+# no LLM chain, no oagw, and the boot reaches the run phase and bootstraps its
+# own root. That is the whole reason — it holds for any fresh database, not for
+# a particular environment.
 mini_chat = { package = "cf-gears-mini-chat", git = "https://github.com/constructorfabric/gears-rust", branch = "main", optional = true }
 api_egress = { package = "cf-gears-oagw", git = "https://github.com/constructorfabric/gears-rust", branch = "main", optional = true }
 credstore = { package = "cf-gears-credstore", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }

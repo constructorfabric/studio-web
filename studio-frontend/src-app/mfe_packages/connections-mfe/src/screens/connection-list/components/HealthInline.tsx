@@ -1,6 +1,5 @@
 import React from 'react';
-import { Badge, Skeleton } from '@gears-frontx/ui-kit';
-import { healthTone } from '../../../model/connection';
+import { Skeleton } from '@gears-frontx/ui-kit';
 import { useConnectionHealth } from '../../../shared/useConnectionHealth';
 import { useConnectionListText } from '../../../i18n';
 import { LoadFailed } from './LoadFailed';
@@ -18,11 +17,9 @@ export const HealthInline: React.FC<{ connectionId: string; tenantId: string }> 
   if (failed) return <LoadFailed label={t('load_failed')} />;
   if (!health) return <NoData label={t('no_data')} />;
 
-  return (
-    <Badge variant={healthTone(health)} shape="plain" dot title={reason ?? undefined}>
-      {t(`health_${health}`)}
-    </Badge>
-  );
+  // TODO: plain text until ui-kit carries a plain status badge again (0.4 dropped
+  // Badge's `shape="plain"`/`dot`). The tone mapping is kept for that swap.
+  return <span title={reason ?? undefined}>{t(`health_${health}`)}</span>;
 };
 
 HealthInline.displayName = 'HealthInline';
