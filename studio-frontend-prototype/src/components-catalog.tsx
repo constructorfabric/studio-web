@@ -258,11 +258,32 @@ interface Sources {
   frontx: RepoSel;
 }
 
+/** The branches worth one click. `HEAD` is the repository's default branch —
+ *  which is not the same as `main` on every repository, so it stays a distinct
+ *  choice rather than an alias for one. Anything else (a tag, a commit, a
+ *  release branch) goes in through "Other…". */
+const BRANCH_CHOICES: { value: string; label: string }[] = [
+  { value: "HEAD", label: "HEAD (default branch)" },
+  { value: "main", label: "main" },
+  { value: "develop", label: "develop" },
+];
+/** Sentinel for the select's "Other…" entry. `~` is forbidden in a git ref
+ *  name, so this can never collide with a real branch. */
+const CUSTOM_BRANCH = "~custom";
+
 const DEFAULT_SOURCES: Sources = {
   cratesIo: true,
   keyword: "constructorfabric",
   gears: { enabled: false, connectionId: "", repo: "constructorfabric/gears-rust", gitRef: "HEAD" },
-  frontx: { enabled: false, connectionId: "", repo: "constructorfabric/gears-frontx", gitRef: "HEAD" },
+  // FrontX is developed on `develop` — the templates this frontend was
+  // scaffolded from are pinned to it (see studio-frontend/.frontx/provenance.json),
+  // so reading `HEAD` there shows a catalogue behind the one people work in.
+  frontx: {
+    enabled: false,
+    connectionId: "",
+    repo: "constructorfabric/gears-frontx",
+    gitRef: "develop",
+  },
 };
 
 const SOURCES_KEY = "cf.components.sources";
@@ -663,14 +684,35 @@ function RepoSourceEditor({
           />
         </label>
         <label className="src-row">
-          <span>Ref</span>
-          <input
-            placeholder="HEAD"
-            value={sel.gitRef}
+          <span>Branch</span>
+          <select
+            value={BRANCH_CHOICES.some((b) => b.value === sel.gitRef) ? sel.gitRef : CUSTOM_BRANCH}
             disabled={!sel.enabled}
-            onChange={(e) => onChange({ gitRef: e.target.value })}
-          />
+            onChange={(e) =>
+              // Choosing "Other…" keeps whatever is typed; the input below is
+              // what actually edits it.
+              onChange({ gitRef: e.target.value === CUSTOM_BRANCH ? "" : e.target.value })
+            }
+          >
+            {BRANCH_CHOICES.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+            <option value={CUSTOM_BRANCH}>Other…</option>
+          </select>
         </label>
+        {!BRANCH_CHOICES.some((b) => b.value === sel.gitRef) && (
+          <label className="src-row">
+            <span>Ref</span>
+            <input
+              placeholder="branch, tag or commit"
+              value={sel.gitRef}
+              disabled={!sel.enabled}
+              onChange={(e) => onChange({ gitRef: e.target.value })}
+            />
+          </label>
+        )}
         <p className="src-note">
           {note}
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
@@ -705,7 +747,7 @@ function SourcesPanel({
       />
       <RepoSourceEditor
         title="FrontX (micro-frontends)"
-        note="Micro-frontend packages from the FrontX repository."
+        note="Every package in the FrontX monorepo — packages/* plus the root-level scaffolding templates (template-shell, template-mfe). FrontX develops on `develop`."
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
         connections={connections}
