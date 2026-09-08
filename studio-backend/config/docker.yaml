@@ -66,6 +66,14 @@ gears:
       base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
       api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
 
+  # Integration seam to Constructor Insight (external decision-intelligence
+  # service, REST at /api/v1). Unconfigured by default — set
+  # STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY to enable.
+  studio-insight:
+    config:
+      base_url_env: "STUDIO_INSIGHT_BASE_URL"
+      api_key_env: "STUDIO_INSIGHT_API_KEY"
+
   api-gateway:
     config:
       bind_addr: "0.0.0.0:8090"
