@@ -12,6 +12,7 @@ import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
 import { makeZip } from "./zip";
 import { DomainModelGraph } from "./domain-model-graph";
+import { GtsEntitiesTable } from "./gts-entities";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -3685,9 +3686,13 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
         <div className="card" key={c.title}>
           <h2>{c.title}</h2>
           <p className="hint">{c.sub}</p>
-          <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
-            {JSON.stringify(c.data, null, 2)}
-          </pre>
+          {c.key === "entities" ? (
+            <GtsEntitiesTable data={c.data} />
+          ) : (
+            <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
+              {JSON.stringify(c.data, null, 2)}
+            </pre>
+          )}
         </div>
       ))}
     </>
