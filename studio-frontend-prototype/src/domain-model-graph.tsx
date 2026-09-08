@@ -24,6 +24,7 @@ interface GLink { s: GNode; t: GNode; k: "i" | "d"; }
 
 interface RawNode { key: string; name: string; payload: Record<string, unknown>; }
 interface RawEdge { type_id: string; from: string; to: string; }
+interface RawObj { instance_id: string; entity: string; bucket: string; name: string; }
 
 interface Ctrl { select: (key: string | null) => void; }
 
@@ -34,6 +35,7 @@ export function DomainModelGraph({ token }: { token: string }) {
   const nodesRef = useRef<Map<string, GNode>>(new Map());
   const filterRef = useRef({ i: true, d: true, off: new Set<string>(), q: "", focus: false });
 
+  const [mode, setMode] = useState<"types" | "instances">("types");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState({ n: 0, i: 0, d: 0 });
@@ -46,31 +48,39 @@ export function DomainModelGraph({ token }: { token: string }) {
     let disposed = false;
     const cleanup: (() => void)[] = [];
 
+    setLoading(true); setError(null); setSel(null);
+
     (async () => {
-      let raw: { nodes: RawNode[]; edges: RawEdge[] };
+      let nodes: GNode[];
+      let rawLinks: { from: string; to: string; k: "i" | "d" }[];
       try {
-        raw = (await api.domainModelGraph(token)) as unknown as { nodes: RawNode[]; edges: RawEdge[] };
+        if (mode === "instances") {
+          const raw = (await api.domainObjectsGraph(token)) as unknown as { nodes: RawObj[]; edges: RawEdge[] };
+          nodes = raw.nodes.map((n) => ({
+            key: n.instance_id, id: n.entity, name: n.name || n.instance_id, bucket: n.bucket,
+            ext: null, abstract: false, fields: 0, rels: 0, x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
+          }));
+          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: "d" as const }));
+        } else {
+          const raw = (await api.domainModelGraph(token)) as unknown as { nodes: RawNode[]; edges: RawEdge[] };
+          nodes = raw.nodes.map((n) => ({
+            key: n.key, id: String(n.payload.id ?? ""), name: n.name || String(n.payload.name ?? n.payload.id ?? ""),
+            bucket: String(n.payload.bucket ?? ""), ext: (n.payload.extends as string | null) ?? null,
+            abstract: Boolean(n.payload.abstract), fields: Number(n.payload.field_count ?? 0), rels: Number(n.payload.relation_count ?? 0),
+            x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
+          }));
+          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: e.type_id.includes("inherits") ? "i" as const : "d" as const }));
+        }
       } catch (e) {
         if (!disposed) { setError(errText(e)); setLoading(false); }
         return;
       }
       if (disposed) return;
 
-      const nodes: GNode[] = raw.nodes.map((n) => ({
-        key: n.key,
-        id: String(n.payload.id ?? ""),
-        name: n.name || String(n.payload.name ?? n.payload.id ?? ""),
-        bucket: String(n.payload.bucket ?? ""),
-        ext: (n.payload.extends as string | null) ?? null,
-        abstract: Boolean(n.payload.abstract),
-        fields: Number(n.payload.field_count ?? 0),
-        rels: Number(n.payload.relation_count ?? 0),
-        x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
-      }));
       const byKey = new Map(nodes.map((n) => [n.key, n]));
       nodesRef.current = byKey;
-      const links: GLink[] = raw.edges
-        .map((e) => ({ s: byKey.get(e.from)!, t: byKey.get(e.to)!, k: e.type_id.includes("inherits") ? "i" as const : "d" as const }))
+      const links: GLink[] = rawLinks
+        .map((e) => ({ s: byKey.get(e.from)!, t: byKey.get(e.to)!, k: e.k }))
         .filter((l) => l.s && l.t);
       for (const l of links) { l.s.out.push(l); l.t.in.push(l); }
 
@@ -260,7 +270,7 @@ export function DomainModelGraph({ token }: { token: string }) {
     })();
 
     return () => { disposed = true; cancelAnimationFrame(raf); cleanup.forEach((f) => f()); };
-  }, [token]);
+  }, [token, mode]);
 
   const repaint = () => force((x) => x + 1);
   const setFilter = (patch: Partial<typeof filterRef.current>) => { Object.assign(filterRef.current, patch); repaint(); };
@@ -275,8 +285,14 @@ export function DomainModelGraph({ token }: { token: string }) {
       <style>{DMG_CSS}</style>
       <canvas ref={canvasRef} className="dmg-canvas" />
       <div className="dmg-bar">
+        <span className="dmg-mode">
+          <button className={mode === "types" ? "on" : ""} onClick={() => setMode("types")}>Types</button>
+          <button className={mode === "instances" ? "on" : ""} onClick={() => setMode("instances")}>Instances</button>
+        </span>
         <span className="dmg-counts">
-          <b>{counts.n}</b> types · <b>{counts.i}</b> inherits · <b>{counts.d}</b> declares
+          {mode === "instances"
+            ? <><b>{counts.n}</b> objects · <b>{counts.d}</b> relations</>
+            : <><b>{counts.n}</b> types · <b>{counts.i}</b> inherits · <b>{counts.d}</b> declares</>}
         </span>
         <input className="dmg-search" type="search" placeholder="Find a type…" spellCheck={false}
           onChange={(e) => setFilter({ q: e.target.value.trim() })} />
@@ -286,6 +302,13 @@ export function DomainModelGraph({ token }: { token: string }) {
 
       {loading && <div className="dmg-msg">Loading graph…</div>}
       {error && <div className="dmg-msg dmg-err">{error}</div>}
+      {!loading && !error && counts.n === 0 && (
+        <div className="dmg-msg">
+          {mode === "instances"
+            ? "No objects yet — create some in the panel above, then relate them."
+            : "Model is empty — run Sync to graph first."}
+        </div>
+      )}
 
       {buckets.length > 0 && (
         <div className="dmg-legend">
@@ -342,6 +365,10 @@ const DMG_CSS = `
 .dmg { position: relative; width: 100%; height: 70vh; min-height: 420px; border: 1px solid var(--dmg-border, #e3e8ef); border-radius: 12px; overflow: hidden; background: var(--dmg-bg, #f5f7fa); }
 .dmg-canvas { display: block; width: 100%; height: 100%; }
 .dmg-bar { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font: 12px/1.4 system-ui, sans-serif; }
+.dmg-mode { display: inline-flex; border: 1px solid #d7deea; border-radius: 8px; overflow: hidden; }
+.dmg-mode button { font: inherit; border: none; background: rgba(255,255,255,.7); color: #64748b; padding: 5px 11px; cursor: pointer; }
+.dmg-mode button + button { border-left: 1px solid #d7deea; }
+.dmg-mode button.on { background: #2563eb; color: #fff; }
 .dmg-counts { color: #64748b; font-variant-numeric: tabular-nums; } .dmg-counts b { color: inherit; }
 .dmg-search { font: inherit; padding: 5px 9px; border: 1px solid #d7deea; border-radius: 8px; background: rgba(255,255,255,.8); outline: none; margin-left: auto; }
 .dmg-tog { display: inline-flex; gap: 5px; align-items: center; color: #64748b; user-select: none; cursor: pointer; }
@@ -365,5 +392,6 @@ const DMG_CSS = `
   .dmg-lrow:hover { background: rgba(255,255,255,.06); }
   .dmg-stats > div { background: #10151d; border-color: #263040; }
   .dmg-focus { background: #10151d; border-color: #2b3646; color: #cdd7e5; }
+  .dmg-mode { border-color: #2b3646; } .dmg-mode button { background: rgba(30,38,50,.7); color: #93a1b5; } .dmg-mode button + button { border-color: #2b3646; }
 }
 `;

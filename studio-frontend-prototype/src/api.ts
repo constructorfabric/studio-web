@@ -1295,6 +1295,9 @@ export const api = {
   /** Read the model graph back out of Graph Storage. */
   domainModelGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/model/graph", token),
+  /** The instance graph: created objects and the relations between them. */
+  domainObjectsGraph: (token: string) =>
+    request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),
   files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 

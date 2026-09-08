@@ -235,6 +235,25 @@ pub struct ModelGraphResponse {
     pub edges: Vec<ModelGraphEdgeDto>,
 }
 
+/// One created object as a graph node.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ObjectGraphNodeDto {
+    pub instance_id: String,
+    /// Entity type id (e.g. `team`).
+    pub entity: String,
+    pub bucket: String,
+    pub name: String,
+}
+
+/// The instance graph: created objects and the relations between them.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ObjectsGraphResponse {
+    pub nodes: Vec<ObjectGraphNodeDto>,
+    pub edges: Vec<ModelGraphEdgeDto>,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct AddFieldRequest {
@@ -456,6 +475,36 @@ async fn model_graph(
     }))
 }
 
+async fn objects_graph(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+) -> ApiResult<JsonBody<ObjectsGraphResponse>> {
+    let (nodes, edges) = handle
+        .0
+        .objects_graph(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(ObjectsGraphResponse {
+        nodes: nodes
+            .into_iter()
+            .map(|n| ObjectGraphNodeDto {
+                instance_id: n.instance_id,
+                entity: n.entity,
+                bucket: n.bucket,
+                name: n.name,
+            })
+            .collect(),
+        edges: edges
+            .into_iter()
+            .map(|e| ModelGraphEdgeDto {
+                type_id: e.type_id,
+                from: e.from,
+                to: e.to,
+            })
+            .collect(),
+    }))
+}
+
 async fn add_field(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
@@ -645,6 +694,27 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(model_graph)
         .json_response_with_schema::<ModelGraphResponse>(openapi, StatusCode::OK, "The model graph")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-domain-model/v1/objects/graph")
+        .operation_id("studio_domain_model.objects_graph")
+        .summary("The instance graph: created objects and their relations")
+        .description(
+            "Returns the objects created via POST /objects and the relations \
+             between them (member/owns/references/composes/derives) — the \
+             instance layer, distinct from the type/model graph.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(objects_graph)
+        .json_response_with_schema::<ObjectsGraphResponse>(
+            openapi,
+            StatusCode::OK,
+            "The instance graph",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

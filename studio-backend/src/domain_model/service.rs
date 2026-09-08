@@ -39,6 +39,15 @@ pub struct RelationCatalog {
     pub unresolved: Vec<(String, String)>,
 }
 
+/// One created object as a graph node (its entity type + bucket for colouring).
+#[derive(Debug, Clone)]
+pub struct ObjectGraphNode {
+    pub instance_id: String,
+    pub entity: String,
+    pub bucket: String,
+    pub name: String,
+}
+
 /// What a model-graph sync wrote.
 #[derive(Debug, Clone)]
 pub struct ModelSyncReport {
@@ -363,6 +372,66 @@ impl DomainModelService {
             .await?
             .into_iter()
             .filter(|e| e.type_id == gts::META_INHERITS || e.type_id == gts::META_DECLARES)
+            .collect();
+        Ok((nodes, edges))
+    }
+
+    /// The graph of created *objects* (instances) and the relations between
+    /// them (`member`/`owns`/…), read out of Graph Storage — the instance layer,
+    /// distinct from the type/model graph. Nodes carry their entity type and
+    /// bucket for colouring.
+    pub async fn objects_graph(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(Vec<ObjectGraphNode>, Vec<EdgeView>)> {
+        self.ensure_types(ctx).await?;
+        // type ids to project + a map back to (entity id, bucket) for labels.
+        let (type_ids, meta) = {
+            let o = self
+                .ontology
+                .lock()
+                .map_err(|_| anyhow::anyhow!("ontology lock poisoned"))?;
+            let type_ids: Vec<String> = o.node_types().into_iter().map(|n| n.type_id).collect();
+            let mut meta: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
+            for e in o.entities() {
+                if let Some(id) = e.get("id").and_then(Value::as_str) {
+                    let bucket = e
+                        .get("bucket")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    meta.insert(gts::node_type_id(id), (id.to_string(), bucket));
+                }
+            }
+            (type_ids, meta)
+        };
+        let objs = self.store.list_objects(ctx, &type_ids).await?;
+        let nodes = objs
+            .iter()
+            .map(|o| {
+                let (entity, bucket) = meta.get(&o.type_id).cloned().unwrap_or_default();
+                let name = o
+                    .value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&o.instance_id)
+                    .to_string();
+                ObjectGraphNode {
+                    instance_id: o.instance_id.clone(),
+                    entity,
+                    bucket,
+                    name,
+                }
+            })
+            .collect();
+        let seeds: Vec<String> = objs.iter().map(|o| o.instance_id.clone()).collect();
+        let edges = self
+            .store
+            .read_edges(ctx, &seeds)
+            .await?
+            .into_iter()
+            .filter(|e| e.type_id.contains(".domainrel."))
             .collect();
         Ok((nodes, edges))
     }
