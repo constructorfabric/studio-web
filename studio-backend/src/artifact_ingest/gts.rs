@@ -361,6 +361,42 @@ pub fn repo_node(
     }
 }
 
+/// What a completed sync pulled for one repository — recorded on the repo node
+/// so a reader can tell a never-synced source from a synced one without
+/// counting its children.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepoSyncStats {
+    pub issues: usize,
+    pub pull_requests: usize,
+    pub files: usize,
+    pub comments: usize,
+    pub commits: usize,
+}
+
+/// The repository node re-stated once a sync has finished: same instance id as
+/// [`repo_node`], so it upserts over the record written when the sync started,
+/// plus when it finished and what came in. This is the repository's sync status
+/// as far as any reader is concerned.
+pub fn repo_synced_node(
+    scope_key: &str,
+    connector_id: &str,
+    provider: &str,
+    repo_full_path: &str,
+    synced_at: &str,
+    stats: RepoSyncStats,
+) -> GtsNode {
+    let mut node = repo_node(scope_key, connector_id, provider, repo_full_path);
+    if let Some(obj) = node.value.as_object_mut() {
+        obj.insert("synced_at".to_string(), json!(synced_at));
+        obj.insert("issues".to_string(), json!(stats.issues));
+        obj.insert("pull_requests".to_string(), json!(stats.pull_requests));
+        obj.insert("files".to_string(), json!(stats.files));
+        obj.insert("comments".to_string(), json!(stats.comments));
+        obj.insert("commits".to_string(), json!(stats.commits));
+    }
+    node
+}
+
 pub fn issue_node(
     scope_key: &str,
     repo_id: &str,

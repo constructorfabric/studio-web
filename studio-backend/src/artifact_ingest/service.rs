@@ -693,6 +693,43 @@ impl IngestService {
         )
         .await?;
 
+        // Stamp the sync onto the repository node — same instance id, so this
+        // upserts over the record written when the sync started. A reader (the
+        // project dashboard) then sees "last synced <when>, <what came in>"
+        // instead of having to infer it from the presence of child nodes.
+        let synced_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        nodes.push(gts::repo_synced_node(
+            source_scope,
+            connector_id,
+            provider,
+            repo_full_path,
+            &synced_at,
+            gts::RepoSyncStats {
+                issues,
+                pull_requests,
+                files,
+                comments,
+                commits,
+            },
+        ));
+        self.flush_and_report(
+            ctx,
+            task_id,
+            &mut nodes,
+            &mut flushed,
+            workspace_id,
+            project_id,
+            "storing…",
+            issues,
+            pull_requests,
+            files,
+            comments,
+            commits,
+        )
+        .await?;
+
         // Relations last — every endpoint node is now stored. Additive: a
         // rejected edge chunk is logged and skipped (its nodes are already
         // stored and the sync still succeeds) rather than failing the whole job.

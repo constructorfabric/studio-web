@@ -10,6 +10,8 @@ import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
+import { runRepoSync, type SyncProgress } from "./artifact-sync";
+import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { DomainModelGraph } from "./domain-model-graph";
 import { GtsEntitiesTable } from "./gts-entities";
@@ -3045,9 +3047,9 @@ function WorkspaceProjects({
  *  studio-project gear used to own, now stored as `project.config` tenant
  *  metadata on the project tenant and edited here. Status is forward-only and
  *  the stage list is validated against the catalogue, both client-side now. */
-/** The sections of an open project. Lifted so the shell sidebar can BE the
- *  project's nav (the tab is stored on the shell, not inside ProjectScreen). */
-type ProjTab = "overview" | "artifacts" | "documents" | "kits" | "analyze" | "automation" | "people";
+/** The sections of an open project — the type is defined next to the Overview
+ *  that links to them; this is the shell sidebar's rendering of the list (the
+ *  active tab is stored on the shell, not inside ProjectScreen). */
 const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "overview", icon: "home", label: "Overview" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
@@ -3124,9 +3126,13 @@ function ProjectScreen({
       </div>
       <div className="proj-content">
         {tab === "overview" && (
-          <>
-            <WorkspaceDashboard token={token} ws={proj} embedded onBack={onBack} onOpenStudio={onOpenStudio} />
-          </>
+          <ProjectOverview
+            token={token}
+            project={proj}
+            parentWorkspaceId={workspace.id}
+            onOpenTab={setTab}
+            onOpenStudio={() => onOpenStudio(proj)}
+          />
         )}
         {tab === "artifacts" && (
           <ArtifactsView
@@ -4814,38 +4820,6 @@ function ProjectFiles({
   );
 }
 
-/** Derive the artifact-ingest parameters (provider + owner/repo + API base)
- *  from a git clone URL. Returns null for hosts we have no driver for. */
-function parseRepoSource(
-  url?: string,
-): { provider: string; full_path: string; base_url?: string } | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    const provider = host.includes("github")
-      ? "github"
-      : host.includes("gitlab")
-        ? "gitlab"
-        : host.includes("bitbucket")
-          ? "bitbucket"
-          : "";
-    if (!provider) return null;
-    const full_path = u.pathname.replace(/^\/+/, "").replace(/\.git$/, "");
-    // github.com uses api.github.com (the driver default); GHE and self-hosted
-    // GitLab need their own API root.
-    const base_url =
-      host === "github.com"
-        ? undefined
-        : provider === "github"
-          ? `${u.protocol}//${host}/api/v3`
-          : `${u.protocol}//${host}`;
-    return { provider, full_path, base_url };
-  } catch {
-    return null;
-  }
-}
-
 function ProjectSources({
   token,
   workspace: ws,
@@ -4864,90 +4838,21 @@ function ProjectSources({
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // Per-repo artifact-sync status text, keyed by repo name.
-  const [sync, setSync] = useState<Record<string, string>>({});
+  // Per-repo artifact-sync progress, keyed by repo name.
+  const [sync, setSync] = useState<Record<string, SyncProgress>>({});
 
   const syncRepo = async (r: RepoEntry) => {
-    const parsed = parseRepoSource(r.url ?? undefined);
-    if (!parsed) {
-      setSync((s) => ({ ...s, [r.name]: "unsupported source URL" }));
-      return;
-    }
-    if (!r.token_ref) {
-      setSync((s) => ({ ...s, [r.name]: "no token — attach it from a connector" }));
-      return;
-    }
-    setSync((s) => ({ ...s, [r.name]: "queued…" }));
-    try {
-      // Sync runs in the background (cloning can take a while); enqueue, then
-      // poll the task to completion. A trailing "…" marks a running state and
-      // keeps the button disabled.
-      const { task_id } = await api.syncArtifacts(token, {
-        provider: parsed.provider,
-        secret_ref: r.token_ref,
-        repo_full_path: parsed.full_path,
-        base_url: parsed.base_url,
-        // Tag every node with both tenants: the parent workspace (so a
-        // workspace-level graph shows every project) and this project (so a
-        // project-level graph shows only its own). `project_id` also locates
-        // the IDE's shared checkout to read instead of cloning.
-        workspace_id: parentWorkspaceId ?? ws.id,
-        project_id: ws.id,
-        repo_dir: r.target || r.name,
-      });
-      const deadline = Date.now() + 5 * 60 * 1000;
-      // Running total of nodes the backend reports as already stored in the
-      // graph. When it climbs, refresh the ingested-artifacts viewer so the
-      // objects appear as they land, not only when the whole sync finishes.
-      let lastStored = -1;
-      // Compact "what's been pulled so far" line, hiding zero counts.
-      const counts = (t: {
-        issues: number;
-        pull_requests: number;
-        files: number;
-        comments: number;
-        commits: number;
-      }) =>
-        [
-          t.issues ? `${t.issues} issues` : "",
-          t.pull_requests ? `${t.pull_requests} PRs` : "",
-          t.files ? `${t.files} files` : "",
-          t.comments ? `${t.comments} comments` : "",
-          t.commits ? `${t.commits} commits` : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      for (;;) {
-        await new Promise((res) => setTimeout(res, 1200));
-        const t = await api.artifactSyncTask(token, task_id);
-        if (t.status === "succeeded") {
-          setSync((s) => ({ ...s, [r.name]: counts(t) || "done" }));
-          onSynced?.();
-          break;
-        }
-        if (t.status === "failed") {
-          setSync((s) => ({ ...s, [r.name]: t.message || "sync failed" }));
-          break;
-        }
-        // Live line: the current phase, plus counts and how many objects are
-        // already in the graph.
-        const phase = (t.message || t.status).replace(/…$/, "");
-        const c = counts(t);
-        const line = `${phase}${c ? ` — ${c}` : ""}${t.stored ? ` · ${t.stored} in graph` : ""}…`;
-        setSync((s) => ({ ...s, [r.name]: line }));
-        // Objects landed since last tick → reload the ingested list.
-        if (t.stored > lastStored) {
-          lastStored = t.stored;
-          onSynced?.();
-        }
-        if (Date.now() > deadline) {
-          setSync((s) => ({ ...s, [r.name]: "timed out — still running server-side" }));
-          break;
-        }
+    // Nodes land in the graph as the sync runs, so refresh the ingested list
+    // whenever the stored count climbs (and once at the end) rather than on
+    // every poll tick.
+    let lastStored = -1;
+    await runRepoSync(token, r, { workspaceId: parentWorkspaceId ?? ws.id, projectId: ws.id }, (p) => {
+      setSync((s) => ({ ...s, [r.name]: p }));
+      if (!p.running || p.stored > lastStored) {
+        lastStored = p.stored;
+        onSynced?.();
       }
-    } catch (e) {
-      setSync((s) => ({ ...s, [r.name]: errText(e) }));
-    }
+    });
   };
 
   const reload = useCallback(async () => {
@@ -5007,16 +4912,16 @@ function ProjectSources({
                   {r.source}
                   {r.url ? ` · ${r.url}` : ""}
                   {r.branch ? ` · ${r.branch}` : ""}
-                  {sync[r.name] ? ` — sync: ${sync[r.name]}` : ""}
+                  {sync[r.name] ? ` — sync: ${sync[r.name].line}` : ""}
                 </div>
               </div>
               <button
                 className="ghost"
                 title="Clone this source and pull its issues, pull requests and files into the graph"
-                disabled={!!sync[r.name]?.endsWith("…")}
+                disabled={!!sync[r.name]?.running}
                 onClick={() => void syncRepo(r)}
               >
-                {sync[r.name]?.endsWith("…") ? "…" : "Sync"}
+                {sync[r.name]?.running ? "…" : "Sync"}
               </button>
               <button className="ghost" disabled={busy === r.name} onClick={() => void detach(r.name)}>
                 {busy === r.name ? "…" : "Detach"}
