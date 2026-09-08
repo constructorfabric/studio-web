@@ -1,6 +1,6 @@
 // A scannable table of the registered GTS entities (types-registry/v1/entities)
 // instead of a raw JSON dump: categorised by gts_id, searchable, filterable.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface Segment { vendor?: string; package?: string; namespace?: string; type_name?: string; ver_major?: number }
 interface Entity {
@@ -50,6 +50,14 @@ function leafId(g: string): string {
 export function GtsEntitiesTable({ data }: { data: unknown }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<Category | null>(null);
+  const [sel, setSel] = useState<Entity | null>(null);
+
+  useEffect(() => {
+    if (!sel) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSel(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sel]);
 
   const rows = useMemo(() => {
     const d = data as { entities?: Entity[]; error?: string } | undefined;
@@ -111,7 +119,7 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.e.id}>
+              <tr key={r.e.id} className="gte-row" onClick={() => setSel(r.e)} title="View schema">
                 <td className="gte-name">{r.name}</td>
                 <td>
                   <span className="gte-badge" style={{ borderColor: CAT_COLOR[r.cat], color: CAT_COLOR[r.cat] }}>
@@ -129,6 +137,25 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
       <div className="gte-foot">
         Showing <b>{shown.length}</b> of {rows.length} registered entities.
       </div>
+
+      {sel && (
+        <div className="gte-modal" onClick={() => setSel(null)}>
+          <div className="gte-dialog" onClick={(e) => e.stopPropagation()}>
+            <button className="gte-close" aria-label="Close" onClick={() => setSel(null)}>×</button>
+            <span className="gte-badge" style={{ borderColor: CAT_COLOR[categoryOf(sel.gts_id)], color: CAT_COLOR[categoryOf(sel.gts_id)] }}>
+              <span className="gte-dot" style={{ background: CAT_COLOR[categoryOf(sel.gts_id)] }} />
+              {categoryOf(sel.gts_id)}{sel.is_schema ? " · schema" : " · instance"}
+            </span>
+            <h3>{displayName(sel)}</h3>
+            <code className="gte-id-full">{sel.gts_id}</code>
+            {(sel.content?.description || sel.description) && (
+              <p className="gte-modal-desc">{sel.content?.description || sel.description}</p>
+            )}
+            <h4>{sel.is_schema ? "Schema" : "Content"}</h4>
+            <pre className="gte-json">{JSON.stringify(sel.content ?? {}, null, 2)}</pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -153,4 +180,13 @@ const GTE_CSS = `
 .gte-desc { color: var(--muted); max-width: 420px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .gte-muted { color: var(--muted); }
 .gte-foot { margin-top: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gte-row { cursor: pointer; }
+.gte-modal { position: fixed; inset: 0; z-index: 60; background: rgba(10,15,25,0.5); display: grid; place-items: center; padding: 20px; }
+.gte-dialog { position: relative; width: min(720px, 100%); max-height: 85vh; overflow: auto; background: var(--card, var(--bg)); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.35); }
+.gte-close { position: absolute; top: 12px; right: 14px; border: none; background: none; font-size: 22px; line-height: 1; color: var(--muted); cursor: pointer; }
+.gte-dialog h3 { margin: 8px 0 4px; font-size: 20px; }
+.gte-id-full { font-size: 12px; color: var(--muted); word-break: break-all; }
+.gte-modal-desc { font-size: 14px; line-height: 1.5; margin: 12px 0; }
+.gte-dialog h4 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.gte-json { margin: 0; padding: 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: 12px; line-height: 1.5; overflow: auto; max-height: 48vh; }
 `;
