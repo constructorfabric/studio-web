@@ -197,10 +197,10 @@ impl RepoEnricher {
             let dir = parent_dir(p);
             // Nested inside a component we already took — part of it, not a
             // component of its own.
-            if claimed
-                .iter()
-                .any(|c| dir.strip_prefix(c.as_str()).is_some_and(|r| r.starts_with('/')))
-            {
+            if claimed.iter().any(|c| {
+                dir.strip_prefix(c.as_str())
+                    .is_some_and(|r| r.starts_with('/'))
+            }) {
                 continue;
             }
             let body = self.read_file(auth, p).await;
@@ -240,7 +240,10 @@ impl RepoEnricher {
             .filter_map(|q| q.strip_prefix(&prefix))
             .filter(|q| !q.is_empty() && !skip_path(q))
             .collect();
-        let repo_url = format!("https://github.com/{}/tree/{}/{dir}", self.repo, self.git_ref);
+        let repo_url = format!(
+            "https://github.com/{}/tree/{}/{dir}",
+            self.repo, self.git_ref
+        );
 
         let mut f = serde_json::Map::new();
         f.insert("path".into(), text(dir, Some(&repo_url), None));
@@ -280,8 +283,9 @@ impl RepoEnricher {
         f.insert(
             "e2e".into(),
             boolean(
-                rel.iter()
-                    .any(|q| q.contains("e2e") || q.contains("cypress") || q.contains("playwright")),
+                rel.iter().any(|q| {
+                    q.contains("e2e") || q.contains("cypress") || q.contains("playwright")
+                }),
             ),
         );
         f.insert(
@@ -788,7 +792,12 @@ fn normalize_ref(git_ref: &str) -> String {
     if r.is_empty() {
         return "HEAD".to_string();
     }
-    for prefix in ["refs/heads/", "refs/remotes/origin/", "origin/", "remotes/origin/"] {
+    for prefix in [
+        "refs/heads/",
+        "refs/remotes/origin/",
+        "origin/",
+        "remotes/origin/",
+    ] {
         if let Some(rest) = r.strip_prefix(prefix)
             && !rest.is_empty()
         {
@@ -1062,7 +1071,6 @@ struct CommitActor {
     date: Option<String>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,7 +1121,9 @@ mod tests {
 
     #[test]
     fn workspace_root_is_a_container_and_a_package_is_not() {
-        assert!(is_workspace_container(r#"{"name":"gears-frontx","workspaces":["packages/*"]}"#));
+        assert!(is_workspace_container(
+            r#"{"name":"gears-frontx","workspaces":["packages/*"]}"#
+        ));
         assert!(is_workspace_container(
             r#"{"name":"root","workspaces":{"packages":["packages/*"]}}"#
         ));
