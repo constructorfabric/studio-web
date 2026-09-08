@@ -39,13 +39,25 @@ pub struct RelationCatalog {
     pub unresolved: Vec<(String, String)>,
 }
 
-/// One created object as a graph node (its entity type + bucket for colouring).
+/// One model-graph edge with its properties (for `declares`: name / verb /
+/// cardinality / label; for `inherits`: the base).
+#[derive(Debug, Clone)]
+pub struct ModelGraphEdge {
+    pub type_id: String,
+    pub from: String,
+    pub to: String,
+    pub payload: Value,
+}
+
+/// One created object as a graph node (its entity type + bucket for colouring,
+/// plus the full stored payload — the object's document in Graph Storage).
 #[derive(Debug, Clone)]
 pub struct ObjectGraphNode {
     pub instance_id: String,
     pub entity: String,
     pub bucket: String,
     pub name: String,
+    pub value: Value,
 }
 
 /// What a model-graph sync wrote.
@@ -359,19 +371,36 @@ impl DomainModelService {
     pub async fn model_graph_view(
         &self,
         ctx: &SecurityContext,
-    ) -> anyhow::Result<(Vec<ObjectNode>, Vec<EdgeView>)> {
+    ) -> anyhow::Result<(Vec<ObjectNode>, Vec<ModelGraphEdge>)> {
         self.ensure_types(ctx).await?;
+        // Nodes are read back from the graph (proof they are stored); edges come
+        // from the ontology so they carry their properties (verb / cardinality /
+        // label / name) — adjacency reads drop the payload, and the ontology is
+        // 1:1 with what the sync wrote. Endpoints are the same deterministic node
+        // keys the sync used, so they line up with the graph nodes.
         let nodes = self
             .store
             .list_objects(ctx, &[gts::META_OBJECT_TYPE.to_string()])
             .await?;
-        let seeds: Vec<String> = nodes.iter().map(|n| n.instance_id.clone()).collect();
-        let edges = self
-            .store
-            .read_edges(ctx, &seeds)
-            .await?
-            .into_iter()
-            .filter(|e| e.type_id == gts::META_INHERITS || e.type_id == gts::META_DECLARES)
+        let graph = {
+            let o = self
+                .ontology
+                .lock()
+                .map_err(|_| anyhow::anyhow!("ontology lock poisoned"))?;
+            o.model_graph()
+        };
+        let edges = graph
+            .edges
+            .iter()
+            .map(|e| ModelGraphEdge {
+                type_id: match e.kind {
+                    ModelEdgeKind::Inherits => gts::META_INHERITS.to_string(),
+                    ModelEdgeKind::Declares => gts::META_DECLARES.to_string(),
+                },
+                from: gts::instance_id(gts::META_OBJECT_TYPE, &e.from_entity),
+                to: gts::instance_id(gts::META_OBJECT_TYPE, &e.to_entity),
+                payload: e.payload.clone(),
+            })
             .collect();
         Ok((nodes, edges))
     }
@@ -422,6 +451,7 @@ impl DomainModelService {
                     entity,
                     bucket,
                     name,
+                    value: o.value.clone(),
                 }
             })
             .collect();

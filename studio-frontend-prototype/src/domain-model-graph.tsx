@@ -17,16 +17,17 @@ const colorOf = (b: string) => PALETTE[b] ?? "#94a3b8";
 interface GNode {
   key: string; id: string; name: string; bucket: string; ext: string | null;
   abstract: boolean; fields: number; rels: number;
+  props: Record<string, unknown>; // the node's stored payload in Graph Storage
   x: number; y: number; vx: number; vy: number;
   out: GLink[]; in: GLink[];
 }
-interface GLink { s: GNode; t: GNode; k: "i" | "d"; }
+interface GLink { s: GNode; t: GNode; k: "i" | "d"; type: string; payload: Record<string, unknown>; }
 
 interface RawNode { key: string; name: string; payload: Record<string, unknown>; }
-interface RawEdge { type_id: string; from: string; to: string; }
-interface RawObj { instance_id: string; entity: string; bucket: string; name: string; }
+interface RawEdge { type_id: string; from: string; to: string; payload?: Record<string, unknown>; }
+interface RawObj { instance_id: string; entity: string; bucket: string; name: string; value: Record<string, unknown>; }
 
-interface Ctrl { select: (key: string | null) => void; }
+interface Ctrl { select: (key: string | null) => void; clearEdge: () => void; }
 
 export function DomainModelGraph({ token }: { token: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -41,6 +42,7 @@ export function DomainModelGraph({ token }: { token: string }) {
   const [counts, setCounts] = useState({ n: 0, i: 0, d: 0 });
   const [buckets, setBuckets] = useState<{ b: string; n: number }[]>([]);
   const [sel, setSel] = useState<GNode | null>(null);
+  const [selEdge, setSelEdge] = useState<GLink | null>(null);
   const [, force] = useState(0); // repaint UI (legend off-state, toggles)
 
   useEffect(() => {
@@ -52,24 +54,26 @@ export function DomainModelGraph({ token }: { token: string }) {
 
     (async () => {
       let nodes: GNode[];
-      let rawLinks: { from: string; to: string; k: "i" | "d" }[];
+      let rawLinks: { from: string; to: string; k: "i" | "d"; type: string; payload: Record<string, unknown> }[];
       try {
         if (mode === "instances") {
           const raw = (await api.domainObjectsGraph(token)) as unknown as { nodes: RawObj[]; edges: RawEdge[] };
           nodes = raw.nodes.map((n) => ({
             key: n.instance_id, id: n.entity, name: n.name || n.instance_id, bucket: n.bucket,
-            ext: null, abstract: false, fields: 0, rels: 0, x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
+            ext: null, abstract: false, fields: 0, rels: 0, props: n.value ?? {},
+            x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
           }));
-          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: "d" as const }));
+          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: "d" as const, type: e.type_id, payload: e.payload ?? {} }));
         } else {
           const raw = (await api.domainModelGraph(token)) as unknown as { nodes: RawNode[]; edges: RawEdge[] };
           nodes = raw.nodes.map((n) => ({
             key: n.key, id: String(n.payload.id ?? ""), name: n.name || String(n.payload.name ?? n.payload.id ?? ""),
             bucket: String(n.payload.bucket ?? ""), ext: (n.payload.extends as string | null) ?? null,
             abstract: Boolean(n.payload.abstract), fields: Number(n.payload.field_count ?? 0), rels: Number(n.payload.relation_count ?? 0),
+            props: n.payload ?? {},
             x: 0, y: 0, vx: 0, vy: 0, out: [], in: [],
           }));
-          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: e.type_id.includes("inherits") ? "i" as const : "d" as const }));
+          rawLinks = raw.edges.map((e) => ({ from: e.from, to: e.to, k: e.type_id.includes("inherits") ? "i" as const : "d" as const, type: e.type_id, payload: e.payload ?? {} }));
         }
       } catch (e) {
         if (!disposed) { setError(errText(e)); setLoading(false); }
@@ -80,7 +84,7 @@ export function DomainModelGraph({ token }: { token: string }) {
       const byKey = new Map(nodes.map((n) => [n.key, n]));
       nodesRef.current = byKey;
       const links: GLink[] = rawLinks
-        .map((e) => ({ s: byKey.get(e.from)!, t: byKey.get(e.to)!, k: e.k }))
+        .map((e) => ({ s: byKey.get(e.from)!, t: byKey.get(e.to)!, k: e.k, type: e.type, payload: e.payload }))
         .filter((l) => l.s && l.t);
       for (const l of links) { l.s.out.push(l); l.t.in.push(l); }
 
@@ -130,7 +134,7 @@ export function DomainModelGraph({ token }: { token: string }) {
       cleanup.push(() => mq.removeEventListener("change", readTokens));
 
       const F = filterRef.current;
-      let hover: GNode | null = null, selected: GNode | null = null;
+      let hover: GNode | null = null, selected: GNode | null = null, selectedEdge: GLink | null = null;
       const visN = (n: GNode) => !F.off.has(n.bucket);
       const visL = (l: GLink) => (l.k === "i" ? F.i : F.d) && visN(l.s) && visN(l.t);
       // Focus mode: when on and a node is selected, isolate it + its direct
@@ -183,11 +187,12 @@ export function DomainModelGraph({ token }: { token: string }) {
         const near = hl ? new Set<GNode>([hl, ...hl.out.map((l) => l.t), ...hl.in.map((l) => l.s)]) : null;
         for (const l of links) {
           if (!visL(l) || (fs && !(fs.has(l.s) && fs.has(l.t)))) continue;
-          const on = hl != null && (l.s === hl || l.t === hl);
+          const onE = l === selectedEdge;
+          const on = onE || (hl != null && (l.s === hl || l.t === hl));
           ctx.globalAlpha = hl && !on ? 0.06 : 1;
           ctx.beginPath(); ctx.moveTo(sx(l.s), sy(l.s)); ctx.lineTo(sx(l.t), sy(l.t));
           ctx.strokeStyle = on ? TOK.hi : l.k === "i" ? TOK.edgeI : TOK.edge;
-          ctx.lineWidth = on ? 1.6 : l.k === "i" ? 1.1 : 0.7;
+          ctx.lineWidth = onE ? 2.6 : on ? 1.6 : l.k === "i" ? 1.1 : 0.7;
           ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -201,7 +206,7 @@ export function DomainModelGraph({ token }: { token: string }) {
           ctx.fillStyle = colorOf(n.bucket); ctx.fill();
           if (n.abstract) { ctx.setLineDash([2, 2]); ctx.lineWidth = 1.4; ctx.strokeStyle = colorOf(n.bucket); ctx.stroke(); ctx.setLineDash([]); }
           else if (n === hl) { ctx.lineWidth = 2; ctx.strokeStyle = TOK.text; ctx.stroke(); }
-          if ((hl != null && near != null && near.has(n)) || view.k > 1.7 || (q !== "" && !dim)) {
+          if ((hl != null && near != null && near.has(n)) || (selectedEdge != null && (n === selectedEdge.s || n === selectedEdge.t)) || view.k > 1.7 || (q !== "" && !dim)) {
             ctx.globalAlpha = dim ? 0.2 : 1; ctx.fillStyle = TOK.text;
             ctx.font = "600 " + (n === hl ? 13 : 11) + "px system-ui, sans-serif"; ctx.textBaseline = "middle";
             ctx.fillText(n.name, sx(n) + r + 6, sy(n));
@@ -225,13 +230,30 @@ export function DomainModelGraph({ token }: { token: string }) {
         return best;
       };
 
-      const doSelect = (n: GNode | null) => { selected = n; setSel(n); };
+      const doSelect = (n: GNode | null) => { selected = n; selectedEdge = null; setSel(n); setSelEdge(null); };
+      const doSelectEdge = (e: GLink | null) => { selectedEdge = e; selected = null; setSelEdge(e); setSel(null); };
       ctrlRef.current = {
         select: (key) => {
           const n = key ? byKey.get(key) ?? null : null;
           doSelect(n);
           if (n) { view.k = Math.max(view.k, 1.5); view.x = W / 2 - n.x * view.k; view.y = H / 2 - n.y * view.k; }
         },
+        clearEdge: () => doSelectEdge(null),
+      };
+      // Nearest visible edge within a few px of (mx,my) — point-to-segment.
+      const pickEdge = (mx: number, my: number): GLink | null => {
+        let best: GLink | null = null, bd = 8 * 8;
+        for (const l of links) {
+          if (!visL(l)) continue;
+          const ax = sx(l.s), ay = sy(l.s), bx = sx(l.t), by = sy(l.t);
+          const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy || 1;
+          let t = ((mx - ax) * dx + (my - ay) * dy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          const px = ax + t * dx, py = ay + t * dy;
+          const d = (mx - px) ** 2 + (my - py) ** 2;
+          if (d < bd) { bd = d; best = l; }
+        }
+        return best;
       };
 
       let dragging: GNode | null = null, panning = false, last = { x: 0, y: 0 }, moved = false;
@@ -249,7 +271,11 @@ export function DomainModelGraph({ token }: { token: string }) {
       };
       const onUp = () => {
         if (dragging && !moved) doSelect(dragging);
-        else if (panning && !moved) doSelect(null);
+        else if (panning && !moved) {
+          const e = pickEdge(last.x, last.y);
+          if (e) doSelectEdge(e);
+          else doSelect(null);
+        }
         dragging = null; panning = false;
       };
       const onWheel = (e: WheelEvent) => {
@@ -336,12 +362,56 @@ export function DomainModelGraph({ token }: { token: string }) {
             <div><b>{sel.rels}</b><span>relations</span></div>
             <div><b>{subs.length}</b><span>subtypes</span></div>
           </div>
+          {Object.keys(sel.props).length > 0 && (
+            <div className="dmg-sec">
+              <h4>Stored in graph</h4>
+              {Object.entries(sel.props).map(([k, v]) => (
+                <div className="dmg-prop" key={k}>
+                  <span className="dmg-pk">{k}</span>
+                  <span className="dmg-pv">{fmtVal(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <RelList title={`Declares → (${decl.length})`} items={decl.slice(0, 30)} ctrl={ctrlRef} />
           {subs.length > 0 && <RelList title={`Subtypes (${subs.length})`} items={subs.slice(0, 30)} ctrl={ctrlRef} />}
         </div>
       )}
+
+      {selEdge && (
+        <div className="dmg-detail">
+          <button className="dmg-close" aria-label="Close" onClick={() => ctrlRef.current?.clearEdge()}>×</button>
+          <span className="dmg-kind">{edgeVerb(selEdge)} edge</span>
+          <h3>{selEdge.s.name} <span className="dmg-arrow">→</span> {selEdge.t.name}</h3>
+          <div className="dmg-id">{selEdge.s.id} → {selEdge.t.id}</div>
+          {Object.keys(selEdge.payload).length > 0 ? (
+            <div className="dmg-sec">
+              <h4>Edge properties (stored in graph)</h4>
+              {Object.entries(selEdge.payload).map(([k, v]) => (
+                <div className="dmg-prop" key={k}><span className="dmg-pk">{k}</span><span className="dmg-pv">{fmtVal(v)}</span></div>
+              ))}
+            </div>
+          ) : (
+            <div className="dmg-rel dmg-muted" style={{ marginTop: 10 }}>No stored properties on this edge.</div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function edgeVerb(l: GLink): string {
+  if (l.type.includes("inherits")) return "inherits";
+  if (l.type.includes("declares")) return "declares";
+  const toks = l.type.replace(/~$/, "").split(".");
+  return toks.length >= 2 ? toks[toks.length - 2] : l.type;
+}
+
+function fmtVal(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") return JSON.stringify(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
 }
 
 function selectByEntity(byKey: Map<string, GNode>, entityId: string, ctrl: Ctrl | null) {
@@ -379,11 +449,15 @@ const DMG_CSS = `
 .dmg-close { float: right; border: none; background: none; font-size: 18px; line-height: 1; color: #94a3b8; cursor: pointer; }
 .dmg-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; display: inline-flex; gap: 6px; align-items: center; }
 .dmg-detail h3 { margin: 5px 0 2px; font-size: 17px; } .dmg-id { font: 11.5px var(--mono, monospace); color: #94a3b8; word-break: break-all; }
+.dmg-arrow { color: #94a3b8; }
 .dmg-focus { margin-top: 10px; width: 100%; font: 12px system-ui, sans-serif; padding: 6px 10px; border: 1px solid #d7deea; border-radius: 8px; background: #f5f7fa; color: #334155; cursor: pointer; }
 .dmg-focus:hover { border-color: #2563eb; color: #2563eb; } .dmg-focus.on { background: #2563eb; border-color: #2563eb; color: #fff; }
 .dmg-stats { display: flex; gap: 7px; margin: 12px 0; } .dmg-stats > div { flex: 1; background: #f5f7fa; border: 1px solid #e3e8ef; border-radius: 9px; padding: 7px 9px; } .dmg-stats b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; } .dmg-stats span { font-size: 10px; text-transform: uppercase; color: #94a3b8; letter-spacing: .04em; }
 .dmg-sec { margin-top: 12px; } .dmg-sec h4 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
 .dmg-rel { padding: 2px 0; display: flex; gap: 6px; } .dmg-rel a { color: #2563eb; cursor: pointer; } .dmg-rel a:hover { text-decoration: underline; } .dmg-muted { color: #94a3b8; font-size: 11.5px; }
+.dmg-prop { display: grid; grid-template-columns: 88px 1fr; gap: 8px; padding: 2px 0; align-items: baseline; }
+.dmg-pk { color: #64748b; font: 11px var(--mono, monospace); overflow: hidden; text-overflow: ellipsis; }
+.dmg-pv { font: 12px var(--mono, monospace); word-break: break-word; }
 .dmg-msg { position: absolute; inset: 0; display: grid; place-items: center; color: #64748b; font: 13px system-ui, sans-serif; } .dmg-err { color: #dc2626; }
 @media (prefers-color-scheme: dark) {
   .dmg { --dmg-border: #263040; --dmg-bg: #0d1017; }

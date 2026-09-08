@@ -225,6 +225,9 @@ pub struct ModelGraphEdgeDto {
     pub type_id: String,
     pub from: String,
     pub to: String,
+    /// Edge properties (declares: name/verb/cardinality/label; else empty).
+    #[schema(value_type = Object)]
+    pub payload: Value,
 }
 
 /// The model graph read back out of Graph Storage.
@@ -244,6 +247,9 @@ pub struct ObjectGraphNodeDto {
     pub entity: String,
     pub bucket: String,
     pub name: String,
+    /// The object's stored payload (its document in Graph Storage).
+    #[schema(value_type = Object)]
+    pub value: Value,
 }
 
 /// The instance graph: created objects and the relations between them.
@@ -470,6 +476,7 @@ async fn model_graph(
                 type_id: e.type_id,
                 from: e.from,
                 to: e.to,
+                payload: e.payload,
             })
             .collect(),
     }))
@@ -492,6 +499,7 @@ async fn objects_graph(
                 entity: n.entity,
                 bucket: n.bucket,
                 name: n.name,
+                value: n.value,
             })
             .collect(),
         edges: edges
@@ -500,6 +508,7 @@ async fn objects_graph(
                 type_id: e.type_id,
                 from: e.from,
                 to: e.to,
+                payload: serde_json::json!({}),
             })
             .collect(),
     }))
