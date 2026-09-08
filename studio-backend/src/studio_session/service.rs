@@ -451,7 +451,16 @@ impl SessionService {
             env.push(format!("STUDIO_THEIA_S2S_TOKEN={control_token}"));
         }
         // Provider keys for the native Theia agents (Codex, Claude Code).
+        // Orca runs the same CLIs, so these keys serve both.
         env.extend(self.agent_env(ctx).await);
+        // Orca runtime for the IDE's Agents panel. Container-local: the
+        // entrypoint starts `orca serve` beside Theia and the panel's backend
+        // shells out to `orca` in the same container, so nothing is published
+        // and no pairing secret ever reaches a browser.
+        if self.cfg.orca_enabled {
+            env.push("STUDIO_ORCA_ENABLED=1".to_string());
+            env.push(format!("STUDIO_ORCA_PORT={}", self.cfg.orca_port));
+        }
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).
         if let Some(root) = &root_repo {

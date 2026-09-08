@@ -127,6 +127,50 @@ COPY --from=cfs --chown=node:node /home/node/.cf-studio/cache/ /home/node/.cf-st
 RUN npm install -g @openai/codex@0.49.0 @anthropic-ai/claude-agent-sdk@0.3.223 \
     && npm cache clean --force
 
+# ── Orca runtime (optional; the IDE's Agents panel drives it) ─────────────
+# Opt-in by build arg: the package is ~155 MB on the wire, ~270 MB installed,
+# and the panel degrades to "not reachable" without it.
+#
+#   docker build -t cf-studio-theia:orca \
+#     --build-arg STUDIO_ORCA_DEB_URL=https://github.com/stablyai/orca/releases/download/v1.4.197/orca-ide_1.4.197_amd64.deb \
+#     --build-arg STUDIO_ORCA_DEB_SHA256=<sha256> .
+#
+# Three things about this package, each found by probing v1.4.197's amd64 deb
+# in a container:
+#   * the CLI is `orca-ide`, not `orca` — /opt/Orca/resources/bin/orca-ide,
+#     linked as /usr/bin/orca-ide;
+#   * its Depends are incomplete: without the Electron runtime libraries below
+#     the binary does not even load (libasound.so.2 missing);
+#   * with them present, `orca-ide status` answers with no display at all —
+#     but `orca serve` is a different story: without a display it sometimes
+#     initializes X11 anyway and dies ("Missing X server or $DISPLAY … The
+#     platform failed to initialize" -> SIGSEGV), reproducibly on a restart.
+#     Hence xvfb here, and `xvfb-run` in the entrypoint: three cold starts in
+#     a row then reached `state: ready` in 2 s each.
+ARG STUDIO_ORCA_DEB_URL=""
+ARG STUDIO_ORCA_DEB_SHA256=""
+RUN if [ -n "$STUDIO_ORCA_DEB_URL" ]; then \
+      set -eux; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends curl; \
+      curl -fsSL --retry 3 -o /tmp/orca.deb "$STUDIO_ORCA_DEB_URL"; \
+      if [ -n "$STUDIO_ORCA_DEB_SHA256" ]; then \
+        echo "$STUDIO_ORCA_DEB_SHA256  /tmp/orca.deb" | sha256sum -c -; \
+      fi; \
+      apt-get install -y --no-install-recommends /tmp/orca.deb \
+        libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+        libcups2 libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0 \
+        libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 \
+        libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 \
+        libxrandr2 xvfb xauth; \
+      rm -f /tmp/orca.deb; \
+      apt-get purge -y curl; apt-get autoremove -y; \
+      rm -rf /var/lib/apt/lists/*; \
+      ls -l /usr/bin/orca-ide; \
+    else \
+      echo "orca not installed (STUDIO_ORCA_DEB_URL empty) — the Agents panel reports 'not reachable'"; \
+    fi
+
 # Non-root: the workspace bind-mount owner should match (uid 1000 = node).
 USER node
 WORKDIR /app
@@ -154,7 +198,8 @@ ENV STUDIO_GIT_MODE=disabled \
     CFS_CACHE_DIR=/home/node/.cf-studio/cache \
     SHELL=/bin/bash \
     THEIA_CODEX_PATH=/usr/local/bin/codex-studio \
-    THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+    THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs \
+    ORCA_CLI=/usr/bin/orca-ide
 
 VOLUME ["/workspace"]
 EXPOSE 3003

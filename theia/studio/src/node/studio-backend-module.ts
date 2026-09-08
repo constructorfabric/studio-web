@@ -56,6 +56,9 @@ import {
 import { StudioRuntimeConfigService, createBrowserSession } from './studio-runtime-config';
 import { WorkspaceBoundary } from './workspace-boundary';
 import { GitExecutor } from './git-executor';
+import { OrcaCli } from './orca-cli';
+import { OrcaServiceImpl } from './orca-service';
+import { orcaServicePath, type OrcaService } from '../common/orca-protocol';
 import { GitPublishService } from './git-publish-service';
 import { OperationJournal } from './operation-journal';
 import { RepositoryOperationQueue } from './repository-operation-queue';
@@ -672,6 +675,14 @@ export default new ContainerModule(bind => {
             client.onDidCloseConnection(() => endpoint.removeClient(client));
             return endpoint;
         })
+    ).inSingletonScope();
+    // Orca: the IDE drives an Orca runtime through its CLI (see orca-cli.ts).
+    // Backend-side on purpose — the binary, and any pairing secret a remote
+    // runtime needs, must not be reachable from the browser.
+    bind(OrcaCli).toSelf().inSingletonScope();
+    bind(OrcaServiceImpl).toSelf().inSingletonScope();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<OrcaService>(orcaServicePath, () => ctx.container.get(OrcaServiceImpl))
     ).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<WorkspaceGraphClient>(workspaceGraphServicePath, client => {

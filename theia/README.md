@@ -180,6 +180,104 @@ Each operation is tied to one repository and one file. Other dirty or staged
 paths block the operation instead of being included. A push failure remains
 visible as `push-pending` and can be retried from Git Operations.
 
+## Agents panel (Orca) — prototype
+
+The project is already open in the IDE; this panel is where a person starts and
+steers coding agents on it without leaving Theia. It talks to an
+[Orca](https://github.com/stablyai/orca) runtime (MIT) — Orca owns the agent
+runs and the isolated worktrees, Theia owns editing.
+
+**Why through the CLI and not by importing Orca.** Orca is one Electron
+project, not a set of packages: its `pnpm-workspace.yaml` declares
+`packages: []`, and the engine ships as a single ~7 MB bundle bound to Electron
+plus patched `node-pty`/`xterm`. There is nothing to `npm install`. What it does
+expose is a client/server split: `orca serve` runs a headless runtime, every
+command takes `--json` (and `--environment` to target a remote one), and
+`orca agent-context --json` publishes the whole surface — 234 commands under
+`schemaVersion: 1`. So Studio speaks to the runtime the same way Orca's own CLI
+does, no vendored code, upgrades from upstream.
+
+| piece | file |
+| --- | --- |
+| RPC contract | `studio/src/common/orca-protocol.ts` |
+| CLI runner (binary resolution, envelope, timeouts) | `studio/src/node/orca-cli.ts` |
+| service (payload mapping) | `studio/src/node/orca-service.ts` |
+| panel | `studio/src/browser/orca-widget.tsx`, `orca-contribution.ts` |
+
+The panel opens from **View → Agents (Orca)** (command `studio.orca.toggle`) and
+does four things: shows whether a runtime is reachable; creates a task
+(`worktree create --agent --prompt`), which gives the agent its own checkout so
+the one you are editing is untouched; starts an agent in the selected worktree
+(`terminal create`, then `terminal send` once `terminal wait --for tui-idle`
+reports the TUI settled); and steers a running one (send / wait / interrupt).
+
+Requirements: an `orca` binary and a reachable runtime. The binary is looked up
+as `$ORCA_CLI`, then the desktop install for the platform, then `orca` on PATH.
+A session container should set `ORCA_CLI` and run `orca serve --no-pairing
+--project-root <workspace>` beside the IDE; on a developer machine the desktop
+app already provides one.
+
+### Running the Orca runtime in a container (cluster notes)
+
+The runtime is an Electron process, and that is the whole difficulty. Probed
+against Orca 1.4.197's `orca-ide_1.4.197_amd64.deb` in a Debian container:
+
+| container posture | result |
+| --- | --- |
+| default seccomp, Chromium sandbox on | **fails** — `Failed to move to new namespace … Operation not permitted`, as root *and* as uid 1000 |
+| default seccomp, `ELECTRON_DISABLE_SANDBOX=1` | **works** — `runtime.state: ready` in ~2 s, no display |
+| `--security-opt seccomp=unconfined`, sandbox on | works; `repo add` + `worktree list` verified end to end |
+| `ELECTRON_DISABLE_SANDBOX=1` alone, repeated starts | **flaky** — some boots reach for X11 anyway and die: `Missing X server or $DISPLAY … The platform failed to initialize` → SIGSEGV |
+| `ELECTRON_DISABLE_SANDBOX=1` + `xvfb-run` | **stable** — three cold starts, `state: ready` in 2 s each |
+
+So the session image takes the first route and adds a virtual display: the
+entrypoint exports `ELECTRON_DISABLE_SANDBOX=1` (unless
+`STUDIO_ORCA_SANDBOX=1` says otherwise) and launches the runtime under
+`xvfb-run` when the image has one. That combination needs no Pod privileges,
+so it survives an admission policy that forbids `seccompProfile: Unconfined`.
+Neither `ELECTRON_EXTRA_LAUNCH_ARGS` nor a `--no-sandbox` argument does
+anything — the CLI rejects unknown flags.
+
+The entrypoint also wipes `~/.config/orca` on every boot (opt out with
+`STUDIO_ORCA_KEEP_STATE=1`). A second boot over a populated userData directory
+was the reliable way to reproduce the X11 crash, and nothing of ours lives
+there: the workspace is on the volume and the panel re-registers the repo.
+
+Three more findings from the same probes, all baked into the Dockerfile:
+
+* the Linux CLI is **`orca-ide`**, not `orca` (`/opt/Orca/resources/bin/orca-ide`,
+  linked as `/usr/bin/orca-ide`);
+* the package's `Depends` are incomplete — without the Electron runtime
+  libraries the binary does not load at all (`libasound.so.2`);
+* with those present, `orca-ide status --json` answers with **no display**.
+
+Also expect two harmless log lines: no D-Bus, and "the OS keyring is
+unavailable, so secrets are stored unencrypted" — Orca's own local state, in an
+ephemeral container whose agent keys come from credstore per session.
+
+Build and enable:
+
+```bash
+docker build -t cf-studio-theia:orca   --build-arg STUDIO_ORCA_DEB_URL=https://github.com/stablyai/orca/releases/download/v1.4.197/orca-ide_1.4.197_amd64.deb   --build-arg STUDIO_ORCA_DEB_SHA256=600a476981b839ba84da438d9b9a040b6877cfc65d015a23900c75d1410f7c19 .
+```
+
+Verified on that image: three `docker restart` cycles each reached
+`state: ready` in 2 s, and the panel's own backend then registered the
+workspace, created a process in the worktree, sent it a command and read the
+answer back out of `terminal read`'s `result.terminal.tail`.
+
+Then `gears.studio-session.config.orca_enabled: true` (k8s.yaml reads
+`${STUDIO_ORCA_ENABLED:-false}`), which makes studio-session pass
+`STUDIO_ORCA_ENABLED=1` and `STUDIO_ORCA_PORT` into the Pod. The agent keys are
+the ones `agent_secrets` already provisions from credstore
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) — Orca runs the same CLIs. The image
+costs ~270 MB more, which is why it is opt-in.
+
+Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
+`orca-service.test.ts` is offline (fixtures are trimmed real payloads);
+`orca-live.acceptance.test.ts` drives a real runtime when one is available and
+stands down otherwise.
+
 ## Validation
 
 Run the gates separately:

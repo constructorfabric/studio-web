@@ -80,6 +80,21 @@ pub struct StudioSessionConfig {
     /// session still starts, that agent just stays unauthenticated.
     #[serde(default = "default_agent_secrets")]
     pub agent_secrets: Vec<AgentSecret>,
+    /// Run an Orca runtime (github.com/stablyai/orca) inside each session, so
+    /// the IDE's Agents panel has something to drive.
+    ///
+    /// Off by default, and deliberately: the runtime is only present in images
+    /// built with the Orca layer, and a session without it degrades to "not
+    /// reachable" in the panel rather than failing to start. The keys the
+    /// agents need are the ones [`Self::agent_secrets`] already provisions —
+    /// Orca runs the same `codex` / `claude` CLIs.
+    #[serde(default)]
+    pub orca_enabled: bool,
+    /// Port the in-container Orca runtime binds. Container-local and never
+    /// published: the only client is the IDE's own backend in the same
+    /// container.
+    #[serde(default = "default_orca_port")]
+    pub orca_port: u16,
 
     /// Enable the Theia backend-control bridge (ADR-0010): mint a per-session
     /// S2S control token, inject it into the container as
@@ -116,6 +131,8 @@ impl Default for StudioSessionConfig {
             max_session_secs: default_max_session_secs(),
             git_mode: default_git_mode(),
             agent_secrets: default_agent_secrets(),
+            orca_enabled: false,
+            orca_port: default_orca_port(),
             theia_control_enabled: false,
             control_reach_host: default_control_reach_host(),
         }
@@ -176,6 +193,9 @@ fn default_port_start() -> u16 {
 }
 fn default_port_end() -> u16 {
     41099
+}
+fn default_orca_port() -> u16 {
+    6768
 }
 fn default_max_session_secs() -> u64 {
     4 * 3600

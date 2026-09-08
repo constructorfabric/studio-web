@@ -377,6 +377,64 @@ if [ -n "${OPENAI_API_KEY:-}" ]; then
   fi
 fi
 
+# ── Orca runtime for the IDE's Agents panel ───────────────────────────────
+# Container-local: the panel's Theia backend shells out to the CLI in this same
+# container, so nothing is published and no pairing link is ever minted. A
+# failure here never fails the session — the panel says "not reachable" and the
+# log below says why.
+#
+# The Chromium sandbox is off by default here, and that is a container fact
+# rather than a preference: Electron's zygote cannot create a new namespace
+# under Docker's default seccomp profile ("Failed to move to new namespace …
+# Operation not permitted"), whether the process runs as root or as uid 1000.
+# ELECTRON_DISABLE_SANDBOX=1 is the knob that works — probed against Orca
+# 1.4.197 as uid 1000 with no display: the runtime reported `state: ready` in
+# two seconds. Neither ELECTRON_EXTRA_LAUNCH_ARGS nor a `--no-sandbox`
+# argument does anything (the CLI rejects unknown flags). Set
+# STUDIO_ORCA_SANDBOX=1 where the Pod is granted the privileges the sandbox
+# needs and you want it back on.
+#
+# Two harmless complaints from the same run, worth recognizing in the log:
+# D-Bus is absent ("Failed to connect to the bus"), and with no gnome-keyring
+# Orca stores its own secrets unencrypted in the container. Agent keys come
+# from credstore per session and the container is ephemeral, so that is a
+# statement about Orca's local state, not about our secrets.
+if [ "${STUDIO_ORCA_ENABLED:-0}" = "1" ]; then
+  ORCA_BIN="${ORCA_CLI:-/usr/bin/orca-ide}"
+  ORCA_PORT="${STUDIO_ORCA_PORT:-6768}"
+  ORCA_LOG="$STUDIO_DATA_DIR/orca-serve.log"
+  if [ -x "$ORCA_BIN" ]; then
+    # Start from a clean Electron userData directory. A second boot over a
+    # populated one does not serve headless: it tries to bring up a desktop
+    # window and dies with "Missing X server or $DISPLAY … The platform failed
+    # to initialize" (probed: first boot ready in seconds, `docker restart`
+    # then stuck in `state: starting` for good). Nothing of ours lives there —
+    # the workspace is on the volume and the panel re-registers the repo — so
+    # wiping it makes every boot behave like the first. STUDIO_ORCA_KEEP_STATE=1
+    # opts out where that state is worth more than a reliable restart.
+    if [ "${STUDIO_ORCA_KEEP_STATE:-0}" != "1" ]; then
+      rm -rf "${HOME:-/home/node}/.config/orca" 2>/dev/null || true
+    fi
+    if [ "${STUDIO_ORCA_SANDBOX:-0}" != "1" ]; then
+      export ELECTRON_DISABLE_SANDBOX=1
+    fi
+    # Under a virtual display when the image has one: `orca serve` otherwise
+    # reaches for X11 on some boots and dies there. With xvfb-run the same
+    # three cold starts came up in 2 s each.
+    if command -v xvfb-run >/dev/null 2>&1; then
+      xvfb-run -a "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" \
+        --project-root "$WORKSPACE" > "$ORCA_LOG" 2>&1 &
+    else
+      "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" --project-root "$WORKSPACE" \
+        > "$ORCA_LOG" 2>&1 &
+    fi
+    echo "[entrypoint] orca: runtime starting on 127.0.0.1:$ORCA_PORT (log: $ORCA_LOG)"
+  else
+    echo "[entrypoint] orca: STUDIO_ORCA_ENABLED=1 but no executable at $ORCA_BIN —" \
+         "rebuild the image with STUDIO_ORCA_DEB_URL to include it"
+  fi
+fi
+
 # Theia binds loopback-only behind the gate; the session manager publishes
 # the gate's port on the host.
 exec npm --prefix /app/browser-app run start -- \

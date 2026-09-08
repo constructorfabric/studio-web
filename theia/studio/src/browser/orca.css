@@ -1,0 +1,113 @@
+/* Orca agents panel. Theme-agnostic: every colour comes from a Theia variable,
+   so the panel follows the IDE (and the portal theme the bridge pushes in). */
+
+.studio-orca-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 10px 12px;
+    overflow: auto;
+    height: 100%;
+    box-sizing: border-box;
+    font-size: var(--theia-ui-font-size1);
+}
+
+.studio-orca-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--theia-editorGroup-border);
+}
+
+.studio-orca-status > span {
+    flex: 1 1 auto;
+}
+
+.studio-orca-section h3 {
+    margin: 0 0 4px;
+    font-size: var(--theia-ui-font-size1);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.8;
+}
+
+.studio-orca-hint {
+    margin: 0 0 6px;
+    opacity: 0.75;
+}
+
+.studio-orca-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+    align-items: center;
+}
+
+.studio-orca-form > input,
+.studio-orca-form > select {
+    flex: 1 1 120px;
+    min-width: 0;
+}
+
+.studio-orca-prompt {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 6px;
+    resize: vertical;
+    font-family: var(--theia-ui-font-family);
+}
+
+.studio-orca-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.studio-orca-list > li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 3px;
+    cursor: default;
+}
+
+.studio-orca-list > li.selected {
+    border-color: var(--theia-focusBorder);
+    background: var(--theia-list-activeSelectionBackground);
+    color: var(--theia-list-activeSelectionForeground);
+}
+
+.studio-orca-branch {
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.studio-orca-meta {
+    opacity: 0.7;
+    font-size: calc(var(--theia-ui-font-size1) - 1px);
+}
+
+/* One captured line of agent output: enough to see whether it is working. */
+.studio-orca-preview {
+    display: block;
+    max-height: 4.5em;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    opacity: 0.75;
+    font-family: var(--theia-code-font-family);
+    font-size: calc(var(--theia-ui-font-size1) - 1px);
+}
+
+.studio-orca-error {
+    margin: 0;
+    word-break: break-word;
+}

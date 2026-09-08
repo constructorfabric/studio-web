@@ -587,6 +587,12 @@ gears:
       image: "${STUDIO_SESSION_IMAGE}"
       gateway_url: "${STUDIO_SESSION_GATEWAY_URL}"
       theia_control_enabled: true
+      # Orca runtime for the IDE's Agents panel, off unless the deployment
+      # ships a session image that carries it (theia/Dockerfile
+      # STUDIO_ORCA_DEB_URL). See theia/README.md — the runtime is an Electron
+      # process, so the Pod needs a seccomp profile that permits the Chromium
+      # sandbox, or the runtime has to live outside the session Pod.
+      orca_enabled: ${STUDIO_ORCA_ENABLED:-false}
       # Namespace is auto-detected from the mounted ServiceAccount token;
       # k8s_namespace / k8s_image_pull_secret override only if ever needed.
       git_mode: "disabled"

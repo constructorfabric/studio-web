@@ -41,10 +41,14 @@ import { WorkspaceSourcesContribution } from './workspace-sources-contribution';
 import { WorkspaceSourcesWidget } from './workspace-sources-widget';
 import { WorkspaceSourceRootDecorator, WorkspaceSourceRootService } from './workspace-source-root-decorator';
 import { PortalBridgeContribution } from './portal-bridge-contribution';
+import { OrcaContribution } from './orca-contribution';
+import { OrcaWidget } from './orca-widget';
+import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
 import '../../src/browser/workspace-sources.css';
+import '../../src/browser/orca.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(ScmHistoryGraphWidget).to(StudioScmHistoryGraphWidget);
@@ -129,6 +133,12 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(FrontendApplicationContribution).toService(AuditContribution);
     bindViewContribution(bind, WorkspaceSourcesContribution);
     bind(FrontendApplicationContribution).toService(WorkspaceSourcesContribution);
+    // Orca agents panel. The service is a plain proxy — the runtime pushes
+    // nothing at us yet, so the panel polls on open and on demand.
+    bind(OrcaService).toDynamicValue(ctx =>
+        ctx.container.get(WebSocketConnectionProvider).createProxy<OrcaService>(orcaServicePath)
+    ).inSingletonScope();
+    bindViewContribution(bind, OrcaContribution);
     bind(StudioWidget).toSelf();
     bind(GitOperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();
@@ -136,6 +146,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(ObjectDetailsWidget).toSelf();
     bind(AuditWidget).toSelf();
     bind(WorkspaceSourcesWidget).toSelf();
+    bind(OrcaWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: StudioWidget.ID,
         createWidget: () => ctx.container.get<StudioWidget>(StudioWidget)
@@ -169,6 +180,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: WorkspaceSourcesWidget.ID,
         createWidget: () => ctx.container.get<WorkspaceSourcesWidget>(WorkspaceSourcesWidget)
+    })).inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: OrcaWidget.ID,
+        createWidget: () => ctx.container.get<OrcaWidget>(OrcaWidget)
     })).inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: MarkdownEditorOpenHandler.ID,
