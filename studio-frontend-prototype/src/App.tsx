@@ -31,9 +31,12 @@ import {
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
+  JOURNEY_STAGES,
+  normalizeStages,
   type Connection,
   type ConnectorProvider,
   type Me,
+  type ProjectMode,
   type RemoteRepo,
   type RepoEntry,
   type Tenant,
@@ -42,6 +45,7 @@ import {
   waitForStudioSessionReady,
   uploadProjectArtifact,
 } from "./api";
+import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -2356,6 +2360,15 @@ function ProjectsView({
   );
 }
 
+/** Ids resolved as the create plan runs; carried between steps and across a
+ *  retry so a healed run can skip what already succeeded. */
+interface CreateCtx {
+  tenantId: string;
+  repoFull: string;
+  branch: string;
+  cloneUrl: string;
+}
+
 /** Level 2: the projects (child tenants of type `project`) inside a workspace,
  *  plus a "New project" that creates a project tenant + its config metadata. */
 function WorkspaceProjects({
@@ -2384,6 +2397,15 @@ function WorkspaceProjects({
   const [priv, setPriv] = useState(true);
   const [remoteRepos, setRemoteRepos] = useState<import("./api").RemoteRepo[]>([]);
   const [pickedRepo, setPickedRepo] = useState("");
+  // Journey framing captured at creation (previously dead in the UI): a free-text
+  // brief and the opt-in journey stages (Intent is always applied).
+  const [brief, setBrief] = useState("");
+  const [stageSel, setStageSel] = useState<Set<string>>(new Set());
+  // Resumable provisioning: the live checklist and the context that accumulates
+  // ids across steps, kept in a ref so Retry reuses the same run.
+  const [prov, setProv] = useState<StepState[] | null>(null);
+  const [provOk, setProvOk] = useState(false);
+  const provCtx = useRef<CreateCtx>({ tenantId: "", repoFull: "", branch: "main", cloneUrl: "" });
   // Inline row editing (rename) + per-row busy for edit/delete.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -2436,85 +2458,195 @@ function WorkspaceProjects({
   const repoDir = (fullPath: string) =>
     (fullPath.split("/").pop() ?? fullPath).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
 
-  const create = async () => {
+  // Whether this project carries a repository at all (all current kinds do, but
+  // the plan is built to tolerate a future kind that does not).
+  const wantsRepo = true;
+
+  /** Build the idempotent create plan for the current form inputs. Each step
+   *  probes real backend state in `check` so a retry resumes cleanly instead of
+   *  duplicating writes (ADR-0010: creation is several non-atomic requests). */
+  const buildCreatePlan = (name: string): ProvisionStep<CreateCtx>[] => {
+    const mode: ProjectMode = newKind === "existing" ? "modernize" : "greenfield";
+    const conn = conns.find((c) => c.id === connId);
+    const steps: ProvisionStep<CreateCtx>[] = [];
+
+    // 1) Project tenant — find-or-create. Reusing a same-named sibling heals a
+    //    prior half-run and closes the "duplicate tenant on retry" race.
+    steps.push({
+      key: "tenant",
+      label: "Project tenant",
+      check: async (ctx) => {
+        const page = await api.tenantChildren(token, workspace.id);
+        const found = (page.items ?? []).find(
+          (t) => t.tenant_type === TENANT_TYPES.project && t.name === name,
+        );
+        if (found) {
+          ctx.tenantId = found.id;
+          return true;
+        }
+        return false;
+      },
+      run: async (ctx) => {
+        const t = await api.createTenant(token, {
+          name,
+          parent_id: workspace.id,
+          tenant_type: TENANT_TYPES.project,
+        });
+        ctx.tenantId = t.id;
+      },
+    });
+
+    // 2) Repository — create a new one, or attach an existing. Once resolved we
+    //    stamp `source_git_url` into the config so a later failure can skip the
+    //    (non-idempotent) repo creation on retry.
+    if (wantsRepo) {
+      steps.push({
+        key: "repo",
+        label: repoMode === "create" ? "Create repository" : "Attach repository",
+        check: async (ctx) => {
+          const cfg = await api.projectConfig(token, ctx.tenantId).catch(() => null);
+          if (cfg?.source_git_url) {
+            ctx.cloneUrl = cfg.source_git_url;
+            ctx.repoFull = cfg.source_git_url
+              .replace(/^https:\/\/github\.com\//, "")
+              .replace(/\.git$/, "");
+            ctx.branch = ctx.branch || "main";
+            return true;
+          }
+          return false;
+        },
+        run: async (ctx) => {
+          if (repoMode === "create") {
+            if (!repoName.trim()) throw new Error("enter a name for the new repository");
+            const r = await api.createProjectRepo(token, ctx.tenantId, {
+              tenant: workspace.id,
+              connection_id: connId || null,
+              owner: isOrg ? owner.trim() : undefined,
+              is_org: isOrg,
+              name: repoName.trim(),
+              private: priv,
+            });
+            ctx.repoFull = r.full_name;
+            ctx.branch = r.default_branch || "main";
+            ctx.cloneUrl = `https://github.com/${r.full_name}.git`;
+          } else {
+            const picked = remoteRepos.find((r) => r.full_path === pickedRepo);
+            if (!picked) throw new Error("pick a repository to attach");
+            ctx.repoFull = picked.full_path;
+            ctx.branch = picked.default_branch || "main";
+            ctx.cloneUrl = picked.clone_url;
+            await api.setProjectGearRepo(token, ctx.tenantId, {
+              tenant: workspace.id,
+              connection_id: connId || null,
+              repo: ctx.repoFull,
+              branch: ctx.branch,
+            });
+          }
+          // Record the resolved repo immediately (idempotent PUT), so retry's
+          // `check` above short-circuits instead of re-creating the repo.
+          const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
+          await api.putProjectConfig(token, ctx.tenantId, {
+            ...cfg,
+            source_git_url: ctx.cloneUrl,
+          });
+        },
+      });
+    }
+
+    // 3) Project config — mode/kind/stages/brief. Idempotent overwriting PUT,
+    //    so it always runs (cheap) and re-running is safe.
+    steps.push({
+      key: "config",
+      label: "Project config",
+      run: async (ctx) => {
+        const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
+        await api.putProjectConfig(token, ctx.tenantId, {
+          ...cfg,
+          mode,
+          kind: newKind,
+          stages: normalizeStages([...stageSel]),
+          status: cfg.status ?? "draft",
+          brief: brief.trim() || cfg.brief,
+          source_git_url: ctx.cloneUrl || cfg.source_git_url,
+        });
+      },
+    });
+
+    // 4) Register the source on the project (shown by Repositories/Sources),
+    //    deduped by clone URL so a retry does not append a second entry.
+    if (wantsRepo) {
+      steps.push({
+        key: "sources",
+        label: "Register source",
+        check: async (ctx) => {
+          const s = await api.workspaceSettings(token, ctx.tenantId).catch(() => null);
+          return (s?.repos ?? []).some((r) => r.url === ctx.cloneUrl);
+        },
+        run: async (ctx) => {
+          const s = (await api.workspaceSettings(token, ctx.tenantId).catch(() => null)) ?? {};
+          const entry: RepoEntry = {
+            name: repoDir(ctx.repoFull),
+            source: "github",
+            url: ctx.cloneUrl,
+            target: repoDir(ctx.repoFull),
+            branch: ctx.branch,
+            token_ref: conn?.secret_ref,
+          };
+          await api.putWorkspaceSettings(token, ctx.tenantId, {
+            ...s,
+            repos: [...(s.repos ?? []), entry],
+          });
+        },
+      });
+    }
+
+    return steps;
+  };
+
+  // Run (or re-run) the create plan. Retry reuses the same accumulated context,
+  // so satisfied steps short-circuit and only the failed tail re-executes.
+  const runCreate = async () => {
     const name = newName.trim();
     if (!name) return;
     setBusy(true);
     setErr(null);
-    try {
-      const tenant = await api.createTenant(token, {
-        name,
-        parent_id: workspace.id,
-        tenant_type: TENANT_TYPES.project,
-      });
-      await api
-        .putProjectConfig(token, tenant.id, {
-          mode: newKind === "existing" ? "modernize" : "greenfield",
-          kind: newKind,
-          stages: [],
-          status: "draft",
-        })
-        .catch(() => {});
-
-      // Resolve the project's repository: create a new one, or attach an existing.
-      const conn = conns.find((c) => c.id === connId);
-      let repoFull = "";
-      let branch = "main";
-      let cloneUrl = "";
-      if (repoMode === "create") {
-        if (!repoName.trim()) throw new Error("enter a name for the new repository");
-        const r = await api.createProjectRepo(token, tenant.id, {
-          tenant: workspace.id,
-          connection_id: connId || null,
-          owner: isOrg ? owner.trim() : undefined,
-          is_org: isOrg,
-          name: repoName.trim(),
-          private: priv,
-        });
-        repoFull = r.full_name;
-        branch = r.default_branch || "main";
-        cloneUrl = `https://github.com/${r.full_name}.git`;
-      } else {
-        const picked = remoteRepos.find((r) => r.full_path === pickedRepo);
-        if (!picked) throw new Error("pick a repository to attach");
-        repoFull = picked.full_path;
-        branch = picked.default_branch || "main";
-        cloneUrl = picked.clone_url;
-        await api.setProjectGearRepo(token, tenant.id, {
-          tenant: workspace.id,
-          connection_id: connId || null,
-          repo: repoFull,
-          branch,
-        });
-      }
-
-      // Add it to the project's repositories list (shown by Repositories/Sources).
-      const s = (await api.workspaceSettings(token, tenant.id).catch(() => null)) ?? {};
-      const entry: import("./api").RepoEntry = {
-        name: repoDir(repoFull),
-        source: "github",
-        url: cloneUrl,
-        target: repoDir(repoFull),
-        branch,
-        token_ref: conn?.secret_ref,
-      };
-      await api
-        .putWorkspaceSettings(token, tenant.id, { ...s, repos: [...(s.repos ?? []), entry] })
-        .catch(() => {});
-
-      setNewName("");
-      setRepoName("");
-      setPickedRepo("");
-      setCreating(false);
+    const res = await runProvision(buildCreatePlan(name), provCtx.current, setProv);
+    setProvOk(res.ok);
+    if (res.ok) {
       await reload();
       onChanged();
-      onOpenProject({ id: tenant.id, name });
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
+
+  const create = async () => {
+    // Fresh run: reset the accumulated ids. `check` rehydrates them from the
+    // backend anyway, so this is just hygiene for a brand-new attempt.
+    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+    setProvOk(false);
+    await runCreate();
+  };
+
+  // Reset the create card back to an empty, pre-run state.
+  const resetCreate = () => {
+    setCreating(false);
+    setProv(null);
+    setProvOk(false);
+    setNewName("");
+    setRepoName("");
+    setPickedRepo("");
+    setBrief("");
+    setStageSel(new Set());
+    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+  };
+
+  const toggleStage = (key: string) =>
+    setStageSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const startEdit = (p: { id: string; name: string }) => {
     setEditingId(p.id);
@@ -2565,7 +2697,7 @@ function WorkspaceProjects({
             workspace · <code>{workspace.id.slice(0, 8)}…</code>
           </p>
         </div>
-        <button className="primary" onClick={() => setCreating((v) => !v)}>
+        <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
           New project
         </button>
       </div>
@@ -2673,14 +2805,148 @@ function WorkspaceProjects({
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="primary" onClick={() => void create()} disabled={!newName.trim() || busy}>
-                {busy ? "Creating…" : "Create project"}
-              </button>
-              <button className="ghost" onClick={() => setCreating(false)}>
-                Cancel
-              </button>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                Brief <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+              </div>
+              <textarea
+                placeholder={
+                  newKind === "existing"
+                    ? "What is this app, and what are we modernizing?"
+                    : "What are we building, and why? Seeds the Intent stage."
+                }
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                rows={3}
+                style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+                disabled={prov !== null}
+              />
             </div>
+
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {JOURNEY_STAGES.map((s) => {
+                  const on = s.required || stageSel.has(s.key);
+                  return (
+                    <label
+                      key={s.key}
+                      title={s.required ? "Always applied" : undefined}
+                      style={{
+                        display: "inline-flex",
+                        gap: 6,
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        border: "1px solid var(--border,#e2e4e9)",
+                        borderRadius: 999,
+                        fontSize: 12,
+                        background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                        cursor: s.required || prov !== null ? "default" : "pointer",
+                        opacity: prov !== null && !on ? 0.5 : 1,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={s.required || prov !== null}
+                        onChange={() => toggleStage(s.key)}
+                      />
+                      {s.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {prov === null ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="primary"
+                  onClick={() => void create()}
+                  disabled={!newName.trim() || busy}
+                >
+                  {busy ? "Creating…" : "Create project"}
+                </button>
+                <button className="ghost" onClick={resetCreate}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: "1px solid var(--border,#e2e4e9)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8 }}>
+                  Provisioning {newName.trim()}
+                </div>
+                {prov.map((st) => {
+                  const mark =
+                    st.status === "done"
+                      ? "✓"
+                      : st.status === "running"
+                        ? "…"
+                        : st.status === "failed"
+                          ? "✕"
+                          : "○";
+                  const color =
+                    st.status === "done"
+                      ? "var(--ok,#15803d)"
+                      : st.status === "failed"
+                        ? "var(--danger,#b91c1c)"
+                        : "inherit";
+                  return (
+                    <div key={st.key} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                      <span style={{ width: 14, color, fontWeight: 700 }}>{mark}</span>
+                      <span style={{ fontSize: 13 }}>{st.label}</span>
+                      {st.error && (
+                        <span style={{ fontSize: 12, color: "var(--danger,#b91c1c)" }}>
+                          — {st.error}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  {provOk ? (
+                    <>
+                      <button
+                        className="primary"
+                        onClick={() => {
+                          const id = provCtx.current.tenantId;
+                          const name = newName.trim();
+                          resetCreate();
+                          if (id) onOpenProject({ id, name });
+                        }}
+                      >
+                        Open project
+                      </button>
+                      <button className="ghost" onClick={resetCreate}>
+                        Done
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="primary"
+                        onClick={() => void runCreate()}
+                        disabled={busy}
+                      >
+                        {busy ? "Retrying…" : "Retry"}
+                      </button>
+                      <button className="ghost" onClick={resetCreate} disabled={busy}>
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
