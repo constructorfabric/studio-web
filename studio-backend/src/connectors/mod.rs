@@ -29,7 +29,7 @@ mod gitlab;
 mod graph_sync;
 #[cfg(feature = "graph")]
 mod graph_sync_tasks;
-mod gts;
+pub(crate) mod gts;
 mod plugin;
 mod rest;
 pub(crate) mod service;
@@ -44,6 +44,7 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
+use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use driver::ConnectorDriver;
 use service::ConnectorService;
@@ -77,7 +78,7 @@ pub fn source_driver_ids() -> [&'static str; 3] {
 
 #[toolkit::gear(
     name = "studio-connector",
-    deps = [account_management, credstore],
+    deps = [types_registry, account_management, credstore],
     capabilities = [rest]
 )]
 #[derive(Default)]
@@ -88,6 +89,15 @@ pub struct StudioConnectorGear {
 #[async_trait]
 impl Gear for StudioConnectorGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Catalog the repository knowledge-graph types. Before the driver loop
+        // on purpose: a deployment with no driver still answers reads over a
+        // graph an earlier sync wrote, and the catalog must describe those
+        // types either way. Idempotent — the same documents every boot.
+        let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
+        let results = registry.register(gts::catalog_type_schemas()).await?;
+        RegisterResult::ensure_all_ok(&results)?;
+        info!("studio-connector: knowledge-graph types cataloged");
+
         let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
         for id in KNOWN_DRIVERS {
             match ctx

@@ -15,7 +15,7 @@ mod clone;
 mod graph;
 #[cfg(feature = "graph")]
 mod graph_backend;
-mod gts;
+pub(crate) mod gts;
 mod rest;
 mod service;
 mod tasks;

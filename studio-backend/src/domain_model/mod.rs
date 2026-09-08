@@ -16,8 +16,8 @@
 //! open, which is what makes goal #2 — extending a type with a new field —
 //! a pure ontology edit rather than a schema migration.
 
-mod gts;
-mod ontology;
+pub(crate) mod gts;
+pub(crate) mod ontology;
 mod rest;
 mod service;
 mod store;
@@ -66,8 +66,14 @@ impl Gear for StudioDomainModelGear {
             schemas.push(gts::catalog_schema(
                 &et.type_id,
                 &et.relation_kind,
-                "A relation between two domain objects.",
+                gts::EDGE_CATALOG_DESCRIPTION,
             ));
+        }
+        // The meta layer (object_type + inherits/declares) is registered in
+        // graph-storage by the store; catalog it here as well so the platform
+        // registry knows every type this gear can put in the graph.
+        for (id, title, description) in gts::META_CATALOG_DOCS {
+            schemas.push(gts::catalog_schema(id, title, description));
         }
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry.register(schemas).await?;

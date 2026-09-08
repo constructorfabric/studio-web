@@ -58,3 +58,137 @@ pub fn plugin_registration(instance_id: &str, vendor: &str, priority: i16) -> se
         "properties": {},
     })
 }
+
+// ── The repository knowledge graph ────────────────────────────────────────
+// The types [`super::graph_sync`] writes when it walks a connected repository.
+// They live here, with the subsystem's other identifiers, rather than next to
+// the walk itself: `graph_sync` is behind the `graph` feature, and the GTS
+// inventory (`crate::gts_inventory`) must enumerate every document this
+// assembly registers whether that feature is on or off.
+
+/// The graph-storage families this producer's types derive from.
+///
+/// Derivation is not decoration: `family` is declared required with no default
+/// on the two bases, so a type deriving straight from a base resolves no family
+/// and cannot be instantiated. Repositories, directories and files are *owned*
+/// nodes — the graph is their system of record here — and the relations are
+/// *static* edges, replaced wholesale by a re-sync.
+pub(crate) const OWNED_NODE: &str = "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~";
+pub(crate) const STATIC_EDGE: &str = "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~";
+
+/// Node types this producer writes.
+pub(crate) const T_REPOSITORY: &str = "cf.studio.kg.repository.v1~";
+pub(crate) const T_DIRECTORY: &str = "cf.studio.kg.directory.v1~";
+pub(crate) const T_FILE: &str = "cf.studio.kg.file.v1~";
+pub(crate) const T_PERSON: &str = "cf.studio.kg.person.v1~";
+pub(crate) const T_PROJECT: &str = "cf.studio.kg.project.v1~";
+
+/// Edge types this producer writes.
+pub(crate) const T_CONTAINS: &str = "cf.studio.kg.contains.v1~";
+pub(crate) const T_CONTRIBUTED_TO: &str = "cf.studio.kg.contributed_to.v1~";
+pub(crate) const T_INCLUDES: &str = "cf.studio.kg.includes.v1~";
+
+/// The registered identifier of one of this producer's types: the family chain
+/// followed by the leaf.
+pub(crate) fn graph_type_id(leaf: &str, family: &str) -> String {
+    format!("{family}{leaf}")
+}
+
+/// One producer type: a schema deriving from its family, with the searchable
+/// payload paths declared as a trait so the gear composes the search text
+/// itself rather than taking a producer-supplied string.
+fn schema_of(leaf: &str, family: &str, search_paths: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "$id": format!("gts://{}", graph_type_id(leaf, family)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "x-gts-traits": { "full_text_search": search_paths },
+        "type": "object",
+        "allOf": [{ "$ref": format!("gts://{family}") }],
+    })
+}
+
+/// The same types as **platform types-registry** catalog entries.
+///
+/// Free-form (`type: object`), like every other studio catalog document, so
+/// registration never trips the closed-envelope narrowing check. Registered so
+/// the platform registry catalogs everything this gear puts in the graph —
+/// without these the repository knowledge graph existed only in graph-storage
+/// and the two registries disagreed (`crate::gts_inventory` now asserts they
+/// do not).
+pub(crate) fn catalog_type_schemas() -> Vec<serde_json::Value> {
+    [
+        (
+            T_REPOSITORY,
+            "Repository",
+            "A source repository walked into the knowledge graph.",
+        ),
+        (
+            T_DIRECTORY,
+            "Directory",
+            "A directory in a repository tree.",
+        ),
+        (T_FILE, "File", "A file in a repository tree."),
+        (
+            T_PERSON,
+            "Person",
+            "A contributor account, keyed per provider until its owner proves control of it.",
+        ),
+        (
+            T_PROJECT,
+            "Project",
+            "The Studio project a repository was walked for.",
+        ),
+        (
+            T_CONTAINS,
+            "Contains",
+            "A repository or directory and what it contains.",
+        ),
+        (
+            T_CONTRIBUTED_TO,
+            "ContributedTo",
+            "A person and a repository they contributed to.",
+        ),
+        (
+            T_INCLUDES,
+            "Includes",
+            "A project and a repository attached to it.",
+        ),
+    ]
+    .into_iter()
+    .map(|(leaf, title, description)| {
+        serde_json::json!({
+            // `leaf` already carries its trailing `~`, so the catalog id is the
+            // leaf under the `gts.` prefix every registered id starts with.
+            "$id": format!("gts://gts.{leaf}"),
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": title,
+            "description": description,
+            "type": "object",
+        })
+    })
+    .collect()
+}
+
+/// Every type the repository walk registers, in the order it registers them.
+///
+/// The graph gear rejects an ingest naming an unregistered type, and rejects it
+/// wholesale, so nothing the walk writes may be missing from this list.
+pub(crate) fn graph_type_schemas() -> Vec<serde_json::Value> {
+    [
+        (T_REPOSITORY, OWNED_NODE, &["/payload/full_path"][..]),
+        (T_DIRECTORY, OWNED_NODE, &["/payload/path"][..]),
+        (
+            T_FILE,
+            OWNED_NODE,
+            &["/payload/path", "/payload/extension"][..],
+        ),
+        (T_PERSON, OWNED_NODE, &["/payload/login"][..]),
+        (T_PROJECT, OWNED_NODE, &[][..]),
+        (T_CONTAINS, STATIC_EDGE, &[][..]),
+        (T_CONTRIBUTED_TO, STATIC_EDGE, &[][..]),
+        (T_INCLUDES, STATIC_EDGE, &[][..]),
+    ]
+    .into_iter()
+    .map(|(leaf, family, search)| schema_of(leaf, family, search))
+    .collect()
+}

@@ -14,7 +14,7 @@
 //! does for its project routes.
 
 mod entity;
-mod gts;
+pub(crate) mod gts;
 mod migrations;
 mod model;
 mod repo;

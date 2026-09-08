@@ -254,6 +254,20 @@ gears:
           x-gts-traits:
             inheritance_policy: "override_only"
 
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"
+          # Organization access config (ADR-0006): {model, roles[]}. Free-form
+          # object like workspace.settings; shape enforced client-side until the
+          # base tenant_metadata schema is relaxed upstream (gears issue #4).
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization access model + roles (free-form)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "inherit"
+
   nodes-registry:
     database:
       server: "pg_main"

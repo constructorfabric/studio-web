@@ -78,7 +78,7 @@ use store::PgValueStore;
 
 /// GTS instance segment for this plugin, alongside the upstream
 /// `cf.core._.static_credstore.v1`.
-const INSTANCE_SEGMENT: &str = "cf.studio._.pg_credstore.v1";
+pub(crate) const INSTANCE_SEGMENT: &str = "cf.studio._.pg_credstore.v1";
 
 /// Persistent credstore value-store plugin gear.
 #[toolkit::gear(

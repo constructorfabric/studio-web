@@ -30,6 +30,10 @@ use std::sync::Arc;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::gts::{
+    OWNED_NODE, STATIC_EDGE, T_CONTAINS, T_CONTRIBUTED_TO, T_DIRECTORY, T_FILE, T_INCLUDES,
+    T_PERSON, T_PROJECT, T_REPOSITORY, graph_type_id, graph_type_schemas,
+};
 use super::service::ConnectorService;
 use crate::user_profile::AliasResolver;
 use crate::user_profile::normalize_key;
@@ -38,52 +42,14 @@ use graph_storage_sdk::models::{
     EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TypeRegistration,
 };
 
-/// The graph-storage families this producer's types derive from.
-///
-/// Derivation is not decoration: `family` is declared required with no default
-/// on the two bases, so a type deriving straight from a base resolves no family
-/// and cannot be instantiated. Repositories, directories and files are *owned*
-/// nodes — the graph is their system of record here — and the relations are
-/// *static* edges, replaced wholesale by a re-sync.
-const OWNED_NODE: &str = "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~";
-const STATIC_EDGE: &str = "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~";
-
-/// Node types this producer writes.
-const T_REPOSITORY: &str = "cf.studio.kg.repository.v1~";
-const T_DIRECTORY: &str = "cf.studio.kg.directory.v1~";
-const T_FILE: &str = "cf.studio.kg.file.v1~";
-const T_PERSON: &str = "cf.studio.kg.person.v1~";
-const T_PROJECT: &str = "cf.studio.kg.project.v1~";
-
-/// Edge types this producer writes.
-const T_CONTAINS: &str = "cf.studio.kg.contains.v1~";
-const T_CONTRIBUTED_TO: &str = "cf.studio.kg.contributed_to.v1~";
-const T_INCLUDES: &str = "cf.studio.kg.includes.v1~";
-
-/// The registered identifier of one of this producer's types.
-fn type_id(leaf: &str, family: &str) -> String {
-    format!("{family}{leaf}")
-}
-
+/// The graph type id of one of this producer's node types.
 fn node_type(leaf: &str) -> String {
-    type_id(leaf, OWNED_NODE)
+    graph_type_id(leaf, OWNED_NODE)
 }
 
+/// The graph type id of one of this producer's edge types.
 fn edge_type(leaf: &str) -> String {
-    type_id(leaf, STATIC_EDGE)
-}
-
-/// One producer type: a schema deriving from its family, with the searchable
-/// payload paths declared as a trait so the gear composes the search text
-/// itself rather than taking a producer-supplied string.
-fn schema_of(leaf: &str, family: &str, search_paths: &[&str]) -> serde_json::Value {
-    serde_json::json!({
-        "$id": format!("gts://{}", type_id(leaf, family)),
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "x-gts-traits": { "full_text_search": search_paths },
-        "type": "object",
-        "allOf": [{ "$ref": format!("gts://{family}") }],
-    })
+    graph_type_id(leaf, STATIC_EDGE)
 }
 
 /// How many rows go in one ingest call.
@@ -188,26 +154,17 @@ pub async fn sync_repository(
     // Every type is registered before anything references it: the gear rejects
     // a batch naming an unregistered type, and rejects it wholesale. One
     // atomic call, idempotent — a byte-identical re-registration converges.
-    let types: Vec<TypeRegistration> = [
-        (T_REPOSITORY, OWNED_NODE, &["/payload/full_path"][..]),
-        (T_DIRECTORY, OWNED_NODE, &["/payload/path"][..]),
-        (
-            T_FILE,
-            OWNED_NODE,
-            &["/payload/path", "/payload/extension"][..],
-        ),
-        (T_PERSON, OWNED_NODE, &["/payload/login"][..]),
-        (T_PROJECT, OWNED_NODE, &[][..]),
-        (T_CONTAINS, STATIC_EDGE, &[][..]),
-        (T_CONTRIBUTED_TO, STATIC_EDGE, &[][..]),
-        (T_INCLUDES, STATIC_EDGE, &[][..]),
-    ]
-    .into_iter()
-    .map(|(leaf, family, search)| TypeRegistration {
-        type_id: type_id(leaf, family),
-        schema: schema_of(leaf, family, search),
-    })
-    .collect();
+    let types: Vec<TypeRegistration> = graph_type_schemas()
+        .into_iter()
+        .map(|schema| TypeRegistration {
+            type_id: schema["$id"]
+                .as_str()
+                .unwrap_or_default()
+                .trim_start_matches("gts://")
+                .to_owned(),
+            schema,
+        })
+        .collect();
     progress("registering the graph types".to_owned());
     graph.register_types(ctx, types).await?;
 

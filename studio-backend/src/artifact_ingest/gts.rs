@@ -182,15 +182,66 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
     ),
 ];
 
+/// The relation types, with a title and a description each — the catalog side
+/// of [`ALL_EDGE_TYPES`].
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+    (
+        REL_ARTIFACT_OF,
+        "ArtifactOf",
+        "An issue or pull request and the repository it belongs to.",
+    ),
+    (
+        REL_CONTAINS,
+        "Contains",
+        "A repository and a file in its tree.",
+    ),
+    (
+        REL_AUTHORED_BY,
+        "AuthoredBy",
+        "An issue or pull request and the account that authored it.",
+    ),
+    (
+        REL_MODIFIES,
+        "Modifies",
+        "A pull request and a file it changed.",
+    ),
+    (
+        REL_DUPLICATES,
+        "Duplicates",
+        "Two documents the bloat detector found to be near-duplicates.",
+    ),
+    (
+        REL_TRACES_TO,
+        "TracesTo",
+        "A traceability link between two documents, from the traceability detector.",
+    ),
+    (
+        REL_FINDING_ON,
+        "FindingOn",
+        "A spec-quality finding and the document it is about.",
+    ),
+    (
+        REL_COMMENT_ON,
+        "CommentOn",
+        "A comment and the issue or pull request it is on.",
+    ),
+];
+
 /// GTS Type Schemas registered with the **platform types-registry** at gear
 /// init. Declared free-form (`type: object`) — the same shape the studio types
 /// use in `config/*.yaml` — so registration never trips the closed-envelope
 /// narrowing check; the full property schemas live alongside as JSON files and
 /// are the graph contract.
+///
+/// Nodes *and* relations, and no type is held back: the platform registry is
+/// the catalog of everything, so every type this gear puts in graph-storage
+/// must be findable here too. `crate::gts_inventory` asserts that direction as
+/// an invariant — a graph type with no catalog entry is a registry that
+/// disagrees with the graph.
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
-        .filter(|(id, _, _)| *id != USER_TYPE)
+        .chain(EDGE_TYPE_DOCS)
         .map(|(id, title, description)| {
             json!({
                 "$id": format!("gts://{id}"),

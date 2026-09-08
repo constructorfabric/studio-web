@@ -139,6 +139,13 @@ pub fn derived_schema(type_id: &str) -> serde_json::Value {
     })
 }
 
+/// The catalog description every domain *relation* type is registered with.
+///
+/// A constant because two callers must emit the same bytes: the gear at `init`
+/// and the offline inventory (`crate::gts_inventory`) that the drift test
+/// diffs against the committed snapshot.
+pub const EDGE_CATALOG_DESCRIPTION: &str = "A relation between two domain objects.";
+
 /// A free-form registration schema for the platform types-registry — the same
 /// shape studio's other types use, so registration never trips the
 /// closed-envelope narrowing check. Catalogs *what a domain type is*; the graph
@@ -152,6 +159,27 @@ pub fn catalog_schema(type_id: &str, title: &str, description: &str) -> serde_js
         "type": "object",
     })
 }
+
+/// The meta-layer types as catalog entries for the platform registry, so the
+/// three types the model graph lives in are cataloged like every other type
+/// this gear registers (`crate::gts_inventory` asserts that direction).
+pub const META_CATALOG_DOCS: [(&str, &str, &str); 3] = [
+    (
+        META_OBJECT_TYPE,
+        "ObjectType",
+        "One domain entity as an object type in the model graph.",
+    ),
+    (
+        META_INHERITS,
+        "Inherits",
+        "An object type and the object type it extends.",
+    ),
+    (
+        META_DECLARES,
+        "Declares",
+        "An object type and a related object type (one declared relation).",
+    ),
+];
 
 /// The meta-layer type registrations (object_type node + inherits/declares
 /// edges) as `(graph type id, schema)` pairs, for registering the graph in

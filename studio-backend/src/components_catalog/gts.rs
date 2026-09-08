@@ -111,12 +111,22 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 4] = [
     ),
 ];
 
+/// The relation types as catalog entries. Registered alongside the nodes so
+/// the platform registry catalogs everything this gear puts in the graph (see
+/// `crate::gts_inventory`).
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 1] = [(
+    REL_HAS_VERSION,
+    "HasVersion",
+    "A version published under a gear crate.",
+)];
+
 /// GTS type schemas registered with the **platform types-registry** at gear
 /// init (free-form `type: object`, same shape the studio types use, so
 /// registration never trips the narrowing check).
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
+        .chain(EDGE_TYPE_DOCS)
         .map(|(id, title, description)| {
             json!({
                 "$id": format!("gts://{id}"),

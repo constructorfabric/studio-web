@@ -46,9 +46,10 @@ use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use uuid::Uuid;
 
-const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
+pub(crate) const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
 /// AM tenant-metadata type holding the org access config (portal writes it).
-const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
+pub(crate) const ACCESS_METADATA_TYPE: &str =
+    "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
 
 /* ── Config ── */
 
