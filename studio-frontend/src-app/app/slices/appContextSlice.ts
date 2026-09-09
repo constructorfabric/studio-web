@@ -1,40 +1,15 @@
-/**
- * App Context Slice
- *
- * What the top bar's second slot shows, and what its dropdown offers.
- *
- * The slot has two scopes. At `org` scope it names the organization the session
- * is in and switches between the user's organizations; at `project` scope it
- * names the open project and switches between projects. One slot, because the
- * mockup gives it one place — the scope decides which list is behind the
- * chevron.
- *
- * Ownership is split along the gear that owns the data, and the split is the
- * reason this slice exists rather than the shell fetching everything:
- *
- * - Organizations are account-management, which the shell already talks to
- *   (`AccountsApiService`), so the shell fills `org`/`orgs` itself.
- * - Projects are the studio-project gear, which is projects-mfe's territory.
- *   The shell never requests them; the MFE writes `project`/`projects` in by
- *   emitting `app/context/project/opened` and `app/context/projects`.
- *
- * Until projects-mfe emits those, the slot simply stays at `org` scope. That is
- * the designed resting state, not a missing feature.
- *
- * The workspace is a THIRD pair (`workspace`/`workspaces`) rather than a third
- * scope: it is in scope at the same time as the organization, while `org` and
- * `project` are alternatives to each other.
- */
+/** App Context Slice */
 
+
+// @cpt-dod:cpt-studiofrontend-dod-shell-levels-no-address:p1
 import { createSlice, type ReducerPayload } from '@gears-frontx/react';
 
 export interface ContextEntity {
   id: string;
   name: string;
+  count?: number;
 }
 
-/** Which list the chevron opens. */
-export type ContextScope = 'org' | 'project';
 export type WorkspacesStatus = 'pending' | 'ready' | 'failed';
 
 /**
@@ -47,15 +22,14 @@ export type WorkspacesStatus = 'pending' | 'ready' | 'failed';
 export type AccessState = 'loading' | 'ready' | 'unassigned';
 
 export interface AppContextState {
-  scope: ContextScope;
   org: ContextEntity | null;
   orgs: ContextEntity[];
   workspace: ContextEntity | null;
   workspaces: ContextEntity[];
   workspacesStatus: WorkspacesStatus;
-  screenUsesWorkspace: boolean;
   project: ContextEntity | null;
   projects: ContextEntity[];
+  section: string | null;
   loading: boolean;
   access: AccessState;
 }
@@ -63,15 +37,14 @@ export interface AppContextState {
 const SLICE_KEY = 'app/context' as const;
 
 const initialState: AppContextState = {
-  scope: 'org',
   org: null,
   orgs: [],
   workspace: null,
   workspaces: [],
   workspacesStatus: 'pending',
-  screenUsesWorkspace: false,
   project: null,
   projects: [],
+  section: null,
   loading: false,
   access: 'loading',
 };
@@ -86,10 +59,10 @@ const {
   setContextWorkspacesStatus,
   setContextWorkspace,
   addContextWorkspace,
-  setScreenUsesWorkspace,
   setContextProjects,
   openContextProject,
   closeContextProject,
+  setContextSection,
 } = createSlice({
   name: SLICE_KEY,
   initialState,
@@ -115,8 +88,6 @@ const {
       const next = state.orgs.find((org) => org.id === action.payload);
       if (!next || next.id === state.org?.id) return;
       state.org = next;
-      // Leaving the organization invalidates anything scoped under it.
-      state.scope = 'org';
       state.workspace = null;
       state.workspaces = [];
       state.workspacesStatus = 'pending';
@@ -148,7 +119,6 @@ const {
       const next = state.workspaces.find((workspace) => workspace.id === action.payload);
       if (!next || next.id === state.workspace?.id) return;
       state.workspace = next;
-      state.scope = 'org';
       state.project = null;
       state.projects = [];
     },
@@ -157,20 +127,13 @@ const {
       state: AppContextState,
       action: ReducerPayload<ContextEntity>
     ) => {
-      if (!state.workspaces.some((workspace) => workspace.id === action.payload.id)) {
-        state.workspaces = [...state.workspaces, action.payload];
-      }
-      state.workspace = action.payload;
-      state.scope = 'org';
+      const listed = state.workspaces.find((workspace) => workspace.id === action.payload.id);
+      if (!listed) state.workspaces = [...state.workspaces, action.payload];
+      const next = listed ?? action.payload;
+      if (next.id === state.workspace?.id) return;
+      state.workspace = next;
       state.project = null;
       state.projects = [];
-    },
-
-    setScreenUsesWorkspace: (
-      state: AppContextState,
-      action: ReducerPayload<boolean>
-    ) => {
-      state.screenUsesWorkspace = action.payload;
     },
 
     setContextProjects: (
@@ -180,17 +143,20 @@ const {
       state.projects = action.payload;
     },
 
-    /** A project was opened — the slot starts naming it. */
     openContextProject: (
       state: AppContextState,
       action: ReducerPayload<ContextEntity>
     ) => {
-      state.scope = 'project';
+      if (state.project?.id !== action.payload.id) state.section = null;
       state.project = action.payload;
     },
     closeContextProject: (state: AppContextState) => {
-      state.scope = 'org';
       state.project = null;
+      state.section = null;
+    },
+
+    setContextSection: (state: AppContextState, action: ReducerPayload<string | null>) => {
+      state.section = action.payload;
     },
   },
 });
@@ -205,10 +171,10 @@ export {
   setContextWorkspacesStatus,
   setContextWorkspace,
   addContextWorkspace,
-  setScreenUsesWorkspace,
   setContextProjects,
   openContextProject,
   closeContextProject,
+  setContextSection,
 };
 export const APP_CONTEXT_SLICE_KEY = SLICE_KEY;
 

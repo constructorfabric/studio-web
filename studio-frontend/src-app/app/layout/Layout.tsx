@@ -2,17 +2,12 @@
  * Layout Component
  *
  * Main layout orchestrator for the application.
- *
- * The top bar is the only chrome in the flow: it takes a 56px row and the
- * mounted MFE gets everything below it, full width. Navigation is no longer a
- * column beside the content — `Menu` renders as an overlay drawer outside the
- * flow, so nothing reserves space for it while it is closed.
  */
 
 import React, { useEffect } from 'react';
 import { fetchCurrentUser, fetchAppContext } from '@/app/actions/bootstrapActions';
 import { Header } from './Header';
-import { Menu } from './Menu';
+import { Rail } from './Rail';
 import { Screen } from './Screen';
 import { Popup } from './Popup';
 import { Overlay } from './Overlay';
@@ -39,14 +34,16 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Global top bar: navigation control, product name, context, session */}
+      {/* Global top bar: brand, the path to the level in scope, session */}
       <Header />
 
-      {/* The mounted MFE owns everything below the top bar, full width. */}
-      <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+      {/* The level's rail, then the screen it mounts. */}
+      <div className="flex min-h-0 flex-1">
+        <Rail />
+          <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+      </div>
 
-      {/* Out of the flow, over everything: drawer, dialogs, overlays. */}
-      <Menu />
+      {/* Out of the flow, over everything: dialogs and overlays. */}
       <OverlayDialog />
       <Popup />
       <Overlay />

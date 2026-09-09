@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, setMenuCollapsed, type JSONSchema } from '@gears-frontx/react';
+import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, type JSONSchema } from '@gears-frontx/react';
 import { Toaster } from '@/app/components/ui/sonner';
 import { AccountsApiService, IdentityApiService } from '@/app/api';
 import './globals.css'; // Global styles with CSS variables
@@ -13,10 +13,12 @@ import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
 import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
 import extensionOverlaySchemaJson from '@/app/mfe/schemas/extension_overlay.v1.json';
+import extensionScreenLeveledSchemaJson from '@/app/mfe/schemas/extension_screen_leveled.v1.json';
 import actionContextPublishSchemaJson from '@/app/mfe/schemas/action_context_publish.v1.json';
 import sharedPropertyContextProjectSchemaJson from '@/app/mfe/schemas/shared_property_context_project.v1.json';
 import sharedPropertyContextOrganizationSchemaJson from '@/app/mfe/schemas/shared_property_context_organization.v1.json';
 import sharedPropertyContextWorkspaceSchemaJson from '@/app/mfe/schemas/shared_property_context_workspace.v1.json';
+import sharedPropertyContextSectionSchemaJson from '@/app/mfe/schemas/shared_property_context_section.v1.json';
 import actionContextWorkspacesPublishSchemaJson from '@/app/mfe/schemas/action_context_workspaces_publish.v1.json';
 import sharedPropertySessionProfileSchemaJson from '@/app/mfe/schemas/shared_property_session_user_profile.v1.json';
 import App from './App';
@@ -40,8 +42,14 @@ gtsPlugin.registerSchema(extensionScreenSchema);
 // schema, and the overlay domain pins no derived type — so a contribution to it
 // needs one declared somewhere. Without this, registering the search extension
 // throws, bootstrapMFE rejects, and MfeScreenContainer never renders the screen
-// slot: the drawer still lists its items while every click mounts into nothing.
+// slot: the rail still lists its items while every click mounts into nothing.
 gtsPlugin.registerSchema(extensionOverlaySchemaJson as JSONSchema);
+// One derivation further down the screen chain: the level a screen belongs to —
+// organization, workspace or project — which the rail groups by. Registered
+// after extensionScreenSchema on purpose: a derived schema resolves its parent
+// by chain, so the type it extends has to be in the registry first, and a
+// screen extension that chains through this one fails to register otherwise.
+gtsPlugin.registerSchema(extensionScreenLeveledSchemaJson as JSONSchema);
 // The context-slot action an MFE executes against the screen domain. Same rule
 // as above: GTS refuses to route an action instance whose type has no schema.
 gtsPlugin.registerSchema(actionContextPublishSchemaJson as JSONSchema);
@@ -59,6 +67,9 @@ gtsPlugin.registerSchema(sharedPropertyContextProjectSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertyContextOrganizationSchemaJson as JSONSchema);
 // The level between them: a project's parent and the Projects list's root.
 gtsPlugin.registerSchema(sharedPropertyContextWorkspaceSchemaJson as JSONSchema);
+// The rail is the shell's, the sections are the MFE's — this is the choice
+// crossing between them.
+gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
 
 // Register accounts service (application-level service for user info)
@@ -106,13 +117,6 @@ app.themeRegistry.register(draculaLargeTheme);
 
 // Apply default theme explicitly
 app.themeRegistry.apply(DEFAULT_THEME_ID);
-
-// The navigation drawer starts closed. The framework's menu slice defaults to
-// the open state a permanent left column wanted, so the shell states its own
-// default here — dispatched rather than emitted so the first paint already has
-// it closed, with no flash of an open panel. See layout/Menu.tsx for why
-// `collapsed` is the drawer's closed flag.
-app.store.dispatch(setMenuCollapsed(true));
 
 /**
  * Render application

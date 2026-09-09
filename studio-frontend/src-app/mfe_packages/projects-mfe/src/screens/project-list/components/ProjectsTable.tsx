@@ -1,3 +1,4 @@
+import { Tenant } from '@constructor-studio/mfe-shared';
 import React from 'react';
 import { FileSpreadsheet } from 'lucide-react';
 import {
@@ -14,14 +15,13 @@ import { useMfeBridge } from '@gears-frontx/react';
 import { useWorkspaceProjects } from '../../../shared/workspaceProjects';
 import { useProjectConfig } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
-import type { TenantDto } from '../../../api/types';
 import { NoData } from './NoData';
 import { OwnerInline } from './OwnerInline';
 import { ProjectStatusInline } from './StatusInline';
 import styles from '../ProjectListScreen.module.css';
 
 interface ProjectsTableProps {
-  rows: readonly TenantDto[];
+  rows: readonly Tenant[];
 }
 
 /**
@@ -29,7 +29,7 @@ interface ProjectsTableProps {
  * tenant type registry puts nothing else under one — so there are no container
  * rows, no chevrons and no indentation left to draw.
  */
-const ProjectRow: React.FC<{ project: TenantDto }> = ({ project }) => {
+const ProjectRow: React.FC<{ project: Tenant }> = ({ project }) => {
   const t = useProjectListText();
   const state = useProjectConfig(project.id);
   const { formatRelative } = useFormatters();

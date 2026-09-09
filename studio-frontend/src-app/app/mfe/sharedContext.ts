@@ -6,6 +6,7 @@ import type { FrontXApp } from '@gears-frontx/react';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+  STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
 } from '@/app/mfe/contextActions';
@@ -27,6 +28,7 @@ interface ContextSliceShape {
   org?: ContextEntity | null;
   workspace?: ContextEntity | null;
   project?: ContextEntity | null;
+  section?: string | null;
 }
 
 function contextState(app: FrontXApp): ContextSliceShape {
@@ -39,17 +41,14 @@ function sessionState(app: FrontXApp): { profile?: SessionProfile | null } {
   return (state[APP_SESSION_SLICE_KEY] as { profile?: SessionProfile | null } | undefined) ?? {};
 }
 
-/**
- * Which project the session is inside, as a tenant id — `null` at organization
- * scope, which is a published answer and not an absent one.
- */
 export function publishSelectedProject(app: FrontXApp): void {
   publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, contextState(app).project?.id ?? null);
 }
 
-/**
- * Which organization is in scope — the answer no MFE should be deriving.
- */
+export function publishSelectedSection(app: FrontXApp): void {
+  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_SECTION, contextState(app).section ?? null);
+}
+
 export function publishSelectedOrganization(app: FrontXApp): void {
   const org = contextState(app).org ?? null;
   publish(
@@ -69,16 +68,10 @@ export function publishSelectedWorkspace(app: FrontXApp): void {
   );
 }
 
-/** Who is signed in, for display. See `appSessionSlice` for why it is stored. */
 export function publishSessionProfile(app: FrontXApp): void {
   publish(app, STUDIO_SHARED_PROPERTY_SESSION_PROFILE, sessionState(app).profile ?? null);
 }
 
-/**
- * All three at once, for `bootstrapMFE` to call as soon as the domains are
- * registered. Anything already resolved lands here; anything not yet resolved
- * lands as `null`, which is the seed every declared property needs.
- */
 export function publishStudioContext(app: FrontXApp): void {
   publishSelectedOrganization(app);
   publishSelectedWorkspace(app);

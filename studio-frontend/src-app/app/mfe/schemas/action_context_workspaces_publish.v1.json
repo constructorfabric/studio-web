@@ -14,9 +14,10 @@
         "kind": {
           "enum": [
             "created",
+            "selected",
             "scoped"
           ],
-          "$comment": "created = this workspace now exists and is the one to work in; scoped = the screen that just mounted works inside a workspace, so the slot naming it belongs in the top bar."
+          "$comment": "created = this workspace now exists and is the one to work in; selected = a screen chose it, so the shell makes it current and moves the session into the workspace level; scoped = the screen that just mounted works inside a workspace, so the slot naming it belongs in the top bar."
         },
         "workspace": {
           "type": "object",
@@ -32,7 +33,7 @@
             "id",
             "name"
           ],
-          "$comment": "Required for kind=created."
+          "$comment": "Required for kind=created and kind=selected. Both carry the name because the sender read the workspace itself and the shell's own list may not hold it yet."
         }
       },
       "required": [

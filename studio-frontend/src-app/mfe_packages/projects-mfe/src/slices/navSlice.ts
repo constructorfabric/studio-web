@@ -9,6 +9,24 @@ export type ProjectSection =
   | 'team'
   | 'settings';
 
+/** Where a freshly opened project lands, and what its rail item is. */
+export const DEFAULT_PROJECT_SECTION: ProjectSection = 'overview';
+
+export const PROJECT_SECTIONS: readonly ProjectSection[] = [
+  'overview',
+  'artifacts',
+  'findings',
+  'activity',
+  'timeline',
+  'team',
+  'settings',
+];
+
+/** The shell relays the section as an opaque token; this is where it is checked. */
+export function isProjectSection(value: unknown): value is ProjectSection {
+  return typeof value === 'string' && (PROJECT_SECTIONS as readonly string[]).includes(value);
+}
+
 export interface NavState {
   projectId: string | null;
   section: ProjectSection;

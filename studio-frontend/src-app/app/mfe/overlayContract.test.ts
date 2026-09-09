@@ -33,6 +33,8 @@ import {
 // `registerExtension` runs after the type-system register succeeds.
 import { validateContract } from '@gears-frontx/mfes';
 import extensionOverlaySchemaJson from './schemas/extension_overlay.v1.json';
+import extensionScreenLeveledSchemaJson from './schemas/extension_screen_leveled.v1.json';
+import sharedPropertyContextSectionSchemaJson from './schemas/shared_property_context_section.v1.json';
 import sharedPropertyContextProjectSchemaJson from './schemas/shared_property_context_project.v1.json';
 import sharedPropertyContextOrganizationSchemaJson from './schemas/shared_property_context_organization.v1.json';
 import sharedPropertySessionProfileSchemaJson from './schemas/shared_property_session_user_profile.v1.json';
@@ -58,7 +60,14 @@ function isWellFormedGtsId(id: string): boolean {
 }
 
 type PresentedExtension = Extension & {
-  presentation?: { label?: string; route?: string; order?: number };
+  presentation?: {
+    label?: string;
+    route?: string;
+    order?: number;
+    level?: string;
+    placement?: string;
+    section?: string;
+  };
 };
 
 interface ManifestConfig {
@@ -83,6 +92,8 @@ gtsPlugin.registerSchema(themeSchema);
 gtsPlugin.registerSchema(languageSchema);
 gtsPlugin.registerSchema(extensionScreenSchema);
 gtsPlugin.registerSchema(extensionOverlaySchemaJson as JSONSchema);
+gtsPlugin.registerSchema(extensionScreenLeveledSchemaJson as JSONSchema);
+gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertyContextProjectSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertyContextOrganizationSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
@@ -133,6 +144,39 @@ describe('generated MFE manifest', () => {
         `type-system register failed for "${name}" — bootstrapMFE would reject and no screen slot would render`
       ).not.toThrow();
     }
+  });
+
+  describe('screen levels', () => {
+    const screenExtensions = extensions.filter((ext) => ext.domain === screenDomain.id);
+
+    it('declares a level on every screen extension', () => {
+      // A screen with no level still shows up, in the organization rail — but
+      // that fallback exists for a manifest nobody has migrated yet, not for
+      // ours. Anything registered here that forgot the field would silently
+      // appear one level up.
+      const undeclared = screenExtensions.filter(
+        (ext) => (ext.presentation as { level?: string } | undefined)?.level === undefined
+      );
+      expect(undeclared.map((ext) => ext.presentation?.label ?? ext.id)).toEqual([]);
+    });
+
+    it('chains every screen extension through the leveled type', () => {
+      // The chain is what resolves the schema that KNOWS about `level`: an id
+      // that stops at the screen type validates against a schema where the
+      // field is unknown and unchecked, so a typo in the level would pass.
+      const unchained = screenExtensions.filter(
+        (ext) => !ext.id.includes('constructor_studio.screensets.layout.leveled_screen.v1~')
+      );
+      expect(unchained.map((ext) => ext.presentation?.label ?? ext.id)).toEqual([]);
+    });
+
+    it('keeps the screen domain satisfied by the longer chain', () => {
+      // The screen domain pins `extensionsTypeId`, and the registry checks it
+      // by prefix — one derivation further down still matches.
+      for (const ext of screenExtensions) {
+        expect(ext.id.startsWith(screenDomain.extensionsTypeId as string)).toBe(true);
+      }
+    });
   });
 
   describe('global search', () => {
@@ -202,22 +246,32 @@ describe('generated MFE manifest', () => {
     });
   });
 
-  describe('drawer order bands', () => {
+  describe('levels and placement', () => {
     const screens = extensions.filter((ext) => ext.domain === screenDomain.id);
 
-    it('puts every working area below the tenant band', () => {
-      const working = screens.filter((ext) => (ext.presentation?.order ?? 999) < 100);
-      expect(working.map((ext) => ext.presentation?.label).sort()).toEqual([
-        'Connections',
-        'Kits',
-        'People',
-        'Projects',
+    it('pins the settings item of each level last, whatever its order says', () => {
+      const settings = screens.filter((ext) => ext.presentation?.placement === 'settings');
+      expect(settings.map((ext) => ext.presentation?.label).sort()).toEqual([
+        'Organization settings',
+        'Project settings',
       ]);
     });
 
-    it('puts My Organization in the tenant band, which is what rules the separator', () => {
-      const tenant = screens.filter((ext) => (ext.presentation?.order ?? 999) >= 100);
-      expect(tenant.map((ext) => ext.presentation?.label)).toEqual(['My Organization']);
+    it('leaves the workspace level one screen — the projects list', () => {
+      const workspace = screens.filter((ext) => ext.presentation?.level === 'workspace');
+      expect(workspace.map((ext) => ext.presentation?.label)).toEqual(['Projects']);
+    });
+
+    it('declares the project sections on the entry they are sections of', () => {
+      const project = screens.filter((ext) => ext.presentation?.level === 'project');
+      const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
+
+      // One entry for the whole rail: that is what lets the shell relay a
+      // section instead of mounting seven screens.
+      expect(new Set(project.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
+      // And each item carries the token the MFE understands for it.
+      expect(project.filter((ext) => !ext.presentation?.section)).toEqual([]);
+      expect(project.length).toBeGreaterThan(1);
     });
   });
 });

@@ -1,3 +1,4 @@
+import { ProjectSource } from '../api/types';
 import { useCallback, useMemo } from 'react';
 import { eventBus, useAppSelector } from '@gears-frontx/react';
 import { useSourceConnections } from './useConnections';
@@ -8,7 +9,6 @@ import {
   type ProjectImport,
 } from '../slices/artifactSyncSlice';
 import type { SyncRequest } from '../events/artifactEvents';
-import type { ProjectSource } from '../api/types';
 import '../events/artifactEvents';
 
 export function useProjectImport(projectId: string): ProjectImport {

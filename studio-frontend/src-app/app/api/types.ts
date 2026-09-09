@@ -24,6 +24,8 @@ export interface Tenant {
   name: string;
   tenant_type: string;
   self_managed?: boolean;
+  /** DIRECT children visible to the caller — not a subtree count. */
+  child_count?: number;
 }
 
 /** Account-management's list envelope. Only `items` is consumed here. */

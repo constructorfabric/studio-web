@@ -4,7 +4,7 @@ import {
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
-import { Card, CardContent, Skeleton } from '@gears-frontx/ui-kit';
+import { Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
 import { useScreenTranslations } from '../../shared/useScreenTranslations';
 import styles from './HomeScreen.module.css';
 
@@ -121,11 +121,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
       <h1 className={styles.title}>{t('title')}</h1>
       <p className={styles.description}>{t('description')}</p>
-      <Card>
-        <CardContent>
-          <p className={styles.note}>{t('coming_soon')}</p>
-        </CardContent>
-      </Card>
+      <Empty>
+        <EmptyDescription>{t('coming_soon')}</EmptyDescription>
+      </Empty>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+import { ProjectMode } from '../api/types';
 /**
  * What the New project wizard is collecting, before anything is sent.
  *
@@ -23,7 +24,6 @@
  *   metadata type is a free-form object.
  */
 
-import type { ProjectMode } from '../api/types';
 
 export type { ProjectMode };
 

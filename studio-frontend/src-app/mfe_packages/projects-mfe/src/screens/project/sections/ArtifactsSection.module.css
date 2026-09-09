@@ -44,10 +44,9 @@
   flex-shrink: 1;
 }
 
-.search {
-  width: 13rem;
+input.search {
+  width: 13.75rem;
   height: var(--control-height-sm);
-  border-radius: var(--radius-sm);
 }
 
 .table {

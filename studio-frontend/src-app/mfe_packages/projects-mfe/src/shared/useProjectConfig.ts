@@ -1,6 +1,6 @@
-import { apiRegistry, useApiQuery } from '@gears-frontx/react';
-import { AccountsApiService } from '../api/AccountsApiService';
 import { PROJECT_CONFIG_TYPE, type ProjectConfig } from '../api/types';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { apiRegistry, useApiQuery } from '@gears-frontx/react';
 
 /**
  * A project's attributes. One request per project — the metadata lives on the
@@ -18,7 +18,10 @@ export interface ProjectConfigState {
 export function useProjectConfig(tenantId: string): ProjectConfigState {
   const accounts = apiRegistry.getService(AccountsApiService);
   const { data, isLoading, isError } = useApiQuery(
-    accounts.projectConfig({ tenantId, metadataType: PROJECT_CONFIG_TYPE })
+    accounts.getTenantMetadata<ProjectConfig>({
+      tenantId,
+      metadataType: PROJECT_CONFIG_TYPE,
+    })
   );
 
   return {

@@ -1,3 +1,4 @@
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 /**
  * MFE Bootstrap — executed once per loaded entry, NOT once per MFE.
  */
@@ -17,20 +18,19 @@ import { navSlice } from './slices/navSlice';
 import { createWizardSlice } from './slices/createSlice';
 import { workspaceCreateSlice } from './slices/workspaceSlice';
 import { artifactSyncSlice } from './slices/artifactSyncSlice';
-import { initProjectsEffects } from './effects/projectsEffects';
 import { initWizardEffects } from './effects/wizardEffects';
 import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
-import { AccountsApiService } from './api/AccountsApiService';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
 import { ConnectorsApiService } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build so plugin sync finds them.
-// Three gears: account-management holds the projects themselves (tenants, since
+// Four gears: account-management holds the projects themselves (tenants, since
 // the studio-project gear was retired), studio-connector the source hosts the
-// New project wizard imports from, and studio-artifact-ingest the graph of what
-// a project's repositories contain.
+// New project wizard imports from, studio-artifact-ingest the graph of what a
+// project's repositories contain, and studio-documents the journey-stage
+// catalogue a new project is seeded from.
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(ConnectorsApiService);
 apiRegistry.register(ArtifactIngestApiService);
@@ -47,7 +47,7 @@ const mfeApp = createFrontX()
   .build();
 
 // Register slices with effects (needs store from build())
-registerSlice(navSlice, initProjectsEffects);
+registerSlice(navSlice);
 // The wizard's effect takes the app as well as the dispatch: it reads the
 // workspace's projects for the announcement and drops the list screen's cached
 // page, and both live on the app-bound QueryClient.

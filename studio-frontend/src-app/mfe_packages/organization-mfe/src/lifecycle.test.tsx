@@ -1,11 +1,16 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_SECTION } from '@constructor-studio/mfe-shared';
 import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
   FRONTX_SHARED_PROPERTY_THEME,
 } from '@gears-frontx/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMfeBridgeFixture } from '../../../__test-utils__/createMfeBridgeFixture';
+import {
+  createMfeBridgeFixture,
+  mfeContextValue,
+} from '../../../__test-utils__/createMfeBridgeFixture';
 
 type BridgeFixture = ReturnType<typeof createMfeBridgeFixture>;
 type TestBridge = BridgeFixture['bridge'];
@@ -56,7 +61,7 @@ vi.mock('./shared/useScreenTranslations', () => ({
   useScreenTranslations: useScreenTranslationsMock,
 }));
 
-describe('blank-mfe lifecycle', () => {
+describe('organization-mfe lifecycle', () => {
   beforeEach(() => {
     getServiceMock.mockReturnValue({ getStatus: { type: 'status' } });
     useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: false });
@@ -83,13 +88,13 @@ describe('blank-mfe lifecycle', () => {
     expect(Reflect.get(lifecycle, 'app')).toEqual({ id: 'blank-mfe-app' } satisfies TestApp);
   });
 
-  it('renders the real home screen with the provided bridge', async () => {
+  it('opens on the overview, which is also the fallback when no section is relayed', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default;
     const renderContent = Reflect.get(lifecycle, 'renderContent');
     const { bridge } = createMfeBridgeFixture({
-      domainId: 'blank-domain',
-      instanceId: 'blank-instance',
+      domainId: 'organization-domain',
+      instanceId: 'organization-instance',
       initialProperties: {
         [FRONTX_SHARED_PROPERTY_THEME]: 'blank-theme',
         [FRONTX_SHARED_PROPERTY_LANGUAGE]: 'en',
@@ -97,13 +102,41 @@ describe('blank-mfe lifecycle', () => {
     });
 
     expect(typeof renderContent).toBe('function');
-    render(<>{renderContent(bridge) as React.ReactNode}</>);
+    // The root reads the shell's section property, so it needs the MFE context
+    // the real lifecycle puts around it.
+    render(
+      <FrontXProvider app={createFrontXApp({})} mfeBridge={mfeContextValue(bridge)}>
+        {renderContent(bridge) as React.ReactNode}
+      </FrontXProvider>
+    );
+
+    expect(await screen.findByText('Overview')).toBeTruthy();
+  });
+
+  it('renders the settings screen when the shell relays that section', async () => {
+    const module = await import('./lifecycle');
+    const lifecycle = module.default;
+    const renderContent = Reflect.get(lifecycle, 'renderContent');
+    const { bridge } = createMfeBridgeFixture({
+      domainId: 'organization-domain',
+      instanceId: 'organization-instance',
+      initialProperties: {
+        [FRONTX_SHARED_PROPERTY_THEME]: 'blank-theme',
+        [FRONTX_SHARED_PROPERTY_LANGUAGE]: 'en',
+        [STUDIO_SHARED_PROPERTY_CONTEXT_SECTION]: 'settings',
+      },
+    });
+
+    render(
+      <FrontXProvider app={createFrontXApp({})} mfeBridge={mfeContextValue(bridge)}>
+        {renderContent(bridge) as React.ReactNode}
+      </FrontXProvider>
+    );
 
     // The key-echoing translation mock makes the placeholder's i18n keys
     // directly assertable.
     expect(await screen.findByText('title')).toBeTruthy();
     expect(screen.getByText('description')).toBeTruthy();
-    expect(screen.getByText('coming_soon')).toBeTruthy();
   });
 
   it('inherits base mount behavior from ThemeAwareReactLifecycle', async () => {

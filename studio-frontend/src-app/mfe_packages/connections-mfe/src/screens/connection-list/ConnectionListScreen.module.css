@@ -33,10 +33,9 @@
   height: var(--text-display-line-height);
 }
 
-.search {
-  width: 13rem;
+input.search {
+  width: 13.75rem;
   height: var(--control-height-sm);
-  border-radius: var(--radius-sm);
 }
 
 .card {

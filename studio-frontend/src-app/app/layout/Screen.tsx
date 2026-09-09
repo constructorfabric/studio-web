@@ -1,12 +1,4 @@
-/**
- * Screen Component
- *
- * Main content area that renders the active screen.
- *
- * No padding of its own: with the left column gone the MFE owns the full width
- * below the top bar, and the mockups place each screen's own gutters inside it —
- * a graph canvas and a data table do not want the same inset.
- */
+/** Screen Component  */
 
 import React from 'react';
 
@@ -16,7 +8,7 @@ export interface ScreenProps {
 
 export const Screen: React.FC<ScreenProps> = ({ children }) => {
   return (
-    <main className="flex flex-1 flex-col overflow-hidden bg-background">{children}</main>
+    <main className="flex flex-1 flex-col overflow-hidden bg-card">{children}</main>
   );
 };
 

@@ -6,6 +6,12 @@
   font-family: var(--font-sans);
   font-size: var(--text-body-size);
   line-height: var(--text-body-line-height);
-  background: var(--background);
   color: var(--foreground);
+}
+
+/* The kit's theme.css paints `body, [data-theme]`, and this root carries
+ * data-theme so its palette applies — which would repaint the shell's screen.
+ * Two classes deep to outrank that rule wherever the sheets land. */
+.root[data-theme] {
+  background: transparent;
 }

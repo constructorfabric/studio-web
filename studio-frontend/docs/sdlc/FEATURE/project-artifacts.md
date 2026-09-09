@@ -305,7 +305,14 @@ Definitions of Done, which are traced.
 
 ### The project's rail lives inside the project frame
 
-- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-rail`
+- [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-rail`
+
+**Superseded by `cpt-studiofrontend-dod-shell-levels-shell-draws`.** The rail is
+the shell's now, for every level, and `ProjectRail` is deleted — so this DoD is
+no longer in force and carries no code marker. What the MFE kept is its section
+state and the sections themselves; what it lost is the drawing of navigation.
+The rest of this DoD is left standing because the geometry it measured off the
+prototype is what the shell's rail was built from.
 
 The system **MUST** render the project's section navigation inside the project
 frame as an icon rail that widens into a labelled flyout on pointer hover **and**

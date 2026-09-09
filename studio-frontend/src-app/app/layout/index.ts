@@ -13,8 +13,7 @@ export type { HeaderProps } from './Header';
 export { Footer } from './Footer';
 export type { FooterProps } from './Footer';
 
-export { Menu } from './Menu';
-export type { MenuProps } from './Menu';
+export { Rail } from './Rail';
 
 export { Screen } from './Screen';
 export type { ScreenProps } from './Screen';
@@ -26,6 +25,5 @@ export { Overlay } from './Overlay';
 export type { OverlayProps } from './Overlay';
 
 export { OverlayDialog } from './OverlayDialog';
-export { ContextSwitcher } from './ContextSwitcher';
-export { WorkspaceSwitcher } from './WorkspaceSwitcher';
+export { ContextChain } from './ContextChain';
 export { UserMenu } from './UserMenu';

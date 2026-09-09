@@ -4,8 +4,6 @@
   height: 100%;
   min-height: 0;
   background: var(--card);
-  /* Makes the frame the containing block of the kit Sidebar's fixed panel. */
-  contain: paint;
 }
 
 .content {
@@ -68,67 +66,6 @@
 
 .blockSkeleton {
   height: var(--space-8);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: var(--space-4);
-  margin: 0 0 var(--space-3);
-}
-
-.fact {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.factLabel {
-  font-size: var(--text-meta-size);
-  line-height: var(--text-meta-line-height);
-  letter-spacing: var(--text-meta-tracking);
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-
-.factValue {
-  margin: 0;
-  font-size: var(--text-body-size);
-  line-height: var(--text-body-line-height);
-  overflow-wrap: anywhere;
-}
-
-.chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-size: var(--text-mono-size);
-  line-height: var(--text-mono-line-height);
-}
-
-.emptyNote {
-  margin: 0;
-  font-size: var(--text-meta-size);
-  line-height: var(--text-meta-line-height);
-  color: var(--muted-foreground);
-}
-
-.placeholder {
-  padding: var(--space-6);
-  border: var(--border-width) dashed var(--border);
-  border-radius: var(--radius-lg);
-}
-
-.placeholderTitle {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-body-size);
-  line-height: var(--text-body-line-height);
-  font-weight: var(--text-label-weight);
 }
 
 .people {

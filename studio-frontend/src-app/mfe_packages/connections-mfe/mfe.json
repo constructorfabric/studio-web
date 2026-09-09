@@ -31,14 +31,15 @@
   ],
   "extensions": [
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.connections.screens.main.v1",
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.connections.screens.main.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.connections.mfe.main.v1",
       "presentation": {
         "label": "Connections",
-        "icon": "material-symbols:extension",
+        "icon": "lucide:network",
         "route": "/connections",
-        "order": 40
+        "order": 40,
+        "level": "organization"
       }
     },
     {

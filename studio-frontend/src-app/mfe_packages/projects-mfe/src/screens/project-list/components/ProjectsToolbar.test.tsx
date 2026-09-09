@@ -22,7 +22,7 @@ import { ProjectsToolbar } from './ProjectsToolbar';
  * direct `register` resolves every key without waiting on `setLanguage`, and
  * the test never races the async load.
  */
-async function mount(busy: boolean, hasWorkspace = true, hasOrg = true) {
+async function mount(busy: boolean, hasWorkspace = true) {
   createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   i18nRegistry.register(PROJECT_LIST_NAMESPACE, 'en' as never, en);
@@ -36,7 +36,6 @@ async function mount(busy: boolean, hasWorkspace = true, hasOrg = true) {
         query=""
         onQueryChange={vi.fn()}
         busy={busy}
-        hasOrg={hasOrg}
         hasWorkspace={hasWorkspace}
       />
     </FrontXProvider>
@@ -54,7 +53,9 @@ describe('ProjectsToolbar', () => {
     expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
     expect(screen.getByRole('searchbox', { name: en.search_placeholder })).toBeTruthy();
     expect(screen.getByRole('button', { name: en.new_project })).toBeTruthy();
-    expect(screen.getByRole('button', { name: en.new_workspace })).toBeTruthy();
+    // Creating a workspace moved to the organization's list; see
+    // `cpt-studiofrontend-dod-workspaces-screen-create-moves`.
+    expect(screen.queryByRole('button', { name: en.new_workspace })).toBeNull();
     // The sort chip is out of the header for now; `SortSelect` is still in tree.
     expect(screen.queryByLabelText(en.sort_label)).toBeNull();
   });

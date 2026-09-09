@@ -17,18 +17,28 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     registry,
     domainId,
     className,
+    onAttached,
   }: {
     registry: { mfeRegistry: Record<string, never> } | null;
     domainId: string;
     className?: string;
-  }) => (
-    <div
-      data-testid="extension-domain-slot"
-      data-registry-present={registry ? 'yes' : 'no'}
-      data-domain-id={domainId}
-      data-class-name={className}
-    />
-  ),
+    onAttached?: (root: Element) => void;
+  }) => {
+    // The real slot attaches the domain root and then reports it; the initial
+    // mount hangs off that report, so the stub has to make it too.
+    const report = (element: HTMLDivElement | null): void => {
+      if (element) onAttached?.(element);
+    };
+    return (
+      <div
+        ref={report}
+        data-testid="extension-domain-slot"
+        data-registry-present={registry ? 'yes' : 'no'}
+        data-domain-id={domainId}
+        data-class-name={className}
+      />
+    );
+  },
 }));
 
 describe('MfeScreenContainer', () => {
@@ -43,8 +53,21 @@ describe('MfeScreenContainer', () => {
     registry = {
       getMountedExtensions: vi.fn().mockReturnValue([]),
       getExtensionsForDomain: vi.fn().mockReturnValue([
-        { id: 'people', presentation: { route: '/people', order: 30 } },
-        { id: 'projects', presentation: { route: '/projects', order: 20 } },
+        {
+          id: 'people',
+          presentation: { route: '/people', order: 30, level: 'organization' },
+        },
+        {
+          id: 'organization',
+          presentation: {
+            route: '/organization',
+            order: 100,
+            level: 'organization',
+            placement: 'settings',
+          },
+        },
+        // The workspace level's screen: never the entry point of a session.
+        { id: 'projects', presentation: { route: '/projects', order: 20, level: 'workspace' } },
       ]),
       executeActionsChain: vi.fn().mockResolvedValue(undefined),
     };
@@ -101,7 +124,7 @@ describe('MfeScreenContainer', () => {
     });
   });
 
-  it('mounts Projects as the initial screen after bootstrap', async () => {
+  it('mounts the first item of the outermost level once the slot reports its root', async () => {
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
@@ -110,7 +133,7 @@ describe('MfeScreenContainer', () => {
       expect(registry.executeActionsChain).toHaveBeenCalledWith({
         action: expect.objectContaining({
           target: mockScreenDomain.id,
-          payload: { subject: 'projects' },
+          payload: { subject: 'people' },
         }),
       });
     });

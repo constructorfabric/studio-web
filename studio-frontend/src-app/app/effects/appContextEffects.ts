@@ -1,23 +1,11 @@
-/**
- * App Context Effects
- *
- * Fills the top bar's context slot and reacts to selections in it.
- *
- * Organizations are resolved here because account-management is a service the
- * shell already owns. Projects are not resolved here at all — the studio-project
- * gear belongs to projects-mfe, so those events only carry state the MFE has
- * already loaded for its own screen.
- *
- * Selections made IN the slot also have to reach that MFE, and this is where
- * they leave the shell: `publishSelectedProject` mirrors every project
- * transition onto a shared property, the only host -> child channel that
- * survives an MFE's module realm.
- */
+/** App Context Effects */
 
 import {
   eventBus,
   apiRegistry,
+  screenDomain,
   type FrontXApp,
+  type ScreenExtension,
 } from '@gears-frontx/react';
 import {
   AccountsApiService,
@@ -26,9 +14,12 @@ import {
   TENANT_TYPES,
   type Tenant,
 } from '@/app/api';
+import { entryPointOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
+import { mountScreen } from '@/app/mfe/mountScreen';
 import {
   publishSelectedOrganization,
   publishSelectedProject,
+  publishSelectedSection,
   publishSelectedWorkspace,
 } from '@/app/mfe/sharedContext';
 import {
@@ -40,10 +31,10 @@ import {
   setContextWorkspacesStatus,
   setContextWorkspace,
   addContextWorkspace,
-  setScreenUsesWorkspace,
   setContextProjects,
   openContextProject,
   closeContextProject,
+  setContextSection,
   type ContextEntity,
   type WorkspacesStatus,
 } from '@/app/slices/appContextSlice';
@@ -56,18 +47,35 @@ function isOrganization(tenant: Tenant): boolean {
 /** Account-management's own listing ceiling, so one page is enough. */
 const WORKSPACE_PAGE_LIMIT = 200;
 
+/** Long enough for an aborted duplicate to have settled. */
+const WORKSPACE_RETRY_DELAY_MS = 400;
+
 function toEntity(tenant: Tenant): ContextEntity {
-  return { id: tenant.id, name: tenant.name };
+  return {
+    id: tenant.id,
+    name: tenant.name,
+    ...(tenant.child_count !== undefined && { count: tenant.child_count }),
+  };
 }
 
 interface ContextSliceShape {
   org?: ContextEntity | null;
+  project?: ContextEntity | null;
   workspacesStatus?: WorkspacesStatus;
 }
 
 function contextSlice(app: FrontXApp): ContextSliceShape {
   const state = app.store.getState() as Record<string, unknown>;
   return (state['app/context'] as ContextSliceShape | undefined) ?? {};
+}
+
+/** The section of a level's entry item, or `null` when it declares none. */
+function entrySectionOf(app: FrontXApp, level: ScreenLevel): string | null {
+  const registry = app.mfeRegistry;
+  if (!registry) return null;
+  const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
+  const entry = entryPointOf(screens, level);
+  return entry ? (sectionOf(entry) ?? null) : null;
 }
 
 function currentOrgId(app: FrontXApp): string | null {
@@ -82,7 +90,7 @@ function currentOrgId(app: FrontXApp): string | null {
 export function registerAppContextEffects(app: FrontXApp): void {
   const dispatch = app.store.dispatch;
 
-  const resolveWorkspaces = async (orgId: string | null): Promise<void> => {
+  const resolveWorkspaces = async (orgId: string | null, isRetry = false): Promise<void> => {
     if (!orgId || !apiRegistry.has(AccountsApiService)) {
       dispatch(setContextWorkspaces([]));
       dispatch(setContextWorkspacesStatus('ready'));
@@ -119,6 +127,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
         error instanceof Error ? error.message : String(error)
       );
       dispatch(setContextWorkspacesStatus('failed'));
+      // Once: the retry is for an aborted duplicate, not for a gear that is down.
+      if (!isRetry) eventBus.emit('app/context/workspaces/failed');
       // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-4
     }
   };
@@ -214,10 +224,6 @@ export function registerAppContextEffects(app: FrontXApp): void {
 
   eventBus.on('app/context/org/changed', ({ orgId }) => {
     if (currentOrgId(app) === orgId) {
-      // Not a change: reselecting must not clear the workspaces and the open
-      // project, nor re-read a list that has not moved. It is still the
-      // member's way of asking again after a failed read, so that case alone
-      // resolves.
       if (contextSlice(app).workspacesStatus === 'failed') void resolveWorkspaces(orgId);
       return;
     }
@@ -228,8 +234,34 @@ export function registerAppContextEffects(app: FrontXApp): void {
     void resolveWorkspaces(currentOrgId(app));
   });
 
-  eventBus.on('app/context/workspace/changed', ({ workspaceId }) => {
-    dispatch(setContextWorkspace(workspaceId));
+  eventBus.on('app/context/level/requested', ({ level }) => {
+    const registry = app.mfeRegistry;
+    if (!registry) return;
+    if (level !== 'project' && contextSlice(app).project) {
+      dispatch(closeContextProject());
+      publishSelectedProject(app);
+      publishSelectedSection(app);
+    }
+    const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
+    const target = entryPointOf(screens, level);
+    if (!target) return;
+    mountScreen(registry, target)
+      .catch((error) => {
+        console.warn(
+          `Failed to enter the ${level} level:`,
+          error instanceof Error ? error.message : String(error)
+        );
+      });
+  });
+
+  eventBus.on('app/context/workspace/changed', ({ workspaceId, name }) => {
+    // A name means the sender read the workspace itself; it may not be in the
+    // shell's list yet, and ignoring it would open the previous workspace.
+    dispatch(
+      name === undefined
+        ? setContextWorkspace(workspaceId)
+        : addContextWorkspace({ id: workspaceId, name })
+    );
     publishSelectedWorkspace(app);
     publishSelectedProject(app);
   });
@@ -240,23 +272,31 @@ export function registerAppContextEffects(app: FrontXApp): void {
     publishSelectedWorkspace(app);
     publishSelectedProject(app);
   });
-
   eventBus.on('app/context/workspace/scoped', () => {
-    dispatch(setScreenUsesWorkspace(true));
     if (contextSlice(app).workspacesStatus === 'failed') {
       void resolveWorkspaces(currentOrgId(app));
     }
   });
 
-  eventBus.on('app/context/screen/changing', () => {
-    dispatch(setScreenUsesWorkspace(false));
+  eventBus.on('app/context/workspaces/failed', () => {
+    window.setTimeout(() => {
+      if (contextSlice(app).workspacesStatus !== 'failed') return;
+      void resolveWorkspaces(currentOrgId(app), true);
+    }, WORKSPACE_RETRY_DELAY_MS);
   });
 
   //  Published by whoever owns projects (projects-mfe)
 
   eventBus.on('app/context/project/opened', ({ id, name }) => {
     dispatch(openContextProject({ id, name }));
+    dispatch(setContextSection(entrySectionOf(app, 'project')));
     publishSelectedProject(app);
+    publishSelectedSection(app);
+  });
+
+  eventBus.on('app/context/project/section', ({ section }) => {
+    dispatch(setContextSection(section));
+    publishSelectedSection(app);
   });
 
   eventBus.on('app/context/projects', ({ items }) => {
@@ -266,6 +306,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
   eventBus.on('app/context/project/closed', () => {
     dispatch(closeContextProject());
     publishSelectedProject(app);
+    publishSelectedSection(app);
   });
 
   eventBus.on('app/context/project/changed', ({ projectId }) => {
@@ -274,6 +315,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
     const picked = context?.projects?.find((project) => project.id === projectId);
     if (!picked) return;
     dispatch(openContextProject(picked));
+    dispatch(setContextSection(entrySectionOf(app, 'project')));
     publishSelectedProject(app);
+    publishSelectedSection(app);
   });
 }

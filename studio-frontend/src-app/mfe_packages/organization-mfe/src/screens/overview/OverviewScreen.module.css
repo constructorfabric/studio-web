@@ -1,0 +1,35 @@
+/* A block, not a column flex: the kit's Empty is `flex: 1`, so a flex parent
+ * stretches the placeholder to the full height. Every other screen is a block. */
+.screen {
+  min-height: 100%;
+  padding: var(--space-8) var(--space-6);
+  font-family: var(--font-sans);
+  color: var(--foreground);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line-height);
+  font-weight: var(--text-display-weight);
+  letter-spacing: var(--text-display-tracking);
+}
+
+.titleSkeleton {
+  width: 8rem;
+  height: var(--text-display-line-height);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  color: var(--muted-foreground);
+}

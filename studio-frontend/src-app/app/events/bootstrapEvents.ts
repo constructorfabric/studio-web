@@ -19,13 +19,6 @@ declare module '@gears-frontx/react' {
     'app/user/fetch': void;
     /** MFE manifest fetch + extension registration reached a terminal state */
     'app/mfe/bootstrap': { status: 'pending' | 'ready' | 'failed' };
-
-    // Top-bar context slot
-    // Two directions on purpose. The shell owns organizations and asks itself
-    // to load them; projects belong to the studio-project gear, so the shell
-    // only announces a selection and projects-mfe answers by publishing state.
-    // See slices/appContextSlice.ts for who writes what.
-
     /** Resolve the signed-in user's organizations. No payload — reads /me. */
     'app/context/fetch': void;
     /** An organization was picked in the switcher. */
@@ -38,14 +31,17 @@ declare module '@gears-frontx/react' {
     'app/context/project/changed': { projectId: string };
     /** Left the project scope (a global screen mounted, or "All projects"). */
     'app/context/project/closed': void;
-
-    /** A workspace was picked in its slot. */
-    'app/context/workspace/changed': { workspaceId: string };
+    /** Go to a level: mount its first item. Emitted when a slot above or below the level in scope is picked. */
+    'app/context/level/requested': { level: 'organization' | 'workspace' | 'project' };
+    /** A section of the level in scope is now on screen — chosen in the rail, or moved by the MFE itself. */
+    'app/context/project/section': { section: string | null };
+    /** A workspace was picked — in its slot, or on a screen that read it itself (then with its name). */
+    'app/context/workspace/changed': { workspaceId: string; name?: string };
     /** A workspace was created by an MFE and must become the current one. */
     'app/context/workspace/created': { id: string; name: string };
     /** The mounted screen works inside a workspace, so the slot naming it belongs in the bar. */
     'app/context/workspace/scoped': void;
-    /** The drawer is mounting another screen.*/
-    'app/context/screen/changing': void;
+    /** The workspace read failed; the shell retries once so the chain regains its slot. */
+    'app/context/workspaces/failed': void;
   }
 }

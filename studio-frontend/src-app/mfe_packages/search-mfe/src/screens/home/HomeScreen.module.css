@@ -27,19 +27,14 @@
 
 .title {
   margin: 0 0 1rem;
-  font-size: 1.875rem;
-  line-height: 2.25rem;
-  font-weight: 700;
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line-height);
+  font-weight: var(--text-display-weight);
+  letter-spacing: var(--text-display-tracking);
 }
 
 .description {
   margin: 0 0 1.5rem;
-  color: var(--muted-foreground);
-}
-
-.note {
-  margin: 0;
-  font-size: 0.875rem;
   color: var(--muted-foreground);
 }
 

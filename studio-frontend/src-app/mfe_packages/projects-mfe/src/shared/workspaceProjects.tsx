@@ -1,11 +1,11 @@
-import React, { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { apiRegistry, useApiQuery } from '@gears-frontx/react';
 import {
   AccountsApiService,
   CHILDREN_PAGE_LIMIT,
-  childrenPageParams,
-} from '../api/AccountsApiService';
-import { type Page, type TenantDto } from '../api/types';
+  type Page,
+  type Tenant,
+} from '@constructor-studio/mfe-shared';
+import React, { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { apiRegistry, useApiQuery } from '@gears-frontx/react';
 import {
   OrganizationProvider,
   WorkspaceProvider,
@@ -20,7 +20,7 @@ import {
 export interface WorkspaceProjects {
   org: OrganizationRef | null;
   workspace: WorkspaceRef | null;
-  projects: TenantDto[];
+  projects: Tenant[];
   loading: boolean;
   failed: boolean;
 }
@@ -39,7 +39,7 @@ export function useWorkspaceProjects(): WorkspaceProjects {
   return useContext(ProjectsContext);
 }
 
-function warnIfTruncated(workspaceId: string, page: Page<TenantDto>): void {
+function warnIfTruncated(workspaceId: string, page: Page<Tenant>): void {
   if (!page.page_info?.next_cursor) return;
   console.warn(
     `[projects-mfe] workspace ${workspaceId} has more than ${CHILDREN_PAGE_LIMIT} projects; ` +
@@ -55,7 +55,7 @@ const WithWorkspace: React.FC<{
 }> = ({ org, workspace, children }) => {
   const accounts = apiRegistry.getService(AccountsApiService);
   const { data, isLoading, isError } = useApiQuery(
-    accounts.children(childrenPageParams(workspace.id))
+    accounts.getProjects({ parentId: workspace.id })
   );
 
   const value = useMemo<WorkspaceProjects>(() => {

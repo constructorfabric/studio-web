@@ -1,20 +1,4 @@
-/**
- * The MFE -> shell channel for the top bar's context slot.
- *
- * What crosses: the project that was just opened, plus the projects next to it
- * inside the same workspace — the list the switcher offers while it is open.
- * What does NOT cross: the organizations in the same slot (account-management
- * data the shell fetches itself) and any notion of "all projects", which the
- * tree cannot know since it loads one branch per click.
- *
- * ADR-0008 has projects-mfe publish the project list and the open project, and
- * described that as `eventBus` events. That cannot work: `MfeHandlerMF` gives
- * every MFE its own module realm, so the MFE's `eventBus` is a different
- * instance and the shell never hears it. The sanctioned crossing is an actions
- * chain executed against a host domain — this action is its payload contract,
- * and the handler below is the thin adapter back onto the shell-side events
- * that `appContextEffects` already handles.
- */
+/** The MFE -> shell channel for the top bar's context slot.*/
 
 import { ActionHandler, eventBus } from '@gears-frontx/react';
 import '@/app/events/bootstrapEvents';
@@ -50,6 +34,9 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION =
  */
 export const STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~';
+
+export const STUDIO_SHARED_PROPERTY_CONTEXT_SECTION =
+  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project_section.selected.v1~';
 
 export const STUDIO_ACTION_WORKSPACES_PUBLISH =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.context.workspaces.publish.v1~';
@@ -96,30 +83,31 @@ export function createContextPublishHandler(): ActionHandler {
 
     if (kind === 'closed') {
       eventBus.emit('app/context/project/closed');
+      return;
+    }
+
+    if (kind === 'section') {
+      if (typeof payload?.section !== 'string') return;
+      eventBus.emit('app/context/project/section', { section: payload.section });
     }
   });
 }
 
-/**
- * Handler for the workspace action, registered on the screen and the overlay
- * domain.
- *
- * Two kinds, and neither publishes a list — the shell reads the workspaces
- * itself:
- *
- * - `created` is one row the shell would otherwise have to refetch to learn
- *   about, and it becomes the current workspace.
- * - `scoped` is the mounted screen saying it works inside a workspace, which is
- *   what puts the workspace slot in the top bar. It is only ever turned ON here;
- *   `Menu` turns it off when it mounts another screen, exactly as it does for
- *   the project slot next to it.
- */
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-announce:p1
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-slot:p1
 export function createWorkspacePublishHandler(): ActionHandler {
   return ActionHandler.fromFunction(async (_actionTypeId, payload) => {
     if (payload?.kind === 'scoped') {
       eventBus.emit('app/context/workspace/scoped');
+      return;
+    }
+    if (payload?.kind === 'selected') {
+      if (!isEntity(payload?.workspace)) return;
+      eventBus.emit('app/context/workspace/changed', {
+        workspaceId: payload.workspace.id,
+        name: payload.workspace.name,
+      });
+      eventBus.emit('app/context/level/requested', { level: 'workspace' });
       return;
     }
     if (payload?.kind !== 'created') return;

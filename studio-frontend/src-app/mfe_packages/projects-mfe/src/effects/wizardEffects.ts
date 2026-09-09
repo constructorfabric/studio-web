@@ -1,15 +1,5 @@
-/**
- * Creating the project: the only place in this MFE that writes.
- *
- * It lives in an effect rather than in the wizard component because the work
- * outlives the thing that started it. The shell can unmount the wizard at any
- * moment — Escape and the scrim are its, and they arrive without a veto — and a
- * half-finished creation must not be cancelled by a React root going away. The
- * effect is registered with the slice and runs for as long as the MFE does.
- *
- * `mutation()` descriptors carry an imperative `fetch()`, so nothing here needs
- * a hook; `useApiMutation` would be unusable outside a component anyway.
- */
+import { PROJECT_CONFIG_TYPE, type ProjectConfig } from '../api/types';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-write:p1
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-project-parent:p1
@@ -25,9 +15,7 @@ import {
   type FrontXApp,
 } from '@gears-frontx/react';
 import { refusalFrom } from '@constructor-studio/mfe-shared';
-import { AccountsApiService, childrenPageParams } from '../api/AccountsApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
-import { PROJECT_CONFIG_TYPE, TENANT_TYPES, type ProjectConfig } from '../api/types';
 import { INITIAL_STATUS, MAX_SOURCES, type ProjectDraft } from '../model/projectDraft';
 import { submitFailed, submitStarted } from '../slices/createSlice';
 import type { ProjectRef } from '../events/wizardEvents';
@@ -93,11 +81,7 @@ export function initWizardEffects(dispatch: AppDispatch, app: FrontXApp): void {
       let tenantId: string;
       try {
         // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-2
-        const tenant = await accounts.createTenant.fetch({
-          name,
-          parent_id: workspaceId,
-          tenant_type: TENANT_TYPES.project,
-        });
+        const tenant = await accounts.createProject({ name, parentId: workspaceId });
         tenantId = tenant.id;
         // @cpt-end:cpt-studiofrontend-algo-project-create-write:p2:inst-2
       } catch (error) {
@@ -117,7 +101,7 @@ export function initWizardEffects(dispatch: AppDispatch, app: FrontXApp): void {
        * the gear.
        */
       const announceCreated = async (): Promise<void> => {
-        const children = accounts.children(childrenPageParams(workspaceId));
+        const children = accounts.getProjects({ parentId: workspaceId });
         const siblings = await children
           .fetch({ staleTime: 0 })
           .then((page) =>
@@ -138,7 +122,7 @@ export function initWizardEffects(dispatch: AppDispatch, app: FrontXApp): void {
       try {
         // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-5
         await accounts
-          .projectConfigWrite(tenantId, PROJECT_CONFIG_TYPE)
+          .putTenantMetadata<ProjectConfig>(tenantId, PROJECT_CONFIG_TYPE)
           .fetch(toProjectConfig(draft, stages));
         // @cpt-end:cpt-studiofrontend-algo-project-create-write:p2:inst-5
       } catch (error) {

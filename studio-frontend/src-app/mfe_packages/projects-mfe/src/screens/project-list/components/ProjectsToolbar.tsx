@@ -4,14 +4,12 @@ import { Button, Input, Skeleton } from '@gears-frontx/ui-kit';
 import { useProjectListText } from '../../../i18n';
 import { useMfeBridge } from '@gears-frontx/react';
 import { openProjectWizard } from '../../../actions/wizardActions';
-import { openWorkspaceForm } from '../../../actions/workspaceActions';
 import styles from '../ProjectListScreen.module.css';
 
 interface ProjectsToolbarProps {
   query: string;
   onQueryChange: (query: string) => void;
   busy: boolean;
-  hasOrg: boolean;
   hasWorkspace: boolean;
 }
 
@@ -20,7 +18,6 @@ export const ProjectsToolbar: React.FC<ProjectsToolbarProps> = ({
   query,
   onQueryChange,
   busy,
-  hasOrg,
   hasWorkspace,
 }) => {
   const t = useProjectListText();
@@ -42,14 +39,6 @@ export const ProjectsToolbar: React.FC<ProjectsToolbarProps> = ({
         onChange={(event) => onQueryChange(event.target.value)}
         aria-label={t('search_placeholder')}
       />
-      <Button
-        size="sm"
-        disabled={!hasOrg}
-        title={hasOrg ? undefined : t('empty_no_org')}
-        onClick={() => openWorkspaceForm(bridge)}
-      >
-        {t('new_workspace')}
-      </Button>
       <Button
         size="sm"
         disabled={!hasWorkspace}
