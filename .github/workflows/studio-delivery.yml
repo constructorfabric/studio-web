@@ -147,26 +147,29 @@ jobs:
 
       - name: Format
         run: cargo fmt --check
+      # `--features theia-bridge` on the two gates that judge code, not just on
+      # the one that compiles it. `studio_theia` is behind that feature, so on
+      # default features the module is not built at all: it was neither linted
+      # nor tested here, and its two tests had never run in CI. The feature only
+      # adds a module, so this set is a superset of the default one -- one
+      # command covers both, and it is also what the compose stack builds for
+      # `backend`.
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets --features theia-bridge -- -D warnings
       - name: Build
         run: cargo build --locked
-      # Every gate above runs on default features. The compose stack builds two
-      # other sets -- `--features theia-bridge` for `backend` and
-      # `--no-default-features` for `backend-bootstrap` -- and neither was
-      # compiled anywhere, so a change could be green here and still fail
+      # `backend-bootstrap` is built `--no-default-features`, which nothing else
+      # here compiles, so a change could be green above and still fail
       # `docker compose up`. `check` rather than `build`: this is about the code
-      # compiling under each set, and a third and fourth link would cost minutes
-      # to prove nothing more. Deliberately without `-D warnings`, unlike the
-      # lint above: `--no-default-features` leaves about sixteen dead-code
-      # warnings for items only the default features use, and those are the
-      # expected shape of a reduced build rather than defects to fix.
-      - name: Compile the feature sets the compose stack builds
-        run: |
-          cargo check --locked --features theia-bridge
-          cargo check --locked --no-default-features
+      # compiling under that set, and a second link would cost minutes to prove
+      # nothing more. Deliberately without `-D warnings`, unlike the lint above:
+      # a reduced build leaves about sixteen dead-code warnings for items only
+      # the default features use, which is its expected shape rather than a set
+      # of defects to fix.
+      - name: Compile the reduced set backend-bootstrap builds
+        run: cargo check --locked --no-default-features
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --features theia-bridge
       - name: "Smoke: assembly resolves 13 gears"
         run: |
           cargo run --locked -- --config config/dev.yaml --list-gears | tee gears.txt
