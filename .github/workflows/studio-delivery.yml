@@ -68,6 +68,19 @@ env:
   SOURCE_REF_TYPE: ${{ github.ref_type }}
 
 jobs:
+  dispatch-inputs:
+    name: Dispatch parameters (diagnostic)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show non-secret dispatch parameters
+        env:
+          INPUTS_CONTEXT: ${{ toJSON(inputs) }}
+          EVENT_INPUTS: ${{ toJSON(github.event.inputs) }}
+        run: |
+          echo "inputs=$INPUTS_CONTEXT"
+          echo "github.event.inputs=$EVENT_INPUTS"
+
   test-changes:
     name: 1. Test changed components / Detect affected components
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.stage == 'validate' || github.event.inputs.stage == 'build'
