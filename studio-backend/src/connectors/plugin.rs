@@ -229,3 +229,173 @@ mod openai_plugin {
         }
     }
 }
+
+/* ── Chat platforms ──────────────────────────────────────────────────────────
+ *
+ * Two gears per platform: a bot-token driver and an incoming-webhook driver.
+ * They are separate plugins rather than one plugin with a mode, because the
+ * connector gear resolves a driver by GTS id and a connection names a
+ * provider — so "Slack with a bot token" and "Slack with a webhook" have to be
+ * two provider keys for the catalogue, the API and the form to tell them
+ * apart. A deployment that wants only one of the two drops the other gear from
+ * its profile and that provider stops being offered.
+ */
+
+mod slack_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::SLACK_INSTANCE_ID;
+    use super::super::slack::SlackDriver;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "slack-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct SlackConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for SlackConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> = Arc::new(SlackDriver::new(http_client()?));
+            register_driver(ctx, SLACK_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}
+
+mod slack_webhook_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::SLACK_WEBHOOK_INSTANCE_ID;
+    use super::super::slack::SlackWebhookDriver;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "slack-webhook-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct SlackWebhookConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for SlackWebhookConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(SlackWebhookDriver::new(http_client()?));
+            register_driver(ctx, SLACK_WEBHOOK_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}
+
+mod zulip_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::ZULIP_INSTANCE_ID;
+    use super::super::zulip::ZulipDriver;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "zulip-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct ZulipConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for ZulipConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> = Arc::new(ZulipDriver::new(http_client()?));
+            register_driver(ctx, ZULIP_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}
+
+mod zulip_webhook_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::ZULIP_WEBHOOK_INSTANCE_ID;
+    use super::super::zulip::ZulipWebhookDriver;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "zulip-webhook-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct ZulipWebhookConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for ZulipWebhookConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(ZulipWebhookDriver::new(http_client()?));
+            register_driver(ctx, ZULIP_WEBHOOK_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}
+
+mod discord_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::discord::DiscordDriver;
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::DISCORD_INSTANCE_ID;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "discord-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct DiscordConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for DiscordConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> = Arc::new(DiscordDriver::new(http_client()?));
+            register_driver(ctx, DISCORD_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}
+
+mod discord_webhook_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::discord::DiscordWebhookDriver;
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::DISCORD_WEBHOOK_INSTANCE_ID;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "discord-webhook-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct DiscordWebhookConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for DiscordWebhookConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(DiscordWebhookDriver::new(http_client()?));
+            register_driver(ctx, DISCORD_WEBHOOK_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}

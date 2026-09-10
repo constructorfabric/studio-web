@@ -23,7 +23,9 @@ pub struct SectionStatus {
     pub word_count: usize,
     /// Required, from the template.
     pub required: bool,
-    /// Passes: present, non-empty, and meets `min_words` when required.
+    /// Filled in: present, non-empty, and long enough. An optional section that
+    /// is empty is `false` here and still lets the document conform — the
+    /// checklist says what is left to do, `conforms` says what is wrong.
     pub ok: bool,
 }
 
@@ -152,8 +154,22 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
         let ok = if s.required {
             present && word_count > 0 && meets_min
         } else {
-            !present || (word_count > 0 && meets_min)
+            // An optional section that is present and EMPTY is the not-filled-in
+            // state, which is what "optional" means -- it is reported through
+            // `SectionStatus.ok` for the checklist and must not make the whole
+            // document non-conforming. This module's own contract says the check
+            // is about "required sections present" and that "a genuinely filled
+            // document never trips a false positive"; counting an unanswered
+            // optional section against conformance broke both, and it made every
+            // questionnaire-generated document non-conforming on arrival, since
+            // the generator emits every declared section so the checklist has
+            // somewhere to point.
+            //
+            // Present, non-empty and too SHORT still fails: something was
+            // written and it does not meet the length the type asks for.
+            !present || word_count == 0 || meets_min
         };
+        let satisfied = ok && present && word_count > 0;
         if !ok {
             conforms = false;
             if !present {
@@ -175,7 +191,7 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
             present,
             word_count,
             required: s.required,
-            ok,
+            ok: satisfied,
         });
     }
 
@@ -253,4 +269,123 @@ fn has_angle_placeholder(content: &str) -> bool {
         i += 1;
     }
     false
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::documents::model::{Rules, Section};
+
+    fn spec(sections: Vec<Section>) -> TemplateSpec {
+        TemplateSpec {
+            body: String::new(),
+            sections,
+            rules: Rules {
+                front_matter: vec!["status".to_string()],
+                ..Rules::default()
+            },
+            questionnaire: Vec::new(),
+        }
+    }
+
+    fn sec(key: &str, title: &str, required: bool, min_words: Option<usize>) -> Section {
+        Section {
+            key: key.to_string(),
+            title: title.to_string(),
+            required,
+            min_words,
+            description: None,
+        }
+    }
+
+    const FRONT: &str = "---
+status: draft
+---
+
+# A Real Title Here
+
+";
+
+    #[test]
+    fn an_empty_optional_section_does_not_make_a_document_non_conforming() {
+        // "Optional" has to mean "you do not have to fill this in". The
+        // checklist still reports it as unfilled.
+        let spec = spec(vec![
+            sec("problem", "Problem", true, None),
+            sec("risks", "Risks", false, None),
+        ]);
+        let body = format!(
+            "{FRONT}## Problem
+
+Something is broken.
+
+## Risks
+
+"
+        );
+
+        let report = validate(&body, &spec);
+        assert!(report.conforms, "issues: {:?}", report.issues);
+        let risks = report
+            .sections
+            .iter()
+            .find(|s| s.key == "risks")
+            .expect("risks reported");
+        assert!(risks.present);
+        assert!(!risks.ok, "the checklist still says it is unfilled");
+    }
+
+    #[test]
+    fn an_optional_section_that_is_written_but_too_short_still_fails() {
+        // Something was written and it does not meet the length the type asks
+        // for. That is a defect, not an unanswered question.
+        let spec = spec(vec![sec("risks", "Risks", false, Some(10))]);
+        let body = format!(
+            "{FRONT}## Risks
+
+Too short.
+"
+        );
+
+        let report = validate(&body, &spec);
+        assert!(!report.conforms);
+        assert!(
+            report.issues.iter().any(|i| i.contains("too short")),
+            "{:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn a_missing_required_section_still_fails() {
+        let spec = spec(vec![sec("problem", "Problem", true, None)]);
+        let report = validate(FRONT, &spec);
+        assert!(!report.conforms);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.contains("Missing required section")),
+            "{:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn an_empty_required_section_still_fails() {
+        let spec = spec(vec![sec("problem", "Problem", true, None)]);
+        let body = format!(
+            "{FRONT}## Problem
+
+"
+        );
+        let report = validate(&body, &spec);
+        assert!(!report.conforms);
+        assert!(
+            report.issues.iter().any(|i| i.contains("Section is empty")),
+            "{:?}",
+            report.issues
+        );
+    }
 }

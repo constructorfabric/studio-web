@@ -439,6 +439,43 @@ describe('StudioRuntimeEndpoint', () => {
             { allowConfiguredExternalRoots: [] }
         );
     });
+
+    it('shows a notification only to clients that can display one', async () => {
+        // The event forwarder is a client too, and it has no UI: `shown` must
+        // count the clients that can act, not the connections.
+        const harness = createHarness({
+            loadResult: validLoadResult(configPath, 'rev-1'),
+            startupMode: 'canonical-active'
+        });
+        const forwarder = createClient();
+        const browser = createClient();
+        const onNotifyEditor = jest.fn();
+        browser.client.onNotifyEditor = onNotifyEditor;
+
+        harness.endpoint.addClient(forwarder.client);
+        harness.endpoint.addClient(browser.client);
+        await harness.endpoint.onStart();
+
+        const request = { level: 'warn' as const, message: 'the import failed', source: 'Studio' };
+        await expect(harness.endpoint.notifyEditor(request)).resolves.toEqual({ shown: true });
+        expect(onNotifyEditor).toHaveBeenCalledWith(request);
+    });
+
+    it('reports a notification as unshown when no client has a UI', async () => {
+        // A session whose tab nobody has open. Not an error — the caller
+        // decides whether an unseen notification matters.
+        const harness = createHarness({
+            loadResult: validLoadResult(configPath, 'rev-1'),
+            startupMode: 'canonical-active'
+        });
+        harness.endpoint.addClient(createClient().client);
+        await harness.endpoint.onStart();
+
+        await expect(
+            harness.endpoint.notifyEditor({ level: 'info', message: 'nobody is looking' })
+        ).resolves.toEqual({ shown: false });
+    });
+
 });
 
 function createHarness(options: {

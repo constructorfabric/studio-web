@@ -1,0 +1,1467 @@
+name: Studio Delivery
+
+# The single user-facing delivery pipeline. Reusable workflow files under this
+# directory deliberately have no manual trigger: start every operation here.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*", "infra-v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage set to execute
+        required: true
+        type: choice
+        default: validate
+        options:
+          - validate
+          - build
+          - deploy-services
+          - deploy-infra
+      source_ref:
+        description: Full 40-character commit SHA, branch, or release tag (leave empty for the selected branch)
+        required: false
+        type: string
+      environment:
+        description: Deployment target (required for deploy-services or deploy-infra)
+        required: false
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
+      component:
+        description: Service component to deploy (deploy-services only)
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - backend
+          - frontend
+          - prototype
+      image_tag:
+        description: Immutable sha-<commit> snapshot or v* release tag (deploy-services only; must match source_ref)
+        required: false
+        type: string
+      infra_tag:
+        description: Published infrastructure release tag infra-vX.Y.Z (deploy-infra only)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+  packages: write
+concurrency:
+  # Deployments serialize independently per target environment. A dev deploy
+  # must never cancel an explicit test deploy (or the other way around).
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'continuous' }}-${{ (inputs.stage == 'deploy-services' || inputs.stage == 'deploy-infra') && inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (inputs.stage != 'deploy-services' && inputs.stage != 'deploy-infra') }}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+  SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+  SOURCE_REF_NAME: ${{ inputs.source_ref || github.ref_name }}
+  SOURCE_REF_TYPE: ${{ github.ref_type }}
+
+jobs:
+  test-changes:
+    name: 1. Test changed components / Detect affected components
+    if: github.event_name != 'workflow_dispatch' || inputs.stage == 'validate' || inputs.stage == 'build'
+    runs-on: ubuntu-latest
+    outputs:
+      # A release tag is an explicit reproducibility point. Test every service
+      # operand for v* and infrastructure operands for infra-v*, rather than
+      # relying on a tag diff that has no branch base.
+      backend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.backend }}
+      frontend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.frontend }}
+      prototype: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.prototype }}
+      theia: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.theia }}
+      infra: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.infra }}
+      deployment: ${{ steps.filter.outputs.deployment }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'studio-backend/**'
+              - '!studio-backend/docker/graph-postgres/**'
+              - 'rust-toolchain.toml'
+              # These workflows change how a service commit is tested or
+              # published, so prove the complete service path after editing
+              # them. Deployment-only workflow edits intentionally do not
+              # rebuild every application component.
+              - '.github/workflows/studio-delivery.yml'
+            frontend:
+              - 'studio-frontend/**'
+              - '.github/workflows/studio-delivery.yml'
+            prototype:
+              - 'studio-frontend-prototype/**'
+              - '.github/workflows/studio-delivery.yml'
+            theia:
+              - 'theia/**'
+              - '.github/workflows/studio-delivery.yml'
+            infra:
+              - 'studio-backend/docker/graph-postgres/**'
+              - 'keycloak/**'
+              - '.github/workflows/studio-delivery.yml'
+            deployment:
+              - 'deploy/**'
+              - '.github/workflows/studio-delivery.yml'
+
+
+  test-backend:
+    needs: test-changes
+    if: needs.test-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-backend
+    steps:
+      # gears-rust is a git dependency pinned in Cargo.toml — no second
+      # checkout, and no second place to keep the revision in sync.
+      - uses: actions/checkout@v6
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: studio-backend
+
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --locked
+      # Every gate above runs on default features. The compose stack builds two
+      # other sets -- `--features theia-bridge` for `backend` and
+      # `--no-default-features` for `backend-bootstrap` -- and neither was
+      # compiled anywhere, so a change could be green here and still fail
+      # `docker compose up`. `check` rather than `build`: this is about the code
+      # compiling under each set, and a third and fourth link would cost minutes
+      # to prove nothing more. Deliberately without `-D warnings`, unlike the
+      # lint above: `--no-default-features` leaves about sixteen dead-code
+      # warnings for items only the default features use, and those are the
+      # expected shape of a reduced build rather than defects to fix.
+      - name: Compile the feature sets the compose stack builds
+        run: |
+          cargo check --locked --features theia-bridge
+          cargo check --locked --no-default-features
+      - name: Test
+        run: cargo test --locked
+      - name: "Smoke: assembly resolves 13 gears"
+        run: |
+          cargo run --locked -- --config config/dev.yaml --list-gears | tee gears.txt
+          grep -q 'account-management' gears.txt
+
+  # The FrontX-based studio-frontend/ (ADR-0006) is the deployed portal;
+  # this used to build studio-frontend-prototype/, which is now a playground
+  # built only at release time (see release.yml, prototype-dist).
+  test-frontend:
+    needs: test-changes
+    if: needs.test-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      # Build precedes Test: the test suites resolve workspace packages
+      # (@gears-frontx/react et al.) through their dist/ entries, which only
+      # the build produces — on a fresh checkout Test-first fails to resolve.
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-frontend-dist
+          path: studio-frontend/dist
+          retention-days: 7
+
+  # The prototype is independently deployable on its dedicated POC host, so changes to
+  # it must now pass Test before an immutable image may be published.
+  test-prototype:
+    needs: test-changes
+    if: needs.test-changes.outputs.prototype == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-frontend-prototype
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio-frontend-prototype/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-frontend-prototype-dist
+          path: studio-frontend-prototype/dist
+          retention-days: 7
+
+  # Fast integration test for the authentication redirect implemented inside
+  # the generated Theia session gate. In Kubernetes an absolute Location: /
+  # escapes /studio/{sessionId}/ and embeds the portal SPA inside its own
+  # iframe; this test boots the real generated gate and locks the redirect.
+  test-theia-session-gate:
+    needs: test-changes
+    if: needs.test-changes.outputs.theia == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node theia/docker/gate.test.mjs
+
+  test-infra:
+    needs: test-changes
+    if: needs.test-changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build graph PostgreSQL image
+        run: >-
+          docker build
+          -f studio-backend/docker/graph-postgres/Dockerfile
+          -t graph-postgres:test
+          studio-backend/docker/graph-postgres
+
+      - name: Verify graph PostgreSQL CloudNativePG compatibility
+        run: >-
+          bash studio-backend/docker/graph-postgres/verify-cnpg-compatibility.sh
+          graph-postgres:test
+
+      - name: Build Keycloak image
+        run: docker build -f keycloak/Dockerfile -t cf-studio-keycloak:test keycloak
+
+      - name: Verify optimized Keycloak runtime
+        run: docker run --rm cf-studio-keycloak:test show-config >/dev/null
+
+  test-deployment-config:
+    needs: test-changes
+    if: needs.test-changes.outputs.deployment == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate GitHub Actions workflows
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
+            | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          # Keep this gate deterministic across runner images. Shell scripts
+          # execute in their component jobs; this step validates workflow YAML,
+          # expressions, job dependencies, actions and event schemas.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck=
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.3
+
+      - name: Lint dev chart
+        run: helm lint deploy/helm/studio-web -f deploy/helm/values-dev.example.yaml
+
+      - name: Lint test chart
+        run: helm lint deploy/helm/studio-web -f deploy/helm/values-test.example.yaml
+  test-complete:
+    name: 1. Test changed components / complete
+    needs: [test-changes, test-backend, test-frontend, test-prototype, test-theia-session-gate, test-infra, test-deployment-config]
+    if: >-
+      always() &&
+      (needs.test-changes.result == 'success' || needs.test-changes.result == 'skipped') &&
+      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
+      (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
+      (needs.test-prototype.result == 'success' || needs.test-prototype.result == 'skipped') &&
+      (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
+      (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
+      (needs.test-deployment-config.result == 'success' || needs.test-deployment-config.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Test stage completed successfully."
+  build-require-ci:
+    name: 2. Build & Publish / require-ci
+    # test-complete proves the complete matrix; test-changes is also listed so
+    # this job can consume the selected-component outputs directly.
+    needs: [test-complete, test-changes]
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.stage == 'build')
+    runs-on: ubuntu-24.04
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+      test_run_id: ${{ steps.tests.outputs.run_id }}
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      prototype: ${{ steps.changes.outputs.prototype }}
+      theia: ${{ steps.changes.outputs.theia }}
+      any_service: ${{ steps.changes.outputs.any_service }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Classify the build
+        id: classify
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_REF_TYPE" != "tag" ]; then
+            scope=services
+          elif [[ "$SOURCE_REF_NAME" =~ ^infra-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            scope=infra
+          elif [[ "$SOURCE_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            scope=services
+          else
+            echo "Unsupported release tag: $SOURCE_REF_NAME" >&2
+            exit 1
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful tests for this exact commit
+        id: tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n '${{ github.run_id }}'
+          echo "run_id=${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "Studio Delivery Test stage succeeded for $SOURCE_SHA"
+
+      - uses: actions/checkout@v6
+        if: steps.classify.outputs.scope == 'services'
+        with:
+          # A push can contain several commits; the component diff must reach
+          # github.event.before rather than only HEAD^.
+          fetch-depth: 0
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Select service components
+        id: changes
+        if: steps.classify.outputs.scope == 'services'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The parent has already calculated the affected components and can
+          # only reach this reusable workflow after all requested test jobs
+          # succeeded. Reusing its values prevents a second, divergent diff.
+          backend='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.backend }}'
+          frontend='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.frontend }}'
+          prototype='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.prototype }}'
+          theia='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.theia }}'
+          any_service='${{ github.ref_type == 'tag' && 'true' || (needs.test-changes.outputs.backend == 'true' || needs.test-changes.outputs.frontend == 'true' || needs.test-changes.outputs.prototype == 'true' || needs.test-changes.outputs.theia == 'true' || needs.test-changes.outputs.deployment == 'true') && 'true' || 'false' }}'
+          for value in "$backend" "$frontend" "$prototype" "$theia" "$any_service"; do
+            test "$value" = true || test "$value" = false
+          done
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "prototype=$prototype"
+            echo "theia=$theia"
+            echo "any_service=$any_service"
+          } >> "$GITHUB_OUTPUT"
+          echo "Selected by Studio Delivery: backend=$backend frontend=$frontend prototype=$prototype theia=$theia"
+
+  build-backend-binary:
+    needs: build-require-ci
+    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
+    # Pinned, not `-latest`: the binary links the builder's glibc, and the
+    # runtime image (Dockerfile, debian:trixie-slim, glibc 2.41) must be at
+    # least as new. `ubuntu-latest` moving to a newer glibc than trixie would
+    # resurrect "version GLIBC_X.YY not found" at container start — bump the
+    # runner and the runtime base TOGETHER.
+    runs-on: ubuntu-24.04
+    steps:
+      # Cargo.lock pins the exact gears-rust revision, so rebuilding the same
+      # commit resolves the same Rust sources.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: studio-backend
+
+      - name: Build (release)
+        working-directory: studio-backend
+        # Keep LLM disabled, but compile graph-storage for the Kubernetes
+        # profile. Its database runtime is versioned independently by
+        # infra-v* releases and Deploy Infra.
+        run: cargo build --locked --release --no-default-features --features graph,theia-bridge
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-backend-linux-x86_64
+          path: studio-backend/target/release/studio-backend
+
+  build-file-storage-sidecar-binary:
+    needs: build-require-ci
+    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      # Cargo.lock is the single source of truth for the gears-rust revision.
+      # Building the sidecar from that same commit prevents control/data-plane
+      # protocol drift without duplicating a revision in this workflow.
+      - name: Resolve pinned gears-rust revision
+        id: gears
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_line=$(sed -n '/name = "cf-gears-file-storage"/,/^\[\[package\]\]/p' \
+            studio-backend/Cargo.lock | grep '^source = ' | head -n 1)
+          revision="${source_line##*#}"
+          revision="${revision%\"}"
+          test "${#revision}" -eq 40
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          repository: constructorfabric/gears-rust
+          ref: ${{ steps.gears.outputs.revision }}
+          path: gears-rust
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gears-rust
+
+      - name: Build file-storage sidecar
+        working-directory: gears-rust
+        run: cargo build --locked --release -p cf-gears-file-storage --bin sidecar
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: file-storage-sidecar-linux-x86_64
+          path: gears-rust/target/release/sidecar
+
+  # Builds the FrontX-based studio-frontend/ — the deployed portal since it
+  # replaced studio-frontend-prototype/ (now a playground with its own image).
+  build-frontend-dist:
+    needs: build-require-ci
+    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        working-directory: studio-frontend
+    steps:
+      # Test already built, tested and uploaded this exact dist. Downloading
+      # it prevents the same npm install/build/test from running twice. A
+      # release tag may point to a commit whose short-lived artifact expired;
+      # in that case build the dist again, while still relying on the recorded
+      # successful Test result for validation.
+      - name: Download dist from the successful Test run
+        id: test_dist
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: studio-frontend-dist
+          path: studio-frontend/dist
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.build-require-ci.outputs.test_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/checkout@v6
+        if: steps.test_dist.outcome != 'success'
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-node@v6
+        if: steps.test_dist.outcome != 'success'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - if: steps.test_dist.outcome != 'success'
+        run: npm ci
+      - if: steps.test_dist.outcome != 'success'
+        run: npm run build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-frontend-dist
+          path: studio-frontend/dist
+
+  # The pre-FrontX prototype ships as its OWN image and rides along in
+  # compose on :8081. It is tested and built only here, at release time —
+  # ci.yml deliberately does not gate on it.
+  build-prototype-dist:
+    needs: build-require-ci
+    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        working-directory: studio-frontend-prototype
+    steps:
+      - name: Download dist from the successful Test run
+        id: test_dist
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: studio-frontend-prototype-dist
+          path: studio-frontend-prototype/dist
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.build-require-ci.outputs.test_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/checkout@v6
+        if: steps.test_dist.outcome != 'success'
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-node@v6
+        if: steps.test_dist.outcome != 'success'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio-frontend-prototype/package-lock.json
+      - if: steps.test_dist.outcome != 'success'
+        run: npm ci
+      - if: steps.test_dist.outcome != 'success'
+        run: npm run build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-frontend-prototype-dist
+          path: studio-frontend-prototype/dist
+
+  build-service-images:
+    needs: [build-require-ci, build-backend-binary, build-file-storage-sidecar-binary, build-frontend-dist, build-prototype-dist]
+    if: >-
+      always() &&
+      needs.build-require-ci.result == 'success' &&
+      needs.build-require-ci.outputs.scope == 'services' &&
+      needs.build-require-ci.outputs.any_service == 'true' &&
+      (needs.build-backend-binary.result == 'success' || needs.build-backend-binary.result == 'skipped') &&
+      (needs.build-file-storage-sidecar-binary.result == 'success' || needs.build-file-storage-sidecar-binary.result == 'skipped') &&
+      (needs.build-frontend-dist.result == 'success' || needs.build-frontend-dist.result == 'skipped') &&
+      (needs.build-prototype-dist.result == 'success' || needs.build-prototype-dist.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/download-artifact@v7
+        if: needs.build-require-ci.outputs.backend == 'true'
+        with:
+          name: studio-backend-linux-x86_64
+          path: studio-backend/.release/
+      - uses: actions/download-artifact@v7
+        if: needs.build-require-ci.outputs.backend == 'true'
+        with:
+          name: file-storage-sidecar-linux-x86_64
+          path: studio-backend/.release/file-storage-sidecar-download/
+      - uses: actions/download-artifact@v7
+        if: needs.build-require-ci.outputs.frontend == 'true'
+        with:
+          name: studio-frontend-dist
+          path: studio-frontend/dist
+      - uses: actions/download-artifact@v7
+        if: needs.build-require-ci.outputs.prototype == 'true'
+        with:
+          name: studio-frontend-prototype-dist
+          path: studio-frontend-prototype/dist
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr rejects any reference with an uppercase letter, and
+      # `github.repository` carries the owner's name exactly as registered —
+      # `AndrejK666/studio-web` here. GitHub expressions have no lowercase
+      # function, so it is done in the shell, and it has to overwrite the
+      # workflow-level IMAGE_PREFIX rather than define a second variable: the
+      # build steps below already read $IMAGE_PREFIX, and two names for one
+      # thing is how the wrong one gets used later.
+      - name: Lowercase the image prefix
+        run: |
+          set -euo pipefail
+          lower=$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_PREFIX=ghcr.io/$lower" >> "$GITHUB_ENV"
+
+      # Every build first publishes the full immutable commit SHA. Mutable or
+      # human-readable tags are promoted only after ALL images have built and
+      # the graph PostgreSQL compatibility check has passed.
+      - name: Work out the image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          immutable="sha-$SOURCE_SHA"
+          if [ "$SOURCE_REF_TYPE" = "tag" ]; then
+            # A prerelease is deployable by its immutable human-readable tag,
+            # but it must never replace the stable production/default channel.
+            if [[ "$SOURCE_REF_NAME" == *-* ]]; then
+              promotions="$SOURCE_REF_NAME"
+            else
+              promotions="$SOURCE_REF_NAME latest"
+            fi
+          elif [ "$SOURCE_REF_NAME" = main ]; then
+            if [ "false" = "true" ]; then
+              promotions="edge latest"
+            else
+              promotions="edge"
+            fi
+          else
+            if [ "false" = "true" ]; then
+              echo "A feature branch cannot move latest" >&2
+              exit 1
+            fi
+            promotions=""
+          fi
+          echo "immutable=$immutable" >> "$GITHUB_OUTPUT"
+          echo "promotions=$promotions" >> "$GITHUB_OUTPUT"
+
+      - name: Build backend image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker build -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
+
+      - name: Push immutable backend image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker push "$IMAGE_PREFIX/studio-backend:$tag"
+
+      - name: Build and push file-storage sidecar image
+        if: needs.build-require-ci.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          mv studio-backend/.release/file-storage-sidecar-download/sidecar \
+            studio-backend/.release/file-storage-sidecar
+          docker build -f studio-backend/Dockerfile.file-storage-sidecar \
+            -t "$IMAGE_PREFIX/file-storage-sidecar:$tag" studio-backend
+          docker push "$IMAGE_PREFIX/file-storage-sidecar:$tag"
+
+      - name: Build & push frontend image
+        if: needs.build-require-ci.outputs.frontend == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker build -f studio-frontend/Dockerfile -t "$IMAGE_PREFIX/studio-frontend:$tag" studio-frontend
+          docker push "$IMAGE_PREFIX/studio-frontend:$tag"
+
+      # Same nginx runtime recipe as the main frontend, its own dist and name.
+      - name: Build & push frontend prototype image
+        if: needs.build-require-ci.outputs.prototype == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker build -f studio-frontend-prototype/Dockerfile -t "$IMAGE_PREFIX/studio-frontend-prototype:$tag" studio-frontend-prototype
+          docker push "$IMAGE_PREFIX/studio-frontend-prototype:$tag"
+
+      # The per-workspace Theia IDE session image (moved in from fabric-poc).
+      # Self-contained multi-stage build from theia/ — no artifact to download,
+      # it downloads Theia plugins at build time (needs network, ~10 min).
+      # studio-session pulls this by the `image:` in config/*.yaml.
+      - name: Build & push Theia session image
+        if: needs.build-require-ci.outputs.theia == 'true'
+        env:
+          # Resolving the Constructor Studio skill engine goes through
+          # api.github.com, whose anonymous limit is 60/hour per IP and is
+          # routinely exhausted on shared runners (403). Passed as a BuildKit
+          # secret, never a build ARG, so it stays out of image history.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          DOCKER_BUILDKIT=1 docker build -f theia/Dockerfile \
+            --secret id=github_token,env=GITHUB_TOKEN \
+            -t "$IMAGE_PREFIX/cf-studio-theia:$tag" theia
+          docker push "$IMAGE_PREFIX/cf-studio-theia:$tag"
+
+      # Preserve a complete immutable snapshot without rebuilding unchanged
+      # components. `edge` is moved only after a successful complete set, so it
+      # is the last known-good source for a remote registry-side copy.
+      - name: Copy unchanged images into the immutable snapshot
+        if: env.SOURCE_REF_TYPE != 'tag'
+        env:
+          BUILD_BACKEND: ${{ needs.build-require-ci.outputs.backend }}
+          BUILD_FRONTEND: ${{ needs.build-require-ci.outputs.frontend }}
+          BUILD_PROTOTYPE: ${{ needs.build-require-ci.outputs.prototype }}
+          BUILD_THEIA: ${{ needs.build-require-ci.outputs.theia }}
+        run: |
+          set -euo pipefail
+          immutable="${{ steps.tags.outputs.immutable }}"
+
+          copy_image() {
+            local image="$1"
+            docker buildx imagetools create \
+              --tag "$IMAGE_PREFIX/$image:$immutable" \
+              "$IMAGE_PREFIX/$image:edge"
+          }
+
+          if [ "$BUILD_BACKEND" != true ]; then
+            copy_image studio-backend
+            copy_image file-storage-sidecar
+          fi
+          if [ "$BUILD_FRONTEND" != true ]; then
+            copy_image studio-frontend
+          fi
+          if [ "$BUILD_PROTOTYPE" != true ]; then
+            copy_image studio-frontend-prototype
+          fi
+          if [ "$BUILD_THEIA" != true ]; then
+            copy_image cf-studio-theia
+          fi
+
+      - name: Promote the complete service image set
+        if: steps.tags.outputs.promotions != ''
+        run: |
+          set -euo pipefail
+          immutable="${{ steps.tags.outputs.immutable }}"
+          images=(
+            studio-backend
+            file-storage-sidecar
+            studio-frontend
+            studio-frontend-prototype
+            cf-studio-theia
+          )
+          for promotion in ${{ steps.tags.outputs.promotions }}; do
+            for image in "${images[@]}"; do
+              docker buildx imagetools create \
+                --tag "$IMAGE_PREFIX/$image:$promotion" \
+                "$IMAGE_PREFIX/$image:$immutable"
+            done
+          done
+      - name: Summary
+        run: |
+          {
+            echo "### Images published"
+            for t in ${{ steps.tags.outputs.immutable }} ${{ steps.tags.outputs.promotions }}; do
+              echo "- \`$IMAGE_PREFIX/studio-backend:$t\`"
+              echo "- \`$IMAGE_PREFIX/file-storage-sidecar:$t\`"
+              echo "- \`$IMAGE_PREFIX/studio-frontend:$t\`"
+              echo "- \`$IMAGE_PREFIX/studio-frontend-prototype:$t\`"
+              echo "- \`$IMAGE_PREFIX/cf-studio-theia:$t\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-infra-images:
+    needs: build-require-ci
+    if: needs.build-require-ci.outputs.scope == 'infra'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase the image prefix
+        run: |
+          set -euo pipefail
+          lower=$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_PREFIX=ghcr.io/$lower" >> "$GITHUB_ENV"
+
+      - name: Work out the infrastructure image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          echo "immutable=sha-$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "promotions=$SOURCE_REF_NAME infra-latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build graph PostgreSQL CloudNativePG operand
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker build \
+            -f studio-backend/docker/graph-postgres/Dockerfile \
+            -t "$IMAGE_PREFIX/graph-postgres:$tag" \
+            studio-backend/docker/graph-postgres
+
+      - name: Verify graph PostgreSQL CloudNativePG compatibility
+        run: >-
+          bash studio-backend/docker/graph-postgres/verify-cnpg-compatibility.sh
+          "$IMAGE_PREFIX/graph-postgres:${{ steps.tags.outputs.immutable }}"
+
+      - name: Build Keycloak image
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker build \
+            -f keycloak/Dockerfile \
+            -t "$IMAGE_PREFIX/cf-studio-keycloak:$tag" \
+            keycloak
+
+      - name: Push immutable infrastructure images
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tags.outputs.immutable }}"
+          docker push "$IMAGE_PREFIX/graph-postgres:$tag"
+          docker push "$IMAGE_PREFIX/cf-studio-keycloak:$tag"
+
+      - name: Promote the complete infrastructure image set
+        run: |
+          set -euo pipefail
+          immutable="${{ steps.tags.outputs.immutable }}"
+          images=(graph-postgres cf-studio-keycloak)
+          for promotion in ${{ steps.tags.outputs.promotions }}; do
+            for image in "${images[@]}"; do
+              docker tag "$IMAGE_PREFIX/$image:$immutable" "$IMAGE_PREFIX/$image:$promotion"
+              docker push "$IMAGE_PREFIX/$image:$promotion"
+            done
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "### Infrastructure images published"
+            for t in ${{ steps.tags.outputs.immutable }} ${{ steps.tags.outputs.promotions }}; do
+              echo "- \`$IMAGE_PREFIX/graph-postgres:$t\`"
+              echo "- \`$IMAGE_PREFIX/cf-studio-keycloak:$t\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-github-release:
+    needs: [build-require-ci, build-backend-binary, build-frontend-dist, build-service-images]
+    # A main push publishes images, not releases.
+    if: >-
+      always() &&
+      github.ref_type == 'tag' &&
+      needs.build-require-ci.outputs.scope == 'services' &&
+      needs.build-backend-binary.result == 'success' &&
+      needs.build-frontend-dist.result == 'success' &&
+      needs.build-service-images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+      - name: Pack artifacts
+        run: |
+          cd artifacts
+          tar czf studio-backend-linux-x86_64.tar.gz -C studio-backend-linux-x86_64 .
+          tar czf studio-frontend-dist.tar.gz -C studio-frontend-dist .
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/studio-backend-linux-x86_64.tar.gz
+            artifacts/studio-frontend-dist.tar.gz
+
+  build-infra-github-release:
+    needs: [build-require-ci, build-infra-images]
+    if: >-
+      always() &&
+      github.ref_type == 'tag' &&
+      needs.build-require-ci.outputs.scope == 'infra' &&
+      needs.build-infra-images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+
+  build-complete:
+    name: 2. Build & Publish / complete
+    # The publish jobs are intentionally skipped for a manual deployment: it
+    # consumes an already immutable image. Treat skipped as a completed stage
+    # so the graph stays linear without rebuilding the artifact.
+    needs: [build-require-ci, build-service-images, build-infra-images]
+    if: >-
+      always() &&
+      (needs.build-require-ci.result == 'success' || needs.build-require-ci.result == 'skipped') &&
+      (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
+      (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Build & Publish stage completed successfully."
+
+  deploy-services:
+    name: 3. Deploy Services
+    # Keep deployment as a visible continuation of the delivery graph. For a
+    # manual deploy the test jobs are intentionally skipped, so test-complete
+    # is a fast gate rather than a rebuild or a second test run.
+    needs: build-complete
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-services'
+    env:
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      NAMESPACE: studio-${{ inputs.environment }}
+      KUBECONFIG: /tmp/studio-kubeconfig
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.target.outputs.url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve source and validate target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref='${{ inputs.source_ref || github.ref_name }}'
+          git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*'
+
+          if [[ "$source_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            resolved="$(git rev-parse --verify "refs/tags/${source_ref}^{commit}")"
+            if ! git merge-base --is-ancestor "$resolved" origin/main; then
+              echo "Release tag $source_ref does not point to a commit on main" >&2
+              exit 1
+            fi
+            source_kind=release
+            derived_tag="$source_ref"
+          elif [[ "$source_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            resolved="$(git rev-parse --verify "${source_ref}^{commit}")"
+            source_kind=snapshot
+            derived_tag="sha-$resolved"
+          else
+            resolved="$(git rev-parse --verify "origin/${source_ref}^{commit}")"
+            source_kind=snapshot
+            derived_tag="sha-$resolved"
+          fi
+
+          if [ -n "$IMAGE_TAG" ]; then
+            if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ && ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "image_tag must be a full sha-<40-hex> tag or a semver v* release tag" >&2
+              exit 1
+            fi
+            if [ "$IMAGE_TAG" != "$derived_tag" ]; then
+              echo "image_tag must match source_ref: expected $derived_tag, got $IMAGE_TAG" >&2
+              exit 1
+            fi
+          else
+            IMAGE_TAG="$derived_tag"
+          fi
+
+          if [ "$source_kind" = snapshot ]; then
+            if [ "${{ inputs.environment }}" != "dev" ]; then
+              echo "Branch snapshots may be deployed only to dev; use a v* release tag for ${{ inputs.environment }}" >&2
+              exit 1
+            fi
+          fi
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+          case "${{ inputs.environment }}" in
+            dev)
+              host=studio-dev.cfabric.org
+              prototype_host=studio-dev-poc.cfabric.org
+              ;;
+            test)
+              host=studio-test.cfabric.org
+              prototype_host=studio-test-poc.cfabric.org
+              ;;
+            *) echo "Unsupported environment" >&2; exit 1 ;;
+          esac
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "prototype_host=$prototype_host" >> "$GITHUB_OUTPUT"
+          echo "url=https://$host" >> "$GITHUB_OUTPUT"
+          echo "source_kind=$source_kind" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$resolved" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.3
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.3
+
+      - name: Configure namespace-scoped cluster access
+        env:
+          KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KUBE_CONFIG_B64"
+          printf '%s' "$KUBE_CONFIG_B64" | base64 --decode > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          unset KUBE_CONFIG_B64
+
+          kubectl auth can-i get deployments -n "$NAMESPACE" | grep -qx yes
+          kubectl auth can-i create deployments -n "$NAMESPACE" | grep -qx yes
+          if kubectl auth can-i '*' '*' --all-namespaces | grep -qx yes; then
+            echo "Refusing to deploy with a cluster-admin credential" >&2
+            exit 1
+          fi
+
+      - name: Synchronize file-storage secrets
+        id: file_storage
+        env:
+          S3_ACCESS_KEY_ID: ${{ secrets.FILE_STORAGE_S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.FILE_STORAGE_S3_SECRET_ACCESS_KEY }}
+          SIGNING_SEED: ${{ secrets.FILE_STORAGE_SIGNING_SEED }}
+          SIDECAR_PUBLIC_KEY: ${{ secrets.FILE_STORAGE_SIDECAR_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$S3_ACCESS_KEY_ID" || { echo "GitHub Environment secret FILE_STORAGE_S3_ACCESS_KEY_ID is empty" >&2; exit 1; }
+          test -n "$S3_SECRET_ACCESS_KEY" || { echo "GitHub Environment secret FILE_STORAGE_S3_SECRET_ACCESS_KEY is empty" >&2; exit 1; }
+          test -n "$SIGNING_SEED" || { echo "GitHub Environment secret FILE_STORAGE_SIGNING_SEED is empty" >&2; exit 1; }
+          test -n "$SIDECAR_PUBLIC_KEY" || { echo "GitHub Environment secret FILE_STORAGE_SIDECAR_PUBLIC_KEY is empty" >&2; exit 1; }
+          [[ "$SIGNING_SEED" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
+            echo "FILE_STORAGE_SIGNING_SEED must be a 32-byte base64url value without padding" >&2
+            exit 1
+          }
+          [[ "$SIDECAR_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
+            echo "FILE_STORAGE_SIDECAR_PUBLIC_KEY must be a 32-byte base64url value without padding" >&2
+            exit 1
+          }
+
+          kubectl create secret generic studio-web-file-storage-s3 -n "$NAMESPACE" \
+            --from-literal=access_key_id="$S3_ACCESS_KEY_ID" \
+            --from-literal=secret_access_key="$S3_SECRET_ACCESS_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+          kubectl create secret generic studio-web-file-storage-signing -n "$NAMESPACE" \
+            --from-literal=signing_seed="$SIGNING_SEED" \
+            --from-literal=sidecar_public_key="$SIDECAR_PUBLIC_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+          revision=$(printf '%s\0%s\0%s\0%s' \
+            "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" \
+            | sha256sum | cut -d' ' -f1)
+          echo "secret_revision=$revision" >> "$GITHUB_OUTPUT"
+          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY
+
+      - name: Verify images and namespace prerequisites
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_tag() {
+            local component="$1"
+            local image
+            image="$(kubectl get deployment "studio-studio-web-$component" \
+              -n "$NAMESPACE" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}')"
+            printf '%s' "${image##*:}"
+          }
+
+          backend_tag="$(current_tag backend)"
+          frontend_tag="$(current_tag frontend)"
+          # The first prototype deployment has no existing Deployment yet.
+          # Service releases publish frontend and prototype with the same tag,
+          # so the current frontend tag is the safe bootstrap value.
+          prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
+          keycloak_tag="$(current_tag keycloak)"
+
+          case "${{ inputs.component }}" in
+            all)
+              backend_tag="$IMAGE_TAG"
+              frontend_tag="$IMAGE_TAG"
+              prototype_tag="$IMAGE_TAG"
+              ;;
+            backend) backend_tag="$IMAGE_TAG" ;;
+            frontend) frontend_tag="$IMAGE_TAG" ;;
+            prototype) prototype_tag="$IMAGE_TAG" ;;
+            *) echo "Unsupported component" >&2; exit 1 ;;
+          esac
+
+          # A push can reach this manual deployment workflow a few seconds
+          # before GHCR exposes every manifest. More importantly, print the
+          # exact missing image: Docker otherwise reports only the unhelpful
+          # generic `manifest unknown`.
+          wait_for_image() {
+            local image="$1"
+            local attempts=12
+            local attempt
+            for attempt in $(seq 1 "$attempts"); do
+              if docker manifest inspect "$image" >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "$attempt" -lt "$attempts" ]; then
+                echo "Waiting for $image to become available in GHCR ($attempt/$attempts)…"
+                sleep 10
+              fi
+            done
+            echo "Required image is unavailable in GHCR: $image" >&2
+            echo "Wait for the Build Images workflow for source_ref to finish successfully, then retry Deploy Services." >&2
+            return 1
+          }
+
+          wait_for_image "$IMAGE_PREFIX/studio-backend:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/file-storage-sidecar:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/studio-frontend:$frontend_tag"
+          wait_for_image "$IMAGE_PREFIX/studio-frontend-prototype:$prototype_tag"
+          # The Kubernetes session driver follows the deployed backend tag;
+          # fail before Helm if the matching IDE runtime was not published.
+          wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
+
+          echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
+          echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
+          echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
+          echo "keycloak_tag=$keycloak_tag" >> "$GITHUB_OUTPUT"
+
+          for secret in \
+            studio-postgres-app \
+            studio-postgres-bootstrap \
+            studio-web-idp \
+            studio-web-app \
+            studio-web-file-storage-s3 \
+            studio-web-file-storage-signing \
+            keycloak-postgres-app \
+            studio-web-keycloak-admin \
+            studio-web-keycloak-realm; do
+            kubectl get secret "$secret" -n "$NAMESPACE" -o name >/dev/null
+          done
+
+      - name: Render and validate chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          values="deploy/helm/values-${{ inputs.environment }}.example.yaml"
+          common_args=(
+            -f "$values"
+            --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}"
+            --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
+            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
+            --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}"
+          )
+
+          helm lint deploy/helm/studio-web "${common_args[@]}"
+          # Helm owns pre-install/pre-upgrade hooks. Applying a rendered hook
+          # Job here tries to mutate an existing Job pod template, which the
+          # Kubernetes API correctly rejects as immutable. Helm's
+          # before-hook-creation policy deletes and recreates it during the
+          # actual upgrade, so validate only the ordinary release resources.
+          helm template studio deploy/helm/studio-web \
+            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
+            | kubectl apply --server-side --force-conflicts --dry-run=server \
+                --field-manager=studio-deploy-validation \
+                -n "$NAMESPACE" -f - >/dev/null
+
+      - name: Deploy with automatic rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm upgrade --install studio deploy/helm/studio-web \
+            -n "$NAMESPACE" \
+            -f "deploy/helm/values-${{ inputs.environment }}.example.yaml" \
+            --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
+            --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
+            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
+            --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}" \
+            --server-side=true \
+            --force-conflicts \
+            --rollback-on-failure \
+            --wait \
+            --timeout 10m \
+            --history-max 10
+
+      - name: Verify rollout and public endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="${{ steps.target.outputs.host }}"
+
+          case "${{ inputs.component }}" in
+            all) components=(backend frontend frontend-prototype) ;;
+            backend) components=(backend) ;;
+            frontend) components=(frontend) ;;
+            prototype) components=(frontend-prototype) ;;
+          esac
+
+          for component in "${components[@]}"; do
+            deployment="studio-studio-web-$component"
+            kubectl rollout status "deployment/$deployment" -n "$NAMESPACE" --timeout=3m
+            images="$(kubectl get "deployment/$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[*].image}')"
+            grep -q ":$IMAGE_TAG" <<<"$images"
+          done
+
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "https://$host/" >/dev/null
+          if [ "${{ inputs.component }}" = all ] || [ "${{ inputs.component }}" = prototype ]; then
+            curl --fail --silent --show-error --retry 6 --retry-all-errors \
+              "https://${{ steps.target.outputs.prototype_host }}/" >/dev/null
+            curl --fail --silent --show-error --retry 6 --retry-all-errors \
+              "https://${{ steps.target.outputs.prototype_host }}/cf/health" >/dev/null
+          fi
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "https://$host/cf/health" >/dev/null
+
+          issuer="$(curl --fail --silent --show-error \
+            "https://$host/auth/realms/studio/.well-known/openid-configuration" \
+            | jq -r .issuer)"
+          test "$issuer" = "https://$host/auth/realms/studio"
+
+          kubectl get pods -n "$NAMESPACE"
+          helm status studio -n "$NAMESPACE"
+  deploy-infrastructure:
+    name: 3. Deploy Infrastructure
+    # See deploy-services: a deployment consumes an existing immutable image,
+    # but still follows the common stage gate in the visual graph.
+    needs: build-complete
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
+    env:
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+      INFRA_TAG: ${{ inputs.infra_tag }}
+      NAMESPACE: studio-${{ inputs.environment }}
+      KUBECONFIG: /tmp/studio-kubeconfig
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.target.outputs.url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate the infrastructure release
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$INFRA_TAG" =~ ^infra-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "infra_tag must match infra-v<semver>" >&2
+            exit 1
+          fi
+
+          resolved="$(git rev-parse --verify "refs/tags/${INFRA_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$resolved" origin/main; then
+            echo "Infrastructure tag $INFRA_TAG does not point to a commit on main" >&2
+            exit 1
+          fi
+
+          is_draft="$(gh release view "$INFRA_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft \
+            --jq .isDraft)"
+          test "$is_draft" = "false"
+
+          case "${{ inputs.environment }}" in
+            dev) host=studio-dev.cfabric.org ;;
+            test) host=studio-test.cfabric.org ;;
+            *) echo "Unsupported environment" >&2; exit 1 ;;
+          esac
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "url=https://$host" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$resolved" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.3
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.3
+
+      - name: Configure namespace-scoped cluster access
+        env:
+          KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KUBE_CONFIG_B64"
+          printf '%s' "$KUBE_CONFIG_B64" | base64 --decode > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          unset KUBE_CONFIG_B64
+
+          kubectl auth can-i get clusters.postgresql.cnpg.io -n "$NAMESPACE" | grep -qx yes
+          kubectl auth can-i patch clusters.postgresql.cnpg.io -n "$NAMESPACE" | grep -qx yes
+          kubectl auth can-i patch deployments.apps -n "$NAMESPACE" | grep -qx yes
+          if kubectl auth can-i '*' '*' --all-namespaces | grep -qx yes; then
+            echo "Refusing to deploy with a cluster-admin credential" >&2
+            exit 1
+          fi
+
+      - name: Verify images and namespace prerequisites
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker manifest inspect "$IMAGE_PREFIX/graph-postgres:$INFRA_TAG" >/dev/null
+          docker manifest inspect "$IMAGE_PREFIX/cf-studio-keycloak:$INFRA_TAG" >/dev/null
+
+          for secret in \
+            studio-postgres-app \
+            studio-postgres-bootstrap \
+            studio-web-idp \
+            studio-web-app \
+            keycloak-postgres-app \
+            studio-web-keycloak-admin \
+            studio-web-keycloak-realm \
+            studio-web-keycloak-vault; do
+            kubectl get secret "$secret" -n "$NAMESPACE" -o name >/dev/null
+          done
+
+          current_tag() {
+            local component="$1"
+            local image
+            image="$(kubectl get deployment "studio-studio-web-$component" \
+              -n "$NAMESPACE" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}')"
+            printf '%s' "${image##*:}"
+          }
+
+          backend_tag="$(current_tag backend)"
+          frontend_tag="$(current_tag frontend)"
+          prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
+          echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
+          echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
+          echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Render and validate infrastructure changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          template="deploy/k8s/cloudnative-pg/${{ inputs.environment }}-cluster.template.yaml"
+          graph_image="$IMAGE_PREFIX/graph-postgres:$INFRA_TAG"
+          sed "s#\${GRAPH_POSTGRES_IMAGE}#$graph_image#g" "$template" \
+            | kubectl apply --server-side --force-conflicts \
+                --field-manager=studio-infra-deployer \
+                --dry-run=server -n "$NAMESPACE" -f - >/dev/null
+
+          values="deploy/helm/values-${{ inputs.environment }}.example.yaml"
+          common_args=(
+            -f "$values"
+            --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
+            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
+            --set-string "keycloak.image.tag=$INFRA_TAG"
+          )
+          helm lint deploy/helm/studio-web "${common_args[@]}"
+          helm template studio deploy/helm/studio-web \
+            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
+            | kubectl apply --server-side --force-conflicts --dry-run=server \
+                --field-manager=studio-infra-validation \
+                -n "$NAMESPACE" -f - >/dev/null
+
+      - name: Reconcile graph PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          template="deploy/k8s/cloudnative-pg/${{ inputs.environment }}-cluster.template.yaml"
+          graph_image="$IMAGE_PREFIX/graph-postgres:$INFRA_TAG"
+          sed "s#\${GRAPH_POSTGRES_IMAGE}#$graph_image#g" "$template" \
+            | kubectl apply --server-side \
+                --force-conflicts \
+                --field-manager=studio-infra-deployer \
+                -n "$NAMESPACE" -f -
+
+          kubectl wait cluster/studio-postgres \
+            -n "$NAMESPACE" \
+            --for=jsonpath='{.status.phase}'='Cluster in healthy state' \
+            --timeout=15m
+
+          # The cluster becoming healthy precedes managed-role reconciliation.
+          # The following Helm hook authenticates as this role, so do not race
+          # it and surface a misleading PostgreSQL authentication failure.
+          for attempt in {1..60}; do
+            roles="$(kubectl get cluster/studio-postgres -n "$NAMESPACE" \
+              -o jsonpath='{.status.managedRolesStatus.byStatus.reconciled[*]}' || true)"
+            if [[ " $roles " == *" studio_bootstrap "* ]]; then
+              break
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              echo "CNPG did not reconcile managed role studio_bootstrap" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Deploy Keycloak with automatic rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm upgrade --install studio deploy/helm/studio-web \
+            -n "$NAMESPACE" \
+            -f "deploy/helm/values-${{ inputs.environment }}.example.yaml" \
+            --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
+            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
+            --set-string "keycloak.image.tag=$INFRA_TAG" \
+            --server-side=true \
+            --force-conflicts \
+            --rollback-on-failure \
+            --wait \
+            --timeout 15m \
+            --history-max 10
+
+      - name: Verify PostgreSQL and Keycloak
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="${{ steps.target.outputs.host }}"
+
+          test "$(kubectl get cluster studio-postgres -n "$NAMESPACE" -o jsonpath='{.status.phase}')" = \
+            "Cluster in healthy state"
+          kubectl rollout status deployment/studio-studio-web-keycloak \
+            -n "$NAMESPACE" --timeout=5m
+
+          keycloak_image="$(kubectl get deployment/studio-studio-web-keycloak \
+            -n "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          grep -q ":$INFRA_TAG$" <<<"$keycloak_image"
+
+          issuer="$(curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "https://$host/auth/realms/studio/.well-known/openid-configuration" \
+            | jq -r .issuer)"
+          test "$issuer" = "https://$host/auth/realms/studio"
+
+          kubectl get cluster,pods -n "$NAMESPACE"
+          helm status studio -n "$NAMESPACE"

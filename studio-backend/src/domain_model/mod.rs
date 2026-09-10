@@ -2,11 +2,22 @@
 //! Storage, create objects of those types, extend the types, and read the
 //! model back so the frontend can be regenerated from it.
 //!
-//! The domain model is embedded from `studio-internal/domain-model-ui` (the
-//! full core model + system bases — 11 buckets, 140 entities). Each entity is registered
+//! Graph Storage is the model's system of record: the document embedded from
+//! `studio-internal/domain-model-ui` (the full core model + system bases — 11
+//! buckets, 140 entities) is the bootstrap seed a tenant runs until the graph
+//! holds a model of its own, and every edit is stored. So the model is per
+//! tenant, and it survives the process that changed it. Every edit is a
+//! numbered version carrying the patch that made it and its inverse, so the
+//! model has a history that can be read, audited and reverted.
+//!
+//! Each entity is registered
 //! as a GTS node type derived from the graph-storage `owned_node` family, and
-//! each relation kind as an endpoint-typed edge type derived from `static_edge`;
-//! objects are typed nodes keyed on a deterministic instance id. Prefers the
+//! each relation kind as an edge type derived from `static_edge` — carrying
+//! which declared relation it is, checked against the model's own source and
+//! target before it is written;
+//! objects are typed nodes keyed on a deterministic instance id, checked on the
+//! way in against the type the model says they are — bases included, since that
+//! is where most of a type's fields live. Prefers the
 //! real graph-storage gear; falls back to an in-memory store so the create/read
 //! loop still runs when the `graph` feature is off.
 //!
@@ -16,11 +27,12 @@
 //! open, which is what makes goal #2 — extending a type with a new field —
 //! a pure ontology edit rather than a schema migration.
 
-mod gts;
-mod ontology;
+pub(crate) mod gts;
+pub(crate) mod ontology;
 mod rest;
 mod service;
 mod store;
+pub(crate) mod validate;
 
 use std::sync::Arc;
 
@@ -66,8 +78,14 @@ impl Gear for StudioDomainModelGear {
             schemas.push(gts::catalog_schema(
                 &et.type_id,
                 &et.relation_kind,
-                "A relation between two domain objects.",
+                gts::EDGE_CATALOG_DESCRIPTION,
             ));
+        }
+        // The meta layer (object_type + inherits/declares) is registered in
+        // graph-storage by the store; catalog it here as well so the platform
+        // registry knows every type this gear can put in the graph.
+        for (id, title, description) in gts::META_CATALOG_DOCS {
+            schemas.push(gts::catalog_schema(id, title, description));
         }
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry.register(schemas).await?;

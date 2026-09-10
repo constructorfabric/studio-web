@@ -15,10 +15,10 @@ mod clone;
 mod graph;
 #[cfg(feature = "graph")]
 mod graph_backend;
-mod gts;
+pub(crate) mod gts;
+mod ingest_task;
 mod rest;
 mod service;
-mod tasks;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -197,8 +197,23 @@ impl RestApiCapability for StudioArtifactIngestGear {
             )))
         };
 
+        // A sync is an `artifact.ingest` run on studio-tasks — durable,
+        // cancellable, retried with backoff. Registered here because the
+        // service it needs is built here, and refused loudly if something else
+        // has claimed the task type.
+        if let Some(service) = &service {
+            crate::tasks::registry::register(Arc::new(ingest_task::IngestTask::new(Arc::clone(
+                service,
+            ))))?;
+        }
+
         // Retain for the process lifetime; the router also owns a clone.
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(router, openapi, service))
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            ctx.client_hub(),
+        ))
     }
 }

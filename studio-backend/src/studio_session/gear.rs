@@ -1,5 +1,4 @@
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -12,6 +11,7 @@ use super::config::StudioSessionConfig;
 use super::docker::DockerDriver;
 use super::driver::SessionDriver;
 use super::k8s::KubernetesDriver;
+use super::reap_task;
 use super::rest;
 use super::service::SessionService;
 
@@ -23,7 +23,7 @@ use super::service::SessionService;
 /// Pods (theia-cloud model) behind the same REST contract.
 #[toolkit::gear(
     name = "studio-session",
-    deps = [credstore],
+    deps = [account_management, credstore],
     capabilities = [rest, stateful]
 )]
 pub struct StudioSessionGear {
@@ -94,6 +94,20 @@ impl Gear for StudioSessionGear {
             ),
         }
 
+        // account-management client: reads the caller's IdP record so a
+        // session's commits carry the person's name rather than the
+        // product's (optional — a session without it starts and pushes just
+        // the same, its commits simply keep the fallback author).
+        match ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            Ok(client) => service.set_account_management(client).await,
+            Err(e) => {
+                warn!("studio-session: account-management unavailable ({e}); commits unattributed")
+            }
+        }
+
         // Re-attach sessions that survived a backend restart.
         match service.adopt_existing().await {
             Ok(n) if n > 0 => info!("studio-session: adopted {n} existing session container(s)"),
@@ -108,6 +122,13 @@ impl Gear for StudioSessionGear {
             .register::<dyn crate::studio_session::sdk::StudioSessionDiscoveryClientV1>(Arc::new(
                 crate::studio_session::sdk::StudioSessionDiscoveryLocalClient::new(service.clone()),
             ));
+
+        // Reaping expired sessions is a `session.reap` run, fired by a
+        // schedule — see `super::reap_task` for what that replaced. Registered
+        // here because the service it needs is built here.
+        crate::tasks::registry::register(Arc::new(reap_task::SessionReapTask::new(
+            service.clone(),
+        )))?;
 
         self.service
             .set(service)
@@ -133,34 +154,19 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
 
 #[async_trait]
 impl toolkit::contracts::RunnableCapability for StudioSessionGear {
-    /// Background reaper: stops sessions past their maximum age.
+    /// Keeps the session image warm. Reaping used to live here too, as a
+    /// 60-second timer in every replica; it is a `session.reap` schedule now
+    /// (see [`super::reap_task`]).
     ///
     /// NB: `start()` must RETURN — the runtime awaits it before starting the
-    /// next gear in topo order. The loop therefore runs in a spawned task
-    /// tied to the runtime's cancellation token (same pattern as credstore's
-    /// reaper tick).
-    async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
+    /// next gear in topo order. The keeper therefore runs in a spawned task.
+    async fn start(&self, _cancel: CancellationToken) -> anyhow::Result<()> {
         let Some(service) = self.service.get().cloned() else {
-            return Ok(()); // sessions disabled — nothing to reap
+            return Ok(()); // sessions disabled — nothing to keep warm
         };
         // Background image keeper: boot pull + notify-driven refreshes, so
         // launch requests never pull inline (30s gateway deadline).
-        tokio::spawn(SessionService::image_keeper(service.clone()));
-        tokio::spawn(async move {
-            info!("studio-session: reaper started (tick 60s)");
-            loop {
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(60)) => {
-                        let reaped = service.reap_expired().await;
-                        if reaped > 0 {
-                            info!("studio-session: reaped {reaped} expired session(s)");
-                        }
-                    }
-                }
-            }
-            info!("studio-session: reaper stopped");
-        });
+        tokio::spawn(SessionService::image_keeper(service));
         Ok(())
     }
 

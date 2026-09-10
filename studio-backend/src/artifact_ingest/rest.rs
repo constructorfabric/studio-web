@@ -2,6 +2,11 @@
 //!
 //! `POST /studio-artifact-ingest/v1/sync` enqueues a background sync (issues,
 //! pull requests and files) and returns a task id; `GET /tasks/{id}` polls it.
+//!
+//! Both are served by `studio-tasks` now: the task id *is* a run id, so
+//! `GET /studio-tasks/v1/runs/{task_id}` answers the same question with more
+//! detail, and the sync survives the process that accepted it. The response
+//! shapes here are unchanged.
 
 use std::sync::Arc;
 
@@ -11,10 +16,13 @@ use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
-use super::service::{IngestService, ProjectArtifact};
+use super::ingest_task::{IngestPayload, TASK_TYPE};
+use super::service::{IngestService, ProjectArtifact, SyncSummary};
 
 /// Errors attributable to an artifact-ingest resource (e.g. an unknown task).
 /// Five tokens in the segment (`vendor.package.namespace.type.vN`); `_` is the
@@ -22,14 +30,26 @@ use super::service::{IngestService, ProjectArtifact};
 #[resource_error(gts_id!("cf.studio._.artifact_ingest.v1~"))]
 pub struct StudioArtifactIngestError;
 
-/// Service handle. `None` = the gear booted without any connector driver
-/// linked; the route stays mounted and answers 503 with the reason.
+/// Service handle, plus the hub the sync routes resolve the task queue
+/// through.
 #[derive(Clone)]
-pub struct Ingest(pub Option<Arc<IngestService>>);
+pub struct Ingest {
+    /// `None` = the gear booted without any connector driver linked; the route
+    /// stays mounted and answers 503 with the reason.
+    service: Option<Arc<IngestService>>,
+    /// Resolved per request rather than held: a sync is a run now, and both the
+    /// enqueue and the poll endpoint read through here — lazily, so this gear
+    /// does not care whether `studio-tasks` initialized first.
+    hub: Arc<ClientHub>,
+}
 
 impl Ingest {
+    pub fn new(service: Option<Arc<IngestService>>, hub: Arc<ClientHub>) -> Self {
+        Self { service, hub }
+    }
+
     fn get(&self) -> ApiResult<&Arc<IngestService>> {
-        self.0.as_ref().ok_or_else(|| {
+        self.service.as_ref().ok_or_else(|| {
             CanonicalError::service_unavailable()
                 .with_detail(
                     "artifact ingest is not available in this deployment \
@@ -37,6 +57,21 @@ impl Ingest {
                 )
                 .create()
         })
+    }
+
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "repository syncs are not available in this deployment \
+                         (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
     }
 }
 
@@ -96,8 +131,9 @@ pub struct SyncEnqueued {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct TaskStatusResponse {
+    /// The run id. `GET /studio-tasks/v1/runs/{task_id}` has the full record.
     pub task_id: String,
-    /// `queued` | `running` | `succeeded` | `failed`.
+    /// `queued` | `running` | `succeeded` | `failed` | `cancelled`.
     pub status: String,
     pub repo_full_path: String,
     /// Current phase while running, or the error message on failure.
@@ -369,76 +405,118 @@ async fn sync(
     Json(req): Json<SyncRequest>,
 ) -> ApiResult<JsonBody<SyncEnqueued>> {
     let svc = ingest.get()?;
-    // Resolve the token now, while we still have the request's security context;
-    // the background job carries only the resolved token.
+    let queue = ingest.queue()?;
+
+    let provider = req.provider.trim().to_string();
     let secret_ref = req.secret_ref.trim().to_string();
-    let token = svc
-        .resolve_token(&ctx, &secret_ref)
+    let repo_full_path = req.repo_full_path.trim().to_string();
+    if repo_full_path.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_constraint("repo_full_path must not be empty")
+            .create());
+    }
+    // Resolved here and thrown away: the run resolves its own token per
+    // attempt (a queue row is no place for one), but a `secret_ref` this caller
+    // cannot read should be a 500 on this request rather than a run that
+    // dead-letters where nobody is looking.
+    svc.resolve_token(&ctx, &secret_ref)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let task_id = svc.enqueue_sync(
-        ctx,
-        req.provider.trim().to_string(),
-        req.base_url
-            .as_deref()
-            .map(str::trim)
+
+    let trimmed = |v: Option<&str>| {
+        v.map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(str::to_string),
-        secret_ref,
-        req.repo_full_path.trim().to_string(),
-        req.since
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
-        token,
-        req.workspace_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
-        req.project_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
-        req.repo_dir
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
-    );
+            .map(str::to_string)
+    };
+    let workspace_id = trimmed(req.workspace_id.as_deref());
+    let project_id = trimmed(req.project_id.as_deref());
+    let payload = serde_json::to_value(IngestPayload {
+        provider: provider.clone(),
+        base_url: trimmed(req.base_url.as_deref()),
+        secret_ref: secret_ref.clone(),
+        repo_full_path: repo_full_path.clone(),
+        since: trimmed(req.since.as_deref()),
+        workspace_id: workspace_id.clone(),
+        project_id: project_id.clone(),
+        repo_dir: trimmed(req.repo_dir.as_deref()),
+    })
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    // Two syncs that would write the same graph keys must not run at once.
+    // Those keys are built from exactly these four things (see `gts::*_node`),
+    // so the same four make the partition key: the same repository under a
+    // different project is a different set of nodes and may run in parallel.
+    let scope = project_id
+        .as_deref()
+        .or(workspace_id.as_deref())
+        .unwrap_or("unscoped");
+    let partition_key = format!("{provider}:{secret_ref}:{scope}:{repo_full_path}");
+
+    let run_id = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: ctx.subject_tenant_id(),
+                task_type: TASK_TYPE,
+                payload,
+                partition_key: Some(&partition_key),
+                idempotency_key: None,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
     Ok(Json(SyncEnqueued {
-        task_id,
+        task_id: run_id.to_string(),
         status: "queued".to_string(),
     }))
 }
 
+/// The state of one background sync.
+///
+/// Served from the `artifact.ingest` run rather than from a registry of this
+/// gear's own: same response shape, but it survives a restart and the counts
+/// come from the run's `result` — which the sync updates per phase, so they
+/// tick up while it works.
 async fn task_status(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<TaskStatusResponse>> {
-    let svc = ingest.get()?;
-    let rec = svc.task(&id).ok_or_else(|| {
+    let queue = ingest.queue()?;
+    let not_found = || {
         StudioArtifactIngestError::not_found("no such sync task")
             .with_resource(id.clone())
             .create()
-    })?;
+    };
+    // Task ids used to be this gear's own strings; they are run ids now, and an
+    // unparseable one is simply not a task this deployment has.
+    let run_id = Uuid::parse_str(&id).map_err(|_| not_found())?;
+    let run = queue
+        .run(ctx.subject_tenant_id(), run_id)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .ok_or_else(not_found)?;
+
+    let payload: Option<IngestPayload> = serde_json::from_value(run.payload).ok();
+    let counts = SyncSummary::of_result(run.result);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(TaskStatusResponse {
-        task_id: rec.id,
-        status: rec.status.as_str().to_string(),
-        repo_full_path: rec.repo_full_path,
-        message: rec.message,
-        issues: rec.issues,
-        pull_requests: rec.pull_requests,
-        files: rec.files,
-        comments: rec.comments,
-        commits: rec.commits,
-        stored: rec.stored,
+        task_id: id,
+        status: run.state.as_str().to_string(),
+        repo_full_path: payload.map(|p| p.repo_full_path).unwrap_or_default(),
+        // What it did if it finished, why it stopped if it failed, where it is
+        // if it is still going — in that order of usefulness to whoever is
+        // polling.
+        message: run.summary.or(run.last_error).or(run.progress),
+        issues: count(counts.issues),
+        pull_requests: count(counts.pull_requests),
+        files: count(counts.files),
+        comments: count(counts.comments),
+        commits: count(counts.commits),
+        stored: count(counts.stored),
     }))
 }
-
 async fn list_nodes(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
@@ -773,15 +851,17 @@ pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<IngestService>>,
+    hub: Arc<ClientHub>,
 ) -> Router {
     let router = OperationBuilder::post("/studio-artifact-ingest/v1/sync")
         .operation_id("studio_artifact_ingest.sync")
         .summary("Enqueue a background sync of a connector source into the graph")
         .description(
-            "Resolves the connector driver and token, then runs a background \
-             sync: issues and pull requests from the API, and files from a \
+            "Checks the connector token, then queues a durable `artifact.ingest` \
+             run: issues and pull requests from the API, and files from a \
              shallow git clone (or the tree API when no volume is mounted). \
-             Returns a task id to poll.",
+             Returns a task id to poll — which is also a run id, so \
+             `GET /studio-tasks/v1/runs/{id}` can cancel or retry it.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()
@@ -797,11 +877,15 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-artifact-ingest/v1/tasks/{id}")
         .operation_id("studio_artifact_ingest.task_status")
         .summary("Poll a background sync task")
-        .description("Returns the status of a sync task and, once succeeded, its counts.")
+        .description(
+            "Returns the status of a sync task and its counts, which tick up per \
+             phase while it runs. 404 once the run has been pruned by the \
+             retention sweep.",
+        )
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("id", "Sync task id")
+        .path_param("id", "Sync task id (a studio-tasks run id)")
         .handler(task_status)
         .json_response_with_schema::<TaskStatusResponse>(openapi, StatusCode::OK, "Task status")
         .error_401(openapi)
@@ -936,5 +1020,5 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Ingest(service)))
+    router.layer(Extension(Ingest::new(service, hub)))
 }

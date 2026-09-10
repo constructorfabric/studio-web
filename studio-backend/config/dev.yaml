@@ -57,6 +57,15 @@ gears:
       base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
       api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
 
+  # Integration seam to Constructor Insight (external decision-intelligence
+  # service, REST at /api/v1). Unconfigured by default — set
+  # STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY to enable; until then
+  # pull/push answer 500 and /studio-insight/v1/health reports configured=false.
+  studio-insight:
+    config:
+      base_url_env: "STUDIO_INSIGHT_BASE_URL"
+      api_key_env: "STUDIO_INSIGHT_API_KEY"
+
   api-gateway:
     config:
       bind_addr: "127.0.0.1:8090"
@@ -314,6 +323,13 @@ gears:
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
+  # NB `studio-documents` is deliberately absent from this profile. Its
+  # migrations are PostgreSQL only (ADR-0014), so giving it a SQLite database
+  # here would fail the gear's init rather than enable it. The gear stands down
+  # without a `database:` section, so the rest of the assembly boots normally
+  # and the document and catalogue endpoints simply are not served. Use
+  # postgres.yaml or the compose stack when you need them.
+
   simple-user-settings:
     database:
       server: "sqlite_main"
@@ -357,6 +373,19 @@ gears:
         # fail at the provider with 401.
         - key: "openai-key"
           value: "sk-REPLACE_ME"
+
+  # No studio-tasks or studio-scheduler section here either, for the same
+  # reason as studio-notify below: both keep their queue in toolkit-db's
+  # transactional outbox, which this assembly runs on PostgreSQL (partitions
+  # are locked with `FOR UPDATE SKIP LOCKED`). Without a `database:` block each
+  # stands down with a warning, and the three routes that enqueue a run answer
+  # 503 with the reason — POST /studio-connector/v1/connections/{id}/graph/sync,
+  # POST /studio-artifact-ingest/v1/sync and
+  # POST /studio-components-catalog/v1/sync.
+  #
+  # This profile is for poking at the API without a database to hand, so that
+  # is the trade it makes. Everything that runs this work runs on PostgreSQL:
+  # use config/postgres.yaml.
 
   mini-chat:
     database:

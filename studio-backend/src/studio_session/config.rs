@@ -22,6 +22,27 @@ pub struct StudioSessionConfig {
     /// for pulling the (private) session image. Unset = no pull secret.
     #[serde(default)]
     pub k8s_image_pull_secret: Option<String>,
+    /// Keep a session's `/workspace` on a PersistentVolumeClaim instead of
+    /// an ephemeral `emptyDir`. Kubernetes only — the Docker driver already
+    /// mounts a host directory and is persistent by construction.
+    ///
+    /// Off by default, and deliberately: it turns a session's scratch space
+    /// into cluster storage that outlives the session, which is a decision
+    /// for whoever owns the cluster's quota, not a default. With it on, a
+    /// second launch of the same workspace finds its clones already there
+    /// (the entrypoint skips materialized sources), so agent worktrees and
+    /// uncommitted work survive both a relaunch and the reaper.
+    #[serde(default)]
+    pub k8s_workspace_persistent: bool,
+    /// Size requested for that claim. Ignored unless
+    /// [`Self::k8s_workspace_persistent`] is set.
+    #[serde(default = "default_workspace_volume_size")]
+    pub k8s_workspace_volume_size: String,
+    /// StorageClass for that claim; `None` leaves it to the cluster default.
+    /// A class with `ReadWriteOnce` is enough — one session at a time holds
+    /// a workspace.
+    #[serde(default)]
+    pub k8s_workspace_storage_class: Option<String>,
     /// Docker image for a Theia session. Default: the legacy CI-published one;
     /// Kubernetes deployments inject this repository's matching immutable image.
     /// when absent; a locally-built `cf-studio-theia:latest` also works.
@@ -80,6 +101,21 @@ pub struct StudioSessionConfig {
     /// session still starts, that agent just stays unauthenticated.
     #[serde(default = "default_agent_secrets")]
     pub agent_secrets: Vec<AgentSecret>,
+    /// Run an Orca runtime (github.com/stablyai/orca) inside each session, so
+    /// the IDE's Agents panel has something to drive.
+    ///
+    /// Off by default, and deliberately: the runtime is only present in images
+    /// built with the Orca layer, and a session without it degrades to "not
+    /// reachable" in the panel rather than failing to start. The keys the
+    /// agents need are the ones [`Self::agent_secrets`] already provisions —
+    /// Orca runs the same `codex` / `claude` CLIs.
+    #[serde(default)]
+    pub orca_enabled: bool,
+    /// Port the in-container Orca runtime binds. Container-local and never
+    /// published: the only client is the IDE's own backend in the same
+    /// container.
+    #[serde(default = "default_orca_port")]
+    pub orca_port: u16,
 
     /// Enable the Theia backend-control bridge (ADR-0010): mint a per-session
     /// S2S control token, inject it into the container as
@@ -103,6 +139,9 @@ impl Default for StudioSessionConfig {
             driver: default_driver(),
             k8s_namespace: None,
             k8s_image_pull_secret: None,
+            k8s_workspace_persistent: false,
+            k8s_workspace_volume_size: default_workspace_volume_size(),
+            k8s_workspace_storage_class: None,
             image: default_image(),
             always_pull: default_always_pull(),
             registry_user_env: default_registry_user_env(),
@@ -116,6 +155,8 @@ impl Default for StudioSessionConfig {
             max_session_secs: default_max_session_secs(),
             git_mode: default_git_mode(),
             agent_secrets: default_agent_secrets(),
+            orca_enabled: false,
+            orca_port: default_orca_port(),
             theia_control_enabled: false,
             control_reach_host: default_control_reach_host(),
         }
@@ -177,8 +218,14 @@ fn default_port_start() -> u16 {
 fn default_port_end() -> u16 {
     41099
 }
+fn default_orca_port() -> u16 {
+    6768
+}
 fn default_max_session_secs() -> u64 {
     4 * 3600
+}
+fn default_workspace_volume_size() -> String {
+    "10Gi".into()
 }
 fn default_git_mode() -> String {
     "disabled".into()

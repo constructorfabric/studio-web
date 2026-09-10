@@ -21,6 +21,8 @@ import {
     StudioOperationDeltaResponse,
     StudioOperationSnapshot,
     StudioRepositoryDescriptor,
+    StudioNotifyEditorRequest,
+    StudioNotifyEditorResult,
     StudioOpenInEditorRequest,
     StudioOpenInEditorResult,
     StudioKitInstallRequest,
@@ -60,6 +62,7 @@ export interface StudioControlContext {
     getOperationDeltas(request: StudioOperationDeltaRequest): Promise<StudioOperationDeltaResponse>;
     retryOperation(request: StudioRetryOperationRequest): Promise<StudioOperationSnapshot>;
     openInEditor(request: StudioOpenInEditorRequest): Promise<StudioOpenInEditorResult>;
+    notifyEditor(request: StudioNotifyEditorRequest): Promise<StudioNotifyEditorResult>;
     installKit(request: StudioKitInstallRequest): Promise<StudioKitInstallResult>;
 }
 
@@ -144,6 +147,17 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
         preview: asBoolean(req.body?.preview)
     }));
 
+    // notifyEditor shows a message in the running IDE. Display-only, so the
+    // only validation is the level: anything the backend has not heard of is
+    // information rather than a refusal, since this crosses a version boundary.
+    handle(router, '/notifyEditor', async req => context.notifyEditor({
+        level: asLevel(req.body?.level),
+        message: asString(req.body?.message),
+        detail: optionalString(req.body?.detail),
+        link: optionalString(req.body?.link),
+        source: optionalString(req.body?.source)
+    }));
+
     handle(router, '/installKit', async req => context.installKit({
         kitSlug: asString(req.body?.kitSlug),
         version: asString(req.body?.version),
@@ -184,4 +198,23 @@ function asNumber(value: unknown): number {
 
 function asBoolean(value: unknown): boolean {
     return value === true;
+}
+
+/**
+ * The notification level, defaulting to `info`.
+ *
+ * A level this build does not know is information, not a refusal: the sender is
+ * a backend that may be newer than this container, and dropping its message
+ * over a word would be the wrong trade.
+ */
+function asLevel(value: unknown): StudioNotifyEditorRequest['level'] {
+    switch (asString(value).trim().toLowerCase()) {
+        case 'error':
+            return 'error';
+        case 'warn':
+        case 'warning':
+            return 'warn';
+        default:
+            return 'info';
+    }
 }

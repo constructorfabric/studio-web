@@ -23,7 +23,8 @@
     "@theia/cli": "1.74.0"
   },
   "scripts": {
-    "bundle": "npm run download:plugins && npm run rebuild && theia build --mode development",
+    "bundle": "npm run download:plugins && npm run rebuild && theia build --mode production",
+    "bundle:dev": "npm run download:plugins && npm run rebuild && theia build --mode development",
     "download:plugins": "theia download:plugins",
     "rebuild": "theia rebuild:browser --cacheRoot ..",
     "start": "node ./scripts/start-browser.js",

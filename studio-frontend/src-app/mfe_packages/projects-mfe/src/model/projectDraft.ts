@@ -9,9 +9,12 @@
  * Assumptions recorded here rather than in the UI, because the mockups are
  * silent on both and the FEATURE fixes them:
  *
- * - **Journey stages.** The wizard has no stage picker on either screen, and
- *   `intent` is the one mandatory stage, so a new project starts with exactly
- *   `['intent']`. The other seven are added later from the project screen.
+ * - **Journey stages.** The wizard has no stage picker on either screen, so a
+ *   new project starts with whatever the workspace's catalogue marks required.
+ *   That used to be `['intent']` hardcoded here; the catalogue is served now
+ *   (ADR-0014 section 7) and an organization may mark a different set, so the
+ *   wizard reads it rather than assuming. The rest are added later from the
+ *   project screen.
  * - **Sources.** A modernization takes one or more repositories, capped at
  *   `MAX_SOURCES`. ADR-0010 lists "modernize carries exactly one source" among
  *   the invariants that moved out of the database and became advisory when the
@@ -23,9 +26,6 @@
 import type { ProjectMode } from '../api/types';
 
 export type { ProjectMode };
-
-/** Canonical order matters — `orderedStages` renders in it, not in config order. */
-export const DEFAULT_STAGES: readonly string[] = ['intent'];
 
 /** Only `draft` is reachable at creation; the ladder moves forward from there. */
 export const INITIAL_STATUS = 'draft';

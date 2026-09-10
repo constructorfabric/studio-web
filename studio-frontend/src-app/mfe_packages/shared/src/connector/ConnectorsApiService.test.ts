@@ -4,6 +4,8 @@ import {
   connectionTestPath,
   connectionsPath,
   repositoriesPath,
+  sendMessagePath,
+  targetsPath,
 } from './ConnectorsApiService';
 
 /**
@@ -47,5 +49,25 @@ describe('studio-connector paths', () => {
     expect(
       repositoriesPath({ connectionId: 'c-1', tenantId: 'org-1', search: 'api', limit: 100 })
     ).toBe('/connections/c-1/repositories?tenant=org-1&search=api&limit=100');
+  });
+
+  it('builds a channel listing the same way as a repository listing', () => {
+    // Both go through one builder, so this pins the resource segment and the
+    // fact that the tenant scoping is not reimplemented beside it.
+    expect(targetsPath({ connectionId: 'c-1', tenantId: 'org-1' })).toBe(
+      '/connections/c-1/targets?tenant=org-1'
+    );
+    expect(
+      targetsPath({ connectionId: 'c/1', tenantId: 'a b&c', search: 'rel', limit: 50 })
+    ).toBe('/connections/c%2F1/targets?tenant=a+b%26c&search=rel&limit=50');
+  });
+
+  it('scopes a send to the tenant that owns the connection', () => {
+    expect(sendMessagePath({ connectionId: 'c-1', tenantId: 'org-1' })).toBe(
+      '/connections/c-1/messages?tenant=org-1'
+    );
+    expect(sendMessagePath({ connectionId: 'c/1', tenantId: 'a b&c' })).toBe(
+      '/connections/c%2F1/messages?tenant=a%20b%26c'
+    );
   });
 });

@@ -48,6 +48,66 @@ docker compose ps
 
 The Compose profile starts these services: `graph-postgres`, `keycloak`,
 `backend-bootstrap`, `backend`, `frontend`, and `frontend-prototype`.
+
+### Two ways to run it: your sources, or the published images
+
+`docker-compose.yml` builds every service from this checkout. That is the
+default and what `scripts/dev-up.sh` uses — it is how you see a change you
+just made.
+
+`docker-compose.published.yml` is an override that swaps those builds for the
+images the pipeline pushed, so you can run what a stand runs:
+
+```bash
+docker login ghcr.io   # a token with read:packages; the registry is private
+docker compose -f docker-compose.yml -f docker-compose.published.yml pull
+docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+
+# an exact snapshot rather than the rolling edge tag
+STUDIO_IMAGE_TAG=sha-<40-char-commit> \
+  docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+
+# the last stable release, which is NOT the tip of main
+STUDIO_IMAGE_TAG=latest \
+  docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+```
+
+Every published service is pinned to `pull_policy: always`, because `edge` is a
+moving tag: a copy pulled three days ago is still called `edge` on your machine,
+and using it in silence is the opposite of running what the tip of `main` runs.
+
+`edge` is the tip of `main`, moved by every push to it; `latest` is the last
+stable release tag and moves only when one is cut, so it lags `main` by however
+long it has been since — at the time of writing, six days. `sha-<commit>` is the
+only tag that cannot move under you, and it is what a stand is deployed with.
+
+Three things worth knowing before you trust either mode:
+
+* **`--no-build` is not optional.** Compose keeps the base file's `build:`
+  section even when an override supplies an `image:`, so a missing tag would
+  be silently rebuilt from source — the opposite of the point. `pull` first;
+  then a missing tag is a visible error.
+* **The session image is built too.** The backend launches it through the host
+  daemon rather than running it as a service, so nobody built it for you and it
+  drifted behind the checkout — a session started on a three-hour-old tag whose
+  panel offered agents that image did not carry. It is now the `session-image`
+  service: `docker compose up` builds `cf-studio-theia:local` when that tag is
+  missing, the backend waits for it, and the container it starts runs `true`
+  and exits. Refresh it deliberately with `docker compose build session-image`
+  (ten minutes — Theia's npm ci and bundle, plus the Orca package); `up` does
+  not rebuild it, and neither does `scripts/dev-up.sh`. In published mode the
+  override points that service at the same snapshot as the backend, so the
+  dependency is a pull. Either way a *running* session keeps the image it
+  started with — recreate the session to pick up a new one.
+* **Export `GITHUB_TOKEN` before the first build.** The session image resolves
+  the Constructor Studio skill engine through `api.github.com`, whose anonymous
+  limit is 60/hour per IP, and the Dockerfile fails the build rather than ship a
+  CLI with nothing behind it. `export GITHUB_TOKEN=$(gh auth token)` is enough;
+  Compose passes it as a build secret, so it never lands in image history.
+* **An empty database still needs `scripts/dev-up.sh` once.** The root tenant
+  is seeded by `backend-bootstrap`, a `--no-default-features` build with no LLM
+  chain and no published counterpart, so that one service builds from source in
+  both modes.
 `graph-postgres` is the single local PostgreSQL instance; it contains both the
 application databases and `graph_storage`.
 
@@ -98,16 +158,17 @@ The exact Secret contract, Helm values, session RBAC bootstrap, S3 setup and
 break-glass recovery procedure are documented in [`deploy/README.md`](deploy/README.md).
 The CI/CD promotion rules are in [`deploy/PIPELINES.md`](deploy/PIPELINES.md).
 
-Routine deployment flow:
+Routine delivery flow:
 
-1. Push or merge code to `main`. The Build Images workflow publishes an
-   immutable `sha-<commit>` snapshot, rebuilding only components whose build
-   context changed.
-2. In GitHub Actions, run **Deploy Services** from `main`.
-3. For dev select a `sha-<commit>` image tag and the required service
-   component. For test select a published `v*` release tag.
-4. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
-   `infra-v*` tag and run **Deploy Infra**.
+1. Push a branch or merge to `main`. The single **Studio Delivery** workflow
+   runs **Test changed components**, then **Build & Publish**, producing a
+   complete immutable `sha-<commit>` image set while rebuilding only affected
+   components. It never deploys automatically.
+2. In **Studio Delivery**, choose `deploy-services`. Select `dev` and a
+   `sha-<commit>` tag for a branch snapshot, or select `dev`/`test` and a
+   published `v*` tag for a release.
+3. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
+   `infra-v*` tag, then choose `deploy-infra` in **Studio Delivery**.
 
 Do not use a cluster-admin kubeconfig in GitHub Actions. Each GitHub
 Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
@@ -115,14 +176,27 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 
 ## CI/CD
 
-- **Test** runs on pushes and pull requests, filtered by changed component.
-- **Build Images** runs for `main`, version tags (`v*`), infrastructure tags
-  (`infra-v*`), and manual requests. Main snapshots rebuild only changed images
-  and copy unchanged images into the same immutable SHA snapshot.
-- **Deploy Services** is manual and deploys `backend`, `frontend`,
-  `prototype`, or `all`. SHA snapshots are dev-only; release tags may be
-  promoted to configured shared environments.
-- **Deploy Infra** is manual and accepts only published `infra-v*` tags.
+- **Studio Delivery** is the only user-facing Actions workflow. It runs tests
+  for every pull request and push; a push then publishes images only after its
+  tests succeed. Pull requests never publish or deploy.
+- Manual stages are `validate`, `build`, `deploy-services`, and `deploy-infra`.
+  Services can deploy `backend`, `frontend`, `prototype`, or `all`. SHA
+  snapshots are dev-only; release tags may be promoted to configured shared
+  environments. Infrastructure accepts only published `infra-v*` tags.
+
+The backend's gates can be run before a pull request, in the image CI uses:
+
+```bash
+scripts/backend-check.sh            # fmt, clippy, build, features, test
+scripts/backend-check.sh clippy     # one gate
+scripts/backend-check.sh test studio_session   # a gate plus cargo args
+```
+
+It needs only Docker: the gates want a linker plus `protobuf-compiler` and
+`cmake`, which on a Windows checkout would otherwise mean an administrator
+install of Visual Studio Build Tools. CI stays the authority — it also runs a
+gear-assembly smoke test — but a backend change once reached `main` without
+compiling because CI was the only check and had not finished.
 
 ```bash
 # service release

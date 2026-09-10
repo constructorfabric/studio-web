@@ -95,38 +95,33 @@ export function projectSubtitle(config: ProjectConfig | null): string | null {
 }
 
 /**
- * Labels are English here, exactly as in the prototype: they are catalogue data,
- * not screen copy, and inventing 8 keys × 35 locale files for a list nothing can
- * edit yet would be worse than saying so out loud. Translating them is a
- * follow-up, together with the write path.
- */
-export const JOURNEY_STAGES: readonly { key: string; label: string; required: boolean }[] = [
-  { key: 'intent', label: 'Intent', required: true },
-  { key: 'brd', label: 'BRD', required: false },
-  { key: 'prd', label: 'PRD', required: false },
-  { key: 'prd_spec', label: 'PRD-Spec', required: false },
-  { key: 'architecture', label: 'Architecture', required: false },
-  { key: 'ui_design', label: 'UI Design', required: false },
-  { key: 'user_stories', label: 'User Stories', required: false },
-  { key: 'testing', label: 'Testing', required: false },
-];
-
-/**
- * A config's stages in catalogue order, with labels. A key the catalogue does
- * not know is kept, at the end, under its own name — the metadata is free-form
- * and another writer may add stages, and silently dropping one would make the
- * screen lie about what the project carries.
+ * A config's stages in catalogue order, with labels.
+ *
+ * `catalogue` is the workspace's effective stage list, from
+ * `DocumentsApiService.stages`. It used to be a constant here (`JOURNEY_STAGES`)
+ * and the same list again in the prototype; ADR-0014 section 7 moved it to the
+ * server so an organization can change the path its projects follow.
+ *
+ * A key the catalogue does not know is kept, at the end, under its own name —
+ * the metadata is free-form and another writer may add stages, and silently
+ * dropping one would make the screen lie about what the project carries. That
+ * now also covers a stage the workspace has since hidden, which is the same
+ * situation and deserves the same honesty.
+ *
+ * Order comes from the catalogue, which arrives sorted; this filters, it never
+ * re-sorts.
  */
 export function orderedStages(
-  config: ProjectConfig | null
+  config: ProjectConfig | null,
+  catalogue: readonly { key: string; label: string }[]
 ): { key: string; label: string }[] {
   const stages = config?.stages;
   if (!stages?.length) return [];
-  const known = JOURNEY_STAGES.filter((stage) => stages.includes(stage.key)).map(
-    ({ key, label }) => ({ key, label })
-  );
-  const catalogue = new Set(JOURNEY_STAGES.map((stage) => stage.key));
-  const unknown = stages.filter((key) => !catalogue.has(key)).map((key) => ({ key, label: key }));
+  const known = catalogue
+    .filter((stage) => stages.includes(stage.key))
+    .map(({ key, label }) => ({ key, label }));
+  const seen = new Set(catalogue.map((stage) => stage.key));
+  const unknown = stages.filter((key) => !seen.has(key)).map((key) => ({ key, label: key }));
   return [...known, ...unknown];
 }
 

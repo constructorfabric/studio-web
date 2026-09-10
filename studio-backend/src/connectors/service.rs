@@ -30,7 +30,10 @@ use serde::{Deserialize, Serialize};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::driver::{ConnectionAuth, ConnectorDriver, DriverIdentity, RemoteRepo};
+use super::driver::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
+    NotifyTarget, RemoteRepo, SentMessage,
+};
 use super::gts::CONNECTIONS_METADATA_TYPE;
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
@@ -141,6 +144,16 @@ struct Catalogue {
     items: Vec<Connection>,
 }
 
+/// What [`ConnectorService::delivery_preflight`] found out about a connection.
+#[derive(Debug, Clone)]
+pub struct DeliveryPreflight {
+    pub label: String,
+    /// `personal` | `workspace` | `organization`.
+    pub scope: String,
+    /// Whether the credential already fixes the channel (an incoming webhook).
+    pub fixed_target: bool,
+}
+
 /// A provider the assembly can actually serve, i.e. one whose plugin gear is
 /// linked and registered.
 #[derive(Debug, Clone)]
@@ -149,12 +162,17 @@ pub struct ProviderInfo {
     pub display_name: String,
     pub default_base_url: String,
     pub instance_id: String,
-    /// `source_code` | `ai` — decides whether repositories can be browsed.
+    /// `source_code` | `ai` | `notification` — decides which affordances the
+    /// provider offers: browsing repositories, or posting messages.
     pub category: String,
     /// Field label for the credential ("Personal Access Token (PAT)", "API Key").
     pub credential_label: String,
     /// Placeholder hinting at the credential's shape.
     pub credential_hint: String,
+    /// For a notification provider: whether the credential already decides
+    /// which channel messages land in (an incoming webhook), so there is no
+    /// channel to list and none to pick.
+    pub fixed_target: bool,
 }
 
 pub struct ConnectorService {
@@ -192,6 +210,7 @@ impl ConnectorService {
                 category: d.category().as_str().to_string(),
                 credential_label: d.credential_label().to_string(),
                 credential_hint: d.credential_hint().to_string(),
+                fixed_target: d.fixed_target(),
             })
             .collect()
     }
@@ -623,6 +642,84 @@ impl ConnectorService {
         let driver = self.driver(&c.provider)?;
         let auth = self.auth(ctx, &c).await?;
         driver.list_repositories(&auth, search, limit).await
+    }
+
+    /// What the caller must know about a connection before queuing a delivery
+    /// against it: whether it can deliver at all, whether a target is needed,
+    /// and whose credential it is.
+    ///
+    /// Resolved with the *caller's* context on purpose. A queued delivery is
+    /// later performed by a background worker under the gear's own identity, so
+    /// the moment to find out that a connection is unusable is while there is
+    /// still a request to answer with a 400 — not three retries later in a dead
+    /// letter, where nobody is looking.
+    pub async fn delivery_preflight(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<DeliveryPreflight> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&c.provider)?;
+        if driver.category() != ConnectorCategory::Notification {
+            return Err(anyhow!(
+                "connection '{}' is a {} connection — it delivers no messages",
+                c.label,
+                driver.display_name()
+            ));
+        }
+        Ok(DeliveryPreflight {
+            label: c.label.clone(),
+            scope: c.scope.clone(),
+            fixed_target: driver.fixed_target(),
+        })
+    }
+
+    /// Channels a notification connection can post to.
+    ///
+    /// Empty for a webhook connection is not what happens: the driver refuses,
+    /// and the REST layer says why rather than showing an empty picker that
+    /// looks like a permissions problem.
+    pub async fn notification_targets(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+        search: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<NotifyTarget>> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&c.provider)?;
+        let auth = self.auth(ctx, &c).await?;
+        driver.list_targets(&auth, search, limit).await
+    }
+
+    /// Deliver one message through a connection.
+    ///
+    /// The connection is the unit of authorization: reaching it means the
+    /// caller could read its catalogue row and its secret, which is what
+    /// credstore's sharing mode already governs. Nothing further is checked
+    /// here — a member of a workspace may post through that workspace's
+    /// connections, and a personal one stays readable only by its owner.
+    ///
+    /// A message is not retried. A chat platform that refuses one is refusing
+    /// for a reason the caller should see (a channel the bot is not in, a
+    /// revoked webhook, a rate limit), and a queue that hides that behind
+    /// eventual delivery is a different feature — one with durable state,
+    /// which this gear does not have.
+    pub async fn send_message(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+        target: Option<&str>,
+        message: &NotifyMessage,
+    ) -> anyhow::Result<(Connection, SentMessage)> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&c.provider)?;
+        let auth = self.auth(ctx, &c).await?;
+        let sent = driver.send_message(&auth, target, message).await?;
+        Ok((c, sent))
     }
 }
 

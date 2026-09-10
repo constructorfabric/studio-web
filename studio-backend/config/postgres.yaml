@@ -13,8 +13,19 @@ server:
 database:
   # NB: this does NOT create missing Postgres databases, despite what it sounds
   # like — toolkit-db only consults it to create SQLite parent directories
-  # (manager.rs, finalize_sqlite_paths). Postgres databases come from
-  # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
+  # (manager.rs, finalize_sqlite_paths).
+  #
+  # The databases come from `backend-bootstrap`, which reads `gears.*.database`
+  # out of config/docker.yaml on every compose start and creates the ones that
+  # are missing. This note used to point at docker/initdb/01-create-databases.sql
+  # instead; that file has since been emptied on purpose, and says so, precisely
+  # because a list that only runs on a new volume went stale every time a
+  # stateful gear was added.
+  #
+  # The consequence for THIS profile, which runs the backend on the host against
+  # that same server: a gear configured here needs its database to exist, and it
+  # will if docker.yaml configures the gear too. Adding a gear here and nowhere
+  # else gets a connection error on the first request, not at boot.
   auto_provision: true
   servers:
     pg_main:
@@ -254,6 +265,20 @@ gears:
           x-gts-traits:
             inheritance_policy: "override_only"
 
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"
+          # Organization access config (ADR-0006): {model, roles[]}. Free-form
+          # object like workspace.settings; shape enforced client-side until the
+          # base tenant_metadata schema is relaxed upstream (gears issue #4).
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization access model + roles (free-form)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "inherit"
+
   nodes-registry:
     database:
       server: "pg_main"
@@ -301,6 +326,26 @@ gears:
     config:
       max_field_length: 200
 
+  # Document types, journey stages, capabilities and the documents themselves
+  # (ADR-0014). Without this section the gear stands down and registers no
+  # routes -- not a boot error, just a portal where the catalogue endpoints
+  # 404. It was configured in docker.yaml, k8s.yaml and oidc.yaml and missing
+  # here, so a backend run from this profile silently lost the whole gear.
+  #
+  # PostgreSQL only: its migrations refuse any other backend, which is why
+  # dev.yaml (SQLite) has no counterpart to this and cannot.
+  studio-documents:
+    database:
+      server: "pg_main"
+      dbname: "studio_documents"
+
+  studio-user:
+    database:
+      server: "pg_main"
+      # Canonical identity store (users, logins, memberships, aliases).
+      # backend-bootstrap creates this database from config on start.
+      dbname: "studio_users"
+
   file-storage:
     database:
       server: "pg_main"
@@ -337,6 +382,48 @@ gears:
         # fail at the provider with 401.
         - key: "openai-key"
           value: "sk-REPLACE_ME"
+
+  # ── studio-tasks (durable background runs) ──
+  # Owns the queue every gear's background work goes through, plus the run
+  # history an operator reads. Its own database because the queue and that
+  # history are written in ONE transaction — the `studio_tasks_outbox_*` family
+  # is toolkit-db's transactional outbox and `studio_tasks_runs` is the record.
+  # Drop the block and the gear stands down: the runs API answers 503 and
+  # nothing is queued.
+  studio-tasks:
+    database:
+      server: "pg_main"
+      dbname: "studio_tasks"
+    config: {}
+
+  # ── studio-scheduler (cron/interval schedules) ──
+  # Owns schedules and nothing else: each tick it enqueues due runs into
+  # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second
+  # replica does not double-fire.
+  #
+  # `owner_tenant_id` MUST match account-management's `bootstrap.root_id` below:
+  # the secure ORM has no cross-tenant read, so the ticker scans one tenant's
+  # schedules and schedules are therefore platform-level. A mismatch is not an
+  # error, it is a schedule list that is always empty.
+  #
+  # Drop the block and nothing fires on its own; the queue keeps working and
+  # `POST /studio-scheduler/v1/schedules/{id}/run-now` is unavailable.
+  studio-scheduler:
+    database:
+      server: "pg_main"
+      dbname: "studio_scheduler"
+    config:
+      owner_tenant_id: "00000000-0000-0000-0000-000000000001"
+      tick_seconds: 60
+      enabled: true
+
+  # ── studio-notify (queued notification delivery) ──
+  # No database: the run in studio-tasks IS the record, which is what keeps
+  # accepting a notification a single transaction. This gear validates the
+  # connection and enqueues a `notify.deliver` run; the outcome is read from
+  # GET /studio-tasks/v1/runs/{id}.
+  studio-notify:
+    config: {}
 
   mini-chat:
     database:

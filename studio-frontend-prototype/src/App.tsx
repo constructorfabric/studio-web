@@ -5,12 +5,20 @@ import { errText, matches } from "./format";
 import { ProjectsPortfolio } from "./projects";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
+import { BackgroundWork } from "./tasks";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
+import { ObjectTypes } from "./object-types";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
+import { ProcessCatalogTab } from "./process-catalog";
+import { runRepoSync, type SyncProgress } from "./artifact-sync";
+import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
+import { DomainModelGraph } from "./domain-model-graph";
+import { GtsEntitiesTable } from "./gts-entities";
+import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -28,9 +36,11 @@ import {
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
+  normalizeStages,
   type Connection,
   type ConnectorProvider,
   type Me,
+  type ProjectMode,
   type RemoteRepo,
   type RepoEntry,
   type Tenant,
@@ -39,6 +49,7 @@ import {
   waitForStudioSessionReady,
   uploadProjectArtifact,
 } from "./api";
+import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -304,6 +315,8 @@ type View =
   | "files"
   | "connectors"
   | "gears"
+  | "objects"
+  | "tasks"
   | "system"
   | "profile";
 
@@ -420,8 +433,12 @@ const NAV_SECTIONS: {
       // project of the org inherits it. Labelled "Connections" to match the
       // sidebar in the product mockups.
       { id: "connectors", icon: "plug", label: "Connections" },
-      { id: "chats", icon: "chat", label: "Chats" },
-      { id: "files", icon: "file", label: "Files" },
+      // Chats and Files are hidden: neither is a surface of the organization.
+      // A chat is had inside a project and a file is an artifact of one, so an
+      // org-wide list of either is a flat, contextless feed sitting one click
+      // from the top of the product. The views and their routes are kept
+      // (`view === "chats"`, `view === "files"`), so putting an entry back here
+      // is the whole of un-hiding them.
     ],
   },
   // Spec Quality is no longer a top-level surface — it moved onto the project
@@ -433,6 +450,13 @@ const NAV_SECTIONS: {
       // Our published gears (crates.io → graph), and the system observability
       // surface.
       { id: "gears", icon: "package", label: "Components" },
+      // The type catalogue the line above is a view of. Which types are
+      // components is a judgement this organization makes here, not a constant
+      // in a gear — so the two surfaces sit next to each other.
+      { id: "objects", icon: "grid", label: "Objects" },
+      // What the deployment is doing in the background, and what fires on its
+      // own: studio-tasks runs plus studio-scheduler schedules.
+      { id: "tasks", icon: "scan", label: "Background work" },
       { id: "system", icon: "cog", label: "System" },
     ],
   },
@@ -1635,6 +1659,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onCategories={setComponentCategories}
           />
         )}
+        {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
+        {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && <SystemView token={token} filters={filters} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
@@ -1783,6 +1809,7 @@ function FilterPanel({
                   <option value="plugin">plugin</option>
                   <option value="toolkit">toolkit</option>
                   <option value="frontx">frontx</option>
+                  <option value="kit">kit</option>
                 </select>
               </div>
               <div className="filter-group">
@@ -2349,8 +2376,20 @@ function ProjectsView({
       <div style={{ marginTop: 20 }}>
         <DocumentTypesTab token={token} workspaceId={root.id} />
       </div>
+      <div style={{ marginTop: 20 }}>
+        <ProcessCatalogTab token={token} workspaceId={root.id} />
+      </div>
     </>
   );
+}
+
+/** Ids resolved as the create plan runs; carried between steps and across a
+ *  retry so a healed run can skip what already succeeded. */
+interface CreateCtx {
+  tenantId: string;
+  repoFull: string;
+  branch: string;
+  cloneUrl: string;
 }
 
 /** Level 2: the projects (child tenants of type `project`) inside a workspace,
@@ -2372,15 +2411,24 @@ function WorkspaceProjects({
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<import("./api").ProjectKind>("new_gears");
-  const [conns, setConns] = useState<import("./api").Connection[]>([]);
-  const [connId, setConnId] = useState("");
-  const [repoMode, setRepoMode] = useState<"create" | "existing">("create");
-  const [repoName, setRepoName] = useState("");
-  const [owner, setOwner] = useState("");
-  const [isOrg, setIsOrg] = useState(false);
-  const [priv, setPriv] = useState(true);
-  const [remoteRepos, setRemoteRepos] = useState<import("./api").RemoteRepo[]>([]);
-  const [pickedRepo, setPickedRepo] = useState("");
+  // What the new project takes from the shared catalogue. A kit is a component
+  // like any other, and a project acquires one the same way it acquires
+  // anything else: by picking it from the list, not by naming a repository.
+  const [kitCatalog, setKitCatalog] = useState<import("./api").StudioKit[]>([]);
+  const [kitSel, setKitSel] = useState<Set<string>>(new Set());
+  // Journey framing captured at creation (previously dead in the UI): a free-text
+  // brief and the opt-in journey stages (Intent is always applied).
+  const [brief, setBrief] = useState("");
+  const [stageSel, setStageSel] = useState<Set<string>>(new Set());
+  // The workspace's effective stage catalogue: names, order, and which are
+  // required. It was a constant in api.ts until ADR-0014 s7 moved it to the
+  // server, because the journey is a thing an organization configures.
+  const [stageCatalogue, setStageCatalogue] = useState<import("./api").JourneyStage[]>([]);
+  // Resumable provisioning: the live checklist and the context that accumulates
+  // ids across steps, kept in a ref so Retry reuses the same run.
+  const [prov, setProv] = useState<StepState[] | null>(null);
+  const [provOk, setProvOk] = useState(false);
+  const provCtx = useRef<CreateCtx>({ tenantId: "", repoFull: "", branch: "main", cloneUrl: "" });
   // Inline row editing (rename) + per-row busy for edit/delete.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -2404,114 +2452,165 @@ function WorkspaceProjects({
     void reload();
   }, [reload]);
 
-  // Load the workspace's connections when the create card opens.
+  // Load the shared component catalogue when the create card opens.
   useEffect(() => {
     if (!creating) return;
     api
-      .connections(token, workspace.id)
-      .then((r) => setConns(r.items ?? []))
-      .catch(() => {});
+      .kits(token)
+      .then((r) => setKitCatalog(r.items ?? []))
+      .catch(() => setKitCatalog([]));
+  }, [creating, token]);
+
+  // ...and its journey-stage catalogue, for the same reason and at the same
+  // moment. An empty catalogue simply renders no chips: a project can still be
+  // created, and its stages can be set later.
+  useEffect(() => {
+    if (!creating) return;
+    api
+      .stages(token, workspace.id)
+      .then((r) => setStageCatalogue(r.items ?? []))
+      .catch(() => setStageCatalogue([]));
   }, [creating, token, workspace.id]);
 
-  // Repo mode allowed per project kind: product always creates a new repo,
-  // an imported existing app always picks one, new-gears defaults to create.
-  useEffect(() => {
-    if (newKind === "product") setRepoMode("create");
-    else if (newKind === "existing") setRepoMode("existing");
-    else setRepoMode("create");
-  }, [newKind]);
+  const toggleKit = (slug: string) =>
+    setKitSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
 
-  // When picking an existing repo, list the chosen connection's repositories.
-  useEffect(() => {
-    if (!creating || repoMode !== "existing" || !connId) return;
-    api
-      .connectionRepositories(token, connId, workspace.id)
-      .then((r) => setRemoteRepos(r.items ?? []))
-      .catch(() => setRemoteRepos([]));
-  }, [creating, repoMode, connId, token, workspace.id]);
+  /** Build the idempotent create plan for the current form inputs. Each step
+   *  probes real backend state in `check` so a retry resumes cleanly instead of
+   *  duplicating writes (ADR-0010: creation is several non-atomic requests). */
+  const buildCreatePlan = (name: string): ProvisionStep<CreateCtx>[] => {
+    const mode: ProjectMode = newKind === "existing" ? "modernize" : "greenfield";
+    const steps: ProvisionStep<CreateCtx>[] = [];
 
-  const repoDir = (fullPath: string) =>
-    (fullPath.split("/").pop() ?? fullPath).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+    // 1) Project tenant — find-or-create. Reusing a same-named sibling heals a
+    //    prior half-run and closes the "duplicate tenant on retry" race.
+    steps.push({
+      key: "tenant",
+      label: "Project tenant",
+      check: async (ctx) => {
+        const page = await api.tenantChildren(token, workspace.id);
+        const found = (page.items ?? []).find(
+          (t) => t.tenant_type === TENANT_TYPES.project && t.name === name,
+        );
+        if (found) {
+          ctx.tenantId = found.id;
+          return true;
+        }
+        return false;
+      },
+      run: async (ctx) => {
+        const t = await api.createTenant(token, {
+          name,
+          parent_id: workspace.id,
+          tenant_type: TENANT_TYPES.project,
+        });
+        ctx.tenantId = t.id;
+      },
+    });
 
-  const create = async () => {
+    // 3) Project config — mode/kind/stages/brief. Idempotent overwriting PUT,
+    //    so it always runs (cheap) and re-running is safe.
+    steps.push({
+      key: "config",
+      label: "Project config",
+      run: async (ctx) => {
+        const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
+        await api.putProjectConfig(token, ctx.tenantId, {
+          ...cfg,
+          mode,
+          kind: newKind,
+          stages: normalizeStages([...stageSel], stageCatalogue),
+          status: cfg.status ?? "draft",
+          brief: brief.trim() || cfg.brief,
+          source_git_url: ctx.cloneUrl || cfg.source_git_url,
+        });
+      },
+    });
+
+    // 3) Kits the project asked for, as DESIRED state.
+    //
+    //    Requesting is idempotent by slug, and materialization is somebody
+    //    else's job: the registry records `pending`, and a trusted `cfs` runner
+    //    writes the files into whatever repositories the project has when it
+    //    has them. That is why creation no longer needs a repository at all --
+    //    a project can want a kit before it has anywhere to put it.
+    if (kitSel.size > 0) {
+      steps.push({
+        key: "kits",
+        label: `Request ${kitSel.size} kit${kitSel.size === 1 ? "" : "s"}`,
+        check: async (ctx) => {
+          const current = await api
+            .kitInstallations(token, ctx.tenantId)
+            .then((r) => r.items)
+            .catch(() => []);
+          return [...kitSel].every((slug) => current.some((i) => i.kit_slug === slug));
+        },
+        run: async (ctx) => {
+          for (const slug of kitSel) {
+            const kit = kitCatalog.find((k) => k.slug === slug);
+            if (!kit) continue;
+            await api.requestKitInstallation(token, ctx.tenantId, {
+              kit_slug: kit.slug,
+              version: kit.default_version,
+              install_mode: "copy",
+              scope: "all-repositories",
+            });
+          }
+        },
+      });
+    }
+
+    return steps;
+  };
+
+  // Run (or re-run) the create plan. Retry reuses the same accumulated context,
+  // so satisfied steps short-circuit and only the failed tail re-executes.
+  const runCreate = async () => {
     const name = newName.trim();
     if (!name) return;
     setBusy(true);
     setErr(null);
-    try {
-      const tenant = await api.createTenant(token, {
-        name,
-        parent_id: workspace.id,
-        tenant_type: TENANT_TYPES.project,
-      });
-      await api
-        .putProjectConfig(token, tenant.id, {
-          mode: newKind === "existing" ? "modernize" : "greenfield",
-          kind: newKind,
-          stages: [],
-          status: "draft",
-        })
-        .catch(() => {});
-
-      // Resolve the project's repository: create a new one, or attach an existing.
-      const conn = conns.find((c) => c.id === connId);
-      let repoFull = "";
-      let branch = "main";
-      let cloneUrl = "";
-      if (repoMode === "create") {
-        if (!repoName.trim()) throw new Error("enter a name for the new repository");
-        const r = await api.createProjectRepo(token, tenant.id, {
-          tenant: workspace.id,
-          connection_id: connId || null,
-          owner: isOrg ? owner.trim() : undefined,
-          is_org: isOrg,
-          name: repoName.trim(),
-          private: priv,
-        });
-        repoFull = r.full_name;
-        branch = r.default_branch || "main";
-        cloneUrl = `https://github.com/${r.full_name}.git`;
-      } else {
-        const picked = remoteRepos.find((r) => r.full_path === pickedRepo);
-        if (!picked) throw new Error("pick a repository to attach");
-        repoFull = picked.full_path;
-        branch = picked.default_branch || "main";
-        cloneUrl = picked.clone_url;
-        await api.setProjectGearRepo(token, tenant.id, {
-          tenant: workspace.id,
-          connection_id: connId || null,
-          repo: repoFull,
-          branch,
-        });
-      }
-
-      // Add it to the project's repositories list (shown by Repositories/Sources).
-      const s = (await api.workspaceSettings(token, tenant.id).catch(() => null)) ?? {};
-      const entry: import("./api").RepoEntry = {
-        name: repoDir(repoFull),
-        source: "github",
-        url: cloneUrl,
-        target: repoDir(repoFull),
-        branch,
-        token_ref: conn?.secret_ref,
-      };
-      await api
-        .putWorkspaceSettings(token, tenant.id, { ...s, repos: [...(s.repos ?? []), entry] })
-        .catch(() => {});
-
-      setNewName("");
-      setRepoName("");
-      setPickedRepo("");
-      setCreating(false);
+    const res = await runProvision(buildCreatePlan(name), provCtx.current, setProv);
+    setProvOk(res.ok);
+    if (res.ok) {
       await reload();
       onChanged();
-      onOpenProject({ id: tenant.id, name });
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
+
+  const create = async () => {
+    // Fresh run: reset the accumulated ids. `check` rehydrates them from the
+    // backend anyway, so this is just hygiene for a brand-new attempt.
+    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+    setProvOk(false);
+    await runCreate();
+  };
+
+  // Reset the create card back to an empty, pre-run state.
+  const resetCreate = () => {
+    setCreating(false);
+    setProv(null);
+    setProvOk(false);
+    setNewName("");
+    setBrief("");
+    setStageSel(new Set());
+    setKitSel(new Set());
+    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+  };
+
+  const toggleStage = (key: string) =>
+    setStageSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const startEdit = (p: { id: string; name: string }) => {
     setEditingId(p.id);
@@ -2562,7 +2661,7 @@ function WorkspaceProjects({
             workspace · <code>{workspace.id.slice(0, 8)}…</code>
           </p>
         </div>
-        <button className="primary" onClick={() => setCreating((v) => !v)}>
+        <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
           New project
         </button>
       </div>
@@ -2619,65 +2718,204 @@ function WorkspaceProjects({
             </div>
 
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Repository</div>
-              <select value={connId} onChange={(e) => setConnId(e.target.value)} style={{ marginBottom: 8, width: "100%" }}>
-                <option value="">First GitHub connection</option>
-                {conns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} · {c.provider} · {c.account}
-                  </option>
-                ))}
-              </select>
-
-              {newKind === "new_gears" && (
-                <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 12 }}>
-                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="radio" name="repomode" checked={repoMode === "create"} onChange={() => setRepoMode("create")} />
-                    Create new
-                  </label>
-                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="radio" name="repomode" checked={repoMode === "existing"} onChange={() => setRepoMode("existing")} />
-                    Use existing gear store
-                  </label>
-                </div>
-              )}
-
-              {repoMode === "create" ? (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <input placeholder="new repo name" value={repoName} onChange={(e) => setRepoName(e.target.value)} />
-                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="checkbox" checked={isOrg} onChange={(e) => setIsOrg(e.target.checked)} />
-                    under org
-                  </label>
-                  {isOrg && (
-                    <input placeholder="org login" value={owner} onChange={(e) => setOwner(e.target.value)} style={{ width: 140 }} />
-                  )}
-                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="checkbox" checked={priv} onChange={(e) => setPriv(e.target.checked)} />
-                    private
-                  </label>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                Components
+              </div>
+              <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                What this project takes from the shared catalogue. Requested now, written
+                into the project&apos;s repositories when it has them — so a project can
+                want a kit before it has anywhere to put it.
+              </p>
+              {kitCatalog.length === 0 ? (
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  The catalogue is empty, or could not be read. A project can be created
+                  without components and take them later from its Kits tab.
                 </div>
               ) : (
-                <select value={pickedRepo} onChange={(e) => setPickedRepo(e.target.value)} style={{ width: "100%" }} disabled={!connId}>
-                  <option value="">{connId ? "— select a repository —" : "pick a connection first"}</option>
-                  {remoteRepos.map((r) => (
-                    <option key={r.id} value={r.full_path}>
-                      {r.full_path}
-                      {r.visibility ? ` · ${r.visibility}` : ""}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {kitCatalog.map((k) => {
+                    const on = kitSel.has(k.slug);
+                    return (
+                      <label
+                        key={k.slug}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "flex-start",
+                          padding: "6px 10px",
+                          border: "1px solid var(--border,#e2e4e9)",
+                          borderRadius: 8,
+                          background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                          cursor: prov !== null ? "default" : "pointer",
+                          opacity: prov !== null && !on ? 0.5 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={prov !== null}
+                          onChange={() => toggleKit(k.slug)}
+                          style={{ marginTop: 2 }}
+                        />
+                        <span>
+                          <span style={{ fontSize: 12, fontWeight: 600 }}>{k.name}</span>
+                          <span style={{ fontSize: 11, opacity: 0.6 }}>
+                            {" "}
+                            · {k.publisher} · {k.default_version}
+                          </span>
+                          <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>
+                            {k.description}
+                          </div>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="primary" onClick={() => void create()} disabled={!newName.trim() || busy}>
-                {busy ? "Creating…" : "Create project"}
-              </button>
-              <button className="ghost" onClick={() => setCreating(false)}>
-                Cancel
-              </button>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                Brief <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+              </div>
+              <textarea
+                placeholder={
+                  newKind === "existing"
+                    ? "What is this app, and what are we modernizing?"
+                    : "What are we building, and why? Seeds the Intent stage."
+                }
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                rows={3}
+                style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+                disabled={prov !== null}
+              />
             </div>
+
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {stageCatalogue.map((s) => {
+                  const on = s.required || stageSel.has(s.key);
+                  return (
+                    <label
+                      key={s.key}
+                      title={s.required ? "Always applied" : undefined}
+                      style={{
+                        display: "inline-flex",
+                        gap: 6,
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        border: "1px solid var(--border,#e2e4e9)",
+                        borderRadius: 999,
+                        fontSize: 12,
+                        background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                        cursor: s.required || prov !== null ? "default" : "pointer",
+                        opacity: prov !== null && !on ? 0.5 : 1,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={s.required || prov !== null}
+                        onChange={() => toggleStage(s.key)}
+                      />
+                      {s.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {prov === null ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="primary"
+                  onClick={() => void create()}
+                  disabled={!newName.trim() || busy}
+                >
+                  {busy ? "Creating…" : "Create project"}
+                </button>
+                <button className="ghost" onClick={resetCreate}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: "1px solid var(--border,#e2e4e9)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8 }}>
+                  Provisioning {newName.trim()}
+                </div>
+                {prov.map((st) => {
+                  const mark =
+                    st.status === "done"
+                      ? "✓"
+                      : st.status === "running"
+                        ? "…"
+                        : st.status === "failed"
+                          ? "✕"
+                          : "○";
+                  const color =
+                    st.status === "done"
+                      ? "var(--ok,#15803d)"
+                      : st.status === "failed"
+                        ? "var(--danger,#b91c1c)"
+                        : "inherit";
+                  return (
+                    <div key={st.key} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                      <span style={{ width: 14, color, fontWeight: 700 }}>{mark}</span>
+                      <span style={{ fontSize: 13 }}>{st.label}</span>
+                      {st.error && (
+                        <span style={{ fontSize: 12, color: "var(--danger,#b91c1c)" }}>
+                          — {st.error}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  {provOk ? (
+                    <>
+                      <button
+                        className="primary"
+                        onClick={() => {
+                          const id = provCtx.current.tenantId;
+                          const name = newName.trim();
+                          resetCreate();
+                          if (id) onOpenProject({ id, name });
+                        }}
+                      >
+                        Open project
+                      </button>
+                      <button className="ghost" onClick={resetCreate}>
+                        Done
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="primary"
+                        onClick={() => void runCreate()}
+                        disabled={busy}
+                      >
+                        {busy ? "Retrying…" : "Retry"}
+                      </button>
+                      <button className="ghost" onClick={resetCreate} disabled={busy}>
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2772,13 +3010,9 @@ function WorkspaceProjects({
   );
 }
 
-/** Project attributes (mode / status / stages / brief) — the fields the retired
- *  studio-project gear used to own, now stored as `project.config` tenant
- *  metadata on the project tenant and edited here. Status is forward-only and
- *  the stage list is validated against the catalogue, both client-side now. */
-/** The sections of an open project. Lifted so the shell sidebar can BE the
- *  project's nav (the tab is stored on the shell, not inside ProjectScreen). */
-type ProjTab = "overview" | "artifacts" | "documents" | "kits" | "analyze" | "automation" | "people";
+/** The sections of an open project — the type is defined next to the Overview
+ *  that links to them; this is the shell sidebar's rendering of the list (the
+ *  active tab is stored on the shell, not inside ProjectScreen). */
 const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "overview", icon: "home", label: "Overview" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
@@ -2855,9 +3089,13 @@ function ProjectScreen({
       </div>
       <div className="proj-content">
         {tab === "overview" && (
-          <>
-            <WorkspaceDashboard token={token} ws={proj} embedded onBack={onBack} onOpenStudio={onOpenStudio} />
-          </>
+          <ProjectOverview
+            token={token}
+            project={proj}
+            parentWorkspaceId={workspace.id}
+            onOpenTab={setTab}
+            onOpenStudio={() => onOpenStudio(proj)}
+          />
         )}
         {tab === "artifacts" && (
           <ArtifactsView
@@ -3487,6 +3725,7 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
   } | null>(null);
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
 
   const onModelFile = async (file: File) => {
     setModelErr(null);
@@ -3612,17 +3851,7 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           governed by tenant scope + self-managed barriers only; the permissions below are the
           registered vocabulary the future PDP and Role Grants will enforce.
         </p>
-        {permissions.length === 0 ? (
-          <p className="empty">No permission instances found in the types-registry.</p>
-        ) : (
-          <ul className="perm-list">
-            {permissions.map((p) => (
-              <li key={p}>
-                <code>{p.replace("gts.cf.toolkit.authz.permission.v1~", "")}</code>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PermissionsTable data={entities} />
       </div>
 
       <div className="card">
@@ -3648,6 +3877,9 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           <button disabled={modelBusy} onClick={() => void onRegenerate()}>
             Regenerate frontend
           </button>
+          <button onClick={() => setShowGraph((v) => !v)}>
+            {showGraph ? "Hide graph" : "View graph"}
+          </button>
         </div>
         {modelErr && (
           <p className="error" style={{ marginTop: 10 }}>
@@ -3666,6 +3898,11 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
             inherits · {modelSync.declares} declares · {modelSync.skipped_endpoints} skipped.
           </p>
         )}
+        {showGraph && (
+          <div style={{ marginTop: 14 }}>
+            <DomainModelGraph token={token} />
+          </div>
+        )}
       </div>
 
       {visibleCards.length === 0 && (
@@ -3675,9 +3912,15 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
         <div className="card" key={c.title}>
           <h2>{c.title}</h2>
           <p className="hint">{c.sub}</p>
-          <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
-            {JSON.stringify(c.data, null, 2)}
-          </pre>
+          {c.key === "entities" ? (
+            <GtsEntitiesTable data={c.data} />
+          ) : c.key === "gears" ? (
+            <GearsTable data={c.data} />
+          ) : (
+            <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
+              {JSON.stringify(c.data, null, 2)}
+            </pre>
+          )}
         </div>
       ))}
     </>
@@ -3825,11 +4068,6 @@ function HomeView({
             <li>
               <button className="linklike" onClick={() => onNavigate("connectors")}>
                 Connect a repository →
-              </button>
-            </li>
-            <li>
-              <button className="linklike" onClick={() => onNavigate("chats")}>
-                Ask AI →
               </button>
             </li>
           </ul>
@@ -4540,38 +4778,6 @@ function ProjectFiles({
   );
 }
 
-/** Derive the artifact-ingest parameters (provider + owner/repo + API base)
- *  from a git clone URL. Returns null for hosts we have no driver for. */
-function parseRepoSource(
-  url?: string,
-): { provider: string; full_path: string; base_url?: string } | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    const provider = host.includes("github")
-      ? "github"
-      : host.includes("gitlab")
-        ? "gitlab"
-        : host.includes("bitbucket")
-          ? "bitbucket"
-          : "";
-    if (!provider) return null;
-    const full_path = u.pathname.replace(/^\/+/, "").replace(/\.git$/, "");
-    // github.com uses api.github.com (the driver default); GHE and self-hosted
-    // GitLab need their own API root.
-    const base_url =
-      host === "github.com"
-        ? undefined
-        : provider === "github"
-          ? `${u.protocol}//${host}/api/v3`
-          : `${u.protocol}//${host}`;
-    return { provider, full_path, base_url };
-  } catch {
-    return null;
-  }
-}
-
 function ProjectSources({
   token,
   workspace: ws,
@@ -4590,90 +4796,21 @@ function ProjectSources({
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // Per-repo artifact-sync status text, keyed by repo name.
-  const [sync, setSync] = useState<Record<string, string>>({});
+  // Per-repo artifact-sync progress, keyed by repo name.
+  const [sync, setSync] = useState<Record<string, SyncProgress>>({});
 
   const syncRepo = async (r: RepoEntry) => {
-    const parsed = parseRepoSource(r.url ?? undefined);
-    if (!parsed) {
-      setSync((s) => ({ ...s, [r.name]: "unsupported source URL" }));
-      return;
-    }
-    if (!r.token_ref) {
-      setSync((s) => ({ ...s, [r.name]: "no token — attach it from a connector" }));
-      return;
-    }
-    setSync((s) => ({ ...s, [r.name]: "queued…" }));
-    try {
-      // Sync runs in the background (cloning can take a while); enqueue, then
-      // poll the task to completion. A trailing "…" marks a running state and
-      // keeps the button disabled.
-      const { task_id } = await api.syncArtifacts(token, {
-        provider: parsed.provider,
-        secret_ref: r.token_ref,
-        repo_full_path: parsed.full_path,
-        base_url: parsed.base_url,
-        // Tag every node with both tenants: the parent workspace (so a
-        // workspace-level graph shows every project) and this project (so a
-        // project-level graph shows only its own). `project_id` also locates
-        // the IDE's shared checkout to read instead of cloning.
-        workspace_id: parentWorkspaceId ?? ws.id,
-        project_id: ws.id,
-        repo_dir: r.target || r.name,
-      });
-      const deadline = Date.now() + 5 * 60 * 1000;
-      // Running total of nodes the backend reports as already stored in the
-      // graph. When it climbs, refresh the ingested-artifacts viewer so the
-      // objects appear as they land, not only when the whole sync finishes.
-      let lastStored = -1;
-      // Compact "what's been pulled so far" line, hiding zero counts.
-      const counts = (t: {
-        issues: number;
-        pull_requests: number;
-        files: number;
-        comments: number;
-        commits: number;
-      }) =>
-        [
-          t.issues ? `${t.issues} issues` : "",
-          t.pull_requests ? `${t.pull_requests} PRs` : "",
-          t.files ? `${t.files} files` : "",
-          t.comments ? `${t.comments} comments` : "",
-          t.commits ? `${t.commits} commits` : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      for (;;) {
-        await new Promise((res) => setTimeout(res, 1200));
-        const t = await api.artifactSyncTask(token, task_id);
-        if (t.status === "succeeded") {
-          setSync((s) => ({ ...s, [r.name]: counts(t) || "done" }));
-          onSynced?.();
-          break;
-        }
-        if (t.status === "failed") {
-          setSync((s) => ({ ...s, [r.name]: t.message || "sync failed" }));
-          break;
-        }
-        // Live line: the current phase, plus counts and how many objects are
-        // already in the graph.
-        const phase = (t.message || t.status).replace(/…$/, "");
-        const c = counts(t);
-        const line = `${phase}${c ? ` — ${c}` : ""}${t.stored ? ` · ${t.stored} in graph` : ""}…`;
-        setSync((s) => ({ ...s, [r.name]: line }));
-        // Objects landed since last tick → reload the ingested list.
-        if (t.stored > lastStored) {
-          lastStored = t.stored;
-          onSynced?.();
-        }
-        if (Date.now() > deadline) {
-          setSync((s) => ({ ...s, [r.name]: "timed out — still running server-side" }));
-          break;
-        }
+    // Nodes land in the graph as the sync runs, so refresh the ingested list
+    // whenever the stored count climbs (and once at the end) rather than on
+    // every poll tick.
+    let lastStored = -1;
+    await runRepoSync(token, r, { workspaceId: parentWorkspaceId ?? ws.id, projectId: ws.id }, (p) => {
+      setSync((s) => ({ ...s, [r.name]: p }));
+      if (!p.running || p.stored > lastStored) {
+        lastStored = p.stored;
+        onSynced?.();
       }
-    } catch (e) {
-      setSync((s) => ({ ...s, [r.name]: errText(e) }));
-    }
+    });
   };
 
   const reload = useCallback(async () => {
@@ -4733,16 +4870,16 @@ function ProjectSources({
                   {r.source}
                   {r.url ? ` · ${r.url}` : ""}
                   {r.branch ? ` · ${r.branch}` : ""}
-                  {sync[r.name] ? ` — sync: ${sync[r.name]}` : ""}
+                  {sync[r.name] ? ` — sync: ${sync[r.name].line}` : ""}
                 </div>
               </div>
               <button
                 className="ghost"
                 title="Clone this source and pull its issues, pull requests and files into the graph"
-                disabled={!!sync[r.name]?.endsWith("…")}
+                disabled={!!sync[r.name]?.running}
                 onClick={() => void syncRepo(r)}
               >
-                {sync[r.name]?.endsWith("…") ? "…" : "Sync"}
+                {sync[r.name]?.running ? "…" : "Sync"}
               </button>
               <button className="ghost" disabled={busy === r.name} onClick={() => void detach(r.name)}>
                 {busy === r.name ? "…" : "Detach"}

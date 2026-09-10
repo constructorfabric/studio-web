@@ -3,7 +3,16 @@
 //! Tokens are write-only: they arrive on create and never come back out. What
 //! a client gets is the connection record plus, on create and test, the
 //! identity the provider reported for that credential — enough to confirm the
-//! right token was pasted without ever echoing it.
+//! right token was pasted without ever echoing it. That holds for a webhook
+//! URL too, which is a credential and not a location: it is stored in
+//! credstore like any other secret and never appears in a response.
+//!
+//! Beyond the catalogue, the routes are the capabilities of whatever provider
+//! a connection points at: `…/repositories` for a source host, `…/targets` and
+//! `…/messages` for a chat platform. A route asked of the wrong kind of
+//! connection answers with the driver's own refusal rather than an empty
+//! result, so "Slack has no repositories" comes back as a failed-precondition
+//! violation with that sentence in it.
 
 use std::sync::Arc;
 
@@ -17,16 +26,16 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::driver::{DriverIdentity, RemoteRepo};
+use super::driver::{DriverIdentity, NotifyMessage, NotifyTarget, RemoteRepo};
 #[cfg(feature = "graph")]
-use super::graph_sync::{SyncOutcome, SyncRequest, sync_repository};
+use super::graph_sync::SyncOutcome;
 #[cfg(feature = "graph")]
-use super::graph_sync_tasks::TaskRegistry;
+use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
-use crate::user_profile::AliasResolver;
-#[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
+#[cfg(feature = "graph")]
+use toolkit::client_hub::{ClientHub, ClientScope};
 
 /// Errors attributable to a connection as a resource.
 #[resource_error(gts_id!("cf.studio.connector.connection.v1~"))]
@@ -61,13 +70,10 @@ impl Connectors {
 #[derive(Clone)]
 pub struct GraphSink {
     client: Option<Arc<dyn GraphStorageClientV1>>,
-    /// The background imports this process has run, for the poll endpoint.
-    tasks: Arc<TaskRegistry>,
-    /// Identity resolution for contributor accounts. Absent when the
-    /// studio-user gear is inert (no database); person nodes then stay keyed
-    /// per provider. Carried here rather than as its own Extension because it
-    /// is only consulted on the graph path.
-    identity: Option<Arc<dyn AliasResolver>>,
+    /// Resolves the task queue per request. An import is a run now, and both
+    /// the enqueue and the poll endpoint read through here — lazily, so this
+    /// gear does not care whether `studio-tasks` initialized first.
+    hub: Arc<ClientHub>,
 }
 
 #[cfg(not(feature = "graph"))]
@@ -76,15 +82,8 @@ pub struct GraphSink;
 
 #[cfg(feature = "graph")]
 impl GraphSink {
-    pub fn new(
-        client: Option<Arc<dyn GraphStorageClientV1>>,
-        identity: Option<Arc<dyn AliasResolver>>,
-    ) -> Self {
-        Self {
-            client,
-            tasks: Arc::new(TaskRegistry::default()),
-            identity,
-        }
+    pub fn new(client: Option<Arc<dyn GraphStorageClientV1>>, hub: Arc<ClientHub>) -> Self {
+        Self { client, hub }
     }
 
     fn get(&self) -> ApiResult<&Arc<dyn GraphStorageClientV1>> {
@@ -93,6 +92,20 @@ impl GraphSink {
                 .with_detail("the knowledge graph is not available in this deployment")
                 .create()
         })
+    }
+
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "repository imports are not available in this deployment                          (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
     }
 }
 
@@ -116,12 +129,17 @@ pub struct ProviderDto {
     pub default_base_url: String,
     /// GTS instance id of the driver plugin serving this provider.
     pub instance_id: String,
-    /// `source_code` (repositories can be browsed) | `ai` (credential only).
+    /// `source_code` (repositories can be browsed) | `ai` (credential only) |
+    /// `notification` (messages can be posted).
     pub category: String,
     /// Label the UI should put above the credential field.
     pub credential_label: String,
     /// Placeholder for the credential field.
     pub credential_hint: String,
+    /// `notification` providers only: `true` when the credential itself fixes
+    /// the channel — an incoming webhook — so a client should offer no channel
+    /// picker and send no `target`.
+    pub fixed_target: bool,
 }
 
 #[derive(Debug)]
@@ -245,6 +263,64 @@ pub struct RemoteRepoListDto {
     pub items: Vec<RemoteRepoDto>,
 }
 
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct NotifyTargetDto {
+    /// Provider-native id. Send this back as `target` — it is what the driver
+    /// expects, and its shape differs per platform.
+    pub id: String,
+    /// Channel name without the platform's sigil.
+    pub name: String,
+    /// The server or workspace the channel belongs to, where the platform
+    /// nests them (a Discord guild).
+    pub container: Option<String>,
+    /// Whether posting needs an invite.
+    pub private: bool,
+    /// Whether a message to this target must carry a `topic`. True for Zulip.
+    pub topic_required: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct NotifyTargetListDto {
+    pub items: Vec<NotifyTargetDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SendMessageRequest {
+    /// Channel to post to, from `GET …/targets`. Omitted for a provider whose
+    /// `fixed_target` is true (an incoming webhook), required otherwise.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// The message body. Markdown-ish; each driver renders it into its own
+    /// platform's idiom.
+    pub text: String,
+    /// A short headline, rendered bold above the body.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// A link to the thing the message is about, appended as its own line.
+    #[serde(default)]
+    pub link: Option<String>,
+    /// Thread/topic within the channel. Required by Zulip — which supplies a
+    /// default when it is absent — and ignored by Slack and Discord.
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SentMessageDto {
+    #[schema(value_type = String)]
+    pub connection_id: Uuid,
+    pub provider: String,
+    /// Where it landed, as the platform reported it. Not necessarily what was
+    /// asked for: a webhook connection resolves its own channel.
+    pub target: String,
+    /// Provider-native message id, where the platform returns one.
+    pub message_id: Option<String>,
+}
+
 /// Which tenant's catalogue the request is about. The portal passes the
 /// workspace it is showing; omitted falls back to the caller's own tenant.
 #[derive(Debug, Deserialize)]
@@ -253,8 +329,11 @@ pub struct ScopeQuery {
     tenant: Option<Uuid>,
 }
 
+/// A filtered listing through a connection — repositories, or notification
+/// channels. One struct: the three parameters mean the same thing for both,
+/// and the providers differ only in whether the filtering happens server-side.
 #[derive(Debug, Deserialize)]
-pub struct RepoQuery {
+pub struct ListingQuery {
     /// Narrow the listing; server-side where the provider supports it.
     #[serde(default)]
     search: Option<String>,
@@ -284,6 +363,16 @@ fn to_test_dto(c: Connection, id: DriverIdentity) -> ConnectionTestDto {
         connection: to_dto(c),
         account: id.account,
         display_name: id.display_name,
+    }
+}
+
+fn to_target_dto(t: NotifyTarget) -> NotifyTargetDto {
+    NotifyTargetDto {
+        id: t.id,
+        name: t.name,
+        container: t.container,
+        private: t.private,
+        topic_required: t.topic_required,
     }
 }
 
@@ -317,6 +406,7 @@ async fn list_providers(
                 category: p.category,
                 credential_label: p.credential_label,
                 credential_hint: p.credential_hint,
+                fixed_target: p.fixed_target,
             })
             .collect(),
     }))
@@ -446,7 +536,7 @@ async fn list_repositories(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
     Path(id): Path<Uuid>,
-    Query(q): Query<RepoQuery>,
+    Query(q): Query<ListingQuery>,
 ) -> ApiResult<JsonBody<RemoteRepoListDto>> {
     let svc = connectors.get()?;
     let items = svc
@@ -471,6 +561,94 @@ async fn list_repositories(
         })?;
     Ok(Json(RemoteRepoListDto {
         items: items.into_iter().map(to_repo_dto).collect(),
+    }))
+}
+
+async fn list_targets(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ListingQuery>,
+) -> ApiResult<JsonBody<NotifyTargetListDto>> {
+    let svc = connectors.get()?;
+    let items = svc
+        .notification_targets(
+            &ctx,
+            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            id,
+            q.search.as_deref(),
+            q.limit.unwrap_or(100),
+        )
+        .await
+        // Three shapes of the same answer: an unusable credential, a
+        // connection to something that is not a chat platform, and a webhook
+        // whose channel is fixed in its URL. All three are the connection's
+        // state rather than a malformed request, and all three carry a
+        // sentence worth showing.
+        .map_err(|e| {
+            StudioConnectorError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "CONNECTOR_LISTING_UNAVAILABLE",
+                )
+                .create()
+        })?;
+    Ok(Json(NotifyTargetListDto {
+        items: items.into_iter().map(to_target_dto).collect(),
+    }))
+}
+
+async fn send_message(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ScopeQuery>,
+    Json(req): Json<SendMessageRequest>,
+) -> ApiResult<JsonBody<SentMessageDto>> {
+    let svc = connectors.get()?;
+    // The one thing this layer can judge without asking a provider. Everything
+    // else — whether the target is required, whether the channel exists,
+    // whether the bot may post in it — is the platform's to answer.
+    if req.text.trim().is_empty() && req.title.as_deref().unwrap_or_default().trim().is_empty() {
+        return Err(StudioConnectorError::invalid_argument()
+            .with_constraint("a message needs a text or a title")
+            .create());
+    }
+    let message = NotifyMessage {
+        text: req.text,
+        title: req.title,
+        link: req.link,
+        topic: req.topic,
+    };
+    let (connection, sent) = svc
+        .send_message(
+            &ctx,
+            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            id,
+            req.target.as_deref(),
+            &message,
+        )
+        .await
+        // Delivery failed at the provider, or the connection is not one that
+        // can deliver. Reported as a precondition on the connection with the
+        // platform's own words: `not_in_channel`, `Missing Access`, a revoked
+        // webhook. A message is never retried here — see
+        // `ConnectorService::send_message`.
+        .map_err(|e| {
+            StudioConnectorError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "CONNECTOR_DELIVERY_FAILED",
+                )
+                .create()
+        })?;
+    Ok(Json(SentMessageDto {
+        connection_id: connection.id,
+        provider: connection.provider,
+        target: sent.target,
+        message_id: sent.id,
     }))
 }
 
@@ -606,6 +784,54 @@ pub fn register_routes(
         .path_param("id", "Connection id")
         .handler(list_repositories)
         .json_response_with_schema::<RemoteRepoListDto>(openapi, StatusCode::OK, "Repositories")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-connector/v1/connections/{id}/targets")
+        .operation_id("studio_connector.list_targets")
+        .summary("List channels a notification connection can post to")
+        .description(
+            "Slack conversations, Zulip channels, Discord text channels. Each entry's \
+             `id` is what `POST …/messages` expects as `target`. Refuses a \
+             connection whose provider has no channels to browse — including an \
+             incoming webhook, whose channel is fixed in the URL it was created from.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Connection id")
+        .handler(list_targets)
+        .json_response_with_schema::<NotifyTargetListDto>(openapi, StatusCode::OK, "Channels")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-connector/v1/connections/{id}/messages")
+        .operation_id("studio_connector.send_message")
+        .summary("Post a message through a notification connection")
+        .description(
+            "The caller says what happened; the driver renders it into the platform's \
+             own idiom, so no caller has to know which of Slack, Zulip or Discord is \
+             behind the connection. Delivered once and not retried: a refusal by the \
+             platform comes back as a failed-precondition on the connection, carrying \
+             the platform's own reason — which is the thing worth acting on.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Connection id")
+        .json_request::<SendMessageRequest>(openapi, "The message to deliver")
+        .handler(send_message)
+        .json_response_with_schema::<SentMessageDto>(
+            openapi,
+            StatusCode::OK,
+            "Delivered; body says where it landed",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -824,55 +1050,12 @@ pub struct GraphSyncTaskDto {
     pub outcome: Option<GraphSyncResultDto>,
 }
 
-/// Everything a background import needs, owned: the request is gone by the
-/// time the task runs.
-#[cfg(feature = "graph")]
-struct ImportJob {
-    connection_id: Uuid,
-    tenant: Uuid,
-    repo_full_path: String,
-    git_ref: Option<String>,
-    max_entries: usize,
-    max_contributors: u32,
-    project_id: Option<Uuid>,
-    project_name: Option<String>,
-    /// Resolver captured at request time, so the spawned task owns everything
-    /// it needs (the `GraphSink` extension is gone by then).
-    identity: Option<Arc<dyn AliasResolver>>,
-}
-
-#[cfg(feature = "graph")]
-impl ImportJob {
-    async fn run(
-        &self,
-        svc: &ConnectorService,
-        graph: &Arc<dyn GraphStorageClientV1>,
-        ctx: &SecurityContext,
-        progress: &(dyn Fn(String) + Sync),
-    ) -> anyhow::Result<SyncOutcome> {
-        sync_repository(
-            svc,
-            graph,
-            self.identity.as_ref(),
-            ctx,
-            &SyncRequest {
-                connection_id: self.connection_id,
-                tenant: self.tenant,
-                repo_full_path: &self.repo_full_path,
-                git_ref: self.git_ref.as_deref(),
-                max_entries: self.max_entries,
-                max_contributors: self.max_contributors,
-                project_id: self.project_id,
-                project_name: self.project_name.as_deref(),
-            },
-            progress,
-        )
-        .await
-    }
-}
-
-/// Walk a repository and write it into the caller's knowledge graph — in the
-/// background by default, inline on request.
+/// Walk a repository and write it into the caller's knowledge graph.
+///
+/// Enqueues a `connector.graph_sync` run and answers with its id. `wait: true`
+/// keeps the documented inline behaviour by polling that run until it finishes
+/// or a deadline passes — the work happens in the queue either way, so there is
+/// one code path and one record of it.
 #[cfg(feature = "graph")]
 async fn graph_sync(
     Extension(ctx): Extension<SecurityContext>,
@@ -882,19 +1065,14 @@ async fn graph_sync(
     Json(body): Json<GraphSyncRequest>,
 ) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
     let svc = Arc::clone(connectors.get()?);
-    let sink = Arc::clone(graph.get()?);
-    let job = ImportJob {
-        connection_id: id,
-        tenant: body.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
-        repo_full_path: body.repo_full_path.trim().to_owned(),
-        git_ref: body.git_ref,
-        max_entries: body.max_entries,
-        max_contributors: body.max_contributors,
-        project_id: body.project_id,
-        project_name: body.project_name,
-        identity: graph.identity.clone(),
-    };
-    if job.repo_full_path.is_empty() {
+    // Resolved for its 503: an import cannot run where there is no graph, and
+    // saying so now beats a run that retries until it dead-letters.
+    let _ = graph.get()?;
+    let queue = graph.queue()?;
+
+    let tenant = body.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let repo_full_path = body.repo_full_path.trim().to_owned();
+    if repo_full_path.is_empty() {
         return Err(StudioConnectorError::invalid_argument()
             .with_constraint("repo_full_path must not be empty")
             .create());
@@ -902,91 +1080,165 @@ async fn graph_sync(
     // The connection is resolved up front, with the request's own context, so a
     // wrong id or an unreadable token is answered now rather than found by a
     // poll later.
-    svc.driver_and_auth(&ctx, job.tenant, job.connection_id)
+    svc.driver_and_auth(&ctx, tenant, id).await.map_err(|e| {
+        StudioConnectorError::invalid_argument()
+            .with_constraint(format!("repository sync failed: {e:#}"))
+            .create()
+    })?;
+
+    let payload = serde_json::to_value(SyncPayload {
+        connection_id: id,
+        repo_full_path: repo_full_path.clone(),
+        git_ref: body.git_ref,
+        max_entries: body.max_entries,
+        max_contributors: body.max_contributors,
+        project_id: body.project_id,
+        project_name: body.project_name,
+    })
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let run_id = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant,
+                task_type: GRAPH_SYNC_TASK_TYPE,
+                payload,
+                // One repository's imports never run concurrently with each
+                // other: two walks of the same tree would fight over the same
+                // node keys.
+                partition_key: Some(&format!("{id}:{repo_full_path}")),
+                idempotency_key: None,
+            },
+        )
         .await
         .map_err(|e| {
-            StudioConnectorError::invalid_argument()
-                .with_constraint(format!("repository sync failed: {e:#}"))
+            StudioConnectorError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "CONNECTOR_IMPORT_NOT_QUEUED",
+                )
                 .create()
         })?;
 
-    let tasks = Arc::clone(&graph.tasks);
-    let task_id = tasks.create(job.connection_id, &job.repo_full_path);
-
     if body.wait {
-        let progress = |phase: String| tasks.progress(&task_id, &phase);
-        return match job.run(&svc, &sink, &ctx, &progress).await {
-            Ok(outcome) => {
-                tasks.succeed(&task_id, outcome.clone());
-                Ok(Json(GraphSyncAcceptedDto {
-                    task_id,
-                    status: "succeeded".to_owned(),
-                    repo_full_path: job.repo_full_path,
-                    outcome: Some(outcome.into()),
-                }))
-            }
-            Err(e) => {
-                tasks.fail(&task_id, &format!("{e:#}"));
-                Err(StudioConnectorError::invalid_argument()
-                    .with_constraint(format!("repository sync failed: {e:#}"))
-                    .create())
-            }
-        };
+        return wait_for_import(&queue, tenant, run_id, repo_full_path).await;
     }
 
-    let repo_full_path = job.repo_full_path.clone();
-    let spawned_id = task_id.clone();
-    tokio::spawn(async move {
-        let progress = |phase: String| tasks.progress(&spawned_id, &phase);
-        match job.run(&svc, &sink, &ctx, &progress).await {
-            Ok(outcome) => {
-                tracing::info!(
-                    task_id = %spawned_id,
-                    repo = %job.repo_full_path,
-                    nodes = outcome.nodes_upserted,
-                    edges = outcome.edges_upserted,
-                    "studio-connector: repository import finished"
-                );
-                tasks.succeed(&spawned_id, outcome);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    task_id = %spawned_id,
-                    repo = %job.repo_full_path,
-                    error = %format!("{e:#}"),
-                    "studio-connector: repository import failed"
-                );
-                tasks.fail(&spawned_id, &format!("{e:#}"));
-            }
-        }
-    });
-
     Ok(Json(GraphSyncAcceptedDto {
-        task_id,
+        task_id: run_id.to_string(),
         status: "queued".to_owned(),
         repo_full_path,
         outcome: None,
     }))
 }
 
+/// Poll one import to completion, for `wait: true`.
+///
+/// Bounded well inside the gateway's deadline: an import of a few hundred files
+/// does not reliably finish in time, which the request field's own
+/// documentation has always said. Timing out here cancels nothing — the run
+/// carries on and the caller gets its id.
+#[cfg(feature = "graph")]
+async fn wait_for_import(
+    queue: &Arc<dyn crate::tasks::TaskQueue>,
+    tenant: Uuid,
+    run_id: Uuid,
+    repo_full_path: String,
+) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
+    use crate::tasks::RunState;
+
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+    let until = std::time::Instant::now() + DEADLINE;
+    while std::time::Instant::now() < until {
+        tokio::time::sleep(POLL).await;
+        let Some(run) = queue
+            .run(tenant, run_id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        else {
+            break;
+        };
+        match run.state {
+            RunState::Succeeded => {
+                return Ok(Json(GraphSyncAcceptedDto {
+                    task_id: run_id.to_string(),
+                    status: run.state.as_str().to_owned(),
+                    repo_full_path,
+                    outcome: run.result.and_then(sync_outcome_of).map(Into::into),
+                }));
+            }
+            RunState::Failed | RunState::Cancelled => {
+                return Err(StudioConnectorError::invalid_argument()
+                    .with_constraint(format!(
+                        "repository sync failed: {}",
+                        run.last_error
+                            .unwrap_or_else(|| run.state.as_str().to_owned())
+                    ))
+                    .create());
+            }
+            RunState::Queued | RunState::Running => {}
+        }
+    }
+    // Still going. The honest answer is the task id — which is what the caller
+    // would have got without `wait`.
+    Ok(Json(GraphSyncAcceptedDto {
+        task_id: run_id.to_string(),
+        status: "running".to_owned(),
+        repo_full_path,
+        outcome: None,
+    }))
+}
+
+/// A run's `result` read back as the walk's own outcome.
+#[cfg(feature = "graph")]
+fn sync_outcome_of(result: serde_json::Value) -> Option<SyncOutcome> {
+    serde_json::from_value(result)
+        .inspect_err(|e| tracing::warn!("studio-connector: unreadable import result: {e}"))
+        .ok()
+}
+
 /// The state of one background import.
+///
+/// Served from the `connector.graph_sync` run rather than from a registry of
+/// this gear's own: the route and its response shape are unchanged, the state
+/// behind them now survives a restart. `task_id` is the run id, so
+/// `GET /studio-tasks/v1/runs/{task_id}` answers the same question with more
+/// detail.
 #[cfg(feature = "graph")]
 async fn graph_sync_task(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(graph): Extension<GraphSink>,
     Path(task_id): Path<String>,
 ) -> ApiResult<JsonBody<GraphSyncTaskDto>> {
-    let rec = graph.tasks.get(&task_id).ok_or_else(|| {
+    let queue = graph.queue()?;
+    let not_found = || {
         StudioConnectorError::not_found("no such import task")
             .with_resource(task_id.clone())
             .create()
-    })?;
+    };
+    // Task ids used to be this gear's own strings; they are run ids now, and an
+    // unparseable one is simply not a task this deployment has.
+    let run_id = Uuid::parse_str(&task_id).map_err(|_| not_found())?;
+    let run = queue
+        .run(ctx.subject_tenant_id(), run_id)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .ok_or_else(not_found)?;
+
+    let payload: Option<SyncPayload> = serde_json::from_value(run.payload).ok();
     Ok(Json(GraphSyncTaskDto {
-        task_id: rec.id,
-        connection_id: rec.connection_id,
-        repo_full_path: rec.repo_full_path,
-        status: rec.status.as_str().to_owned(),
-        message: rec.message,
-        outcome: rec.outcome.map(Into::into),
+        task_id,
+        connection_id: payload.as_ref().map_or_else(Uuid::nil, |p| p.connection_id),
+        repo_full_path: payload.map(|p| p.repo_full_path).unwrap_or_default(),
+        status: run.state.as_str().to_owned(),
+        // What it did if it finished, why it stopped if it failed, where it is
+        // if it is still going — in that order of usefulness to whoever is
+        // polling.
+        message: run.summary.or(run.last_error).or(run.progress),
+        outcome: run.result.and_then(sync_outcome_of).map(Into::into),
     }))
 }

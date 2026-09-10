@@ -11,6 +11,8 @@ import {
     type EnqueueStudioOperationRequest,
     type StudioAuditDeltaRequest,
     type StudioOperationDeltaRequest,
+    type StudioNotifyEditorRequest,
+    type StudioNotifyEditorResult,
     type StudioOpenInEditorRequest,
     type StudioOpenInEditorResult,
     type StudioRetryOperationRequest,
@@ -56,6 +58,9 @@ import {
 import { StudioRuntimeConfigService, createBrowserSession } from './studio-runtime-config';
 import { WorkspaceBoundary } from './workspace-boundary';
 import { GitExecutor } from './git-executor';
+import { OrcaCli } from './orca-cli';
+import { OrcaServiceImpl } from './orca-service';
+import { orcaServicePath, type OrcaService } from '../common/orca-protocol';
 import { GitPublishService } from './git-publish-service';
 import { OperationJournal } from './operation-journal';
 import { RepositoryOperationQueue } from './repository-operation-queue';
@@ -172,6 +177,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             getOperationDeltas: request => this.getOperationDeltas(request),
             retryOperation: request => this.retryOperation(request),
             openInEditor: request => this.openInEditor(request),
+            notifyEditor: request => this.notifyEditor(request),
             installKit: request => this.kitInstaller.install(request, this.repositoryRegistry)
         });
     }
@@ -197,6 +203,25 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             }
         });
         return { opened: delivered > 0, resolvedRelativePath: request.relativePath };
+    }
+
+    /**
+     * Show a Studio-originated message in this session's IDE.
+     *
+     * Same shape as `openInEditor` and for the same reason: the node backend
+     * has no UI, so the message goes to the browser clients and `shown`
+     * reports whether any of them could act on it. A session whose tab nobody
+     * has open answers `shown: false` rather than pretending.
+     */
+    async notifyEditor(request: StudioNotifyEditorRequest): Promise<StudioNotifyEditorResult> {
+        let delivered = 0;
+        this.broadcast(client => {
+            if (client.onNotifyEditor) {
+                client.onNotifyEditor(request);
+                delivered++;
+            }
+        });
+        return { shown: delivered > 0 };
     }
 
     async resolveWorkspacePath(request: StudioWorkspaceRequest) {
@@ -672,6 +697,14 @@ export default new ContainerModule(bind => {
             client.onDidCloseConnection(() => endpoint.removeClient(client));
             return endpoint;
         })
+    ).inSingletonScope();
+    // Orca: the IDE drives an Orca runtime through its CLI (see orca-cli.ts).
+    // Backend-side on purpose — the binary, and any pairing secret a remote
+    // runtime needs, must not be reachable from the browser.
+    bind(OrcaCli).toSelf().inSingletonScope();
+    bind(OrcaServiceImpl).toSelf().inSingletonScope();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<OrcaService>(orcaServicePath, () => ctx.container.get(OrcaServiceImpl))
     ).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<WorkspaceGraphClient>(workspaceGraphServicePath, client => {

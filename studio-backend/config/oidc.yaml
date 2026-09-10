@@ -443,6 +443,48 @@ gears:
         - key: "anthropic-key"
           value: ""
 
+  # ── studio-tasks (durable background runs) ──
+  # Owns the queue every gear's background work goes through, plus the run
+  # history an operator reads. Its own database because the queue and that
+  # history are written in ONE transaction — the `studio_tasks_outbox_*` family
+  # is toolkit-db's transactional outbox and `studio_tasks_runs` is the record.
+  # Drop the block and the gear stands down: the runs API answers 503 and
+  # nothing is queued.
+  studio-tasks:
+    database:
+      server: "pg_main"
+      dbname: "studio_tasks"
+    config: {}
+
+  # ── studio-scheduler (cron/interval schedules) ──
+  # Owns schedules and nothing else: each tick it enqueues due runs into
+  # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second
+  # replica does not double-fire.
+  #
+  # `owner_tenant_id` MUST match account-management's `bootstrap.root_id` below:
+  # the secure ORM has no cross-tenant read, so the ticker scans one tenant's
+  # schedules and schedules are therefore platform-level. A mismatch is not an
+  # error, it is a schedule list that is always empty.
+  #
+  # Drop the block and nothing fires on its own; the queue keeps working and
+  # `POST /studio-scheduler/v1/schedules/{id}/run-now` is unavailable.
+  studio-scheduler:
+    database:
+      server: "pg_main"
+      dbname: "studio_scheduler"
+    config:
+      owner_tenant_id: "00000000-0000-0000-0000-000000000001"
+      tick_seconds: 60
+      enabled: true
+
+  # ── studio-notify (queued notification delivery) ──
+  # No database: the run in studio-tasks IS the record, which is what keeps
+  # accepting a notification a single transaction. This gear validates the
+  # connection and enqueues a `notify.deliver` run; the outcome is read from
+  # GET /studio-tasks/v1/runs/{id}.
+  studio-notify:
+    config: {}
+
   mini-chat:
     database:
       server: "pg_main"
@@ -608,6 +650,55 @@ gears:
       priority: 100
 
   openai-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  # Chat platforms — where Studio delivers notifications. Two drivers per
+  # platform, and the difference matters when configuring one:
+  #
+  #   <platform>            a bot token or API key. One connection reaches every
+  #                         channel the bot was invited to, the channels are
+  #                         listed by GET /connections/{id}/targets, and each
+  #                         message names the one it goes to.
+  #   <platform>_webhook    an incoming-webhook URL, which is itself the
+  #                         credential and already names its channel. Nothing to
+  #                         list; one connection per channel.
+  #
+  # Neither needs any configuration here: the endpoints are the platforms' own
+  # and the credential arrives with the connection. Dropping a block removes
+  # nothing — the gear runs on these defaults either way; removing the gear from
+  # the assembly is what makes a provider disappear from GET /providers.
+  #
+  # Verifying a Slack or Zulip webhook DELIVERS a message to its channel:
+  # neither platform will describe a webhook URL without being posted to. A
+  # Discord webhook is readable at its own URL and is verified silently.
+  slack-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  slack-webhook-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  zulip-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  zulip-webhook-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  discord-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  discord-webhook-connector-plugin:
     config:
       vendor: "constructorfabric"
       priority: 100

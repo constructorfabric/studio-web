@@ -60,6 +60,10 @@ jest.mock('./audit-widget', () => ({
     AuditWidget: { ID: 'studio:audit', LABEL: 'Audit' },
     AUDIT_FILTERS: []
 }));
+jest.mock('./orca-widget', () => ({
+    ORCA_WIDGET_ID: 'studio.orca',
+    OrcaWidget: { ID: 'studio.orca', LABEL: 'Agents (Orca)' }
+}));
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { CommandRegistry } from '@theia/core/lib/common/command';
@@ -74,6 +78,7 @@ import { ObjectDetailsWidget } from './object-details-widget';
 import { GitOperationsWidget } from './git-operations-widget';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditWidget } from './audit-widget';
+import { OrcaWidget } from './orca-widget';
 
 describe('StudioContribution', () => {
     it('initializes the default layout only through initializeLayout', async () => {
@@ -83,7 +88,8 @@ describe('StudioContribution', () => {
             [ObjectDetailsWidget.ID, { id: ObjectDetailsWidget.ID, isAttached: false }],
             [GitOperationsWidget.ID, { id: GitOperationsWidget.ID, isAttached: false }],
             [AnalyzeWidget.ID, { id: AnalyzeWidget.ID, isAttached: false }],
-            [AuditWidget.ID, { id: AuditWidget.ID, isAttached: false }]
+            [AuditWidget.ID, { id: AuditWidget.ID, isAttached: false }],
+            [OrcaWidget.ID, { id: OrcaWidget.ID, isAttached: false }]
         ]);
         const widgetManager = {
             getOrCreateWidget: jest.fn(async (id: string) => widgets.get(id))
@@ -98,8 +104,15 @@ describe('StudioContribution', () => {
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(6);
-        expect(shell.activateWidget).toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
+        expect(shell.addWidget).toHaveBeenCalledTimes(7);
+        expect(shell.addWidget).toHaveBeenCalledWith(
+            expect.objectContaining({ id: OrcaWidget.ID }),
+            { area: 'right' }
+        );
+        // The Agents panel is revealed by activating it, and the graph is
+        // activated last so the focus lands there rather than in Orca.
+        expect(shell.activateWidget.mock.calls.map(([id]: [string]) => id))
+            .toEqual([OrcaWidget.ID, WorkspaceGraphWidget.ID]);
     });
 
     it('does not compose the default layout when Theia restores a saved layout', async () => {
@@ -135,7 +148,8 @@ describe('StudioContribution', () => {
 
         await application.runInitializeLayout();
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(6);
+        expect(shell.addWidget).toHaveBeenCalledTimes(7);
+        expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
         expect(shell.activateWidget).toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
     });
 

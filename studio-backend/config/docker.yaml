@@ -66,6 +66,14 @@ gears:
       base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
       api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
 
+  # Integration seam to Constructor Insight (external decision-intelligence
+  # service, REST at /api/v1). Unconfigured by default — set
+  # STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY to enable.
+  studio-insight:
+    config:
+      base_url_env: "STUDIO_INSIGHT_BASE_URL"
+      api_key_env: "STUDIO_INSIGHT_API_KEY"
+
   api-gateway:
     config:
       bind_addr: "0.0.0.0:8090"
@@ -455,6 +463,48 @@ gears:
         - key: "anthropic-key"
           value: ""
 
+  # ── studio-tasks (durable background runs) ──
+  # Owns the queue every gear's background work goes through, plus the run
+  # history an operator reads. Its own database because the queue and that
+  # history are written in ONE transaction — the `studio_tasks_outbox_*` family
+  # is toolkit-db's transactional outbox and `studio_tasks_runs` is the record.
+  # Drop the block and the gear stands down: the runs API answers 503 and
+  # nothing is queued.
+  studio-tasks:
+    database:
+      server: "pg_main"
+      dbname: "studio_tasks"
+    config: {}
+
+  # ── studio-scheduler (cron/interval schedules) ──
+  # Owns schedules and nothing else: each tick it enqueues due runs into
+  # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second
+  # replica does not double-fire.
+  #
+  # `owner_tenant_id` MUST match account-management's `bootstrap.root_id` below:
+  # the secure ORM has no cross-tenant read, so the ticker scans one tenant's
+  # schedules and schedules are therefore platform-level. A mismatch is not an
+  # error, it is a schedule list that is always empty.
+  #
+  # Drop the block and nothing fires on its own; the queue keeps working and
+  # `POST /studio-scheduler/v1/schedules/{id}/run-now` is unavailable.
+  studio-scheduler:
+    database:
+      server: "pg_main"
+      dbname: "studio_scheduler"
+    config:
+      owner_tenant_id: "00000000-0000-0000-0000-000000000001"
+      tick_seconds: 60
+      enabled: true
+
+  # ── studio-notify (queued notification delivery) ──
+  # No database: the run in studio-tasks IS the record, which is what keeps
+  # accepting a notification a single transaction. This gear validates the
+  # connection and enqueues a `notify.deliver` run; the outcome is read from
+  # GET /studio-tasks/v1/runs/{id}.
+  studio-notify:
+    config: {}
+
   mini-chat:
     database:
       server: "pg_main"
@@ -579,8 +629,20 @@ gears:
       # Locally-built Theia image that carries studio-event-forwarder.ts (the
       # ghcr `edge` tag predates it). Build it first:
       #   docker build -f theia/Dockerfile -t cf-studio-theia:local theia
-      image: "cf-studio-theia:local"
-      always_pull: false
+      # Which session image to launch, and whether to pull it first.
+      #
+      # Defaults are the locally built tag: `docker compose up --build` builds
+      # everything else from this checkout, and the session image is the one
+      # thing compose cannot build for you (it is not a compose service), so
+      # build it yourself — the command is in the comment above.
+      #
+      # docker-compose.published.yml sets both to run the images the pipeline
+      # published instead: STUDIO_SESSION_IMAGE=ghcr.io/…/cf-studio-theia:<tag>
+      # and STUDIO_SESSION_ALWAYS_PULL=true, so a session comes from the same
+      # snapshot as the backend beside it rather than from whatever `:local`
+      # happens to be lying around.
+      image: "${STUDIO_SESSION_IMAGE:-cf-studio-theia:local}"
+      always_pull: ${STUDIO_SESSION_ALWAYS_PULL:-false}
       workspaces_root: "/srv/cf-studio-workspaces"
       bind_host: "127.0.0.1"
       public_host: "localhost"
@@ -588,6 +650,12 @@ gears:
       port_range_end: 41099
       max_session_secs: 14400
       git_mode: "disabled"
+      # Orca runtime for the IDE's Agents panel. On, like the k8s profile: the
+      # session image carries the runtime by default, and leaving this false
+      # would make the panel report an unreachable runtime beside a binary
+      # that is right there. It is container-local — a desktop Orca on the
+      # host is not reachable from the session, by design.
+      orca_enabled: true
       # ADR-0010: mint the per-session S2S control token and inject
       # STUDIO_THEIA_S2S_TOKEN + STUDIO_GATEWAY_URL into the session container,
       # so the forwarder self-arms and the studio-theia gear can dial the node.

@@ -60,8 +60,15 @@ changes the code:
   [Workspaces in scope](workspace-scope.md) introduced it. The wizard still has
   no workspace field: the workspace is the one in the shell's top bar, and
   `cpt-studiofrontend-dod-workspace-scope-project-parent` owns that decision.
-- A new project starts with the stage list `['intent']`. The wizard has no stage
-  picker; `intent` is the one mandatory stage.
+- A new project starts with the stages the workspace's catalogue marks
+  **required**, read from `GET /studio-documents/v1/workspaces/{id}/stages`. The
+  wizard has no stage picker. **Superseded**: this was originally the literal
+  list `['intent']`, taken from a `JOURNEY_STAGES` constant that was itself a
+  copy of the retired gear's catalogue. ADR-0014 section 7 moved the catalogue
+  back to the server, so an organization may mark a different set and the wizard
+  asks rather than assumes. Reading it is best-effort: a project is created with
+  no stages rather than not created at all, because an empty stage list is
+  something a user can fix and a missing project is not.
 - A modernization takes **one or more** repositories, at most 100 in total. The
   mockup's checkboxes and "3 selected" counter are literal, and the selection
   spans connection tabs — a project may be seeded from a GitHub repository and a
@@ -198,10 +205,11 @@ are traced.
 2. [x] - `p1` - `API: POST /cf/account-management/v1/tenants (name, project tenant type, parent = the workspace in scope)` - `inst-2`
 3. [x] - `p1` - **IF** account-management refuses - `inst-3`
    1. [x] - `p1` - **RETURN** the refusal; the draft survives so the member can correct it - `inst-4`
-4. [x] - `p1` - `API: PUT /cf/account-management/v1/tenants/{id}/metadata/{project config type} (mode, stages, status, brief, source)` - `inst-5`
-5. [x] - `p1` - **IF** the metadata write fails - `inst-6`
+4. [x] - `p1` - `API: GET /studio-documents/v1/workspaces/{id}/stages (the required ones seed the project)` - `inst-4a`
+5. [x] - `p1` - `API: PUT /cf/account-management/v1/tenants/{id}/metadata/{project config type} (mode, stages, status, brief, source)` - `inst-5`
+6. [x] - `p1` - **IF** the metadata write fails - `inst-6`
    1. [x] - `p1` - Report it but keep the tenant: a project without attributes is recoverable, a rollback is not - `inst-7`
-6. [x] - `p1` - **RETURN** the tenant id - `inst-8`
+7. [x] - `p1` - **RETURN** the tenant id - `inst-8`
 
 ### Read the repository catalogue
 
@@ -414,7 +422,8 @@ row.
 - [ ] The selection survives switching connection tabs, and a created project records every picked repository.
 - [ ] At 100 selected the unpicked checkboxes are inert and the footer states the maximum.
 - [ ] A connection to a model provider (an API key) is not offered as a tab on the repositories step.
-- [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, `stages = ['intent']` and an `owner_id` in its metadata.
+- [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, an `owner_id`, and the stages its workspace's catalogue marks required.
+- [ ] A workspace whose catalogue marks a different stage required seeds new projects with that one, and no code change is involved.
 - [ ] The owner field names the signed-in member and offers no way to change them; the created project carries their subject id as `owner_id`.
 - [ ] A refused creation leaves the wizard open with the draft intact and shows what was refused.
 - [ ] The created project appears in the list without a manual refresh.

@@ -26,22 +26,42 @@ import {
 } from '@gears-frontx/react';
 import { refusalFrom } from '@constructor-studio/mfe-shared';
 import { AccountsApiService, childrenPageParams } from '../api/AccountsApiService';
+import { DocumentsApiService } from '../api/DocumentsApiService';
 import { PROJECT_CONFIG_TYPE, TENANT_TYPES, type ProjectConfig } from '../api/types';
-import {
-  DEFAULT_STAGES,
-  INITIAL_STATUS,
-  MAX_SOURCES,
-  type ProjectDraft,
-} from '../model/projectDraft';
+import { INITIAL_STATUS, MAX_SOURCES, type ProjectDraft } from '../model/projectDraft';
 import { submitFailed, submitStarted } from '../slices/createSlice';
 import type { ProjectRef } from '../events/wizardEvents';
 import '../events/wizardEvents';
 
 
-function toProjectConfig(draft: ProjectDraft): ProjectConfig {
+/**
+ * The stages a new project starts with: whatever the workspace's catalogue
+ * marks required, in catalogue order.
+ *
+ * It used to be `['intent']` hardcoded, from a constant that was itself a copy
+ * of a retired gear's catalogue. An organization may now mark a different set
+ * (ADR-0014 section 7), so the wizard asks rather than assumes.
+ *
+ * A failure here does NOT fail creation. The catalogue is a convenience for a
+ * project's starting point, and refusing to create a project because a second
+ * gear was briefly unreachable would trade a recoverable state (a project whose
+ * stage list a user can extend) for an unrecoverable one (no project at all).
+ */
+async function requiredStages(workspaceId: string): Promise<string[]> {
+  try {
+    const documents = apiRegistry.getService(DocumentsApiService);
+    const page = await documents.stages({ workspaceId }).fetch();
+    return page.items.filter((stage) => stage.required).map((stage) => stage.key);
+  } catch (error) {
+    console.warn('[projects] stage catalogue not read; creating with no stages', error);
+    return [];
+  }
+}
+
+function toProjectConfig(draft: ProjectDraft, stages: readonly string[]): ProjectConfig {
   const config: ProjectConfig = {
     mode: draft.mode ?? 'greenfield',
-    stages: [...DEFAULT_STAGES],
+    stages: [...stages],
     status: INITIAL_STATUS,
   };
   if (draft.goal.trim()) config.brief = draft.goal.trim();
@@ -111,11 +131,15 @@ export function initWizardEffects(dispatch: AppDispatch, app: FrontXApp): void {
         eventBus.emit('mfe/projects/created', { project: { id: tenantId, name }, siblings });
       };
 
+      // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-4a
+      const stages = await requiredStages(workspaceId);
+      // @cpt-end:cpt-studiofrontend-algo-project-create-write:p2:inst-4a
+
       try {
         // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-5
         await accounts
           .projectConfigWrite(tenantId, PROJECT_CONFIG_TYPE)
-          .fetch(toProjectConfig(draft));
+          .fetch(toProjectConfig(draft, stages));
         // @cpt-end:cpt-studiofrontend-algo-project-create-write:p2:inst-5
       } catch (error) {
         // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-6

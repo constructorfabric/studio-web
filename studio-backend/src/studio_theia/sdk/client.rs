@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use toolkit_security::SecurityContext;
 
 use super::{
-    EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, OpenInEditor,
-    OpenInEditorResult, OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus,
-    SessionInfo, SessionTarget, TheiaControlError,
+    EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
+    NotifyEditorResult, OpenInEditor, OpenInEditorResult, OperationDeltas, OperationSnapshot,
+    RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget, TheiaControlError,
 };
 
 /// Object-safe control client for the per-session Theia node backend (v1).
@@ -71,6 +71,17 @@ pub trait TheiaControlClientV1: Send + Sync {
         target: &SessionTarget,
         request: &OpenInEditor,
     ) -> Result<OpenInEditorResult, TheiaControlError>;
+
+    /// Show a Studio message in the running IDE (new editor command §4).
+    ///
+    /// `shown: false` means the session is up but nobody has its tab open. That
+    /// is a fact about the world, not a failure of the call.
+    async fn notify_editor(
+        &self,
+        ctx: &SecurityContext,
+        target: &SessionTarget,
+        request: &NotifyEditor,
+    ) -> Result<NotifyEditorResult, TheiaControlError>;
 
     /// Install an allow-listed Studio kit in the selected repository.
     async fn install_kit(

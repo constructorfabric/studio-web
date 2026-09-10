@@ -1,10 +1,17 @@
 //! The connector driver contract.
 //!
-//! A driver knows how to talk to one flavour of source host (GitLab, GitHub,
-//! …). It is deliberately narrow: authenticate, enumerate repositories,
-//! produce a clone URL. Everything tenant-shaped — which connections exist,
-//! who may see them, where the token is kept — belongs to the connector
-//! service, not here, so adding a provider stays a small, local job.
+//! A driver knows how to talk to one flavour of provider — a source host
+//! (GitLab, GitHub, …), a model provider, or a chat platform. It is
+//! deliberately narrow: authenticate, then whatever the one thing that
+//! provider is good for happens to be — enumerate repositories, or post a
+//! message. Everything tenant-shaped — which connections exist, who may see
+//! them, where the token is kept — belongs to the connector service, not
+//! here, so adding a provider stays a small, local job.
+//!
+//! Every capability past `test()` is a defaulted method that refuses in the
+//! provider's own words, so a driver implements only what its provider can
+//! actually do: a Slack driver never learns what a repository is, and the REST
+//! layer turns the refusal into a 4xx rather than an empty listing.
 
 use async_trait::async_trait;
 
@@ -28,13 +35,17 @@ impl ConnectionAuth {
 }
 
 /// What a provider is for. Decides which affordances the UI offers: only a
-/// source host can be browsed for repositories.
+/// source host can be browsed for repositories, only a notification target
+/// can be posted to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectorCategory {
     /// Git hosting — repositories can be listed and attached to a workspace.
     SourceCode,
     /// Model provider — the credential is handed to agents, nothing to browse.
     Ai,
+    /// Chat platform — Studio posts messages into it. Nothing is read back:
+    /// the credential is an egress, not a source.
+    Notification,
 }
 
 impl ConnectorCategory {
@@ -42,6 +53,7 @@ impl ConnectorCategory {
         match self {
             Self::SourceCode => "source_code",
             Self::Ai => "ai",
+            Self::Notification => "notification",
         }
     }
 }
@@ -193,6 +205,70 @@ pub struct Contributor {
     pub contributions: u64,
 }
 
+/* ── Notifications ── */
+
+/// One place a notification can be delivered: a Slack channel, a Zulip
+/// channel, a Discord text channel.
+///
+/// Only channel-shaped targets are listed. Direct messages to a person are
+/// deliberately absent: they need a mapping from a Studio subject to a
+/// platform account, which is `studio-identity`'s job (ADR-0012) and not a
+/// thing to guess from a display name.
+#[derive(Debug, Clone)]
+pub struct NotifyTarget {
+    /// Provider-native id, and exactly what [`ConnectorDriver::send_message`]
+    /// expects back: a Slack channel id (`C0123…`), a Zulip channel name, a
+    /// Discord channel id. Opaque to everything above the driver.
+    pub id: String,
+    /// Human name, without the platform's sigil (`releases`, not `#releases`).
+    pub name: String,
+    /// Where the target lives, when the platform nests them — a Discord guild,
+    /// a Slack team. `None` where the installation *is* the container.
+    pub container: Option<String>,
+    /// Whether posting needs an invite. Reported so a human can tell why an
+    /// otherwise valid channel refuses the message.
+    pub private: bool,
+    /// Whether a message to this target must carry a topic. True for Zulip,
+    /// whose channels are threaded by construction, false everywhere else —
+    /// the UI reads it to decide whether to ask for one.
+    pub topic_required: bool,
+}
+
+/// A notification to deliver.
+///
+/// Deliberately not a provider payload: no Slack blocks, no Discord embeds. A
+/// caller says what happened and, optionally, where to look; each driver
+/// renders that into its own platform's idiom. The alternative — passing
+/// provider-shaped JSON through — would make every caller know which platform
+/// it is talking to, which is the whole thing a connector exists to avoid.
+#[derive(Debug, Clone, Default)]
+pub struct NotifyMessage {
+    /// The message body. Markdown-ish: emphasis and links survive on all three
+    /// platforms, anything more exotic is on the caller.
+    pub text: String,
+    /// A short headline, rendered bold above the body — none of the three
+    /// platforms has a first-class title for a plain message.
+    pub title: Option<String>,
+    /// A link to the thing the message is about, appended as its own line.
+    pub link: Option<String>,
+    /// Thread/topic within the target. Required by Zulip, ignored by the
+    /// others — see [`NotifyTarget::topic_required`].
+    pub topic: Option<String>,
+}
+
+/// What the platform said about a delivered message.
+#[derive(Debug, Clone)]
+pub struct SentMessage {
+    /// The target it landed in, as the driver resolved it. Echoed because a
+    /// webhook driver knows the channel only after the fact — the caller sent
+    /// no target at all.
+    pub target: String,
+    /// Provider-native message id, where the platform returns one. Slack gives
+    /// a `ts`, Zulip a numeric id, Discord a snowflake; a Discord webhook
+    /// returns nothing unless asked to wait.
+    pub id: Option<String>,
+}
+
 #[async_trait]
 pub trait ConnectorDriver: Send + Sync + 'static {
     /// Stable provider key used in the API and the UI (`gitlab`, `github`).
@@ -213,6 +289,7 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         match self.category() {
             ConnectorCategory::SourceCode => "Personal Access Token (PAT)",
             ConnectorCategory::Ai => "API Key",
+            ConnectorCategory::Notification => "Bot Token",
         }
     }
 
@@ -389,6 +466,53 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         let _ = (auth, repo_full_path, max);
         Err(anyhow::anyhow!(
             "{} does not expose contributors",
+            self.display_name()
+        ))
+    }
+
+    /// Whether the credential itself decides where messages land.
+    ///
+    /// True for an incoming webhook: the channel is fixed when a human creates
+    /// the URL, so there is nothing to enumerate and nothing to pick —
+    /// [`Self::list_targets`] refuses and [`Self::send_message`] ignores the
+    /// target it is handed. A bot token is the other shape: one connection
+    /// reaches every channel the bot was invited to, and the target is part of
+    /// the send. The UI reads this to decide whether to show a channel picker
+    /// at all.
+    fn fixed_target(&self) -> bool {
+        false
+    }
+
+    /// Channels this credential can post to. `search` filters by name —
+    /// client-side, since none of the chat platforms offer a channel search —
+    /// and `limit` caps the result.
+    ///
+    /// Defaulted to a refusal: a source host has no channels, and a webhook
+    /// has exactly one it will not name up front.
+    async fn list_targets(
+        &self,
+        auth: &ConnectionAuth,
+        search: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<NotifyTarget>> {
+        let _ = (auth, search, limit);
+        Err(anyhow::anyhow!(
+            "{} does not expose notification channels",
+            self.display_name()
+        ))
+    }
+
+    /// Deliver one message. `target` is a [`NotifyTarget::id`]; it is `None`
+    /// only for a [`Self::fixed_target`] driver, which would ignore it anyway.
+    async fn send_message(
+        &self,
+        auth: &ConnectionAuth,
+        target: Option<&str>,
+        message: &NotifyMessage,
+    ) -> anyhow::Result<SentMessage> {
+        let _ = (auth, target, message);
+        Err(anyhow::anyhow!(
+            "{} is not a notification provider — there is nothing to post to",
             self.display_name()
         ))
     }

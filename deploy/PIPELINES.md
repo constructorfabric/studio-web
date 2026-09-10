@@ -14,12 +14,12 @@ reconciled through GitHub afterward.
 
 ## Workflow model
 
-| Workflow | Responsibility | Trigger |
+| Stage in **Studio Delivery** | Responsibility | Trigger |
 | --- | --- | --- |
-| **Test** | Test and validate changed source and deployment definitions | Every pull request and branch push |
-| **Build Images** | Build and publish either service or infrastructure images | `main`, `v*`, `infra-v*`, or a manual service snapshot |
-| **Deploy Infra** | Reconcile PostgreSQL and Keycloak for one environment | Manual dispatch using an `infra-v*` release only |
-| **Deploy Services** | Deploy backend, frontend, or both | Manual dispatch using a branch snapshot or service release |
+| **1. Test changed components** | Test and validate changed source and deployment definitions | Every pull request, branch push, and manual `validate`/`build` run |
+| **2. Build & Publish** | Build and publish either service or infrastructure images | After tests on every push, or manual `build` |
+| **3. Deploy Infrastructure** | Reconcile PostgreSQL and Keycloak for one environment | Manual `deploy-infra` using an `infra-v*` release only |
+| **3. Deploy Services** | Deploy backend, frontend, or both | Manual `deploy-services` using a branch snapshot or service release |
 
 Publishing and deployment are intentionally separate. Creating a Git tag may
 publish a release, but it never deploys automatically to an environment.
@@ -47,10 +47,10 @@ Release tags must point to commits reachable from `main`. Deployment workflows
 must resolve the tag to its commit and reject malformed, missing, or unrelated
 tags. Image manifests must exist before a deployment changes cluster state.
 
-## Test
+## 1. Test changed components
 
 Test runs before any image publication and is matched to the exact commit SHA.
-The Build Images workflow waits for a successful Test run for that SHA.
+Build & Publish runs only after the successful Test stage for the same SHA.
 
 Required checks include:
 
@@ -63,9 +63,9 @@ Required checks include:
 Path filtering may skip unaffected component jobs, but a successful workflow
 result for the exact commit remains mandatory.
 
-## Build Images
+## 2. Build & Publish
 
-Build Images selects exactly one scope:
+Build & Publish selects exactly one scope:
 
 ### Service scope
 
@@ -91,7 +91,7 @@ For both scopes, all images are built and verified before human-readable or
 movable tags are promoted. Deployments never consume `edge`, `latest`, or
 `infra-latest`.
 
-## Deploy Infra
+## 3. Deploy Infrastructure
 
 Inputs:
 
@@ -119,7 +119,7 @@ environment automatically. Test and production must use GitHub Environment
 reviewers. Stateful PostgreSQL changes require backups and a documented
 rollback/restore decision before production approval.
 
-## Deploy Services
+## 3. Deploy Services
 
 Inputs:
 
@@ -186,7 +186,7 @@ Migration order:
 ## Rollout phases
 
 1. Split build scopes and enforce `v*` versus `infra-v*` tags.
-2. Split Deploy Services and Deploy Infra workflow responsibilities while
+2. Split Deploy Services and Deploy Infrastructure stage responsibilities while
    retaining the shared Helm release.
 3. Exercise dev service and infrastructure deployments, including rollback.
 4. Split the Helm releases and migrate dev ownership.
@@ -194,13 +194,14 @@ Migration order:
 6. Design and provision production separately.
 ## Service image and deployment policy
 
-`Build Images` runs after tests for every internal branch push. It calculates
+`Build & Publish` runs after tests for every internal branch push. It calculates
 the changed service components and rebuilds only those; the other components
 are copied from the last known-good `edge` snapshot so every commit still gets
 a complete immutable `sha-<full-commit>` image set.
 
-- A branch snapshot may be deployed only to `dev`. In **Deploy Services**, set
-  `source_ref` to the branch name and leave `image_tag` empty; the workflow
+- A branch snapshot may be deployed only to `dev`. In **Studio Delivery**, set
+  the stage to `deploy-services`, set `source_ref` to the branch name, and
+  leave `image_tag` empty; the workflow
   resolves the exact commit and its `sha-…` tag.
 - A stable release tag such as `v1.4.0` may be deployed to `dev` or `test` and
   advances `latest` only after all images are published.

@@ -139,6 +139,40 @@ pub struct OpenInEditorResult {
     pub resolved_relative_path: Option<String>,
 }
 
+/// Show a Studio message in the running IDE (new editor command §4).
+///
+/// Display-only: it touches no workspace state, which is why it needs none of
+/// the path guards the other editor commands carry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyEditor {
+    /// `info` | `warn` | `error`. A word the container does not know is shown
+    /// as information rather than refused — this crosses a version boundary.
+    pub level: String,
+    /// One line. The IDE shows it as a notification.
+    pub message: String,
+    /// A second line: what happened, in a sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// An http(s) URL the message is about, offered as an action on the
+    /// notification. The IDE ignores any other scheme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    /// Who sent it, for the notification's own label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// Result of [`NotifyEditor`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyEditorResult {
+    /// False when no browser client was attached to show it — a session whose
+    /// tab nobody has open. Deliberately not an error: whether an unseen
+    /// notification matters is the caller's judgement.
+    pub shown: bool,
+}
+
 /// Materialize one registry-approved kit inside a repository mounted by Theia.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

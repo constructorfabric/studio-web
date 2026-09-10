@@ -14,10 +14,13 @@
 //! does for its project routes.
 
 mod entity;
-mod gts;
+pub(crate) mod gts;
+pub(crate) mod intake;
 mod migrations;
 mod model;
 mod repo;
+#[cfg(test)]
+mod repo_tests;
 mod rest;
 mod service;
 mod validate;

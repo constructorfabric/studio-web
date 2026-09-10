@@ -23,6 +23,7 @@ import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { AccountsApiService } from './api/AccountsApiService';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
+import { DocumentsApiService } from './api/DocumentsApiService';
 import { ConnectorsApiService } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build so plugin sync finds them.
@@ -33,6 +34,7 @@ import { ConnectorsApiService } from '@constructor-studio/mfe-shared';
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(ConnectorsApiService);
 apiRegistry.register(ArtifactIngestApiService);
+apiRegistry.register(DocumentsApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.

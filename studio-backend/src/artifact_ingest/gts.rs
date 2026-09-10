@@ -182,15 +182,66 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
     ),
 ];
 
+/// The relation types, with a title and a description each — the catalog side
+/// of [`ALL_EDGE_TYPES`].
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+    (
+        REL_ARTIFACT_OF,
+        "ArtifactOf",
+        "An issue or pull request and the repository it belongs to.",
+    ),
+    (
+        REL_CONTAINS,
+        "Contains",
+        "A repository and a file in its tree.",
+    ),
+    (
+        REL_AUTHORED_BY,
+        "AuthoredBy",
+        "An issue or pull request and the account that authored it.",
+    ),
+    (
+        REL_MODIFIES,
+        "Modifies",
+        "A pull request and a file it changed.",
+    ),
+    (
+        REL_DUPLICATES,
+        "Duplicates",
+        "Two documents the bloat detector found to be near-duplicates.",
+    ),
+    (
+        REL_TRACES_TO,
+        "TracesTo",
+        "A traceability link between two documents, from the traceability detector.",
+    ),
+    (
+        REL_FINDING_ON,
+        "FindingOn",
+        "A spec-quality finding and the document it is about.",
+    ),
+    (
+        REL_COMMENT_ON,
+        "CommentOn",
+        "A comment and the issue or pull request it is on.",
+    ),
+];
+
 /// GTS Type Schemas registered with the **platform types-registry** at gear
 /// init. Declared free-form (`type: object`) — the same shape the studio types
 /// use in `config/*.yaml` — so registration never trips the closed-envelope
 /// narrowing check; the full property schemas live alongside as JSON files and
 /// are the graph contract.
+///
+/// Nodes *and* relations, and no type is held back: the platform registry is
+/// the catalog of everything, so every type this gear puts in graph-storage
+/// must be findable here too. `crate::gts_inventory` asserts that direction as
+/// an invariant — a graph type with no catalog entry is a registry that
+/// disagrees with the graph.
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
-        .filter(|(id, _, _)| *id != USER_TYPE)
+        .chain(EDGE_TYPE_DOCS)
         .map(|(id, title, description)| {
             json!({
                 "$id": format!("gts://{id}"),
@@ -308,6 +359,42 @@ pub fn repo_node(
             "full_path": repo_full_path,
         }),
     }
+}
+
+/// What a completed sync pulled for one repository — recorded on the repo node
+/// so a reader can tell a never-synced source from a synced one without
+/// counting its children.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepoSyncStats {
+    pub issues: usize,
+    pub pull_requests: usize,
+    pub files: usize,
+    pub comments: usize,
+    pub commits: usize,
+}
+
+/// The repository node re-stated once a sync has finished: same instance id as
+/// [`repo_node`], so it upserts over the record written when the sync started,
+/// plus when it finished and what came in. This is the repository's sync status
+/// as far as any reader is concerned.
+pub fn repo_synced_node(
+    scope_key: &str,
+    connector_id: &str,
+    provider: &str,
+    repo_full_path: &str,
+    synced_at: &str,
+    stats: RepoSyncStats,
+) -> GtsNode {
+    let mut node = repo_node(scope_key, connector_id, provider, repo_full_path);
+    if let Some(obj) = node.value.as_object_mut() {
+        obj.insert("synced_at".to_string(), json!(synced_at));
+        obj.insert("issues".to_string(), json!(stats.issues));
+        obj.insert("pull_requests".to_string(), json!(stats.pull_requests));
+        obj.insert("files".to_string(), json!(stats.files));
+        obj.insert("comments".to_string(), json!(stats.comments));
+        obj.insert("commits".to_string(), json!(stats.commits));
+    }
+    node
 }
 
 pub fn issue_node(

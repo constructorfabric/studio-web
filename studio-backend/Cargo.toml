@@ -78,6 +78,9 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# RFC-6902 patches: how a model edit records what it did and how to undo it
+# (studio-domain-model). Already in the lockfile as a transitive dependency.
+json-patch = "4"
 serde_yaml = "0.9"
 tokio-postgres = "0.7"
 inventory = "0.3"
@@ -234,6 +237,20 @@ hyper = { version = "1.11.0", features = ["client", "http1"] }
 #
 # Drop this block once the gear is upstream, then `cargo update` the git
 # dependencies and commit the lockfile.
+# ── dev only ────────────────────────────────────────────────────────────────
+# studio-documents keeps its tables in PostgreSQL and its tests exercise the
+# real migration set against them (ADR-0014). Testcontainers gives each test
+# process its own database, which buys two things a shared server does not:
+# `cargo test` needs no external setup beyond a Docker daemon, and an EDITED
+# migration always re-applies -- against a long-lived database the ledger says
+# it already ran, and the test then passes against a stale schema.
+# Pinned below the latest on purpose: 0.24 wants a newer `bollard` than the
+# `0.17` studio-session depends on, and moving that to satisfy a test harness
+# would be the tail wagging the dog.
+[dev-dependencies]
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+
 [patch."https://github.com/constructorfabric/gears-rust"]
 cf-gears-account-management = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.2" }
 cf-gears-account-management-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.2" }

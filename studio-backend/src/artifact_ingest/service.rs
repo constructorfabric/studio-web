@@ -6,10 +6,11 @@
 //! checkout — including text-file content; without a volume the pipeline falls
 //! back to the connector's tree API (metadata only).
 //!
-//! A sync can take seconds (cloning), so it runs as a background task: callers
-//! `enqueue_sync` and poll the [`TaskRegistry`]. The connection is passed
-//! explicitly (`provider`, `base_url`, `connector_id`) so the pipeline is
-//! testable on its own.
+//! A sync can take seconds (cloning), so it runs as a `artifact.ingest` run on
+//! `studio-tasks` — see [`super::ingest_task`]. This service is the pipeline
+//! only: it is handed a resolved token and a place to report progress, and the
+//! connection is passed explicitly (`provider`, `base_url`, `connector_id`) so
+//! it stays testable on its own.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,13 +21,12 @@ use bytes::Bytes;
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use file_parser_sdk::{Detection, FileParserClientV1, ParseBytesRequest};
 use toolkit_security::SecurityContext;
-use uuid::Uuid;
 
 use super::clone;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
-use super::tasks::{TaskRecord, TaskRegistry};
 use crate::connectors::driver::{ConnectionAuth, ConnectorDriver};
+use crate::tasks::registry::SyncReporter;
 
 /// Hard cap on pages per channel — a runaway loop backstop, not a real limit.
 const MAX_PAGES: u32 = 50;
@@ -60,11 +60,47 @@ fn is_parseable_doc(path: &str) -> bool {
     DOC_EXT.contains(&ext.as_str())
 }
 
-#[derive(Debug, Clone, Copy)]
+/// What a sync has counted.
+///
+/// Reported live through the progress bridge as the sync runs, and again as the
+/// run's final result when it finishes — one shape, so the poll endpoint reads
+/// a half-finished sync and a completed one the same way.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct SyncSummary {
+    #[serde(default)]
     pub issues: usize,
+    #[serde(default)]
     pub pull_requests: usize,
+    #[serde(default)]
     pub files: usize,
+    #[serde(default)]
+    pub comments: usize,
+    #[serde(default)]
+    pub commits: usize,
+    /// Nodes already flushed to the graph store — the objects that are
+    /// queryable right now, mid-sync.
+    #[serde(default)]
+    pub stored: usize,
+}
+
+impl SyncSummary {
+    /// The counts recorded on a run, or zeroes when it has not reported any
+    /// yet.
+    ///
+    /// Tolerant on purpose: a run queued by an older version of this code, or
+    /// one whose result is some other shape, polls as zeroes rather than as a
+    /// 500.
+    pub fn of_result(result: Option<serde_json::Value>) -> Self {
+        result
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// This value as a progress detail. Infallible in practice — six integers
+    /// always serialize — and an empty document rather than a panic if not.
+    fn as_detail(self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}))
+    }
 }
 
 pub struct IngestService {
@@ -84,8 +120,6 @@ pub struct IngestService {
     /// Fallback own-clone volume (`STUDIO_ARTIFACT_WORKDIR`). `None` = no
     /// fallback clone → tree-API metadata when no workspace checkout exists.
     work_root: Option<PathBuf>,
-    /// Background sync tasks, polled by the portal.
-    tasks: Arc<TaskRegistry>,
 }
 
 /// One spec-quality finding to persist. Built by the portal from a detector
@@ -137,7 +171,6 @@ impl IngestService {
             file_parser,
             workspaces_root,
             work_root,
-            tasks: Arc::new(TaskRegistry::default()),
         }
     }
 
@@ -162,64 +195,8 @@ impl IngestService {
             .map_err(|_| anyhow!("stored token is not valid UTF-8"))
     }
 
-    /// Enqueue a sync and return its task id. The token is resolved by the
-    /// caller (it needs the security context) and handed in, so the spawned job
-    /// carries no request state.
-    #[allow(clippy::too_many_arguments)]
-    pub fn enqueue_sync(
-        self: &Arc<Self>,
-        ctx: SecurityContext,
-        provider: String,
-        base_url: Option<String>,
-        connector_id: String,
-        repo_full_path: String,
-        since: Option<String>,
-        token: String,
-        workspace_id: Option<String>,
-        project_id: Option<String>,
-        repo_dir: Option<String>,
-    ) -> String {
-        let id = Uuid::new_v4().to_string();
-        self.tasks.create(&id, &repo_full_path);
-        let svc = Arc::clone(self);
-        let task_id = id.clone();
-        tokio::spawn(async move {
-            svc.tasks.set_running(&task_id, "syncing…");
-            match svc
-                .run_sync(
-                    &ctx,
-                    &provider,
-                    base_url.as_deref(),
-                    &connector_id,
-                    &repo_full_path,
-                    since.as_deref(),
-                    &token,
-                    workspace_id.as_deref(),
-                    project_id.as_deref(),
-                    repo_dir.as_deref(),
-                    Some(&task_id),
-                )
-                .await
-            {
-                Ok(s) => svc.tasks.succeed(
-                    &task_id,
-                    s.issues as u32,
-                    s.pull_requests as u32,
-                    s.files as u32,
-                ),
-                Err(e) => svc.tasks.fail(&task_id, &format!("{e:#}")),
-            }
-        });
-        id
-    }
-
-    /// Snapshot of a task for the poll endpoint.
-    pub fn task(&self, id: &str) -> Option<TaskRecord> {
-        self.tasks.get(id)
-    }
-
     /// Pull issues + PRs + files for one repository and upsert them into the
-    /// graph. `task_id`, when set, receives short progress lines.
+    /// graph, reporting each phase (and the counts so far) to `progress`.
     #[allow(clippy::too_many_arguments)]
     pub async fn run_sync(
         &self,
@@ -233,7 +210,7 @@ impl IngestService {
         workspace_id: Option<&str>,
         project_id: Option<&str>,
         repo_dir: Option<&str>,
-        task_id: Option<&str>,
+        progress: &SyncReporter,
     ) -> anyhow::Result<SyncSummary> {
         let driver = self
             .drivers
@@ -288,7 +265,7 @@ impl IngestService {
         let mut flushed = 0usize;
         self.flush_and_report(
             ctx,
-            task_id,
+            progress,
             &mut nodes,
             &mut flushed,
             workspace_id,
@@ -302,7 +279,7 @@ impl IngestService {
         )
         .await?;
 
-        self.progress(task_id, "pulling issues…");
+        progress.set("pulling issues…");
         let mut issues = 0usize;
         for page in 1..=MAX_PAGES {
             let batch = driver
@@ -325,7 +302,7 @@ impl IngestService {
             // (and the live count climbs) before the whole sync completes.
             self.flush_and_report(
                 ctx,
-                task_id,
+                progress,
                 &mut nodes,
                 &mut flushed,
                 workspace_id,
@@ -340,7 +317,7 @@ impl IngestService {
             .await?;
         }
 
-        self.progress(task_id, "pulling pull requests…");
+        progress.set("pulling pull requests…");
         let mut pull_requests = 0usize;
         for page in 1..=MAX_PAGES {
             let batch = driver
@@ -364,7 +341,7 @@ impl IngestService {
             }
             self.flush_and_report(
                 ctx,
-                task_id,
+                progress,
                 &mut nodes,
                 &mut flushed,
                 workspace_id,
@@ -393,7 +370,7 @@ impl IngestService {
         let on_disk: Option<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> = if let Some(dir) =
             self.shared_checkout_dir(project_id.or(workspace_id), repo_dir)
         {
-            self.progress(task_id, "reading workspace files…");
+            progress.set("reading workspace files…");
             match self.walk_checkout(dir).await {
                 Ok(v) => Some(v),
                 Err(e) => {
@@ -406,7 +383,7 @@ impl IngestService {
                 }
             }
         } else if let Some(work_root) = self.work_root.clone() {
-            self.progress(task_id, "cloning repository…");
+            progress.set("cloning repository…");
             match self
                 .clone_files(
                     driver,
@@ -461,7 +438,7 @@ impl IngestService {
             }
             None => {
                 // No checkout available — fall back to connector metadata.
-                self.progress(task_id, "listing files…");
+                progress.set("listing files…");
                 match driver.list_files(&auth, repo_full_path, None).await {
                     Ok(list) => {
                         for f in list.into_iter().filter(|f| !f.is_dir).take(MAX_FILES) {
@@ -499,7 +476,7 @@ impl IngestService {
         // PR→file links (those are edges, whose endpoints must already exist).
         self.flush_and_report(
             ctx,
-            task_id,
+            progress,
             &mut nodes,
             &mut flushed,
             workspace_id,
@@ -516,7 +493,7 @@ impl IngestService {
         // PR → file (`modifies`): one API call per PR, best-effort, and only for
         // files we actually ingested so every edge endpoint exists in the graph.
         if !pr_refs.is_empty() && !file_paths.is_empty() {
-            self.progress(task_id, "linking pull requests to files…");
+            progress.set("linking pull requests to files…");
             for (number, pr_id) in &pr_refs {
                 match driver
                     .pull_request_files(&auth, repo_full_path, *number)
@@ -549,7 +526,7 @@ impl IngestService {
 
         // Comments on issues and PRs. Best-effort and paged; each links to the
         // issue/PR node by number (`comment_on`) and to its author.
-        self.progress(task_id, "pulling comments…");
+        progress.set("pulling comments…");
         let mut comments = 0usize;
         for page in 1..=MAX_PAGES {
             let batch = match driver
@@ -584,7 +561,7 @@ impl IngestService {
             }
             self.flush_and_report(
                 ctx,
-                task_id,
+                progress,
                 &mut nodes,
                 &mut flushed,
                 workspace_id,
@@ -610,7 +587,7 @@ impl IngestService {
         // Commits. Best-effort and paged; each links to the repo (`artifact_of`)
         // and to its author. Commit→file links are deferred (one extra call per
         // commit — see the batching plan).
-        self.progress(task_id, "pulling commits…");
+        progress.set("pulling commits…");
         let mut commits = 0usize;
         for page in 1..=MAX_PAGES {
             let batch = match driver
@@ -642,7 +619,7 @@ impl IngestService {
             }
             self.flush_and_report(
                 ctx,
-                task_id,
+                progress,
                 &mut nodes,
                 &mut flushed,
                 workspace_id,
@@ -676,10 +653,47 @@ impl IngestService {
         // tenant-tagging happens inside `store_node_batch`, so every flushed
         // batch is already scoped (see rest.rs `scope`).
         nodes.extend(users.into_values());
-        self.progress(task_id, "storing…");
+        progress.set("storing…");
         self.flush_and_report(
             ctx,
-            task_id,
+            progress,
+            &mut nodes,
+            &mut flushed,
+            workspace_id,
+            project_id,
+            "storing…",
+            issues,
+            pull_requests,
+            files,
+            comments,
+            commits,
+        )
+        .await?;
+
+        // Stamp the sync onto the repository node — same instance id, so this
+        // upserts over the record written when the sync started. A reader (the
+        // project dashboard) then sees "last synced <when>, <what came in>"
+        // instead of having to infer it from the presence of child nodes.
+        let synced_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        nodes.push(gts::repo_synced_node(
+            source_scope,
+            connector_id,
+            provider,
+            repo_full_path,
+            &synced_at,
+            gts::RepoSyncStats {
+                issues,
+                pull_requests,
+                files,
+                comments,
+                commits,
+            },
+        ));
+        self.flush_and_report(
+            ctx,
+            progress,
             &mut nodes,
             &mut flushed,
             workspace_id,
@@ -722,6 +736,9 @@ impl IngestService {
             issues,
             pull_requests,
             files,
+            comments,
+            commits,
+            stored: total_nodes,
         })
     }
 
@@ -835,12 +852,6 @@ impl IngestService {
         }
     }
 
-    fn progress(&self, task_id: Option<&str>, message: &str) {
-        if let Some(id) = task_id {
-            self.tasks.set_running(id, message);
-        }
-    }
-
     /// Tag a batch of freshly-built nodes with their tenant scope and upsert
     /// them to the graph in bounded chunks. The graph embeds each node itself
     /// from the payload paths its type declares. Factored out of the final flush so a sync can store
@@ -888,7 +899,7 @@ impl IngestService {
     async fn flush_and_report(
         &self,
         ctx: &SecurityContext,
-        task_id: Option<&str>,
+        progress: &SyncReporter,
         nodes: &mut [GtsNode],
         flushed: &mut usize,
         workspace_id: Option<&str>,
@@ -906,18 +917,18 @@ impl IngestService {
                 .await?;
             *flushed = end;
         }
-        if let Some(id) = task_id {
-            self.tasks.report(
-                id,
-                phase,
-                issues as u32,
-                pull_requests as u32,
-                files as u32,
-                comments as u32,
-                commits as u32,
-                *flushed as u32,
-            );
-        }
+        progress.set_with(
+            phase,
+            SyncSummary {
+                issues,
+                pull_requests,
+                files,
+                comments,
+                commits,
+                stored: *flushed,
+            }
+            .as_detail(),
+        );
         Ok(())
     }
 

@@ -196,16 +196,24 @@ function DocumentsView({
     api.validateDocument(token, workspaceId, selected.id).then(setReport).catch(() => setReport(null));
   }, [selectedId, selected, token, workspaceId]);
 
-  const createDoc = async (title: string, content?: string) => {
+  const createDoc = async (title: string, answers?: import("./api").DocAnswer[]) => {
     if (!newType || !title.trim()) return;
     setBusy(true);
     setErr(null);
     try {
-      const body: { type_key: string; title: string; content?: string } = {
+      // The body is composed server-side from the answers (ADR-0014 follow-up
+      // 2). It used to be built here, which made one client's markdown the de
+      // facto contract for a type that every client shares.
+      const body: {
+        type_key: string;
+        title: string;
+        content?: string;
+        answers?: import("./api").DocAnswer[];
+      } = {
         type_key: newType,
         title: title.trim(),
       };
-      if (content) body.content = content;
+      if (answers) body.answers = answers;
       const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, body);
       setNewTitle("");
       setShowQ(false);
@@ -224,17 +232,18 @@ function DocumentsView({
     setComposeBusy(true);
     setErr(null);
     try {
-      const [components, profs] = await Promise.all([
+      const [components, profs, vocab] = await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch(() => ({ nodes: [] as import("./api").CatalogNode[] })),
+        api.capabilities(token, workspaceId),
       ]);
       const profiles: Record<string, Record<string, unknown>> = {};
       for (const n of profs.nodes ?? []) {
         const nm = (n.value as Record<string, unknown>).gear_name;
         if (typeof nm === "string") profiles[nm] = n.value as Record<string, unknown>;
       }
-      const caps = parseCapabilities(selected.content);
-      setPlan(composePlan(caps, components.nodes ?? [], profiles));
+      const caps = selected.capabilities ?? [];
+      setPlan(composePlan(caps, components.nodes ?? [], profiles, vocab.items ?? []));
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -412,7 +421,7 @@ function DocumentsView({
           busy={busy}
           initialTitle={newTitle}
           onCancel={() => setShowQ(false)}
-          onSubmit={(content, title) => createDoc(title, content)}
+          onSubmit={(answers, title) => createDoc(title, answers)}
         />
       )}
       {plan && (
@@ -440,14 +449,6 @@ function DocumentsView({
 
 type Answer = string | string[] | boolean;
 
-/** Render one answer as markdown text. Empty answers return "". */
-function answerText(q: DocQuestion, a: Answer | undefined): string {
-  if (a === undefined || a === null) return "";
-  if (q.kind === "bool") return a ? "Yes" : "No";
-  if (q.kind === "multi") return Array.isArray(a) ? a.join(", ") : "";
-  return typeof a === "string" ? a.trim() : String(a);
-}
-
 /** Is a required question satisfied? */
 function answered(q: DocQuestion, a: Answer | undefined): boolean {
   if (q.kind === "bool") return true; // a boolean is always answered
@@ -455,30 +456,21 @@ function answered(q: DocQuestion, a: Answer | undefined): boolean {
   return typeof a === "string" && a.trim().length > 0;
 }
 
-/** Build a conforming markdown document from questionnaire answers: front
- *  matter, title, and each section filled with the answers that target it.
- *  Capability tags that were answered are recorded in the front matter so the
- *  Composer can read them later. */
-function generateFromQuestionnaire(type: DocType, title: string, answers: Record<string, Answer>): string {
-  const questions = type.questionnaire ?? [];
-  const caps = Array.from(
-    new Set(
-      questions
-        .filter((q) => q.capability && answered(q, answers[q.id]) && answers[q.id] !== false)
-        .map((q) => q.capability as string),
-    ),
-  );
-  const lines: string[] = ["---", "status: draft", "owner: "];
-  if (caps.length) lines.push(`capabilities: ${caps.join(", ")}`);
-  lines.push("---", "", `# ${type.name} — ${title.trim()}`, "");
-  for (const s of type.sections) {
-    lines.push(`## ${s.title}`, "");
-    for (const q of questions.filter((x) => x.section === s.key)) {
-      const text = answerText(q, answers[q.id]);
-      if (text) lines.push(`**${q.prompt}**`, "", text, "");
-    }
-  }
-  return lines.join("\n");
+/** Map the editor's answers onto the wire shape. The server owns rendering; a
+ *  client only says what was answered. */
+function toWireAnswers(
+  questions: DocQuestion[],
+  answers: Record<string, Answer>,
+): import("./api").DocAnswer[] {
+  return questions
+    .filter((q) => answers[q.id] !== undefined)
+    .map((q) => {
+      const a = answers[q.id];
+      if (q.kind === "bool") return { question_id: q.id, flag: Boolean(a) };
+      if (q.kind === "multi")
+        return { question_id: q.id, choices: Array.isArray(a) ? a : [] };
+      return { question_id: q.id, text: typeof a === "string" ? a : String(a) };
+    });
 }
 
 function QuestionnaireModal({
@@ -492,7 +484,7 @@ function QuestionnaireModal({
   busy: boolean;
   initialTitle: string;
   onCancel: () => void;
-  onSubmit: (content: string, title: string) => void;
+  onSubmit: (answers: import("./api").DocAnswer[], title: string) => void;
 }) {
   const questions = type.questionnaire ?? [];
   const [title, setTitle] = useState(initialTitle);
@@ -535,7 +527,7 @@ function QuestionnaireModal({
           <button
             className="primary"
             disabled={!canSubmit}
-            onClick={() => onSubmit(generateFromQuestionnaire(type, title, answers), title)}
+            onClick={() => onSubmit(toWireAnswers(questions, answers), title)}
           >
             Generate document
           </button>
@@ -643,36 +635,9 @@ const qTag: CSSProperties = { marginLeft: 8, fontSize: 10, opacity: 0.6, fontWei
 
 // ── Compose (v1): match the App Spec's capabilities to catalog components ─────
 
-/** Search terms per capability tag; a component matches when its catalog
- *  metadata contains any of them. Deliberately explicit and explainable — v2
- *  replaces this with agent-driven, embedding-based matching. */
-const CAP_KEYWORDS: Record<string, string[]> = {
-  tenancy: ["tenant", "tenancy", "account", "organization", "org", "resource group"],
-  auth: ["auth", "authn", "identity", "idp", "oidc", "keycloak", "login", "session", "credential"],
-  authz: ["authz", "authorization", "permission", "rbac", "policy", "access", "role"],
-  storage: ["storage", "graph", "postgres", "database", "file", "object", "search", "node"],
-  connectors: ["connector", "github", "gitlab", "bitbucket", "integration", "source"],
-  facade: ["connector", "proxy", "gateway", "adapter", "facade", "wrapper", "oagw", "egress"],
-  billing: ["billing", "payment", "invoice", "metering", "subscription", "usage"],
-  compliance: ["audit", "compliance", "gdpr", "secret", "credstore", "policy"],
-  deploy: ["deploy", "gitops", "helm", "k8s", "kubernetes", "bootstrap"],
-};
 
 type Candidate = { name: string; kind: string; score: number; why: string[] };
 type PlanRow = { capability: string; candidates: Candidate[]; gap: boolean };
-
-/** Capability tags recorded in the App Spec's front matter by the questionnaire. */
-function parseCapabilities(content: string): string[] {
-  const fm = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fm) return [];
-  const line = fm[1].split("\n").find((l) => l.trim().startsWith("capabilities:"));
-  if (!line) return [];
-  return line
-    .replace(/^\s*capabilities:/, "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
 
 function profileText(profile?: Record<string, unknown>): string {
   const auto = profile?.auto;
@@ -702,14 +667,23 @@ function componentHaystack(g: CatalogNode, profile?: Record<string, unknown>): s
     .toLowerCase();
 }
 
+/** Resolve capabilities to candidate components.
+ *
+ *  `vocabulary` is the workspace's effective capability catalogue, which used to
+ *  be a `CAP_KEYWORDS` constant in this file. A workspace that invents a
+ *  capability can now give it search terms instead of getting zero candidates
+ *  and no explanation (ADR-0014 s5). A capability the catalogue does not know is
+ *  still matched against its own name, exactly as before. */
 function composePlan(
   caps: string[],
   gears: CatalogNode[],
   profiles: Record<string, Record<string, unknown>>,
+  vocabulary: readonly import("./api").Capability[],
 ): PlanRow[] {
+  const terms = new Map(vocabulary.map((c) => [c.key, c.terms]));
   const geared = gears.filter((g) => typeof g.value.name === "string");
   return caps.map((cap) => {
-    const kws = CAP_KEYWORDS[cap] ?? [cap];
+    const kws = terms.get(cap)?.length ? terms.get(cap)! : [cap];
     const candidates = geared
       .map((g) => {
         const hay = componentHaystack(g, profiles[g.value.name as string]);

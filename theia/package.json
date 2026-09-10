@@ -6,6 +6,7 @@
   },
   "scripts": {
     "build:browser": "npm --prefix browser-app run bundle",
+    "build:browser:dev": "npm --prefix browser-app run bundle:dev",
     "build:electron": "npm --prefix electron-app run bundle",
     "prepare": "lerna run prepare",
     "postinstall": "theia check:theia-version && patch-package",

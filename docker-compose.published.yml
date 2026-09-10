@@ -1,0 +1,86 @@
+# Run the images the pipeline published, instead of building from this checkout.
+#
+# An override, not a second stack: everything it does not mention — postgres,
+# keycloak, the volumes, the environment, the health checks — comes from
+# docker-compose.yml, so the two modes cannot drift apart in anything but the
+# provenance of the binaries.
+#
+#   # published images (the default tag is the rolling `edge`)
+#   docker compose -f docker-compose.yml -f docker-compose.published.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+#
+#   # an exact snapshot, which is what a stand runs
+#   STUDIO_IMAGE_TAG=sha-<40-char-commit> \
+#     docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+#
+# Which tag to ask for, from the delivery workflow's own promotion rules:
+#
+#   sha-<commit>  every build. The only tag that cannot move under you.
+#   edge          the tip of main, moved by every push to it. The default here,
+#                 because "what a stand runs" is main, not a release.
+#   latest        the last STABLE release tag (vX.Y.Z; a prerelease vX-rc never
+#                 moves it). Older than edge by however long it has been since
+#                 that release — at the time of writing, six days and everything
+#                 merged in them.
+#   vX.Y.Z        that release, immutably.
+#
+#   # back to building from source
+#   scripts/dev-up.sh
+#
+# On an EMPTY database, run scripts/dev-up.sh once first, whichever mode you
+# then use: the root tenant is seeded by backend-bootstrap, which has no
+# published image and is not overridden here (see the bottom of this file).
+#
+# Every service here also carries `pull_policy: always`, because the default
+# tag is a MOVING one: `edge` from three days ago is still called `edge` on
+# this machine, and using it in silence is the opposite of running what the tip
+# of main runs. With the policy set, `up` refuses to be quietly out of date and
+# the explicit `pull` above is belt and braces.
+#
+# `--no-build` matters. Compose keeps the `build:` section from the base file
+# even when an override supplies an `image:`, and would rebuild from source the
+# moment the tag is missing locally — quietly giving you the opposite of what
+# this file is for. `pull` first, `--no-build` second, and a missing tag is an
+# error you can see.
+#
+# ghcr.io/constructorfabric/studio-web is private: `docker login ghcr.io` with a
+# token that has read:packages before the pull, and set STUDIO_REGISTRY_USER /
+# STUDIO_REGISTRY_TOKEN (docker-compose.yml explains why the session gear needs
+# its own pair — the Docker API ignores the CLI credential store).
+
+services:
+  backend:
+    image: ghcr.io/constructorfabric/studio-web/studio-backend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+    environment:
+      # The session image is not a compose service: the backend launches it
+      # through the host daemon, by the name in config/docker.yaml. Point it at
+      # the same snapshot as the backend, and pull it, so a session is not
+      # whatever `cf-studio-theia:local` happens to be on this machine.
+      STUDIO_SESSION_IMAGE: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
+      STUDIO_SESSION_ALWAYS_PULL: "true"
+
+  frontend:
+    image: ghcr.io/constructorfabric/studio-web/studio-frontend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+
+  frontend-prototype:
+    image: ghcr.io/constructorfabric/studio-web/studio-frontend-prototype:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+
+  graph-postgres:
+    image: ghcr.io/constructorfabric/studio-web/graph-postgres:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+
+  # The backend waits for this one (docker-compose.yml explains why), so it
+  # has to resolve here too — pointed at the published tag, which makes the
+  # dependency a pull instead of a ten-minute build.
+  session-image:
+    image: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+
+  # backend-bootstrap is deliberately NOT overridden. It is a --no-default-features
+  # build whose whole purpose is to have no LLM chain, so it seeds the root tenant
+  # on an empty database (see scripts/dev-up.sh); the pipeline publishes no such
+  # image. On a fresh volume it still builds from this checkout — which is fine,
+  # since you have the checkout, and it runs once.

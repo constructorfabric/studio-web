@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use account_management_sdk::AccountManagementClient;
 use anyhow::{Context, anyhow};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use tokio::sync::RwLock;
@@ -9,7 +10,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::config::StudioSessionConfig;
-use super::driver::{LaunchSpec, LocalBind, SessionAddress, SessionDriver};
+use super::driver::{AdoptedSession, LaunchSpec, LocalBind, SessionAddress, SessionDriver};
 
 const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
@@ -59,6 +60,22 @@ pub enum RepoKind {
     Local,
 }
 
+/// What one reaping pass did. Reported as a `session.reap` run's summary, so
+/// "nothing expired" and "three stopped, one refused" are told apart in the
+/// history rather than only in a log line.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReapOutcome {
+    /// Sessions the runtime showed as past their maximum age.
+    #[serde(default)]
+    pub expired: usize,
+    #[serde(default)]
+    pub stopped: usize,
+    /// Ones the driver refused to stop. They stay, and the next pass tries
+    /// again.
+    #[serde(default)]
+    pub failed: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: Uuid,
@@ -90,6 +107,11 @@ pub struct SessionService {
     sessions: RwLock<HashMap<Uuid, Session>>,
     /// Resolves repo access tokens (PATs) stored as credstore secrets.
     credstore: RwLock<Option<Arc<dyn CredStoreClientV1>>>,
+    /// Reads the caller's IdP record, for a session's commit authorship.
+    /// Wired the same way and just as optionally as `credstore`: a backend
+    /// without it still launches sessions, their commits just keep the
+    /// product's name.
+    account_management: RwLock<Option<Arc<dyn AccountManagementClient>>>,
     /// Wakes the background image keeper (see [`Self::image_keeper`]) for a
     /// refresh pull. Launch requests never pull inline: a registry pull of a
     /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
@@ -110,12 +132,17 @@ impl SessionService {
             driver,
             sessions: RwLock::new(HashMap::new()),
             credstore: RwLock::new(None),
+            account_management: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
         })
     }
 
     pub async fn set_credstore(&self, client: Arc<dyn CredStoreClientV1>) {
         *self.credstore.write().await = Some(client);
+    }
+
+    pub async fn set_account_management(&self, client: Arc<dyn AccountManagementClient>) {
+        *self.account_management.write().await = Some(client);
     }
 
     /// Resolve a UTF-8 secret from credstore (tenant-scoped by ctx). Used
@@ -171,6 +198,85 @@ impl SessionService {
             }
         }
         out
+    }
+
+    /// Commit authorship for a session, read from the caller's IdP record.
+    ///
+    /// Without it the entrypoint falls back to `Constructor Studio
+    /// <studio@constructor.tech>`, so every commit from every session is
+    /// authored by the product rather than by the person who made it — and a
+    /// repository that insists on a real author (a DCO check, say) rejects the
+    /// result. Pushes are already attributed, because the token is the
+    /// caller's; the commit was the half still missing.
+    ///
+    /// Best-effort, like [`Self::agent_env`]: a service account, a lookup that
+    /// fails, or a user with no email address leaves that fallback in place
+    /// rather than failing the launch — a session must still start, and the
+    /// person can always set both in its own git config.
+    async fn git_identity_env(&self, ctx: &SecurityContext) -> Vec<String> {
+        // A service account has no IdP user record to read.
+        if let Some(kind) = ctx.subject_type()
+            && kind != "user"
+        {
+            return Vec::new();
+        }
+        // Cloned out of the lock: the lookup below is a call into another
+        // gear and must not hold this one's read guard while it waits.
+        let client = {
+            let guard = self.account_management.read().await;
+            match guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    tracing::warn!(
+                        "studio-session: account-management client unwired — \
+                         session commits stay unattributed"
+                    );
+                    return Vec::new();
+                }
+            }
+        };
+        let user = match client
+            .get_user(ctx, ctx.subject_tenant_id(), ctx.subject_id())
+            .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                tracing::warn!(
+                    "studio-session: cannot read the caller's user record ({e}) — \
+                     session commits stay unattributed"
+                );
+                return Vec::new();
+            }
+        };
+        let email = user
+            .email
+            .as_deref()
+            .map(str::trim)
+            .filter(|e| !e.is_empty());
+        let Some(email) = email else {
+            tracing::warn!(
+                "studio-session: the caller has no email address — \
+                 session commits stay unattributed"
+            );
+            return Vec::new();
+        };
+        let name = git_author_name(
+            user.display_name.as_deref(),
+            user.first_name.as_deref(),
+            user.last_name.as_deref(),
+            &user.username,
+        );
+        if name.is_empty() {
+            tracing::warn!(
+                "studio-session: the caller has no usable name — \
+                 session commits stay unattributed"
+            );
+            return Vec::new();
+        }
+        vec![
+            format!("STUDIO_GIT_AUTHOR_NAME={name}"),
+            format!("STUDIO_GIT_AUTHOR_EMAIL={email}"),
+        ]
     }
 
     /// The URL the portal opens for a session, from its driver address.
@@ -451,7 +557,17 @@ impl SessionService {
             env.push(format!("STUDIO_THEIA_S2S_TOKEN={control_token}"));
         }
         // Provider keys for the native Theia agents (Codex, Claude Code).
+        // Orca runs the same CLIs, so these keys serve both.
         env.extend(self.agent_env(ctx).await);
+        env.extend(self.git_identity_env(ctx).await);
+        // Orca runtime for the IDE's Agents panel. Container-local: the
+        // entrypoint starts `orca serve` beside Theia and the panel's backend
+        // shells out to `orca` in the same container, so nothing is published
+        // and no pairing secret ever reaches a browser.
+        if self.cfg.orca_enabled {
+            env.push("STUDIO_ORCA_ENABLED=1".to_string());
+            env.push(format!("STUDIO_ORCA_PORT={}", self.cfg.orca_port));
+        }
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).
         if let Some(root) = &root_repo {
@@ -888,27 +1004,132 @@ impl SessionService {
         Ok(count)
     }
 
-    /// Reaper pass: stop sessions past max_session_secs. Returns reaped count.
-    pub async fn reap_expired(&self) -> usize {
+    /// One reaping pass: stop every session past `max_session_secs`.
+    ///
+    /// The list comes from the **driver**, not from this process's session map.
+    /// That map only holds what this replica launched, plus what it adopted when
+    /// it booted — a session launched by another replica afterwards is not in
+    /// it. Asking the runtime instead makes one pass enough for everything the
+    /// driver can see, which is what lets a schedule fire this in one replica
+    /// (see [`super::reap_task`]) rather than every replica running its own
+    /// timer over its own partial view.
+    ///
+    /// # Errors
+    ///
+    /// Only when the runtime cannot be listed at all. A single session the
+    /// driver refuses to stop is counted in [`ReapOutcome::failed`] and left
+    /// for the next pass.
+    pub async fn reap_expired(&self) -> anyhow::Result<ReapOutcome> {
         if self.cfg.max_session_secs == 0 {
-            return 0;
+            return Ok(ReapOutcome::default());
         }
         let cutoff = now_secs().saturating_sub(self.cfg.max_session_secs);
-        let expired: Vec<Session> = self
-            .sessions
-            .read()
-            .await
-            .values()
-            .filter(|s| s.created_at_epoch_secs < cutoff && s.state != SessionState::Stopped)
-            .cloned()
+        let expired: Vec<AdoptedSession> = self
+            .driver
+            .list_adoptable()
+            .await?
+            .into_iter()
+            .filter(|s| s.created_at_epoch_secs < cutoff)
             .collect();
-        let mut reaped = 0;
-        for s in expired {
-            if self.driver.destroy(&s.handle).await.is_ok() {
-                self.sessions.write().await.remove(&s.id);
-                reaped += 1;
+
+        let mut outcome = ReapOutcome {
+            expired: expired.len(),
+            ..ReapOutcome::default()
+        };
+        for session in expired {
+            match self.driver.destroy(&session.handle).await {
+                Ok(()) => {
+                    outcome.stopped += 1;
+                    // Drop it from this replica's map as well, when it is there:
+                    // the handle is the driver's key, the map's is our own id.
+                    let mut sessions = self.sessions.write().await;
+                    if let Some(id) = sessions
+                        .values()
+                        .find(|s| s.handle == session.handle)
+                        .map(|s| s.id)
+                    {
+                        sessions.remove(&id);
+                    }
+                }
+                Err(e) => {
+                    outcome.failed += 1;
+                    tracing::warn!(
+                        handle = %session.handle,
+                        workspace_id = %session.workspace_id,
+                        "studio-session: could not stop an expired session: {e:#}"
+                    );
+                }
             }
         }
-        reaped
+        Ok(outcome)
+    }
+}
+
+/// The name a person recognizes as their own: the display name, then the two
+/// name parts, then the username. Never a blank string — git accepts one and
+/// the commit then reads as authored by nobody at all, which is worse than
+/// the `Constructor Studio` fallback because it looks deliberate.
+fn git_author_name(
+    display_name: Option<&str>,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+    username: &str,
+) -> String {
+    // A named function, not a closure: as a closure the nested `filter` makes
+    // the borrow checker tie the argument's lifetime to the closure itself.
+    fn present(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|v| !v.is_empty())
+    }
+    if let Some(display) = present(display_name) {
+        return display.to_string();
+    }
+    match (present(first_name), present(last_name)) {
+        (Some(first), Some(last)) => format!("{first} {last}"),
+        (Some(one), None) | (None, Some(one)) => one.to_string(),
+        (None, None) => username.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_author_name;
+
+    #[test]
+    fn prefers_the_display_name() {
+        assert_eq!(
+            git_author_name(Some("Ada Lovelace"), Some("Augusta"), Some("King"), "ada"),
+            "Ada Lovelace"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_name_parts() {
+        assert_eq!(
+            git_author_name(None, Some("Ada"), Some("Lovelace"), "ada"),
+            "Ada Lovelace"
+        );
+        assert_eq!(git_author_name(None, Some("Ada"), None, "ada"), "Ada");
+        assert_eq!(
+            git_author_name(None, None, Some("Lovelace"), "ada"),
+            "Lovelace"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_username_last() {
+        assert_eq!(git_author_name(None, None, None, "ada"), "ada");
+    }
+
+    /// An IdP that stores an empty string is the common case this has to
+    /// survive: it is not `None`, and used as-is it authors the commit to an
+    /// empty name.
+    #[test]
+    fn treats_blank_fields_as_absent() {
+        assert_eq!(
+            git_author_name(Some("  "), Some(""), Some(" "), "ada"),
+            "ada"
+        );
+        assert_eq!(git_author_name(Some(" Ada "), None, None, "ada"), "Ada");
+        assert!(git_author_name(None, None, None, "   ").is_empty());
     }
 }

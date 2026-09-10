@@ -104,6 +104,34 @@ services:
       retries: 30
       start_period: 30s
 
+  # The Theia session image, as a service — so Compose builds it.
+  #
+  # It is not something the stack runs: the backend launches this image through
+  # the host Docker daemon, one container per session. But it WAS the one image
+  # nobody built for you, so it drifted behind the checkout twice in one
+  # afternoon — a session started on a tag from three hours earlier and the
+  # panel offered agents that image did not carry. `entrypoint: true` is the
+  # whole command: this container exists to have been built.
+  #
+  # Built once. Compose builds a service that has both `image` and `build` only
+  # when that tag is missing locally, so `up` is a no-op afterwards; to refresh
+  # it deliberately, `docker compose build session-image` (ten minutes: Theia's
+  # npm ci and bundle, plus the Orca package).
+  session-image:
+    build:
+      context: theia
+      dockerfile: Dockerfile
+      secrets:
+        # The Constructor Studio skill engine resolves through api.github.com,
+        # whose anonymous limit is 60/hour per IP; the Dockerfile fails the
+        # build rather than ship a CLI with nothing behind it. Export
+        # GITHUB_TOKEN (`gh auth token` will do) or accept the anonymous odds.
+        - github_token
+    image: cf-studio-theia:local
+    container_name: studio-session-image
+    restart: "no"
+    entrypoint: ["true"]
+
   # PostgreSQL 19 + pgvector — the single PostgreSQL instance for local
   # Compose. It hosts application gear databases and graph_storage. PostgreSQL
   # 19 is required for graph-storage's vector, SQL/PGQ and HNSW features.
@@ -246,6 +274,12 @@ services:
       # seeded yet. On a warm volume the seeder is a fast no-op (seconds).
       backend-bootstrap:
         condition: service_completed_successfully
+      # A session cannot start without the image the gear launches, and the
+      # gear only finds out when someone clicks. Cheap to wait for: the
+      # container runs `true`, and the build behind it happens only when the
+      # tag is missing.
+      session-image:
+        condition: service_completed_successfully
     healthcheck:
       # /cf/health is the endpoint the gateway actually serves (proven 200);
       # the bare /healthz was never mounted, so the probe stayed red forever and
@@ -360,3 +394,10 @@ volumes:
   # Embedding model artifacts (graph-storage `onnx` provider), ~90 MB, filled
   # by the `embedding-model` service. Drop it to force a re-fetch.
   studio_models:
+
+# Passed to `build` only (see session-image): BuildKit mounts it for one RUN,
+# so it never lands in image history. Unset is allowed — the build then talks
+# to api.github.com anonymously and takes its chances with the rate limit.
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN

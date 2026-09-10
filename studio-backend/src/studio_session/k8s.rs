@@ -1,8 +1,9 @@
 //! Kubernetes session driver (ADR-0003, the k8s successor).
 //!
 //! One Pod + one ClusterIP Service per session, created in the backend's own
-//! namespace through the in-cluster API. The Pod is unprivileged, mounts an
-//! ephemeral `emptyDir` at `/workspace` (sources are cloned on start), and is
+//! namespace through the in-cluster API. The Pod is unprivileged, mounts
+//! `/workspace` (an ephemeral `emptyDir`, or a per-workspace claim when
+//! `k8s_workspace_persistent` is set — see [`KubernetesDriver::launch`]), and is
 //! never exposed directly: the backend proxies the browser to the Service
 //! after checking the caller owns the session (see the REST proxy). A bare Pod
 //! (not a Deployment) is deliberate — a session is a single lifetime; the
@@ -14,8 +15,10 @@ use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use k8s_openapi::api::core::v1::{
     Capabilities, Container, ContainerPort, EmptyDirVolumeSource, EnvVar, HTTPGetAction,
-    LocalObjectReference, Pod, PodSecurityContext, PodSpec, Probe, ResourceRequirements,
-    SeccompProfile, SecurityContext, Service, ServicePort, ServiceSpec, Volume, VolumeMount,
+    LocalObjectReference, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+    PersistentVolumeClaimVolumeSource, Pod, PodSecurityContext, PodSpec, Probe,
+    ResourceRequirements, SeccompProfile, SecurityContext, Service, ServicePort, ServiceSpec,
+    Volume, VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -69,6 +72,53 @@ impl KubernetesDriver {
     }
     fn services(&self) -> Api<Service> {
         Api::namespaced(self.client.clone(), &self.namespace)
+    }
+    fn claims(&self) -> Api<PersistentVolumeClaim> {
+        Api::namespaced(self.client.clone(), &self.namespace)
+    }
+
+    /// Create the workspace's claim, or accept the one already there — the
+    /// second case is the whole point, so a 409 is success.
+    async fn ensure_workspace_claim(
+        &self,
+        claim_name: &str,
+        labels: &BTreeMap<String, String>,
+    ) -> anyhow::Result<()> {
+        let claim = workspace_claim(claim_name, labels, &self.cfg);
+        match self.claims().create(&PostParams::default(), &claim).await {
+            Ok(_) => {
+                tracing::info!(claim = %claim_name, "studio-session: workspace volume created");
+                Ok(())
+            }
+            Err(kube::Error::Api(ae)) if ae.code == 409 => {
+                tracing::info!(claim = %claim_name, "studio-session: reusing the workspace volume");
+                Ok(())
+            }
+            Err(e) => Err(anyhow!("failed to create the workspace volume claim: {e}")),
+        }
+    }
+
+    /// Wait for a deleted Pod to actually be gone.
+    ///
+    /// Only needed for a persistent workspace: the claim is `ReadWriteOnce`,
+    /// so a Pod that is still terminating still holds the volume and the
+    /// replacement sits in `Pending` with a multi-attach error until the
+    /// kubelet lets go. Bounded — on timeout the launch proceeds and the
+    /// readiness probe absorbs the rest, which is no worse than not waiting.
+    async fn await_pod_gone(&self, name: &str) {
+        for _ in 0..60 {
+            match self.pods().get_opt(name).await {
+                Ok(None) => return,
+                Ok(Some(_)) | Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+        tracing::warn!(
+            pod = %name,
+            "studio-session: previous session Pod still terminating — \
+             the replacement may wait for its workspace volume"
+        );
     }
 
     /// The Service that fronts a session Pod — same name (a session is one
@@ -130,6 +180,31 @@ impl SessionDriver for KubernetesDriver {
         // A leftover Pod/Service from a crashed session holds the name; clear
         // it first (the service only launches when no LIVE session exists).
         let _ = self.destroy(&name).await;
+
+        // `/workspace`: ephemeral by default, or the workspace's own claim.
+        // The claim is named after the Pod, which is itself per-workspace, so
+        // the same workspace comes back to the same volume — clones, agent
+        // worktrees and uncommitted work included. It deliberately outlives
+        // the session; `destroy` does not touch it.
+        let workspace_volume = if self.cfg.k8s_workspace_persistent {
+            let claim_name = workspace_claim_name(&name);
+            self.ensure_workspace_claim(&claim_name, &labels).await?;
+            self.await_pod_gone(&name).await;
+            Volume {
+                name: "workspace".to_string(),
+                persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                    claim_name,
+                    read_only: None,
+                }),
+                ..Default::default()
+            }
+        } else {
+            Volume {
+                name: "workspace".to_string(),
+                empty_dir: Some(EmptyDirVolumeSource::default()),
+                ..Default::default()
+            }
+        };
 
         let image_pull_secrets = self
             .cfg
@@ -221,11 +296,7 @@ impl SessionDriver for KubernetesDriver {
                     }),
                     ..Default::default()
                 }],
-                volumes: Some(vec![Volume {
-                    name: "workspace".to_string(),
-                    empty_dir: Some(EmptyDirVolumeSource::default()),
-                    ..Default::default()
-                }]),
+                volumes: Some(vec![workspace_volume]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -303,6 +374,10 @@ impl SessionDriver for KubernetesDriver {
     }
 
     async fn destroy(&self, handle: &str) -> anyhow::Result<()> {
+        // Pod and Service only. A persistent workspace's claim is NOT deleted
+        // here: surviving the session is what it is for, and the next launch
+        // of the same workspace binds it again. Nothing reclaims it yet —
+        // deleting a workspace should, and does not.
         // Delete both; a NotFound on either is fine (idempotent teardown).
         let dp = DeleteParams::default();
         if let Err(e) = self.services().delete(handle, &dp).await
@@ -376,5 +451,118 @@ impl SessionDriver for KubernetesDriver {
             });
         }
         Ok(out)
+    }
+}
+
+/// The claim that backs one workspace, derived from the Pod name — which is
+/// itself per-workspace, so this is stable across sessions and needs no
+/// registry of its own.
+fn workspace_claim_name(pod_name: &str) -> String {
+    format!("{pod_name}-workspace")
+}
+
+/// `ReadWriteOnce` is the right mode and not a limitation: the service admits
+/// one live session per workspace, so exactly one Pod ever writes here. The
+/// session labels are carried onto the claim so it can be found — and one day
+/// reclaimed — the same way Pods are.
+fn workspace_claim(
+    claim_name: &str,
+    labels: &BTreeMap<String, String>,
+    cfg: &StudioSessionConfig,
+) -> PersistentVolumeClaim {
+    let mut requests = BTreeMap::new();
+    requests.insert(
+        "storage".to_string(),
+        Quantity(cfg.k8s_workspace_volume_size.clone()),
+    );
+    PersistentVolumeClaim {
+        metadata: ObjectMeta {
+            name: Some(claim_name.to_string()),
+            labels: Some(labels.clone()),
+            ..Default::default()
+        },
+        spec: Some(PersistentVolumeClaimSpec {
+            access_modes: Some(vec!["ReadWriteOnce".to_string()]),
+            resources: Some(VolumeResourceRequirements {
+                requests: Some(requests),
+                limits: None,
+            }),
+            storage_class_name: cfg
+                .k8s_workspace_storage_class
+                .clone()
+                .filter(|c| !c.trim().is_empty()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StudioSessionConfig, workspace_claim, workspace_claim_name};
+    use std::collections::BTreeMap;
+
+    fn labels() -> BTreeMap<String, String> {
+        BTreeMap::from([("cf.studio.session".to_string(), "1".to_string())])
+    }
+
+    #[test]
+    fn the_claim_name_follows_the_workspace_pod() {
+        assert_eq!(
+            workspace_claim_name("cf-studio-session-abc123"),
+            "cf-studio-session-abc123-workspace"
+        );
+    }
+
+    #[test]
+    fn claims_one_writer_and_the_configured_size() {
+        let cfg = StudioSessionConfig::default();
+        let claim = workspace_claim("ws-claim", &labels(), &cfg);
+        let spec = claim.spec.expect("claim has a spec");
+        assert_eq!(
+            spec.access_modes.as_deref(),
+            Some(["ReadWriteOnce".to_string()].as_slice())
+        );
+        let requests = spec
+            .resources
+            .expect("resources")
+            .requests
+            .expect("requests");
+        assert_eq!(requests["storage"].0, cfg.k8s_workspace_volume_size);
+        assert_eq!(claim.metadata.name.as_deref(), Some("ws-claim"));
+        // Carried so the claim is discoverable the same way its Pod is.
+        assert_eq!(claim.metadata.labels, Some(labels()));
+    }
+
+    /// An unset or blank class must leave the field absent, so the cluster
+    /// default applies; an empty string means "no dynamic provisioning" to
+    /// Kubernetes, which would leave the claim Pending forever.
+    #[test]
+    fn a_blank_storage_class_is_not_sent() {
+        let mut cfg = StudioSessionConfig::default();
+        assert!(
+            workspace_claim("c", &labels(), &cfg)
+                .spec
+                .unwrap()
+                .storage_class_name
+                .is_none()
+        );
+        cfg.k8s_workspace_storage_class = Some("   ".to_string());
+        assert!(
+            workspace_claim("c", &labels(), &cfg)
+                .spec
+                .unwrap()
+                .storage_class_name
+                .is_none()
+        );
+        cfg.k8s_workspace_storage_class = Some("fast-ssd".to_string());
+        assert_eq!(
+            workspace_claim("c", &labels(), &cfg)
+                .spec
+                .unwrap()
+                .storage_class_name
+                .as_deref(),
+            Some("fast-ssd")
+        );
     }
 }

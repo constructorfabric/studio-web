@@ -34,6 +34,10 @@ vi.mock('./api/ArtifactIngestApiService', () => ({
   ArtifactIngestApiService: class ArtifactIngestApiService {},
 }));
 
+vi.mock('./api/DocumentsApiService', () => ({
+  DocumentsApiService: class DocumentsApiService {},
+}));
+
 // The connector client is shared with the other MFE now; `init.ts` imports it
 // from the package, and nothing else in this test's graph pulls the package at
 // runtime (the wire types are type-only imports and erase).
@@ -90,8 +94,10 @@ describe('projects-mfe init', () => {
     const { initWorkspaceEffects } = await import('./effects/workspaceEffects');
     const module = await import('./init');
 
-    // Three gears: account-management, studio-connector, studio-artifact-ingest.
-    expect(register).toHaveBeenCalledTimes(3);
+    // Four gears: account-management, studio-connector, studio-artifact-ingest
+    // and studio-documents (the journey-stage catalogue the project screens and
+    // the create wizard read).
+    expect(register).toHaveBeenCalledTimes(4);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

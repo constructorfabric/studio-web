@@ -3,9 +3,32 @@
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-connection-list-glyph:p1
-import { Bot, GitBranch, Github, Gitlab, Plug, Sparkles, type LucideIcon } from 'lucide-react';
+import {
+  Bot,
+  GitBranch,
+  Github,
+  Gitlab,
+  MessageCircle,
+  MessageSquare,
+  Plug,
+  Slack,
+  Sparkles,
+  Webhook,
+  type LucideIcon,
+} from 'lucide-react';
 
-export type ProviderCode = 'github' | 'gitlab' | 'bitbucket' | 'anthropic' | 'openai';
+export type ProviderCode =
+  | 'github'
+  | 'gitlab'
+  | 'bitbucket'
+  | 'anthropic'
+  | 'openai'
+  | 'slack'
+  | 'slack_webhook'
+  | 'zulip'
+  | 'zulip_webhook'
+  | 'discord'
+  | 'discord_webhook';
 
 /** The single place that knows which provider looks like what. */
 const ICONS = {
@@ -15,6 +38,18 @@ const ICONS = {
   bitbucket: GitBranch,
   anthropic: Sparkles,
   openai: Bot,
+  slack: Slack,
+  // No Zulip or Discord mark either, so a chat glyph each, distinct enough to
+  // tell apart in a list.
+  zulip: MessageSquare,
+  discord: MessageCircle,
+  // Every webhook variant draws as a webhook rather than as its platform: the
+  // row already names the provider, and what a reader needs at a glance is
+  // which of the two credentials this connection holds — one channel fixed in
+  // a URL, or a bot that reaches many.
+  slack_webhook: Webhook,
+  zulip_webhook: Webhook,
+  discord_webhook: Webhook,
 } satisfies Record<ProviderCode, LucideIcon>;
 
 

@@ -11,6 +11,65 @@ import {
   uploadProjectArtifact,
 } from "./api";
 
+describe("background work client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function jsonMock(body: unknown) {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("asks for every run when nothing is filtered", async () => {
+    const fetchMock = jsonMock({ items: [] });
+    await api.taskRuns("token");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-tasks/v1/runs",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer token" }),
+      }),
+    );
+  });
+
+  it("narrows the listing server-side rather than in the browser", async () => {
+    // The filters exist so a busy deployment does not ship 10k rows to draw
+    // five of them; an omitted filter must not appear as an empty parameter.
+    const fetchMock = jsonMock({ items: [] });
+    await api.taskRuns("token", { state: "failed", taskType: "notify.deliver", limit: 200 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-tasks/v1/runs?state=failed&task_type=notify.deliver&limit=200",
+      expect.anything(),
+    );
+  });
+
+  it("encodes a run id in the path rather than interpolating it raw", async () => {
+    const fetchMock = jsonMock({ id: "r-1" });
+    await api.cancelTaskRun("token", "r/1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-tasks/v1/runs/r%2F1/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("fires a schedule through the scheduler, not the task queue", async () => {
+    // `run-now` is the only way a person starts background work: it runs a
+    // task type and payload a schedule already validated.
+    const fetchMock = jsonMock({ run_id: "r-2" });
+    await expect(api.runScheduleNow("token", "s-1")).resolves.toEqual({ run_id: "r-2" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-scheduler/v1/schedules/s-1/run-now",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
 describe("kit registry client", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

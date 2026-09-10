@@ -11,20 +11,26 @@ mod credstore_pg; // persistent credstore value store (issue #66)
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
+mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
+mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
+mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
 // keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in
 // registered_gears.rs). The former in-crate implementation was removed once the
 // official plugin went green — see docs/keycloak-idp-migration.md.
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
+mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod registered_gears;
+mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 #[cfg(feature = "theia-bridge")]
 mod studio_theia; // ADR-0010: backend-to-backend bridge to the Theia node backend (opt-in)
+mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
 
 use std::path::{Path, PathBuf};
@@ -81,11 +87,58 @@ enum Commands {
         #[arg(long)]
         apply: bool,
     },
+    /// Print every GTS document this assembly registers (JSON) and exit.
+    ///
+    /// Built from the code alone — no config, no database, no registry, no
+    /// listener. Regenerates `docs/gts-types.json`, which `cargo test`
+    /// drift-checks (see `gts_inventory`).
+    GtsTypes,
+    /// Audit a running deployment: diff both live registries against the
+    /// inventory this binary would register, and exit non-zero on any
+    /// disagreement (ADR-0013 §6.3).
+    GtsAudit {
+        /// Deployment base URL **including the route prefix**, e.g.
+        /// `http://127.0.0.1:8090/cf` for `config/dev.yaml`.
+        #[arg(long)]
+        base_url: String,
+        /// Bearer token — both list endpoints are authenticated (dev.yaml:
+        /// `studio-admin-token`).
+        #[arg(long)]
+        token: Option<String>,
+        /// Tenant for the graph-storage read (`X-Tenant-ID`). Graph types are
+        /// registered per tenant, so this is part of the question.
+        #[arg(long)]
+        tenant: Option<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Emitted from the code alone, so it runs before the config is loaded: an
+    // offline emit has to work in a checkout with no deployment profile, and
+    // its output must not depend on which profile was passed.
+    if matches!(cli.command, Some(Commands::GtsTypes)) {
+        print!("{}", gts_inventory::to_pretty_json()?);
+        return Ok(());
+    }
+
+    // Same reason: the audit talks HTTP to a deployment that is already
+    // running, so it needs this binary's inventory and a URL, never a profile.
+    if let Some(Commands::GtsAudit {
+        base_url,
+        token,
+        tenant,
+    }) = &cli.command
+    {
+        return gts_audit::run(&gts_audit::Target {
+            base_url: base_url.clone(),
+            token: token.clone(),
+            tenant: tenant.clone(),
+        })
+        .await;
+    }
 
     // rustls 0.23 carries both crypto providers in this tree (aws-lc-rs from
     // credstore/TLS, ring from file-storage/pingora). rustls refuses to pick
@@ -123,6 +176,8 @@ async fn main() -> Result<()> {
         Commands::Run => run_server(config).await,
         Commands::Migrate => run_migrate(config).await,
         Commands::Bootstrap { apply } => database_bootstrap::run(config, apply).await,
+        // Both handled above, before the config was loaded.
+        Commands::GtsTypes | Commands::GtsAudit { .. } => Ok(()),
     }
 }
 

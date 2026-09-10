@@ -30,19 +30,27 @@ export {
   connectionsPath,
   connectionTestPath,
   repositoriesPath,
+  sendMessagePath,
+  targetsPath,
   type ConnectionsParams,
   type ConnectionTestParams,
   type RepositoriesParams,
+  type SendMessageParams,
+  type TargetsParams,
 } from './connector/ConnectorsApiService';
 export type {
   ConnectionDto,
   ConnectionListDto,
   ConnectionTestDto,
   CreateConnectionBody,
+  NotifyTargetDto,
+  NotifyTargetListDto,
   ProviderDto,
   ProviderListDto,
   RemoteRepoDto,
   RemoteRepoListDto,
+  SendMessageBody,
+  SentMessageDto,
 } from './connector/connectorTypes';
 
 export {

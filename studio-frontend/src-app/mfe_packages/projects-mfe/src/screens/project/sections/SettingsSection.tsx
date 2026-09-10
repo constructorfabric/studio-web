@@ -1,5 +1,9 @@
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { apiRegistry } from '@gears-frontx/react';
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
+import { useWorkspace } from '@constructor-studio/mfe-shared';
+import { DocumentsApiService } from '../../../api/DocumentsApiService';
 import { orderedStages, projectStatus } from '../../../model/project';
 import type { ProjectConfig, TenantDto } from '../../../api/types';
 import styles from '../ProjectScreen.module.css';
@@ -18,7 +22,19 @@ export const SettingsSection: React.FC<{
   config: ProjectConfig | null;
 }> = ({ project, config }) => {
   const t = useProjectText();
-  const stages = orderedStages(config);
+  const { workspace } = useWorkspace();
+  const documents = apiRegistry.getService(DocumentsApiService);
+  // The catalogue names and orders the stages; the project's own config says
+  // which of them it carries. A workspace that is not resolved yet, or a
+  // catalogue that failed to load, leaves the keys renderable under their own
+  // names rather than blanking the field.
+  const catalogueQuery = documents.stages({ workspaceId: workspace?.id ?? '' });
+  const { data: catalogue } = useQuery({
+    queryKey: catalogueQuery.key,
+    queryFn: ({ signal }) => catalogueQuery.fetch({ signal }),
+    enabled: Boolean(workspace?.id),
+  });
+  const stages = orderedStages(config, catalogue?.items ?? []);
 
   return (
     <div className={styles.sectionBody}>

@@ -115,7 +115,9 @@ trigger a delta backfill (§2). Delivery is at-least-once; consumers key on
 
 ## 4. New editor commands (added to `studio-protocol.ts` first)
 
-These do **not** exist yet — the portal needs to *drive the running editor UI*,
+`openInEditor` and `notifyEditor` are implemented; the rest of this section is
+still design. They did not exist when the contract was written — the portal
+needs to *drive the running editor UI*,
 which the current contract (workspace/git only) does not cover. Each is added as
 a new method on `StudioRuntimeService` (node side) plus a Theia **frontend
 command contribution** that actually acts on the editor, then exposed over the
@@ -125,7 +127,7 @@ bridge. Kept deliberately small for v1:
 |---|---|---|
 | `openInEditor(OpenInEditorRequest)` → `OpenInEditorResult` | `{ location: StudioWorkspaceRequest, selection?, preview? }` → `{ opened: boolean, resolved: StudioWorkspaceLocation }` | reveal/open a workspace file in the running IDE (portal "jump to file"); resolves through the existing `WorkspaceBoundary` so it cannot escape `/workspace` |
 | `revealRepository(RevealRepositoryRequest)` → `{ revealed: boolean }` | `{ repositoryId }` | focus a repo root in the explorer |
-| `notifyEditor(NotifyEditorRequest)` → `{ shown: boolean }` | `{ level: 'info'\|'warn'\|'error', message, actionHint? }` | surface a portal-originated message inside the IDE (e.g. "portal published your commit") |
+| `notifyEditor(NotifyEditorRequest)` → `{ shown: boolean }` | `{ level: 'info'\|'warn'\|'error', message, detail?, link?, source? }` | **implemented** — surface a Studio-originated message inside the IDE (e.g. "the repository import finished"). `shown` is false when the session is up but no browser client is attached to show it: a fact, not an error. `link` is offered as an *Open* action and followed through Theia's opener service, http(s) only. `studio-notify` reaches it with `workspace_id` instead of `connection_id` |
 | `getRuntimeStatus()` → `RuntimeStatus` | `{}` → `{ ready: boolean, workspaceMode, activeClients, lastEventSequence, version }` | richer readiness than studio-session's TCP probe; also the reconnect cursor source |
 | `requestEventResync(ResyncRequest)` → `StudioOperationDeltaResponse` | `{ afterSequence }` | force a full re-broadcast/backfill after studio-theia detects a gap |
 

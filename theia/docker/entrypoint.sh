@@ -74,6 +74,17 @@ git config --global --add safe.directory '*'
 git config --global user.name  "${STUDIO_GIT_AUTHOR_NAME:-Constructor Studio}"
 git config --global user.email "${STUDIO_GIT_AUTHOR_EMAIL:-studio@constructor.tech}"
 
+# Session git credentials. The tokens are already in this container — the
+# gear resolves them from credstore into STUDIO_SOURCES / STUDIO_ROOT_TOKEN,
+# and a personal one into STUDIO_GIT_PAT. This is the configuration that lets
+# git use them, so a person in a terminal, or an agent in one of Orca's
+# worktrees, can push instead of failing with "could not read Username".
+# useHttpPath is what makes git send the repository path, without which a
+# per-source token could not be confined to its own repository. The helper
+# answers only for hosts this workspace uses — see docker/git-credentials.mjs.
+git config --global credential.useHttpPath true
+git config --global credential.helper '!node /usr/local/lib/studio-git-credentials.mjs'
+
 # The workspace root itself may be a repository (a CLI-created Studio
 # workspace: manifest, docs, .workspace-sources/). Adopt it into /workspace.
 #
@@ -113,28 +124,54 @@ fi
 # canonical .cf-workspace.toml lists them all for the Studio's Workspace
 # Sources. Tokens go through an inline credential helper (username "oauth2"
 # satisfies both GitHub and GitLab PATs) and never land in .git/config.
+clone_source() {
+    local name=$1 dir=$2 url=$3 branch=$4 token=$5
+    local dest="$WORKSPACE/$dir"
+    if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+        echo "[entrypoint] source '$name' already materialized — skipping"
+        return 0
+    fi
+    echo "[entrypoint] cloning $url into $dest"
+    local opts=()
+    if [ -n "$token" ]; then
+        opts+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
+    fi
+    # The token reaches the helper through this command's own environment
+    # rather than a shell-wide export: concurrent clones would otherwise
+    # overwrite each other's credentials. It still never lands in .git/config.
+    if ! STUDIO_GIT_TOKEN="$token" git "${opts[@]}" \
+            clone ${branch:+--branch "$branch"} "$url" "$dest"; then
+        echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
+    fi
+}
+
 if [ -n "${STUDIO_SOURCES:-}" ]; then
+    # Fields are separated by US (0x1f), not a tab: a tab is IFS whitespace,
+    # so `read` collapses runs of them and an absent `branch` would shift the
+    # token into its place — a source with a token and no branch then cloned
+    # with `--branch <token>`, which fails and prints the token into the log.
     node -e '
         const sources = JSON.parse(process.env.STUDIO_SOURCES);
         for (const s of sources) {
-            console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\t"));
+            console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\u001f"));
         }
-    ' | while IFS=$'\t' read -r name dir url branch token; do
-        dest="$WORKSPACE/$dir"
-        if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
-            echo "[entrypoint] source '$name' already materialized — skipping"
-            continue
-        fi
-        echo "[entrypoint] cloning $url into $dest"
-        CLONE_OPTS=()
-        if [ -n "$token" ]; then
-            export STUDIO_GIT_TOKEN="$token"
-            CLONE_OPTS+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
-        fi
-        git "${CLONE_OPTS[@]}" clone ${branch:+--branch "$branch"} "$url" "$dest" \
-            || echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
-        unset STUDIO_GIT_TOKEN
-    done
+    ' | {
+        # Clones run concurrently. Several sources are the normal case and
+        # each lands in its own directory, so this phase should cost the
+        # slowest repository rather than the sum of all of them — it is the
+        # phase the splash above exists to cover. STUDIO_CLONE_JOBS caps the
+        # concurrency; the constraint is network and volume throughput.
+        running=0
+        while IFS=$'\x1f' read -r name dir url branch token; do
+            clone_source "$name" "$dir" "$url" "$branch" "$token" &
+            running=$((running + 1))
+            if [ "$running" -ge "${STUDIO_CLONE_JOBS:-4}" ]; then
+                wait -n || true
+                running=$((running - 1))
+            fi
+        done
+        wait
+    }
 fi
 
 # Kubernetes sessions receive a fresh emptyDir at /workspace, not the
@@ -374,6 +411,64 @@ if [ -n "${OPENAI_API_KEY:-}" ]; then
   if ! grep -qE '^[[:space:]]*model[[:space:]]*=' "$CODEX_CFG" 2>/dev/null; then
     printf 'model = "%s"\n' "${STUDIO_CODEX_MODEL:-gpt-5.3-codex}" >> "$CODEX_CFG"
     echo "[entrypoint] codex: default model ${STUDIO_CODEX_MODEL:-gpt-5.3-codex}"
+  fi
+fi
+
+# ── Orca runtime for the IDE's Agents panel ───────────────────────────────
+# Container-local: the panel's Theia backend shells out to the CLI in this same
+# container, so nothing is published and no pairing link is ever minted. A
+# failure here never fails the session — the panel says "not reachable" and the
+# log below says why.
+#
+# The Chromium sandbox is off by default here, and that is a container fact
+# rather than a preference: Electron's zygote cannot create a new namespace
+# under Docker's default seccomp profile ("Failed to move to new namespace …
+# Operation not permitted"), whether the process runs as root or as uid 1000.
+# ELECTRON_DISABLE_SANDBOX=1 is the knob that works — probed against Orca
+# 1.4.197 as uid 1000 with no display: the runtime reported `state: ready` in
+# two seconds. Neither ELECTRON_EXTRA_LAUNCH_ARGS nor a `--no-sandbox`
+# argument does anything (the CLI rejects unknown flags). Set
+# STUDIO_ORCA_SANDBOX=1 where the Pod is granted the privileges the sandbox
+# needs and you want it back on.
+#
+# Two harmless complaints from the same run, worth recognizing in the log:
+# D-Bus is absent ("Failed to connect to the bus"), and with no gnome-keyring
+# Orca stores its own secrets unencrypted in the container. Agent keys come
+# from credstore per session and the container is ephemeral, so that is a
+# statement about Orca's local state, not about our secrets.
+if [ "${STUDIO_ORCA_ENABLED:-0}" = "1" ]; then
+  ORCA_BIN="${ORCA_CLI:-/usr/bin/orca-ide}"
+  ORCA_PORT="${STUDIO_ORCA_PORT:-6768}"
+  ORCA_LOG="$STUDIO_DATA_DIR/orca-serve.log"
+  if [ -x "$ORCA_BIN" ]; then
+    # Start from a clean Electron userData directory. A second boot over a
+    # populated one does not serve headless: it tries to bring up a desktop
+    # window and dies with "Missing X server or $DISPLAY … The platform failed
+    # to initialize" (probed: first boot ready in seconds, `docker restart`
+    # then stuck in `state: starting` for good). Nothing of ours lives there —
+    # the workspace is on the volume and the panel re-registers the repo — so
+    # wiping it makes every boot behave like the first. STUDIO_ORCA_KEEP_STATE=1
+    # opts out where that state is worth more than a reliable restart.
+    if [ "${STUDIO_ORCA_KEEP_STATE:-0}" != "1" ]; then
+      rm -rf "${HOME:-/home/node}/.config/orca" 2>/dev/null || true
+    fi
+    if [ "${STUDIO_ORCA_SANDBOX:-0}" != "1" ]; then
+      export ELECTRON_DISABLE_SANDBOX=1
+    fi
+    # Under a virtual display when the image has one: `orca serve` otherwise
+    # reaches for X11 on some boots and dies there. With xvfb-run the same
+    # three cold starts came up in 2 s each.
+    if command -v xvfb-run >/dev/null 2>&1; then
+      xvfb-run -a "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" \
+        --project-root "$WORKSPACE" > "$ORCA_LOG" 2>&1 &
+    else
+      "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" --project-root "$WORKSPACE" \
+        > "$ORCA_LOG" 2>&1 &
+    fi
+    echo "[entrypoint] orca: runtime starting on 127.0.0.1:$ORCA_PORT (log: $ORCA_LOG)"
+  else
+    echo "[entrypoint] orca: STUDIO_ORCA_ENABLED=1 but no executable at $ORCA_BIN —" \
+         "rebuild the image with STUDIO_ORCA_DEB_URL to include it"
   fi
 fi
 

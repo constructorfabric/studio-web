@@ -51,6 +51,44 @@ cargo run -- --config config/dev.yaml run            # migrations apply on start
 ./demo/demo-groups.sh <user-id>                      # user-groups scenario
 ```
 
+### GTS types
+
+Every GTS document the assembly registers — both registries — is emitted offline and
+committed as a snapshot, so a schema change is a reviewable diff instead of a
+`post-init failed` on a pod:
+
+```bash
+cargo run --quiet -- gts-types > docs/gts-types.json   # regenerate after a type change
+cargo test gts_inventory                               # the drift + validity gates
+```
+
+A running deployment is audited against that same inventory — the check CI
+cannot do, since a pod may run an older image or a profile may have lost an
+entry:
+
+```bash
+cargo run --quiet -- gts-audit   --base-url http://127.0.0.1:8090/cf --token studio-admin-token
+```
+
+It reads `GET /types-registry/v1/entities` and `GET /graph-storage/v1/types`,
+compares both to what this binary would register, and exits non-zero on any
+disagreement — so it can gate a deploy. A gear that stands down in a profile
+takes its types with it (`dev.yaml` configures no database for
+`studio-documents`, so its nine `doc.*` types are absent there), and the audit
+names them rather than leaving you to notice an empty screen.
+
+`gts-types` needs no config, database or registry. The nine tests in
+`src/gts_inventory.rs` assert offline what the registries would otherwise only
+discover at boot: the snapshot is current, every deployment profile declares the
+types the code reads (and the same set as its siblings), graph-storage documents
+derive from a family while types-registry documents stay free-form, every
+`cf.studio.*` segment has its five grammar tokens, and no two documents claim one
+id. Two of them pin that **the registries do not disagree**: every type in
+graph-storage is also in the platform catalog, and the reverse exceptions are an
+explicit list (`gts.cf.studio.doc.*` — documents live in the gear's own tables,
+not in the graph). A schema that changes under an unchanged type id is a graph-storage migration,
+not an edit — the gear treats a registered type's schema as immutable.
+
 Config profiles: `dev.yaml` (SQLite, zero deps), `postgres.yaml` (host run against the
 compose Postgres), `docker.yaml` (in-container: DB host `postgres`, binds 0.0.0.0).
 Docker orchestration lives at the repo root — see `../docker-compose.yml`

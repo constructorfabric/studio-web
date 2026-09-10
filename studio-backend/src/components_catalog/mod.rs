@@ -8,12 +8,13 @@
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
 mod cratesio;
-mod gts;
+pub(crate) mod field_schema;
+pub(crate) mod gts;
 mod repo_enrich;
 mod rest;
 mod scaffold;
 mod service;
-mod tasks;
+mod sync_task;
 
 use std::sync::Arc;
 
@@ -130,7 +131,21 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         let sink = build_sink(ctx);
         let connectors = build_connectors(ctx);
         let service = Arc::new(CatalogService::new(sink, keyword, connectors));
+
+        // A sync is a `catalog.sync` run on studio-tasks — durable,
+        // cancellable, retried with backoff. Registered here because the
+        // service it needs is built here, and refused loudly if something else
+        // has claimed the task type.
+        crate::tasks::registry::register(Arc::new(sync_task::CatalogSyncTask::new(Arc::clone(
+            &service,
+        ))))?;
+
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(router, openapi, service))
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            ctx.client_hub(),
+        ))
     }
 }

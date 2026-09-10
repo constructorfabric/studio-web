@@ -205,6 +205,10 @@ export interface StudioRuntimeClient {
     /** Open/reveal a workspace file in the running IDE (ADR-0010). Optional:
      * only browser clients implement it; the event forwarder ignores it. */
     onOpenInEditor?(request: StudioOpenInEditorRequest): void;
+    /** Show a Studio-originated message in the running IDE (ADR-0010
+     * `notifyEditor`). Optional for the same reason as `onOpenInEditor`: only a
+     * browser client has a UI to show it in. */
+    onNotifyEditor?(request: StudioNotifyEditorRequest): void;
 }
 
 export interface StudioOpenInEditorRequest {
@@ -215,6 +219,32 @@ export interface StudioOpenInEditorRequest {
 export interface StudioOpenInEditorResult {
     readonly opened: boolean;
     readonly resolvedRelativePath?: string;
+}
+
+/**
+ * A message from Studio to show in this session's IDE.
+ *
+ * Display-only: it touches no workspace state, which is why the bridge contract
+ * lists it beside `openInEditor` rather than among the mutations.
+ */
+export interface StudioNotifyEditorRequest {
+    readonly level: 'info' | 'warn' | 'error';
+    /** One line. The IDE shows it as a notification. */
+    readonly message: string;
+    /** Optional second line — what happened, in a sentence. */
+    readonly detail?: string;
+    /** An http(s) URL the message is about. Offered as an action on the
+     * notification; anything else is ignored rather than opened. */
+    readonly link?: string;
+    /** Who sent it, for the notification's own label ("Studio", a job name). */
+    readonly source?: string;
+}
+
+export interface StudioNotifyEditorResult {
+    /** False when no browser client was attached to show it — a session whose
+     * tab nobody has open. Deliberately not an error: the caller decides
+     * whether an unseen notification matters. */
+    readonly shown: boolean;
 }
 
 /** Trusted backend request to materialize one registry-approved kit. */
@@ -244,6 +274,7 @@ export interface StudioRuntimeService extends RpcServer<StudioRuntimeClient> {
     getOperationDeltas(request: StudioOperationDeltaRequest): Promise<StudioOperationDeltaResponse>;
     getAuditDeltas(request: StudioAuditDeltaRequest): Promise<StudioAuditDeltaResponse>;
     retryOperation(request: StudioRetryOperationRequest): Promise<StudioOperationSnapshot>;
+    notifyEditor?(request: StudioNotifyEditorRequest): Promise<StudioNotifyEditorResult>;
     getWorkspaceSnapshot?(request: WorkspaceSnapshotRequest): Promise<WorkspaceSnapshotResponse>;
     createWorkspaceConfig?(request: CreateWorkspaceConfigRequest): Promise<WorkspaceConfigMutationResponse>;
     addWorkspaceSource?(request: UpdateWorkspaceConfigRequest): Promise<WorkspaceConfigMutationResponse>;

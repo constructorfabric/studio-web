@@ -22,6 +22,7 @@ class SilentService {
   readonly children = this.refuse;
   readonly projectConfig = this.refuse;
   readonly nodes = this.refuse;
+  readonly stages = this.refuse;
   readonly connections = this.refuse;
   readonly providers = this.refuse();
 }
@@ -31,6 +32,7 @@ vi.mock('./api/AccountsApiService', async (importOriginal) => ({
   AccountsApiService: SilentService,
 }));
 vi.mock('./api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: SilentService }));
+vi.mock('./api/DocumentsApiService', () => ({ DocumentsApiService: SilentService }));
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   ConnectorsApiService: SilentService,
@@ -82,5 +84,10 @@ describe('ProjectsRoot', () => {
     });
 
     expect(await screen.findByRole('searchbox')).toBeTruthy();
-  });
+    // Two full renders of the kit's chrome in jsdom, measured at 14-15s against
+    // vitest's 15s default -- a coin flip, and a CI flake waiting to happen. The
+    // budget is raised rather than the work reduced because none of what takes
+    // the time is what this test asserts: it pins which screen shows, and the
+    // chrome around it renders regardless.
+  }, 45_000);
 });

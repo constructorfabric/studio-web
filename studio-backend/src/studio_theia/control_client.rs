@@ -10,9 +10,10 @@ use serde_json::json;
 use toolkit_security::SecurityContext;
 
 use crate::studio_theia::sdk::{
-    EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, OpenInEditor,
-    OpenInEditorResult, OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus,
-    SessionInfo, SessionTarget, TheiaControlClientV1, TheiaControlError,
+    EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
+    NotifyEditorResult, OpenInEditor, OpenInEditorResult, OperationDeltas, OperationSnapshot,
+    RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget, TheiaControlClientV1,
+    TheiaControlError,
 };
 use crate::studio_theia::service::TheiaService;
 
@@ -109,6 +110,17 @@ impl TheiaControlClientV1 for TheiaControlLocalClient {
     ) -> Result<OpenInEditorResult, TheiaControlError> {
         self.service
             .call(ctx, target, "openInEditor", request)
+            .await
+    }
+
+    async fn notify_editor(
+        &self,
+        ctx: &SecurityContext,
+        target: &SessionTarget,
+        request: &NotifyEditor,
+    ) -> Result<NotifyEditorResult, TheiaControlError> {
+        self.service
+            .call(ctx, target, "notifyEditor", request)
             .await
     }
 

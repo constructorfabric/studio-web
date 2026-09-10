@@ -23,12 +23,50 @@ pub const GEAR_PROFILE_TYPE: &str = "gts.cf.studio.catalog.gear_profile.v1~";
 /// live and where scaffolded gears are written. Keyed on the project id.
 pub const PROJECT_GEAR_REPO_TYPE: &str = "gts.cf.studio.catalog.project_gear_repo.v1~";
 
+/// A kit: a set of files a project installs into its repositories.
+///
+/// Its own type rather than a `kind` on [`GEAR_TYPE`], because a kit is a
+/// different shape and not a different label. A gear is a published crate with
+/// versions, download counts and a semver ladder; a kit is a repository, a
+/// manifest path and a git ref, installed as desired state and materialized by
+/// a runner. Sharing one node type would mean a payload where half the fields
+/// are always null and no reader can tell which half.
+///
+/// This is not in tension with ADR-0014's "a catalogue key is an instance, not
+/// a type": that is about entries WITHIN one kind (`prd` is an instance of
+/// `document_type`). A gear and a kit are different kinds.
+pub const KIT_TYPE: &str = "gts.cf.studio.catalog.kit.v1~";
+
+/// A FrontX micro-frontend: a package in the FrontX monorepo.
+///
+/// Its own type for the same reason a kit has one. A gear is a crate with a
+/// version ladder on crates.io; a micro-frontend is an npm package in a
+/// monorepo, with none of that and a shell contract instead. They were one node
+/// type separated by a `kind` string, which made the difference a label rather
+/// than a shape and left every reader to guess which fields applied.
+pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
+
+/// The presentation of one component type: which fields a page shows for it,
+/// grouped, and where each one is read from.
+///
+/// A node that describes a TYPE rather than an instance, which is unusual
+/// enough to say why. The types-registry is the catalogue of meaning and its
+/// studio documents are deliberately free-form, so a field schema cannot
+/// become `properties` there (see `super::field_schema`). Graph-storage is
+/// tenant-scoped, which is exactly what makes a schema overridable per tenant
+/// without inventing a second overlay mechanism. Keyed on the type it
+/// describes: one schema per type per tenant.
+pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 4] = [
+pub const ALL_NODE_TYPES: [&str; 7] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
     PROJECT_GEAR_REPO_TYPE,
+    KIT_TYPE,
+    FRONTX_TYPE,
+    FIELD_SCHEMA_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -79,6 +117,26 @@ pub fn graph_type_id(our_type: &str) -> String {
     format!("{family}{leaf}")
 }
 
+/// The leaf of a graph-storage type id: the last `~`-segment, back in `gts.`
+/// form.
+///
+/// A derived id carries its ancestry —
+/// `gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.gear.v1~`
+/// — and the leaf is the type itself, `gts.cf.studio.catalog.gear.v1~`. That
+/// is the id everything outside graph-storage names a type by, and the id the
+/// studio's per-type records are keyed on, so a type listed from the graph and
+/// a schema written for it meet on the same string. Unlike
+/// [`our_type_from_graph`], this works for any type, including the ones other
+/// gears (or another deployment) registered.
+pub fn leaf_type_id(graph_type: &str) -> String {
+    let body = graph_type.strip_prefix("gts.").unwrap_or(graph_type);
+    let leaf = body
+        .split('~')
+        .rfind(|segment| !segment.is_empty())
+        .unwrap_or(body);
+    format!("gts.{leaf}~")
+}
+
 /// Reverse of [`graph_type_id`]: map a graph-storage type id back to our
 /// `&'static` constant so a node read back keeps its typed identity.
 pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
@@ -88,7 +146,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 4] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 7] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -109,7 +167,31 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 4] = [
         "ProjectGearRepo",
         "The gear repository connected to a project (connector, repo, branch).",
     ),
+    (
+        KIT_TYPE,
+        "Kit",
+        "A set of files a project installs into its repositories, discovered from a source repository.",
+    ),
+    (
+        FRONTX_TYPE,
+        "Micro-frontend",
+        "A FrontX package: a micro-frontend or a scaffolding template from the FrontX monorepo.",
+    ),
+    (
+        FIELD_SCHEMA_TYPE,
+        "Field schema",
+        "The fields a component page shows for one component type, grouped, with the source of each.",
+    ),
 ];
+
+/// The relation types as catalog entries. Registered alongside the nodes so
+/// the platform registry catalogs everything this gear puts in the graph (see
+/// `crate::gts_inventory`).
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 1] = [(
+    REL_HAS_VERSION,
+    "HasVersion",
+    "A version published under a gear crate.",
+)];
 
 /// GTS type schemas registered with the **platform types-registry** at gear
 /// init (free-form `type: object`, same shape the studio types use, so
@@ -117,6 +199,7 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 4] = [
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
+        .chain(EDGE_TYPE_DOCS)
         .map(|(id, title, description)| {
             json!({
                 "$id": format!("gts://{id}"),
@@ -211,6 +294,50 @@ pub fn gear_node(name: &str, value: Value) -> GtsNode {
     }
 }
 
+/// Instance id of a kit, keyed on its slug — the identity the kit registry uses,
+/// so a kit discovered here and a kit installed in a project are the same thing.
+pub fn kit_instance_id(slug: &str) -> String {
+    anon_id(&["kit", slug])
+}
+
+/// A kit node. `value` is the payload built from its manifest.
+pub fn kit_node(slug: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: KIT_TYPE,
+        instance_id: kit_instance_id(slug),
+        value,
+    }
+}
+
+/// Instance id of a micro-frontend, keyed on its package name.
+pub fn frontx_instance_id(name: &str) -> String {
+    anon_id(&["frontx", name])
+}
+
+/// A micro-frontend node. `value` is the payload built from its package.
+pub fn frontx_node(name: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: FRONTX_TYPE,
+        instance_id: frontx_instance_id(name),
+        value,
+    }
+}
+
+/// Instance id of a field schema, keyed on the GTS type it describes — so a
+/// tenant has at most one schema per type and saving one twice replaces it.
+pub fn field_schema_instance_id(describes: &str) -> String {
+    anon_id(&["field_schema", describes])
+}
+
+/// The presentation of one component type. `value` is the schema payload.
+pub fn field_schema_node(describes: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: FIELD_SCHEMA_TYPE,
+        instance_id: field_schema_instance_id(describes),
+        value,
+    }
+}
+
 /// A crate-version node. `value` is the curated version payload.
 pub fn crate_version_node(name: &str, num: &str, value: Value) -> GtsNode {
     GtsNode {
@@ -270,6 +397,24 @@ mod tests {
                 "{id}: expected vendor.package.namespace.type.vN, got {tokens:?}"
             );
         }
+    }
+
+    /// The id every other surface names a type by, taken off the end of the
+    /// ancestry graph-storage stores it under.
+    #[test]
+    fn a_derived_type_id_reduces_to_its_leaf() {
+        assert_eq!(leaf_type_id(&graph_type_id(GEAR_TYPE)), GEAR_TYPE);
+        assert_eq!(leaf_type_id(&graph_type_id(KIT_TYPE)), KIT_TYPE);
+        // An id that is already a leaf is its own leaf.
+        assert_eq!(leaf_type_id(GEAR_TYPE), GEAR_TYPE);
+        // And a type this gear never registered reduces the same way, which is
+        // the point: the Objects page lists other gears' types too.
+        assert_eq!(
+            leaf_type_id(
+                "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file.v1~"
+            ),
+            "gts.cf.studio.artifact.file.v1~"
+        );
     }
 
     #[test]

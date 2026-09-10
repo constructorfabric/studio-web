@@ -1,4 +1,15 @@
-//! Source connectors — bring repositories into Studio instead of typing URLs.
+//! Connectors — the providers Studio talks to, and the credentials it talks
+//! with.
+//!
+//! Three kinds today, and the difference between them is only which of the
+//! driver contract's capabilities a driver implements:
+//!
+//! * **source hosts** (GitLab, GitHub, Bitbucket) — bring repositories into
+//!   Studio instead of typing clone URLs;
+//! * **model providers** (Anthropic, OpenAI) — the key the IDE agents
+//!   authenticate with;
+//! * **chat platforms** (Slack, Zulip, Discord) — where Studio delivers
+//!   notifications, each with a bot-token and an incoming-webhook variant.
 //!
 //! Three moving parts, deliberately separated:
 //!
@@ -22,17 +33,21 @@
 
 mod ai_providers;
 mod bitbucket;
+mod discord;
 pub mod driver;
 mod github;
 mod gitlab;
 #[cfg(feature = "graph")]
 mod graph_sync;
 #[cfg(feature = "graph")]
-mod graph_sync_tasks;
-mod gts;
+mod graph_sync_task;
+pub(crate) mod gts;
+mod notify;
 mod plugin;
 mod rest;
 pub(crate) mod service;
+mod slack;
+mod zulip;
 
 use std::sync::Arc;
 
@@ -44,6 +59,7 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
+use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use driver::ConnectorDriver;
 use service::ConnectorService;
@@ -55,13 +71,82 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 5] = [
+const KNOWN_DRIVERS: [&str; 11] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
     gts::ANTHROPIC_INSTANCE_ID,
     gts::OPENAI_INSTANCE_ID,
+    gts::SLACK_INSTANCE_ID,
+    gts::SLACK_WEBHOOK_INSTANCE_ID,
+    gts::ZULIP_INSTANCE_ID,
+    gts::ZULIP_WEBHOOK_INSTANCE_ID,
+    gts::DISCORD_INSTANCE_ID,
+    gts::DISCORD_WEBHOOK_INSTANCE_ID,
 ];
+
+/// ClientHub key under which the notification sender is published for other
+/// gears in this assembly.
+///
+/// Not a plugin: nothing selects between implementations, so — like
+/// `user_profile::IDENTITY_INSTANCE_ID` — this id is the hub's scope key and
+/// nothing more. It is not published to the types-registry.
+pub const NOTIFY_SENDER_INSTANCE_ID: &str = "cf.studio._.notification_sender.v1~";
+
+/// Message delivery, for gears that queue notifications rather than send them
+/// inline (`studio-notify`).
+///
+/// Deliberately two methods and no catalogue. A consumer may ask whether a
+/// connection can deliver, and ask it to deliver — it may not enumerate
+/// connections, read credentials, or reach a driver. Everything this trait
+/// exposes is something the connector gear would do for an HTTP caller anyway.
+#[async_trait]
+pub trait NotificationSender: Send + Sync + 'static {
+    /// Whether this connection can deliver, and what a delivery to it needs.
+    async fn preflight(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+    ) -> anyhow::Result<service::DeliveryPreflight>;
+
+    /// Deliver one message. `ctx` is whatever identity the caller is acting
+    /// under — a request's own context inline, or the queue worker's service
+    /// identity for a queued delivery.
+    async fn deliver(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+        target: Option<&str>,
+        message: &driver::NotifyMessage,
+    ) -> anyhow::Result<driver::SentMessage>;
+}
+
+#[async_trait]
+impl NotificationSender for ConnectorService {
+    async fn preflight(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+    ) -> anyhow::Result<service::DeliveryPreflight> {
+        self.delivery_preflight(ctx, tenant, connection).await
+    }
+
+    async fn deliver(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+        target: Option<&str>,
+        message: &driver::NotifyMessage,
+    ) -> anyhow::Result<driver::SentMessage> {
+        self.send_message(ctx, tenant, connection, target, message)
+            .await
+            .map(|(_, sent)| sent)
+    }
+}
 
 /// Source-host driver plugin ids (github/gitlab/bitbucket), for gears that
 /// resolve a driver from ClientHub without duplicating the id strings — e.g.
@@ -77,7 +162,7 @@ pub fn source_driver_ids() -> [&'static str; 3] {
 
 #[toolkit::gear(
     name = "studio-connector",
-    deps = [account_management, credstore],
+    deps = [types_registry, account_management, credstore],
     capabilities = [rest]
 )]
 #[derive(Default)]
@@ -88,6 +173,15 @@ pub struct StudioConnectorGear {
 #[async_trait]
 impl Gear for StudioConnectorGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Catalog the repository knowledge-graph types. Before the driver loop
+        // on purpose: a deployment with no driver still answers reads over a
+        // graph an earlier sync wrote, and the catalog must describe those
+        // types either way. Idempotent — the same documents every boot.
+        let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
+        let results = registry.register(gts::catalog_type_schemas()).await?;
+        RegisterResult::ensure_all_ok(&results)?;
+        info!("studio-connector: knowledge-graph types cataloged");
+
         let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
         for id in KNOWN_DRIVERS {
             match ctx
@@ -118,6 +212,28 @@ impl Gear for StudioConnectorGear {
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
+
+        // Published in `init` so a consumer resolving it in its own `init` or
+        // later cannot lose a race with us. `studio-notify` resolves it lazily
+        // per delivery instead, which makes the two gears independent of
+        // initialization order altogether — but publishing early costs nothing
+        // and keeps the option open.
+        // The repository import is a task type now, so it survives a restart,
+        // can be cancelled and can be retried. Registered here because the
+        // service it needs is built here; the graph client and the alias
+        // resolver are resolved per run, inside the handler.
+        #[cfg(feature = "graph")]
+        crate::tasks::registry::register(Arc::new(graph_sync_task::GraphSyncTask::new(
+            Arc::clone(&service),
+            ctx.client_hub(),
+        )))?;
+
+        let sender: Arc<dyn NotificationSender> = service.clone();
+        ctx.client_hub().register_scoped::<dyn NotificationSender>(
+            ClientScope::gts_id(NOTIFY_SENDER_INSTANCE_ID),
+            sender,
+        );
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-connector gear already initialized"))?;
@@ -144,27 +260,14 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
             ctx.client_hub()
                 .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
                 .inspect_err(|_| {
-                    warn!(
-                        "studio-connector: graph-storage client not registered — \
-                         repository import will answer 503"
-                    );
+                    warn!("studio-connector: no graph-storage client — imports answer 503");
                 })
                 .ok(),
-            // Same reasoning, and safe in either order: studio-identity
-            // publishes the resolver in its `init`, which runs before any
-            // gear's REST phase. Absent when that gear is inert (no database),
-            // in which case contributor nodes stay keyed per provider.
-            ctx.client_hub()
-                .get_scoped::<dyn crate::user_profile::AliasResolver>(&ClientScope::gts_id(
-                    crate::user_profile::IDENTITY_INSTANCE_ID,
-                ))
-                .inspect_err(|_| {
-                    warn!(
-                        "studio-connector: studio-user alias resolver not registered — \
-                         contributor nodes will not be resolved to Studio subjects"
-                    );
-                })
-                .ok(),
+            // The hub, not resolved clients: the import runs as a task now and
+            // its handler resolves what it needs per run — including the alias
+            // resolver, which used to be captured here. What is left on this
+            // path is the enqueue and the poll endpoint.
+            ctx.client_hub(),
         );
         // Built without the `graph` feature there is no knowledge graph to
         // import into, and the route is not registered at all.

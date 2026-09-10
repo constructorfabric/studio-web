@@ -35,6 +35,61 @@ export interface PlatformIdentity {
   organization_role?: "owner" | "member";
 }
 
+/* ── studio-tasks / studio-scheduler ── */
+
+/** One unit of background work. `GET /studio-tasks/v1/runs`. */
+export interface TaskRun {
+  id: string;
+  tenant_id: string;
+  /** `<gear>.<verb>` — `connector.graph_sync`, `notify.deliver`. */
+  task_type: string;
+  /** `queued` | `running` | `succeeded` | `failed` | `cancelled`. */
+  state: string;
+  /** What the handler was given. Shape belongs to the task type. */
+  payload: Record<string, unknown>;
+  /** What the run was told not to overtake, when ordering was asked for. */
+  partition_key?: string | null;
+  attempts: number;
+  /** The phase the handler last reported; kept after it ends. */
+  progress?: string | null;
+  /** One line about what it did, once it succeeded. */
+  summary?: string | null;
+  /** The handler's structured result, where it has one. */
+  result?: Record<string, unknown> | null;
+  last_error?: string | null;
+  cancel_requested: boolean;
+  requested_by: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+/** A recurring trigger. `GET /studio-scheduler/v1/schedules`. */
+export interface TaskSchedule {
+  id: string;
+  name: string;
+  task_type: string;
+  payload: Record<string, unknown>;
+  /** `cron` | `interval`. */
+  expression_kind: string;
+  /** A 5-field cron expression, or an ISO-8601 duration. */
+  expression: string;
+  timezone: string;
+  /** `allow` | `forbid` | `replace`. */
+  concurrency: string;
+  /** `skip` | `catch_up` | `backfill`. */
+  missed_policy: string;
+  max_catch_up_runs: number;
+  enabled: boolean;
+  next_run_at: string;
+  last_fired_at?: string | null;
+  /** The run the last firing produced. */
+  last_run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Page<T> {
   items: T[];
   page_info?: { next_cursor: string | null; prev_cursor: string | null; limit: number };
@@ -89,25 +144,59 @@ export type ProjectStatus = "draft" | "active" | "archived";
  *  the UI now that the studio-project gear no longer guards them server-side. */
 export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
 
-/** The canonical journey-stage catalogue (was `GET /studio-project/v1/stages`).
- *  Intent is always applied; the rest are opt-in. A project's `stages` should be
- *  a subset of these keys, kept in this order. */
-export const JOURNEY_STAGES: { key: string; label: string; required: boolean }[] = [
-  { key: "intent", label: "Intent", required: true },
-  { key: "brd", label: "BRD", required: false },
-  { key: "prd", label: "PRD", required: false },
-  { key: "prd_spec", label: "PRD-Spec", required: false },
-  { key: "architecture", label: "Architecture", required: false },
-  { key: "ui_design", label: "UI Design", required: false },
-  { key: "user_stories", label: "User Stories", required: false },
-  { key: "testing", label: "Testing", required: false },
-];
+/** One journey stage, as the catalogue serves it.
+ *
+ *  This used to be a hardcoded array here, left behind when the studio-project
+ *  gear was retired and `GET /studio-project/v1/stages` went with it. It is the
+ *  path a product takes through the studio, so an organization has to be able
+ *  to change it — which a constant in a client cannot express. ADR-0014
+ *  section 7 moved the catalogue back to the server; `api.stages()` reads it.
+ *
+ *  What comes back is already the EFFECTIVE list for that workspace: the
+ *  platform catalogue, overlaid by the organization, overlaid by the workspace,
+ *  with hidden entries removed and the whole thing in catalogue order. A client
+ *  must not re-sort it or assume `intent` is present — a workspace may have
+ *  replaced it. */
+/** One capability a product may need, and the words that find components
+ *  providing it.
+ *
+ *  Was `CAP_KEYWORDS` in documents.tsx — a table in a UI file that decided
+ *  which components a workspace could be offered. It is catalogue data now,
+ *  overlaid the same three ways as everything else. */
+export interface Capability {
+  key: string;
+  label: string;
+  /** Empty means "match the key itself". */
+  terms: string[];
+  owner: string;
+  owner_tenant_id?: string | null;
+}
 
-/** Normalise a stage selection to the required set + chosen keys, in catalogue
- *  order — the same idempotent normalisation the old gear did server-side. */
-export function normalizeStages(selected: readonly string[]): string[] {
+export interface JourneyStage {
+  key: string;
+  label: string;
+  required: boolean;
+  position: number;
+  /** Document-type keys this stage is not complete without. */
+  requires: string[];
+  /** Detectors every required document must pass before the stage completes. */
+  gates: string[];
+  /** "builtin" | "organization" | "workspace" — which level defined it. */
+  owner: string;
+  owner_tenant_id?: string | null;
+}
+
+/** Normalise a stage selection against a catalogue: the required entries plus
+ *  what was chosen, in catalogue order.
+ *
+ *  Takes the catalogue rather than closing over one, because there is no longer
+ *  a single right answer — it depends on the workspace. */
+export function normalizeStages(
+  selected: readonly string[],
+  catalogue: readonly JourneyStage[],
+): string[] {
   const chosen = new Set(selected);
-  return JOURNEY_STAGES.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
+  return catalogue.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
 }
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
@@ -222,6 +311,92 @@ export interface ArtifactNodePage {
 
 /** One node from the gears catalog — a `gear` crate or a `crate_version`. The
  *  payload shape differs by type; read it loosely. */
+/** One registered type, as the registry returns it. Only the fields a screen
+ *  needs; the registry carries the whole schema document too. */
+/** How many nodes of one type the graph holds.
+ *
+ *  Counted rather than asked for: graph-storage's contract has no count, so
+ *  the server pages a projection and stops at a cap. `capped` says the number
+ *  is a floor — a page that shows one as a total lies about the graph. */
+export interface TypeCount {
+  leaf_id: string;
+  count: number;
+  capped: boolean;
+}
+
+/** One GTS type the graph holds, and what this organization says about it.
+ *
+ *  The graph stores far more types than a catalogue of building blocks should
+ *  list — files, chunks, commits, domain entities. Which of them are
+ *  components is a judgement about the organization's model, not a fact about
+ *  storage, so it is a mark somebody sets rather than a constant in a gear. */
+export interface CatalogType {
+  /** The id graph-storage stores it under, ancestry and all. Empty when
+   *  nothing has written a node of this type into this tenant's graph yet. */
+  type_id: string;
+  /** The leaf of that id: how the type is named everywhere else, and the key a
+   *  mark and a field schema are written against. */
+  leaf_id: string;
+  /** A family or base — derived from, never instantiated, so never a
+   *  component. Reported rather than hidden so the page can say why. */
+  is_abstract: boolean;
+  component: boolean;
+  /** Who authored the field schema it renders against. */
+  schema: "builtin" | "tenant" | "none";
+}
+
+/** The presentation of one component type: which fields a component page shows
+ *  for it, grouped, and where each one is read from.
+ *
+ *  Served by studio-components-catalog and stored in graph-storage beside the
+ *  type it describes, so a workspace can change a page without a release. This
+ *  used to be a JSON file compiled into this bundle. */
+export interface FieldSchemaSource {
+  class: "repo" | "api" | "manual" | "none";
+  ref: string;
+}
+
+export interface FieldSchemaField {
+  key: string;
+  label: string;
+  kind: "text" | "label" | "docstate" | "bool" | "metric" | "status";
+  lamp: boolean;
+  source: FieldSchemaSource;
+  example?: string;
+  domain?: Record<string, unknown>;
+}
+
+export interface FieldSchemaGroup {
+  id: string;
+  title: string;
+  icon: string;
+  fields: FieldSchemaField[];
+}
+
+export interface FieldSchema {
+  /** The GTS type this schema is the presentation of. */
+  describes: string;
+  groups: FieldSchemaGroup[];
+  composition: { key: string; label: string; color: string }[];
+  statusLegend: Record<string, string>;
+  docStateLegend: Record<string, string>;
+  sourceClasses: Record<string, { label: string; hint: string }>;
+  /** `builtin` — what the deployment ships — or `tenant`, a stored override. */
+  owner: "builtin" | "tenant";
+  /** Whether this organization treats the type as a component, and therefore
+   *  whether the Components page lists its nodes. Set on the Objects page. */
+  component: boolean;
+}
+
+export interface GtsEntity {
+  gts_id: string;
+  content?: { title?: string; description?: string };
+}
+
+export interface GtsEntityPage {
+  entities: GtsEntity[];
+}
+
 export interface CatalogNode {
   type_id: string;
   instance_id: string;
@@ -765,7 +940,7 @@ export interface DocType {
   name: string;
   description: string;
   gts_type_id: string;
-  owner: "builtin" | "workspace";
+  owner: "builtin" | "organization" | "workspace";
   owner_tenant_id?: string | null;
   body: string;
   sections: DocSection[];
@@ -773,6 +948,18 @@ export interface DocType {
   /** Intake questionnaire; empty for types without one. */
   questionnaire?: DocQuestion[];
 }
+/** One questionnaire answer on the wire. Exactly one value field is meaningful
+ *  per question kind. */
+export interface DocAnswer {
+  question_id: string;
+  /** `text`, `long_text` and `single`. */
+  text?: string;
+  /** `multi`. */
+  choices?: string[];
+  /** `bool`. */
+  flag?: boolean;
+}
+
 export interface Doc {
   id: string;
   tenant_id: string;
@@ -783,6 +970,9 @@ export interface Doc {
   content: string;
   status: "draft" | "review" | "approved";
   conforms: boolean;
+  /** Capability keys the document declares. The server indexes these from the
+   *  document's own front matter on every write — do not parse the body. */
+  capabilities: string[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -833,9 +1023,82 @@ export const api = {
 
   /* ── studio-documents gear (types + templates + validation) ── */
 
+  /** Define, replace or hide a journey stage in this workspace.
+   *
+   *  `hidden: true` is a tombstone: it removes the inherited entry from the
+   *  effective catalogue instead of replacing it. Reverting is `deleteStage`. */
+  upsertStage: (
+    token: string,
+    workspaceId: string,
+    body: {
+      key: string;
+      label: string;
+      required?: boolean;
+      position?: number;
+      requires?: string[];
+      gates?: string[];
+      hidden?: boolean;
+    },
+  ) =>
+    request<JourneyStage>(`/studio-documents/v1/workspaces/${workspaceId}/stages`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Drop this workspace's own entry for `key`, so what it inherits shows
+   *  through again. Idempotent. */
+  deleteStage: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  upsertCapability: (
+    token: string,
+    workspaceId: string,
+    body: { key: string; label: string; terms?: string[]; hidden?: boolean },
+  ) =>
+    request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCapability: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  /** The effective capability vocabulary for a workspace (ADR-0014 s5). */
+  capabilities: (token: string, workspaceId: string) =>
+    request<{ items: Capability[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities`,
+      token,
+    ),
+
+  /** The effective journey-stage catalogue for a workspace (ADR-0014 s7). */
+  stages: (token: string, workspaceId: string) =>
+    request<{ items: JourneyStage[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages`,
+      token,
+    ),
+
   docTypes: (token: string, workspaceId: string) =>
     request<{ items: DocType[] }>(
       `/studio-documents/v1/workspaces/${workspaceId}/types`,
+      token,
+    ),
+
+  /** What an organization publishes to the workspaces under it.
+   *
+   *  Its own editing view, not what a workspace sees: a workspace may replace
+   *  or hide any of it. The Components page is organization-scoped, so this is
+   *  the level whose document types belong in its catalogue. */
+  orgDocTypes: (token: string, organizationId: string) =>
+    request<{ items: DocType[] }>(
+      `/studio-documents/v1/organizations/${organizationId}/types`,
       token,
     ),
 
@@ -871,7 +1134,7 @@ export const api = {
   createWorkspaceDocument: (
     token: string,
     workspaceId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(`/studio-documents/v1/workspaces/${workspaceId}/documents`, token, {
       method: "POST",
@@ -882,7 +1145,7 @@ export const api = {
     token: string,
     workspaceId: string,
     projectId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(
       `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/documents`,
@@ -1276,6 +1539,63 @@ export const api = {
   oagwUpstreams: (token: string) => request<unknown>("/oagw/v1/upstreams", token),
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
 
+  /** The same registry, read for what a screen needs: the human name of a type.
+   *
+   *  ADR-0013 makes this the catalogue of MEANING — "titles and descriptions are
+   *  read by consoles and by the generated frontend, so they are written for
+   *  people". A screen that labels a type should therefore ask here rather than
+   *  prettify an identifier, which is how `domain.skill` would end up displayed
+   *  as "Skill" when the model calls it "Competency". */
+  gtsTypeTitles: (token: string) =>
+    request<GtsEntityPage>("/types-registry/v1/entities", token),
+
+  /** The field schema each component type is rendered against.
+   *
+   *  Built-ins overlaid by whatever this tenant has stored, so what comes back
+   *  is what the page should show — the client does not merge levels. */
+  fieldSchemas: (token: string) =>
+    request<{ schemas: FieldSchema[] }>(
+      "/studio-components-catalog/v1/field-schemas",
+      token,
+    ),
+
+  /** Replace this tenant's schema for one component type. */
+  saveFieldSchema: (token: string, describes: string, schema: unknown) =>
+    request<unknown>(
+      `/studio-components-catalog/v1/field-schemas/${encodeURIComponent(describes)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ schema }) },
+    ),
+
+  /** Drop this tenant's schema for one component type, back to the built-in. */
+  deleteFieldSchema: (token: string, describes: string) =>
+    request<void>(
+      `/studio-components-catalog/v1/field-schemas/${encodeURIComponent(describes)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  /** Every node type the graph holds, and which of them this organization
+   *  treats as components. The Objects page is a view of exactly this. */
+  catalogTypes: (token: string) =>
+    request<{ types: CatalogType[] }>("/studio-components-catalog/v1/types", token),
+
+  /** How many nodes of each type the graph holds.
+   *
+   *  Its own read: a count is one projection per type, and the type list is
+   *  hundreds of types. The Objects page draws its table first and fills these
+   *  in, rather than waiting on arithmetic to show a row. */
+  typeCounts: (token: string) =>
+    request<{ counts: TypeCount[] }>("/studio-components-catalog/v1/types/counts", token),
+
+  /** Mark a type as one of this organization's components, or unmark it. */
+  setTypeComponent: (token: string, typeId: string, component: boolean) =>
+    request<CatalogType>(
+      `/studio-components-catalog/v1/types/${encodeURIComponent(typeId)}/component`,
+      token,
+      { method: "PUT", body: JSON.stringify({ component }) },
+    ),
+
   // ── Domain model (studio-domain-model gear) ──
   /** Upload a domain-model document to make it the active ontology. */
   importDomainModel: (token: string, ontology: unknown) =>
@@ -1295,6 +1615,9 @@ export const api = {
   /** Read the model graph back out of Graph Storage. */
   domainModelGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/model/graph", token),
+  /** The instance graph: created objects and the relations between them. */
+  domainObjectsGraph: (token: string) =>
+    request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),
   files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
@@ -1322,11 +1645,13 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
-  /** Poll a background sync task. Terminal states are `succeeded` / `failed`. */
+  /** Poll a background sync task. Terminal states are `succeeded` / `failed` /
+   * `cancelled`. The task id is a studio-tasks run id, so `taskRun` reads the
+   * same work with attempts, timings and a cancel verb. */
   artifactSyncTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       repo_full_path: string;
       message?: string | null;
       issues: number;
@@ -1449,11 +1774,12 @@ export const api = {
       method: "POST",
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
-  /** Poll a background catalog sync task. */
+  /** Poll a background catalog sync task. The task id is a studio-tasks run
+   * id — see `taskRun`. */
   componentsCatalogTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       message?: string | null;
       gears: number;
       versions: number;
@@ -1461,7 +1787,10 @@ export const api = {
     }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/components", token),
+    request<{ nodes: CatalogNode[]; truncated?: boolean }>(
+      "/studio-components-catalog/v1/components",
+      token,
+    ),
   /** Read Studio-managed delivery metadata for catalogued Gears. */
   listComponentProfiles: (token: string) =>
     request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/profiles", token),
@@ -1671,4 +2000,52 @@ export const api = {
       }
     }
   },
+  /* ── studio-tasks gear: durable background runs ── */
+
+  /** Newest first. `state` and `taskType` narrow it server-side. */
+  taskRuns: (
+    token: string,
+    opts?: { state?: string; taskType?: string; limit?: number },
+  ) => {
+    const q = new URLSearchParams();
+    if (opts?.state) q.set("state", opts.state);
+    if (opts?.taskType) q.set("task_type", opts.taskType);
+    if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+    const suffix = q.toString();
+    return request<{ items: TaskRun[] }>(
+      `/studio-tasks/v1/runs${suffix ? `?${suffix}` : ""}`,
+      token,
+    );
+  },
+
+  taskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}`, token),
+
+  /** What kinds of work this deployment can run at all. */
+  taskTypes: (token: string) =>
+    request<{ items: string[] }>("/studio-tasks/v1/task-types", token),
+
+  /** Cooperative: the flag is set, and a handler that never checks it will
+      not stop. Answers 202 for exactly that reason. */
+  cancelTaskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}/cancel`, token, {
+      method: "POST",
+    }),
+
+  retryTaskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}/retry`, token, {
+      method: "POST",
+    }),
+
+  /* ── studio-scheduler gear: cron/interval schedules ── */
+
+  schedules: (token: string) =>
+    request<{ items: TaskSchedule[] }>("/studio-scheduler/v1/schedules", token),
+
+  runScheduleNow: (token: string, scheduleId: string) =>
+    request<{ run_id: string }>(
+      `/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}/run-now`,
+      token,
+      { method: "POST" },
+    ),
 };

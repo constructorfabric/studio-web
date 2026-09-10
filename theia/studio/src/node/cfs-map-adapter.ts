@@ -14,6 +14,7 @@ import {
     type WorkspaceGraphCategoryBand,
     type WorkspaceGraphDanglingCptUse,
     type WorkspaceGraphEdge,
+    type WorkspaceGraphEdgeRef,
     type WorkspaceGraphLocation,
     type WorkspaceGraphNode,
     type WorkspaceGraphSource,
@@ -236,7 +237,14 @@ export async function adaptCfsMap(
 
     const edges: WorkspaceGraphEdge[] = [];
     const edgeIds = new Set<string>();
-    const relationKeys = new Set<string>();
+    // Relation key -> where that relation already sits in `edges`. The same
+    // relation can legitimately be reported twice — two files under one kit's
+    // examples/ referencing each other is enough — and rejecting the map over
+    // it took the whole graph down for content nobody was looking at. Two
+    // edges with the same (type, from, to) ARE one relation, so they are
+    // merged; a repeated edge *id* stays an error, because ids have to be
+    // unique for anything downstream to address one.
+    const relationIndex = new Map<string, number>();
     for (const [index, value] of arrayAt(root.edges, '$.edges', MAX_GRAPH_ITEMS).entries()) {
         const edgePath = `$.edges[${index}]`;
         const edge = objectAt(value, edgePath);
@@ -255,13 +263,6 @@ export async function adaptCfsMap(
             );
         }
         const relationKey = `${type}\0${from}\0${to}`;
-        if (relationKeys.has(relationKey)) {
-            throw new CfsMapAdapterError(
-                `duplicate semantic relation "${sanitizeLabel(type)}" from "${sanitizeLabel(from)}" to "${sanitizeLabel(to)}"`,
-                `${edgePath}.id`
-            );
-        }
-        relationKeys.add(relationKey);
         const refs = arrayAt(edge.refs, `${edgePath}.refs`, MAX_GRAPH_ITEMS).map((ref, refIndex) => {
             const refPath = `${edgePath}.refs[${refIndex}]`;
             const record = objectAt(ref, refPath);
@@ -273,7 +274,7 @@ export async function adaptCfsMap(
                 defSnippet: nullableString(record.def_snippet, `${refPath}.def_snippet`)
             };
         });
-        edges.push({
+        const parsed: WorkspaceGraphEdge = {
             id,
             from,
             to,
@@ -281,7 +282,14 @@ export async function adaptCfsMap(
             refs,
             crossRepo: booleanAt(edge.cross_repo, `${edgePath}.cross_repo`),
             dangling: booleanAt(edge.dangling, `${edgePath}.dangling`)
-        });
+        };
+        const alreadyAt = relationIndex.get(relationKey);
+        if (alreadyAt === undefined) {
+            relationIndex.set(relationKey, edges.length);
+            edges.push(parsed);
+        } else {
+            edges[alreadyAt] = mergeRelation(edges[alreadyAt], parsed);
+        }
     }
 
     const danglingCptUses: WorkspaceGraphDanglingCptUse[] = arrayAt(root.dangling_cpt_uses, '$.dangling_cpt_uses', MAX_GRAPH_ITEMS)
@@ -593,6 +601,41 @@ function stringArray(value: unknown, valuePath: string): readonly string[] {
     return arrayAt(value, valuePath, MAX_GRAPH_ITEMS).map((item, index) =>
         stringAt(item, `${valuePath}[${index}]`)
     );
+}
+
+/**
+ * Two edges expressing the same relation are one relation, and their `refs`
+ * are both its evidence.
+ *
+ * The kept edge keeps its id, so anything already addressing it still can.
+ * `crossRepo` is true if ANY occurrence crossed a repository boundary — the
+ * relation does cross one. `dangling` is true only if EVERY occurrence was
+ * dangling: one occurrence that resolved means the target exists, and calling
+ * the merged relation dangling would hide it.
+ */
+function mergeRelation(kept: WorkspaceGraphEdge, duplicate: WorkspaceGraphEdge): WorkspaceGraphEdge {
+    const seen = new Set(kept.refs.map(refKey));
+    const refs = [...kept.refs];
+    for (const ref of duplicate.refs) {
+        const key = refKey(ref);
+        if (!seen.has(key)) {
+            seen.add(key);
+            refs.push(ref);
+        }
+    }
+    return {
+        ...kept,
+        // The cap that bounds a single edge's refs bounds the merged list too,
+        // so a pathological map cannot grow one edge without limit.
+        refs: refs.slice(0, MAX_GRAPH_ITEMS),
+        crossRepo: kept.crossRepo || duplicate.crossRepo,
+        dangling: kept.dangling && duplicate.dangling
+    };
+}
+
+/** Identity of a ref, for dropping ones the map reported twice. */
+function refKey(ref: WorkspaceGraphEdgeRef): string {
+    return [ref.cptId, ref.line, ref.snippet, ref.defLine, ref.defSnippet].join('\0');
 }
 
 function sanitizeLabel(value: string): string {

@@ -6,7 +6,7 @@
 //! kit files into a checkout.
 
 mod rest;
-mod service;
+pub(crate) mod service;
 
 use std::sync::{Arc, OnceLock};
 

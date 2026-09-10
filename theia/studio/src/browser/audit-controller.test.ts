@@ -33,7 +33,8 @@ describe('Studio Audit frontend delivery', () => {
             gitOperations as never,
             audit as never,
             {} as never,
-            {} as never // OpenInEditorFrontendController (unused in this test)
+            {} as never, // OpenInEditorFrontendController (unused in this test)
+            {} as never // NotifyEditorFrontendController (unused in this test)
         );
 
         client.onAuditEvent(entry);

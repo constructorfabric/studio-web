@@ -271,20 +271,68 @@ describe('cfs map adapter', () => {
         expect(error.message).toContain('duplicate edge id');
     });
 
-    it('rejects duplicate semantic relations even when their edge ids differ', async () => {
+    // This used to reject the whole map, which meant one repeated relation —
+    // two files under a kit's examples/ referencing each other was enough —
+    // left the graph unavailable over content nobody was looking at.
+    it('merges a relation the map reported twice, keeping the first id', async () => {
         const edges = payload.edges as Array<Record<string, unknown>>;
-        edges.push({ ...edges[0], id: 'different-id-for-the-same-relation' });
+        const first = edges[0] as Record<string, unknown>;
+        edges.push({
+            ...first,
+            id: 'different-id-for-the-same-relation',
+            refs: [{ cpt_id: null, line: 99, snippet: 'a second sighting', def_line: null, def_snippet: null }]
+        });
 
-        const error = await expectFailure(adaptCfsMap(payload, {
+        const graph = await adaptCfsMap(payload, {
             workspaceId: 'workspace',
             revision: 'revision-1',
             repositories,
             engine: { command: 'cfs', version: '1.7.0' }
-        }));
+        });
 
-        expect(error.path).toBe('$.edges[3].id');
-        expect(error.message).toContain('duplicate semantic relation');
-        expect(error.message).toContain('file-link');
+        const merged = graph.edges.filter(e => e.from === first.from && e.to === first.to && e.type === first.type);
+        expect(merged).toHaveLength(1);
+        expect(merged[0].id).toBe(first.id);
+        // Both sightings survive as evidence of the one relation.
+        expect(merged[0].refs.map(r => r.line)).toContain(99);
+        expect(merged[0].refs.length).toBeGreaterThan(1);
+    });
+
+    it('does not list the same ref twice when the map repeats it verbatim', async () => {
+        const edges = payload.edges as Array<Record<string, unknown>>;
+        const first = edges[0] as Record<string, unknown>;
+        const before = (first.refs as unknown[]).length;
+        edges.push({ ...first, id: 'verbatim-copy' });
+
+        const graph = await adaptCfsMap(payload, {
+            workspaceId: 'workspace',
+            revision: 'revision-1',
+            repositories,
+            engine: { command: 'cfs', version: '1.7.0' }
+        });
+
+        const merged = graph.edges.find(e => e.id === first.id);
+        expect(merged?.refs).toHaveLength(before);
+    });
+
+    // A relation that resolved once is not dangling, and one that crossed a
+    // repository boundary once does cross it.
+    it('takes the resolving side of dangling and the crossing side of cross-repo', async () => {
+        const edges = payload.edges as Array<Record<string, unknown>>;
+        const first = edges[0] as Record<string, unknown>;
+        edges[0] = { ...first, dangling: true, cross_repo: false };
+        edges.push({ ...first, id: 'the-resolved-sighting', dangling: false, cross_repo: true });
+
+        const graph = await adaptCfsMap(payload, {
+            workspaceId: 'workspace',
+            revision: 'revision-1',
+            repositories,
+            engine: { command: 'cfs', version: '1.7.0' }
+        });
+
+        const merged = graph.edges.find(e => e.id === first.id);
+        expect(merged?.dangling).toBe(false);
+        expect(merged?.crossRepo).toBe(true);
     });
 
     it.each([
@@ -345,9 +393,13 @@ describe('cfs map adapter', () => {
     });
 
     it('keeps the runtime map schema byte-matched with the authoritative project copy', async () => {
+        // The project's own copy, which theia/Dockerfile installs at the
+        // runtime path. This used to resolve five levels up — OUTSIDE the
+        // repository — so it only ever passed in a checkout that happened to
+        // sit inside a CFS-managed workspace, and failed everywhere else.
         const canonicalSchemaPath = path.resolve(
             __dirname,
-            '../../../../../.cf-studio/.core/schemas/map.schema.json'
+            '../../../docker/cfs-map.schema.json'
         );
         const [runtimeBytes, canonicalBytes] = await Promise.all([
             fs.readFile(CFS_MAP_RUNTIME_SCHEMA_PATH),
