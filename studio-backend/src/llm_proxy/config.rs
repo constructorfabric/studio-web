@@ -113,21 +113,13 @@ mod tests {
     //! and on whose account, so precedence resolving the wrong way is a bill
     //! as much as a bug.
     //!
-    //! Tests that write to the environment take a lock: the process has one
-    //! environment and `set_var` is not thread-safe. Each also uses a variable
-    //! name of its own, so a failure names one test rather than leaking.
-
-    use std::sync::{Mutex, MutexGuard};
+    //! Tests that write to the environment take [`crate::test_env::lock`]:
+    //! the process has one environment, so the lock has to be one too. Each
+    //! also uses a variable name of its own, so a failure names one test
+    //! rather than leaking.
 
     use super::LlmProxyConfig;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::test_env::lock;
 
     fn config(suffix: &str) -> LlmProxyConfig {
         LlmProxyConfig {

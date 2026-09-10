@@ -123,3 +123,75 @@ impl InsightClient for HttpInsightClient {
         &self.base_url
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Where a call to Insight lands, and what happens when there is nowhere
+    //! to send it.
+
+    use super::{HttpInsightClient, InsightClient};
+
+    fn client(base_url: &str) -> HttpInsightClient {
+        HttpInsightClient::new(
+            reqwest::Client::new(),
+            base_url.to_string(),
+            "/api/v1".to_string(),
+            Some("key".to_string()),
+        )
+    }
+
+    #[test]
+    fn a_resource_is_appended_under_the_api_path() {
+        let client = client("https://insight.example");
+        assert_eq!(
+            client.url("reports"),
+            "https://insight.example/api/v1/reports"
+        );
+    }
+
+    /// Callers write the resource both ways, and both mean the same thing. The
+    /// leading slash is stripped rather than trusted, because the path already
+    /// ends without one and the two would otherwise make `//reports`.
+    #[test]
+    fn a_leading_slash_on_the_resource_makes_no_difference() {
+        let client = client("https://insight.example");
+        assert_eq!(client.url("/reports"), client.url("reports"));
+        assert!(!client.url("/reports").contains("v1//"));
+    }
+
+    #[test]
+    fn a_nested_resource_keeps_its_own_slashes() {
+        assert_eq!(
+            client("https://insight.example").url("reports/2026/summary"),
+            "https://insight.example/api/v1/reports/2026/summary"
+        );
+    }
+
+    /// Unconfigured is a valid state for this seam: the gear loads, and a call
+    /// says what to set instead of sending a request to `/api/v1/reports` with
+    /// no host in front of it.
+    #[test]
+    fn an_unconfigured_client_reports_itself_and_refuses() {
+        let unconfigured = client("");
+        assert!(!unconfigured.is_configured());
+
+        let refusal = unconfigured
+            .ensure_configured()
+            .expect_err("an unconfigured client must refuse")
+            .to_string();
+        assert!(
+            refusal.contains("STUDIO_INSIGHT_BASE_URL"),
+            "the refusal must name the variable to set, got: {refusal}"
+        );
+
+        assert!(client("https://insight.example").is_configured());
+    }
+
+    #[test]
+    fn the_base_url_is_reported_as_configured() {
+        assert_eq!(
+            client("https://insight.example").base_url(),
+            "https://insight.example"
+        );
+    }
+}

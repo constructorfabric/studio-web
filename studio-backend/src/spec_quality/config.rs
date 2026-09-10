@@ -85,24 +85,13 @@ mod tests {
     //! backwards would mean a deployment silently serving whatever the YAML
     //! happened to carry.
     //!
-    //! Tests that write to the environment take a lock rather than run in
-    //! parallel: the process has one environment, and `set_var` is not
-    //! thread-safe. Each still uses a variable name of its own, so a failure
-    //! names one test rather than leaking into the next.
-
-    use std::sync::{Mutex, MutexGuard};
+    //! Tests that write to the environment take [`crate::test_env::lock`]:
+    //! the process has one environment, so the lock has to be one too. Each
+    //! still uses a variable name of its own, so a failure names one test
+    //! rather than leaking into the next.
 
     use super::SpecQualityConfig;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock() -> MutexGuard<'static, ()> {
-        // A test that panicked while holding the lock has already failed; the
-        // environment it leaves behind is still fine for the others.
-        ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::test_env::lock;
 
     fn config(base_url: &str, api_key: &str, suffix: &str) -> SpecQualityConfig {
         SpecQualityConfig {

@@ -206,3 +206,278 @@ async fn heal_seed(client: &dyn CredStoreClientV1, ctx: &SecurityContext, seed: 
         Err(e) => warn!(reference, "studio-secrets-bootstrap: create failed: {e}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! What the heal decides, against a credstore that records what it was
+    //! asked to do.
+    //!
+    //! This gear runs once at boot and writes nothing but log lines, so its
+    //! behaviour is invisible until a secret is missing that should not be —
+    //! and by then the boot is long over. The decisions are worth stating: an
+    //! accessible secret is left alone, an inaccessible one is overwritten
+    //! whatever generation holds it, and a reference with no metadata at all
+    //! is created.
+    //!
+    //! The fake overrides `get`, `put_opts` and `create_opts` — the three the
+    //! SDK leaves to an implementation; `put` and `create` route through the
+    //! `_opts` pair.
+
+    use std::sync::Mutex;
+
+    use credstore_sdk::{CredStoreError, GetSecretResponse, TenantId, WriteOptions};
+
+    use super::*;
+    use crate::test_env::with_var_async;
+
+    /// What the heal asked credstore to do, in order.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Call {
+        Get,
+        Put(SharingMode),
+        Create(SharingMode),
+    }
+
+    type GetAnswer =
+        Box<dyn Fn() -> Result<Option<GetSecretResponse>, CredStoreError> + Send + Sync>;
+    type PutAnswer = Box<dyn Fn() -> Result<(), CredStoreError> + Send + Sync>;
+
+    struct FakeCredStore {
+        /// What `get` answers: `Ok(None)` is the fence-poisoned or missing case.
+        get: GetAnswer,
+        /// What `put` answers. `Conflict` and `NotFound` are the fall-through
+        /// to create.
+        put: PutAnswer,
+        calls: Mutex<Vec<Call>>,
+    }
+
+    impl FakeCredStore {
+        fn new() -> Self {
+            Self {
+                get: Box::new(|| Ok(None)),
+                put: Box::new(|| Ok(())),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn answering_get(
+            mut self,
+            f: impl Fn() -> Result<Option<GetSecretResponse>, CredStoreError> + Send + Sync + 'static,
+        ) -> Self {
+            self.get = Box::new(f);
+            self
+        }
+
+        fn answering_put(
+            mut self,
+            f: impl Fn() -> Result<(), CredStoreError> + Send + Sync + 'static,
+        ) -> Self {
+            self.put = Box::new(f);
+            self
+        }
+
+        fn calls(&self) -> Vec<Call> {
+            std::mem::take(&mut *self.calls.lock().expect("calls"))
+        }
+    }
+
+    #[async_trait]
+    impl CredStoreClientV1 for FakeCredStore {
+        async fn get(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+        ) -> Result<Option<GetSecretResponse>, CredStoreError> {
+            self.calls.lock().expect("calls").push(Call::Get);
+            (self.get)()
+        }
+
+        async fn put_opts(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+            _value: SecretValue,
+            sharing: SharingMode,
+            _precondition: WritePrecondition,
+            _opts: WriteOptions,
+        ) -> Result<(), CredStoreError> {
+            self.calls.lock().expect("calls").push(Call::Put(sharing));
+            (self.put)()
+        }
+
+        async fn create_opts(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+            _value: SecretValue,
+            sharing: SharingMode,
+            _opts: WriteOptions,
+        ) -> Result<(), CredStoreError> {
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(Call::Create(sharing));
+            Ok(())
+        }
+    }
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(BOOTSTRAP_ACTOR)
+            .subject_type("service")
+            .subject_tenant_id(ROOT_TENANT)
+            .build()
+            .expect("security context")
+    }
+
+    fn seed(env: &str, sharing: &str) -> SeedSpec {
+        SeedSpec {
+            reference: "openai-key".to_string(),
+            value_env: env.to_string(),
+            sharing: sharing.to_string(),
+        }
+    }
+
+    /// Run the heal with the value variable set, and report what credstore saw.
+    ///
+    /// The variable has to stay set for as long as the future runs: the heal
+    /// reads it when it runs, not when it is built.
+    async fn heal_with_value(store: &FakeCredStore, spec: &SeedSpec) -> Vec<Call> {
+        let ctx = ctx();
+        with_var_async(&spec.value_env, "sk-live", heal_seed(store, &ctx, spec)).await;
+        store.calls()
+    }
+
+    /// The value store is re-seeded from config every boot, so a secret that
+    /// reads back is also current. Rewriting it would be a write for nothing.
+    #[tokio::test]
+    async fn an_accessible_secret_is_left_alone() {
+        let store = FakeCredStore::new().answering_get(|| {
+            Ok(Some(GetSecretResponse {
+                value: SecretValue::new(b"already-there".to_vec()),
+                id: Uuid::nil(),
+                owner_tenant_id: TenantId(ROOT_TENANT),
+                sharing: SharingMode::Shared,
+                is_inherited: false,
+                version: 1,
+                secret_type: String::new(),
+                expires_at: None,
+            }))
+        });
+        let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_ACCESSIBLE", "shared")).await;
+        assert_eq!(calls, [Call::Get], "nothing should have been written");
+    }
+
+    /// The case the gear exists for: metadata survived in Postgres, the value
+    /// did not, so `get` fails closed with `None` and the reference is
+    /// overwritten whatever generation holds it.
+    #[tokio::test]
+    async fn a_fence_poisoned_secret_is_overwritten() {
+        let store = FakeCredStore::new();
+        let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_POISONED", "shared")).await;
+        assert_eq!(calls, [Call::Get, Call::Put(SharingMode::Shared)]);
+    }
+
+    /// No metadata at all: the put fails its precondition, and the heal falls
+    /// through to a create rather than giving up.
+    #[tokio::test]
+    async fn a_reference_with_no_metadata_is_created() {
+        for not_there in [false, true] {
+            let store = FakeCredStore::new().answering_put(move || {
+                Err(if not_there {
+                    CredStoreError::NotFound
+                } else {
+                    CredStoreError::Conflict
+                })
+            });
+            let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_CREATE", "shared")).await;
+            assert_eq!(
+                calls,
+                [
+                    Call::Get,
+                    Call::Put(SharingMode::Shared),
+                    Call::Create(SharingMode::Shared),
+                ]
+            );
+        }
+    }
+
+    /// Any other write failure stops there. Following an internal error with a
+    /// create would turn one unexplained failure into two.
+    #[tokio::test]
+    async fn an_unexpected_write_failure_does_not_fall_through_to_create() {
+        let store = FakeCredStore::new()
+            .answering_put(|| Err(CredStoreError::internal("upstream is having a day")));
+        let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_FAILURE", "shared")).await;
+        assert_eq!(calls, [Call::Get, Call::Put(SharingMode::Shared)]);
+    }
+
+    /// A `get` that errors is not evidence the secret is fine, so the heal
+    /// proceeds — the write is idempotent and a needless one costs nothing.
+    #[tokio::test]
+    async fn a_failing_get_still_heals() {
+        let store = FakeCredStore::new()
+            .answering_get(|| Err(CredStoreError::service_unavailable("no plugin yet")));
+        let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_GET_ERR", "shared")).await;
+        assert_eq!(calls, [Call::Get, Call::Put(SharingMode::Shared)]);
+    }
+
+    /// Nothing to seed with means nothing is written — not an empty secret,
+    /// which would read back as a configured key and fail at the provider.
+    #[tokio::test]
+    async fn an_unset_variable_writes_nothing() {
+        let store = FakeCredStore::new();
+        heal_seed(
+            &store,
+            &ctx(),
+            &seed("STUDIO_TEST_SEED_NEVER_SET", "shared"),
+        )
+        .await;
+        assert!(store.calls().is_empty(), "an unset variable seeds nothing");
+    }
+
+    #[tokio::test]
+    async fn a_blank_variable_writes_nothing() {
+        let store = FakeCredStore::new();
+        let spec = seed("STUDIO_TEST_SEED_BLANK", "shared");
+        let ctx = ctx();
+        with_var_async(&spec.value_env, "   ", heal_seed(&store, &ctx, &spec)).await;
+        assert!(store.calls().is_empty(), "a blank variable seeds nothing");
+    }
+
+    /// `shared` is the default because cross-tenant is what LLM egress needs;
+    /// anything unrecognised falls back to it rather than to the narrowest
+    /// mode, which would leave the seed unreadable where it is used.
+    #[tokio::test]
+    async fn the_sharing_word_selects_the_mode_and_unknown_means_shared() {
+        for (word, expected) in [
+            ("private", SharingMode::Private),
+            ("tenant", SharingMode::Tenant),
+            ("shared", SharingMode::Shared),
+            ("nonsense", SharingMode::Shared),
+            ("", SharingMode::Shared),
+        ] {
+            let store = FakeCredStore::new();
+            let calls = heal_with_value(&store, &seed("STUDIO_TEST_SEED_SHARING", word)).await;
+            assert_eq!(
+                calls,
+                [Call::Get, Call::Put(expected)],
+                "sharing `{word}` must select {expected:?}"
+            );
+        }
+    }
+
+    /// A reference the SDK refuses is a config mistake, and it must not reach
+    /// credstore as a write.
+    #[tokio::test]
+    async fn an_invalid_reference_writes_nothing() {
+        let store = FakeCredStore::new();
+        let spec = SeedSpec {
+            reference: String::new(),
+            value_env: "STUDIO_TEST_SEED_BAD_REF".to_string(),
+            sharing: "shared".to_string(),
+        };
+        let calls = heal_with_value(&store, &spec).await;
+        assert!(calls.is_empty(), "an invalid ref must not be written");
+    }
+}
