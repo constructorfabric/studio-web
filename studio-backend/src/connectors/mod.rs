@@ -47,6 +47,7 @@ mod plugin;
 mod rest;
 pub(crate) mod service;
 mod slack;
+mod url_guard; // the guard every driver's configured address passes
 mod zulip;
 
 use std::sync::Arc;

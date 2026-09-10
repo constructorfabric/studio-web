@@ -11,6 +11,7 @@
 //! instead: it proves the key is accepted and says what it can reach, which is
 //! the useful half of "whose key is this?".
 
+use super::url_guard::HostRule;
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -82,6 +83,12 @@ impl ConnectorDriver for AnthropicDriver {
         "https://api.anthropic.com"
     }
 
+    /// Anthropic has no self-hosted form, so an address anywhere else is a
+    /// typo — or somebody pointing a stored API key at a host of their own.
+    fn base_url_rule(&self) -> HostRule {
+        HostRule::OneOf(&["anthropic.com"])
+    }
+
     fn category(&self) -> ConnectorCategory {
         ConnectorCategory::Ai
     }
@@ -131,6 +138,12 @@ impl ConnectorDriver for OpenAiDriver {
 
     fn default_base_url(&self) -> &'static str {
         "https://api.openai.com"
+    }
+
+    /// As for Anthropic: one set of endpoints, and a key must not be sent
+    /// anywhere else.
+    fn base_url_rule(&self) -> HostRule {
+        HostRule::OneOf(&["openai.com"])
     }
 
     fn category(&self) -> ConnectorCategory {

@@ -30,7 +30,8 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
     NotifyTarget, SentMessage,
 };
-use super::notify::{HostRule, check_url, http_error, render, truncate};
+use super::notify::{http_error, render, truncate};
+use super::url_guard::{HostRule, check_url};
 
 /// Slack has no self-hosted form, so any other host is a mistake worth naming.
 const SLACK_HOSTS: &[&str] = &["slack.com"];

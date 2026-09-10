@@ -35,6 +35,7 @@ use super::driver::{
     NotifyTarget, RemoteRepo, SentMessage,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
+use super::url_guard::check_url;
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +181,31 @@ pub struct ConnectorService {
     credstore: Arc<dyn CredStoreClientV1>,
     /// Resolved drivers keyed by provider key, in registration order.
     drivers: BTreeMap<String, (String, Arc<dyn ConnectorDriver>)>,
+}
+
+/// The address a connection will actually be used with, checked before it is.
+///
+/// `base_url` is typed by a tenant member and the backend then makes requests
+/// to it carrying that connection's credential, so an unchecked value is a
+/// request-forgery primitive — see [`super::url_guard`]. Every path that can
+/// set one comes through here: creating a connection, editing one, and probing
+/// a credential before it is stored.
+///
+/// The driver's own default is checked too. It is ours and it passes, so the
+/// check costs nothing and means the rule has no exception to remember.
+fn resolve_base_url(
+    driver: &dyn ConnectorDriver,
+    supplied: Option<&str>,
+) -> anyhow::Result<String> {
+    let raw = supplied
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| driver.default_base_url());
+    let url = check_url(raw, "Server URL", driver.base_url_rule())?;
+    // Parsed and re-rendered rather than passed through: `Url` has already
+    // normalised the host, and what the driver joins paths onto should be what
+    // was checked, not the string beside it.
+    Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
 impl ConnectorService {
@@ -351,11 +377,7 @@ impl ConnectorService {
         if token.is_empty() {
             return Err(anyhow!("token is required"));
         }
-        let base_url = base_url
-            .map(str::trim)
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| driver.default_base_url())
-            .to_string();
+        let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
 
         let identity = driver
@@ -411,11 +433,7 @@ impl ConnectorService {
         if token.is_empty() {
             return Err(anyhow!("token is required"));
         }
-        let base_url = base_url
-            .map(str::trim)
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| driver.default_base_url())
-            .to_string();
+        let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         driver
             .test(&ConnectionAuth {
                 base_url,
@@ -521,16 +539,16 @@ impl ConnectorService {
         };
 
         // An explicitly empty base_url means "back to the provider default",
-        // which is the only way to undo a typo'd self-hosted URL.
+        // which is the only way to undo a typo'd self-hosted URL. Anything
+        // else is checked, for the same reason it is on create — this is the
+        // other way to point a stored credential at an address of one's own.
+        //
+        // An unchanged address is left alone rather than re-checked: a row
+        // stored before the guard existed stays editable, and the change being
+        // made is not the thing to refuse it over.
         let base_url = match base_url {
-            Some(u) => {
-                let u = u.trim();
-                if u.is_empty() {
-                    driver.default_base_url().to_string()
-                } else {
-                    u.to_string()
-                }
-            }
+            Some(u) if u.trim().is_empty() => resolve_base_url(driver.as_ref(), None)?,
+            Some(u) => resolve_base_url(driver.as_ref(), Some(u))?,
             None => existing.base_url.clone(),
         };
 
@@ -728,4 +746,106 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod base_url_rule_tests {
+    //! What each driver will let a connection point at.
+    //!
+    //! The rule is per driver because only the driver knows whether its
+    //! provider has a self-hosted form, and the two answers have opposite
+    //! failure modes: pinning a self-hostable provider locks a deployment out
+    //! of its own installation, while leaving a hosted one open lets a stored
+    //! API key be sent to an address somebody typed.
+
+    use super::resolve_base_url;
+    use crate::connectors::ai_providers::{AnthropicDriver, OpenAiDriver};
+    use crate::connectors::bitbucket::BitbucketDriver;
+    use crate::connectors::driver::ConnectorDriver;
+    use crate::connectors::github::GitHubDriver;
+    use crate::connectors::gitlab::GitLabDriver;
+
+    fn http() -> reqwest::Client {
+        reqwest::Client::new()
+    }
+
+    fn drivers() -> Vec<Box<dyn ConnectorDriver>> {
+        vec![
+            Box::new(GitHubDriver::new(http())),
+            Box::new(GitLabDriver::new(http())),
+            Box::new(BitbucketDriver::new(http())),
+            Box::new(AnthropicDriver::new(http())),
+            Box::new(OpenAiDriver::new(http())),
+        ]
+    }
+
+    /// The finding this guard closes: any of these, typed into the address
+    /// field, made the backend fetch it with the connection's credential and
+    /// hand the first part of the reply back in an error.
+    #[test]
+    fn no_driver_accepts_an_internal_address() {
+        for driver in drivers() {
+            for target in [
+                "http://169.254.169.254/latest/meta-data/",
+                "https://169.254.169.254/latest/meta-data/",
+                "https://127.0.0.1:8090/cf",
+                "https://10.0.0.5/api",
+                "https://backend.svc.cluster.local/cf",
+                "https://localhost/api",
+            ] {
+                assert!(
+                    resolve_base_url(driver.as_ref(), Some(target)).is_err(),
+                    "{} accepted {target}",
+                    driver.provider()
+                );
+            }
+        }
+    }
+
+    /// Every driver's own default must pass its own rule, or the provider is
+    /// unusable without an address being typed.
+    #[test]
+    fn every_default_passes_its_own_rule() {
+        for driver in drivers() {
+            let resolved = resolve_base_url(driver.as_ref(), None)
+                .unwrap_or_else(|e| panic!("{} rejects its own default: {e}", driver.provider()));
+            assert_eq!(resolved, driver.default_base_url());
+        }
+    }
+
+    /// Source hosts are self-hostable, so a deployment's own installation is
+    /// the normal case and must be allowed.
+    #[test]
+    fn a_source_host_accepts_a_self_hosted_installation() {
+        for driver in [
+            Box::new(GitHubDriver::new(http())) as Box<dyn ConnectorDriver>,
+            Box::new(GitLabDriver::new(http())),
+            Box::new(BitbucketDriver::new(http())),
+        ] {
+            assert!(
+                resolve_base_url(driver.as_ref(), Some("https://git.constr.dev")).is_ok(),
+                "{} refused a self-hosted installation",
+                driver.provider()
+            );
+        }
+    }
+
+    /// Model providers have one set of endpoints. An address anywhere else is
+    /// a stored API key pointed somewhere it was not issued for.
+    #[test]
+    fn a_model_provider_is_pinned_to_its_own_hosts() {
+        for driver in [
+            Box::new(AnthropicDriver::new(http())) as Box<dyn ConnectorDriver>,
+            Box::new(OpenAiDriver::new(http())),
+        ] {
+            assert!(
+                resolve_base_url(driver.as_ref(), Some("https://api.example.org")).is_err(),
+                "{} accepted a foreign host",
+                driver.provider()
+            );
+        }
+        // Their own hosts, and subdomains of them, stay usable.
+        let anthropic: Box<dyn ConnectorDriver> = Box::new(AnthropicDriver::new(http()));
+        assert!(resolve_base_url(anthropic.as_ref(), Some("https://api.anthropic.com/v1")).is_ok());
+    }
 }

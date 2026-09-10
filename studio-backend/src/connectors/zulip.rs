@@ -33,7 +33,8 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
     NotifyTarget, SentMessage,
 };
-use super::notify::{HostRule, check_url, http_error, render, truncate};
+use super::notify::{http_error, render, truncate};
+use super::url_guard::{HostRule, check_url};
 
 /// Where a message goes when the caller names no topic. Zulip requires one,
 /// and a channel with a single well-known Studio topic is easier to mute or

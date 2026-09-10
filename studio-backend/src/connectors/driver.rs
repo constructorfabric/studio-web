@@ -13,6 +13,7 @@
 //! actually do: a Slack driver never learns what a repository is, and the REST
 //! layer turns the refusal into a 4xx rather than an empty listing.
 
+use super::url_guard::HostRule;
 use async_trait::async_trait;
 
 /// Everything a driver needs to reach an installation. Assembled per call by
@@ -279,6 +280,21 @@ pub trait ConnectorDriver: Send + Sync + 'static {
 
     /// Default installation root, offered as a placeholder in the UI.
     fn default_base_url(&self) -> &'static str;
+
+    /// What a configured address for this provider may point at.
+    ///
+    /// The driver decides because only the driver knows whether the provider
+    /// has a self-hosted form. A GitLab or a Bitbucket Server lives at whatever
+    /// address the deployment runs it at, so the answer there is any public
+    /// host; a model provider has exactly one set of endpoints, and an address
+    /// outside them is a typo at best.
+    ///
+    /// Defaulted to the open rule so a new driver is never accidentally
+    /// pinned to the wrong hosts — the guard's other checks (https, no
+    /// internal target) apply either way, and they are the ones that matter.
+    fn base_url_rule(&self) -> HostRule {
+        HostRule::AnyPublic
+    }
 
     /// What this provider is for.
     fn category(&self) -> ConnectorCategory;

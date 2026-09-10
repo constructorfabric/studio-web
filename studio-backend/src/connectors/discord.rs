@@ -25,7 +25,8 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
     NotifyTarget, SentMessage,
 };
-use super::notify::{HostRule, check_url, http_error, render, truncate};
+use super::notify::{http_error, render, truncate};
+use super::url_guard::{HostRule, check_url};
 
 /// Discord's own hosts. `discordapp.com` is the pre-rename domain, still
 /// served and still pasted from old runbooks.
