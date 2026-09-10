@@ -77,7 +77,7 @@ const WizardBody: React.FC = () => {
 
   useEffect(() => {
     const subscription = eventBus.on('mfe/projects/created', ({ project, siblings }) => {
-      void announceCreatedProject(bridge, project, siblings).finally(() =>
+      void announceCreatedProject(bridge, project, siblings, workspaceId).finally(() =>
         closeProjectWizard(bridge)
       );
     });

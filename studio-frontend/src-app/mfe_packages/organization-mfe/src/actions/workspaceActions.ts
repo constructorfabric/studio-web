@@ -1,4 +1,4 @@
-/**
+ /**
  * The MFE -> shell crossing for a workspace picked on this screen.
  *
  * The shell owns the levels, so the screen does not mount anything: it names
@@ -13,13 +13,17 @@ import {
   type WorkspaceRef,
 } from '@constructor-studio/mfe-shared';
 
-export function requestWorkspace(bridge: ChildMfeBridge | null, workspace: WorkspaceRef): void {
+export function requestWorkspace(
+  bridge: ChildMfeBridge | null,
+  workspace: WorkspaceRef,
+  organizationId: string
+): void {
   sendAndForget(
     bridge,
     {
       type: STUDIO_ACTION_WORKSPACES_PUBLISH,
       target: FRONTX_SCREEN_DOMAIN,
-      payload: { kind: 'selected', workspace },
+      payload: { kind: 'selected', workspace, organizationId },
     },
     'organization'
   );

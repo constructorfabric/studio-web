@@ -34,11 +34,11 @@ const ProjectRow: React.FC<{ project: Tenant }> = ({ project }) => {
   const state = useProjectConfig(project.id);
   const { formatRelative } = useFormatters();
   const bridge = useMfeBridge();
-  const { projects } = useWorkspaceProjects();
+  const { projects, workspace } = useWorkspaceProjects();
 
   const open = (): void => {
     const siblings = projects.map((sibling) => ({ id: sibling.id, name: sibling.name }));
-    requestOpenProject({ id: project.id, name: project.name }, siblings, bridge);
+    requestOpenProject({ id: project.id, name: project.name }, siblings, bridge, workspace?.id ?? null);
   };
 
   return (

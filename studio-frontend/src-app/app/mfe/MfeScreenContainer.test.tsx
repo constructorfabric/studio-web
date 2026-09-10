@@ -139,7 +139,7 @@ describe('MfeScreenContainer', () => {
     });
   });
 
-  it('logs an error and renders nothing when bootstrap rejects', async () => {
+  it('says the screens could not be loaded when bootstrap rejects', async () => {
     const error = new Error('boom');
     mockBootstrapMFE.mockRejectedValue(error);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -147,9 +147,21 @@ describe('MfeScreenContainer', () => {
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
     render(<MfeScreenContainer />);
 
-    await waitFor(() => {
-      expect(errorSpy).toHaveBeenCalled();
-    });
+    // A blank content area is the one thing this must not be: the shell has no
+    // other place left to report a manifest that did not load.
+    const note = await screen.findByRole('alert');
+    expect(note.textContent).toMatch(/could not be loaded/i);
+    expect(screen.queryByTestId('extension-domain-slot')).toBeNull();
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it('says nothing of the sort while bootstrap is still pending', async () => {
+    mockBootstrapMFE.mockImplementation(() => new Promise<void>(() => {}));
+    const { MfeScreenContainer } = await import('./MfeScreenContainer');
+
+    render(<MfeScreenContainer />);
+
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByTestId('extension-domain-slot')).toBeNull();
   });
 });

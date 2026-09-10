@@ -1,23 +1,9 @@
-/**
- * Rail Component — the navigation of the level in scope.
- *
- * A permanent icon-width column that expands over the content on hover or
- * focus, rather than a drawer that has to be opened before anything can be
- * reached. Its items are the screen extensions of the level the session is at,
- * so it is empty — and absent — at a level whose only screen is the level
- * itself.
- *
- * Same shape as `ProjectRail` in projects-mfe, which this replaces: the kit's
- * `Sidebar collapsible="icon"` carries the icon width and the labels, and its
- * styles are carried over verbatim in Rail.module.css. No tooltips: the panel
- * expands on hover, which is where the label belongs.
- */
+/** Rail Component — the navigation of the level in scope. */
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-shell-draws:p1
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-one-mount:p1
 import React, { useCallback, useState } from 'react';
 import {
-  useFrontX,
   useAppSelector,
   useDomainExtensions,
   useMountedExtensions,
@@ -41,7 +27,6 @@ import {
 } from '@/app/slices/mfeBootstrapSlice';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { resolveLevelMenu, sectionOf } from '@/app/mfe/screenLevels';
-import { mountScreen } from '@/app/mfe/mountScreen';
 import { railIconName } from './railIcon';
 import { useScreenLevel } from './useScreenLevel';
 import styles from './Rail.module.css';
@@ -60,7 +45,6 @@ function isActiveItem(
 }
 
 export const Rail: React.FC = () => {
-  const { mfeRegistry } = useFrontX();
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as ScreenExtension[];
   const items = resolveLevelMenu(registered, level);
@@ -76,7 +60,6 @@ export const Rail: React.FC = () => {
   );
 
   const [open, setOpen] = useState(false);
-  const [mounting, setMounting] = useState(false);
 
   const closeOnBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const next = event.relatedTarget;
@@ -84,32 +67,19 @@ export const Rail: React.FC = () => {
     setOpen(false);
   }, []);
 
-  const choose = useCallback(
-    async (chosen: ScreenExtension) => {
-      if (!mfeRegistry || mounting) return;
-      setOpen(false);
+  // Naming the screen is all the rail does. Whether that means another section
+  // of the mounted entry or leaving the project scope for a new mount is the
+  // shell's call, in `appContextEffects` — the same path a slot of the top bar
+  // takes, so the guard and the failure rollback are shared rather than copied.
+  const choose = useCallback((chosen: ScreenExtension) => {
+    setOpen(false);
+    eventBus.emit('app/context/screen/requested', { extensionId: chosen.id });
+  }, []);
 
-      if (mounted && chosen.entry === mounted.entry) {
-        const chosenSection = sectionOf(chosen) ?? null;
-        eventBus.emit('app/context/project/section', { section: chosenSection });
-        return;
-      }
-
-      // Leave the project scope first: closing it nulls the section, and
-      // mountScreen sets the chosen one — the other order wipes it again.
-      eventBus.emit('app/context/project/closed');
-      setMounting(true);
-      try {
-        await mountScreen(mfeRegistry, chosen);
-      } finally {
-        setMounting(false);
-      }
-    },
-    [mfeRegistry, mounting, mounted]
-  );
-
-  // Skeleton only while bootstrap is pending; a failed bootstrap is reported by
-  // the screen container, and a rail of one item is not a rail.
+  // Skeleton only while bootstrap is pending. A failed bootstrap leaves no
+  // items, and the rail says nothing about it — `MfeScreenContainer` reports it
+  // in the content area, where the screen would have been. A rail of one item
+  // is not a rail either.
   if (items.length <= 1 && bootstrapStatus !== 'pending') return null;
 
   // Controlled `open` without `onOpenChange`: the kit's provider owns Cmd/Ctrl+B
@@ -122,6 +92,13 @@ export const Rail: React.FC = () => {
       onPointerLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={closeOnBlur}
+      // Carried over from the deleted `Menu`, and local rather than a document
+      // listener the way `OverlayDialog` does it: the rail is not a modal, so
+      // Escape is only its business while the focus is inside it. Tabbing out
+      // already collapses the panel; this is for collapsing without leaving.
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') setOpen(false);
+      }}
     >
       <Sidebar collapsible="icon" className={styles.panel}>
         <SidebarContent className={styles.content}>
@@ -137,7 +114,7 @@ export const Rail: React.FC = () => {
                     <SidebarMenuButton
                       className={styles.item}
                       isActive={isActiveItem(ext, mountedId, mounted, section)}
-                      onClick={() => void choose(ext)}
+                      onClick={() => choose(ext)}
                     >
                       {(() => {
                         const icon = railIconName(pres.icon, iconNames);

@@ -13,20 +13,22 @@ import {
   type ScreenExtension,
 } from '@gears-frontx/react';
 import { bootstrapMFE } from './bootstrap';
+import type { MfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 export function MfeScreenContainer() {
   const app = useFrontX();
   const bootstrappedRef = useRef(false);
-  const [bootstrapped, setBootstrapped] = useState(false);
+  const [status, setStatus] = useState<MfeBootstrapStatus>('pending');
 
   useEffect(() => {
     if (bootstrappedRef.current) return;
     bootstrappedRef.current = true;
     bootstrapMFE(app).then(() => {
-      setBootstrapped(true);
+      setStatus('ready');
       eventBus.emit('app/mfe/bootstrap', { status: 'ready' });
     }).catch((error) => {
       console.error('[MFE Bootstrap] Failed to bootstrap MFE:', error);
+      setStatus('failed');
       eventBus.emit('app/mfe/bootstrap', { status: 'failed' });
     });
   }, [app]);
@@ -47,7 +49,11 @@ export function MfeScreenContainer() {
 
   return (
     <div className="flex-1 overflow-auto" data-mfe-screen-container>
-      {bootstrapped && app.mfeRegistry ? (
+      {status === 'failed' ? (
+        <div className="p-6 text-label text-muted-foreground" role="alert" data-mfe-bootstrap-failed>
+          Screens could not be loaded. Check the console for the manifest error.
+        </div>
+      ) : status === 'ready' && app.mfeRegistry ? (
         <ExtensionDomainSlot
           registry={app.mfeRegistry}
           domainId={screenDomain.id}

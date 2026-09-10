@@ -76,5 +76,6 @@ export function publishStudioContext(app: FrontXApp): void {
   publishSelectedOrganization(app);
   publishSelectedWorkspace(app);
   publishSelectedProject(app);
+  publishSelectedSection(app);
   publishSessionProfile(app);
 }

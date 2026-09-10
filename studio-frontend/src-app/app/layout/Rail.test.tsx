@@ -158,22 +158,20 @@ describe('Rail (the level navigation)', () => {
     expect(container.querySelectorAll('[data-orientation]').length).toBe(0);
   });
 
-  it('mounts the chosen screen into the screen domain', () => {
+  // The rail names the screen and stops there: leaving the project scope and
+  // the mount itself belong to the shell, and are covered in appContextEffects.
+  it('names the chosen screen to the shell', () => {
     render(<Rail />);
     fireEvent.click(screen.getByText('Connections'));
-    expect(mockRegistry.executeActionsChain).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: expect.objectContaining({ payload: { subject: 'ext.connections' } }),
-      })
-    );
+    expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', {
+      extensionId: 'ext.connections',
+    });
   });
 
-  it('leaves the project scope when an area of this level is chosen', async () => {
+  it('mounts nothing itself', () => {
     render(<Rail />);
     fireEvent.click(screen.getByText('Connections'));
-    await vi.waitFor(() =>
-      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/project/closed')
-    );
+    expect(mockRegistry.executeActionsChain).not.toHaveBeenCalled();
   });
 
   it('marks the mounted screen as the active item', () => {
@@ -196,16 +194,17 @@ describe('Rail (the level navigation)', () => {
       section.value = 'overview';
     });
 
-    it('relays the section instead of mounting the screen again', () => {
+    // Same event for a section as for any other item: telling them apart is
+    // the shell's job, since only it knows what is mounted right now.
+    it('names the section item the same way as any other item', () => {
       render(<Rail />);
       fireEvent.click(screen.getByText('Artifacts'));
-      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/project/section', {
-        section: 'artifacts',
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', {
+        extensionId: 'ext.project.artifacts',
       });
-      expect(mockRegistry.executeActionsChain).not.toHaveBeenCalled();
     });
 
-    it('does not leave the project when a section of it is chosen', () => {
+    it('does not decide by itself that the project is being left', () => {
       render(<Rail />);
       fireEvent.click(screen.getByText('Artifacts'));
       expect(mockEventBus.emit).not.toHaveBeenCalledWith('app/context/project/closed');
@@ -218,6 +217,40 @@ describe('Rail (the level navigation)', () => {
       expect(screen.getByText('Overview').closest('[data-active]')).toBeNull();
     });
 
+  });
+
+  describe('the keyboard', () => {
+    // The panel expands on focus and collapses when focus leaves it. Escape is
+    // the way to collapse it while staying inside.
+    // The provider takes the events; the kit stamps the open state one node in.
+    const provider = (container: HTMLElement): HTMLElement =>
+      container.firstElementChild as HTMLElement;
+    const state = (container: HTMLElement): string | undefined =>
+      container.querySelector<HTMLElement>('[data-state]')?.dataset.state;
+
+    it('expands when focus reaches it', () => {
+      const { container } = render(<Rail />);
+      fireEvent.focus(provider(container));
+      expect(state(container)).toBe('expanded');
+    });
+
+    it('collapses on Escape without focus having to leave', () => {
+      const { container } = render(<Rail />);
+      fireEvent.focus(provider(container));
+
+      fireEvent.keyDown(provider(container), { key: 'Escape' });
+
+      expect(state(container)).toBe('collapsed');
+    });
+
+    it('ignores other keys', () => {
+      const { container } = render(<Rail />);
+      fireEvent.focus(provider(container));
+
+      fireEvent.keyDown(provider(container), { key: 'a' });
+
+      expect(state(container)).toBe('expanded');
+    });
   });
 
   it('holds placeholder rows while the manifest is still in flight', () => {

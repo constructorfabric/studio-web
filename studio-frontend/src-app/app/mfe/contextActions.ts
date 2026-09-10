@@ -61,6 +61,20 @@ function isEntity(value: unknown): value is ContextEntityPayload {
 }
 
 /**
+ * The scope an announcement was made in, when the sender named one. Omitted
+ * rather than defaulted: an absent id means "not claimed", which the shell
+ * treats as "cannot be checked", and that is a different thing from a claim
+ * that happens to match nothing.
+ */
+function scopeOf<K extends string>(
+  payload: Record<string, unknown> | undefined,
+  key: K
+): Partial<Record<K, string>> {
+  const value = payload?.[key];
+  return typeof value === 'string' ? ({ [key]: value } as Record<K, string>) : {};
+}
+
+/**
  * Handler for the action, registered on the screen domain.
  *
  * Payload is validated here rather than trusted: GTS checks the action instance
@@ -77,7 +91,10 @@ export function createContextPublishHandler(): ActionHandler {
       // the menu behind it still holds the previous workspace's siblings.
       const siblings = Array.isArray(payload?.siblings) ? payload.siblings : [];
       eventBus.emit('app/context/projects', { items: siblings.filter(isEntity) });
-      eventBus.emit('app/context/project/opened', payload.project);
+      eventBus.emit('app/context/project/opened', {
+        ...payload.project,
+        ...scopeOf(payload, 'workspaceId'),
+      });
       return;
     }
 
@@ -106,12 +123,16 @@ export function createWorkspacePublishHandler(): ActionHandler {
       eventBus.emit('app/context/workspace/changed', {
         workspaceId: payload.workspace.id,
         name: payload.workspace.name,
+        ...scopeOf(payload, 'organizationId'),
       });
       eventBus.emit('app/context/level/requested', { level: 'workspace' });
       return;
     }
     if (payload?.kind !== 'created') return;
     if (!isEntity(payload?.workspace)) return;
-    eventBus.emit('app/context/workspace/created', payload.workspace);
+    eventBus.emit('app/context/workspace/created', {
+      ...payload.workspace,
+      ...scopeOf(payload, 'organizationId'),
+    });
   });
 }

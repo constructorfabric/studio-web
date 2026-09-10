@@ -45,12 +45,13 @@ export function closeWorkspaceForm(bridge: ChildMfeBridge | null): Promise<void>
  */
 export function publishCreatedWorkspace(
   bridge: ChildMfeBridge | null,
-  workspace: { id: string; name: string }
+  workspace: { id: string; name: string },
+  organizationId: string | null
 ): Promise<void> {
   return sendToHost(bridge, {
     type: STUDIO_ACTION_WORKSPACES_PUBLISH,
     target: FRONTX_OVERLAY_DOMAIN,
-    payload: { kind: 'created', workspace },
+    payload: { kind: 'created', workspace, ...(organizationId ? { organizationId } : {}) },
   });
 }
 

@@ -30,6 +30,14 @@ const WorkspaceList: React.FC<{
   const accounts = apiRegistry.getService(AccountsApiService);
   const t = useWorkspacesText();
   const [query, setQuery] = useState("");
+  // `staleTime: 0` is what makes the `refetch()` below reach the network, and
+  // is not an accidental opt-out of the shared 30s default. There are two
+  // caches, and this number is handed to both: react-query's, whose staleness
+  // `refetch()` does override, and the one inside `descriptor.fetch`
+  // (`SharedFetchCache`, also 30s), which it does not — `queryFn` calls into it
+  // on every refetch and only `staleTime <= 0` counts an entry as stale there.
+  // Raise this and creating a workspace stops adding a row for up to 30s: the
+  // effect still calls `refetch()`, and no request is made.
   const { data, isLoading, isError, refetch } = useApiQuery(
     accounts.getWorkspaces({ organizationId: organization.id }),
     { staleTime: 0 },
@@ -63,9 +71,9 @@ const WorkspaceList: React.FC<{
   // @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-row-opens:p1
   const open = useCallback(
     (row: Tenant) => {
-      requestWorkspace(bridge, { id: row.id, name: row.name });
+      requestWorkspace(bridge, { id: row.id, name: row.name }, organization.id);
     },
-    [bridge],
+    [bridge, organization.id],
   );
 
   const pending = translationsPending || (isLoading && all.length === 0);
@@ -105,7 +113,9 @@ const WorkspaceList: React.FC<{
             )}
             <WorkspacesTable
               rows={rows}
-              total={rows.length}
+              // The organization's count, not the search's: the caption reads
+              // "1-2 of 10", and passing `rows` would make it say "1-2 of 2".
+              total={all.length}
               emptyMessage={t(query.trim() ? "empty_search" : "empty_none")}
               onOpen={open}
             />

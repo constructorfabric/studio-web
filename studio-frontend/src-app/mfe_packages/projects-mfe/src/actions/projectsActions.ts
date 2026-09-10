@@ -43,8 +43,6 @@ function publish(bridge: ChildMfeBridge | null, payload: Record<string, unknown>
   );
 }
 
-// ─── local navigation ────────────────────────────────────────────────────────
-
 /**
  * `siblings` is what the top bar's switcher will offer while this project is
  * open: the projects of the same workspace, current one included. It travels
@@ -61,9 +59,10 @@ function publish(bridge: ChildMfeBridge | null, payload: Record<string, unknown>
 export function requestOpenProject(
   project: ContextEntity,
   siblings: ContextEntity[],
-  bridge: ChildMfeBridge | null
+  bridge: ChildMfeBridge | null,
+  workspaceId: string | null
 ): void {
-  publish(bridge, { kind: 'opened', project, siblings });
+  publish(bridge, { kind: 'opened', project, siblings, ...(workspaceId ? { workspaceId } : {}) });
 }
 
 /**
@@ -86,7 +85,8 @@ export function requestOpenProject(
 export function announceCreatedProject(
   bridge: ChildMfeBridge | null,
   project: ContextEntity,
-  siblings: readonly ContextEntity[]
+  siblings: readonly ContextEntity[],
+  workspaceId: string | null
 ): Promise<void> {
   if (!bridge) return Promise.resolve();
   const listed = siblings.some((sibling) => sibling.id === project.id)
@@ -95,7 +95,14 @@ export function announceCreatedProject(
   return sendToHost(bridge, {
     type: STUDIO_ACTION_CONTEXT_PUBLISH,
     target: FRONTX_SCREEN_DOMAIN,
-    payload: { kind: 'opened', project, siblings: listed },
+    payload: {
+      kind: 'opened',
+      project,
+      siblings: listed,
+      // See `requestOpenProject`: the wizard's own scope, so a create that
+      // resolves after a workspace switch does not land in the new workspace.
+      ...(workspaceId ? { workspaceId } : {}),
+    },
   });
 }
 

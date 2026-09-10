@@ -5,6 +5,7 @@ import {
   apiRegistry,
   screenDomain,
   type FrontXApp,
+  type MfeRegistry,
   type ScreenExtension,
 } from '@gears-frontx/react';
 import {
@@ -15,7 +16,7 @@ import {
   type Tenant,
 } from '@/app/api';
 import { entryPointOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
-import { mountScreen } from '@/app/mfe/mountScreen';
+import { mountScreen, isMountingScreen } from '@/app/mfe/mountScreen';
 import {
   publishSelectedOrganization,
   publishSelectedProject,
@@ -60,7 +61,10 @@ function toEntity(tenant: Tenant): ContextEntity {
 
 interface ContextSliceShape {
   org?: ContextEntity | null;
+  workspace?: ContextEntity | null;
   project?: ContextEntity | null;
+  projects?: ContextEntity[];
+  section?: string | null;
   workspacesStatus?: WorkspacesStatus;
 }
 
@@ -80,6 +84,17 @@ function entrySectionOf(app: FrontXApp, level: ScreenLevel): string | null {
 
 function currentOrgId(app: FrontXApp): string | null {
   return contextSlice(app).org?.id ?? null;
+}
+
+/**
+ * Whether an announcement belongs to a scope the session has left.
+ *
+ * An unclaimed scope (`undefined`) is never stale: the shell's own top-bar
+ * slots announce without one, and there is nothing to disagree with. Only a
+ * sender that named its scope can be found to have named the wrong one.
+ */
+function staleScope(current: string | null, claimed: string | undefined): boolean {
+  return claimed !== undefined && claimed !== current;
 }
 
 /**
@@ -234,27 +249,78 @@ export function registerAppContextEffects(app: FrontXApp): void {
     void resolveWorkspaces(currentOrgId(app));
   });
 
-  eventBus.on('app/context/level/requested', ({ level }) => {
-    const registry = app.mfeRegistry;
-    if (!registry) return;
-    if (level !== 'project' && contextSlice(app).project) {
+  const enterScreen = (
+    registry: MfeRegistry,
+    target: ScreenExtension,
+    leaveProject: boolean,
+    what: string
+  ): void => {
+    // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
+    // Asked before anything is cleared: `mountScreen` drops a mount that
+    // overlaps another, and clearing the project for one that will be dropped
+    // is how the rail and the content come apart.
+    if (isMountingScreen(registry)) return;
+
+    // Leave the project scope first: closing it nulls the section, and
+    // mountScreen sets the chosen one — the other order wipes it again.
+    const leaving = leaveProject ? (contextSlice(app).project ?? null) : null;
+    const leavingSection = leaving ? (contextSlice(app).section ?? null) : null;
+    if (leaving) {
       dispatch(closeContextProject());
       publishSelectedProject(app);
       publishSelectedSection(app);
     }
+
+    void mountScreen(registry, target).catch((error: unknown) => {
+      // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
+      // The level on screen never changed, so put its context back: the rail
+      // reads the level from the mounted screen and would otherwise name a
+      // level the content does not show.
+      if (leaving) {
+        dispatch(openContextProject(leaving));
+        dispatch(setContextSection(leavingSection));
+        publishSelectedProject(app);
+        publishSelectedSection(app);
+      }
+      // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
+      console.warn(
+        `Failed to enter ${what}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    });
+    // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
+  };
+
+  eventBus.on('app/context/level/requested', ({ level }) => {
+    const registry = app.mfeRegistry;
+    if (!registry) return;
     const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
     const target = entryPointOf(screens, level);
     if (!target) return;
-    mountScreen(registry, target)
-      .catch((error) => {
-        console.warn(
-          `Failed to enter the ${level} level:`,
-          error instanceof Error ? error.message : String(error)
-        );
-      });
+    enterScreen(registry, target, level !== 'project', `the ${level} level`);
   });
 
-  eventBus.on('app/context/workspace/changed', ({ workspaceId, name }) => {
+  eventBus.on('app/context/screen/requested', ({ extensionId }) => {
+    const registry = app.mfeRegistry;
+    if (!registry) return;
+    const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
+    const target = screens.find((screen) => screen.id === extensionId);
+    if (!target) return;
+
+    const [currentId] = registry.getMountedExtensions(screenDomain.id);
+    const current = screens.find((screen) => screen.id === currentId);
+    if (current && target.entry === current.entry) {
+      eventBus.emit('app/context/project/section', { section: sectionOf(target) ?? null });
+      return;
+    }
+    enterScreen(registry, target, true, `the ${target.presentation.label} screen`);
+  });
+
+  eventBus.on('app/context/workspace/changed', ({ workspaceId, name, organizationId }) => {
+    // The same rule the workspace read follows (`workspace-scope-resolve`
+    // inst-2/inst-3): an announcement made for an organization that has since
+    // been left is dropped rather than applied to whatever is current now.
+    if (staleScope(currentOrgId(app), organizationId)) return;
     // A name means the sender read the workspace itself; it may not be in the
     // shell's list yet, and ignoring it would open the previous workspace.
     dispatch(
@@ -267,7 +333,10 @@ export function registerAppContextEffects(app: FrontXApp): void {
   });
 
   /** Created by an MFE and handed over as an action chain — see contextActions. */
-  eventBus.on('app/context/workspace/created', ({ id, name }) => {
+  eventBus.on('app/context/workspace/created', ({ id, name, organizationId }) => {
+    // Created under the organization that was in scope at submit time. If the
+    // switcher has moved on since, the workspace does not belong here.
+    if (staleScope(currentOrgId(app), organizationId)) return;
     dispatch(addContextWorkspace({ id, name }));
     publishSelectedWorkspace(app);
     publishSelectedProject(app);
@@ -287,7 +356,10 @@ export function registerAppContextEffects(app: FrontXApp): void {
 
   //  Published by whoever owns projects (projects-mfe)
 
-  eventBus.on('app/context/project/opened', ({ id, name }) => {
+  eventBus.on('app/context/project/opened', ({ id, name, workspaceId }) => {
+    // A wizard or a list from a workspace since left would otherwise overwrite
+    // the open project — and the sibling list published just before it.
+    if (staleScope(contextSlice(app).workspace?.id ?? null, workspaceId)) return;
     dispatch(openContextProject({ id, name }));
     dispatch(setContextSection(entrySectionOf(app, 'project')));
     publishSelectedProject(app);
@@ -310,9 +382,12 @@ export function registerAppContextEffects(app: FrontXApp): void {
   });
 
   eventBus.on('app/context/project/changed', ({ projectId }) => {
-    const state = app.store.getState() as Record<string, unknown>;
-    const context = state['app/context'] as { projects?: ContextEntity[] } | undefined;
-    const picked = context?.projects?.find((project) => project.id === projectId);
+    const context = contextSlice(app);
+    // Picking the project already open is a no-op, the way picking the current
+    // organization is: the switcher just closes, and the section the member is
+    // reading stays on screen instead of snapping back to the rail's first item.
+    if (context.project?.id === projectId) return;
+    const picked = context.projects?.find((project) => project.id === projectId);
     if (!picked) return;
     dispatch(openContextProject(picked));
     dispatch(setContextSection(entrySectionOf(app, 'project')));
