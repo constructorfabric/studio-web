@@ -303,6 +303,33 @@ jobs:
 
       - name: Lint test chart
         run: helm lint deploy/helm/studio-web -f deploy/helm/values-test.example.yaml
+
+      # The session registry is process-local, so IDE sessions and a second
+      # backend replica cannot both be asked for. The chart refuses to render
+      # that combination; this asserts the refusal still happens, because a
+      # guard nobody exercises is a guard that quietly stops guarding.
+      - name: Chart refuses multi-replica backend with IDE sessions
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/studio-web
+          base=(--set backend.image.tag=t --set frontend.image.tag=t
+                --set backend.sessions.enabled=true)
+
+          # Renders: sessions on, exactly one replica, no autoscaler.
+          helm template guard "$chart" "${base[@]}" \
+            --set backend.autoscaling.enabled=false --set backend.replicas=1 >/dev/null
+
+          refuses() {
+            if helm template guard "$chart" "${base[@]}" "$@" >/dev/null 2>&1; then
+              echo "Chart rendered with backend.sessions.enabled=true and $*" >&2
+              exit 1
+            fi
+          }
+
+          # Both ways of asking for a second replica must fail the render.
+          refuses --set backend.autoscaling.enabled=true
+          refuses --set backend.autoscaling.enabled=false --set backend.replicas=3
   test-complete:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.

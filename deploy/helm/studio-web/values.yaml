@@ -140,9 +140,13 @@ backend:
   # the config profile also has to select driver=kubernetes. When on, the
   # backend gets a namespaced Role over pods/services (sessions-rbac.yaml) and
   # a NetworkPolicy opens egress for session Pods (sessions-netpol.yaml).
-  # autoscaling MUST stay single-replica while on: the session registry is
+  # The backend MUST stay single-replica while on: the session registry is
   # in-memory per pod, so a second backend replica cannot see the first's
-  # sessions (a DB-backed registry is the follow-up).
+  # sessions. Not a convention — the chart refuses to render if either
+  # `backend.autoscaling.enabled` or a `backend.replicas` above 1 is combined
+  # with this (see templates/backend/deployment.yaml). Lifting it means moving
+  # the registry out of the process; the orchestrator already knows which
+  # sessions exist, so listing them from the driver is the likelier answer.
   sessions:
     enabled: false
     rbac:

@@ -1,5 +1,16 @@
-{{- if and .Values.backend.sessions.enabled .Values.backend.autoscaling.enabled }}
+{{- /*
+  The session registry is process-local (studio_session::service::SessionService
+  holds it in a RwLock<HashMap>), so a second backend replica cannot see the
+  first's sessions. Both ways of asking for one are refused here rather than
+  left to a comment in values.yaml: autoscaling, and a plain replica count.
+*/}}
+{{- if .Values.backend.sessions.enabled }}
+{{- if .Values.backend.autoscaling.enabled }}
 {{- fail "backend.autoscaling.enabled must be false while backend.sessions.enabled is true (session registry is process-local)" }}
+{{- end }}
+{{- if gt (int .Values.backend.replicas) 1 }}
+{{- fail "backend.replicas must be 1 while backend.sessions.enabled is true (session registry is process-local: a second replica cannot see the first's sessions)" }}
+{{- end }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
