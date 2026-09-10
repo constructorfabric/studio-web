@@ -11,16 +11,24 @@ server:
 database:
   # NB: this does NOT create missing Postgres databases, despite what it sounds
   # like — toolkit-db only consults it to create SQLite parent directories
-  # (manager.rs, finalize_sqlite_paths). Postgres databases come from
-  # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
+  # (manager.rs, finalize_sqlite_paths). The databases come from
+  # `backend-bootstrap`, which reads `gears.*.database` out of this file on
+  # every compose start and creates the ones that are missing. (It used to be
+  # docker/initdb/01-create-databases.sql; that file is deliberately empty now,
+  # because a list that only runs on a new volume went stale every time a
+  # stateful gear was added.)
   auto_provision: true
   servers:
-    # Single Postgres for the whole assembly (Variant B): the graph-postgres
-    # image (PostgreSQL 19 + pgvector) hosts every gear database AND graph_storage
-    # as separate databases on one instance. Both aliases below point at the same
-    # server so gears keep their `server:` unchanged; they differ only in the
-    # admin/default dbname. NB: PG19 is beta — this consolidates all data onto it
-    # on purpose (see the graph-postgres service in docker-compose.yml).
+    # One PostgreSQL for the whole assembly, and it is the graph image
+    # (PostgreSQL 19 + pgvector). graph-storage cannot run on anything else —
+    # its migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
+    # (SQL/PGQ, PG19+) and an HNSW index — and no other gear minds where it
+    # lives, so the second server entry was only ever a second name for the
+    # same instance. Each gear names its own `dbname`; that is what separates
+    # them, not the server.
+    #
+    # NB: PG19 is beta — this consolidates all data onto it on purpose (see the
+    # graph-postgres service in docker-compose.yml).
     pg_main:
       engine: "postgres"
       host: "graph-postgres"
@@ -28,20 +36,6 @@ database:
       user: "studio"
       password: "${STUDIO_PG_PASSWORD}"
       dbname: "studio"            # admin/default db; gears override per-gear below
-      pool:
-        max_conns: 10
-        acquire_timeout: "30s"
-
-    # Same physical instance as pg_main; the graph-storage gear keeps its own
-    # `server: pg_graph` and its `graph_storage` database (where the vector /
-    # PROPERTY GRAPH / HNSW migrations run).
-    pg_graph:
-      engine: "postgres"
-      host: "graph-postgres"
-      port: 5432
-      user: "studio"
-      password: "${STUDIO_PG_PASSWORD}"
-      dbname: "graph_storage"
       pool:
         max_conns: 10
         acquire_timeout: "30s"
@@ -716,11 +710,12 @@ gears:
         default_subject_type: "gts.cf.core.security.subject_service.v1~"
 
   # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
-  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
-  # it cannot run on the main server.
+  # hybrid retrieval. The one PostgreSQL is the PG19 + pgvector image this
+  # gear needs, so it shares it with everything else and only its
+  # `dbname` sets it apart.
   graph-storage:
     database:
-      server: "pg_graph"
+      server: "pg_main"
       dbname: "graph_storage"
     config:
       # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A

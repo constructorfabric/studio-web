@@ -22,11 +22,12 @@
 name: studio
 
 services:
-  # Variant B: a SINGLE Postgres for the whole assembly. The graph-postgres
-  # service below (PostgreSQL 19 + pgvector) is the only database instance —
-  # it hosts every gear database AND graph_storage. The former postgres:16
-  # service ("studio-backend-pg") was removed; config/docker.yaml now points
-  # both server aliases (pg_main, pg_graph) at graph-postgres.
+  # A SINGLE Postgres for the whole assembly. The graph-postgres service below
+  # (PostgreSQL 19 + pgvector) is the only database instance — it hosts every
+  # gear database AND graph_storage, one database each. The former postgres:16
+  # service ("studio-backend-pg") was removed, and with it the second server
+  # entry: config/docker.yaml declares one `pg_main` and graph-storage names it
+  # like every other gear.
 
   # OIDC IdP for real login (config/oidc.yaml profile). Dev-grade: self-signed
   # TLS (certs in docker/keycloak/certs, CA trusted by the backend via

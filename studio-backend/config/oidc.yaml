@@ -35,21 +35,6 @@ database:
         max_conns: 10
         acquire_timeout: "30s"
 
-    # Same physical instance as pg_main; the graph-storage gear keeps its own
-    # `server: pg_graph` and its `graph_storage` database, where the vector /
-    # PROPERTY GRAPH / HNSW migrations run. The credentials are pg_main's: the
-    # instance is created with POSTGRES_USER=studio and has no `graph` role.
-    pg_graph:
-      engine: "postgres"
-      host: "127.0.0.1"
-      port: 5433
-      user: "studio"
-      password: "${STUDIO_PG_PASSWORD:-studio}"
-      dbname: "graph_storage"
-      pool:
-        max_conns: 10
-        acquire_timeout: "30s"
-
 logging:
   default:
     console_level: info
@@ -737,11 +722,12 @@ gears:
       tokens: []
 
   # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
-  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
-  # it cannot run on the main server.
+  # hybrid retrieval. The one PostgreSQL is the PG19 + pgvector image this
+  # gear needs, so it shares it with everything else and only its
+  # `dbname` sets it apart.
   graph-storage:
     database:
-      server: "pg_graph"
+      server: "pg_main"
       dbname: "graph_storage"
     config:
       # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A

@@ -1,6 +1,6 @@
 # Constructor Studio Backend — Postgres profile.
 # Usage:
-#   docker compose up -d postgres
+#   docker compose up -d graph-postgres
 #   cargo run -- --config config/postgres.yaml run
 #
 # Same gear assembly as dev.yaml; only the storage layer differs — one Postgres
@@ -28,29 +28,24 @@ database:
   # else gets a connection error on the first request, not at boot.
   auto_provision: true
   servers:
+    # One PostgreSQL for the whole assembly, and it is the graph image
+    # (PostgreSQL 19 + pgvector). graph-storage cannot run on anything else —
+    # its migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
+    # (SQL/PGQ, PG19+) and an HNSW index — and no other gear minds where it
+    # lives, so the second server entry was only ever a second name for the
+    # same instance. Each gear names its own `dbname`; that is what separates
+    # them, not the server.
+    #
+    # 5433 rather than 5432 because this profile runs the backend on the HOST:
+    # the container listens on 5432 and compose publishes it as 127.0.0.1:5433.
+    # In-network profiles use `graph-postgres:5432` instead.
     pg_main:
       engine: "postgres"
       host: "127.0.0.1"
-      port: 5432
-      user: "studio"
-      password: "${STUDIO_PG_PASSWORD}"
-      dbname: "studio"            # admin/default db; gears override per-gear below
-      pool:
-        max_conns: 10
-        acquire_timeout: "30s"
-
-    # PostgreSQL 19 + pgvector, used by graph-storage and nothing else. That
-    # gear's migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
-    # (SQL/PGQ, PostgreSQL 19+) and an HNSW index, none of which the server
-    # above provides. Routing one gear here keeps every other gear on the
-    # stable engine — see the `graph-postgres` service in docker-compose.yml.
-    pg_graph:
-      engine: "postgres"
-      host: "127.0.0.1"
       port: 5433
-      user: "graph"
-      password: "${STUDIO_GRAPH_PG_PASSWORD:-graph}"
-      dbname: "graph_storage"
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD:-studio}"
+      dbname: "studio"            # admin/default db; gears override per-gear below
       pool:
         max_conns: 10
         acquire_timeout: "30s"
@@ -551,11 +546,12 @@ gears:
         default_subject_type: "gts.cf.core.security.subject_service.v1~"
 
   # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
-  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
-  # it cannot run on the main server.
+  # hybrid retrieval. The one PostgreSQL is the PG19 + pgvector image this
+  # gear needs, so it shares it with everything else and only its
+  # `dbname` sets it apart.
   graph-storage:
     database:
-      server: "pg_graph"
+      server: "pg_main"
       dbname: "graph_storage"
     config:
       # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A

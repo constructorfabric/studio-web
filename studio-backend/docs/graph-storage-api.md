@@ -184,7 +184,7 @@ vector only through the bounded `text_excerpt` artifact-ingest stores.
 
 ```yaml
 graph-storage:
-  database: { server: "pg_graph", dbname: "graph_storage" }
+  database: { server: "pg_main", dbname: "graph_storage" }
   config:
     traversal_hop: pgq                # pgq | two_query
     embedding_dimension: 384          # fixed at migration time

@@ -35,19 +35,6 @@ database:
         max_conns: 10
         acquire_timeout: "30s"
 
-    # Same CloudNativePG instance as pg_main, but a distinct logical database.
-    # The graph-enabled release requires PostgreSQL 19 SQL/PGQ and pgvector.
-    pg_graph:
-      engine: "postgres"
-      host: "${STUDIO_PG_HOST}"
-      port: 5432
-      user: "${STUDIO_PG_USER}"
-      password: "${STUDIO_PG_PASSWORD}"
-      dbname: "graph_storage"
-      pool:
-        max_conns: 10
-        acquire_timeout: "30s"
-
 logging:
   default:
     console_level: info
@@ -586,7 +573,7 @@ gears:
   # must be available before the backend starts.
   graph-storage:
     database:
-      server: "pg_graph"
+      server: "pg_main"
       dbname: "graph_storage"
     config:
       traversal_hop: pgq

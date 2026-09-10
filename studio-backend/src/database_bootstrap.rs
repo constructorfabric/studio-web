@@ -81,10 +81,13 @@ pub async fn run(config: AppConfig, apply: bool) -> Result<()> {
         .context("no PostgreSQL databases were discovered in the effective configuration")?;
     let bootstrap = BootstrapConnection::from_server(first_server)?;
 
-    // Studio presently uses one physical PostgreSQL cluster. Reject a config
-    // that silently tries to provision a second host with the first host's
-    // credentials; adding explicit multi-cluster credentials can be a future,
-    // deliberate extension.
+    // One physical PostgreSQL cluster, and every profile now declares exactly
+    // one server entry to match (the `pg_graph` alias is gone — it named the
+    // same instance and differed only in a default `dbname` each gear
+    // overrides anyway). This is what keeps it that way: a second host would
+    // otherwise be provisioned with the first host's credentials, silently.
+    // Explicit multi-cluster credentials can be a future, deliberate
+    // extension.
     for target in &targets {
         let server = &effective.database.servers[&target.server];
         if server.host != first_server.host || server.port != first_server.port {

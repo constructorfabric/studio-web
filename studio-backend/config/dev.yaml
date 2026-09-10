@@ -21,17 +21,19 @@ database:
         max_conns: 1          # SQLite is single-writer
         acquire_timeout: "30s"
 
-    # PostgreSQL 19 + pgvector, used by graph-storage and nothing else. That
-    # gear's migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
-    # (SQL/PGQ, PostgreSQL 19+) and an HNSW index, none of which the server
-    # above provides. Routing one gear here keeps every other gear on the
-    # stable engine — see the `graph-postgres` service in docker-compose.yml.
-    pg_graph:
+    # The one PostgreSQL — the graph image (PG19 + pgvector) that compose
+    # runs, published on 127.0.0.1:5433. In this profile it hosts a single
+    # gear: graph-storage, whose migrations need `CREATE EXTENSION vector`,
+    # `CREATE PROPERTY GRAPH` (SQL/PGQ, PG19+) and an HNSW index, none of which
+    # SQLite provides. Everything else here stays on `sqlite_main` — that is
+    # what this profile is for. Named `pg_main` like every other profile's, so
+    # a gear block reads the same wherever it is copied from.
+    pg_main:
       engine: "postgres"
       host: "127.0.0.1"
       port: 5433
-      user: "graph"
-      password: "${STUDIO_GRAPH_PG_PASSWORD:-graph}"
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD:-studio}"
       dbname: "graph_storage"
       pool:
         max_conns: 10
@@ -515,8 +517,8 @@ gears:
         default_subject_type: "gts.cf.core.security.subject_service.v1~"
 
   # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
-  # hybrid retrieval. Pinned to `pg_graph` (PostgreSQL 19) by the block above;
-  # it cannot run on the main server.
+  # hybrid retrieval. Pinned to `pg_main` (PostgreSQL 19 + pgvector) by the
+  # block above; it cannot run on SQLite.
   studio-user:
     database:
       server: "sqlite_main"
@@ -524,7 +526,7 @@ gears:
 
   graph-storage:
     database:
-      server: "pg_graph"
+      server: "pg_main"
       dbname: "graph_storage"
     config:
       # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A
