@@ -22,6 +22,12 @@ export function isMountingScreen(registry: MfeRegistry): boolean {
   return mounting.has(registry);
 }
 
+/** Called when the screen domain attaches a root */
+
+export function releaseMountLock(registry: MfeRegistry): void {
+  mounting.delete(registry);
+}
+
 export async function mountScreen(
   registry: MfeRegistry,
   extension: ScreenExtension

@@ -38,7 +38,7 @@ import sharedPropertyContextSectionSchemaJson from './schemas/shared_property_co
 import sharedPropertyContextProjectSchemaJson from './schemas/shared_property_context_project.v1.json';
 import sharedPropertyContextOrganizationSchemaJson from './schemas/shared_property_context_organization.v1.json';
 import sharedPropertySessionProfileSchemaJson from './schemas/shared_property_session_user_profile.v1.json';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT } from './contextActions';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT } from '@constructor-studio/mfe-shared';
 
 /**
  * The GTS id grammar, as far as this test needs it: every `~`-separated segment

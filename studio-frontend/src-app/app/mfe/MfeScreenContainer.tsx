@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { entryPointOf } from '@/app/mfe/screenLevels';
-import { mountScreen } from '@/app/mfe/mountScreen';
+import { mountScreen, releaseMountLock } from '@/app/mfe/mountScreen';
 import {
   useFrontX,
   eventBus,
@@ -35,6 +35,7 @@ export function MfeScreenContainer() {
   const mountInitialScreen = useCallback(() => {
     const registry = app.mfeRegistry;
     if (!registry) return;
+    releaseMountLock(registry);
     if (registry.getMountedExtensions(screenDomain.id).length > 0) return;
 
     const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];

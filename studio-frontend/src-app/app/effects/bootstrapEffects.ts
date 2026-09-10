@@ -10,7 +10,7 @@
 import { eventBus, setUser, setHeaderLoading, apiRegistry, type FrontXApp } from '@gears-frontx/react';
 import { publishSessionProfile } from '@/app/mfe/sharedContext';
 import { setSessionProfile, type SessionProfile } from '@/app/slices/appSessionSlice';
-import { AccountsApiService } from '@/app/api';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 import { setMfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 /**
@@ -54,7 +54,7 @@ export function registerBootstrapEffects(app: FrontXApp): void {
 
       // Get accounts service using class-based registration
       const accountsService = apiRegistry.getService(AccountsApiService);
-      const me = await accountsService.me.fetch();
+      const me = await accountsService.getMe.fetch();
       const identity = (await app.auth?.getIdentity?.()) ?? null;
       const claims = identity?.claims as Record<string, unknown> | undefined;
       const displayName =

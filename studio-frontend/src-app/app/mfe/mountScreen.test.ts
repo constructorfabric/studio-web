@@ -12,7 +12,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   screenDomain: { id: SCREEN_DOMAIN },
 }));
 
-import { isMountingScreen, mountScreen } from './mountScreen';
+import { isMountingScreen, mountScreen, releaseMountLock } from './mountScreen';
 
 const artifacts = {
   id: 'ext.project.artifacts',
@@ -93,6 +93,28 @@ describe('mountScreen', () => {
     expect(isMountingScreen(other)).toBe(false);
     await mountScreen(other, people);
     expect(other.executeActionsChain).toHaveBeenCalledTimes(1);
+  });
+
+  // What the shell calls when the screen domain attaches a root. The mount that
+  // was going into the old one is doomed, and must not keep the new one out —
+  // in development StrictMode makes attach/detach/attach the normal path.
+  it('lets a fresh root mount even while the doomed one is still in flight', async () => {
+    let release = (): void => undefined;
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+
+    void mountScreen(registry, artifacts);
+    expect(isMountingScreen(registry)).toBe(true);
+
+    releaseMountLock(registry);
+    void mountScreen(registry, people);
+
+    expect(registry.executeActionsChain).toHaveBeenCalledTimes(2);
+    release();
   });
 
   it('is ready again after a mount fails, and lets the failure through', async () => {

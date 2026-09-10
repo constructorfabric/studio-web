@@ -139,6 +139,30 @@ describe('MfeScreenContainer', () => {
     });
   });
 
+  // The sequence StrictMode produces: a mount starts against the root, the slot
+  // detaches and re-attaches, and the doomed first mount is still in flight.
+  // Without the release the guard in mountScreen swallows the second one and
+  // the session opens on a blank screen with no active rail item.
+  it('mounts into a fresh root even while a doomed mount is still in flight', async () => {
+    const { mountScreen } = await import('./mountScreen');
+    registry.executeActionsChain.mockReturnValue(new Promise<void>(() => {}));
+    void mountScreen(registry as never, {
+      id: 'people',
+      presentation: { route: '/people', order: 30, level: 'organization' },
+    } as never);
+    registry.executeActionsChain.mockClear();
+    registry.executeActionsChain.mockResolvedValue(undefined);
+
+    const { MfeScreenContainer } = await import('./MfeScreenContainer');
+    render(<MfeScreenContainer />);
+
+    await waitFor(() => {
+      expect(registry.executeActionsChain).toHaveBeenCalledWith({
+        action: expect.objectContaining({ payload: { subject: 'people' } }),
+      });
+    });
+  });
+
   it('says the screens could not be loaded when bootstrap rejects', async () => {
     const error = new Error('boom');
     mockBootstrapMFE.mockRejectedValue(error);

@@ -16,7 +16,7 @@ import {
   type Tenant,
 } from '@/app/api';
 import { entryPointOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
-import { mountScreen, isMountingScreen } from '@/app/mfe/mountScreen';
+import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import {
   publishSelectedOrganization,
   publishSelectedProject,
@@ -44,9 +44,6 @@ import {
 function isOrganization(tenant: Tenant): boolean {
   return tenant.tenant_type === TENANT_TYPES.organization;
 }
-
-/** Account-management's own listing ceiling, so one page is enough. */
-const WORKSPACE_PAGE_LIMIT = 200;
 
 /** Long enough for an aborted duplicate to have settled. */
 const WORKSPACE_RETRY_DELAY_MS = 400;
@@ -116,13 +113,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     dispatch(setContextWorkspacesStatus('pending'));
     try {
       // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-1
-      const page = await accounts
-        .tenantChildrenOfType({
-          tenantId: orgId,
-          tenantType: TENANT_TYPES.workspace,
-          limit: WORKSPACE_PAGE_LIMIT,
-        })
-        .fetch();
+      const page = await accounts.getWorkspaces({ organizationId: orgId }).fetch();
       // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-1
       // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-2
       // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-3
@@ -205,7 +196,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     const accounts = apiRegistry.getService(AccountsApiService);
     dispatch(setContextLoading(true));
     try {
-      const me = await accounts.me.fetch();
+      const me = await accounts.getMe.fetch();
       const homeTenantId = me?.subject_tenant_id;
 
       // The home tenant no longer decides WHICH organizations are on offer —

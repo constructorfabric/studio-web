@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, type JSONSchema } from '@gears-frontx/react';
 import { Toaster } from '@/app/components/ui/sonner';
-import { AccountsApiService, IdentityApiService } from '@/app/api';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
@@ -71,8 +71,6 @@ gtsPlugin.registerSchema(sharedPropertyContextWorkspaceSchemaJson as JSONSchema)
 // crossing between them.
 gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
-
-// Register accounts service (application-level service for user info)
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 
@@ -91,14 +89,20 @@ const app = createFrontXApp({
   auth: { provider: keycloakOidcProvider },
 });
 
-// Mock API off from the first paint. The framework's `mock()` plugin (part of
-// the full preset) turns mock mode ON by default on localhost, and the accounts
-// mock map answers `/me` with a tenant id that exists nowhere
-// (`…0000000000aa`). Since MFEs share the host's QueryClient
-// (`queryCacheShared()`), that fake identity leaks into every MFE that reads
-// `/me` — projects-mfe then asks account-management for the children of a
-// tenant AM has never heard of and gets a 404. The FrontX Studio panel can
-// still switch mocks back on.
+// Mock API off from the first paint: the framework's `mock()` plugin turns mock
+// mode ON by default on localhost, and the MFE scaffolds still carry maps. A
+// mocked `/me` is the expensive one — MFEs share the host's QueryClient, so a
+// fake identity leaks into all of them and every read after it 404s against a
+// tenant account-management has never heard of. The Studio panel can switch
+// mocks back on.
+//
+// Adding a mock map: register the plugin through its service, which means a
+// subclass (`BaseApiService.protocol()` is protected). Never
+// `apiRegistry.plugins.add(RestProtocol, …)` — this toggle cannot reach that
+// one, and it is read on every request. And key the map off the same path
+// helper the client builds its URL with: `RestMockPlugin` matches the whole
+// URL, query string included, which is what the deleted accounts map got
+// wrong for the workspaces read.
 app.actions.toggleMockMode(false);
 
 // Register app-level slices and effects (identity flows through app.auth)

@@ -6,7 +6,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
-} from '@/app/mfe/contextActions';
+} from '@constructor-studio/mfe-shared';
 import { publishStudioContext } from './sharedContext';
 
 describe('publishStudioContext', () => {

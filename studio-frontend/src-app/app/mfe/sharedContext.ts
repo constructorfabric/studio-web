@@ -9,7 +9,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
-} from '@/app/mfe/contextActions';
+} from '@constructor-studio/mfe-shared';
 import { APP_CONTEXT_SLICE_KEY, type ContextEntity } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY, type SessionProfile } from '@/app/slices/appSessionSlice';
 

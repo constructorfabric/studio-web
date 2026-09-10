@@ -1,53 +1,8 @@
-/** The MFE -> shell channel for the top bar's context slot.*/
+/** The MFE -> shell channel for the top bar's context slot. */
+
 
 import { ActionHandler, eventBus } from '@gears-frontx/react';
 import '@/app/events/bootstrapEvents';
-
-/** Declared by an MFE in `mfe.json` -> `entries[].domainActions`. */
-export const STUDIO_ACTION_CONTEXT_PUBLISH =
-  'gts.frontx.mfes.comm.action.v1~constructor_studio.context.projects.publish.v1~';
-
-/**
- * The other direction: which project the shell says we are inside, or `null` at
- * organization scope. Declared on the screen domain (`sharedProperties`) and in
- * the MFE's `mfe.json` -> `requiredProperties`.
- *
- * Without it the switcher this action feeds is decoration — selecting an item
- * emits `app/context/project/changed` on the SHELL's eventBus, which the owning
- * MFE cannot hear. A shared property is the one host -> child channel that
- * crosses a module realm.
- *
- * The trailing `~` is required: `updateSharedProperty` appends to this string to
- * derive the ephemeral GTS instance it validates.
- */
-export const STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project.selected.v1~';
-
-/**
- * The organization the session is working in, as `{id, name}` or `null`.
- */
-export const STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~';
-
-/**
- * The workspace the session is working in, as `{id, name}` or `null`.
- */
-export const STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~';
-
-export const STUDIO_SHARED_PROPERTY_CONTEXT_SECTION =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project_section.selected.v1~';
-
-export const STUDIO_ACTION_WORKSPACES_PUBLISH =
-  'gts.frontx.mfes.comm.action.v1~constructor_studio.context.workspaces.publish.v1~';
-
-/**
- * Who is signed in, for display: `{id, displayName?, email?}` or `null`.
- * Display only. Every authorization decision stays with the backend, which
- * verifies the signature.
- */
-export const STUDIO_SHARED_PROPERTY_SESSION_PROFILE =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.user.profile.v1~';
 
 interface ContextEntityPayload {
   id: string;

@@ -51,6 +51,8 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+} from '@constructor-studio/mfe-shared';
+import {
   createContextPublishHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
