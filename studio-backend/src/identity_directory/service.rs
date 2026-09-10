@@ -58,6 +58,90 @@ struct KeycloakUser {
     federated_identities: Vec<FederatedIdentity>,
 }
 
+/// Does this Keycloak user belong in the directory at all?
+///
+/// Service accounts do not: they are clients, they never sign in, and an
+/// onboarding screen that lists them is asking an administrator to place a
+/// robot in an organization.
+fn is_directory_identity(user: &KeycloakUser) -> bool {
+    user.service_account_client_id.is_none()
+}
+
+/// The tenant an identity's `tenant_id` attribute asks for, when it parses.
+///
+/// Asking is not being: the attribute is written by whoever provisioned the
+/// user and is not evidence the tenant exists or is visible here. Only
+/// [`DirectoryIdentity::project`] decides what it means.
+fn requested_tenant(user: &KeycloakUser) -> Option<Uuid> {
+    user.attributes
+        .get(HOME_TENANT_ATTRIBUTE)
+        .and_then(|values| values.first())
+        .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+impl DirectoryIdentity {
+    /// One Keycloak identity as the directory reports it.
+    ///
+    /// `home_tenant_name` is the identity's requested tenant *as resolved
+    /// through account-management* — `None` when it requested none, and also
+    /// `None` when it requested one that could not be read. Those collapse on
+    /// purpose: an attribute naming a tenant that does not resolve is not an
+    /// assignment, so the identity reads as `unassigned` and its
+    /// `home_tenant_id` is dropped rather than shown. A stale or forged
+    /// attribute must not make somebody look placed.
+    fn project(user: KeycloakUser, home_tenant_name: Option<String>) -> Self {
+        let home_tenant_id = requested_tenant(&user).filter(|_| home_tenant_name.is_some());
+        let status = if home_tenant_id == Some(PLATFORM_ROOT_TENANT_ID) {
+            "platform_admin"
+        } else if home_tenant_id.is_some() {
+            "assigned"
+        } else {
+            "unassigned"
+        };
+        let display_name = [user.first_name.as_deref(), user.last_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Self {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            display_name: (!display_name.is_empty()).then_some(display_name),
+            identity_provider: user
+                .federated_identities
+                .first()
+                .map(|identity| identity.identity_provider.clone()),
+            first_seen_at_epoch_ms: user.created_timestamp,
+            status,
+            home_tenant_id,
+            home_tenant_name,
+            organization_role: user
+                .attributes
+                .get(ORGANIZATION_ROLE_ATTRIBUTE)
+                .and_then(|values| values.first())
+                .cloned(),
+        }
+    }
+}
+
+/// Newest first, ties broken by username.
+///
+/// The screen this feeds is an onboarding queue, so the people who just
+/// arrived and are waiting to be placed belong at the top. Username breaks the
+/// tie because Keycloak's creation timestamp is optional, and identities that
+/// have none must still come out in a stable order.
+fn sort_identities(identities: &mut [DirectoryIdentity]) {
+    identities.sort_by(|left, right| {
+        right
+            .first_seen_at_epoch_ms
+            .cmp(&left.first_seen_at_epoch_ms)
+            .then_with(|| left.username.cmp(&right.username))
+    });
+}
+
 #[derive(Debug, Deserialize)]
 struct KeycloakGroup {
     id: String,
@@ -261,15 +345,11 @@ impl IdentityDirectoryService {
         let mut identities = Vec::with_capacity(users.len());
 
         for user in users {
-            if user.service_account_client_id.is_some() {
+            if !is_directory_identity(&user) {
                 continue;
             }
 
-            let requested_tenant = user
-                .attributes
-                .get(HOME_TENANT_ATTRIBUTE)
-                .and_then(|values| values.first())
-                .and_then(|value| Uuid::parse_str(value).ok());
+            let requested_tenant = requested_tenant(&user);
 
             let home_tenant_name = if let Some(tenant_id) = requested_tenant {
                 if let Some(cached) = tenants.get(&tenant_id) {
@@ -288,48 +368,10 @@ impl IdentityDirectoryService {
                 None
             };
 
-            let home_tenant_id = requested_tenant.filter(|_| home_tenant_name.is_some());
-            let status = if home_tenant_id == Some(PLATFORM_ROOT_TENANT_ID) {
-                "platform_admin"
-            } else if home_tenant_id.is_some() {
-                "assigned"
-            } else {
-                "unassigned"
-            };
-            let display_name = [user.first_name.as_deref(), user.last_name.as_deref()]
-                .into_iter()
-                .flatten()
-                .filter(|part| !part.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            identities.push(DirectoryIdentity {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                display_name: (!display_name.is_empty()).then_some(display_name),
-                identity_provider: user
-                    .federated_identities
-                    .first()
-                    .map(|identity| identity.identity_provider.clone()),
-                first_seen_at_epoch_ms: user.created_timestamp,
-                status,
-                home_tenant_id,
-                home_tenant_name,
-                organization_role: user
-                    .attributes
-                    .get(ORGANIZATION_ROLE_ATTRIBUTE)
-                    .and_then(|values| values.first())
-                    .cloned(),
-            });
+            identities.push(DirectoryIdentity::project(user, home_tenant_name));
         }
 
-        identities.sort_by(|left, right| {
-            right
-                .first_seen_at_epoch_ms
-                .cmp(&left.first_seen_at_epoch_ms)
-                .then_with(|| left.username.cmp(&right.username))
-        });
+        sort_identities(&mut identities);
         Ok(identities)
     }
 
@@ -467,5 +509,196 @@ impl IdentityDirectoryService {
             .await
             .map_err(|error| anyhow::anyhow!("cannot update organization owner grant: {error}"))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The directory's judgement, without Keycloak.
+    //!
+    //! `list` is a Keycloak call, a tenant lookup per distinct attribute, and
+    //! the decisions below. Only the decisions are worth pinning, and they are
+    //! the part an administrator acts on: this screen is where somebody is
+    //! placed into an organization.
+    //!
+    //! Fixtures are built from JSON rather than by constructing `KeycloakUser`,
+    //! so the field names Keycloak actually sends are under test too. A realm
+    //! that renamed `serviceAccountClientId` would otherwise start listing
+    //! robots and nothing here would notice.
+
+    use serde_json::json;
+
+    use super::{
+        DirectoryIdentity, KeycloakUser, PLATFORM_ROOT_TENANT_ID, is_directory_identity,
+        sort_identities,
+    };
+
+    fn user(value: serde_json::Value) -> KeycloakUser {
+        serde_json::from_value(value).expect("a Keycloak user shape")
+    }
+
+    fn person() -> serde_json::Value {
+        json!({
+            "id": "3f1b0c58-0000-0000-0000-000000000001",
+            "username": "ada",
+            "email": "ada@example.org",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "createdTimestamp": 1_700_000_000_000_i64,
+        })
+    }
+
+    fn with_tenant(mut value: serde_json::Value, tenant: &str) -> serde_json::Value {
+        value["attributes"] = json!({ "tenant_id": [tenant] });
+        value
+    }
+
+    #[test]
+    fn a_service_account_is_not_an_identity_to_place() {
+        let mut robot = person();
+        robot["serviceAccountClientId"] = json!("studio-backend");
+        assert!(!is_directory_identity(&user(robot)));
+        assert!(is_directory_identity(&user(person())));
+    }
+
+    #[test]
+    fn an_identity_with_no_tenant_attribute_is_unassigned() {
+        let identity = DirectoryIdentity::project(user(person()), None);
+        assert_eq!(identity.status, "unassigned");
+        assert_eq!(identity.home_tenant_id, None);
+    }
+
+    #[test]
+    fn a_resolved_tenant_makes_it_assigned() {
+        let tenant = "6f9619ff-8b86-d011-b42d-00cf4fc964ff";
+        let identity = DirectoryIdentity::project(
+            user(with_tenant(person(), tenant)),
+            Some("Constructor".to_string()),
+        );
+        assert_eq!(identity.status, "assigned");
+        assert_eq!(
+            identity.home_tenant_id.map(|id| id.to_string()).as_deref(),
+            Some(tenant)
+        );
+        assert_eq!(identity.home_tenant_name.as_deref(), Some("Constructor"));
+    }
+
+    /// The one worth having. An attribute is a claim, not an assignment: if the
+    /// tenant it names cannot be read, the identity is still waiting to be
+    /// placed, and the directory must not show it as belonging anywhere.
+    #[test]
+    fn a_tenant_that_does_not_resolve_is_not_an_assignment() {
+        let identity = DirectoryIdentity::project(
+            user(with_tenant(
+                person(),
+                "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+            )),
+            None,
+        );
+        assert_eq!(identity.status, "unassigned");
+        assert_eq!(
+            identity.home_tenant_id, None,
+            "an unresolved tenant must not be reported as this identity's home"
+        );
+    }
+
+    /// Same rule, and the case where getting it wrong is worst: an attribute
+    /// naming the platform root would otherwise present as a platform admin.
+    #[test]
+    fn an_unresolved_root_tenant_does_not_confer_platform_admin() {
+        let identity = DirectoryIdentity::project(
+            user(with_tenant(person(), &PLATFORM_ROOT_TENANT_ID.to_string())),
+            None,
+        );
+        assert_eq!(identity.status, "unassigned");
+    }
+
+    #[test]
+    fn the_root_tenant_reads_as_platform_admin() {
+        let identity = DirectoryIdentity::project(
+            user(with_tenant(person(), &PLATFORM_ROOT_TENANT_ID.to_string())),
+            Some("root".to_string()),
+        );
+        assert_eq!(identity.status, "platform_admin");
+    }
+
+    /// A tenant attribute that is not a uuid is no different from none.
+    #[test]
+    fn an_unparsable_tenant_attribute_is_ignored() {
+        let identity = DirectoryIdentity::project(user(with_tenant(person(), "not-a-uuid")), None);
+        assert_eq!(identity.status, "unassigned");
+        assert_eq!(identity.home_tenant_id, None);
+    }
+
+    #[test]
+    fn the_display_name_joins_the_parts_that_are_there() {
+        let identity = DirectoryIdentity::project(user(person()), None);
+        assert_eq!(identity.display_name.as_deref(), Some("Ada Lovelace"));
+
+        let mut first_only = person();
+        first_only["lastName"] = json!(null);
+        let identity = DirectoryIdentity::project(user(first_only), None);
+        assert_eq!(identity.display_name.as_deref(), Some("Ada"));
+    }
+
+    /// A realm that stores an empty string is the common case: it is not
+    /// `null`, and used as-is it renders a name of one space.
+    #[test]
+    fn blank_name_parts_read_as_absent() {
+        let mut blank = person();
+        blank["firstName"] = json!("  ");
+        blank["lastName"] = json!("");
+        assert_eq!(
+            DirectoryIdentity::project(user(blank), None).display_name,
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_federated_identity_names_the_provider() {
+        let mut federated = person();
+        federated["federatedIdentities"] = json!([
+            { "identityProvider": "github" },
+            { "identityProvider": "google" },
+        ]);
+        let identity = DirectoryIdentity::project(user(federated), None);
+        assert_eq!(identity.identity_provider.as_deref(), Some("github"));
+        assert_eq!(
+            DirectoryIdentity::project(user(person()), None).identity_provider,
+            None,
+            "a local account has no provider to name"
+        );
+    }
+
+    #[test]
+    fn the_organization_role_comes_from_its_attribute() {
+        let mut with_role = person();
+        with_role["attributes"] = json!({ "studio_organization_role": ["owner"] });
+        let identity = DirectoryIdentity::project(user(with_role), None);
+        assert_eq!(identity.organization_role.as_deref(), Some("owner"));
+    }
+
+    #[test]
+    fn newest_first_and_ties_broken_by_username() {
+        let at = |name: &str, ts: Option<i64>| {
+            let mut value = person();
+            value["username"] = json!(name);
+            value["createdTimestamp"] = ts.map_or(json!(null), |t| json!(t));
+            DirectoryIdentity::project(user(value), None)
+        };
+        let mut identities = vec![
+            at("carol", Some(100)),
+            at("bob", None),
+            at("alice", Some(300)),
+            at("dave", Some(300)),
+        ];
+        sort_identities(&mut identities);
+
+        let order: Vec<&str> = identities.iter().map(|i| i.username.as_str()).collect();
+        assert_eq!(
+            order,
+            ["alice", "dave", "carol", "bob"],
+            "newest first; equal timestamps by username; no timestamp last"
+        );
     }
 }
