@@ -948,7 +948,9 @@ jobs:
     # manual deploy the test jobs are intentionally skipped, so test-complete
     # is a fast gate rather than a rebuild or a second test run.
     needs: build-complete
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services'
+    # Diagnostic branch safety: production workflow permits a service deploy
+    # from a selected branch/SHA; this temporary branch must never do so.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services' && github.ref == 'refs/heads/main'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       IMAGE_TAG: ${{ github.event.inputs.image_tag }}
