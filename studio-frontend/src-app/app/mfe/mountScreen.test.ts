@@ -20,20 +20,42 @@ const artifacts = {
   presentation: { label: 'Artifacts', level: 'project', section: 'artifacts' },
 } as unknown as ScreenExtension;
 
+const timeline = {
+  id: 'ext.project.timeline',
+  entry: 'entry.projects',
+  presentation: { label: 'Timeline', level: 'project', section: 'timeline' },
+} as unknown as ScreenExtension;
+
 const people = {
   id: 'ext.people',
   entry: 'entry.people',
   presentation: { label: 'People', level: 'organization' },
 } as unknown as ScreenExtension;
 
+/**
+ * A registry that keeps a mount set, because the race is about who ends up in
+ * it: `ExclusiveMountStrategy` evicts the sibling and mounts the subject at the
+ * end of its own chain, so whichever chain finishes last owns the domain.
+ */
 function registryThat(chain: () => Promise<void>): MfeRegistry {
-  return { executeActionsChain: vi.fn(chain) } as unknown as MfeRegistry;
+  const mounted: string[] = [];
+  return {
+    getMountedExtensions: () => mounted,
+    executeActionsChain: vi.fn(async ({ action }: MountAction) => {
+      await chain();
+      mounted.splice(0, mounted.length, action.payload.subject);
+    }),
+  } as unknown as MfeRegistry;
+}
+
+interface MountAction {
+  action: { payload: { subject: string } };
 }
 
 afterEach(() => vi.clearAllMocks());
 
 describe('mountScreen', () => {
-  it('mounts the extension into the screen domain and names its section', async () => {
+  it('mounts the extension into the screen domain, and says nothing else', async () => {
     const registry = registryThat(() => Promise.resolve());
 
     await mountScreen(registry, artifacts);
@@ -44,9 +66,10 @@ describe('mountScreen', () => {
         payload: { subject: 'ext.project.artifacts' },
       }),
     });
-    expect(mockEmit).toHaveBeenCalledWith('app/context/project/section', {
-      section: 'artifacts',
-    });
+    // The section belongs to the click that asked for this mount, and was
+    // written before it began. Naming it here would name it on the far side of
+    // an await, where a later click can no longer overrule it.
+    expect(mockEmit).not.toHaveBeenCalled();
   });
 
   // `ExclusiveMountStrategy` reads the mounted list once and then awaits, so two
@@ -115,6 +138,140 @@ describe('mountScreen', () => {
 
     expect(registry.executeActionsChain).toHaveBeenCalledTimes(2);
     release();
+  });
+
+  // The mount that was replaced cannot be called off, so it reaches the domain
+  // last and takes it. What it cannot do is keep it.
+  it('puts back the screen asked for last when an abandoned mount takes the domain', async () => {
+    const releases: Array<() => void> = [];
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+
+    const doomed = mountScreen(registry, artifacts);
+    releaseMountLock(registry);
+    const current = mountScreen(registry, people);
+
+    releases[1]();
+    await current;
+    expect(registry.getMountedExtensions('any')).toEqual([people.id]);
+
+    // The abandoned one lands afterwards and takes the domain with it.
+    releases[0]();
+    await doomed;
+    expect(registry.executeActionsChain).toHaveBeenCalledTimes(3);
+
+    releases[2]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(registry.getMountedExtensions('any')).toEqual([people.id]);
+  });
+
+  it('asks for nothing more when the domain already holds what was asked for', async () => {
+    const releases: Array<() => void> = [];
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+
+    const doomed = mountScreen(registry, artifacts);
+    releaseMountLock(registry);
+    const current = mountScreen(registry, people);
+
+    // This time the abandoned mount lands first, so the one that replaced it
+    // has the last word on its own.
+    releases[0]();
+    await doomed;
+    releases[1]();
+    await current;
+
+    expect(registry.executeActionsChain).toHaveBeenCalledTimes(2);
+    expect(registry.getMountedExtensions('any')).toEqual([people.id]);
+  });
+
+  // Three deep, landing newest-first so every earlier mount reaches the domain
+  // after the one that replaced it. Whatever the order, the domain is left
+  // holding the screen asked for last.
+  it('settles on the screen asked for last, however the overlaps land', async () => {
+    const releases: Array<() => void> = [];
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+
+    const first = mountScreen(registry, artifacts);
+    releaseMountLock(registry);
+    const second = mountScreen(registry, people);
+    releaseMountLock(registry);
+    const third = mountScreen(registry, timeline);
+
+    releases[2]();
+    await third;
+    releases[1]();
+    await second;
+    releases[0]();
+    await first;
+
+    // Let every mount those landings asked for run to the end as well.
+    let settled = 3;
+    for (let round = 0; round < 20 && settled < releases.length; round += 1) {
+      while (settled < releases.length) releases[settled++]();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    expect(registry.getMountedExtensions('any')).toEqual([timeline.id]);
+    expect(isMountingScreen(registry)).toBe(false);
+  });
+
+  it('leaves the lock with the mount that took over', async () => {
+    const releases: Array<() => void> = [];
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+
+    const doomed = mountScreen(registry, artifacts);
+    releaseMountLock(registry);
+    void mountScreen(registry, people);
+
+    releases[0]();
+    await doomed;
+
+    expect(isMountingScreen(registry)).toBe(true);
+  });
+
+  // And a failure it is too late to act on is not the caller's to handle:
+  // `enterScreen` rolls the project context back on a rejection, which would
+  // land on the navigation that replaced this one.
+  it('keeps the failure of a superseded mount from its caller', async () => {
+    const settlers: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    const registry = registryThat(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          settlers.push({ resolve, reject });
+        })
+    );
+
+    const doomed = mountScreen(registry, artifacts);
+    releaseMountLock(registry);
+    const current = mountScreen(registry, people);
+
+    settlers[1].resolve();
+    await current;
+
+    settlers[0].reject(new Error('no such entry'));
+    await expect(doomed).resolves.toBeUndefined();
   });
 
   it('is ready again after a mount fails, and lets the failure through', async () => {

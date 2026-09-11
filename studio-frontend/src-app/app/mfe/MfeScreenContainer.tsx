@@ -3,14 +3,12 @@
 /** MFE Screen Container Component. */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { entryPointOf } from '@/app/mfe/screenLevels';
-import { mountScreen, releaseMountLock } from '@/app/mfe/mountScreen';
+import { releaseMountLock } from '@/app/mfe/mountScreen';
 import {
   useFrontX,
   eventBus,
   ExtensionDomainSlot,
   screenDomain,
-  type ScreenExtension,
 } from '@gears-frontx/react';
 import { bootstrapMFE } from './bootstrap';
 import type { MfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
@@ -38,14 +36,7 @@ export function MfeScreenContainer() {
     releaseMountLock(registry);
     if (registry.getMountedExtensions(screenDomain.id).length > 0) return;
 
-    const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
-    const initialScreen = entryPointOf(screens, 'organization');
-    if (!initialScreen) return;
-
-    mountScreen(registry, initialScreen)
-      .catch((error) => {
-        console.error('[MFE Bootstrap] Failed to mount the initial screen:', error);
-      });
+    eventBus.emit('app/context/level/requested', { level: 'organization' });
   }, [app.mfeRegistry]);
 
   return (

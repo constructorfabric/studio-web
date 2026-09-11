@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 const mockBootstrapMFE = vi.fn();
 const mockUseFrontX = vi.fn();
 const mockScreenDomain = { id: 'screen-domain' };
+const mockEmit = vi.hoisted(() => vi.fn());
 
 vi.mock('./bootstrap', () => ({
   bootstrapMFE: (...args: never[]) => mockBootstrapMFE(...args),
@@ -13,6 +14,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<Record<string, never>>()),
   useFrontX: () => mockUseFrontX(),
   screenDomain: mockScreenDomain,
+  eventBus: { on: vi.fn(), emit: mockEmit },
   ExtensionDomainSlot: ({
     registry,
     domainId,
@@ -75,6 +77,7 @@ describe('MfeScreenContainer', () => {
     mockUseFrontX.mockReturnValue(app);
     mockBootstrapMFE.mockReset();
     mockBootstrapMFE.mockResolvedValue(undefined);
+    mockEmit.mockClear();
   });
 
   afterEach(() => {
@@ -124,43 +127,44 @@ describe('MfeScreenContainer', () => {
     });
   });
 
-  it('mounts the first item of the outermost level once the slot reports its root', async () => {
+  // Asking for the level rather than mounting a screen of its own choosing is
+  // what keeps one way into a screen: which item the level opens on is
+  // `resolveLevelMenu`'s to decide, and the section that item names is written
+  // by the same handler every other navigation goes through.
+  it('asks for the outermost level once the slot reports its root', async () => {
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
     await waitFor(() => {
-      expect(registry.executeActionsChain).toHaveBeenCalledWith({
-        action: expect.objectContaining({
-          target: mockScreenDomain.id,
-          payload: { subject: 'people' },
-        }),
+      expect(mockEmit).toHaveBeenCalledWith('app/context/level/requested', {
+        level: 'organization',
       });
     });
   });
 
   // The sequence StrictMode produces: a mount starts against the root, the slot
   // detaches and re-attaches, and the doomed first mount is still in flight.
-  // Without the release the guard in mountScreen swallows the second one and
-  // the session opens on a blank screen with no active rail item.
-  it('mounts into a fresh root even while a doomed mount is still in flight', async () => {
-    const { mountScreen } = await import('./mountScreen');
+  // Without the release the guard in mountScreen swallows the next one and the
+  // session opens on a blank screen with no active rail item.
+  it('frees a doomed mount still in flight when a fresh root arrives', async () => {
+    const { mountScreen, isMountingScreen } = await import('./mountScreen');
     registry.executeActionsChain.mockReturnValue(new Promise<void>(() => {}));
     void mountScreen(registry as never, {
       id: 'people',
       presentation: { route: '/people', order: 30, level: 'organization' },
     } as never);
-    registry.executeActionsChain.mockClear();
-    registry.executeActionsChain.mockResolvedValue(undefined);
+    expect(isMountingScreen(registry as never)).toBe(true);
 
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
     render(<MfeScreenContainer />);
 
     await waitFor(() => {
-      expect(registry.executeActionsChain).toHaveBeenCalledWith({
-        action: expect.objectContaining({ payload: { subject: 'people' } }),
+      expect(mockEmit).toHaveBeenCalledWith('app/context/level/requested', {
+        level: 'organization',
       });
     });
+    expect(isMountingScreen(registry as never)).toBe(false);
   });
 
   it('says the screens could not be loaded when bootstrap rejects', async () => {

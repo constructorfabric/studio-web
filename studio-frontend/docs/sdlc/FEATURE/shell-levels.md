@@ -203,20 +203,48 @@ rest on are the Definitions of Done, which are traced.
 
 ### Decide what a menu click does
 
-- [ ] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-click`
+- [x] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-click`
 
 **Input**: the chosen item, and the extension currently mounted in the screen domain
 
 **Output**: either a mounted extension, or the chosen section relayed to the mounted one
 
 **Steps**:
-1. [ ] - `p1` - **IF** the chosen item's entry is the entry of the mounted extension - `inst-1`
-   1. [ ] - `p1` - Write the chosen item's section into the shell's context and publish it as the section property - `inst-2`
-   2. [ ] - `p1` - **RETURN** the section changed without a remount; re-picking the open section republishes the same value and changes nothing - `inst-3`
-2. [ ] - `p1` - Leave the project scope, so the section of the old screen does not outlive it - `inst-4`
-3. [ ] - `p1` - Mount the chosen item in the screen domain, one mount at a time - `inst-5`
-4. [ ] - `p1` - Publish the chosen item's section, or `null` when it declares none - `inst-6`
-5. [ ] - `p1` - **RETURN** the mounted extension - `inst-7`
+1. [x] - `p1` - **IF** the chosen item's entry is the entry of the mounted extension - `inst-1`
+   1. [x] - `p1` - Write the chosen item's section into the shell's context and publish it as the section property - `inst-2`
+   2. [x] - `p1` - **RETURN** the section changed without a remount; re-picking the open section republishes the same value and changes nothing - `inst-3`
+2. [x] - `p1` - Leave the project scope, so the section of the old screen does not outlive it - `inst-4`
+3. [x] - `p1` - Write the chosen item's section, or `null` when it declares none, and publish it - `inst-6`
+4. [x] - `p1` - Mount the chosen item in the screen domain, one mount at a time - `inst-5`
+5. [x] - `p1` - **RETURN** the mounted extension - `inst-7`
+
+The click is what decides the active item, so the click is what writes it —
+`inst-6` before `inst-5`, and by the same hand as `inst-2`. Deciding it when
+the mount finishes puts the decision on the far side of an await, where the
+next click cannot overrule it: two overlapping mounts then land in whichever
+order they happen to resolve, and the rail names a section the screen does not
+show. The mount is the slow part and the part that can fail; what the member
+asked for is known before it starts.
+
+One mount at a time is the rule, not the guarantee: a mount bound to a root
+that has since been detached cannot be called off, and the lock is let go for it
+so that the next one is not swallowed. So `inst-5` is about where things end up
+— once the overlapping mounts have settled, the domain holds the item asked for
+last. A mount that has been replaced and still reaches the domain last is undone
+rather than prevented, by asking for the current item again once the domain is
+free. Preventing it would need a cancellation the runtime does not offer.
+
+`inst-5`'s "one mount at a time" governs the whole click, not just its own
+step: a click that arrives while a mount is running is dropped, the relay of
+`inst-2` included. Relaying a section of the screen being replaced would leave
+that token naming the screen that arrives, and no item of its rail carries it —
+the rail then marks nothing at all.
+
+That leaves two writers of the active section, which is what
+`cpt-studiofrontend-flow-shell-levels-section` already asks for: the shell
+writes what was asked for (`inst-3` there), and the MFE's own report is adopted
+when it arrives (`inst-4`/`inst-5` there). Neither races the other — one
+answers the click, the other answers the MFE.
 
 ### Assemble the path
 
@@ -449,11 +477,16 @@ and falls back to the lowest order. After this feature there is no such screen
 at the organization level, and a shell that names one screen cannot be reused for
 three levels.
 
+It names no level's item either: on the root it is handed, it asks for the
+outermost level and nothing more. The item is then chosen — and its section
+written — by the handler every other navigation already goes through, so the
+screen a session opens on is not the one screen reached by a second path.
+
 **Implements**:
 - `cpt-studiofrontend-algo-shell-levels-menu`
 
 **Touches**:
-- Entities: `MfeScreenContainer`
+- Entities: `MfeScreenContainer`, `appContextEffects`
 
 ### Counts arrive with the list that shows them
 

@@ -16,7 +16,8 @@
         },
         "section": {
           "type": "string",
-          "$comment": "For items that share their entry with the item already mounted: the token the MFE understands for this one. The shell relays it through the section property instead of mounting again, so a rail of sections costs one mount rather than seven. Opaque to the shell — it never parses it."
+          "minLength": 1,
+          "$comment": "For items that share their entry with the item already mounted: the token the MFE understands for this one. The shell relays it through the section property instead of mounting again, so a rail of sections costs one mount rather than seven. Opaque to the shell — it never parses it. Whether it is REQUIRED, and that it is unique, cannot be stated here: both depend on the other extensions of the same level, and a schema sees one instance at a time. The rule — every item sharing an entry with another of its level carries a section of its own — is enforced by overlayContract.test.ts over the whole generated aggregate."
         },
         "placement": {
           "type": "string",

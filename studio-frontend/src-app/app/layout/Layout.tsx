@@ -40,7 +40,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* The level's rail, then the screen it mounts. */}
       <div className="flex min-h-0 flex-1">
         <Rail />
-          <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+        <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
       </div>
 
       {/* Out of the flow, over everything: dialogs and overlays. */}

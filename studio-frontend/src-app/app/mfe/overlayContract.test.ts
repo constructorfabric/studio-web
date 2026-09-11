@@ -273,5 +273,34 @@ describe('generated MFE manifest', () => {
       expect(project.filter((ext) => !ext.presentation?.section)).toEqual([]);
       expect(project.length).toBeGreaterThan(1);
     });
+
+    it('gives every item sharing an entry with another of its level a section of its own', () => {
+      const groups = new Map<string, PresentedExtension[]>();
+      for (const ext of screens) {
+        const key = `${ext.presentation?.level ?? 'organization'}\u0000${ext.entry}`;
+        groups.set(key, [...(groups.get(key) ?? []), ext]);
+      }
+
+      const shared = [...groups.values()].filter((group) => group.length > 1);
+      const nameOf = (ext: PresentedExtension): string => ext.presentation?.label ?? ext.id;
+
+      const untokened = shared.flatMap((group) =>
+        group.filter((ext) => !ext.presentation?.section).map(nameOf)
+      );
+      expect(untokened).toEqual([]);
+
+      const duplicated = shared.flatMap((group) => {
+        const seen = new Set<string>();
+        return group
+          .filter((ext) => {
+            const section = ext.presentation?.section as string;
+            if (seen.has(section)) return true;
+            seen.add(section);
+            return false;
+          })
+          .map(nameOf);
+      });
+      expect(duplicated).toEqual([]);
+    });
   });
 });

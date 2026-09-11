@@ -8,13 +8,8 @@ import {
   type MfeRegistry,
   type ScreenExtension,
 } from '@gears-frontx/react';
-import {
-  AccountsApiService,
-  IdentityApiService,
-  PLATFORM_ROOT_TENANT_ID,
-  TENANT_TYPES,
-  type Tenant,
-} from '@/app/api';
+import { AccountsApiService, TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
+import { IdentityApiService, PLATFORM_ROOT_TENANT_ID } from '@/app/api';
 import { entryPointOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import {
@@ -152,7 +147,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
   const platformOrganizations = async (rootId: string): Promise<Tenant[]> => {
     const accounts = apiRegistry.getService(AccountsApiService);
     try {
-      const children = (await accounts.tenantChildren({ tenantId: rootId }).fetch())?.items ?? [];
+      const children = (await accounts.getChildren({ tenantId: rootId }).fetch())?.items ?? [];
       return children.filter(isOrganization);
     } catch (error) {
       console.warn(
@@ -181,7 +176,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     const resolved = await Promise.all(
       memberships.map(async (membership) => {
         try {
-          return await accounts.tenant({ tenantId: membership.org_id }).fetch();
+          return await accounts.getTenant({ tenantId: membership.org_id }).fetch();
         } catch {
           return null;
         }
@@ -240,6 +235,13 @@ export function registerAppContextEffects(app: FrontXApp): void {
     void resolveWorkspaces(currentOrgId(app));
   });
 
+  /** The active section, as the shell decided it. */
+
+  const showSection = (section: string | null): void => {
+    dispatch(setContextSection(section));
+    publishSelectedSection(app);
+  };
+
   const enterScreen = (
     registry: MfeRegistry,
     target: ScreenExtension,
@@ -247,38 +249,36 @@ export function registerAppContextEffects(app: FrontXApp): void {
     what: string
   ): void => {
     // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
-    // Asked before anything is cleared: `mountScreen` drops a mount that
-    // overlaps another, and clearing the project for one that will be dropped
-    // is how the rail and the content come apart.
     if (isMountingScreen(registry)) return;
-
-    // Leave the project scope first: closing it nulls the section, and
-    // mountScreen sets the chosen one — the other order wipes it again.
     const leaving = leaveProject ? (contextSlice(app).project ?? null) : null;
-    const leavingSection = leaving ? (contextSlice(app).section ?? null) : null;
+    const leavingSection = contextSlice(app).section ?? null;
+
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
     if (leaving) {
       dispatch(closeContextProject());
       publishSelectedProject(app);
-      publishSelectedSection(app);
     }
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
 
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
+    showSection(sectionOf(target) ?? null);
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
+
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
     void mountScreen(registry, target).catch((error: unknown) => {
       // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
-      // The level on screen never changed, so put its context back: the rail
-      // reads the level from the mounted screen and would otherwise name a
-      // level the content does not show.
       if (leaving) {
         dispatch(openContextProject(leaving));
-        dispatch(setContextSection(leavingSection));
         publishSelectedProject(app);
-        publishSelectedSection(app);
       }
+      showSection(leavingSection);
       // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
       console.warn(
         `Failed to enter ${what}:`,
         error instanceof Error ? error.message : String(error)
       );
     });
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
     // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
   };
 
@@ -294,15 +294,22 @@ export function registerAppContextEffects(app: FrontXApp): void {
   eventBus.on('app/context/screen/requested', ({ extensionId }) => {
     const registry = app.mfeRegistry;
     if (!registry) return;
+    if (isMountingScreen(registry)) return;
     const screens = registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
     const target = screens.find((screen) => screen.id === extensionId);
     if (!target) return;
 
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
     const [currentId] = registry.getMountedExtensions(screenDomain.id);
     const current = screens.find((screen) => screen.id === currentId);
     if (current && target.entry === current.entry) {
-      eventBus.emit('app/context/project/section', { section: sectionOf(target) ?? null });
+      // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
+      // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
+      showSection(sectionOf(target) ?? null);
+      // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
+      // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
       return;
+      // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
     }
     enterScreen(registry, target, true, `the ${target.presentation.label} screen`);
   });
@@ -352,15 +359,20 @@ export function registerAppContextEffects(app: FrontXApp): void {
     // the open project — and the sibling list published just before it.
     if (staleScope(contextSlice(app).workspace?.id ?? null, workspaceId)) return;
     dispatch(openContextProject({ id, name }));
-    dispatch(setContextSection(entrySectionOf(app, 'project')));
     publishSelectedProject(app);
-    publishSelectedSection(app);
+    showSection(entrySectionOf(app, 'project'));
   });
 
+  // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
+  // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
+  // The MFE's own report, adopted as it arrives. The shell's side of the rail
+  // is written by the click, in `showSection` — this is the other writer, and
+  // the two never answer the same question.
   eventBus.on('app/context/project/section', ({ section }) => {
-    dispatch(setContextSection(section));
-    publishSelectedSection(app);
+    showSection(section);
   });
+  // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
+  // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
 
   eventBus.on('app/context/projects', ({ items }) => {
     dispatch(setContextProjects(items));
@@ -381,8 +393,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     const picked = context.projects?.find((project) => project.id === projectId);
     if (!picked) return;
     dispatch(openContextProject(picked));
-    dispatch(setContextSection(entrySectionOf(app, 'project')));
     publishSelectedProject(app);
-    publishSelectedSection(app);
+    showSection(entrySectionOf(app, 'project'));
   });
 }
