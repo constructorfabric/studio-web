@@ -118,6 +118,27 @@ interpret keep it shut, and verdicts never cross between the two kinds of
 subject: a document's passing verdict says nothing about a repository file of
 the same type.
 
+## Which detectors a stage can gate on
+
+| detector | shape | gateable |
+|---|---|---|
+| `purpose` | per document, `gate.passed` | yes |
+| `leak` | per document, `passed` + `leak_share` — needs the document's type, which a binding has | yes |
+| `bloat` | set-wise: clusters of duplicated text, each naming the files it occurs in | yes, derived |
+| `traceability` | set-wise: pairs between documents | no |
+
+`bloat` has no per-document verdict in its response, but every cluster names its
+files, and that answers the one question a stage asks: is any of this document
+also somewhere else. Only duplication **across** documents counts — a document
+that repeats itself is a lesser complaint, and failing a stage for it would bury
+the one bloat exists for, which is two documents saying the same thing so that
+changing one silently leaves the other lying.
+
+`traceability` is not gateable, and not for want of a rule: `extract` returns no
+pairs for any document set or identifier notation we could construct, and
+`classify` then reports `passed` on a comparison it never made. Written up in
+`studio-backend/docs/spec-quality-issues.md`.
+
 ## The person's ruling
 
 `PUT …/document-bindings/{id}` takes one explicit action — `confirm` the

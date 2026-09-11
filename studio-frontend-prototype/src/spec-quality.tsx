@@ -255,8 +255,16 @@ export interface DocTypeVerdict {
  *  roadmap and fails a genuine ADR; gating on it would reject the real
  *  documents and keep the noise.
  *
- *  At 0.5 the sample keeps every real specification and drops four of the five
- *  files that are not one. */
+ *  At 0.5 the sample keeps every real specification and drops the files that
+ *  are not one.
+ *
+ *  `deploy/README.md` sits above the cut at 0.89 and was written down here as
+ *  the one non-specification that gets through. It is not one: asked again, its
+ *  mixture is `design 0.57, requirement 0.43, other 0.00` — every section reads
+ *  as design or requirement, and the reasons hold up ("declares published
+ *  images, tag rules, and runtime constraints"). It is a deployment design
+ *  document that happens to be called README. The detector was right and the
+ *  label was mine. */
 export const MIN_SPEC_SHARE = 0.5;
 
 /** Ask the `leak` detector whether a document contains content that belongs to
@@ -329,6 +337,77 @@ export interface LeakVerdict {
   leakShare: number | null;
   /** The kinds it read as — `design` and `requirement` inside an ADR, say. */
   foreignRoles: string[];
+  taskId: string;
+}
+
+/** Ask the `bloat` detector which documents repeat each other.
+ *
+ *  Set-wise: one run over the whole set, and the result is clusters of
+ *  duplicated text rather than a verdict per document. But each cluster names
+ *  the files it occurs in, and that is enough to say the one thing a stage
+ *  needs to know about a single document — whether any of it is also somewhere
+ *  else.
+ *
+ *  Only duplication **across** documents counts. A document that repeats itself
+ *  is a different (and lesser) complaint, and failing a stage for it would
+ *  bury the one bloat exists for: two documents saying the same thing, so that
+ *  changing one silently leaves the other lying.
+ */
+export async function detectBloat(
+  token: string,
+  docs: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<BloatVerdicts> {
+  const view = await runDetector("bloat", { docs }, token, { signal });
+  const r = (view.result ?? {}) as { clusters?: unknown };
+  const clusters = Array.isArray(r.clusters) ? r.clusters : [];
+
+  /** path → the other paths it shares text with. */
+  const shares = new Map<string, Set<string>>();
+  for (const raw of clusters) {
+    const cluster = raw as { occurrences?: { file?: unknown }[] };
+    const files = [
+      ...new Set(
+        (cluster.occurrences ?? [])
+          .map((o) => (typeof o.file === "string" ? o.file : ""))
+          .filter(Boolean),
+      ),
+    ];
+    // One file, however many times: that is a document repeating itself.
+    if (files.length < 2) continue;
+    for (const file of files) {
+      const others = shares.get(file) ?? new Set<string>();
+      for (const other of files) if (other !== file) others.add(other);
+      shares.set(file, others);
+    }
+  }
+
+  const verdicts: BloatVerdicts = { byPath: {}, taskId: view.task_id, pairs: [] };
+  for (const path of Object.keys(docs)) {
+    verdicts.byPath[path] = [...(shares.get(path) ?? [])].sort();
+  }
+  // The same fact as a relation, for the graph: an unordered pair, once.
+  const seen = new Set<string>();
+  for (const [path, others] of shares) {
+    for (const other of others) {
+      const [a, b] = path < other ? [path, other] : [other, path];
+      const key = `${a}|${b}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        verdicts.pairs.push([a, b]);
+      }
+    }
+  }
+  return verdicts;
+}
+
+/** Which documents of a set repeat which others. */
+export interface BloatVerdicts {
+  /** Every document in the set, mapped to the others it shares text with.
+   *  Empty array = nothing of it is duplicated elsewhere. */
+  byPath: Record<string, string[]>;
+  /** The same relation, deduplicated and unordered, for the graph. */
+  pairs: [string, string][];
   taskId: string;
 }
 

@@ -33,7 +33,13 @@ import {
   StageStatus,
   WrittenFile,
 } from "./api";
-import { detectDocType, detectLeak, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
+import {
+  detectBloat,
+  detectDocType,
+  detectLeak,
+  isDetectorCancel,
+  MIN_SPEC_SHARE,
+} from "./spec-quality";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -1028,6 +1034,103 @@ function IngestedDocumentsView({
     }
   };
 
+  /** Find the documents that repeat each other.
+   *
+   *  One run over the whole set, because that is the only way the question
+   *  makes sense — "does this document say what another one already says" has
+   *  no answer from one document. The per-document verdict falls out of which
+   *  files each duplicate cluster names.
+   *
+   *  Unlike the other two runs this one cannot skip what it has already seen:
+   *  a verdict about a set goes stale the moment the set changes, so adding one
+   *  document re-judges all of them. */
+  const runBloatCheck = async () => {
+    const targets = bindings.filter((b) => b.type_key && contentByNode[b.node_id]);
+    if (targets.length < 2) {
+      setNote(
+        targets.length === 1
+          ? "Duplication is a question about two documents; this project has one."
+          : "No bound documents with text to compare. Run Scan first.",
+      );
+      return;
+    }
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    setProgress(`Comparing ${targets.length} documents…`);
+    try {
+      const docs: Record<string, string> = {};
+      for (const b of targets) docs[b.path] = contentByNode[b.node_id];
+      const { byPath, pairs, taskId } = await detectBloat(token, docs, ctrl.signal);
+
+      let repeating = 0;
+      for (const b of targets) {
+        const others = byPath[b.path] ?? [];
+        const clean = others.length === 0;
+        if (!clean) repeating += 1;
+        const summary = clean
+          ? "bloat: nothing repeated elsewhere"
+          : `bloat: repeats ${others.map(basename).join(", ")}`;
+
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "bloat",
+                subject: b.node_id,
+                path: b.path,
+                severity: clean ? "clean" : "high",
+                summary,
+                score: others.length,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {});
+
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "bloat", {
+            state: clean ? "passed" : "failed",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {});
+      }
+
+      // The relation itself, for the graph: which document repeats which.
+      const nodeOf = new Map(targets.map((b) => [b.path, b.node_id]));
+      const duplicates = pairs
+        .map(([a, b]) => ({ from: nodeOf.get(a) ?? "", to: nodeOf.get(b) ?? "" }))
+        .filter((d) => d.from && d.to);
+      if (duplicates.length > 0) {
+        void api
+          .saveQualityFindings(token, {
+            duplicates,
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {});
+      }
+
+      await reload();
+      setNote(
+        `Compared ${targets.length} documents: ${targets.length - repeating} repeat nothing, ` +
+          `${repeating} share text with another.`,
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote("Stopped.");
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
   /** Apply one person's decision to one binding, re-validating when we still
    *  hold the file's text. */
   const decide = async (
@@ -1121,6 +1224,13 @@ function IngestedDocumentsView({
           title="Check each bound document for content that belongs to another kind of document"
         >
           Check bound documents for leaks
+        </button>
+        <button
+          onClick={runBloatCheck}
+          disabled={busy || counts.bound < 2}
+          title="Find the documents that repeat each other"
+        >
+          Compare bound documents for duplication
         </button>
         {busy && abortRef.current && (
           <button onClick={() => abortRef.current?.abort()}>Stop</button>
