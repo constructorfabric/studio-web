@@ -126,3 +126,42 @@ pub mod alias {
     pub enum Relation {}
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+pub mod invitation {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    /// A pending membership: an organization, an address, a role, and a secret
+    /// that turns them into one.
+    ///
+    /// The token is stored as a digest, never as itself, so a read of this
+    /// table yields nothing usable (see `invitations::mint_token`).
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_invitation")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub org_id: Uuid,
+        /// Normalized, and the only thing an acceptance is matched against.
+        pub email: String,
+        pub role: String,
+        /// SHA-256 of the token. Unique, so a token identifies one invitation.
+        pub token_digest: String,
+        /// The person who sent it.
+        pub invited_by: Uuid,
+        pub created_at: OffsetDateTime,
+        pub expires_at: OffsetDateTime,
+        /// Set once, by the acceptance. Its presence is what makes an
+        /// invitation single-use.
+        pub accepted_at: Option<OffsetDateTime>,
+        pub accepted_by: Option<Uuid>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}

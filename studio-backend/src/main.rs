@@ -4,6 +4,7 @@
 //! lives in the linked gear crates (see `registered_gears.rs`); this binary
 //! only loads layered config and hands control to `toolkit::bootstrap`.
 
+mod access_config; // the Studio access-config document: one shape, one reader, one writer
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
@@ -22,6 +23,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
+mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod registered_gears;
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks

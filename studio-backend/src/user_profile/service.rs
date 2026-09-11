@@ -9,26 +9,22 @@
 //! platform action.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Result, anyhow};
-use gts::GtsTypeId;
-use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::alias_policy::{
     Confidence, Decision, Held, ProofOwner, decide, displaced_a_proof, proof_owner,
 };
+use super::invitations;
 use super::store::IdentityStore;
 use crate::connectors::service::ConnectorService;
-use crate::identity_directory::FederatedIdentityReader;
-
-/// AM tenant-metadata type holding an organization's access config (the same
-/// document the Studio PDP reads).
-const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
+use crate::identity_directory::IdpDirectoryReader;
 
 /// A connection whose scope makes it a team or bot credential rather than the
 /// caller's own. `ConnectionScope::Personal` serialises as this string.
@@ -37,6 +33,38 @@ const PERSONAL_SCOPE: &str = "personal";
 /// `membership.source` for a row written by the assignment path, as opposed to
 /// `manual` (an operator using the REST route directly).
 const SOURCE_ASSIGNMENT: &str = "assignment";
+
+/// `membership.source` for the owner row a person gets by creating the
+/// organization. The third way in, beside being assigned and being added by
+/// hand — and the one an owner's member list should be able to tell apart.
+const SOURCE_CREATION: &str = "creation";
+
+/// `membership.source` for a row an accepted invitation produced. The fourth
+/// and last way in, and the one an owner most wants to be able to tell apart.
+const SOURCE_INVITATION: &str = "invitation";
+
+/// Bumped by every write that changes who belongs where.
+///
+/// Consumers that cache a person's organizations — the Studio PDP does, because
+/// it is asked on every request — read this to know their copy is stale. A
+/// counter rather than a per-person signal on purpose: memberships change
+/// rarely, the whole cache is small, and one atomic load is cheaper than
+/// keeping per-subject invalidation correct.
+///
+/// It exists because of a bug this found: creating an organization writes the
+/// membership and then the owner grant, and the grant write is authorized by a
+/// clamp that had already cached "this person belongs to nothing". The creator
+/// could not finish creating their own organization until the cache expired.
+static MEMBERSHIP_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The current membership generation. See [`MEMBERSHIP_GENERATION`].
+pub fn membership_generation() -> u64 {
+    MEMBERSHIP_GENERATION.load(Ordering::Acquire)
+}
+
+fn memberships_changed() {
+    MEMBERSHIP_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
 
 /// Provider tag for a sign-in method minted through Studio's own Keycloak
 /// realm. Every bearer the platform authenticates carries a subject from there,
@@ -97,6 +125,24 @@ pub struct AliasRecord {
     pub added_at_epoch_ms: i64,
 }
 
+/// A pending membership.
+///
+/// `token_digest` is write-only from the service's point of view: it is set when
+/// the invitation is made and compared when one is accepted, and never read back
+/// out to anybody.
+#[derive(Clone, Debug)]
+pub struct InvitationRecord {
+    pub id: String,
+    pub org_id: String,
+    pub email: String,
+    pub role: String,
+    pub token_digest: String,
+    pub invited_by: String,
+    pub created_at_epoch_ms: i64,
+    pub expires_at_epoch_ms: i64,
+    pub accepted_at_epoch_ms: Option<i64>,
+}
+
 /// A patch to a profile; `None` fields are left untouched.
 #[derive(Clone, Debug, Default)]
 pub struct ProfilePatch {
@@ -114,25 +160,6 @@ pub struct MergeResult {
     pub memberships_moved: usize,
 }
 
-// ── Access config (subset; mirrors the PDP's view) ───────────────────────────
-
-#[derive(Debug, Clone, Deserialize, Default)]
-struct AccessConfig {
-    #[serde(default)]
-    grants: Vec<GrantDef>,
-}
-#[derive(Debug, Clone, Deserialize)]
-struct GrantDef {
-    #[serde(rename = "subjectType")]
-    subject_type: String,
-    #[serde(rename = "subjectId")]
-    subject_id: String,
-    #[serde(rename = "roleKey")]
-    role_key: String,
-    #[serde(rename = "scopeType")]
-    scope_type: String,
-}
-
 // ── Service ──────────────────────────────────────────────────────────────────
 
 pub struct IdentityService {
@@ -145,7 +172,7 @@ pub struct IdentityService {
     connectors: OnceLock<Option<Arc<ConnectorService>>>,
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
-    federated: OnceLock<Option<Arc<dyn FederatedIdentityReader>>>,
+    federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
 }
 
 impl IdentityService {
@@ -172,7 +199,7 @@ impl IdentityService {
     /// Separate from `new` for the same reason as `attach_connectors`: the
     /// directory gear is a separate gear, and the REST phase is the first point
     /// where it is known to have registered.
-    pub fn attach_federated(&self, federated: Option<Arc<dyn FederatedIdentityReader>>) {
+    pub fn attach_federated(&self, federated: Option<Arc<dyn IdpDirectoryReader>>) {
         let _ = self.federated.set(federated);
     }
 
@@ -181,23 +208,9 @@ impl IdentityService {
     /// per-org authority gate: no platform-wide admin needed, and it is scoped
     /// to the one organization.
     pub async fn is_org_owner(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
-        let subject = ctx.subject_id().to_string();
-        let cfg = match self
-            .am
-            .resolve_metadata(ctx, org_id, GtsTypeId::new(ACCESS_METADATA_TYPE))
+        crate::access_config::read(self.am.as_ref(), ctx, org_id)
             .await
-        {
-            Ok(Some(entry)) => {
-                serde_json::from_value::<AccessConfig>(entry.value).unwrap_or_default()
-            }
-            _ => return false,
-        };
-        cfg.grants.iter().any(|g| {
-            g.subject_type == "member"
-                && g.subject_id == subject
-                && g.role_key == "owner"
-                && g.scope_type == "org"
-        })
+            .grants_ownership_to(&ctx.subject_id().to_string())
     }
 
     /// The canonical person behind an authenticated caller, provisioning on
@@ -568,7 +581,7 @@ impl IdentityService {
     async fn confirm_from_idp(
         store: &dyn IdentityStore,
         user_id: &str,
-        federated: &dyn FederatedIdentityReader,
+        federated: &dyn IdpDirectoryReader,
         report: &mut ConfirmReport,
     ) -> Result<()> {
         for login in store.logins_of(user_id).await? {
@@ -662,6 +675,7 @@ impl IdentityService {
             updated_at_epoch_ms: now,
         };
         self.store.upsert_membership(&view).await?;
+        memberships_changed();
         Ok(view)
     }
 
@@ -681,9 +695,171 @@ impl IdentityService {
         Ok(())
     }
 
+    /// Record that `subject` created `org_id` and therefore owns it.
+    ///
+    /// Separate from [`Self::record_assignment`] only in what it records as the
+    /// source: ownership that arises from creating an organization did not come
+    /// from an operator, and an owner reading their member list should see the
+    /// difference (ADR-0018 §2).
+    pub async fn record_creation(&self, subject: &str, org_id: Uuid) -> Result<()> {
+        let user_id = self
+            .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+            .await?;
+        self.record_membership(
+            &user_id,
+            &org_id.to_string(),
+            crate::access_config::ROLE_OWNER,
+            SOURCE_CREATION,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// The organizations the person behind `subject` is a member of.
+    ///
+    /// Never provisions: a subject nobody has seen is a subject with no
+    /// memberships, and minting a person for one during an authorization
+    /// decision would create people out of traffic.
+    pub async fn organizations_of(&self, subject: &str) -> Result<Vec<Uuid>> {
+        let Some(user_id) = self.resolve_subject(PROVIDER_KEYCLOAK, subject).await? else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .store
+            .memberships_of(&user_id)
+            .await?
+            .into_iter()
+            .filter_map(|m| Uuid::parse_str(&m.org_id).ok())
+            .collect())
+    }
+
+    /// Invite an address into an organization.
+    ///
+    /// Returns the token **once**. It is not stored and cannot be shown again:
+    /// only its digest is kept, so a later read of the table yields nothing
+    /// that works.
+    pub async fn invite(
+        &self,
+        org_id: Uuid,
+        inviter: &str,
+        email: &str,
+        role: &str,
+    ) -> Result<(InvitationRecord, String)> {
+        let email = invitations::validate_email(email)?;
+        let role = invitations::validate_role(role)?;
+        let (token, digest) = invitations::mint_token();
+        let now = now_ms();
+        let record = InvitationRecord {
+            id: Uuid::new_v4().to_string(),
+            org_id: org_id.to_string(),
+            email,
+            role,
+            token_digest: digest,
+            invited_by: inviter.to_owned(),
+            created_at_epoch_ms: now,
+            expires_at_epoch_ms: now + invitations::VALID_FOR_DAYS * 24 * 60 * 60 * 1000,
+            accepted_at_epoch_ms: None,
+        };
+        self.store.insert_invitation(&record).await?;
+        Ok((record, token))
+    }
+
+    /// What an organization has outstanding.
+    pub async fn invitations_of(&self, org_id: Uuid) -> Result<Vec<InvitationRecord>> {
+        self.store.invitations_of_org(&org_id.to_string()).await
+    }
+
+    /// Withdraw one. Returns whether there was one to withdraw.
+    pub async fn revoke_invitation(&self, org_id: Uuid, id: &str) -> Result<bool> {
+        self.store.delete_invitation(id, &org_id.to_string()).await
+    }
+
+    /// The invitations waiting for a verified address.
+    ///
+    /// One row per invitation waiting for any address this person has verified.
+    pub async fn invitations_waiting_for(
+        &self,
+        verified_emails: &[String],
+    ) -> Result<Vec<InvitationRecord>> {
+        let mut out = Vec::new();
+        for email in verified_emails {
+            for invitation in self
+                .store
+                .invitations_for_email(&invitations::normalize_email(email))
+                .await?
+            {
+                if !out.iter().any(|i: &InvitationRecord| i.id == invitation.id) {
+                    out.push(invitation);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every address the identity provider vouches for, across all of this
+    /// person's realm logins.
+    ///
+    /// Empty when the directory is not configured — which refuses an
+    /// acceptance rather than falling back to the profile address. The profile
+    /// address is self-service, so believing it here would let anybody claim
+    /// any invitation by typing the address it was sent to.
+    pub async fn verified_emails(&self, user_id: &str) -> Result<Vec<String>> {
+        let Some(Some(directory)) = self.federated.get() else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for login in self.store.logins_of(user_id).await? {
+            if login.provider != PROVIDER_KEYCLOAK {
+                continue;
+            }
+            if let Some(email) = directory.verified_email(&login.subject).await?
+                && !found.contains(&email)
+            {
+                found.push(email);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Accept an invitation and become a member.
+    ///
+    /// `verified_email` is what the identity provider vouches for; `None` means
+    /// it vouches for nothing, which refuses. The membership is written only
+    /// after the database has confirmed that this call is the one that took the
+    /// invitation, so a race produces one member and one refusal rather than
+    /// two members.
+    pub async fn accept_invitation(
+        &self,
+        user_id: &str,
+        token: &str,
+        verified_emails: &[String],
+    ) -> Result<Result<MembershipView, invitations::Refusal>> {
+        let digest = invitations::digest_of(token);
+        let found = self.store.find_invitation_by_digest(&digest).await?;
+        let pending = found.as_ref().map(|r| invitations::Pending {
+            email: r.email.clone(),
+            expired: r.expires_at_epoch_ms <= now_ms(),
+            accepted: r.accepted_at_epoch_ms.is_some(),
+        });
+        if let Err(refusal) = invitations::may_accept(pending.as_ref(), verified_emails) {
+            return Ok(Err(refusal));
+        }
+        let record = found.expect("checked above");
+        if !self.store.accept_invitation(&record.id, user_id).await? {
+            // Somebody else took it between the read and the write.
+            return Ok(Err(invitations::Refusal::AlreadyAccepted));
+        }
+        let membership = self
+            .record_membership(user_id, &record.org_id, &record.role, SOURCE_INVITATION)
+            .await?;
+        Ok(Ok(membership))
+    }
+
     /// Remove a person's membership in an organization.
     pub async fn remove_membership(&self, user_id: &str, org_id: &str) -> Result<()> {
-        self.store.delete_membership(user_id, org_id).await
+        self.store.delete_membership(user_id, org_id).await?;
+        memberships_changed();
+        Ok(())
     }
 
     /// Merge `from_user` into `into_user`: repoint every login, alias and
@@ -730,6 +906,9 @@ impl IdentityService {
         source.merged_into = Some(into_user.to_owned());
         source.updated_at_epoch_ms = now_ms();
         self.store.upsert_user(&source).await?;
+        // A merge repoints memberships, so anything caching where this person
+        // may go is now wrong.
+        memberships_changed();
         Ok(result)
     }
 }
@@ -946,6 +1125,24 @@ mod idp_channel_tests {
         async fn delete_alias(&self, _kind: &str, _external_id: &str) -> Result<()> {
             unimplemented!("not on the ceremony's path")
         }
+        async fn insert_invitation(&self, _i: &InvitationRecord) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn find_invitation_by_digest(&self, _d: &str) -> Result<Option<InvitationRecord>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn invitations_of_org(&self, _org: &str) -> Result<Vec<InvitationRecord>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn invitations_for_email(&self, _email: &str) -> Result<Vec<InvitationRecord>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn accept_invitation(&self, _id: &str, _user: &str) -> Result<bool> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn delete_invitation(&self, _id: &str, _org: &str) -> Result<bool> {
+            unimplemented!("not on the ceremony's path")
+        }
     }
 
     /// The IdP, answering per subject. Records which subjects were asked about.
@@ -955,7 +1152,7 @@ mod idp_channel_tests {
     }
 
     #[async_trait::async_trait]
-    impl FederatedIdentityReader for Broker {
+    impl IdpDirectoryReader for Broker {
         async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>> {
             self.asked.lock().expect("lock").push(subject.to_owned());
             Ok(self
@@ -964,6 +1161,10 @@ mod idp_channel_tests {
                 .find(|(s, _)| *s == subject)
                 .map(|(_, accounts)| accounts.clone())
                 .unwrap_or_default())
+        }
+
+        async fn verified_email(&self, _subject: &str) -> anyhow::Result<Option<String>> {
+            unimplemented!("not on the ceremony's path")
         }
     }
 

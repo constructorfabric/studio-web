@@ -181,6 +181,49 @@ pub struct ConfirmReportDto {
 }
 
 #[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct InviteRequest {
+    /// The address the invitation is bound to. Only somebody whose identity
+    /// provider has verified this address can accept it.
+    pub email: String,
+    /// `member` or `admin`. Not `owner` — ownership is not something a link
+    /// can confer.
+    pub role: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InvitationDto {
+    pub id: String,
+    pub org_id: String,
+    pub email: String,
+    pub role: String,
+    pub expires_at_epoch_ms: i64,
+    pub accepted_at_epoch_ms: Option<i64>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InvitationCreatedDto {
+    pub invitation: InvitationDto,
+    /// Shown once and never again — only its digest is stored. Hand it to the
+    /// person being invited.
+    pub token: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InvitationListDto {
+    pub items: Vec<InvitationDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AcceptInvitationRequest {
+    pub token: String,
+}
+
+#[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct AliasPairDto {
     pub kind: String,
@@ -592,6 +635,117 @@ async fn confirm_my_aliases(
     Ok(Json(confirm_report_dto(report)))
 }
 
+fn invitation_dto(r: super::service::InvitationRecord) -> InvitationDto {
+    InvitationDto {
+        id: r.id,
+        org_id: r.org_id,
+        email: r.email,
+        role: r.role,
+        expires_at_epoch_ms: r.expires_at_epoch_ms,
+        accepted_at_epoch_ms: r.accepted_at_epoch_ms,
+    }
+}
+
+async fn invite_to_organization(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path(org_id): Path<String>,
+    Json(req): Json<InviteRequest>,
+) -> ApiResult<JsonBody<InvitationCreatedDto>> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    require_org_authority(&ctx, &service, org).await?;
+    let inviter = caller_user_id(&ctx, &service).await?;
+    let (record, token) = service
+        .invite(org, &inviter, &req.email, &req.role)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(InvitationCreatedDto {
+        invitation: invitation_dto(record),
+        token,
+    }))
+}
+
+async fn list_organization_invitations(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path(org_id): Path<String>,
+) -> ApiResult<JsonBody<InvitationListDto>> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    require_org_authority(&ctx, &service, org).await?;
+    let items = service
+        .invitations_of(org)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(invitation_dto)
+        .collect();
+    Ok(Json(InvitationListDto { items }))
+}
+
+async fn revoke_invitation(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path((org_id, invitation_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    require_org_authority(&ctx, &service, org).await?;
+    if service
+        .revoke_invitation(org, &invitation_id)
+        .await
+        .map_err(internal)?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(
+            UserProfileError::not_found("no such invitation in this organization")
+                .with_resource(invitation_id)
+                .create(),
+        )
+    }
+}
+
+async fn my_invitations(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<InvitationListDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let emails = service.verified_emails(&user_id).await.map_err(internal)?;
+    let items = service
+        .invitations_waiting_for(&emails)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(invitation_dto)
+        .collect();
+    Ok(Json(InvitationListDto { items }))
+}
+
+async fn accept_invitation(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<AcceptInvitationRequest>,
+) -> ApiResult<JsonBody<OrgMembershipDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let emails = service.verified_emails(&user_id).await.map_err(internal)?;
+    match service
+        .accept_invitation(&user_id, &req.token, &emails)
+        .await
+        .map_err(internal)?
+    {
+        Ok(membership) => Ok(Json(membership_to_dto(membership))),
+        // Every refusal is the caller's to act on and none of them reveals
+        // anything about an invitation they do not hold.
+        Err(refusal) => Err(UserProfileError::invalid_argument()
+            .with_constraint(refusal.message())
+            .create()),
+    }
+}
+
 async fn merge_users(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -955,6 +1109,110 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::post("/studio-user/v1/organizations/{org_id}/invitations")
+        .operation_id("studio_user.invite_to_organization")
+        .summary("Invite an address into an organization")
+        .description(
+            "An owner or a platform administrator invites somebody by e-mail. The token comes \
+             back once and is stored only as a digest, so it cannot be shown again — hand it to \
+             the person being invited. It expires, it works once, and it can only be accepted by \
+             somebody whose identity provider has verified that address: a forwarded invitation \
+             is not a way into an organization. The role may be `member` or `admin`; ownership \
+             is not something a link can confer.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("org_id", "Organization tenant id")
+        .json_request::<InviteRequest>(openapi, "Who to invite, and as what")
+        .handler(invite_to_organization)
+        .json_response_with_schema::<InvitationCreatedDto>(
+            openapi,
+            StatusCode::OK,
+            "The invitation and its one-time token",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-user/v1/organizations/{org_id}/invitations")
+        .operation_id("studio_user.list_organization_invitations")
+        .summary("List an organization's invitations")
+        .description("Tokens are never included — only their digests are stored.")
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("org_id", "Organization tenant id")
+        .handler(list_organization_invitations)
+        .json_response_with_schema::<InvitationListDto>(openapi, StatusCode::OK, "Invitations")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::delete(
+        "/studio-user/v1/organizations/{org_id}/invitations/{invitation_id}",
+    )
+    .operation_id("studio_user.revoke_invitation")
+    .summary("Withdraw an invitation")
+    .description(
+        "Deletes it outright rather than marking it spent: an invitation nobody may use again          has nothing left to record, and a withdrawn row left behind would keep appearing in          the organization's list. Answers 404 when there is no such invitation in this          organization — the organization is part of the lookup, so one organization's owner          cannot withdraw another's.",
+    )
+    .tag("StudioUser")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("org_id", "Organization tenant id")
+    .path_param("invitation_id", "Invitation id")
+    .handler(revoke_invitation)
+    .no_content_response(StatusCode::NO_CONTENT, "Withdrawn")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-user/v1/me/invitations")
+        .operation_id("studio_user.my_invitations")
+        .summary("Invitations waiting for the signed-in person")
+        .description(
+            "Matched against every address this person's identity provider has verified, across \
+             all of their sign-in methods — an invitation sent to the address on one login is \
+             theirs whichever way they signed in today. The profile e-mail is not used: it is \
+             self-service, so believing it would let anybody claim any invitation.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(my_invitations)
+        .json_response_with_schema::<InvitationListDto>(openapi, StatusCode::OK, "Invitations")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-user/v1/me/invitations/accept")
+        .operation_id("studio_user.accept_invitation")
+        .summary("Accept an invitation and become a member")
+        .description(
+            "Single use, decided by the database rather than by a check followed by a write, so \
+             two acceptances racing produce one member and one refusal.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<AcceptInvitationRequest>(openapi, "The invitation token")
+        .handler(accept_invitation)
+        .json_response_with_schema::<OrgMembershipDto>(
+            openapi,
+            StatusCode::OK,
+            "The membership it produced",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     OperationBuilder::post("/studio-user/v1/merge")
         .operation_id("studio_user.merge_users")

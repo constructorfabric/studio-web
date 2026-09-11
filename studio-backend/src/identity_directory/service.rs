@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
+use account_management_sdk::AccountManagementClient;
 use anyhow::{Context, Result, bail};
 use futures_util::stream::{self, StreamExt};
-use gts::GtsTypeId;
 use reqwest::Client;
 use serde::Deserialize;
 use toolkit_security::SecurityContext;
@@ -25,7 +24,6 @@ const PAGE_SIZE: usize = 200;
 /// that this deployment needs the directory to paginate to its caller rather
 /// than read the realm on every load.
 const MAX_PAGES: usize = 10;
-const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
 
 /// What one read of the realm saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +105,10 @@ struct KeycloakUser {
     #[serde(default)]
     username: String,
     email: Option<String>,
+    /// Whether the realm has verified that address. An unverified address is
+    /// a claim by whoever typed it, and nothing may be decided from it.
+    #[serde(default)]
+    email_verified: bool,
     first_name: Option<String>,
     last_name: Option<String>,
     created_timestamp: Option<i64>,
@@ -369,6 +371,41 @@ impl IdentityDirectoryService {
             .collect())
     }
 
+    /// The address the realm has verified for `subject`, if any.
+    ///
+    /// `None` when the user has no address, when the realm has not verified it,
+    /// or when the user cannot be read. All three mean the same thing to a
+    /// caller: there is nothing here that may be decided from.
+    ///
+    /// This exists because the profile e-mail cannot serve: it is self-service
+    /// (`POST /studio-user/v1/me`), so deciding anything from it would let
+    /// somebody claim an address by typing it. An invitation matched on a
+    /// self-declared address is an invitation anybody can take.
+    pub async fn verified_email(&self, subject: &str) -> Result<Option<String>> {
+        let token = self.admin_token().await?;
+        let url = format!(
+            "{}/admin/realms/{}/users/{}",
+            self.admin_base_url, self.realm, subject
+        );
+        let user = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("read the realm user for its verified address")?
+            .error_for_status()
+            .context("Keycloak rejected the user read")?
+            .json::<KeycloakUser>()
+            .await
+            .context("decode the realm user")?;
+        Ok(user
+            .email
+            .filter(|_| user.email_verified)
+            .map(|e| e.trim().to_lowercase())
+            .filter(|e| !e.is_empty()))
+    }
+
     /// The external accounts brokered onto `subject`, for a caller that already
     /// knows the subject is its own.
     ///
@@ -622,12 +659,13 @@ impl IdentityDirectoryService {
         // Owner is also a real organization-wide access grant understood by
         // Studio's PDP. Member is tenant membership without that elevated
         // grant; project roles can still be assigned independently.
-        self.set_owner_grant(
+        crate::access_config::set_owner_grant(
+            self.account_management.as_ref(),
             ctx,
             tenant_id,
             &tenant.name,
             &identity_id_string,
-            organization_role == "owner",
+            organization_role == crate::access_config::ROLE_OWNER,
         )
         .await?;
 
@@ -713,56 +751,6 @@ impl IdentityDirectoryService {
             }
         }
         Ok((recorded, failed))
-    }
-
-    async fn set_owner_grant(
-        &self,
-        ctx: &SecurityContext,
-        tenant_id: Uuid,
-        tenant_name: &str,
-        identity_id: &str,
-        owner: bool,
-    ) -> Result<()> {
-        let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
-        let mut config = match self
-            .account_management
-            .get_metadata(ctx, tenant_id, type_id.clone())
-            .await
-        {
-            Ok(entry) => entry.value,
-            Err(_) => serde_json::json!({ "model": "tenant", "roles": [], "grants": [] }),
-        };
-        let config_object = config
-            .as_object_mut()
-            .context("organization access config is not an object")?;
-        let grants = config_object
-            .entry("grants")
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .context("organization access grants are not an array")?;
-        grants.retain(|grant| {
-            grant.get("subjectType").and_then(|value| value.as_str()) != Some("member")
-                || grant.get("subjectId").and_then(|value| value.as_str()) != Some(identity_id)
-                || grant.get("scopeType").and_then(|value| value.as_str()) != Some("org")
-                || grant.get("roleKey").and_then(|value| value.as_str()) != Some("owner")
-        });
-        if owner {
-            grants.push(serde_json::json!({
-                "id": Uuid::new_v4().to_string(),
-                "subjectType": "member",
-                "subjectId": identity_id,
-                "subjectName": identity_id,
-                "roleKey": "owner",
-                "scopeType": "org",
-                "scopeId": tenant_id.to_string(),
-                "scopeName": tenant_name,
-            }));
-        }
-        self.account_management
-            .upsert_metadata(ctx, tenant_id, UpsertMetadataRequest::new(type_id, config))
-            .await
-            .map_err(|error| anyhow::anyhow!("cannot update organization owner grant: {error}"))?;
-        Ok(())
     }
 }
 

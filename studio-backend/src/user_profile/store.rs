@@ -12,12 +12,14 @@ use async_trait::async_trait;
 use sea_orm::{ActiveValue, ColumnTrait, Condition, EntityTrait, QueryFilter};
 use time::OffsetDateTime;
 use toolkit_db::DBProvider;
-use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict};
+use toolkit_db::secure::{
+    SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict, SecureUpdateExt,
+};
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{self, ROOT_TENANT};
-use super::service::{AliasRecord, LoginView, MembershipView, UserProfile};
+use super::service::{AliasRecord, InvitationRecord, LoginView, MembershipView, UserProfile};
 
 fn scope() -> AccessScope {
     AccessScope::for_tenant(ROOT_TENANT)
@@ -57,6 +59,24 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// list before writing any of it.
     async fn find_aliases(&self, kind: &str, external_ids: &[String]) -> Result<Vec<AliasRecord>>;
     async fn delete_alias(&self, kind: &str, external_id: &str) -> Result<()>;
+
+    async fn insert_invitation(&self, invitation: &InvitationRecord) -> Result<()>;
+    /// The invitation a token identifies, whatever state it is in.
+    ///
+    /// State is not filtered here on purpose: the policy decides what "expired"
+    /// and "used" mean to a caller, and a store that hid them would make those
+    /// two indistinguishable from "no such invitation".
+    async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>>;
+    async fn invitations_of_org(&self, org_id: &str) -> Result<Vec<InvitationRecord>>;
+    /// Pending, unexpired invitations for one address.
+    async fn invitations_for_email(&self, email: &str) -> Result<Vec<InvitationRecord>>;
+    /// Mark one accepted, but only if it is still open.
+    ///
+    /// Returns whether this call was the one that took it. Single use has to be
+    /// decided by the database, not by a check followed by a write: two
+    /// acceptances racing would both pass the check.
+    async fn accept_invitation(&self, id: &str, user_id: &str) -> Result<bool>;
+    async fn delete_invitation(&self, id: &str, org_id: &str) -> Result<bool>;
 }
 
 // ── conversions (row -> view) ─────────────────────────────────────────────
@@ -112,6 +132,20 @@ impl PgStore {
     #[must_use]
     pub fn new(db: Arc<DBProvider<anyhow::Error>>) -> Self {
         Self { db }
+    }
+}
+
+fn invitation_to_view(m: entity::invitation::Model) -> InvitationRecord {
+    InvitationRecord {
+        id: m.id.to_string(),
+        org_id: m.org_id.to_string(),
+        email: m.email,
+        role: m.role,
+        token_digest: m.token_digest,
+        invited_by: m.invited_by.to_string(),
+        created_at_epoch_ms: to_ms(m.created_at),
+        expires_at_epoch_ms: to_ms(m.expires_at),
+        accepted_at_epoch_ms: m.accepted_at.map(to_ms),
     }
 }
 
@@ -418,5 +452,132 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn insert_invitation(&self, invitation: &InvitationRecord) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let am = entity::invitation::ActiveModel {
+            id: ActiveValue::Set(parse_uuid(&invitation.id)?),
+            tenant_id: ActiveValue::Set(ROOT_TENANT),
+            org_id: ActiveValue::Set(parse_uuid(&invitation.org_id)?),
+            email: ActiveValue::Set(invitation.email.clone()),
+            role: ActiveValue::Set(invitation.role.clone()),
+            token_digest: ActiveValue::Set(invitation.token_digest.clone()),
+            invited_by: ActiveValue::Set(parse_uuid(&invitation.invited_by)?),
+            created_at: ActiveValue::Set(from_ms(invitation.created_at_epoch_ms)),
+            expires_at: ActiveValue::Set(from_ms(invitation.expires_at_epoch_ms)),
+            accepted_at: ActiveValue::Set(None),
+            accepted_by: ActiveValue::Set(None),
+        };
+        entity::invitation::Entity::insert(am)
+            .secure()
+            .scope_unchecked(&scope())
+            .map_err(|e| anyhow!("invitation insert scope: {e}"))?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::invitation::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::invitation::Column::TokenDigest.eq(digest)))
+            .one(&conn)
+            .await?
+            .map(invitation_to_view))
+    }
+
+    async fn invitations_of_org(&self, org_id: &str) -> Result<Vec<InvitationRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::invitation::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::invitation::Column::OrgId.eq(parse_uuid(org_id)?)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(invitation_to_view)
+            .collect())
+    }
+
+    async fn invitations_for_email(&self, email: &str) -> Result<Vec<InvitationRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::invitation::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::invitation::Column::Email.eq(email))
+                    .add(entity::invitation::Column::AcceptedAt.is_null())
+                    .add(entity::invitation::Column::ExpiresAt.gt(OffsetDateTime::now_utc())),
+            )
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(invitation_to_view)
+            .collect())
+    }
+
+    async fn accept_invitation(&self, id: &str, user_id: &str) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // `accepted_at IS NULL` in the WHERE is what makes this single-use: the
+        // database decides who took it, so two acceptances racing cannot both
+        // win.
+        let result = entity::invitation::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::invitation::Column::Id.eq(parse_uuid(id)?))
+                    .add(entity::invitation::Column::AcceptedAt.is_null()),
+            )
+            .col_expr(
+                entity::invitation::Column::AcceptedAt,
+                sea_orm::sea_query::Expr::value(OffsetDateTime::now_utc()),
+            )
+            .col_expr(
+                entity::invitation::Column::AcceptedBy,
+                sea_orm::sea_query::Expr::value(parse_uuid(user_id)?),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn delete_invitation(&self, id: &str, org_id: &str) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // The organization is in the filter, not only checked beforehand: it is
+        // what stops one organization's owner revoking another's invitation.
+        let result = entity::invitation::Entity::delete_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::invitation::Column::Id.eq(parse_uuid(id)?))
+                    .add(entity::invitation::Column::OrgId.eq(parse_uuid(org_id)?)),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 }

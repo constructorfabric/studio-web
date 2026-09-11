@@ -88,6 +88,11 @@ tracing = "0.1"
 tokio-util = "0.7"
 utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
+# Invitation tokens are stored as digests, never as themselves: a read of the
+# table must not yield working tokens. Both crates are already in the lockfile
+# transitively, so declaring them adds nothing to the build.
+sha2 = "0.10"
+hex = "0.4"
 toolkit-macros = { package = "cf-gears-toolkit-macros", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
 credstore-sdk = { package = "cf-gears-credstore-sdk", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
 # Strict ${VAR} pre-expansion of the config file (#65): the toolkit loader

@@ -26,7 +26,7 @@ use service::IdentityDirectoryService;
 /// ClientHub key under which the federated-identity reader is published.
 pub const IDP_DIRECTORY_INSTANCE_ID: &str = "cf.studio._.idp_directory.v1~";
 
-/// Read the external accounts the IdP has brokered onto one of its users.
+/// What the IdP knows about one of its own subjects.
 ///
 /// A second proof-of-control channel for identity attribution (ADR-0012
 /// follow-up 2): a person who signed in through GitHub has already completed
@@ -38,16 +38,27 @@ pub const IDP_DIRECTORY_INSTANCE_ID: &str = "cf.studio._.idp_directory.v1~";
 /// about the person signed in right now; a bulk or arbitrary-subject read would
 /// make it an account-enumeration surface, and nothing needs one.
 #[async_trait]
-pub trait FederatedIdentityReader: Send + Sync + 'static {
+pub trait IdpDirectoryReader: Send + Sync + 'static {
     /// The external accounts brokered onto `subject`, or an empty list when the
     /// realm user has no brokered login.
     async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>>;
+
+    /// The address the realm has verified for `subject`, lowercased, or `None`
+    /// when there is none to trust.
+    ///
+    /// The only address in this system that may be decided from: the profile
+    /// e-mail is self-service and therefore a claim, not a fact.
+    async fn verified_email(&self, subject: &str) -> anyhow::Result<Option<String>>;
 }
 
 #[async_trait]
-impl FederatedIdentityReader for IdentityDirectoryService {
+impl IdpDirectoryReader for IdentityDirectoryService {
     async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>> {
         IdentityDirectoryService::federated_accounts(self, subject).await
+    }
+
+    async fn verified_email(&self, subject: &str) -> anyhow::Result<Option<String>> {
+        IdentityDirectoryService::verified_email(self, subject).await
     }
 }
 
@@ -90,12 +101,11 @@ impl Gear for IdentityDirectoryGear {
         // leaves the identity gear's IdP proof channel unavailable and its
         // connector channel untouched.
         if let Some(svc) = service.clone() {
-            let reader: Arc<dyn FederatedIdentityReader> = svc;
-            ctx.client_hub()
-                .register_scoped::<dyn FederatedIdentityReader>(
-                    ClientScope::gts_id(IDP_DIRECTORY_INSTANCE_ID),
-                    reader,
-                );
+            let reader: Arc<dyn IdpDirectoryReader> = svc;
+            ctx.client_hub().register_scoped::<dyn IdpDirectoryReader>(
+                ClientScope::gts_id(IDP_DIRECTORY_INSTANCE_ID),
+                reader,
+            );
         }
 
         self.service
