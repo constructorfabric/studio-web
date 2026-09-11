@@ -6,7 +6,20 @@
 //    workspace-defined); define or override a type (template, sections, rules).
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 
-import { api, CatalogNode, Doc, DocQuestion, DocRules, DocSection, DocType, DocValidation } from "./api";
+import {
+  api,
+  CatalogNode,
+  Connection,
+  ConnectorProvider,
+  Doc,
+  DocQuestion,
+  DocRules,
+  DocSection,
+  DocType,
+  DocValidation,
+  RemoteRepo,
+  WrittenFile,
+} from "./api";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -157,6 +170,7 @@ function DocumentsView({
   const [showQ, setShowQ] = useState(false);
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   const [scaffold, setScaffold] = useState<Scaffold | null>(null);
+  const [publishing, setPublishing] = useState<Doc | null>(null);
   const [composeBusy, setComposeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -400,6 +414,13 @@ function DocumentsView({
                       {composeBusy ? "Composing…" : "Compose →"}
                     </button>
                   )}
+                  <button
+                    onClick={() => setPublishing(selected)}
+                    disabled={busy}
+                    title="Commit this document into a repository through one of the project's connections"
+                  >
+                    Publish…
+                  </button>
                   <button onClick={remove} disabled={!editable || busy}>
                     Delete
                   </button>
@@ -432,6 +453,14 @@ function DocumentsView({
           onClose={() => setPlan(null)}
         />
       )}
+      {publishing && (
+        <PublishModal
+          token={token}
+          doc={publishing}
+          tenantId={projectTenantId}
+          onClose={() => setPublishing(null)}
+        />
+      )}
       {scaffold && (
         <ScaffoldModal
           scaffold={scaffold}
@@ -442,6 +471,387 @@ function DocumentsView({
         />
       )}
     </>
+  );
+}
+
+// ── Publishing back to the source ────────────────────────────────────────────
+// The other half of scenario A: a document written here is only half-delivered
+// while it lives in Studio's database. Publishing commits it through the same
+// connection the project already uses to read that repository, so what may be
+// written is exactly what that credential may push.
+
+/** Commit straight onto a branch, or land it as a request to review. */
+type PublishMode = "pull_request" | "commit";
+
+const PUBLISH_MODES: { id: PublishMode; label: string; hint: string }[] = [
+  {
+    id: "pull_request",
+    label: "Open a pull request",
+    hint: "Commits to a working branch and opens a request against the base.",
+  },
+  {
+    id: "commit",
+    label: "Commit directly",
+    hint: "Commits straight onto the branch named — no review step.",
+  },
+];
+
+/** Where a document of this type belongs in a repository, by convention.
+ *  Only a starting suggestion — the path is editable. */
+function suggestedPath(doc: Doc): string {
+  return `docs/${doc.type_key}/${slugPath(doc.title)}.md`;
+}
+
+/** A filename-safe slug of a document title. */
+function slugPath(title: string): string {
+  return (
+    title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "untitled"
+  );
+}
+
+function PublishModal({
+  token,
+  doc,
+  tenantId,
+  onClose,
+}: {
+  token: string;
+  doc: Doc;
+  /** Tenant whose connections to offer — the project, which also sees the ones
+   *  inherited from its workspace and organization. */
+  tenantId: string;
+  onClose: () => void;
+}) {
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionId, setConnectionId] = useState("");
+  const [repos, setRepos] = useState<RemoteRepo[]>([]);
+  const [repo, setRepo] = useState("");
+  const [mode, setMode] = useState<PublishMode>("pull_request");
+  const [branch, setBranch] = useState(`studio/${slugPath(doc.title)}`);
+  const [base, setBase] = useState("");
+  const [prTitle, setPrTitle] = useState(`Publish ${doc.title}`);
+  const [prBody, setPrBody] = useState("");
+  const [path, setPath] = useState(suggestedPath(doc));
+  const [message, setMessage] = useState(`docs: publish ${doc.title}`);
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [written, setWritten] = useState<WrittenFile | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Only source hosts can be published to; a model-provider connection has no
+  // repositories at all, so offering it would only produce a confusing 400.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [conns, provs] = await Promise.all([
+          api.connections(token, tenantId),
+          api.connectorProviders(token).catch(() => ({ items: [] as ConnectorProvider[] })),
+        ]);
+        const sourceHosts = new Set(
+          provs.items.filter((p) => p.category === "source_code").map((p) => p.provider),
+        );
+        const usable = conns.items.filter((c) => sourceHosts.has(c.provider));
+        if (!alive) return;
+        setConnections(usable);
+        if (usable.length > 0) setConnectionId(usable[0].id);
+      } catch (e) {
+        if (alive) setErr(errText(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [token, tenantId]);
+
+  useEffect(() => {
+    if (!connectionId) return;
+    let alive = true;
+    setLoadingRepos(true);
+    setRepos([]);
+    setRepo("");
+    api
+      .connectionRepositories(token, connectionId, tenantId)
+      .then((r) => {
+        if (!alive) return;
+        setRepos(r.items);
+        if (r.items.length > 0) setRepo(r.items[0].full_path);
+      })
+      .catch((e) => {
+        if (alive) setErr(errText(e));
+      })
+      .finally(() => {
+        if (alive) setLoadingRepos(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, connectionId, tenantId]);
+
+  const selectedRepo = useMemo(
+    () => repos.find((r) => r.full_path === repo) ?? null,
+    [repos, repo],
+  );
+
+  const publish = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const result = await api.writeRepoFile(token, connectionId, tenantId, {
+        repo,
+        ...(branch.trim() ? { branch: branch.trim() } : {}),
+        ...(base.trim() ? { base: base.trim() } : {}),
+        path: path.trim(),
+        content: doc.content,
+        message: message.trim() || `docs: publish ${doc.title}`,
+        ...(mode === "pull_request"
+          ? {
+              pull_request: {
+                title: prTitle.trim() || `Publish ${doc.title}`,
+                ...(prBody.trim() ? { body: prBody.trim() } : {}),
+              },
+            }
+          : {}),
+      });
+      setWritten(result);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A request has to come from somewhere. The server says so too, but saying
+  // it here means the person is not told after a commit has already landed.
+  const canPublish =
+    !!connectionId &&
+    !!repo &&
+    path.trim().length > 0 &&
+    (mode === "commit" || branch.trim().length > 0) &&
+    !busy;
+
+  return (
+    <div style={modalBackdrop} onClick={onClose}>
+      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Publish to a repository</span>
+          <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
+          Commits <b>{doc.title}</b> through one of this project's connections. A whole-file
+          write: anything already at that path is replaced. Publishing a second revision
+          lands on the same branch, and on the request already open for it.
+        </p>
+
+        {!doc.conforms && !written && (
+          <div
+            style={{
+              fontSize: 12,
+              padding: "6px 10px",
+              borderRadius: 8,
+              background: "#fef3c7",
+              color: "#92400e",
+              marginBottom: 12,
+            }}
+          >
+            This document does not yet satisfy its type's checklist. You can still publish it —
+            just know that is what you are publishing.
+          </div>
+        )}
+
+        {written ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13 }}>
+              {written.updated ? "Updated" : "Created"} <code>{written.path}</code>
+              {written.branch ? ` on ${written.branch}` : ""}
+              {written.branch_created ? " (new branch)" : ""}.
+            </div>
+            {written.commit && (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                commit <code>{written.commit.slice(0, 10)}</code>
+              </div>
+            )}
+            {written.pull_request && (
+              <div style={{ fontSize: 13 }}>
+                {written.pull_request.created
+                  ? "Opened pull request"
+                  : "Added to the pull request already open"}{" "}
+                <b>#{written.pull_request.number}</b>.
+                {written.pull_request.url && (
+                  <>
+                    {" "}
+                    <a href={written.pull_request.url} target="_blank" rel="noreferrer">
+                      Review it →
+                    </a>
+                  </>
+                )}
+              </div>
+            )}
+            {written.url && (
+              <a href={written.url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                Open the file in the provider →
+              </a>
+            )}
+            <div style={{ marginTop: 8 }}>
+              <button className="primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {connections.length === 0 ? (
+              <p className="empty" style={{ fontSize: 12 }}>
+                No source connections reach this project. Add one under Connections first.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={qLabel}>Connection</label>
+                  <select
+                    value={connectionId}
+                    onChange={(e) => setConnectionId(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    {connections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} · {c.provider} · {c.account}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={qLabel}>Repository</label>
+                  <select
+                    value={repo}
+                    onChange={(e) => setRepo(e.target.value)}
+                    disabled={loadingRepos || repos.length === 0}
+                    style={{ width: "100%" }}
+                  >
+                    {loadingRepos && <option>loading…</option>}
+                    {!loadingRepos && repos.length === 0 && <option value="">none reachable</option>}
+                    {repos.map((r) => (
+                      <option key={r.id} value={r.full_path}>
+                        {r.full_path}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={qLabel}>How</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {PUBLISH_MODES.map((m) => (
+                      <button
+                        key={m.id}
+                        className={mode === m.id ? "primary" : undefined}
+                        onClick={() => setMode(m.id)}
+                        title={m.hint}
+                        style={{ flex: 1 }}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+                    {PUBLISH_MODES.find((m) => m.id === mode)?.hint}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={qLabel}>
+                    Branch
+                    {mode === "commit" && <span style={qTag}>optional</span>}
+                  </label>
+                  <input
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    placeholder={
+                      mode === "commit"
+                        ? (selectedRepo?.default_branch ?? "default branch")
+                        : "studio/…"
+                    }
+                    style={{ width: "100%" }}
+                  />
+                  <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+                    A branch that does not exist yet is cut from the base.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={qLabel}>
+                    Base<span style={qTag}>optional</span>
+                  </label>
+                  <input
+                    value={base}
+                    onChange={(e) => setBase(e.target.value)}
+                    placeholder={selectedRepo?.default_branch ?? "default branch"}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
+                {mode === "pull_request" && (
+                  <>
+                    <div>
+                      <label style={qLabel}>Pull request title</label>
+                      <input
+                        value={prTitle}
+                        onChange={(e) => setPrTitle(e.target.value)}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <label style={qLabel}>
+                        Description<span style={qTag}>optional</span>
+                      </label>
+                      <textarea
+                        value={prBody}
+                        onChange={(e) => setPrBody(e.target.value)}
+                        rows={3}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <label style={qLabel}>Path in the repository</label>
+                  <input value={path} onChange={(e) => setPath(e.target.value)} style={{ width: "100%" }} />
+                </div>
+
+                <div>
+                  <label style={qLabel}>Commit message</label>
+                  <input
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {err && <div className="error" style={{ marginTop: 10 }}>{err}</div>}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 16 }}>
+              <button className="primary" onClick={publish} disabled={!canPublish}>
+                {busy ? "Publishing…" : "Publish"}
+              </button>
+              <button onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

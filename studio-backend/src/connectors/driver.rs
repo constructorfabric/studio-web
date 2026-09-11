@@ -3,15 +3,21 @@
 //! A driver knows how to talk to one flavour of provider — a source host
 //! (GitLab, GitHub, …), a model provider, or a chat platform. It is
 //! deliberately narrow: authenticate, then whatever the one thing that
-//! provider is good for happens to be — enumerate repositories, or post a
-//! message. Everything tenant-shaped — which connections exist, who may see
-//! them, where the token is kept — belongs to the connector service, not
-//! here, so adding a provider stays a small, local job.
+//! provider is good for happens to be — enumerate repositories, publish a
+//! file, or post a message. Everything tenant-shaped — which connections
+//! exist, who may see them, where the token is kept — belongs to the connector
+//! service, not here, so adding a provider stays a small, local job.
 //!
 //! Every capability past `test()` is a defaulted method that refuses in the
 //! provider's own words, so a driver implements only what its provider can
 //! actually do: a Slack driver never learns what a repository is, and the REST
 //! layer turns the refusal into a 4xx rather than an empty listing.
+//!
+//! The write side is deliberately four small calls rather than one "publish"
+//! call: resolving a default branch, looking up a branch head, creating a
+//! branch, opening a pull request. Each is a thin provider round-trip, and the
+//! order they go in is provider-independent — so the composition lives in the
+//! service, where it can be read and tested without a provider at all.
 
 use super::url_guard::HostRule;
 use async_trait::async_trait;
@@ -124,6 +130,38 @@ pub struct RemoteFile {
     pub is_dir: bool,
     /// Size in bytes for blobs, when the provider reports it.
     pub size: Option<i64>,
+}
+
+/// A pull request opened for a published change — or the one that was already
+/// open for the same head and base.
+#[derive(Debug, Clone)]
+pub struct OpenedPullRequest {
+    pub number: i64,
+    pub url: Option<String>,
+    /// False when a pull request for this head → base was already open and was
+    /// reused. Publishing twice should update the branch, not pile up requests.
+    pub created: bool,
+}
+
+/// The result of writing one file into a repository.
+///
+/// Reported back so the caller can link to what it just published and can tell
+/// a first publish from a subsequent one without asking the provider again.
+#[derive(Debug, Clone)]
+pub struct WrittenFile {
+    /// Repo-relative path actually written.
+    pub path: String,
+    /// Branch the commit landed on, as the provider resolved it (the
+    /// repository default when the caller named none).
+    pub branch: Option<String>,
+    /// Blob sha after the write.
+    pub sha: String,
+    /// The commit the write produced, when the provider reports it.
+    pub commit: Option<String>,
+    /// Browser URL for the file, when the provider gives one.
+    pub url: Option<String>,
+    /// False when the file did not exist before this call.
+    pub updated: bool,
 }
 
 /// One pull/merge request as the provider describes it.
@@ -467,6 +505,99 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         let _ = (auth, repo_full_path, git_ref);
         Err(anyhow::anyhow!(
             "{} does not expose a repository tree",
+            self.display_name()
+        ))
+    }
+
+    /// Create or replace one file on a branch, as a single commit.
+    ///
+    /// The write is a whole-file replacement, not a patch: the caller owns the
+    /// content and the provider records one commit for it. `branch` is the
+    /// repository's default when `None`. Existing content at `path` is
+    /// overwritten — the caller decides whether that is what it wants.
+    ///
+    /// Defaulted to an error: writing is the one capability a connection may
+    /// legitimately lack (a read-only token, a provider whose driver has not
+    /// grown a write path yet), and the REST layer turns this into a clear 400
+    /// rather than pretending the publish happened.
+    async fn put_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        branch: Option<&str>,
+        path: &str,
+        content: &str,
+        message: &str,
+    ) -> anyhow::Result<WrittenFile> {
+        let _ = (auth, repo_full_path, branch, path, content, message);
+        Err(anyhow::anyhow!(
+            "{} cannot write files through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// The repository's default branch — what a caller means when it names no
+    /// branch at all. Defaulted to an error for a driver with no write path.
+    async fn default_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+    ) -> anyhow::Result<String> {
+        let _ = (auth, repo_full_path);
+        Err(anyhow::anyhow!(
+            "{} cannot resolve a default branch through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// The commit sha a branch points at, or `None` when the branch does not
+    /// exist. The absence is a normal answer here — it is how a caller decides
+    /// whether to create the branch — so it is not an error.
+    async fn branch_head(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        branch: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let _ = (auth, repo_full_path, branch);
+        Err(anyhow::anyhow!(
+            "{} cannot look up branches through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// Create `branch` pointing at `from_sha`. The caller has already checked
+    /// that it does not exist; a provider that disagrees should say so.
+    async fn create_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        branch: &str,
+        from_sha: &str,
+    ) -> anyhow::Result<()> {
+        let _ = (auth, repo_full_path, branch, from_sha);
+        Err(anyhow::anyhow!(
+            "{} cannot create branches through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// Open a pull request from `head` into `base`, or return the one already
+    /// open between them. Reuse rather than failure: publishing a second
+    /// revision of the same document should land on the open request, not
+    /// collide with it.
+    async fn open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: Option<&str>,
+    ) -> anyhow::Result<OpenedPullRequest> {
+        let _ = (auth, repo_full_path, head, base, title, body);
+        Err(anyhow::anyhow!(
+            "{} cannot open pull requests through this connection",
             self.display_name()
         ))
     }

@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
-    NotifyTarget, RemoteRepo, SentMessage,
+    NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::url_guard::check_url;
@@ -756,6 +756,27 @@ impl ConnectorService {
         driver.list_repositories(&auth, search, limit).await
     }
 
+    /// Publish one file into a repository through a connection: commit it, and
+    /// — when asked — cut the branch first and open a pull request after.
+    ///
+    /// The connection's own credential does all of it, so what a caller may
+    /// publish is exactly what that token may push. The ordering lives here
+    /// rather than in a driver because none of it is provider-specific: every
+    /// host needs a base resolved, a branch that exists, a commit, then a
+    /// request. What differs is only the four calls underneath.
+    pub async fn publish_file(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+        write: FileWrite<'_>,
+    ) -> anyhow::Result<PublishOutcome> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&c.provider)?;
+        let auth = self.auth(ctx, &c).await?;
+        publish_through(driver.as_ref(), &auth, write).await
+    }
+
     /// What the caller must know about a connection before queuing a delivery
     /// against it: whether it can deliver at all, whether a target is needed,
     /// and whose credential it is.
@@ -833,6 +854,118 @@ impl ConnectorService {
         let sent = driver.send_message(&auth, target, message).await?;
         Ok((c, sent))
     }
+}
+
+/// What a caller wants published, and how.
+pub struct FileWrite<'a> {
+    /// Namespaced repository path, e.g. `acme/specs`.
+    pub repo: &'a str,
+    /// Branch to commit on. `None` commits to the repository's default branch.
+    pub branch: Option<&'a str>,
+    /// Where `branch` is cut from when it does not exist yet, and what a pull
+    /// request targets. `None` means the repository's default branch.
+    pub base: Option<&'a str>,
+    pub path: &'a str,
+    pub content: &'a str,
+    pub message: &'a str,
+    /// When set, open (or reuse) a pull request from `branch` into the base.
+    pub pull_request: Option<PullRequestIntent<'a>>,
+}
+
+pub struct PullRequestIntent<'a> {
+    pub title: &'a str,
+    pub body: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub struct PublishOutcome {
+    pub file: WrittenFile,
+    /// True when this call created the working branch. False both when the
+    /// branch already existed and when none was named.
+    pub branch_created: bool,
+    pub pull_request: Option<OpenedPullRequest>,
+}
+
+/// The publish sequence, over a driver rather than a connection — so it can be
+/// read, and tested, without a catalogue or a credstore behind it.
+async fn publish_through(
+    driver: &dyn ConnectorDriver,
+    auth: &ConnectionAuth,
+    write: FileWrite<'_>,
+) -> anyhow::Result<PublishOutcome> {
+    let repo = write.repo.trim();
+    if repo.is_empty() {
+        anyhow::bail!("a repository is required");
+    }
+    if write.pull_request.is_some() && write.branch.is_none() {
+        anyhow::bail!(
+            "a pull request needs a branch to open from — name one, or publish without a request"
+        );
+    }
+
+    // The base is one more round-trip, so it is resolved only where it is
+    // actually needed: cutting a missing branch, or targeting a request.
+    let mut base_name: Option<String> = write
+        .base
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty());
+
+    let mut branch_created = false;
+    if let Some(branch) = write.branch
+        && driver.branch_head(auth, repo, branch).await?.is_none()
+    {
+        let base = match &base_name {
+            Some(b) => b.clone(),
+            None => {
+                let resolved = driver.default_branch(auth, repo).await?;
+                base_name = Some(resolved.clone());
+                resolved
+            }
+        };
+        let base_head = driver
+            .branch_head(auth, repo, &base)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("base branch {base} does not exist in {repo}"))?;
+        driver.create_branch(auth, repo, branch, &base_head).await?;
+        branch_created = true;
+    }
+
+    let file = driver
+        .put_file(
+            auth,
+            repo,
+            write.branch,
+            write.path,
+            write.content,
+            write.message,
+        )
+        .await?;
+
+    let pull_request = match (write.pull_request, write.branch) {
+        (Some(intent), Some(branch)) => {
+            let base = match &base_name {
+                Some(b) => b.clone(),
+                None => driver.default_branch(auth, repo).await?,
+            };
+            if branch == base {
+                anyhow::bail!(
+                    "a pull request needs a branch other than {base} — the commit is already on it"
+                );
+            }
+            Some(
+                driver
+                    .open_pull_request(auth, repo, branch, &base, intent.title, intent.body)
+                    .await?,
+            )
+        }
+        _ => None,
+    };
+
+    Ok(PublishOutcome {
+        file,
+        branch_created,
+        pull_request,
+    })
 }
 
 fn now_secs() -> u64 {
@@ -1078,5 +1211,308 @@ mod person_guard_tests {
                 .await
                 .expect("resolved")
         );
+    }
+}
+
+#[cfg(test)]
+mod publish_tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::connectors::driver::{ConnectorCategory, WrittenFile};
+
+    /// A driver that records what it was asked to do, in order.
+    ///
+    /// The publish sequence is the part worth testing here — which calls
+    /// happen, in what order, and which are skipped — and none of it is
+    /// provider-specific, so a real host would only make the test slower and
+    /// less precise about the thing it is checking.
+    #[derive(Default)]
+    struct RecordingDriver {
+        /// Branches that already exist, name → head sha.
+        existing: Vec<(String, String)>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl RecordingDriver {
+        fn with_branches(branches: &[(&str, &str)]) -> Self {
+            Self {
+                existing: branches
+                    .iter()
+                    .map(|(n, s)| (n.to_string(), s.to_string()))
+                    .collect(),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn log(&self, call: String) {
+            self.calls.lock().unwrap().push(call);
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectorDriver for RecordingDriver {
+        fn provider(&self) -> &'static str {
+            "recording"
+        }
+        fn display_name(&self) -> &'static str {
+            "Recording"
+        }
+        fn default_base_url(&self) -> &'static str {
+            "https://example.test"
+        }
+        fn category(&self) -> ConnectorCategory {
+            ConnectorCategory::SourceCode
+        }
+
+        async fn test(&self, _auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
+            unreachable!("the publish sequence never verifies the credential")
+        }
+
+        async fn default_branch(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+        ) -> anyhow::Result<String> {
+            self.log("default_branch".into());
+            Ok("main".into())
+        }
+
+        async fn branch_head(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+            branch: &str,
+        ) -> anyhow::Result<Option<String>> {
+            self.log(format!("branch_head({branch})"));
+            Ok(self
+                .existing
+                .iter()
+                .find(|(n, _)| n == branch)
+                .map(|(_, sha)| sha.clone()))
+        }
+
+        async fn create_branch(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+            branch: &str,
+            from_sha: &str,
+        ) -> anyhow::Result<()> {
+            self.log(format!("create_branch({branch} from {from_sha})"));
+            Ok(())
+        }
+
+        async fn put_file(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+            branch: Option<&str>,
+            path: &str,
+            _content: &str,
+            _message: &str,
+        ) -> anyhow::Result<WrittenFile> {
+            self.log(format!("put_file({path} on {})", branch.unwrap_or("-")));
+            Ok(WrittenFile {
+                path: path.to_string(),
+                branch: branch.map(str::to_string),
+                sha: "blob".into(),
+                commit: Some("commit".into()),
+                url: None,
+                updated: false,
+            })
+        }
+
+        async fn open_pull_request(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+            head: &str,
+            base: &str,
+            title: &str,
+            _body: Option<&str>,
+        ) -> anyhow::Result<OpenedPullRequest> {
+            self.log(format!("open_pull_request({head} -> {base}: {title})"));
+            Ok(OpenedPullRequest {
+                number: 7,
+                url: Some("https://example.test/pull/7".into()),
+                created: true,
+            })
+        }
+    }
+
+    fn auth() -> ConnectionAuth {
+        ConnectionAuth {
+            base_url: "https://example.test".into(),
+            token: "t".into(),
+        }
+    }
+
+    fn write<'a>(branch: Option<&'a str>, base: Option<&'a str>) -> FileWrite<'a> {
+        FileWrite {
+            repo: "acme/specs",
+            branch,
+            base,
+            path: "docs/prd.md",
+            content: "# PRD\n",
+            message: "docs: publish",
+            pull_request: None,
+        }
+    }
+
+    /// The plain case: no branch, no request, one call.
+    #[tokio::test]
+    async fn committing_to_the_default_branch_touches_nothing_else() {
+        let driver = RecordingDriver::default();
+        let out = publish_through(&driver, &auth(), write(None, None))
+            .await
+            .unwrap();
+
+        assert!(!out.branch_created);
+        assert!(out.pull_request.is_none());
+        assert_eq!(driver.calls(), vec!["put_file(docs/prd.md on -)"]);
+    }
+
+    /// An existing branch is committed to as-is — and the default branch is
+    /// never resolved, because nothing needed it.
+    #[tokio::test]
+    async fn an_existing_branch_is_not_recut() {
+        let driver = RecordingDriver::with_branches(&[("docs/prd", "sha-b")]);
+        let out = publish_through(&driver, &auth(), write(Some("docs/prd"), None))
+            .await
+            .unwrap();
+
+        assert!(!out.branch_created);
+        assert_eq!(
+            driver.calls(),
+            vec!["branch_head(docs/prd)", "put_file(docs/prd.md on docs/prd)"]
+        );
+    }
+
+    /// A branch that is not there yet is cut from the repository default.
+    #[tokio::test]
+    async fn a_missing_branch_is_cut_from_the_default_base() {
+        let driver = RecordingDriver::with_branches(&[("main", "sha-main")]);
+        let out = publish_through(&driver, &auth(), write(Some("docs/prd"), None))
+            .await
+            .unwrap();
+
+        assert!(out.branch_created);
+        assert_eq!(
+            driver.calls(),
+            vec![
+                "branch_head(docs/prd)",
+                "default_branch",
+                "branch_head(main)",
+                "create_branch(docs/prd from sha-main)",
+                "put_file(docs/prd.md on docs/prd)",
+            ]
+        );
+    }
+
+    /// A named base is used verbatim, without asking what the default is.
+    #[tokio::test]
+    async fn a_named_base_is_not_second_guessed() {
+        let driver = RecordingDriver::with_branches(&[("release", "sha-rel")]);
+        let out = publish_through(&driver, &auth(), write(Some("docs/prd"), Some("release")))
+            .await
+            .unwrap();
+
+        assert!(out.branch_created);
+        assert!(
+            !driver.calls().contains(&"default_branch".to_string()),
+            "{:?}",
+            driver.calls()
+        );
+        assert!(
+            driver
+                .calls()
+                .contains(&"create_branch(docs/prd from sha-rel)".to_string()),
+            "{:?}",
+            driver.calls()
+        );
+    }
+
+    /// The whole flow: cut, commit, open.
+    #[tokio::test]
+    async fn a_pull_request_follows_the_commit_on_the_new_branch() {
+        let driver = RecordingDriver::with_branches(&[("main", "sha-main")]);
+        let mut w = write(Some("docs/prd"), None);
+        w.pull_request = Some(PullRequestIntent {
+            title: "Publish the PRD",
+            body: Some("From Studio."),
+        });
+
+        let out = publish_through(&driver, &auth(), w).await.unwrap();
+
+        assert!(out.branch_created);
+        assert_eq!(out.pull_request.as_ref().map(|p| p.number), Some(7));
+        let calls = driver.calls();
+        assert_eq!(
+            calls.last().map(String::as_str),
+            Some("open_pull_request(docs/prd -> main: Publish the PRD)")
+        );
+        // The request is opened after the commit, never before it.
+        let commit_at = calls
+            .iter()
+            .position(|c| c.starts_with("put_file"))
+            .unwrap();
+        let pr_at = calls
+            .iter()
+            .position(|c| c.starts_with("open_pull_request"))
+            .unwrap();
+        assert!(commit_at < pr_at, "{calls:?}");
+    }
+
+    /// A request with nowhere to come from is refused before anything is
+    /// written — not after a commit has already landed on the default branch.
+    #[tokio::test]
+    async fn a_pull_request_without_a_branch_is_refused_before_committing() {
+        let driver = RecordingDriver::default();
+        let mut w = write(None, None);
+        w.pull_request = Some(PullRequestIntent {
+            title: "Publish",
+            body: None,
+        });
+
+        let err = publish_through(&driver, &auth(), w)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("needs a branch"), "{err}");
+        assert!(driver.calls().is_empty(), "{:?}", driver.calls());
+    }
+
+    /// Opening a request from a branch into itself is not a thing.
+    #[tokio::test]
+    async fn a_pull_request_from_the_base_into_itself_is_refused() {
+        let driver = RecordingDriver::with_branches(&[("main", "sha-main")]);
+        let mut w = write(Some("main"), Some("main"));
+        w.pull_request = Some(PullRequestIntent {
+            title: "Publish",
+            body: None,
+        });
+
+        let err = publish_through(&driver, &auth(), w)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("other than main"), "{err}");
+    }
+
+    /// A base that does not exist is named in the error, rather than surfacing
+    /// later as an opaque provider failure.
+    #[tokio::test]
+    async fn a_missing_base_is_reported_by_name() {
+        let driver = RecordingDriver::default();
+        let err = publish_through(&driver, &auth(), write(Some("docs/prd"), Some("nope")))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("base branch nope does not exist"), "{err}");
     }
 }

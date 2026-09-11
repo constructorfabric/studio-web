@@ -275,6 +275,32 @@ export interface Connection {
   created_at_epoch_secs: number;
 }
 
+/** A pull request opened for a published change, or the one already open. */
+export interface OpenedPullRequest {
+  number: number;
+  url?: string | null;
+  /** False when a request for this branch and base was already open. */
+  created: boolean;
+}
+
+/** One file written into a repository through a connection. */
+export interface WrittenFile {
+  path: string;
+  branch?: string | null;
+  /** Blob sha after the write. */
+  sha: string;
+  /** The commit the write produced, when the provider reports it. */
+  commit?: string | null;
+  /** Browser URL for the file, when the provider gives one. */
+  url?: string | null;
+  /** False when this call created the file. */
+  updated: boolean;
+  /** True when this call also created the branch it committed on. */
+  branch_created: boolean;
+  /** The pull request opened or reused, when one was asked for. */
+  pull_request?: OpenedPullRequest | null;
+}
+
 export interface ConnectorIdentity {
   account: string;
   display_name?: string;
@@ -1530,6 +1556,35 @@ export const api = {
       token,
     );
   },
+
+  /** Publish one file into a repository through a connection: commit it, and
+   *  optionally cut the branch first and open a pull request after. The
+   *  connection's own credential does the writing, so a read-only token
+   *  answers 400 with the provider's reason. */
+  writeRepoFile: (
+    token: string,
+    connectionId: string,
+    tenant: string,
+    body: {
+      repo: string;
+      /** Branch to commit on; omitted commits to the repository default. A
+       *  branch that does not exist yet is cut from `base`. */
+      branch?: string;
+      /** Where a new branch is cut from, and what a pull request targets.
+       *  Omitted means the repository default. */
+      base?: string;
+      path: string;
+      content: string;
+      message: string;
+      /** Opens (or reuses) a request from `branch` into the base. Needs `branch`. */
+      pull_request?: { title: string; body?: string };
+    },
+  ) =>
+    request<WrittenFile>(
+      `/studio-connector/v1/connections/${connectionId}/files?tenant=${encodeURIComponent(tenant)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   putWorkspaceSettings: (token: string, tenantId: string, value: WorkspaceSettings) =>
     request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${WS_SETTINGS_TYPE}`, token, {

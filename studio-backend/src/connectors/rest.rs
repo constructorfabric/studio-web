@@ -31,7 +31,10 @@ use super::driver::{DriverIdentity, NotifyMessage, NotifyTarget, RemoteRepo};
 use super::graph_sync::SyncOutcome;
 #[cfg(feature = "graph")]
 use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
-use super::service::{Connection, ConnectionEdit, ConnectorService, NewConnection};
+use super::service::{
+    Connection, ConnectionEdit, ConnectorService, FileWrite, NewConnection, PublishOutcome,
+    PullRequestIntent,
+};
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
 #[cfg(feature = "graph")]
@@ -265,6 +268,83 @@ pub struct RemoteRepoDto {
 }
 
 #[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct OpenPullRequestDto {
+    pub title: String,
+    pub body: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct WriteFileDto {
+    /// Namespaced repository path, e.g. `constructorfabric/studio-web`.
+    pub repo: String,
+    /// Branch to commit on. Omitted commits to the repository's default
+    /// branch. A branch that does not exist yet is cut from `base`.
+    pub branch: Option<String>,
+    /// Where `branch` is cut from when it is new, and what a pull request
+    /// targets. Omitted means the repository's default branch.
+    pub base: Option<String>,
+    /// Repo-relative destination, e.g. `docs/prd.md`.
+    pub path: String,
+    /// The file's full new content. This is a whole-file write, not a patch.
+    pub content: String,
+    /// Commit message.
+    pub message: String,
+    /// When set, open a pull request from `branch` into `base` after the
+    /// commit — or reuse the one already open between them. Requires `branch`.
+    pub pull_request: Option<OpenPullRequestDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OpenedPullRequestDto {
+    pub number: i64,
+    pub url: Option<String>,
+    /// False when a pull request for this branch and base was already open and
+    /// was reused rather than created.
+    pub created: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct WrittenFileDto {
+    pub path: String,
+    pub branch: Option<String>,
+    /// Blob sha after the write.
+    pub sha: String,
+    /// The commit the write produced, when the provider reports it.
+    pub commit: Option<String>,
+    /// Browser URL for the file, when the provider gives one.
+    pub url: Option<String>,
+    /// False when this call created the file.
+    pub updated: bool,
+    /// True when this call also created the branch it committed on.
+    pub branch_created: bool,
+    /// The pull request opened or reused, when one was asked for.
+    pub pull_request: Option<OpenedPullRequestDto>,
+}
+
+impl From<PublishOutcome> for WrittenFileDto {
+    fn from(o: PublishOutcome) -> Self {
+        Self {
+            path: o.file.path,
+            branch: o.file.branch,
+            sha: o.file.sha,
+            commit: o.file.commit,
+            url: o.file.url,
+            updated: o.file.updated,
+            branch_created: o.branch_created,
+            pull_request: o.pull_request.map(|p| OpenedPullRequestDto {
+                number: p.number,
+                url: p.url,
+                created: p.created,
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct RemoteRepoListDto {
     pub items: Vec<RemoteRepoDto>,
@@ -347,6 +427,13 @@ pub struct ListingQuery {
     /// Page size, 1..=100.
     #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    tenant: Option<Uuid>,
+}
+
+/// Just the tenant override, for routes with no listing knobs of their own.
+#[derive(Debug, Deserialize)]
+pub struct TenantQuery {
     #[serde(default)]
     tenant: Option<Uuid>,
 }
@@ -541,6 +628,61 @@ async fn test_connection(
             .create()
     })?;
     Ok(Json(to_test_dto(connection, identity)))
+}
+
+/// Publish one file into a repository through a connection.
+///
+/// The failure that matters here is a credential that may read but not write,
+/// and it is a precondition the caller can act on (use a token with write
+/// scope, or a branch they may push to) — not a server fault.
+async fn write_file(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<TenantQuery>,
+    Json(body): Json<WriteFileDto>,
+) -> ApiResult<JsonBody<WrittenFileDto>> {
+    let svc = connectors.get()?;
+    let trimmed = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let branch = trimmed(&body.branch);
+    let base = trimmed(&body.base);
+    let pr_body = body.pull_request.as_ref().and_then(|p| trimmed(&p.body));
+    let pull_request = body.pull_request.as_ref().map(|p| PullRequestIntent {
+        title: p.title.trim(),
+        body: pr_body.as_deref(),
+    });
+
+    let outcome = svc
+        .publish_file(
+            &ctx,
+            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            id,
+            FileWrite {
+                repo: body.repo.trim(),
+                branch: branch.as_deref(),
+                base: base.as_deref(),
+                path: &body.path,
+                content: &body.content,
+                message: body.message.trim(),
+                pull_request,
+            },
+        )
+        .await
+        .map_err(|e| {
+            StudioConnectorError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "CONNECTOR_WRITE_UNAVAILABLE",
+                )
+                .create()
+        })?;
+    Ok(Json(outcome.into()))
 }
 
 async fn list_repositories(
@@ -853,6 +995,36 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Delivered; body says where it landed",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-connector/v1/connections/{id}/files")
+        .operation_id("studio_connector.write_file")
+        .summary("Publish one file into a repository through a connection")
+        .description(
+            "Creates or replaces the file at `path` on `branch` as a single commit, using \
+             the connection's own credential — so what may be published is exactly what \
+             that token may push. A whole-file write, not a patch: existing content at \
+             the path is replaced. A branch that does not exist yet is cut from `base` \
+             (the repository default when unnamed); with `pull_request` set, a request \
+             from `branch` into that base is opened afterwards, or the one already open \
+             between them is reused. A read-only credential answers 400 with the \
+             provider's own reason rather than a server error.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Connection id")
+        .json_request::<WriteFileDto>(openapi, "What to publish, and how")
+        .handler(write_file)
+        .json_response_with_schema::<WrittenFileDto>(
+            openapi,
+            StatusCode::OK,
+            "The file as the provider reports it after the write",
         )
         .error_400(openapi)
         .error_401(openapi)
