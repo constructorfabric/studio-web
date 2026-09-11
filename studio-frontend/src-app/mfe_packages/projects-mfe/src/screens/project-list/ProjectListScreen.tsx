@@ -25,7 +25,6 @@ const ProjectList: React.FC = () => {
         query={query}
         onQueryChange={setQuery}
         busy={busy}
-        hasOrg={!!org}
         hasWorkspace={!!workspace}
       />
 

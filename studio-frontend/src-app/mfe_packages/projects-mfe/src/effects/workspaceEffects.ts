@@ -1,3 +1,4 @@
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 /** Creating the workspace. */
 
 
@@ -6,8 +7,6 @@
 // @cpt-flow:cpt-studiofrontend-flow-workspace-scope-create:p1
 import { apiRegistry, eventBus, type AppDispatch } from '@gears-frontx/react';
 import { refusalFrom } from '@constructor-studio/mfe-shared';
-import { AccountsApiService } from '../api/AccountsApiService';
-import { TENANT_TYPES } from '../api/types';
 import { workspaceSubmitFailed, workspaceSubmitStarted } from '../slices/workspaceSlice';
 import '../events/workspaceEvents';
 
@@ -25,14 +24,10 @@ export function initWorkspaceEffects(dispatch: AppDispatch): void {
     void (async () => {
       try {
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-2
-        const tenant = await accounts.createTenant.fetch({
-          name,
-          parent_id: orgId,
-          tenant_type: TENANT_TYPES.workspace,
-        });
+        const tenant = await accounts.createWorkspace({ name, parentId: orgId });
         // @cpt-end:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-2
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-5
-        eventBus.emit('mfe/workspaces/created', { id: tenant.id, name });
+        eventBus.emit('mfe/workspaces/created', { id: tenant.id, name, orgId });
         // @cpt-end:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-5
       } catch (error) {
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-3

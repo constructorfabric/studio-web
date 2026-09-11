@@ -1,0 +1,73 @@
+.provider {
+  flex: 0 0 auto;
+  width: var(--sidebar-width-icon);
+  min-height: 0;
+  align-self: stretch;
+  transform: translateZ(0);
+  position: relative;
+  z-index: 20;
+  --sidebar: var(--card);
+  --sidebar-border: var(--border);
+  --sidebar-accent: color-mix(in oklab, var(--muted) 70%, transparent);
+  --sidebar-accent-foreground: var(--foreground);
+  --rail-icon-size: 1.125rem;
+  --rail-icon-stroke: 1.5;
+  --rail-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.provider .panel {
+  transition:
+    width 0.22s var(--rail-ease),
+    left 0.22s var(--rail-ease),
+    right 0.22s var(--rail-ease)
+}
+
+.content {
+  padding-block: var(--space-2);
+}
+
+.panel .menu {
+  gap: var(--space-2);
+  padding-inline: var(--space-1);
+}
+
+.panel .menu .item {
+  transition:
+    color 0.12s var(--rail-ease),
+    background-color 0.12s var(--rail-ease);
+  width: 100%;
+  height: var(--control-height-lg);
+  padding-inline: 0;
+  gap: 0;
+  justify-content: flex-start;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: var(--control-height-lg);
+}
+
+.glyph svg {
+  inline-size: var(--rail-icon-size);
+  block-size: var(--rail-icon-size);
+  stroke-width: var(--rail-icon-stroke);
+  color: var(--muted-foreground);
+}
+
+.item[data-active] .glyph svg {
+  color: inherit;
+}
+
+.panel .menu .item[data-active] {
+  background-color: color-mix(in oklab, var(--primary) 12%, var(--card));
+  color: var(--primary);
+}
+
+
+

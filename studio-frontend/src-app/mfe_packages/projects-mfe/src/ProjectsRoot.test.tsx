@@ -18,23 +18,23 @@ import {
  */
 class SilentService {
   private readonly refuse = () => ({ fetch: () => Promise.reject(new Error('no gear in jsdom')) });
-  readonly tenant = this.refuse;
-  readonly children = this.refuse;
-  readonly projectConfig = this.refuse;
+  readonly getTenant = this.refuse;
+  readonly getProjects = this.refuse;
+  readonly getWorkspaces = this.refuse;
+  readonly getTenantMetadata = this.refuse;
+  readonly findTenantUser = this.refuse;
   readonly nodes = this.refuse;
   readonly stages = this.refuse;
   readonly connections = this.refuse;
   readonly providers = this.refuse();
 }
 
-vi.mock('./api/AccountsApiService', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./api/AccountsApiService')>()),
-  AccountsApiService: SilentService,
-}));
 vi.mock('./api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: SilentService }));
 vi.mock('./api/DocumentsApiService', () => ({ DocumentsApiService: SilentService }));
+// Both gears' clients live in the shared package now, so one mock covers them.
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  AccountsApiService: SilentService,
   ConnectorsApiService: SilentService,
 }));
 

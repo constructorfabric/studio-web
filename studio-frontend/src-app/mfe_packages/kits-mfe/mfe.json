@@ -18,14 +18,15 @@
   ],
   "extensions": [
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.kits.screens.main.v1",
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.kits.screens.main.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.kits.mfe.main.v1",
       "presentation": {
         "label": "Kits",
-        "icon": "material-symbols:widgets",
+        "icon": "lucide:files",
         "route": "/kits",
-        "order": 50
+        "order": 50,
+        "level": "organization"
       }
     }
   ]

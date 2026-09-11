@@ -1,3 +1,4 @@
+import { User } from '@constructor-studio/mfe-shared';
 /**
  * The signed-in subject: the id everything keys on, plus the two strings needed
  * to draw them.
@@ -6,7 +7,6 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-create-owner:p1
 import { useSharedProperty } from '@gears-frontx/react';
 import { STUDIO_SHARED_PROPERTY_SESSION_PROFILE } from '@constructor-studio/mfe-shared';
-import type { User } from '../api/types';
 
 interface SessionProfile {
   id: string;

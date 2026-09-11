@@ -33,10 +33,16 @@
   height: var(--text-display-line-height);
 }
 
-.search {
-  width: 13rem;
+/* `input.search`, not `.search`: the kit's own `._input` rule is a single class
+   too, and its stylesheet is injected into the MFE shadow root AFTER this one,
+   so a bare class loses every declaration it tries to override. Element+class
+   wins on specificity instead of hoping for source order.
+   No radius here on purpose: inside the MFE the kit's `--radius-md` already
+   resolves to 8px (the shell's scale differs), which is what the design draws.
+   Height matches the `size="sm"` button beside it; the kit's default is 40px. */
+input.search {
+  width: 13.75rem;
   height: var(--control-height-sm);
-  border-radius: var(--radius-sm);
 }
 
 .sort {

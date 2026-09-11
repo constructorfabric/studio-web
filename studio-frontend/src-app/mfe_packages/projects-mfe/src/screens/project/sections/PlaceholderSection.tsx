@@ -1,11 +1,13 @@
 import React from 'react';
-import styles from '../ProjectScreen.module.css';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@gears-frontx/ui-kit';
 
 export const PlaceholderSection: React.FC<{ title: string; note: string }> = ({ title, note }) => (
-  <section className={styles.placeholder}>
-    <p className={styles.placeholderTitle}>{title}</p>
-    <p className={styles.emptyNote}>{note}</p>
-  </section>
+  <Empty>
+    <EmptyHeader>
+      <EmptyTitle>{title}</EmptyTitle>
+      <EmptyDescription>{note}</EmptyDescription>
+    </EmptyHeader>
+  </Empty>
 );
 
 PlaceholderSection.displayName = 'PlaceholderSection';

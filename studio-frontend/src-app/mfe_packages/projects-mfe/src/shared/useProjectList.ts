@@ -1,3 +1,4 @@
+import { Tenant } from '@constructor-studio/mfe-shared';
 /**
  * The rows the list screen draws: the current workspace's projects, narrowed by
  * the toolbar's search and ordered by its sort.
@@ -6,10 +7,9 @@
 import { useMemo } from 'react';
 import { tenantComparator, type ProjectSortOption } from '../model/project';
 import { useWorkspaceProjects } from './workspaceProjects';
-import type { TenantDto } from '../api/types';
 
 export interface ProjectListView {
-  rows: TenantDto[];
+  rows: Tenant[];
   loading: boolean;
   failed: boolean;
   org: ReturnType<typeof useWorkspaceProjects>['org'];

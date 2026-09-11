@@ -3,7 +3,7 @@ import type { ChildMfeBridge } from '@gears-frontx/react';
 import { anchorKitThemeOnShadowHost, ThemeAwareReactLifecycle } from '@gears-frontx/react';
 import kitTheme from '@gears-frontx/ui-kit/theme.css?inline';
 import { mfeApp } from './init';
-import { HomeScreen } from './screens/home/HomeScreen';
+import { OrganizationRoot } from './OrganizationRoot';
 
 /**
  * The ui-kit theme travels inside this bundle (`?inline`; the kit is
@@ -14,9 +14,9 @@ import { HomeScreen } from './screens/home/HomeScreen';
  *
  * Known, measured-harmless collision: the base BASE_RESETS sheet paints `:host`
  * from `hsl(var(--background))`; the kit's re-anchored hex tokens make that
- * expression invalid, so the host computes transparent. Nothing is visibly
- * unpainted while the screen root stays the shadow root's only rendered child
- * and paints itself via its `[data-theme]` rule.
+ * expression invalid, so the host computes transparent. That is what the screen
+ * wants: its root keeps the kit's `[data-theme]` paint off deliberately, so the
+ * shell's own ground shows through.
  */
 const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
 
@@ -28,7 +28,7 @@ class ScreensetLifecycle extends ThemeAwareReactLifecycle {
   }
 
   protected renderContent(bridge: ChildMfeBridge): React.ReactNode {
-    return <HomeScreen bridge={bridge} />;
+    return <OrganizationRoot bridge={bridge} />;
   }
 }
 

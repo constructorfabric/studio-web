@@ -1,9 +1,9 @@
+import { Tenant } from '@constructor-studio/mfe-shared';
 import React from 'react';
 import { Skeleton } from '@gears-frontx/ui-kit';
 import { projectStatus } from '../../../model/project';
 import type { ProjectConfigState } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
-import type { TenantDto } from '../../../api/types';
 import { LoadFailed } from './LoadFailed';
 import styles from '../ProjectListScreen.module.css';
 
@@ -23,13 +23,13 @@ StatusBadge.displayName = 'StatusBadge';
 /**
  * The tenant's own lifecycle: `active` / `suspended` / `deleted`.
  */
-export const StatusInline: React.FC<{ tenant: TenantDto }> = ({ tenant }) => (
+export const StatusInline: React.FC<{ tenant: Tenant }> = ({ tenant }) => (
   <StatusBadge status={tenant.status} />
 );
 
 StatusInline.displayName = 'StatusInline';
 
-export const ProjectStatusInline: React.FC<{ tenant: TenantDto; state: ProjectConfigState }> = ({
+export const ProjectStatusInline: React.FC<{ tenant: Tenant; state: ProjectConfigState }> = ({
   tenant,
   state,
 }) => {

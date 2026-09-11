@@ -14,7 +14,7 @@
 
 import React, { useState } from 'react';
 import { useFrontX } from '@gears-frontx/react';
-import { ACCOUNTS_API_BASE_URL } from '@/app/api';
+import { ACCOUNTS_API_BASE_URL } from '@constructor-studio/mfe-shared';
 
 const IDP_HINTS = [
   { hint: 'google', label: 'Google' },

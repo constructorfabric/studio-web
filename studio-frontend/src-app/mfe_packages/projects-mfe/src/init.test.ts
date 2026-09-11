@@ -26,10 +26,6 @@ vi.mock('@gears-frontx/react', () => ({
   authShared,
 }));
 
-vi.mock('./api/AccountsApiService', () => ({
-  AccountsApiService: class AccountsApiService {},
-}));
-
 vi.mock('./api/ArtifactIngestApiService', () => ({
   ArtifactIngestApiService: class ArtifactIngestApiService {},
 }));
@@ -38,10 +34,11 @@ vi.mock('./api/DocumentsApiService', () => ({
   DocumentsApiService: class DocumentsApiService {},
 }));
 
-// The connector client is shared with the other MFE now; `init.ts` imports it
-// from the package, and nothing else in this test's graph pulls the package at
-// runtime (the wire types are type-only imports and erase).
+// Both gears' clients are shared with the other MFEs now; `init.ts` imports
+// them from the package, and nothing else in this test's graph pulls the
+// package at runtime (the wire types are type-only imports and erase).
 vi.mock('@constructor-studio/mfe-shared', () => ({
+  AccountsApiService: class AccountsApiService {},
   ConnectorsApiService: class ConnectorsApiService {},
 }));
 
@@ -59,10 +56,6 @@ vi.mock('./slices/workspaceSlice', () => ({
 
 vi.mock('./slices/artifactSyncSlice', () => ({
   artifactSyncSlice: { name: 'projects/artifact-sync' },
-}));
-
-vi.mock('./effects/projectsEffects', () => ({
-  initProjectsEffects: vi.fn(),
 }));
 
 vi.mock('./effects/wizardEffects', () => ({
@@ -90,13 +83,11 @@ describe('projects-mfe init', () => {
     const expectedApp = { id: 'projects-mfe-app' };
     build.mockReturnValue(expectedApp);
 
-    const { initProjectsEffects } = await import('./effects/projectsEffects');
     const { initWorkspaceEffects } = await import('./effects/workspaceEffects');
     const module = await import('./init');
 
     // Four gears: account-management, studio-connector, studio-artifact-ingest
-    // and studio-documents (the journey-stage catalogue the project screens and
-    // the create wizard read).
+    // and studio-documents (the journey-stage catalogue the create wizard reads).
     expect(register).toHaveBeenCalledTimes(4);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
@@ -113,7 +104,9 @@ describe('projects-mfe init', () => {
       ])
     );
     expect(build).toHaveBeenCalledTimes(1);
-    expect(registerSlice).toHaveBeenCalledWith({ name: 'projects/nav' }, initProjectsEffects);
+    // No effects initializer: this MFE has no local intents left to turn into
+    // `projects/nav` — the shell's properties are what write it.
+    expect(registerSlice).toHaveBeenCalledWith({ name: 'projects/nav' });
     // The wizard's slice must exist before the overlay entry mounts, and that
     // entry does not run this module a second time. Its effect carries the two
     // writes, so it is registered on the same schedule. It is wrapped, because

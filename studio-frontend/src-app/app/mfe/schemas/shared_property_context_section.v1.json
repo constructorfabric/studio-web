@@ -1,0 +1,14 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project_section.selected.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Which section of the level in scope the shell wants shown, as the token the MFE declared for that rail item — or null when nothing is chosen. The rail moved into the shell, but the sections stay the MFE's own screens, so this is the host -> child half of that split: the shell says which item was picked, the MFE decides what to render for it. A shared property because it has to cross a module realm, like the project and the workspace next to it.",
+  "allOf": [
+    { "$ref": "gts://gts.frontx.mfes.comm.shared_property.v1~" }
+  ],
+  "properties": {
+    "value": {
+      "type": ["string", "null"],
+      "$comment": "Opaque to the shell: it relays the `section` token from the chosen extension's presentation and never parses it."
+    }
+  }
+}

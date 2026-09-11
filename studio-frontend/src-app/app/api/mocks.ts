@@ -1,67 +1,26 @@
 /**
- * Accounts Domain - Mock Data
- * Mock responses for accounts service endpoints
+ * Identity Domain - Mock Data
  *
- * Used with MockPlugin for development and testing.
- * Keys are full URL patterns (including baseURL path); a `:param` segment
- * matches one path segment, which is how the parameterized tenant endpoints
- * are covered without enumerating ids.
+ * Used with `RestMockPlugin`, registered by `IdentityApiService` itself.
+ * Keys are full URL patterns including the baseURL path, because the plugin
+ * matches the whole URL — query string included.
+ *
+ * The accounts map that used to live beside this one is gone with the shell's
+ * own accounts service: it keyed the workspaces read by a URL the client never
+ * built, so it never answered and hid a real 500 behind a mock.
  */
 
 import type { MockMap } from '@gears-frontx/react';
-import type { Me, MembershipList, Page, Tenant } from './types';
-import { TENANT_TYPES } from './types';
+import type { MembershipList } from './types';
 
+/** The organization the mocked session is a member of. */
 const HOME_TENANT_ID = '00000000-0000-0000-0000-0000000000aa';
-
-/**
- * Accounts mock map
- * Keys are full URL patterns (including the /cf/account-management/v1 baseURL)
- */
-export const accountsMockMap: MockMap = {
-  'GET /cf/account-management/v1/me': (): Me => ({
-    subject_id: '00000000-0000-0000-0000-000000000001',
-    subject_type: 'user',
-    subject_tenant_id: HOME_TENANT_ID,
-  }),
-
-  // The signed-in user's home tenant. A mock factory receives only the request
-  // body, never the URL, so this answers for any id — enough to exercise the
-  // top bar, which asks for exactly one tenant.
-  'GET /cf/account-management/v1/tenants/:tenantId': (): Tenant => ({
-    id: HOME_TENANT_ID,
-    name: 'My Organization',
-    tenant_type: TENANT_TYPES.organization,
-  }),
-
-  // Two switchable organizations plus one workspace, so the context switcher
-  // has something to filter: only the organizations may appear in it.
-  'GET /cf/account-management/v1/tenants/:tenantId/children': (): Page<Tenant> => ({
-    items: [
-      {
-        id: '00000000-0000-0000-0000-0000000000b1',
-        name: 'Constructor Fabric',
-        tenant_type: TENANT_TYPES.organization,
-      },
-      {
-        id: '00000000-0000-0000-0000-0000000000b2',
-        name: 'Agent Labs',
-        tenant_type: TENANT_TYPES.organization,
-      },
-      {
-        id: '00000000-0000-0000-0000-0000000000b3',
-        name: 'Platform workspace',
-        tenant_type: TENANT_TYPES.workspace,
-      },
-    ],
-  }),
-};
 
 /**
  * Identity mock map (the /cf/studio-user/v1 baseURL).
  *
- * One membership, of the same organization the accounts mock calls home, so the
- * mocked shell resolves the same context through either source.
+ * One membership, so a mocked shell resolves exactly one organization and the
+ * access gate stays out of the way.
  */
 export const identityMockMap: MockMap = {
   'GET /cf/studio-user/v1/me/memberships': (): MembershipList => ({

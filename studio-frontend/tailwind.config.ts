@@ -129,6 +129,7 @@ export default {
         // Resolved from the themed token, like every other value here — so a
         // theme can rebrand the family and nothing else has to change.
         sans: 'var(--font-sans)',
+        mono: 'var(--font-mono)',
       },
       fontSize: {
         // Named text roles, mirroring ui-kit's ramp. Each carries the role's
@@ -140,6 +141,7 @@ export default {
           { lineHeight: 'var(--text-heading-1-line-height)' },
         ],
         label: ['var(--text-label-size)', { lineHeight: 'var(--text-label-line-height)' }],
+        meta: ['var(--text-meta-size)', { lineHeight: 'var(--text-meta-line-height)' }],
       },
       spacing: {
         xs: 'var(--spacing-xs)',

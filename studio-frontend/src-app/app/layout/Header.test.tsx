@@ -2,6 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 const OVERLAY_DOMAIN = 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.overlay.v1';
+const SCREEN_DOMAIN = 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1';
+
+/** One organization-level screen, so the level in scope has a rail to open. */
+const peopleScreen = {
+  id: 'ext.people',
+  domain: SCREEN_DOMAIN,
+  entry: 'entry.people',
+  presentation: {
+    label: 'People',
+    icon: 'material-symbols:group',
+    route: '/people',
+    order: 30,
+    level: 'organization',
+  },
+};
 
 /** Overlay extensions declare presentation too; the shell matches on the route. */
 const searchOverlay = {
@@ -15,27 +30,31 @@ const searchOverlay = {
   },
 };
 
-const { mockEventBus, mockDispatch, mockRegistry, overlayExtensions } = vi.hoisted(() => ({
-  mockEventBus: { emit: vi.fn() },
-  mockDispatch: vi.fn(),
-  mockRegistry: { executeActionsChain: vi.fn() },
-  overlayExtensions: { value: [] as unknown[] },
-}));
+const { mockEventBus, mockDispatch, mockRegistry, overlayExtensions, screenExtensions } =
+  vi.hoisted(() => ({
+    mockEventBus: { emit: vi.fn() },
+    mockDispatch: vi.fn(),
+    mockRegistry: { executeActionsChain: vi.fn() },
+    overlayExtensions: { value: [] as unknown[] },
+    screenExtensions: { value: [] as unknown[] },
+  }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   useFrontX: () => ({ mfeRegistry: mockRegistry }),
   useAppDispatch: () => mockDispatch,
   useAppSelector: () => undefined,
-  useDomainExtensions: () => overlayExtensions.value,
+  useDomainExtensions: (domain: string) =>
+    domain === SCREEN_DOMAIN ? screenExtensions.value : overlayExtensions.value,
+  useMountedExtensions: () => screenExtensions.value.slice(0, 1),
   eventBus: mockEventBus,
 }));
 
 // The right-hand cluster is covered by its own suites; the top bar's job here is
 // composition, so identity is stubbed out to keep this focused.
 vi.mock('./UserMenu', () => ({ UserMenu: () => <div data-testid="user-menu" /> }));
-vi.mock('./ContextSwitcher', () => ({
-  ContextSwitcher: () => <div data-testid="context-switcher" />,
+vi.mock('./ContextChain', () => ({
+  ContextChain: () => <div data-testid="context-chain" />,
 }));
 
 import { Header } from './Header';
@@ -43,6 +62,7 @@ import { Header } from './Header';
 describe('Header (global top bar)', () => {
   beforeEach(() => {
     overlayExtensions.value = [];
+    screenExtensions.value = [peopleScreen];
     mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
@@ -56,11 +76,9 @@ describe('Header (global top bar)', () => {
     expect(screen.getByText('Constructor Studio')).toBeTruthy();
   });
 
-  it('opens the navigation drawer from the burger', () => {
+  it('carries no navigation of its own: the rail is beside the screen now', () => {
     render(<Header />);
-    fireEvent.click(screen.getByLabelText('Open global navigation'));
-    // `collapsed: false` is the open drawer — see Menu.tsx.
-    expect(mockEventBus.emit).toHaveBeenCalledWith('layout/menu/collapsed', { collapsed: false });
+    expect(screen.queryByLabelText('Open global navigation')).toBeNull();
   });
 
   it('no longer titles the mounted screen — the MFE owns its own heading', () => {
@@ -70,7 +88,7 @@ describe('Header (global top bar)', () => {
 
   it('carries the context slot and the identity control', () => {
     render(<Header />);
-    expect(screen.getByTestId('context-switcher')).toBeTruthy();
+    expect(screen.getByTestId('context-chain')).toBeTruthy();
     expect(screen.getByTestId('user-menu')).toBeTruthy();
   });
 

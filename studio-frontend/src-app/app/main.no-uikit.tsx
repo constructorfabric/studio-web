@@ -2,12 +2,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp } from '@gears-frontx/react';
-import { AccountsApiService } from '@/app/api';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
 import App from './App';
 
 // Register accounts service (application-level service for user info)
+// No accounts mock map — see the mock note in `main.tsx` before adding one.
 apiRegistry.register(AccountsApiService);
 
 // Initialize API services

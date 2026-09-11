@@ -1,0 +1,15 @@
+{
+  "title": "Overview",
+  "tile_workspaces": "Workspaces",
+  "tile_workspaces_projects_one": "{count} project across them",
+  "tile_workspaces_projects_many": "{count} projects across them",
+  "tile_workspaces_uncounted": "Projects across them are not counted in this answer.",
+  "tile_stale": "The last read failed; showing what was read before.",
+  "tile_gears": "Gear health",
+  "tile_gears_owed": "No gear registry serves this yet.",
+  "tile_attention": "Needs attention",
+  "tile_attention_owed": "No aggregate serves this yet.",
+  "retry": "Try again",
+  "resolving_org": "Resolving the organization…",
+  "no_org": "No organization is in scope."
+}

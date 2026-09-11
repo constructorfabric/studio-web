@@ -21,6 +21,10 @@ patterns = [
   "src-app/mfe_packages/*/vite.config.ts",
   "src-app/mfe_packages/*/vitest.config.ts",
   "src-app/mfe_packages/*/src/init.ts",
+  # Copied verbatim too, and their markers name a FrontX-owned DoD.
+  "src-app/mfe_packages/*/src/api/_BlankApiService.test.ts",
+  "src-app/mfe_packages/*/src/api/mocks.test.ts",
+  "src-app/mfe_packages/*/src/shared/useScreenTranslations.test.tsx",
   # The shell files that came with the template and still carry only its
   # markers. The rest of `src-app/app` is this repository's and is in scope.
   "src-app/app/actions/**",
@@ -45,6 +49,10 @@ codebase = [
   # the markers of `workspace-scope` live here as well as in the MFE.
   { path = "src-app/app", extensions = [".ts", ".tsx"] },
   { path = "src-app/mfe_packages/connections-mfe/src", extensions = [".ts", ".tsx"] },
+  # In scope since the organization level got real screens: the workspaces list
+  # and the overview carry the markers of `workspaces-screen` and
+  # `organization-overview`.
+  { path = "src-app/mfe_packages/organization-mfe/src", extensions = [".ts", ".tsx"] },
   # What both of the above share, extracted rather than copied. In scope because
   # the code that moved there carries markers of its own — `organization.tsx`
   # implements the org-scope DoD of both features.

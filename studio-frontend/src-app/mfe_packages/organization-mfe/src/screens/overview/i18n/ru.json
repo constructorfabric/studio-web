@@ -1,0 +1,15 @@
+{
+  "title": "Обзор",
+  "tile_workspaces": "Воркспейсы",
+  "tile_workspaces_projects_one": "{count} проект в них",
+  "tile_workspaces_projects_many": "{count} проектов в них",
+  "tile_workspaces_uncounted": "Проекты в них в этом ответе не подсчитаны.",
+  "tile_stale": "Последнее чтение не удалось; показано прочитанное ранее.",
+  "tile_gears": "Состояние гиров",
+  "tile_gears_owed": "Пока нет реестра гиров, который это отдаёт.",
+  "tile_attention": "Требует внимания",
+  "tile_attention_owed": "Пока нет агрегата, который это отдаёт.",
+  "retry": "Повторить",
+  "resolving_org": "Определяем организацию…",
+  "no_org": "Организация не определена."
+}

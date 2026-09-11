@@ -42,7 +42,7 @@ describe('registerBootstrapEffects', () => {
     registerBootstrapEffects(app);
     mockHas.mockReturnValue(true);
     mockGetService.mockReturnValue({
-      me: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456', subject_type: 'user' }) },
+      getMe: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456', subject_type: 'user' }) },
     });
     mockGetIdentity.mockResolvedValue({
       sub: 'abcdef12-3456',
@@ -85,7 +85,7 @@ describe('registerBootstrapEffects', () => {
   it('warns and clears the loading flag when the /me check fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockGetService.mockReturnValue({
-      me: { fetch: vi.fn().mockRejectedValue(new Error('401')) },
+      getMe: { fetch: vi.fn().mockRejectedValue(new Error('401')) },
     });
 
     await emit('app/user/fetch');
@@ -105,7 +105,7 @@ describe('registerBootstrapEffects', () => {
       config: { headers: { Authorization: 'Bearer super-secret-token' } },
     });
     mockGetService.mockReturnValue({
-      me: { fetch: vi.fn().mockRejectedValue(axiosLikeError) },
+      getMe: { fetch: vi.fn().mockRejectedValue(axiosLikeError) },
     });
 
     await emit('app/user/fetch');

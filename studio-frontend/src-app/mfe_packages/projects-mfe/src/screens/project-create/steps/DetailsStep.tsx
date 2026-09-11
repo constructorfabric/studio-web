@@ -1,6 +1,7 @@
 /** Step 1 — name, goal, owner, starting point. */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-owner:p1
+import { User } from '@constructor-studio/mfe-shared';
 import React, { useId } from 'react';
 import { FileText, Files } from 'lucide-react';
 import {
@@ -18,7 +19,6 @@ import { CREATE_SLICE_KEY, editDraft } from '../../../slices/createSlice';
 import { useCurrentUser } from '../../../shared/useCurrentUser';
 import { displayName } from '../../../model/project';
 import type { ProjectMode } from '../../../api/types.ts';
-import type { User } from '../../../api/types';
 import styles from '../NewProjectWizard.module.css';
 
 /** Two letters at most, like the mockup's avatar. */

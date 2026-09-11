@@ -1,6 +1,5 @@
+import { AccountsApiService, User } from '@constructor-studio/mfe-shared';
 import { apiRegistry, useApiQuery } from '@gears-frontx/react';
-import { AccountsApiService } from '../api/AccountsApiService';
-import type { User } from '../api/types';
 
 export interface UserLookup {
   user: User | null;
@@ -10,7 +9,7 @@ export interface UserLookup {
 
 export function useUserById(tenantId: string, userId: string): UserLookup {
   const accounts = apiRegistry.getService(AccountsApiService);
-  const { data, isLoading, isError } = useApiQuery(accounts.tenantUser({ tenantId, userId }));
+  const { data, isLoading, isError } = useApiQuery(accounts.findTenantUser({ tenantId, userId }));
 
   return { user: data?.items?.[0] ?? null, loading: isLoading, failed: isError };
 }

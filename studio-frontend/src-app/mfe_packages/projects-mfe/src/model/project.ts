@@ -1,12 +1,13 @@
+import { type ProjectConfig } from '../api/types';
+import { TENANT_TYPES, type Tenant, type User } from '@constructor-studio/mfe-shared';
 /**
  * Tenants + their metadata -> what a screen renders.
  */
 
-import { TENANT_TYPES, type ProjectConfig, type TenantDto, type User } from '../api/types';
 
 export type StatusTone = 'success' | 'warning' | 'info' | 'danger' | 'muted';
 
-export function isProject(tenant: TenantDto): boolean {
+export function isProject(tenant: Tenant): boolean {
   return tenant.tenant_type === TENANT_TYPES.project;
 }
 
@@ -41,7 +42,7 @@ export function sortDirection(option: ProjectSortOption): 'asc' | 'desc' {
  */
 export function tenantComparator(
   option: ProjectSortOption
-): (a: TenantDto, b: TenantDto) => number {
+): (a: Tenant, b: Tenant) => number {
   return (a, b) => {
     switch (option) {
       case 'alphabetical':
@@ -61,7 +62,7 @@ export function tenantComparator(
  * when the tenant itself is not active — a suspended tenant is not "draft".
  */
 export function projectStatus(
-  tenant: TenantDto,
+  tenant: Tenant,
   config: ProjectConfig | null
 ): 'draft' | 'active' | 'archived' | 'suspended' | 'deleted' | 'unknown' {
   if (tenant.status === 'suspended') return 'suspended';
@@ -136,15 +137,15 @@ export function displayName(user: User): string {
  * per-project aggregate. They stay undefined rather than invented; wiring them
  * up later is a change to these three functions.
  */
-export function issueSummary(_tenant: TenantDto): undefined {
+export function issueSummary(_tenant: Tenant): undefined {
   return undefined;
 }
 
-export function movement7d(_tenant: TenantDto): undefined {
+export function movement7d(_tenant: Tenant): undefined {
   return undefined;
 }
 
-export function healthStatus(_tenant: TenantDto): undefined {
+export function healthStatus(_tenant: Tenant): undefined {
   return undefined;
 }
 

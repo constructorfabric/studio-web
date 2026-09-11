@@ -1,18 +1,22 @@
+import { ProjectSource } from '../../api/types';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 import React, { useEffect } from 'react';
-import { apiRegistry, useApiQuery, useAppDispatch, useAppSelector } from '@gears-frontx/react';
+import {
+  apiRegistry,
+  useApiQuery,
+  useAppDispatch,
+  useAppSelector,
+  useMfeBridge,
+} from '@gears-frontx/react';
 import { Skeleton } from '@gears-frontx/ui-kit';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { useProjectScreenTranslations, useProjectText } from '../../i18n';
-import { AccountsApiService } from '../../api/AccountsApiService';
-import type { ProjectSource } from '../../api/types';
-import { useProjectConfig } from '../../shared/useProjectConfig';
 import { useArtifactCount } from '../../shared/useArtifacts';
 import { useArtifactImport } from '../../shared/useArtifactImport';
 import { NAV_SLICE_KEY, landOnFirstImport } from '../../slices/navSlice';
-import { SettingsSection } from './sections/SettingsSection';
+import { announceSection } from '../../actions/projectsActions';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
-import { ProjectRail } from './ProjectRail';
 import styles from './ProjectScreen.module.css';
 
 interface ImportWatchProps {
@@ -32,6 +36,7 @@ const ImportWatch: React.FC<ImportWatchProps> = ({
   artifactsRead,
 }) => {
   const dispatch = useAppDispatch();
+  const bridge = useMfeBridge();
   const { isFirstImport, start } = useArtifactImport({
     projectId,
     workspaceId,
@@ -44,8 +49,9 @@ const ImportWatch: React.FC<ImportWatchProps> = ({
   useEffect(() => {
     if (!isFirstImport) return;
     dispatch(landOnFirstImport());
+    announceSection(bridge, 'artifacts');
     start();
-  }, [isFirstImport, dispatch, start]);
+  }, [isFirstImport, dispatch, start, bridge]);
 
   return null;
 };
@@ -64,8 +70,7 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
     data: project,
     isLoading,
     isError,
-  } = useApiQuery(accounts.tenant({ tenantId: projectId }));
-  const { config } = useProjectConfig(projectId);
+  } = useApiQuery(accounts.getTenant({ tenantId: projectId }));
   const section = useAppSelector((state) => state[NAV_SLICE_KEY].section);
 
   const { org } = useOrganization();
@@ -96,8 +101,6 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
     switch (section) {
       case 'artifacts':
         return <ArtifactsSection projectId={projectId} />;
-      case 'settings':
-        return <SettingsSection project={project} config={config} />;
       default:
         return <PlaceholderSection title={t(`section_${section}`)} note={t('no_source_yet')} />;
     }
@@ -105,7 +108,6 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
 
   return (
     <div className={styles.frame}>
-      <ProjectRail section={section} />
       <div className={styles.content}>
         {org && (
           <ImportWatch

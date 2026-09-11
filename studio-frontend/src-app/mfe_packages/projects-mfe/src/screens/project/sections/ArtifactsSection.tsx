@@ -1,3 +1,4 @@
+import { ProjectSource } from '../../../api/types';
 import React from 'react';
 import {
   Button,
@@ -13,7 +14,6 @@ import { useFormatters } from '@gears-frontx/react';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { Search } from 'lucide-react';
 import { useProjectText } from '../../../i18n';
-import type { ProjectSource } from '../../../api/types';
 import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
 import { useThemedRoot } from '../../../shared/useThemedRoot';

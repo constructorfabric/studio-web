@@ -1,3 +1,4 @@
+import { TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
@@ -9,7 +10,6 @@ import { OrganizationProvider, STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } fro
 import { PROJECT_LIST_NAMESPACE } from '../../../i18n';
 import en from '../i18n/en.json';
 import { ProjectsTable } from './ProjectsTable';
-import { TENANT_TYPES, type TenantDto } from '../../../api/types';
 import type { ProjectConfigState } from '../../../shared/useProjectConfig';
 import type { UserLookup } from '../../../shared/users';
 
@@ -43,7 +43,7 @@ vi.mock('../../../shared/users', async () => {
   return { ...actual, useUserById: () => ownerState };
 });
 
-function tenant(id: string, tenantType: string): TenantDto {
+function tenant(id: string, tenantType: string): Tenant {
   return {
     id,
     name: id,
@@ -60,10 +60,10 @@ function tenant(id: string, tenantType: string): TenantDto {
 
 const PROJECT = tenant('proj', TENANT_TYPES.project);
 
-async function mount(rows: TenantDto[]) {
+async function mount(rows: Tenant[]) {
   createFrontXApp({});
   const { mfeApp } = await import('../../../init');
-  const { bridge } = createMfeBridgeFixture({
+  const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',
     instanceId: 'inst',
     // The shell publishes an object here, not a string — the fixture's property
@@ -81,7 +81,7 @@ async function mount(rows: TenantDto[]) {
       </OrganizationProvider>
     </FrontXProvider>
   );
-  return mfeApp;
+  return { mfeApp, executeActionsChain };
 }
 
 const beforeEachState = () => {
@@ -96,16 +96,25 @@ const beforeEachState = () => {
 describe('ProjectsTable rows', () => {
   beforeEach(beforeEachState);
 
-  it('opens the project on click', async () => {
-    const app = await mount([PROJECT]);
+  it('tells the shell to open the project, and opens nothing itself', async () => {
+    const { mfeApp, executeActionsChain } = await mount([PROJECT]);
     const button = screen.getByRole('button', { name: /proj/ }) as HTMLButtonElement;
 
     await act(async () => {
       fireEvent.click(button);
     });
 
-    const state = app.store.getState() as Record<string, { projectId: string | null }>;
-    expect(state['projects/nav'].projectId).toBe('proj');
+    // The shell owns which project is open. A row asks; it does not decide.
+    const payloads = executeActionsChain.mock.calls.map(([chain]) => chain.action.payload);
+    expect(payloads).toContainEqual(
+      expect.objectContaining({ kind: 'opened', project: { id: 'proj', name: 'proj' } })
+    );
+
+    // Local state stays put until the shell publishes the project back. It used
+    // to be written here too, and that second writer is what made the shell's
+    // echo look like "nothing changed" — the rail then marked no section.
+    const state = mfeApp.store.getState() as Record<string, { projectId: string | null }>;
+    expect(state['projects/nav'].projectId).toBeNull();
   });
 
   it('draws a row from the project metadata, not from the tenant', async () => {

@@ -159,8 +159,9 @@
   background: var(--card);
 }
 
-.repoSearch {
+input.repoSearch {
   width: 100%;
+  height: var(--control-height-sm);
 }
 
 .repoViewport .placeholder {

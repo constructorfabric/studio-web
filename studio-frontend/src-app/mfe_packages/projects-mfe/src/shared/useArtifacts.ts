@@ -1,3 +1,4 @@
+import { ProjectSource } from '../api/types';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import { ArtifactIngestApiService, type NodesParams } from '../api/ArtifactIngestApiService';
@@ -10,7 +11,6 @@ import {
 } from '../model/artifact';
 import { useProjectConfig } from './useProjectConfig';
 import { useProjectImport } from './useArtifactImport';
-import type { ProjectSource } from '../api/types';
 
 export const ARTIFACTS_PAGE_SIZE = 18;
 

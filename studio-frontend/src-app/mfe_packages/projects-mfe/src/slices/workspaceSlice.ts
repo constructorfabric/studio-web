@@ -3,11 +3,18 @@
 import { createSlice, type ReducerPayload } from '@gears-frontx/react';
 import type { Refusal } from '@constructor-studio/mfe-shared';
 
+/** The written workspace, with the organization it was written under. */
+export interface CreatedWorkspace {
+  id: string;
+  name: string;
+  orgId: string;
+}
+
 export interface WorkspaceCreateState {
   name: string;
   submitting: boolean;
   error: Refusal | null;
-  created: { id: string; name: string } | null;
+  created: CreatedWorkspace | null;
 }
 
 const SLICE_KEY = 'projects/workspace-create' as const;
@@ -55,7 +62,7 @@ const {
       },
       workspaceAnnounceFailed: (
         state: WorkspaceCreateState,
-        action: ReducerPayload<{ workspace: { id: string; name: string }; error: Refusal }>
+        action: ReducerPayload<{ workspace: CreatedWorkspace; error: Refusal }>
       ) => {
         state.submitting = false;
         state.created = action.payload.workspace;

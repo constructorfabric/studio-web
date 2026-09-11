@@ -13,6 +13,7 @@
     "test:unit:watch": "vitest --watch"
   },
   "dependencies": {
+    "@constructor-studio/mfe-shared": "0.1.0",
     "@gears-frontx/react": "0.2.0-alpha.0",
     "@gears-frontx/ui-kit": "0.4.0-alpha.1",
     "@tanstack/react-query": "5.90.21",

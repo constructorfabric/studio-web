@@ -15,21 +15,32 @@ import {
   registerSlice,
   apiRegistry,
   effects,
-  mock,
   queryCacheShared,
+  authShared,
+  i18n,
 } from '@gears-frontx/react';
 import { homeSlice } from './slices/homeSlice';
 import { initHomeEffects } from './effects/homeEffects';
 import { _BlankApiService } from './api/_BlankApiService';
+import { AccountsApiService } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build — mock plugin syncs during build(),
 // so services must already be present for mock activation to find them
 apiRegistry.register(_BlankApiService);
+apiRegistry.register(AccountsApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.
 // queryCacheShared() joins the host-owned QueryClient without reconfiguring it.
-const mfeApp = createFrontX().use(effects()).use(queryCacheShared()).use(mock()).build();
+const mfeApp = createFrontX()
+  .use(effects())
+  .use(i18n())
+  .use(queryCacheShared())
+  // The host's auth plugin lives in the host's realm, so an MFE request goes
+  // out with no bearer unless this reads the shared session — the workspaces
+  // read is this MFE's first real call to a gear.
+  .use(authShared())
+  .build();
 
 // Register slices with effects (needs store from build())
 registerSlice(homeSlice, initHomeEffects);
