@@ -555,12 +555,15 @@ const STATE_LABEL: Record<DocBindingState, string> = {
   not_a_document: "not a document",
 };
 
+/** The product's own status colours, not ours: a proposal reads as information,
+ *  a settled type as success, an undecided file as something still wanting
+ *  attention, and a file we were told is not a document recedes. */
 const STATE_TONE: Record<DocBindingState, { bg: string; fg: string }> = {
-  detected: { bg: "#dbeafe", fg: "#1e40af" },
-  confirmed: { bg: "#dcfce7", fg: "#166534" },
-  manual: { bg: "#dcfce7", fg: "#166534" },
-  unknown: { bg: "#fef3c7", fg: "#92400e" },
-  not_a_document: { bg: "#f3f4f6", fg: "#6b7280" },
+  detected: { bg: "var(--info-soft)", fg: "var(--info)" },
+  confirmed: { bg: "var(--success-soft)", fg: "var(--success)" },
+  manual: { bg: "var(--success-soft)", fg: "var(--success)" },
+  unknown: { bg: "var(--warning-soft)", fg: "var(--warning)" },
+  not_a_document: { bg: "var(--muted)", fg: "var(--muted-foreground)" },
 };
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -969,7 +972,7 @@ function IngestedDocumentsView({
                   <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                     {basename(selected.path)}
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--muted,#6b7280)" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
                     {typeName(selected.type_key)}
                   </div>
                   {/* The file lives in the repository, so the repository's
@@ -991,7 +994,7 @@ function IngestedDocumentsView({
                           margin: 0,
                           paddingLeft: 16,
                           fontSize: 12,
-                          color: "var(--muted,#6b7280)",
+                          color: "var(--muted-foreground)",
                         }}
                       >
                         {selected.candidates.map((c) => (
@@ -1016,27 +1019,27 @@ function IngestedDocumentsView({
 const INGESTED_CSS = `
 .ingested { display: flex; flex-direction: column; gap: 12px; }
 .ing-head h2 { margin: 0 0 4px; font-size: 16px; }
-.ing-head p { margin: 0; font-size: 13px; color: var(--muted,#6b7280); max-width: 70ch; }
+.ing-head p { margin: 0; font-size: 13px; color: var(--muted-foreground); max-width: 70ch; }
 .ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ing-progress, .ing-note { font-size: 12px; color: var(--muted,#6b7280); }
+.ing-progress, .ing-note { font-size: 12px; color: var(--muted-foreground); }
 .ing-filters { display: flex; gap: 6px; flex-wrap: wrap; }
-.ing-filter { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border,#e2e4e9); background: transparent; cursor: pointer; }
-.ing-filter.on { background: var(--accent-soft,#eef2ff); border-color: #c7d2fe; }
+.ing-filter { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); background: transparent; cursor: pointer; }
+.ing-filter.on { background: var(--accent); border-color: var(--accent-foreground); }
 .ing-count { opacity: 0.6; margin-left: 4px; }
 .ing-split { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 12px; align-items: start; }
-.ing-table { border: 1px solid var(--border,#e2e4e9); border-radius: 10px; overflow: hidden; }
-.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.4fr) 110px 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border,#e2e4e9); cursor: pointer; }
+.ing-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.4fr) 110px 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
 .ing-row:first-child { border-top: none; }
-.ing-row.on { background: var(--accent-soft,#eef2ff); }
-.ing-row-head { font-weight: 600; cursor: default; background: var(--surface-2,#f9fafb); }
+.ing-row.on { background: var(--accent); }
+.ing-row-head { font-weight: 600; cursor: default; background: var(--surface-raised); }
 .ing-row select { width: 100%; font-size: 12px; }
 .ing-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
 .ing-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ing-state { padding: 1px 7px; border-radius: 20px; font-size: 11px; white-space: nowrap; }
 .ing-conf { opacity: 0.7; }
 .ing-src { opacity: 0.6; font-size: 11px; }
-.ing-ok { color: #16a34a; }
-.ing-bad { color: #b45309; }
+.ing-ok { color: var(--success); }
+.ing-bad { color: var(--warning); }
 .ing-dash { opacity: 0.4; }
 .ing-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .ing-actions button { font-size: 11px; padding: 2px 8px; }
