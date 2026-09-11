@@ -24,6 +24,7 @@ import {
   resetWorkspaceForm,
   workspaceAnnounceFailed,
   workspaceSubmitStarted,
+  type CreatedWorkspace,
 } from '../../slices/workspaceSlice';
 import styles from './NewWorkspaceForm.module.css';
 
@@ -46,16 +47,20 @@ const FormBody: React.FC = () => {
   }, [dispatch]);
 
   const announceToShell = useCallback(
-    async (workspace: { id: string; name: string }): Promise<void> => {
+    async (workspace: CreatedWorkspace): Promise<void> => {
       try {
-        await publishCreatedWorkspace(bridge, workspace, orgId);
+        await publishCreatedWorkspace(
+          bridge,
+          { id: workspace.id, name: workspace.name },
+          workspace.orgId
+        );
       } catch (error) {
         dispatch(workspaceAnnounceFailed({ workspace, error: refusalFrom(error, 'error_announce') }));
         return;
       }
       await closeWorkspaceForm(bridge);
     },
-    [bridge, dispatch, orgId]
+    [bridge, dispatch]
   );
 
   useEffect(() => {

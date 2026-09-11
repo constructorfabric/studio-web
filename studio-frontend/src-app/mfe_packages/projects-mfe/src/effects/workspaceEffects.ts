@@ -27,7 +27,7 @@ export function initWorkspaceEffects(dispatch: AppDispatch): void {
         const tenant = await accounts.createWorkspace({ name, parentId: orgId });
         // @cpt-end:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-2
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-5
-        eventBus.emit('mfe/workspaces/created', { id: tenant.id, name });
+        eventBus.emit('mfe/workspaces/created', { id: tenant.id, name, orgId });
         // @cpt-end:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-5
       } catch (error) {
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-write:p1:inst-3

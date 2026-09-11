@@ -374,7 +374,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
   // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
   // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
 
-  eventBus.on('app/context/projects', ({ items }) => {
+  eventBus.on('app/context/projects', ({ items, workspaceId }) => {
+    if (staleScope(contextSlice(app).workspace?.id ?? null, workspaceId)) return;
     dispatch(setContextProjects(items));
   });
 

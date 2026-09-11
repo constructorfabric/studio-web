@@ -292,6 +292,15 @@ describe('entering a screen', () => {
       expect(dispatch).not.toHaveBeenCalled();
     });
 
+    it('drops the sibling list announced from a workspace since left', async () => {
+      await emit('app/context/projects', {
+        items: [{ id: 'p9', name: 'Late' }],
+        workspaceId: 'ws-OLD',
+      });
+
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
     it('keeps a project announced from the workspace still in scope', async () => {
       await emit('app/context/project/opened', {
         id: 'p9',

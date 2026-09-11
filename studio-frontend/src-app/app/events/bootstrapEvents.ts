@@ -25,8 +25,8 @@ declare module '@gears-frontx/react' {
     'app/context/org/changed': { orgId: string };
     /** A project was opened — published by whoever owns projects. `workspaceId` is the scope it was read in, so a late announcement from a workspace since left can be dropped. */
     'app/context/project/opened': { id: string; name: string; workspaceId?: string };
-    /** The switchable project list — published by whoever owns projects. */
-    'app/context/projects': { items: { id: string; name: string }[] };
+    /** The switchable project list — published by whoever owns projects. `workspaceId` is the scope it was read in, and carries the same meaning it has on `project/opened`: the list travels with that event and is dropped on the same terms. */
+    'app/context/projects': { items: { id: string; name: string }[]; workspaceId?: string };
     /** A project was picked in the switcher; the owning MFE navigates. */
     'app/context/project/changed': { projectId: string };
     /** Left the project scope (a global screen mounted, or "All projects"). */

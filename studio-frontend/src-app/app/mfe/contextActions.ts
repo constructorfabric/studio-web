@@ -45,11 +45,9 @@ export function createContextPublishHandler(): ActionHandler {
       // Order matters: the list first, so the slot never names a project while
       // the menu behind it still holds the previous workspace's siblings.
       const siblings = Array.isArray(payload?.siblings) ? payload.siblings : [];
-      eventBus.emit('app/context/projects', { items: siblings.filter(isEntity) });
-      eventBus.emit('app/context/project/opened', {
-        ...payload.project,
-        ...scopeOf(payload, 'workspaceId'),
-      });
+      const scope = scopeOf(payload, 'workspaceId');
+      eventBus.emit('app/context/projects', { items: siblings.filter(isEntity), ...scope });
+      eventBus.emit('app/context/project/opened', { ...payload.project, ...scope });
       return;
     }
 
