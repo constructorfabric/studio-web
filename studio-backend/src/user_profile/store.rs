@@ -46,6 +46,9 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn logins_of(&self, user_id: &str) -> Result<Vec<LoginView>>;
     async fn upsert_membership(&self, m: &MembershipView) -> Result<()>;
     async fn memberships_of(&self, user_id: &str) -> Result<Vec<MembershipView>>;
+    /// Everybody in one organization. The last-owner rule needs to see the
+    /// whole room, not one person's side of it.
+    async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>>;
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()>;
     async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()>;
     async fn aliases_of(&self, user_id: &str) -> Result<Vec<AliasRecord>>;
@@ -317,6 +320,22 @@ impl IdentityStore for PgStore {
             .secure()
             .scope_with(&scope())
             .filter(Condition::all().add(entity::membership::Column::UserId.eq(uid)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(membership_to_view)
+            .collect())
+    }
+
+    async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::membership::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::membership::Column::OrgId.eq(parse_uuid(org_id)?)))
             .all(&conn)
             .await?
             .into_iter()

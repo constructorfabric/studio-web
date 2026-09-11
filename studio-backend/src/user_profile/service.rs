@@ -22,6 +22,7 @@ use super::alias_policy::{
     Confidence, Decision, Held, ProofOwner, decide, displaced_a_proof, proof_owner,
 };
 use super::invitations;
+use super::leaving;
 use super::store::IdentityStore;
 use crate::connectors::service::ConnectorService;
 use crate::identity_directory::IdpDirectoryReader;
@@ -42,6 +43,17 @@ const SOURCE_CREATION: &str = "creation";
 /// `membership.source` for a row an accepted invitation produced. The fourth
 /// and last way in, and the one an owner most wants to be able to tell apart.
 const SOURCE_INVITATION: &str = "invitation";
+
+/// `membership.source` for a row the installation seeded from configuration.
+const SOURCE_BOOTSTRAP: &str = "bootstrap";
+
+/// `membership.source` for a row written because somebody signed in for the
+/// first time into a deployment that says its IdP's users are its members.
+const SOURCE_FIRST_LOGIN: &str = "first_login";
+
+/// The tenant every organization hangs under, and the one whose membership
+/// makes somebody a platform administrator.
+pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 
 /// Bumped by every write that changes who belongs where.
 ///
@@ -173,6 +185,9 @@ pub struct IdentityService {
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
     federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
+    /// The organization a person joins the first time they are seen, if the
+    /// installation says there is one.
+    first_login_join: OnceLock<Option<(Uuid, String)>>,
 }
 
 impl IdentityService {
@@ -182,6 +197,7 @@ impl IdentityService {
             am,
             connectors: OnceLock::new(),
             federated: OnceLock::new(),
+            first_login_join: OnceLock::new(),
         }
     }
 
@@ -192,6 +208,11 @@ impl IdentityService {
     /// registered. Calling it twice is ignored: the second view is equivalent.
     pub fn attach_connectors(&self, connectors: Option<Arc<ConnectorService>>) {
         let _ = self.connectors.set(connectors);
+    }
+
+    /// Tell the service which organization a new person joins, if any.
+    pub fn set_first_login_join(&self, join: Option<(Uuid, String)>) {
+        let _ = self.first_login_join.set(join);
     }
 
     /// Hand the service its view of the IdP's brokered logins.
@@ -284,6 +305,27 @@ impl IdentityService {
             linked_at_epoch_ms: now,
         };
         self.store.upsert_login(&login).await?;
+
+        // The deployment's statement that its identity provider's users are the
+        // members of one organization (ADR-0018 §4), made true here — at the one
+        // moment a person begins to exist. Recorded as a row, so it can be
+        // revoked later without touching the corporate directory, and so it
+        // remembers how it came about.
+        //
+        // Not fatal: a person who exists but has not joined yet is a person the
+        // next request can still join, whereas failing here would leave them
+        // unable to sign in at all.
+        if let Some(Some((org_id, role))) = self.first_login_join.get()
+            && let Err(error) = self
+                .record_membership(&user_id, &org_id.to_string(), role, SOURCE_FIRST_LOGIN)
+                .await
+        {
+            tracing::warn!(
+                user = %user_id,
+                organization = %org_id,
+                "studio-user: could not join the new person to the configured organization:                  {error:#}"
+            );
+        }
         Ok(user_id)
     }
 
@@ -715,6 +757,55 @@ impl IdentityService {
         Ok(())
     }
 
+    /// Is the person behind `subject` a platform administrator?
+    ///
+    /// The question is "do they hold a membership of the platform root", not
+    /// "what does their token say". A token names the tenant of *one login*, so
+    /// reading administrative rights from it made a person an administrator
+    /// through one sign-in method and an ordinary member through another
+    /// (ADR-0018 §3).
+    ///
+    /// This is the half of that ADR that replaces the token reading. The
+    /// callers still accept the old signal as well while the migration runs —
+    /// see the note on each one.
+    pub async fn is_platform_admin(&self, subject: &str) -> Result<bool> {
+        Ok(self
+            .organizations_of(subject)
+            .await?
+            .contains(&PLATFORM_ROOT_TENANT_ID))
+    }
+
+    /// Seed the memberships that make the configured identities administrators.
+    ///
+    /// Idempotent, and run at every start: an installation states who its
+    /// administrators are, and the row that makes it true is written from that
+    /// statement rather than from whoever happens to carry an attribute.
+    ///
+    /// Without this there is a lockout waiting at the end of the migration: once
+    /// the token signal is removed, a deployment whose administrators were only
+    /// ever administrators *by token* would have none, and no way to make one.
+    pub async fn seed_platform_admins(&self, subjects: &[String]) -> Result<usize> {
+        let mut seeded = 0;
+        for subject in subjects {
+            let subject = subject.trim();
+            if subject.is_empty() {
+                continue;
+            }
+            let user_id = self
+                .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+                .await?;
+            self.record_membership(
+                &user_id,
+                &PLATFORM_ROOT_TENANT_ID.to_string(),
+                crate::access_config::ROLE_OWNER,
+                SOURCE_BOOTSTRAP,
+            )
+            .await?;
+            seeded += 1;
+        }
+        Ok(seeded)
+    }
+
     /// The organizations the person behind `subject` is a member of.
     ///
     /// Never provisions: a subject nobody has seen is a subject with no
@@ -855,13 +946,84 @@ impl IdentityService {
         Ok(Ok(membership))
     }
 
-    /// Remove a person's membership in an organization.
-    pub async fn remove_membership(&self, user_id: &str, org_id: &str) -> Result<()> {
-        self.store.delete_membership(user_id, org_id).await?;
-        memberships_changed();
-        Ok(())
+    /// Everybody in one organization, so a caller can see the room before
+    /// changing who is in it.
+    pub async fn members_of(&self, org_id: &str) -> Result<Vec<MembershipView>> {
+        self.store.memberships_in_org(org_id).await
     }
 
+    /// May this membership end, or change to `new_role`?
+    ///
+    /// One gate for leaving, for being removed, and for being demoted —
+    /// otherwise the rule would hold on one route and be walked around on
+    /// another.
+    pub async fn may_change_membership(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        new_role: Option<&str>,
+    ) -> Result<Result<(), leaving::Refusal>> {
+        let members: Vec<leaving::Member> = self
+            .members_of(org_id)
+            .await?
+            .into_iter()
+            .map(|m| leaving::Member {
+                user_id: m.user_id,
+                role: m.role,
+            })
+            .collect();
+        Ok(leaving::may_change(&members, user_id, new_role))
+    }
+
+    /// Leave an organization: the membership ends, and the leaver's own
+    /// credentials go with them.
+    ///
+    /// Access goes; authorship does not. Documents, projects and workspaces
+    /// belong to the organization and stay, and attribution in the knowledge
+    /// graph stays with the person who earned it — history is not rewritten
+    /// because somebody left (ADR-0018 §6).
+    ///
+    /// What does leave with them is every *personal* connection they created
+    /// here. Without that the organization keeps a working credential of
+    /// somebody no longer in it, and under ADR-0012 it keeps their proof of
+    /// controlling that external account too.
+    pub async fn leave_organization(
+        &self,
+        ctx: &SecurityContext,
+        user_id: &str,
+        org_id: Uuid,
+    ) -> Result<Result<usize, leaving::Refusal>> {
+        let org = org_id.to_string();
+        if let Err(refusal) = self.may_change_membership(user_id, &org, None).await? {
+            return Ok(Err(refusal));
+        }
+        self.store.delete_membership(user_id, &org).await?;
+        memberships_changed();
+
+        // After the membership, not before: the credentials are the tidy-up,
+        // and leaving somebody a member while their connections disappear would
+        // be the worse of the two half-states.
+        let removed = match self.connectors.get().and_then(Option::as_ref) {
+            // This gear *is* the person resolver, so it hands itself over
+            // rather than looking one up.
+            Some(connectors) => connectors
+                .delete_personal_of(ctx, org_id, self, user_id)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        user = %user_id,
+                        organization = %org_id,
+                        "studio-user: left the organization but could not remove their personal \
+                         connections: {error:#}"
+                    );
+                    0
+                }),
+            None => 0,
+        };
+        Ok(Ok(removed))
+    }
+
+    /// Remove a person's membership in an organization.
     /// Merge `from_user` into `into_user`: repoint every login, alias and
     /// membership, then tombstone the source with a `merged_into` pointer.
     pub async fn merge(&self, from_user: &str, into_user: &str) -> Result<MergeResult> {
@@ -1111,6 +1273,9 @@ mod idp_channel_tests {
             unimplemented!("not on the ceremony's path")
         }
         async fn memberships_of(&self, _user_id: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn memberships_in_org(&self, _org_id: &str) -> Result<Vec<MembershipView>> {
             unimplemented!("not on the ceremony's path")
         }
         async fn delete_membership(&self, _user_id: &str, _org_id: &str) -> Result<()> {

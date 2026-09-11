@@ -18,6 +18,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::alias_policy::Confidence;
+use super::leaving;
 use super::service::{
     AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, ProfilePatch,
     UserProfile,
@@ -314,13 +315,42 @@ fn configured(service: Option<Arc<IdentityService>>) -> ApiResult<Arc<IdentitySe
     })
 }
 
-fn require_platform_admin(ctx: &SecurityContext) -> ApiResult<()> {
-    if ctx.subject_tenant_id() != PLATFORM_ROOT_TENANT_ID {
-        return Err(UserProfileError::permission_denied()
-            .with_reason("PLATFORM_ADMIN_REQUIRED")
-            .create());
+/// Is the caller a platform administrator?
+///
+/// Two signals while the migration in ADR-0018 §3 runs, and they are not
+/// equivalent:
+///
+/// - **a membership of the platform root** — the answer about the *person*, and
+///   the one that will remain;
+/// - **the token's tenant** — the answer about the *login*, which is what made
+///   somebody an administrator through one sign-in method and not another.
+///
+/// Accepting either widens nothing: an installation seeds its administrators
+/// (`platform_admins`), the backfill wrote the rows for the identities that
+/// already carried the attribute, and until both are true everywhere removing
+/// the second would lock somebody out. The removal is the third step, not this
+/// one.
+async fn is_platform_admin(ctx: &SecurityContext, service: &Arc<IdentityService>) -> bool {
+    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID {
+        return true;
     }
-    Ok(())
+    service
+        .is_platform_admin(&ctx.subject_id().to_string())
+        .await
+        .unwrap_or(false)
+}
+
+async fn require_platform_admin(
+    ctx: &SecurityContext,
+    service: &Arc<IdentityService>,
+) -> ApiResult<()> {
+    if is_platform_admin(ctx, service).await {
+        Ok(())
+    } else {
+        Err(UserProfileError::permission_denied()
+            .with_reason("PLATFORM_ADMIN_REQUIRED")
+            .create())
+    }
 }
 
 /// A membership write needs authority over that organization: its owner has it,
@@ -335,13 +365,29 @@ async fn require_org_authority(
     service: &Arc<IdentityService>,
     org_id: Uuid,
 ) -> ApiResult<()> {
-    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID || service.is_org_owner(ctx, org_id).await
-    {
+    if is_platform_admin(ctx, service).await || service.is_org_owner(ctx, org_id).await {
         Ok(())
     } else {
         Err(UserProfileError::permission_denied()
             .with_reason("ORG_OWNER_REQUIRED")
             .create())
+    }
+}
+
+/// Turn a last-owner refusal into an answer the caller can act on.
+///
+/// `NotAMember` is a 404 — there is no membership at that address to end. The
+/// other two are 400: the request is well-formed and the caller is allowed, but
+/// the organization would be left without an owner, and the message says what
+/// to do first.
+fn refused(refusal: leaving::Refusal, user_id: &str, org_id: &str) -> CanonicalError {
+    match refusal {
+        leaving::Refusal::NotAMember => UserProfileError::not_found(refusal.message())
+            .with_resource(format!("{user_id}@{org_id}"))
+            .create(),
+        _ => UserProfileError::invalid_argument()
+            .with_constraint(refusal.message())
+            .create(),
     }
 }
 
@@ -417,6 +463,16 @@ async fn get_my_logins(
     Ok(Json(LoginListDto { items }))
 }
 
+/// What leaving took with it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LeaveResultDto {
+    /// How many of the leaver's personal connections were removed along with
+    /// the membership. Reported rather than silent: it is their credentials
+    /// that just disappeared, and they should be told how many.
+    pub connections_removed: u32,
+}
+
 async fn get_my_memberships(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -438,8 +494,8 @@ async fn get_user(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(user_id): Path<String>,
 ) -> ApiResult<JsonBody<UserProfileDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let profile = service
         .get_profile(&user_id)
         .await
@@ -457,8 +513,8 @@ async fn get_user_memberships(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(user_id): Path<String>,
 ) -> ApiResult<JsonBody<MembershipListDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let items = service
         .list_memberships(&user_id)
         .await
@@ -478,6 +534,18 @@ async fn put_membership(
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org).await?;
+    // A role change can remove the last owner just as surely as a removal can,
+    // so it passes the same gate. Somebody joining is not a member yet, and
+    // that is not a reason to refuse adding them.
+    let gate = service
+        .may_change_membership(&user_id, &org_id, Some(&req.role))
+        .await
+        .map_err(internal)?;
+    if let Err(refusal) = gate
+        && refusal != leaving::Refusal::NotAMember
+    {
+        return Err(refused(refusal, &user_id, &org_id));
+    }
     let source = req.source.unwrap_or_else(|| "manual".to_string());
     let membership = service
         .record_membership(&user_id, &org_id, &req.role, &source)
@@ -490,15 +558,45 @@ async fn delete_membership(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path((user_id, org_id)): Path<(String, String)>,
-) -> ApiResult<StatusCode> {
+) -> ApiResult<JsonBody<LeaveResultDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org).await?;
-    service
-        .remove_membership(&user_id, &org_id)
+    // Removed by an owner or walking out on their own, the departure is the
+    // same one: the same invariant holds it back, and the same credentials go
+    // with it.
+    leave(&ctx, &service, &user_id, org).await
+}
+
+async fn leave_my_organization(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path(org_id): Path<String>,
+) -> ApiResult<JsonBody<LeaveResultDto>> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    // No authority gate: leaving is nobody's permission to give. The last-owner
+    // rule is the only thing that can hold it back.
+    let user_id = caller_user_id(&ctx, &service).await?;
+    leave(&ctx, &service, &user_id, org).await
+}
+
+async fn leave(
+    ctx: &SecurityContext,
+    service: &Arc<IdentityService>,
+    user_id: &str,
+    org: Uuid,
+) -> ApiResult<JsonBody<LeaveResultDto>> {
+    match service
+        .leave_organization(ctx, user_id, org)
         .await
-        .map_err(internal)?;
-    Ok(StatusCode::NO_CONTENT)
+        .map_err(internal)?
+    {
+        Ok(connections_removed) => Ok(Json(LeaveResultDto {
+            connections_removed: connections_removed as u32,
+        })),
+        Err(refusal) => Err(refused(refusal, user_id, &org.to_string())),
+    }
 }
 
 fn parse_confidence(raw: Option<&str>) -> ApiResult<Confidence> {
@@ -564,8 +662,8 @@ async fn add_alias(
     Path(user_id): Path<String>,
     Json(req): Json<AddAliasRequest>,
 ) -> ApiResult<JsonBody<AliasWriteDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let confidence = parse_confidence(req.confidence.as_deref())?;
     // Through the same gate as the self-service path: an admin writing on
     // somebody's behalf must not be able to silently take an identity another
@@ -751,8 +849,8 @@ async fn merge_users(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Json(req): Json<MergeRequest>,
 ) -> ApiResult<JsonBody<MergeResultDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let result = service
         .merge(&req.from_user_id, &req.into_user_id)
         .await
@@ -769,8 +867,8 @@ async fn resolve_identity(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Json(req): Json<ResolveRequest>,
 ) -> ApiResult<JsonBody<ResolveResultDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let user_id = service
         .resolve_or_provision(&req.provider, &req.subject, None, None, true)
         .await
@@ -942,9 +1040,11 @@ pub fn register_routes(
         .operation_id("studio_user.delete_membership")
         .summary("Remove a user's membership in an organization (organization owner)")
         .description(
-            "Removes a user's membership in an organization, and the role that \
-             came with it. The user record and their other memberships are \
-             untouched. Organization owners only.",
+            "Removes a user's membership in an organization, and the role that came with it, \
+             along with the personal connections they created there. The user record and their \
+             other memberships are untouched. Organization owners only, and refused where it \
+             would leave the organization without an owner — the same rule that applies when \
+             somebody leaves of their own accord.",
         )
         .tag("StudioUser")
         .authenticated()
@@ -952,10 +1052,43 @@ pub fn register_routes(
         .path_param("user_id", "Canonical Studio user id")
         .path_param("org_id", "Organization (tenant) id")
         .handler(delete_membership)
-        .no_content_response(StatusCode::NO_CONTENT, "Membership removed")
+        .json_response_with_schema::<LeaveResultDto>(
+            openapi,
+            StatusCode::OK,
+            "Membership removed, and what went with it",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::delete("/studio-user/v1/me/memberships/{org_id}")
+        .operation_id("studio_user.leave_organization")
+        .summary("Leave an organization")
+        .description(
+            "Ends the caller's own membership. Nobody's permission is needed for it, and the \
+             only thing that refuses it is the rule that an organization always has an owner: \
+             its only owner is told to appoint another first, and its only person is told that \
+             leaving would mean deleting the organization, which is a separate act. Documents, \
+             projects and authorship stay with the organization; the caller's personal \
+             connections do not, and the response says how many were removed.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("org_id", "Organization (tenant) id")
+        .handler(leave_my_organization)
+        .json_response_with_schema::<LeaveResultDto>(
+            openapi,
+            StatusCode::OK,
+            "Left, and what went with it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));

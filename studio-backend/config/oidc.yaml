@@ -401,6 +401,14 @@ gears:
       # Canonical identity store (users, logins, memberships, aliases).
       # backend-bootstrap creates this database from config on start.
       dbname: "studio_users"
+    config:
+      # Who administers this installation. Each subject listed here gets a
+      # membership of the platform root at every start, which is what being a
+      # platform administrator is (ADR-0018 §3) — and ADR-0011 §4 asks for a
+      # deliberately provisioned identity rather than whoever logs in first.
+      # Empty here: this profile's administrators still come from the token's
+      # tenant, which the gate accepts while the migration runs.
+      platform_admins: []
 
   studio-credstore-pg:
     database:
