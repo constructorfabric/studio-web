@@ -360,7 +360,8 @@ impl DocumentsService {
         let model = analysis::Model {
             id: analysis_row_id(document_id, &detector),
             tenant_id: workspace_id,
-            document_id,
+            document_id: Some(document_id),
+            binding_id: None,
             detector: detector.clone(),
             state: state.as_str().to_string(),
             task_id: task_id.clone(),
@@ -370,7 +371,8 @@ impl DocumentsService {
         };
         self.repo.upsert_analysis(model).await?;
         Ok(Analysis {
-            document_id,
+            document_id: Some(document_id),
+            binding_id: None,
             detector,
             state,
             task_id,
@@ -385,14 +387,74 @@ impl DocumentsService {
         workspace_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<Vec<Analysis>> {
+        // A project's effective documents are both kinds now, so a listing that
+        // read only one of them would answer half the question it is asked.
         let docs = self.all_documents(workspace_id, project_id).await?;
-        let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
+        let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
+        let (binding_rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let binding_ids: Vec<Uuid> = binding_rows.iter().map(|b| b.id).collect();
+
+        let mut rows = self.repo.list_analyses(workspace_id, &doc_ids).await?;
+        rows.extend(
+            self.repo
+                .list_binding_analyses(workspace_id, &binding_ids)
+                .await?,
+        );
+        rows.into_iter().map(analysis_from_row).collect()
+    }
+
+    /// Record a detector's verdict about a bound repository file.
+    ///
+    /// The full finding lives in the artifact graph, joined to the file node;
+    /// this row is the INDEX a stage gate reads, the same way a document's
+    /// `capabilities` column indexes its own front matter. The gate needs one
+    /// question answered cheaply — did this detector pass for this document —
+    /// and walking the graph to answer it, per stage, per requirement, is not
+    /// the shape of that question.
+    pub async fn record_binding_analysis(
+        &self,
+        workspace_id: Uuid,
+        binding_id: Uuid,
+        detector: &str,
+        state: AnalysisState,
+        task_id: Option<String>,
+        summary: String,
+    ) -> Result<Analysis> {
+        let detector = normalize_key(detector)?;
+        // Refuse a verdict about a binding this workspace does not have, for
+        // the same reason the document path does: the row would be unreachable
+        // through every read and would still count against a stage gate.
         self.repo
-            .list_analyses(workspace_id, &ids)
+            .get_binding(workspace_id, binding_id)
             .await?
-            .into_iter()
-            .map(analysis_from_row)
-            .collect()
+            .context("no such document binding")?;
+
+        let now = OffsetDateTime::now_utc();
+        let model = analysis::Model {
+            id: analysis_row_id(binding_id, &detector),
+            tenant_id: workspace_id,
+            document_id: None,
+            binding_id: Some(binding_id),
+            detector: detector.clone(),
+            state: state.as_str().to_string(),
+            task_id: task_id.clone(),
+            summary: summary.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        self.repo.upsert_analysis(model).await?;
+        Ok(Analysis {
+            document_id: None,
+            binding_id: Some(binding_id),
+            detector,
+            state,
+            task_id,
+            summary,
+            updated_at: now.format(&Rfc3339)?,
+        })
     }
 
     /// Where a project stands against the stages of its workspace.
@@ -418,14 +480,19 @@ impl DocumentsService {
             .repo
             .list_bindings(workspace_id, binding_scope(Some(project_id)), 0, None)
             .await?;
+        let binding_ids: Vec<Uuid> = binding_rows.iter().map(|b| b.id).collect();
         let bindings = binding_rows
             .into_iter()
             .map(binding_from_row)
             .collect::<Result<Vec<_>>>()?;
+        let binding_analyses = self
+            .repo
+            .list_binding_analyses(workspace_id, &binding_ids)
+            .await?;
 
         Ok(stages
             .into_iter()
-            .map(|stage| evaluate_stage(stage, &docs, &bindings, &analyses))
+            .map(|stage| evaluate_stage(stage, &docs, &bindings, &analyses, &binding_analyses))
             .collect())
     }
 
@@ -694,6 +761,9 @@ fn stage_from_row(row: stage::Model, workspace_id: Option<Uuid>) -> Result<Stage
 ///
 /// Two judgements are deliberate:
 ///
+/// * A gate is read from whichever subject answers for the document: a
+///   Studio document's own verdicts, or the ones recorded against the binding
+///   of a repository file. Neither opens a gate the detector has not passed.
 /// * A gate on a document that does NOT exist reports nothing outstanding.
 ///   `present: false` already says what is wrong, and repeating it as four
 ///   failing detectors would bury the one fact that matters.
@@ -712,6 +782,7 @@ fn evaluate_stage(
     docs: &[Document],
     bindings: &[DocumentBinding],
     analyses: &[analysis::Model],
+    binding_analyses: &[analysis::Model],
 ) -> StageStatus {
     let requirements: Vec<Requirement> = stage
         .requires
@@ -728,20 +799,32 @@ fn evaluate_stage(
                     .iter()
                     .filter(|detector| {
                         !analyses.iter().any(|a| {
-                            a.document_id == doc.id
+                            a.document_id == Some(doc.id)
                                 && &a.detector == *detector
                                 && a.state == AnalysisState::Passed.as_str()
                         })
                     })
                     .cloned()
                     .collect(),
-                // A repository file carries no verdicts: `studio_document_analyses`
-                // keys on a document id, and this one has none. So its gates stay
-                // shut rather than opening without evidence -- the same judgement
-                // the third bullet above makes, applied where the evidence cannot
-                // exist yet rather than where it disagrees.
-                None if bound.is_some() => stage.gates.clone(),
-                None => Vec::new(),
+                // A repository file answers for itself the same way, through
+                // the verdicts recorded against its binding. Its gates open on
+                // evidence or stay shut without it -- what they never do is
+                // open because nobody could produce any.
+                None => match bound {
+                    Some(b) => stage
+                        .gates
+                        .iter()
+                        .filter(|detector| {
+                            !binding_analyses.iter().any(|a| {
+                                a.binding_id == Some(b.id)
+                                    && &a.detector == *detector
+                                    && a.state == AnalysisState::Passed.as_str()
+                            })
+                        })
+                        .cloned()
+                        .collect(),
+                    None => Vec::new(),
+                },
             };
             Requirement {
                 type_key: type_key.clone(),
@@ -767,6 +850,7 @@ fn evaluate_stage(
 fn analysis_from_row(row: analysis::Model) -> Result<Analysis> {
     Ok(Analysis {
         document_id: row.document_id,
+        binding_id: row.binding_id,
         detector: row.detector,
         // An unrecognised state means the row was written by something newer
         // than this build. Reading it as pending is the safe choice: a gate
@@ -1583,6 +1667,7 @@ mod tests {
     // -- the stage gate ------------------------------------------------------
 
     const DOC: Uuid = Uuid::from_u128(0x3333_3333_3333_4333_8333_3333_3333_3333);
+    const BINDING: Uuid = Uuid::from_u128(0x4444_4444_4444_4444_8444_4444_4444_4444);
 
     fn stage_with(requires: &[&str], gates: &[&str]) -> Stage {
         Stage {
@@ -1614,12 +1699,23 @@ mod tests {
         }
     }
 
+    /// A verdict recorded against the bound repository file, not against a
+    /// document Studio holds.
+    fn binding_verdict(detector: &str, state: &str) -> analysis::Model {
+        let mut row = verdict(detector, state);
+        row.id = analysis_row_id(BINDING, detector);
+        row.document_id = None;
+        row.binding_id = Some(BINDING);
+        row
+    }
+
     fn verdict(detector: &str, state: &str) -> analysis::Model {
         let now = OffsetDateTime::now_utc();
         analysis::Model {
             id: analysis_row_id(DOC, detector),
             tenant_id: WS,
-            document_id: DOC,
+            document_id: Some(DOC),
+            binding_id: None,
             detector: detector.to_string(),
             state: state.to_string(),
             task_id: None,
@@ -1631,7 +1727,7 @@ mod tests {
 
     #[test]
     fn a_stage_that_requires_nothing_is_complete() {
-        let status = evaluate_stage(stage_with(&[], &[]), &[], &[], &[]);
+        let status = evaluate_stage(stage_with(&[], &[]), &[], &[], &[], &[]);
         assert!(status.complete);
         assert!(status.requirements.is_empty());
     }
@@ -1640,7 +1736,7 @@ mod tests {
     fn a_missing_document_is_reported_once_not_as_four_failing_detectors() {
         // `present: false` is the fact that matters; listing every gate as
         // outstanding on top of it would bury it.
-        let status = evaluate_stage(stage_with(&["prd"], &["bloat", "leak"]), &[], &[], &[]);
+        let status = evaluate_stage(stage_with(&["prd"], &["bloat", "leak"]), &[], &[], &[], &[]);
         assert!(!status.complete);
         let req = &status.requirements[0];
         assert!(!req.present);
@@ -1649,7 +1745,13 @@ mod tests {
 
     #[test]
     fn a_document_that_does_not_conform_does_not_complete_its_stage() {
-        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", false)], &[], &[]);
+        let status = evaluate_stage(
+            stage_with(&["prd"], &[]),
+            &[doc("prd", false)],
+            &[],
+            &[],
+            &[],
+        );
         assert!(!status.complete);
         assert!(status.requirements[0].present);
         assert!(!status.requirements[0].conforms);
@@ -1657,7 +1759,13 @@ mod tests {
 
     #[test]
     fn structure_alone_completes_a_stage_that_gates_nothing() {
-        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", true)], &[], &[]);
+        let status = evaluate_stage(
+            stage_with(&["prd"], &[]),
+            &[doc("prd", true)],
+            &[],
+            &[],
+            &[],
+        );
         assert!(status.complete);
     }
 
@@ -1666,6 +1774,7 @@ mod tests {
         let status = evaluate_stage(
             stage_with(&["prd"], &["bloat"]),
             &[doc("prd", true)],
+            &[],
             &[],
             &[],
         );
@@ -1681,6 +1790,7 @@ mod tests {
                 &[doc("prd", true)],
                 &[],
                 &[verdict("bloat", state)],
+                &[],
             );
             assert!(!status.complete, "{state} should not open the gate");
         }
@@ -1695,6 +1805,7 @@ mod tests {
             &[doc("prd", true)],
             &[],
             &[verdict("bloat", "inconclusive")],
+            &[],
         );
         assert!(!status.complete);
     }
@@ -1706,6 +1817,7 @@ mod tests {
             &[doc("prd", true)],
             &[],
             &[verdict("bloat", "passed")],
+            &[],
         );
         assert!(status.complete, "{:?}", status.requirements);
     }
@@ -1717,6 +1829,7 @@ mod tests {
             &[doc("prd", true)],
             &[],
             &[verdict("leak", "passed")],
+            &[],
         );
         assert!(!status.complete);
         assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
@@ -1724,7 +1837,7 @@ mod tests {
 
     fn bound(type_key: &str, state: BindingState, conforms: Option<bool>) -> DocumentBinding {
         DocumentBinding {
-            id: Uuid::nil(),
+            id: BINDING,
             tenant_id: WS,
             project_id: None,
             node_id: "node".to_string(),
@@ -1750,6 +1863,7 @@ mod tests {
             &[],
             &[bound("prd", BindingState::Confirmed, Some(true))],
             &[],
+            &[],
         );
         assert!(status.requirements[0].present);
         assert!(status.requirements[0].conforms);
@@ -1762,6 +1876,7 @@ mod tests {
             stage_with(&["prd"], &[]),
             &[],
             &[bound("prd", BindingState::Manual, Some(true))],
+            &[],
             &[],
         );
         assert!(status.complete);
@@ -1780,6 +1895,7 @@ mod tests {
                 &[],
                 &[bound("prd", state, Some(true))],
                 &[],
+                &[],
             );
             assert!(
                 !status.requirements[0].present,
@@ -1794,6 +1910,7 @@ mod tests {
             stage_with(&["prd"], &[]),
             &[],
             &[bound("prd", BindingState::Confirmed, Some(false))],
+            &[],
             &[],
         );
         assert!(status.requirements[0].present);
@@ -1810,6 +1927,7 @@ mod tests {
             stage_with(&["prd"], &["bloat", "leak"]),
             &[],
             &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[],
             &[],
         );
         assert!(status.requirements[0].present);
@@ -1829,8 +1947,87 @@ mod tests {
             &[doc("prd", true)],
             &[bound("prd", BindingState::Confirmed, Some(true))],
             &[verdict("bloat", "passed")],
+            &[],
         );
         assert!(status.complete);
+    }
+
+    /// The point of the whole exercise: a repository file can now clear a gated
+    /// stage, on the same terms a document in Studio does.
+    #[test]
+    fn a_passing_verdict_on_a_bound_file_opens_the_gate() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[],
+            &[binding_verdict("bloat", "passed")],
+        );
+        assert!(status.requirements[0].analyses_outstanding.is_empty());
+        assert!(status.complete);
+    }
+
+    /// And only `passed` does. Pending and failed keep it shut, as they do for
+    /// a document — a gate that opens on a value we cannot interpret is worse
+    /// than one that stays closed.
+    #[test]
+    fn only_a_passing_verdict_on_a_bound_file_opens_the_gate() {
+        for state in ["pending", "failed", "something-new"] {
+            let status = evaluate_stage(
+                stage_with(&["prd"], &["bloat"]),
+                &[],
+                &[bound("prd", BindingState::Confirmed, Some(true))],
+                &[],
+                &[binding_verdict("bloat", state)],
+            );
+            assert_eq!(
+                status.requirements[0].analyses_outstanding,
+                ["bloat"],
+                "{state} must not open the gate"
+            );
+        }
+    }
+
+    /// Verdicts do not cross between the two kinds of subject. A document's
+    /// passing verdict says nothing about a repository file of the same type.
+    #[test]
+    fn a_documents_verdict_does_not_open_a_bound_files_gate() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[verdict("bloat", "passed")],
+            &[],
+        );
+        assert_eq!(status.requirements[0].analyses_outstanding, ["bloat"]);
+    }
+
+    #[test]
+    fn a_bound_files_verdict_does_not_open_a_documents_gate() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[],
+            &[],
+            &[binding_verdict("bloat", "passed")],
+        );
+        assert_eq!(status.requirements[0].analyses_outstanding, ["bloat"]);
+    }
+
+    /// A gate the detector has not been run for at all is still outstanding,
+    /// and still names itself rather than reading as a missing document.
+    #[test]
+    fn a_gate_with_no_verdict_at_all_stays_outstanding() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat", "leak"]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[],
+            &[binding_verdict("bloat", "passed")],
+        );
+        assert!(status.requirements[0].present);
+        assert_eq!(status.requirements[0].analyses_outstanding, ["leak"]);
+        assert!(!status.complete);
     }
 }
 

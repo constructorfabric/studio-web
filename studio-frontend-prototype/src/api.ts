@@ -1728,6 +1728,25 @@ export const api = {
       { method: "PUT", body: JSON.stringify(body) },
     ),
 
+
+  /** Record one detector's verdict against a bound repository file.
+   *
+   *  The full finding goes to the artifact graph; this is the index a stage
+   *  gate reads, so a stage can depend on a detector having passed for a
+   *  document that lives in the repository. */
+  recordBindingAnalysis: (
+    token: string,
+    workspaceId: string,
+    bindingId: string,
+    detector: string,
+    body: { state: "pending" | "passed" | "failed"; task_id?: string; summary?: string },
+  ) =>
+    request<unknown>(
+      `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${bindingId}/analyses/${detector}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+
   deleteDocBinding: (token: string, workspaceId: string, id: string) =>
     request<void>(
       `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${id}`,

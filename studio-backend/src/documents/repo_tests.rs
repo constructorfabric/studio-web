@@ -401,7 +401,8 @@ async fn deleting_a_document_takes_its_verdicts_with_it() {
     repo.upsert_analysis(analysis::Model {
         id: analysis_row_id(doc_id, "bloat"),
         tenant_id: ws,
-        document_id: doc_id,
+        document_id: Some(doc_id),
+        binding_id: None,
         detector: "bloat".to_string(),
         state: "passed".to_string(),
         task_id: Some("task-1".to_string()),
@@ -656,4 +657,125 @@ async fn forgetting_a_binding_leaves_the_others_alone() {
         .expect("list");
     assert_eq!(total, 1);
     assert_eq!(rows[0].node_id, "node-b");
+}
+
+/// A verdict about a bound repository file is the same row with the other
+/// subject set, and it is read back by the other query.
+#[tokio::test]
+async fn a_verdict_about_a_bound_file_round_trips() {
+    let repo = repo().await;
+    let ws = tenant();
+    repo.upsert_binding(binding(
+        ws,
+        None,
+        "node-a",
+        "docs/prd.md",
+        Some("prd"),
+        "confirmed",
+    ))
+    .await
+    .expect("binding");
+    let id = binding_row_id(ws, None, "node-a");
+
+    let now = OffsetDateTime::now_utc();
+    repo.upsert_analysis(analysis::Model {
+        id: analysis_row_id(id, "purpose"),
+        tenant_id: ws,
+        document_id: None,
+        binding_id: Some(id),
+        detector: "purpose".to_string(),
+        state: "passed".to_string(),
+        task_id: Some("t_1".to_string()),
+        summary: "purpose: prd".to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .expect("verdict");
+
+    let rows = repo
+        .list_binding_analyses(ws, &[id])
+        .await
+        .expect("list by binding");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].document_id, None);
+    assert_eq!(rows[0].binding_id, Some(id));
+    assert_eq!(rows[0].state, "passed");
+
+    // And it is not a document's verdict, however the caller asks.
+    let by_doc = repo
+        .list_analyses(ws, &[id])
+        .await
+        .expect("list by document");
+    assert!(by_doc.is_empty(), "a binding's verdict is not a document's");
+}
+
+/// Exactly one subject. A row about both, or about neither, is a verdict
+/// nothing can read back — and it would still count against a stage gate.
+#[tokio::test]
+async fn a_verdict_must_be_about_exactly_one_subject() {
+    let repo = repo().await;
+    let ws = tenant();
+    let now = OffsetDateTime::now_utc();
+    let row = |doc: Option<Uuid>, bind: Option<Uuid>| analysis::Model {
+        id: Uuid::new_v4(),
+        tenant_id: ws,
+        document_id: doc,
+        binding_id: bind,
+        detector: "purpose".to_string(),
+        state: "passed".to_string(),
+        task_id: None,
+        summary: String::new(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    assert!(
+        repo.upsert_analysis(row(None, None)).await.is_err(),
+        "a verdict about nothing is refused"
+    );
+    assert!(
+        repo.upsert_analysis(row(Some(Uuid::new_v4()), Some(Uuid::new_v4())))
+            .await
+            .is_err(),
+        "a verdict about both is refused"
+    );
+}
+
+/// Forgetting a binding takes its verdicts with it, the way deleting a document
+/// takes its own.
+#[tokio::test]
+async fn deleting_a_binding_takes_its_verdicts_with_it() {
+    let repo = repo().await;
+    let ws = tenant();
+    repo.upsert_binding(binding(
+        ws,
+        None,
+        "node-a",
+        "docs/prd.md",
+        Some("prd"),
+        "confirmed",
+    ))
+    .await
+    .expect("binding");
+    let id = binding_row_id(ws, None, "node-a");
+    let now = OffsetDateTime::now_utc();
+    repo.upsert_analysis(analysis::Model {
+        id: analysis_row_id(id, "purpose"),
+        tenant_id: ws,
+        document_id: None,
+        binding_id: Some(id),
+        detector: "purpose".to_string(),
+        state: "passed".to_string(),
+        task_id: None,
+        summary: String::new(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .expect("verdict");
+
+    assert!(repo.delete_binding(ws, id).await.expect("delete"));
+    let rows = repo.list_binding_analyses(ws, &[id]).await.expect("list");
+    assert!(rows.is_empty(), "the cascade took the verdict");
 }

@@ -135,7 +135,11 @@ pub struct UpsertCapabilityDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct AnalysisDto {
-    pub document_id: Uuid,
+    /// The Studio document this verdict is about, when it is about one.
+    pub document_id: Option<Uuid>,
+    /// The bound repository file it is about, when it is about one of those.
+    /// Exactly one of the two is set.
+    pub binding_id: Option<Uuid>,
     /// `bloat`, `purpose`, `leak`, `traceability` -- whatever the spec-quality
     /// service offers. Not an enum: the upstream owns that list.
     pub detector: String,
@@ -538,6 +542,7 @@ impl From<Analysis> for AnalysisDto {
     fn from(a: Analysis) -> Self {
         Self {
             document_id: a.document_id,
+            binding_id: a.binding_id,
             detector: a.detector,
             state: a.state.as_str().to_string(),
             task_id: a.task_id,
@@ -936,6 +941,34 @@ async fn record_analysis(
         .ok_or_else(|| invalid(anyhow::anyhow!("state must be pending, passed or failed")))?;
     let saved = service
         .record_analysis(
+            workspace_id,
+            id,
+            &detector,
+            state,
+            body.task_id,
+            body.summary.unwrap_or_default(),
+        )
+        .await
+        .map_err(invalid)?;
+    Ok(Json(saved.into()))
+}
+
+/// The same for a document that lives in the repository: the verdict is
+/// recorded against its binding, which is what a stage gate reads.
+async fn record_binding_analysis(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, id, detector)): Path<(Uuid, Uuid, String)>,
+    Json(body): Json<RecordAnalysisDto>,
+) -> ApiResult<JsonBody<AnalysisDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    let state = AnalysisState::parse(&body.state)
+        .ok_or_else(|| invalid(anyhow::anyhow!("state must be pending, passed or failed")))?;
+    let saved = service
+        .record_binding_analysis(
             workspace_id,
             id,
             &detector,
@@ -2217,6 +2250,29 @@ pub fn register_routes(
             .error_403(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    router = OperationBuilder::put(
+        "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}",
+    )
+    .operation_id("studio_documents.record_binding_analysis")
+    .summary("Record one detector's verdict on a bound repository file")
+    .description(
+        "The counterpart of recording a verdict on a document Studio holds, for a          document that lives in the repository instead. The full finding belongs in the          artifact graph, joined to the file node; this is the index a stage gate reads,          so a stage can depend on a detector having passed whichever of the two kinds of          document answers for the type it requires.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("id", "Binding id")
+    .path_param("detector", "Detector name, e.g. purpose")
+    .json_request::<RecordAnalysisDto>(openapi, "Verdict")
+    .handler(record_binding_analysis)
+    .json_response_with_schema::<AnalysisDto>(openapi, StatusCode::OK, "Recorded verdict")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     // ── ingested-document bindings ──────────────────────────────────────────
     // Classification reads content the caller already holds (it loaded the

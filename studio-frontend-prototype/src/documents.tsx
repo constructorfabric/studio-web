@@ -808,7 +808,7 @@ function IngestedDocumentsView({
       for (let i = 0; i < targets.length; i += 1) {
         const b = targets[i];
         setProgress(`Spec Quality ${i + 1}/${targets.length} · ${basename(b.path)}`);
-        const { docType, specShare } = await detectDocType(
+        const { docType, specShare, gatePassed, taskId } = await detectDocType(
           token,
           b.path,
           contentByNode[b.node_id],
@@ -821,10 +821,16 @@ function IngestedDocumentsView({
         // unrelated files comes back with all of them called the same thing.
         const recognised = specShare >= MIN_SPEC_SHARE;
 
-        // Keep the verdict in the graph whichever way it went. The call cost an
-        // LLM round-trip, and "the detector recognised almost none of this
-        // file" is worth knowing next time as much as a confident answer is —
-        // without it, every scan pays again to learn the same thing.
+        const summary = docType
+          ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
+          : "purpose: no type named";
+
+        // Two writes, for two different things, and neither is a copy of the
+        // other. The graph keeps the finding itself — the detector, the score,
+        // the raw result — joined to the file, which is what survives and what
+        // the list shows. The binding keeps the pass/fail, which is the one
+        // question a stage gate asks and the only one it can afford to walk a
+        // graph for.
         void api
           .saveQualityFindings(token, {
             findings: [
@@ -832,10 +838,15 @@ function IngestedDocumentsView({
                 detector: "purpose",
                 subject: b.node_id,
                 path: b.path,
-                severity: recognised ? "analyzed" : "unrecognised",
-                summary: docType
-                  ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
-                  : "purpose: no type named",
+                severity:
+                  gatePassed === true
+                    ? "gate-passed"
+                    : gatePassed === false
+                      ? "gate-failed"
+                      : recognised
+                        ? "analyzed"
+                        : "unrecognised",
+                summary,
                 score: specShare,
               },
             ],
@@ -845,6 +856,21 @@ function IngestedDocumentsView({
           .catch(() => {
             // The binding below is the decision; losing its trace is not worth
             // failing the run the person is watching.
+          });
+
+        // `gate` is `leak_share` against a threshold — no foreign content where
+        // the type says there should be none. Useless as evidence for the type
+        // it named, exactly right as the verdict a stage gating on `purpose`
+        // waits for. Unknown stays `pending`: a gate never opens on a value we
+        // could not interpret.
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "purpose", {
+            state: gatePassed === true ? "passed" : gatePassed === false ? "failed" : "pending",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {
+            // Same reasoning: the person is watching the queue, not the gate.
           });
 
         if (docType && recognised && types.some((t) => t.key === docType)) {

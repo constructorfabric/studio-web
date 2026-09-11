@@ -95,6 +95,29 @@ Our own guess is exactly what a re-scan is *for*: improving a type's template
 has to be able to change it. Either way the run refreshes conformance against
 what the file says today.
 
+## What a stage counts
+
+A stage requirement is met by a document created in Studio **or** by a
+repository file someone bound to that type — only one a person settled, never an
+unreviewed proposal.
+
+A stage's *gates* are met the same way from either side. A detector's verdict is
+a row in `studio_document_analyses` whose subject is one or the other: a
+document Studio holds, or a binding. Exactly one of the two columns is set,
+which the database checks, and forgetting either subject takes its verdicts with
+it.
+
+That row is an **index**, not the record. The finding itself — detector, score,
+raw result — lives in the artifact graph joined to the file node, which is what
+survives and what the queue shows. The row answers the one question a gate asks,
+cheaply: did this detector pass for this document. Walking the graph to answer
+it, per stage, per requirement, is not the shape of that question.
+
+Only `passed` opens a gate. Pending, failed, and anything this build cannot
+interpret keep it shut, and verdicts never cross between the two kinds of
+subject: a document's passing verdict says nothing about a repository file of
+the same type.
+
 ## The person's ruling
 
 `PUT …/document-bindings/{id}` takes one explicit action — `confirm` the

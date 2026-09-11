@@ -196,8 +196,10 @@ export async function detectDocType(
   const r = (view.result ?? {}) as {
     doc_type?: unknown;
     mixture?: Record<string, unknown>;
+    gate?: Record<string, unknown>;
   };
   const docType = typeof r.doc_type === "string" && r.doc_type.trim() ? r.doc_type.trim() : null;
+  const passed = r.gate?.passed ?? r.gate?.ok;
 
   // `mixture` is how much of the document each section role accounts for.
   // `other` is the share that is not specification content at all, so what is
@@ -205,7 +207,12 @@ export async function detectDocType(
   // and that, not `gate`, is what says whether `doc_type` means anything.
   const other = Number(r.mixture?.other ?? 0);
   const specShare = Number.isFinite(other) ? Math.max(0, Math.min(1, 1 - other)) : 0;
-  return { docType, specShare };
+  return {
+    docType,
+    specShare,
+    gatePassed: typeof passed === "boolean" ? passed : null,
+    taskId: view.task_id,
+  };
 }
 
 /** What the `purpose` detector concluded about one document. */
@@ -215,6 +222,15 @@ export interface DocTypeVerdict {
   /** How much of the document read as specification content rather than
    *  `other`, 0.0–1.0 — the detector's own evidence for the type it named. */
   specShare: number;
+  /** Whether the purpose gate passed: `leak_share` under its threshold, i.e.
+   *  no foreign content where the type says there should be none.
+   *
+   *  This is the one thing `gate` is good for. It is not evidence for
+   *  `doc_type` — see [`MIN_SPEC_SHARE`] — but it is exactly what a stage that
+   *  gates on `purpose` is asking about. */
+  gatePassed: boolean | null;
+  /** The upstream task, so a disputed verdict can be traced to its run. */
+  taskId: string;
 }
 
 /** Below this, the detector recognised too little of the document for the type
