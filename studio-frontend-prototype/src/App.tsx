@@ -100,6 +100,12 @@ type StudioTarget = {
   standalone?: boolean;
 };
 
+/** The product's mark, served from public/. Built through BASE_URL rather than
+ *  written as "/favicon.png": vite is configured with `base: "./"` precisely
+ *  because this bundle is also mounted under `/prototype/` (see nginx.conf),
+ *  and an absolute path would 404 there while working fine at the root. */
+const PRODUCT_MARK = `${import.meta.env.BASE_URL}favicon.png`;
+
 /* ── Filters (right panel) ── */
 
 interface Filters {
@@ -502,7 +508,7 @@ function OrganizationAccessGate({
   return (
     <div className="login-page">
       <div className="login-panel">
-        <div className="logo login-logo">CS</div>
+        <img className="logo login-logo" src={PRODUCT_MARK} alt="" />
         <h1 className="login-title">
           {loading ? "Checking organization access" : "Waiting for organization access"}
         </h1>
@@ -1059,7 +1065,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             product family — API docs and the IdP admin are the real others. */}
         <div className="wordmark product-switch">
           <button className="product-button" onClick={() => setProductMenu((v) => !v)}>
-            <div className="logo">CS</div>
+            <img className="logo" src={PRODUCT_MARK} alt="" />
             <strong>Constructor Studio</strong>
             <span className="chev">▾</span>
           </button>

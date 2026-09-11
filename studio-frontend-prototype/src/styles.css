@@ -193,11 +193,13 @@ h2 {
 }
 
 .wordmark { display: flex; align-items: center; gap: 10px; }
-.wordmark .logo {
+/* The product's mark (public/favicon.png), not a tinted "CS" tile of our own —
+   the portal ships this image and nothing else as its logo, so inventing a
+   monogram here was the one piece of branding the two could not share. It is a
+   full-bleed square, hence object-fit rather than padding. */
+.logo {
   width: 34px; height: 34px; border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, color-mix(in oklab, var(--primary) 78%, white), var(--primary));
-  color: var(--primary-foreground); font-weight: 700; font-size: 18px;
-  display: grid; place-items: center;
+  object-fit: cover; flex: none; display: block;
 }
 
 .topbar {
@@ -582,7 +584,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   padding: 3rem 2.75rem 2.25rem;
   display: flex; flex-direction: column; gap: 12px;
 }
-.login-logo { width: 48px; height: 48px; font-size: 26px; border-radius: var(--radius-lg); margin-bottom: 8px; }
+.login-logo { width: 48px; height: 48px; border-radius: var(--radius-lg); margin-bottom: 8px; }
 .login-title { font-size: 2.1rem; margin: 0; }
 .login-sso { width: 100%; padding: 12px; font-size: 15px; margin-top: 10px; }
 .login-providers { display: flex; gap: 10px; }
@@ -642,8 +644,10 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .product-button {
   display: flex; align-items: center; gap: 10px; width: 100%;
   background: none; border: none; padding: 4px 6px; cursor: pointer;
-  font-size: 15px; color: var(--foreground); border-radius: var(--radius-lg);
+  /* The shell's product name: 16px, 600, on --foreground. */
+  font-size: 16px; line-height: 1.5rem; color: var(--foreground); border-radius: var(--radius-lg);
 }
+.product-button strong { font-weight: 600; }
 .product-button:hover { background: var(--accent); }
 .product-button .chev { color: var(--muted-foreground); font-size: 11px; }
 .product-menu {
