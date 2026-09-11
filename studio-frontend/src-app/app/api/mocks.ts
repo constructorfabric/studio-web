@@ -9,7 +9,15 @@
  */
 
 import type { MockMap } from '@gears-frontx/react';
-import type { Me, MembershipList, Page, Tenant } from './types';
+import type {
+  InvitationList,
+  Me,
+  MembershipList,
+  Organization,
+  OrganizationCapabilities,
+  Page,
+  Tenant,
+} from './types';
 import { TENANT_TYPES } from './types';
 
 const HOME_TENANT_ID = '00000000-0000-0000-0000-0000000000aa';
@@ -70,8 +78,28 @@ export const identityMockMap: MockMap = {
         user_id: '00000000-0000-0000-0000-0000000000f1',
         org_id: HOME_TENANT_ID,
         role: 'owner',
+        status: 'active',
         source: 'assignment',
       },
     ],
+  }),
+
+  // Nothing waiting: the ordinary case for somebody who already has an
+  // organization, and the one the shell has to render without looking empty.
+  'GET /cf/studio-user/v1/me/invitations': (): InvitationList => ({ items: [] }),
+};
+
+/**
+ * Organizations mock map
+ * Keys are full URL patterns (including the /cf/studio-organizations/v1 baseURL)
+ */
+export const organizationsMockMap: MockMap = {
+  'GET /cf/studio-organizations/v1/capabilities': (): OrganizationCapabilities => ({
+    self_service: true,
+  }),
+
+  'POST /cf/studio-organizations/v1/organizations': (body): Organization => ({
+    id: '00000000-0000-0000-0000-0000000000c1',
+    name: (body as { name?: string } | undefined)?.name ?? 'New organization',
   }),
 };

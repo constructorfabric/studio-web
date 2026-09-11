@@ -62,9 +62,53 @@ export interface Membership {
   user_id: string;
   org_id: string;
   role: string;
+  /**
+   * `active` or `suspended`. A suspended membership grants nothing while it
+   * stands, so it never reaches this list — the shell reads the field to say
+   * what it is looking at, not to decide access.
+   */
+  status: string;
   source: string;
 }
 
 export interface MembershipList {
   items: Membership[];
+}
+
+/**
+ * An invitation waiting for the signed-in person
+ * (GET /cf/studio-user/v1/me/invitations).
+ *
+ * Matched to them by a verified address, never by one they typed: the token is
+ * what accepts it, and the list only ever shows invitations already addressed
+ * to an address this person has proven (ADR-0018 §2).
+ */
+export interface Invitation {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  expires_at_epoch_ms: number;
+}
+
+export interface InvitationList {
+  items: Invitation[];
+}
+
+/**
+ * What this installation lets people do with organizations
+ * (GET /cf/studio-organizations/v1/capabilities).
+ *
+ * `self_service` is false in an installation inside one company, where the
+ * organization already exists and people are joined to it — so the screen
+ * offers waiting rather than a control that answers 403 (ADR-0018 §4).
+ */
+export interface OrganizationCapabilities {
+  self_service: boolean;
+}
+
+/** An organization as `studio-organizations` returns it. */
+export interface Organization {
+  id: string;
+  name: string;
 }

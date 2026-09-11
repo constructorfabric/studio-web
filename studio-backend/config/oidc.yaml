@@ -401,6 +401,21 @@ gears:
       # Canonical identity store (users, logins, memberships, aliases).
       # backend-bootstrap creates this database from config on start.
       dbname: "studio_users"
+    config:
+      # Who administers this installation. Each subject listed here gets a
+      # membership of the platform root at every start, which is what being a
+      # platform administrator is (ADR-0018 §3) — and ADR-0011 §4 asks for a
+      # deliberately provisioned identity rather than whoever logs in first.
+      # The realm's `admin` user, by the id realm-studio.json pins. Nothing else
+      # makes an administrator now: the token's tenant stopped being one
+      # (ADR-0018 §3), so an installation that names nobody here has no
+      # administrator at all — the gear says so at boot.
+      #
+      # A deployment with its own identity provider puts its own subject ids
+      # here; there is no other way in, and that is the point — an administrator
+      # is provisioned deliberately, never claimed by whoever signs in.
+      platform_admins:
+        - "00000000-0000-4000-8000-000000000a11"
 
   studio-credstore-pg:
     database:

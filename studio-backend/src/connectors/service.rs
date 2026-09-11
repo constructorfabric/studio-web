@@ -529,6 +529,54 @@ impl ConnectorService {
     /// the connection's own tenant, so deleting an inherited connection from a
     /// workspace touches the organization's catalogue — and fails with the
     /// authorization error it should if the caller may not write there.
+    /// Delete the personal connections `person` created in this tenant.
+    ///
+    /// Called when somebody leaves an organization. A *personal* connection
+    /// holds that person's own credential in credstore, and under ADR-0012 the
+    /// record is also their proof of controlling the external account — so an
+    /// organization they are no longer part of must not keep either. Shared
+    /// connections belong to the organization and stay.
+    ///
+    /// `created_by` stores the subject that wrote the row, so it is resolved to
+    /// a person before being compared: somebody who created a connection under
+    /// one of their logins is still its creator under another (ADR-0014).
+    ///
+    /// Returns how many were removed. A failure on one is logged and the rest
+    /// are still taken: leaving half a person's credentials behind is worse
+    /// than leaving none.
+    pub async fn delete_personal_of(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        people: &dyn PersonResolver,
+        person: &str,
+    ) -> anyhow::Result<usize> {
+        let mut removed = 0;
+        for connection in self.list(ctx, tenant).await? {
+            if connection.scope != ConnectionScope::Personal.as_str()
+                || connection.created_by.trim().is_empty()
+            {
+                continue;
+            }
+            let creator = people
+                .resolve_recorded_subject(&connection.created_by)
+                .await
+                .unwrap_or(None);
+            if creator.as_deref() != Some(person) {
+                continue;
+            }
+            match self.delete(ctx, tenant, connection.id).await {
+                Ok(true) => removed += 1,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    connection = %connection.id,
+                    "studio-connector: could not remove a leaver's personal connection: {error:#}"
+                ),
+            }
+        }
+        Ok(removed)
+    }
+
     pub async fn delete(
         &self,
         ctx: &SecurityContext,

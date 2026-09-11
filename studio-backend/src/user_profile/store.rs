@@ -46,6 +46,9 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn logins_of(&self, user_id: &str) -> Result<Vec<LoginView>>;
     async fn upsert_membership(&self, m: &MembershipView) -> Result<()>;
     async fn memberships_of(&self, user_id: &str) -> Result<Vec<MembershipView>>;
+    /// Everybody in one organization. The last-owner rule needs to see the
+    /// whole room, not one person's side of it.
+    async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>>;
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()>;
     async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()>;
     async fn aliases_of(&self, user_id: &str) -> Result<Vec<AliasRecord>>;
@@ -67,6 +70,12 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// and "used" mean to a caller, and a store that hid them would make those
     /// two indistinguishable from "no such invitation".
     async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>>;
+    /// The invitation with this id, whatever state it is in.
+    ///
+    /// The other way in, for a person the server has already matched to an
+    /// invitation by a verified address — they never saw the token, and the
+    /// listing that showed it to them proved as much as the token would.
+    async fn find_invitation_by_id(&self, id: &str) -> Result<Option<InvitationRecord>>;
     async fn invitations_of_org(&self, org_id: &str) -> Result<Vec<InvitationRecord>>;
     /// Pending, unexpired invitations for one address.
     async fn invitations_for_email(&self, email: &str) -> Result<Vec<InvitationRecord>>;
@@ -107,6 +116,7 @@ fn membership_to_view(m: entity::membership::Model) -> MembershipView {
         user_id: m.user_id.to_string(),
         org_id: m.org_id.to_string(),
         role: m.role,
+        status: m.status,
         source: m.source,
         created_at_epoch_ms: to_ms(m.created_at),
         updated_at_epoch_ms: to_ms(m.updated_at),
@@ -284,6 +294,7 @@ impl IdentityStore for PgStore {
             user_id: ActiveValue::Set(uid),
             org_id: ActiveValue::Set(org),
             role: ActiveValue::Set(m.role.clone()),
+            status: ActiveValue::Set(m.status.clone()),
             source: ActiveValue::Set(m.source.clone()),
             created_at: ActiveValue::Set(from_ms(m.created_at_epoch_ms)),
             updated_at: ActiveValue::Set(from_ms(m.updated_at_epoch_ms)),
@@ -293,6 +304,7 @@ impl IdentityStore for PgStore {
         ])
         .update_columns([
             entity::membership::Column::Role,
+            entity::membership::Column::Status,
             entity::membership::Column::Source,
             entity::membership::Column::UpdatedAt,
         ])
@@ -317,6 +329,22 @@ impl IdentityStore for PgStore {
             .secure()
             .scope_with(&scope())
             .filter(Condition::all().add(entity::membership::Column::UserId.eq(uid)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(membership_to_view)
+            .collect())
+    }
+
+    async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::membership::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::membership::Column::OrgId.eq(parse_uuid(org_id)?)))
             .all(&conn)
             .await?
             .into_iter()
@@ -479,6 +507,20 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn find_invitation_by_id(&self, id: &str) -> Result<Option<InvitationRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::invitation::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::invitation::Column::Id.eq(parse_uuid(id)?)))
+            .one(&conn)
+            .await?
+            .map(invitation_to_view))
     }
 
     async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>> {

@@ -541,6 +541,17 @@ gears:
       # postgres.yaml documents for itself.
       server: "pg_main"
       dbname: "studio_users"
+    config:
+      # Who administers this installation. Each subject listed here gets a
+      # membership of the platform root at every start, which is what being a
+      # platform administrator is (ADR-0018 §3) — and ADR-0011 §4 asks for a
+      # deliberately provisioned identity rather than whoever logs in first.
+      # The static-token admin below. Nothing else makes an administrator now:
+      # the token's tenant stopped being one (ADR-0018 §3), so an installation
+      # that names nobody here has no administrator at all — the gear says so at
+      # boot.
+      platform_admins:
+        - "00000000-0000-0000-0000-00000000a001"
 
   graph-storage:
     database:

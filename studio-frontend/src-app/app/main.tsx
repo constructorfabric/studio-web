@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, setMenuCollapsed, type JSONSchema } from '@gears-frontx/react';
 import { Toaster } from '@/app/components/ui/sonner';
-import { AccountsApiService, IdentityApiService } from '@/app/api';
+import { AccountsApiService, IdentityApiService, OrganizationsApiService } from '@/app/api';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
@@ -64,6 +64,7 @@ gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
 // Register accounts service (application-level service for user info)
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
+apiRegistry.register(OrganizationsApiService);
 
 // Initialize API services
 apiRegistry.initialize({});

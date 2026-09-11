@@ -17,7 +17,7 @@ import {
   RestProtocol,
   RestMockPlugin,
 } from '@gears-frontx/react';
-import type { MembershipList } from './types';
+import type { InvitationList, Membership, MembershipList } from './types';
 import { identityMockMap } from './mocks';
 
 export const IDENTITY_API_BASE_URL = '/cf/studio-user/v1';
@@ -46,4 +46,26 @@ export class IdentityApiService extends BaseApiService {
    */
   readonly myMemberships =
     this.protocol(RestEndpointProtocol).query<MembershipList>('/me/memberships');
+
+  /**
+   * Invitations waiting for this person, matched to the addresses they have
+   * proven — never to one they typed.
+   *
+   * This is how somebody with no organization gets one without an administrator
+   * in the loop (ADR-0018 §2): the invitation was addressed to them, so it is
+   * theirs to accept.
+   */
+  readonly myInvitations =
+    this.protocol(RestEndpointProtocol).query<InvitationList>('/me/invitations');
+
+  /**
+   * Accept one, by the token that came with it.
+   *
+   * The membership it returns is the answer — the shell reloads its context
+   * from it rather than guessing what changed.
+   */
+  readonly acceptInvitation = this.protocol(RestEndpointProtocol).mutation<
+    Membership,
+    { token: string } | { invitation_id: string }
+  >('POST', '/me/invitations/accept');
 }

@@ -30,7 +30,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::access_config;
-use crate::user_profile::AssignmentRecorder;
+use crate::user_profile::{AssignmentRecorder, MembershipEvictor, OrganizationReader};
 
 /// The tenant type an organization has.
 ///
@@ -79,9 +79,18 @@ pub fn clean_name(raw: &str) -> Result<String> {
     Ok(name.to_owned())
 }
 
+/// What deleting an organization took with it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Deletion {
+    pub people: usize,
+    pub connections: usize,
+}
+
 pub struct OrganizationService {
     am: Arc<dyn AccountManagementClient>,
     memberships: Arc<dyn AssignmentRecorder>,
+    evictions: Arc<dyn MembershipEvictor>,
+    people: Arc<dyn OrganizationReader>,
     /// The tenant every organization is created under.
     platform_root: Uuid,
 }
@@ -90,13 +99,39 @@ impl OrganizationService {
     pub(crate) fn new(
         am: Arc<dyn AccountManagementClient>,
         memberships: Arc<dyn AssignmentRecorder>,
+        evictions: Arc<dyn MembershipEvictor>,
+        people: Arc<dyn OrganizationReader>,
         platform_root: Uuid,
     ) -> Self {
         Self {
             am,
             memberships,
+            evictions,
+            people,
             platform_root,
         }
+    }
+
+    /// May the caller delete this organization?
+    ///
+    /// Its owner may, and so may a platform administrator — the second for the
+    /// case ADR-0018 §6 calls break-glass, where the owner is gone and somebody
+    /// still has to dispose of what they left. Nobody else, whatever they can
+    /// otherwise reach inside it.
+    ///
+    /// Ownership is read from the access config rather than from the membership
+    /// row because that is the document the authorization policy evaluates, and
+    /// a deletion gate that disagreed with the policy would be a gate in name.
+    pub async fn may_delete(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
+        let subject = ctx.subject_id().to_string();
+        access_config::read(self.am.as_ref(), ctx, org_id)
+            .await
+            .grants_ownership_to(&subject)
+            || self
+                .people
+                .is_platform_admin(&subject)
+                .await
+                .unwrap_or(false)
     }
 
     /// Create an organization owned by the caller, or finish creating one.
@@ -156,6 +191,49 @@ impl OrganizationService {
             .map_err(|e| (Step::Grant, e, Some(org.id)))?;
 
         Ok(org)
+    }
+
+    /// Delete an organization: the memberships first, then the tenant.
+    ///
+    /// The order is creation's, reversed, and for the same reason creation has
+    /// one. The memberships and the personal connections that hang off them live
+    /// *inside* the tenant — its metadata holds the connection catalogue — so
+    /// removing the tenant first would leave nothing to read them through, and
+    /// the credentials of everybody who was in it would stay behind in
+    /// credstore. Membership is also the authority for access (ADR-0011 §2):
+    /// while it exists the organization is still somebody's, and it must be the
+    /// first thing to stop being true.
+    ///
+    /// Deleting a tenant is a soft delete with a retention window in
+    /// account-management, and it refuses a tenant that still has children — a
+    /// workspace or a project. That refusal is the right one and is passed
+    /// through: an organization with work in it is not something to remove by
+    /// answering one prompt.
+    ///
+    /// Idempotent as far as it can be: emptying an organization with no members
+    /// removes nothing, and account-management returns the existing tombstone
+    /// for a tenant already deleted.
+    pub async fn delete(&self, ctx: &SecurityContext, org_id: Uuid) -> Result<Deletion> {
+        let tenant = self
+            .am
+            .get_tenant(ctx, org_id)
+            .await
+            .map_err(|e| anyhow!("cannot read organization {org_id}: {e}"))?;
+        // A workspace and a project are tenants too, and this route must not be
+        // a way to delete one of those by naming it an organization.
+        if tenant.tenant_type.as_deref() != Some(ORGANIZATION_TENANT_TYPE) {
+            return Err(anyhow!("{org_id} is not an organization"));
+        }
+
+        let evicted = self.evictions.evict_everybody(ctx, org_id).await?;
+        self.am
+            .delete_tenant(ctx, org_id)
+            .await
+            .map_err(|e| anyhow!("cannot delete organization {org_id}: {e}"))?;
+        Ok(Deletion {
+            people: evicted.people,
+            connections: evicted.connections,
+        })
     }
 }
 

@@ -19,7 +19,11 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
+        vec![
+            Box::new(m0001::Migration),
+            Box::new(m0002::Migration),
+            Box::new(m0003::Migration),
+        ]
     }
 }
 
@@ -162,6 +166,51 @@ CREATE INDEX IF NOT EXISTS idx_identity_invitation_email
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS identity_invitation;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0003 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0003_membership_status"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    // DEFAULT 'active' rather than a nullable column: every row
+                    // that exists was written when active was the only state
+                    // there was, so that is what it means, and a NULL would
+                    // leave every reader to decide what absence meant.
+                    r"
+ALTER TABLE identity_membership
+    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared("ALTER TABLE identity_membership DROP COLUMN IF EXISTS status;")
                 .await?;
             Ok(())
         }

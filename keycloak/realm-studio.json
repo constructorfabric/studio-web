@@ -6,6 +6,7 @@
   "accessTokenLifespan": 3600,
   "users": [
     {
+      "id": "00000000-0000-4000-8000-000000000a11",
       "username": "admin",
       "enabled": true,
       "email": "admin@studio.local",

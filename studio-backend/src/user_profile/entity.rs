@@ -93,6 +93,11 @@ pub mod membership {
         pub user_id: Uuid,
         pub org_id: Uuid,
         pub role: String,
+        /// `active` or `suspended` (ADR-0011 §2). A membership that is not
+        /// active is still a membership: the row says the person belongs here
+        /// and what they would hold if reinstated, while granting nothing
+        /// meanwhile. Leaving deletes the row; suspension does not.
+        pub status: String,
         pub source: String,
         pub created_at: OffsetDateTime,
         pub updated_at: OffsetDateTime,
