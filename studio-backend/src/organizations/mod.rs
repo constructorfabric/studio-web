@@ -23,10 +23,40 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::contracts::RestApiCapability;
 use toolkit::{Gear, GearCtx};
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
+use serde::Deserialize;
+
 use service::OrganizationService;
+
+/// What this installation lets people do with organizations.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StudioOrganizationsConfig {
+    /// May a person create one?
+    ///
+    /// `true` in the cloud: somebody arrives with no organization and makes
+    /// their own. `false` in an installation inside one company, where the
+    /// organization already exists and people are joined to it on first sight
+    /// (`studio-user.config.on_first_login`).
+    ///
+    /// These two settings are the whole difference between the two ways Studio
+    /// ships (ADR-0018 §4). The domain model does not change, and neither does
+    /// any authorization path — only how a person comes by their first
+    /// organization.
+    #[serde(default = "yes")]
+    pub self_service: bool,
+}
+
+const fn yes() -> bool {
+    true
+}
+
+impl Default for StudioOrganizationsConfig {
+    fn default() -> Self {
+        Self { self_service: true }
+    }
+}
 
 /// The tenant new organizations are created under.
 ///
@@ -41,14 +71,22 @@ const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 #[derive(Default)]
 pub struct StudioOrganizationsGear {
     service: OnceLock<Option<Arc<OrganizationService>>>,
+    self_service: OnceLock<bool>,
 }
 
 #[async_trait]
 impl Gear for StudioOrganizationsGear {
-    async fn init(&self, _ctx: &GearCtx) -> anyhow::Result<()> {
-        // Nothing to do here: everything this gear needs comes from other gears,
-        // and the REST phase is the first point at which they have all
-        // initialized.
+    async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        let cfg = ctx
+            .config_or_default::<StudioOrganizationsConfig>()
+            .unwrap_or_default();
+        if !cfg.self_service {
+            info!(
+                "studio-organizations: self-service creation is off — this installation's people \
+                 are joined to an organization that already exists"
+            );
+        }
+        let _ = self.self_service.set(cfg.self_service);
         Ok(())
     }
 }
@@ -63,7 +101,13 @@ impl RestApiCapability for StudioOrganizationsGear {
     ) -> anyhow::Result<Router> {
         let service = build_service(ctx);
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(router, openapi, service))
+        let self_service = self.self_service.get().copied().unwrap_or(true);
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            rest::SelfService(self_service),
+        ))
     }
 }
 

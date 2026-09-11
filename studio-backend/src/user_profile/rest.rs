@@ -314,13 +314,42 @@ fn configured(service: Option<Arc<IdentityService>>) -> ApiResult<Arc<IdentitySe
     })
 }
 
-fn require_platform_admin(ctx: &SecurityContext) -> ApiResult<()> {
-    if ctx.subject_tenant_id() != PLATFORM_ROOT_TENANT_ID {
-        return Err(UserProfileError::permission_denied()
-            .with_reason("PLATFORM_ADMIN_REQUIRED")
-            .create());
+/// Is the caller a platform administrator?
+///
+/// Two signals while the migration in ADR-0018 §3 runs, and they are not
+/// equivalent:
+///
+/// - **a membership of the platform root** — the answer about the *person*, and
+///   the one that will remain;
+/// - **the token's tenant** — the answer about the *login*, which is what made
+///   somebody an administrator through one sign-in method and not another.
+///
+/// Accepting either widens nothing: an installation seeds its administrators
+/// (`platform_admins`), the backfill wrote the rows for the identities that
+/// already carried the attribute, and until both are true everywhere removing
+/// the second would lock somebody out. The removal is the third step, not this
+/// one.
+async fn is_platform_admin(ctx: &SecurityContext, service: &Arc<IdentityService>) -> bool {
+    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID {
+        return true;
     }
-    Ok(())
+    service
+        .is_platform_admin(&ctx.subject_id().to_string())
+        .await
+        .unwrap_or(false)
+}
+
+async fn require_platform_admin(
+    ctx: &SecurityContext,
+    service: &Arc<IdentityService>,
+) -> ApiResult<()> {
+    if is_platform_admin(ctx, service).await {
+        Ok(())
+    } else {
+        Err(UserProfileError::permission_denied()
+            .with_reason("PLATFORM_ADMIN_REQUIRED")
+            .create())
+    }
 }
 
 /// A membership write needs authority over that organization: its owner has it,
@@ -335,8 +364,7 @@ async fn require_org_authority(
     service: &Arc<IdentityService>,
     org_id: Uuid,
 ) -> ApiResult<()> {
-    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID || service.is_org_owner(ctx, org_id).await
-    {
+    if is_platform_admin(ctx, service).await || service.is_org_owner(ctx, org_id).await {
         Ok(())
     } else {
         Err(UserProfileError::permission_denied()
@@ -438,8 +466,8 @@ async fn get_user(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(user_id): Path<String>,
 ) -> ApiResult<JsonBody<UserProfileDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let profile = service
         .get_profile(&user_id)
         .await
@@ -457,8 +485,8 @@ async fn get_user_memberships(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(user_id): Path<String>,
 ) -> ApiResult<JsonBody<MembershipListDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let items = service
         .list_memberships(&user_id)
         .await
@@ -564,8 +592,8 @@ async fn add_alias(
     Path(user_id): Path<String>,
     Json(req): Json<AddAliasRequest>,
 ) -> ApiResult<JsonBody<AliasWriteDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let confidence = parse_confidence(req.confidence.as_deref())?;
     // Through the same gate as the self-service path: an admin writing on
     // somebody's behalf must not be able to silently take an identity another
@@ -751,8 +779,8 @@ async fn merge_users(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Json(req): Json<MergeRequest>,
 ) -> ApiResult<JsonBody<MergeResultDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let result = service
         .merge(&req.from_user_id, &req.into_user_id)
         .await
@@ -769,8 +797,8 @@ async fn resolve_identity(
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Json(req): Json<ResolveRequest>,
 ) -> ApiResult<JsonBody<ResolveResultDto>> {
-    require_platform_admin(&ctx)?;
     let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
     let user_id = service
         .resolve_or_provision(&req.provider, &req.subject, None, None, true)
         .await

@@ -147,6 +147,20 @@ impl toolkit::contracts::RestApiCapability for IdentityDirectoryGear {
                 })
                 .ok(),
         );
-        Ok(rest::register_routes(router, openapi, service, memberships))
+        // Same phase and the same reasoning as the recorder above.
+        let people = rest::People(
+            ctx.client_hub()
+                .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ))
+                .ok(),
+        );
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            memberships,
+            people,
+        ))
     }
 }

@@ -34,6 +34,19 @@ pub struct CreateOrganizationRequest {
     pub organization_id: Option<String>,
 }
 
+/// Whether this installation lets people create organizations.
+#[derive(Clone, Copy)]
+pub struct SelfService(pub bool);
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationCapabilitiesDto {
+    /// When false, a person with no organization is waiting for an invitation
+    /// or for the installation to join them — and the portal should not offer
+    /// a control that will be refused.
+    pub self_service: bool,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct OrganizationDto {
@@ -52,11 +65,25 @@ fn configured(service: Option<Arc<OrganizationService>>) -> ApiResult<Arc<Organi
     })
 }
 
+async fn organization_capabilities(
+    Extension(self_service): Extension<SelfService>,
+) -> ApiResult<JsonBody<OrganizationCapabilitiesDto>> {
+    Ok(Json(OrganizationCapabilitiesDto {
+        self_service: self_service.0,
+    }))
+}
+
 async fn create_organization(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Extension(self_service): Extension<SelfService>,
     Json(req): Json<CreateOrganizationRequest>,
 ) -> ApiResult<JsonBody<OrganizationDto>> {
+    if !self_service.0 {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("SELF_SERVICE_DISABLED")
+            .create());
+    }
     let service = configured(service)?;
     let resume = match req.organization_id.as_deref() {
         None => None,
@@ -97,7 +124,29 @@ pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<OrganizationService>>,
+    self_service: SelfService,
 ) -> Router {
+    let router = OperationBuilder::get("/studio-organizations/v1/capabilities")
+        .operation_id("studio_organizations.capabilities")
+        .summary("What this installation lets people do with organizations")
+        .description(
+            "One field today: whether a person may create an organization. The portal reads it \
+             so the no-organization screen offers creation where creation is possible and says \
+             `wait for an invitation` where it is not — rather than offering a control that \
+             answers 403.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(organization_capabilities)
+        .json_response_with_schema::<OrganizationCapabilitiesDto>(
+            openapi,
+            StatusCode::OK,
+            "Capabilities",
+        )
+        .error_401(openapi)
+        .register(router, openapi);
+
     OperationBuilder::post("/studio-organizations/v1/organizations")
         .operation_id("studio_organizations.create_organization")
         .summary("Create an organization and own it")
@@ -120,4 +169,5 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service))
+        .layer(Extension(self_service))
 }

@@ -43,6 +43,17 @@ const SOURCE_CREATION: &str = "creation";
 /// and last way in, and the one an owner most wants to be able to tell apart.
 const SOURCE_INVITATION: &str = "invitation";
 
+/// `membership.source` for a row the installation seeded from configuration.
+const SOURCE_BOOTSTRAP: &str = "bootstrap";
+
+/// `membership.source` for a row written because somebody signed in for the
+/// first time into a deployment that says its IdP's users are its members.
+const SOURCE_FIRST_LOGIN: &str = "first_login";
+
+/// The tenant every organization hangs under, and the one whose membership
+/// makes somebody a platform administrator.
+pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
+
 /// Bumped by every write that changes who belongs where.
 ///
 /// Consumers that cache a person's organizations — the Studio PDP does, because
@@ -173,6 +184,9 @@ pub struct IdentityService {
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
     federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
+    /// The organization a person joins the first time they are seen, if the
+    /// installation says there is one.
+    first_login_join: OnceLock<Option<(Uuid, String)>>,
 }
 
 impl IdentityService {
@@ -182,6 +196,7 @@ impl IdentityService {
             am,
             connectors: OnceLock::new(),
             federated: OnceLock::new(),
+            first_login_join: OnceLock::new(),
         }
     }
 
@@ -192,6 +207,11 @@ impl IdentityService {
     /// registered. Calling it twice is ignored: the second view is equivalent.
     pub fn attach_connectors(&self, connectors: Option<Arc<ConnectorService>>) {
         let _ = self.connectors.set(connectors);
+    }
+
+    /// Tell the service which organization a new person joins, if any.
+    pub fn set_first_login_join(&self, join: Option<(Uuid, String)>) {
+        let _ = self.first_login_join.set(join);
     }
 
     /// Hand the service its view of the IdP's brokered logins.
@@ -284,6 +304,27 @@ impl IdentityService {
             linked_at_epoch_ms: now,
         };
         self.store.upsert_login(&login).await?;
+
+        // The deployment's statement that its identity provider's users are the
+        // members of one organization (ADR-0018 §4), made true here — at the one
+        // moment a person begins to exist. Recorded as a row, so it can be
+        // revoked later without touching the corporate directory, and so it
+        // remembers how it came about.
+        //
+        // Not fatal: a person who exists but has not joined yet is a person the
+        // next request can still join, whereas failing here would leave them
+        // unable to sign in at all.
+        if let Some(Some((org_id, role))) = self.first_login_join.get()
+            && let Err(error) = self
+                .record_membership(&user_id, &org_id.to_string(), role, SOURCE_FIRST_LOGIN)
+                .await
+        {
+            tracing::warn!(
+                user = %user_id,
+                organization = %org_id,
+                "studio-user: could not join the new person to the configured organization:                  {error:#}"
+            );
+        }
         Ok(user_id)
     }
 
@@ -713,6 +754,55 @@ impl IdentityService {
         )
         .await?;
         Ok(())
+    }
+
+    /// Is the person behind `subject` a platform administrator?
+    ///
+    /// The question is "do they hold a membership of the platform root", not
+    /// "what does their token say". A token names the tenant of *one login*, so
+    /// reading administrative rights from it made a person an administrator
+    /// through one sign-in method and an ordinary member through another
+    /// (ADR-0018 §3).
+    ///
+    /// This is the half of that ADR that replaces the token reading. The
+    /// callers still accept the old signal as well while the migration runs —
+    /// see the note on each one.
+    pub async fn is_platform_admin(&self, subject: &str) -> Result<bool> {
+        Ok(self
+            .organizations_of(subject)
+            .await?
+            .contains(&PLATFORM_ROOT_TENANT_ID))
+    }
+
+    /// Seed the memberships that make the configured identities administrators.
+    ///
+    /// Idempotent, and run at every start: an installation states who its
+    /// administrators are, and the row that makes it true is written from that
+    /// statement rather than from whoever happens to carry an attribute.
+    ///
+    /// Without this there is a lockout waiting at the end of the migration: once
+    /// the token signal is removed, a deployment whose administrators were only
+    /// ever administrators *by token* would have none, and no way to make one.
+    pub async fn seed_platform_admins(&self, subjects: &[String]) -> Result<usize> {
+        let mut seeded = 0;
+        for subject in subjects {
+            let subject = subject.trim();
+            if subject.is_empty() {
+                continue;
+            }
+            let user_id = self
+                .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+                .await?;
+            self.record_membership(
+                &user_id,
+                &PLATFORM_ROOT_TENANT_ID.to_string(),
+                crate::access_config::ROLE_OWNER,
+                SOURCE_BOOTSTRAP,
+            )
+            .await?;
+            seeded += 1;
+        }
+        Ok(seeded)
     }
 
     /// The organizations the person behind `subject` is a member of.
