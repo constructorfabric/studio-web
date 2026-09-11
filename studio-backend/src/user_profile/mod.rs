@@ -145,6 +145,13 @@ pub trait AssignmentRecorder: Send + Sync + 'static {
         org_id: uuid::Uuid,
         role: &str,
     ) -> anyhow::Result<()>;
+
+    /// Record that `subject` created `org_id` and owns it.
+    ///
+    /// The role is not a parameter: creating an organization makes you its
+    /// owner and nothing else, so letting a caller pass a role here would only
+    /// create a way to get it wrong.
+    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -156,6 +163,10 @@ impl AssignmentRecorder for IdentityService {
         role: &str,
     ) -> anyhow::Result<()> {
         IdentityService::record_assignment(self, subject, org_id, role).await
+    }
+
+    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()> {
+        IdentityService::record_creation(self, subject, org_id).await
     }
 }
 

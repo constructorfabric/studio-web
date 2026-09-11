@@ -14,8 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Result, anyhow};
-use gts::GtsTypeId;
-use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -26,10 +24,6 @@ use super::store::IdentityStore;
 use crate::connectors::service::ConnectorService;
 use crate::identity_directory::FederatedIdentityReader;
 
-/// AM tenant-metadata type holding an organization's access config (the same
-/// document the Studio PDP reads).
-const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
-
 /// A connection whose scope makes it a team or bot credential rather than the
 /// caller's own. `ConnectionScope::Personal` serialises as this string.
 const PERSONAL_SCOPE: &str = "personal";
@@ -37,6 +31,11 @@ const PERSONAL_SCOPE: &str = "personal";
 /// `membership.source` for a row written by the assignment path, as opposed to
 /// `manual` (an operator using the REST route directly).
 const SOURCE_ASSIGNMENT: &str = "assignment";
+
+/// `membership.source` for the owner row a person gets by creating the
+/// organization. The third way in, beside being assigned and being added by
+/// hand — and the one an owner's member list should be able to tell apart.
+const SOURCE_CREATION: &str = "creation";
 
 /// Provider tag for a sign-in method minted through Studio's own Keycloak
 /// realm. Every bearer the platform authenticates carries a subject from there,
@@ -114,25 +113,6 @@ pub struct MergeResult {
     pub memberships_moved: usize,
 }
 
-// ── Access config (subset; mirrors the PDP's view) ───────────────────────────
-
-#[derive(Debug, Clone, Deserialize, Default)]
-struct AccessConfig {
-    #[serde(default)]
-    grants: Vec<GrantDef>,
-}
-#[derive(Debug, Clone, Deserialize)]
-struct GrantDef {
-    #[serde(rename = "subjectType")]
-    subject_type: String,
-    #[serde(rename = "subjectId")]
-    subject_id: String,
-    #[serde(rename = "roleKey")]
-    role_key: String,
-    #[serde(rename = "scopeType")]
-    scope_type: String,
-}
-
 // ── Service ──────────────────────────────────────────────────────────────────
 
 pub struct IdentityService {
@@ -181,23 +161,9 @@ impl IdentityService {
     /// per-org authority gate: no platform-wide admin needed, and it is scoped
     /// to the one organization.
     pub async fn is_org_owner(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
-        let subject = ctx.subject_id().to_string();
-        let cfg = match self
-            .am
-            .resolve_metadata(ctx, org_id, GtsTypeId::new(ACCESS_METADATA_TYPE))
+        crate::access_config::read(self.am.as_ref(), ctx, org_id)
             .await
-        {
-            Ok(Some(entry)) => {
-                serde_json::from_value::<AccessConfig>(entry.value).unwrap_or_default()
-            }
-            _ => return false,
-        };
-        cfg.grants.iter().any(|g| {
-            g.subject_type == "member"
-                && g.subject_id == subject
-                && g.role_key == "owner"
-                && g.scope_type == "org"
-        })
+            .grants_ownership_to(&ctx.subject_id().to_string())
     }
 
     /// The canonical person behind an authenticated caller, provisioning on
@@ -678,6 +644,26 @@ impl IdentityService {
             .await?;
         self.record_membership(&user_id, &org_id.to_string(), role, SOURCE_ASSIGNMENT)
             .await?;
+        Ok(())
+    }
+
+    /// Record that `subject` created `org_id` and therefore owns it.
+    ///
+    /// Separate from [`Self::record_assignment`] only in what it records as the
+    /// source: ownership that arises from creating an organization did not come
+    /// from an operator, and an owner reading their member list should see the
+    /// difference (ADR-0018 §2).
+    pub async fn record_creation(&self, subject: &str, org_id: Uuid) -> Result<()> {
+        let user_id = self
+            .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+            .await?;
+        self.record_membership(
+            &user_id,
+            &org_id.to_string(),
+            crate::access_config::ROLE_OWNER,
+            SOURCE_CREATION,
+        )
+        .await?;
         Ok(())
     }
 
