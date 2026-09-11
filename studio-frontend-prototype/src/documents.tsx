@@ -31,7 +31,7 @@ import {
   RemoteRepo,
   WrittenFile,
 } from "./api";
-import { detectDocType, isDetectorCancel } from "./spec-quality";
+import { detectDocType, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -767,20 +767,24 @@ function IngestedDocumentsView({
       for (let i = 0; i < targets.length; i += 1) {
         const b = targets[i];
         setProgress(`Spec Quality ${i + 1}/${targets.length} · ${basename(b.path)}`);
-        const { docType, confidence } = await detectDocType(
+        const { docType, specShare } = await detectDocType(
           token,
           b.path,
           contentByNode[b.node_id],
           ctrl.signal,
         );
-        // The detector has its own vocabulary; only a name this workspace
-        // actually has a template for can be bound.
-        if (docType && types.some((t) => t.key === docType)) {
+        // Two things have to hold before a verdict is worth recording: the
+        // detector recognised enough of the document for the type it named to
+        // mean anything, and that name is one this workspace has a template
+        // for. It always names a type, so without the first check a run over
+        // unrelated files comes back with all of them called the same thing.
+        const recognised = specShare >= MIN_SPEC_SHARE;
+        if (docType && recognised && types.some((t) => t.key === docType)) {
           await api.decideDocBinding(token, workspaceId, b.id, {
             action: "set",
             type_key: docType,
             source: "spec_quality",
-            confidence: confidence ?? undefined,
+            confidence: specShare,
             content: contentByNode[b.node_id],
           });
           named += 1;
@@ -791,7 +795,11 @@ function IngestedDocumentsView({
       await reload();
       setNote(
         `Spec Quality named ${named} document${named === 1 ? "" : "s"}` +
-          (declined ? `, and had no answer for ${declined}` : "") +
+          (declined
+            ? `, and recognised too little of ${declined} to place ${
+                declined === 1 ? "it" : "them"
+              }`
+            : "") +
           ".",
       );
     } catch (e) {

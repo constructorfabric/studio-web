@@ -186,18 +186,62 @@ export async function detectDocType(
   path: string,
   text: string,
   signal?: AbortSignal,
-): Promise<{ docType: string | null; confidence: number | null }> {
+): Promise<DocTypeVerdict> {
   const view = await runDetector(
     "purpose",
     { text, path, classify_doc_type: true },
     token,
     { signal },
   );
-  const r = (view.result ?? {}) as { doc_type?: unknown; doc_type_confidence?: unknown };
+  const r = (view.result ?? {}) as {
+    doc_type?: unknown;
+    mixture?: Record<string, unknown>;
+  };
   const docType = typeof r.doc_type === "string" && r.doc_type.trim() ? r.doc_type.trim() : null;
-  const confidence = typeof r.doc_type_confidence === "number" ? r.doc_type_confidence : null;
-  return { docType, confidence };
+
+  // `mixture` is how much of the document each section role accounts for.
+  // `other` is the share that is not specification content at all, so what is
+  // left is how much of the file the detector actually recognised as a spec —
+  // and that, not `gate`, is what says whether `doc_type` means anything.
+  const other = Number(r.mixture?.other ?? 0);
+  const specShare = Number.isFinite(other) ? Math.max(0, Math.min(1, 1 - other)) : 0;
+  return { docType, specShare };
 }
+
+/** What the `purpose` detector concluded about one document. */
+export interface DocTypeVerdict {
+  /** The type it named. It always names one, hence `specShare`. */
+  docType: string | null;
+  /** How much of the document read as specification content rather than
+   *  `other`, 0.0–1.0 — the detector's own evidence for the type it named. */
+  specShare: number;
+}
+
+/** Below this, the detector recognised too little of the document for the type
+ *  it named to mean anything.
+ *
+ *  Measured against ten files of this repository whose kind we already know:
+ *
+ *  ```text
+ *  docs/adr/0009-roles-over-tenant.md      adr             0.99
+ *  .../0014-document-types-are-components  adr             0.86   gate FAILED
+ *  docs/adr/0007-shell-tokens…             adr             0.72
+ *  docs/theia-bridge-contract-v1.md        feature         0.88
+ *  docs/roadmap-alignment.md               decomposition   0.00
+ *  TASKS.md                                decomposition   0.00
+ *  README.md                               feature         0.16
+ *  ```
+ *
+ *  Two things that table settles. `doc_type` on its own is not a signal at all:
+ *  a task list and a roadmap both come back `decomposition`, because the
+ *  classifier must return one of the types it knows. And `gate` is not
+ *  confidence — it is `leak_share` against a threshold, so it passes the
+ *  roadmap and fails a genuine ADR; gating on it would reject the real
+ *  documents and keep the noise.
+ *
+ *  At 0.5 the sample keeps every real specification and drops four of the five
+ *  files that are not one. */
+export const MIN_SPEC_SHARE = 0.5;
 
 /** True when an error came from the user pressing Stop, not from a failure. */
 export const isDetectorCancel = isCancel;
