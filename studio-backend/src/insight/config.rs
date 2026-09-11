@@ -1,9 +1,14 @@
 //! Configuration for the Constructor Insight integration.
 //!
-//! Insight is an external service (its REST API lives under `/api/v1`); this
-//! gear is the seam. The base URL and API key follow the same literal-or-env
-//! convention `studio-spec-quality` uses, so a deployment can inject the secret
-//! through a Secret-backed env var without putting it in YAML.
+//! Insight is an external service; this gear is the seam. Its REST API is
+//! rooted at `/api` — not `/api/v1`, which this gear assumed until the contract
+//! was checked against the live deployment and every path under it answered
+//! 404. The one operation Insight exposes there is the analytics SQL endpoint,
+//! `POST /api/sql/query`, addressed as `api_path` + `sql_resource`.
+//!
+//! The base URL and API key follow the same literal-or-env convention
+//! `studio-spec-quality` uses, so a deployment can inject the secret through a
+//! Secret-backed env var without putting it in YAML.
 
 use serde::Deserialize;
 
@@ -25,6 +30,12 @@ pub struct InsightConfig {
     /// Path prefix on the Insight host (Insight serves its REST API here).
     #[serde(default = "default_api_path")]
     pub api_path: String,
+
+    /// Resource under `api_path` for the analytics SQL endpoint. Split out from
+    /// the prefix so a deployment can move that endpoint without also moving
+    /// `pull`/`push`.
+    #[serde(default = "default_sql_resource")]
+    pub sql_resource: String,
 }
 
 impl Default for InsightConfig {
@@ -35,6 +46,7 @@ impl Default for InsightConfig {
             api_key: String::new(),
             api_key_env: default_api_key_env(),
             api_path: default_api_path(),
+            sql_resource: default_sql_resource(),
         }
     }
 }
@@ -46,7 +58,10 @@ fn default_api_key_env() -> String {
     "STUDIO_INSIGHT_API_KEY".into()
 }
 fn default_api_path() -> String {
-    "/api/v1".into()
+    "/api".into()
+}
+fn default_sql_resource() -> String {
+    "sql/query".into()
 }
 
 fn env_non_empty(name: &str) -> Option<String> {
@@ -77,8 +92,19 @@ impl InsightConfig {
     /// The API path with exactly one leading slash and no trailing slash.
     pub fn resolve_api_path(&self) -> String {
         let p = self.api_path.trim();
-        let p = if p.is_empty() { "/api/v1" } else { p };
+        let p = if p.is_empty() { "/api" } else { p };
         format!("/{}", p.trim_matches('/'))
+    }
+
+    /// The SQL resource relative to the API path, with no slash at either end —
+    /// the client supplies the one that joins them.
+    pub fn resolve_sql_resource(&self) -> String {
+        let r = self.sql_resource.trim().trim_matches('/');
+        if r.is_empty() {
+            default_sql_resource()
+        } else {
+            r.to_string()
+        }
     }
 }
 
@@ -90,7 +116,7 @@ mod tests {
     //! Same literal-or-env convention as `studio-spec-quality`, with one extra
     //! knob: Insight serves its REST API under a prefix, and the client
     //! concatenates `{base_url}{api_path}/{resource}`. Both halves of that join
-    //! have to be normalised or the seam addresses `…//api/v1//reports`.
+    //! have to be normalised or the seam addresses `…//api//sql/query`.
     //!
     //! Tests that write to the environment take [`crate::test_env::lock`]: the
     //! process has one environment, so the lock has to be one too.
@@ -165,15 +191,15 @@ mod tests {
     /// gets to type, so every plausible spelling has to land in one place.
     #[test]
     fn the_api_path_normalises_to_one_leading_slash_and_no_trailing_one() {
-        for written in ["/api/v1", "api/v1", "/api/v1/", "api/v1/", "  /api/v1/  "] {
+        for written in ["/api", "api", "/api/", "api/", "  /api/  "] {
             let cfg = InsightConfig {
                 api_path: written.to_string(),
                 ..config("path")
             };
             assert_eq!(
                 cfg.resolve_api_path(),
-                "/api/v1",
-                "`{written}` must normalise to /api/v1"
+                "/api",
+                "`{written}` must normalise to /api"
             );
         }
     }
@@ -187,7 +213,7 @@ mod tests {
                 api_path: written.to_string(),
                 ..config("blank_path")
             };
-            assert_eq!(cfg.resolve_api_path(), "/api/v1");
+            assert_eq!(cfg.resolve_api_path(), "/api");
         }
     }
 
@@ -196,6 +222,26 @@ mod tests {
         let cfg = InsightConfig::default();
         assert_eq!(cfg.base_url_env, "STUDIO_INSIGHT_BASE_URL");
         assert_eq!(cfg.api_key_env, "STUDIO_INSIGHT_API_KEY");
-        assert_eq!(cfg.resolve_api_path(), "/api/v1");
+        assert_eq!(cfg.resolve_api_path(), "/api");
+    }
+
+    /// The endpoint is addressed as two halves, so the resource half needs the
+    /// same treatment as the prefix: whatever it is written as, it joins once.
+    #[test]
+    fn the_sql_resource_normalises_and_falls_back() {
+        for written in ["sql/query", "/sql/query", "sql/query/", "  /sql/query/  "] {
+            let cfg = InsightConfig {
+                sql_resource: written.to_string(),
+                ..config("sql_resource")
+            };
+            assert_eq!(cfg.resolve_sql_resource(), "sql/query");
+        }
+        for blank in ["", "   ", "/"] {
+            let cfg = InsightConfig {
+                sql_resource: blank.to_string(),
+                ..config("blank_sql_resource")
+            };
+            assert_eq!(cfg.resolve_sql_resource(), "sql/query");
+        }
     }
 }

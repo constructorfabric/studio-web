@@ -1,19 +1,24 @@
 //! studio-insight — the integration seam to Constructor Insight
 //! (`github.com/constructorfabric/insight`, a decision-intelligence platform
-//! whose REST API lives under `/api/v1`).
+//! whose REST API is rooted at `/api`).
 //!
 //! This gear wraps that external service so the rest of the assembly has one
-//! place of contact for two scenarios: **pull** data from Insight and **push**
-//! data to Insight. The seam is exposed two ways:
-//!   * a REST surface (`/studio-insight/v1/{pull,push,health}`) for the portal
-//!     and out-of-process callers, and
+//! place of contact for it. The seam is exposed two ways:
+//!   * a REST surface (`/studio-insight/v1/{query,components/metrics,pull,push,
+//!     health}`) for the portal and out-of-process callers, and
 //!   * an in-process [`InsightClient`] published to the ClientHub, so another
 //!     gear can reach Insight without a network hop through our own gateway.
 //!
-//! Deliberately generic (resource + JSON) while Insight finalizes the contract
-//! for us; typed methods land on the same client once their shapes are pinned.
+//! The operation Insight exposes today is a read-only SQL endpoint over its
+//! ClickHouse warehouse (`POST /api/sql/query`), typed here as
+//! [`InsightClient::query`]; `pull`/`push` remain the generic resource + JSON
+//! escape hatch for whatever Insight publishes next. See [`client`] for the
+//! wire contract and the shape of the warehouse, and [`components`] for the one
+//! question Insight's own dimensions cannot answer: delivery per *component*
+//! (a gear), which lives below the repository its metrics are keyed by.
 
 mod client;
+mod components;
 mod config;
 mod rest;
 
@@ -49,23 +54,35 @@ impl Gear for StudioInsightGear {
         let base_url = cfg.resolve_base_url();
         let api_key = cfg.resolve_api_key();
         let api_path = cfg.resolve_api_path();
+        let sql_resource = cfg.resolve_sql_resource();
 
         if base_url.is_empty() || api_key.is_none() {
             warn!(
                 base_url_set = !base_url.is_empty(),
                 key_set = api_key.is_some(),
-                "studio-insight: upstream not (fully) configured — pull/push will 500. \
-                 Set STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY (or the YAML equivalents)"
+                "studio-insight: upstream not (fully) configured — every call answers 503 \
+                 and /studio-insight/v1/health reports configured=false. Set \
+                 STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY (or the YAML equivalents)"
             );
         } else {
-            info!(base_url = %base_url, api_path = %api_path, "studio-insight: configured");
+            info!(
+                base_url = %base_url,
+                sql_endpoint = %format!("{base_url}{api_path}/{sql_resource}"),
+                "studio-insight: configured"
+            );
         }
 
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(60))
             .build()?;
-        let client = Arc::new(HttpInsightClient::new(http, base_url, api_path, api_key));
+        let client = Arc::new(HttpInsightClient::new(
+            http,
+            base_url,
+            api_path,
+            sql_resource,
+            api_key,
+        ));
 
         // Publish the seam for other gears (in `init`, before any REST phase, so
         // a consumer resolving it in its own REST phase cannot lose a race).

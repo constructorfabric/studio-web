@@ -486,6 +486,63 @@ export interface CatalogNode {
   };
 }
 
+// ── Constructor Insight: delivery metrics per component ──────────────────────
+
+/** One component to measure. Either a path prefix or a directory name; with
+ *  neither, the `key` is used as the directory name — which is what a caller
+ *  that knows component names but not their paths wants. */
+export interface ComponentSpecInput {
+  key: string;
+  path_prefix?: string;
+  path_segment?: string;
+}
+
+export interface ComponentMetricsQuery {
+  /** `owner/name`, or a bare `name` to match in any org. */
+  repository: string;
+  /** Inclusive `YYYY-MM-DD`; both default to the last 30 days. */
+  from?: string;
+  to?: string;
+  /** Group by the first N path segments when `components` is empty (1–6). */
+  depth?: number;
+  components?: ComponentSpecInput[];
+  /** Return the `other` remainder row. Default true. */
+  include_other?: boolean;
+  /** Ask for `series` as well — one point per component per bucket. */
+  bucket?: "day" | "week" | "month";
+  limit?: number;
+}
+
+export interface ComponentMetricsRow {
+  component: string;
+  commits: number;
+  files_changed: number;
+  lines_added: number;
+  lines_removed: number;
+  authors: number;
+}
+
+export interface ComponentTrendPoint {
+  component: string;
+  /** The bucket's first day, `YYYY-MM-DD`. */
+  date: string;
+  commits: number;
+  lines_added: number;
+  lines_removed: number;
+}
+
+export interface ComponentMetrics {
+  repository: string;
+  /** The window actually used, resolved server-side when the request defaulted it. */
+  from: string;
+  to: string;
+  components: ComponentMetricsRow[];
+  bucket?: string | null;
+  /** Sparse: a bucket with no commits has no point, rather than a zero. */
+  series: ComponentTrendPoint[];
+  truncated: boolean;
+}
+
 /** A relation between two artifact nodes (endpoints by instance id). Types:
  *  `…rel.authored_by…`, `…rel.modifies…`, `…rel.artifact_of…`, `…rel.contains…`. */
 export interface ArtifactEdge {
@@ -1983,6 +2040,13 @@ export const api = {
       `/studio-components-catalog/v1/versions${crate ? `?crate=${encodeURIComponent(crate)}` : ""}`,
       token,
     ),
+
+  /** Delivery metrics for one repository, sliced by component (studio-insight). */
+  insightComponentMetrics: (token: string, body: ComponentMetricsQuery) =>
+    request<ComponentMetrics>("/studio-insight/v1/components/metrics", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   /** The gear repository connected to a project (0 or 1 node). */
   getProjectGearRepo: (token: string, projectId: string) =>

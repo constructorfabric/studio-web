@@ -60,13 +60,21 @@ gears:
       api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
 
   # Integration seam to Constructor Insight (external decision-intelligence
-  # service, REST at /api/v1). Unconfigured by default — set
-  # STUDIO_INSIGHT_BASE_URL / STUDIO_INSIGHT_API_KEY to enable; until then
-  # pull/push answer 500 and /studio-insight/v1/health reports configured=false.
+  # service). Its REST root is /api — NOT /api/v1, which this gear assumed
+  # until the contract was checked against the live deployment — and the one
+  # endpoint it exposes today is the read-only analytics SQL query at
+  # /api/sql/query, surfaced as POST /cf/studio-insight/v1/query.
+  # The host is named here; only the instance TOKEN comes from the environment
+  # (STUDIO_INSIGHT_API_KEY), so the credential is never in the repository.
+  # Without it every call answers 503 and /studio-insight/v1/health reports
+  # configured=false.
   studio-insight:
     config:
+      base_url: "https://insight.cfabric.org"
       base_url_env: "STUDIO_INSIGHT_BASE_URL"
       api_key_env: "STUDIO_INSIGHT_API_KEY"
+      api_path: "/api"
+      sql_resource: "sql/query"
 
   api-gateway:
     config:

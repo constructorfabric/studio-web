@@ -190,6 +190,13 @@ services:
       # (studio-spec-quality.config.api_key_env); without it the wrapper reports
       # "not configured" and every Spec Quality run fails. Value lives in .env.
       STUDIO_SPEC_QUALITY_API_KEY: ${STUDIO_SPEC_QUALITY_API_KEY:-}
+      # Constructor Insight instance token (studio-insight gear). The gear has
+      # base_url in config/docker.yaml and reads the TOKEN from this env var
+      # (studio-insight.config.api_key_env); without it every Insight call
+      # answers 503. Override the host too when pointing at another Insight
+      # deployment. Values live in .env.
+      STUDIO_INSIGHT_API_KEY: ${STUDIO_INSIGHT_API_KEY:-}
+      STUDIO_INSIGHT_BASE_URL: ${STUDIO_INSIGHT_BASE_URL:-}
       # Encryption key for credstore secret VALUES at rest (issue #66, base64,
       # 32 bytes). Without it the backend falls back to the in-memory value
       # store and every secret typed into the portal — source PATs, connector

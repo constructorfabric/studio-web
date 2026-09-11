@@ -2,6 +2,16 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { CatalogNode, Connection, DocType, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import {
+  ACTIVITY_CSS,
+  ACTIVITY_WINDOWS,
+  ActivityTiles,
+  ChurnChart,
+  MiniChurn,
+  compact,
+  useGearActivity,
+} from "./gear-activity";
+import type { ActivityIndex, GearActivity } from "./gear-activity";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -779,6 +789,12 @@ export function ComponentsCatalog({
   const [viewMode, setViewMode] = useState<"list" | "graph">("list");
   const graph = useMemo(() => buildComponentGraph(visible, profiles), [visible, profiles]);
 
+  // Delivery activity from Insight, for the whole catalogue at once: one request
+  // per repository, keyed on the gear names, so opening a component page or
+  // typing in the filter costs nothing more.
+  const [activityDays, setActivityDays] = useState<number>(90);
+  const activity = useGearActivity(token, gears, activityDays);
+
   const syncing = sync.endsWith("…");
   const sourceSummary = [
     sources.gears.enabled && "gears",
@@ -790,7 +806,7 @@ export function ComponentsCatalog({
 
   return (
     <div className="gcat">
-      <style>{GCAT_CSS}</style>
+      <style>{GCAT_CSS + ACTIVITY_CSS}</style>
 
       {selectedGear ? (
         <GearDetail
@@ -798,6 +814,9 @@ export function ComponentsCatalog({
           gear={selectedGear}
           profile={profiles[selected as string]}
           schema={schemaFor(schemas, selectedGear.type_id)}
+          activity={activity}
+          activityDays={activityDays}
+          onActivityDays={setActivityDays}
           onBack={() => setSelected(null)}
           onSaved={(p) => setProfiles((cur) => ({ ...cur, [selected as string]: p }))}
         />
@@ -813,6 +832,17 @@ export function ComponentsCatalog({
                 {(["list", "graph"] as const).map((v) => (
                   <button key={v} aria-pressed={viewMode === v} onClick={() => setViewMode(v)}>
                     {v === "list" ? "List" : "Graph"}
+                  </button>
+                ))}
+              </div>
+              <div className="seg" role="tablist" aria-label="Activity window">
+                {ACTIVITY_WINDOWS.map((w) => (
+                  <button
+                    key={w.days}
+                    aria-pressed={activityDays === w.days}
+                    onClick={() => setActivityDays(w.days)}
+                  >
+                    {w.label}
                   </button>
                 ))}
               </div>
@@ -860,6 +890,7 @@ export function ComponentsCatalog({
             </p>
           )}
           {sync && <p className="gcat-hint">Sync: {sync}</p>}
+          <ActivityStatus activity={activity} />
           {err && <p className="gcat-err">{err}</p>}
 
           {gears === null ? (
@@ -880,6 +911,7 @@ export function ComponentsCatalog({
                   gear={g}
                   profile={profiles[nameOf(g)]}
                   schema={schemaFor(schemas, g.type_id)}
+                  activity={activity.byGear.get(nameOf(g))}
                   onOpen={() => setSelected(nameOf(g))}
                 />
               ))}
@@ -1110,10 +1142,33 @@ function SourcesPanel({
 
 // ── list card ────────────────────────────────────────────────────────────────
 
+/** Where the activity numbers came from, and what they cost — stated once,
+ *  above the cards, so no card has to carry a provenance footnote. */
+function ActivityStatus({ activity }: { activity: ActivityIndex }) {
+  if (activity.status === "off") return null;
+  if (activity.status === "loading") {
+    return <p className="gcat-hint">Activity: reading Constructor Insight…</p>;
+  }
+  if (activity.status === "error") {
+    return (
+      <p className="gcat-hint">
+        Activity unavailable — {activity.error}. The catalogue below is unaffected.
+      </p>
+    );
+  }
+  return (
+    <p className="gcat-hint">
+      Activity {activity.from} → {activity.to}, from Constructor Insight: commits, files and lines
+      per gear directory{activity.truncated ? " (Insight capped the page — some gears are missing)" : ""}.
+    </p>
+  );
+}
+
 function GearListCard({
   gear,
   profile,
   schema,
+  activity,
   onOpen,
 }: {
   gear: CatalogNode;
@@ -1121,6 +1176,7 @@ function GearListCard({
   /** This component's own type's schema — the card counts against it, so
    *  "8 of 11" on a micro-frontend rather than "8 of 62". */
   schema: Schema;
+  activity: GearActivity | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
@@ -1155,6 +1211,17 @@ function GearListCard({
           <b>{numText(gear.value.downloads)}</b> downloads
         </span>
       </div>
+      {activity && (activity.commits > 0 || activity.linesAdded + activity.linesRemoved > 0) && (
+        <div className="act-card">
+          <MiniChurn points={activity.points} />
+          <span>
+            <b>{compact(activity.commits)}</b> commits ·{" "}
+            <b className="ink-added">+{compact(activity.linesAdded)}</b>{" "}
+            <b className="ink-removed">−{compact(activity.linesRemoved)}</b> ·{" "}
+            <b>{compact(activity.authors)}</b> authors
+          </span>
+        </div>
+      )}
       <div className="gcard-foot">
         <span className="lampline">
           {bad > 0 && (
@@ -1184,11 +1251,72 @@ function GearListCard({
 
 // ── detail page ──────────────────────────────────────────────────────────────
 
+/** What Insight can say about one gear, and — just as importantly — what it
+ *  cannot. Every branch here is a real state the page reaches: the upstream is
+ *  off, still loading, broken, the gear was never matched to a directory, or it
+ *  was matched and simply had a quiet quarter. */
+function ActivityPanel({
+  name,
+  activity,
+  index,
+  days,
+  onDays,
+}: {
+  name: string;
+  activity: GearActivity | undefined;
+  index: ActivityIndex;
+  days: number;
+  onDays: (days: number) => void;
+}) {
+  const window = ACTIVITY_WINDOWS.find((w) => w.days === days)?.label ?? `${days} days`;
+  return (
+    <section className="act-panel">
+      <header>
+        <h2>Delivery activity</h2>
+        <span className="seg" role="tablist" aria-label="Activity window">
+          {ACTIVITY_WINDOWS.map((w) => (
+            <button key={w.days} aria-pressed={days === w.days} onClick={() => onDays(w.days)}>
+              {w.label}
+            </button>
+          ))}
+        </span>
+      </header>
+      {index.status === "loading" ? (
+        <p className="act-empty">Reading Constructor Insight…</p>
+      ) : index.status === "error" ? (
+        <p className="act-empty">Constructor Insight is unavailable — {index.error}</p>
+      ) : index.status === "off" ? (
+        <p className="act-empty">
+          No repository on this component, so there is nothing for Insight to measure.
+        </p>
+      ) : !activity ? (
+        <p className="act-empty">
+          No directory named after <code>{name}</code> changed in the last {window.toLowerCase()} —
+          either the gear was quiet, or its sources sit under a different directory name.
+        </p>
+      ) : (
+        <>
+          <p className="act-note">
+            Commits touching a <code>{name}</code> directory, {index.from} → {index.to}, from
+            Constructor Insight. Pull-request cycle time and CI outcomes are not shown: those belong
+            to the repository, not to one gear inside it.
+          </p>
+          <ActivityTiles activity={activity} />
+          <ChurnChart points={activity.points} label={`Weekly change in ${name}`} />
+        </>
+      )}
+    </section>
+  );
+}
+
 function GearDetail({
   token,
   gear,
   profile,
   schema,
+  activity,
+  activityDays,
+  onActivityDays,
   onBack,
   onSaved,
 }: {
@@ -1200,6 +1328,9 @@ function GearDetail({
    *  with its handful of real values lost in it, which is what this page used
    *  to do. */
   schema: Schema;
+  activity: ActivityIndex;
+  activityDays: number;
+  onActivityDays: (days: number) => void;
   onBack: () => void;
   onSaved: (profile: Record<string, unknown>) => void;
 }) {
@@ -1277,6 +1408,15 @@ function GearDetail({
 
       {view === "filled" && <HealthStrip values={values} schema={schema} />}
       {view === "filled" && <Kpis values={values} schema={schema} />}
+      {view === "filled" && (
+        <ActivityPanel
+          name={name}
+          activity={activity.byGear.get(name)}
+          index={activity}
+          days={activityDays}
+          onDays={onActivityDays}
+        />
+      )}
 
       <div className="grid">
         {schema.groups.map((group) => (
