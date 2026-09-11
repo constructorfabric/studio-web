@@ -65,6 +65,8 @@ backend:
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
   # spec_quality_api_key [optional; enables the external detector wrapper],
+  # insight_api_key [optional; enables Constructor Insight analytics — without it the
+  # Components page reports delivery activity as unavailable],
   # embed_api_key [required when embedding.provider=remote]).
   appSecrets:
     existingSecret: "studio-web-app"

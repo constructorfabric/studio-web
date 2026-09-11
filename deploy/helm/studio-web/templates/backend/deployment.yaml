@@ -160,6 +160,14 @@ spec:
             # disabled; the gear returns a clear configuration error instead.
             - name: STUDIO_SPEC_QUALITY_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: spec_quality_api_key, optional: true } }
+            # Constructor Insight instance token (analytics over its ClickHouse
+            # warehouse — the Components page reads per-gear delivery metrics
+            # through it). Optional in the same way: without it the gear reports
+            # itself unconfigured and every call answers 503, rather than the
+            # pod failing to start. The host is in config/k8s.yaml, so only the
+            # credential comes from the Secret.
+            - name: STUDIO_INSIGHT_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: insight_api_key, optional: true } }
             - name: STUDIO_LLM_BASE_URL
               value: {{ .Values.backend.llm.baseUrl | quote }}
             - name: STUDIO_LLM_MODEL

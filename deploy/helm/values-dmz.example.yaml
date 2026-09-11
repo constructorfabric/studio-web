@@ -15,6 +15,9 @@
 #                                                with every pod restart — #66]
 #                         s2s_client_secret     [optional: mini-chat confidential client]
 #                         idp_admin_secret      [optional: Keycloak admin client for invites]
+#                         insight_api_key       [optional: Constructor Insight instance token;
+#                                                without it the Components page reports delivery
+#                                                activity as unavailable]
 #   ghcr-pull             kubernetes.io/dockerconfigjson for ghcr.io
 #       (the ghcr packages start private; skip if they are made public)
 #

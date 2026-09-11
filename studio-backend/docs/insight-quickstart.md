@@ -63,7 +63,8 @@ STUDIO_INSIGHT_API_KEY=<instance token>
 #STUDIO_INSIGHT_BASE_URL=https://insight.cfabric.org   # only for another deployment
 ```
 
-`config/{dev,docker}.yaml` carry the rest:
+`config/{dev,docker,oidc,k8s}.yaml` carry the rest; `postgres.yaml` omits the
+section:
 
 ```yaml
 studio-insight:
@@ -80,6 +81,32 @@ env var for the token. A profile that omits the section entirely resolves to no
 host and no key, which is a valid state: every call then answers **503** (not
 500 — the integration is unavailable, the caller did nothing wrong) and `health`
 reports `configured: false` with the variables to set.
+
+### In the cluster
+
+The Helm chart reads the token from the app Secret (`backend.appSecrets.existingSecret`,
+default `studio-web-app`) under the key **`insight_api_key`**, and injects it as
+`STUDIO_INSIGHT_API_KEY`:
+
+The Secret already exists and holds other keys, so add to it rather than
+recreate it — `create --dry-run | apply` would replace the whole object and take
+`llm_api_key` and `fs_signing_seed` with it:
+
+```bash
+kubectl -n <ns> patch secret studio-web-app --type merge \
+  -p '{"stringData":{"insight_api_key":"<instance token>"}}'
+# the env var is read at boot, so the pods have to come back for it
+kubectl -n <ns> rollout restart deploy -l app.kubernetes.io/component=backend
+```
+
+The reference is `optional: true`, deliberately: a namespace without the key
+still starts the pod, and the gear reports itself unconfigured instead. That is
+also why the key alone is not enough — `config/k8s.yaml` must carry the
+`studio-insight` gear section, or the gear stands down and every route under it
+answers 503 whatever the Secret holds.
+
+`deploy/k8s/` is the legacy kustomize path and is not wired for this (see
+`deploy/FILE_STORAGE_S3.md`); the chart is the deployed one.
 
 ## The REST surface
 

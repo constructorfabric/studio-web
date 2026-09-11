@@ -55,6 +55,22 @@ gears:
       base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
       api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
 
+  # Integration seam to Constructor Insight (external decision-intelligence
+  # service). Its REST root is /api and the one endpoint it exposes today is
+  # the read-only analytics SQL query at /api/sql/query, surfaced as
+  # POST /cf/studio-insight/v1/query. The instance TOKEN has its own secret
+  # (env STUDIO_INSIGHT_API_KEY) and never reaches the browser.
+  # Unset = every Insight call answers 503 with
+  # a clear message and /studio-insight/v1/health reports configured=false;
+  # the backend still boots.
+  studio-insight:
+    config:
+      base_url: "https://insight.cfabric.org"
+      base_url_env: "STUDIO_INSIGHT_BASE_URL"
+      api_key_env: "STUDIO_INSIGHT_API_KEY"
+      api_path: "/api"
+      sql_resource: "sql/query"
+
   api-gateway:
     config:
       # 0.0.0.0: session containers reach the gateway via
