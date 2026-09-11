@@ -25,6 +25,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0004::Migration),
             Box::new(m0005::Migration),
             Box::new(m0006::Migration),
+            Box::new(m0007::Migration),
         ]
     }
 }
@@ -402,6 +403,76 @@ CREATE TABLE IF NOT EXISTS studio_document_analyses (
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// Bindings between ingested graph files and document types: the repository
+/// that already had documents in it when the project connected to it.
+mod m0007 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0007_document_bindings"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            // `id` is uuid5 of (tenant, project, node_id), so the primary key
+            // IS the uniqueness constraint — no UNIQUE over a nullable
+            // project_id, whose NULLs Postgres treats as distinct.
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_document_bindings (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID,
+    node_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    type_key TEXT,
+    state TEXT NOT NULL
+        CHECK (state IN ('detected','confirmed','manual','unknown','not_a_document')),
+    confidence REAL,
+    source TEXT
+        CHECK (source IS NULL OR source IN ('front_matter','heuristic','spec_quality','manual')),
+    candidates TEXT NOT NULL DEFAULT '[]',
+    conforms BOOLEAN,
+    validation TEXT NOT NULL DEFAULT '{}',
+    content_sha TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_document_bindings_tenant_project
+    ON studio_document_bindings (tenant_id, project_id);",
+                // The review queue reads "everything still undecided" first.
+                r"CREATE INDEX IF NOT EXISTS idx_studio_document_bindings_state
+    ON studio_document_bindings (tenant_id, state);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_document_bindings;")
+                .await?;
             Ok(())
         }
     }

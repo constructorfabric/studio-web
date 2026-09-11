@@ -13,15 +13,17 @@ use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::entity::{analysis, capability, doc_type, document, stage};
+use super::classify::{classify, is_prose_path};
+use super::entity::{analysis, capability, doc_type, document, document_binding, stage};
 use super::intake::{self, Answer};
 use super::model::{
-    Analysis, AnalysisState, Capability, CatalogEntry, DocStatus, Document, DocumentType, Owner,
-    Requirement, Stage, StageStatus, TYPE_GTS_ID, TemplateSpec, builtin_capabilities,
-    builtin_stages, builtin_types,
+    Analysis, AnalysisState, BindingState, Capability, CatalogEntry, DetectionSource, DocStatus,
+    Document, DocumentBinding, DocumentType, Owner, Requirement, Stage, StageStatus, TYPE_GTS_ID,
+    TemplateSpec, TypeCandidate, builtin_capabilities, builtin_stages, builtin_types,
 };
 use super::repo::{
-    DocScope, DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
+    DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
+    type_row_id,
 };
 use super::validate::{ValidationReport, validate};
 use crate::pagination::PageQuery;
@@ -825,6 +827,340 @@ fn status_from_i16(value: i16) -> DocStatus {
     }
 }
 
+// ── ingested documents ──────────────────────────────────────────────────────
+// A document written in Studio knows its type — someone picked it. A document
+// that was already in the repository does not, and its content stays where
+// ingest put it: the artifact graph. A **binding** is the thin record that
+// joins the two, so both kinds end up judged by the same templates.
+
+/// UUIDv5 namespace for the content digest a binding records. A digest, not a
+/// copy: it exists only to tell a current verdict from one computed against
+/// content that has since been re-synced.
+const CONTENT_NS: Uuid = Uuid::from_u128(0x9f38_71ea_4c02_4d6b_b5a1_0e77_cc92_38d5);
+
+/// One file offered for classification: where it lives in the graph, what it is
+/// called, and its current text. The text is read, never stored.
+pub struct IngestedFile {
+    pub node_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+/// What a classification run did.
+pub struct ClassifyOutcome {
+    pub bindings: Vec<DocumentBinding>,
+    /// Files whose path is not prose at all (source, images, lockfiles). They
+    /// get no binding — there is nothing to be undecided about.
+    pub skipped: usize,
+}
+
+/// Which decision is being made, rather than a soup of optional flags the
+/// caller has to combine correctly.
+pub enum BindingAction {
+    /// Accept the proposed type as a person's decision.
+    Confirm,
+    /// Bind this type — a person's choice, or an external detector's verdict.
+    Set { type_key: String },
+    /// This file is not a document; stop proposing types for it.
+    Reject,
+    /// Back to undecided, so the classifier may propose again.
+    Reset,
+}
+
+pub struct BindingDecision {
+    pub action: BindingAction,
+    /// Who decided. Defaults to a person ([`DetectionSource::Manual`]).
+    pub source: Option<DetectionSource>,
+    /// Confidence, for a detector's verdict.
+    pub confidence: Option<f32>,
+    /// The file's current text, to re-check conformance in the same call.
+    pub content: Option<String>,
+}
+
+/// Whether a re-classification must leave this binding's verdict alone, and
+/// the state it keeps.
+///
+/// Two reasons, and they are different reasons:
+///
+/// - **a person ruled on it.** Re-guessing would overwrite a decision, which is
+///   the one thing a background pass must never do.
+/// - **Spec Quality answered it.** That verdict cost an LLM round-trip, and
+///   offline scoring already had its turn on this file and did not settle it.
+///   Discarding the expensive answer to re-run the cheap one that failed is
+///   strictly worse than keeping it — the proposal still waits for a person.
+fn keep_existing_verdict(prior: &document_binding::Model) -> Option<BindingState> {
+    let state = BindingState::parse(&prior.state)?;
+    if state.is_settled() {
+        return Some(state);
+    }
+    let detected_by_llm = prior
+        .source
+        .as_deref()
+        .and_then(DetectionSource::parse)
+        .is_some_and(|s| matches!(s, DetectionSource::SpecQuality));
+    detected_by_llm.then_some(state)
+}
+
+/// Stable digest of a document's content.
+fn content_digest(content: &str) -> String {
+    Uuid::new_v5(&CONTENT_NS, content.as_bytes())
+        .simple()
+        .to_string()
+}
+
+fn binding_scope(project_id: Option<Uuid>) -> DocScope {
+    match project_id {
+        Some(pid) => DocScope::Effective(pid),
+        None => DocScope::WorkspaceLevel,
+    }
+}
+
+/// Validate content against a bound type, or `None` when nothing is bound — an
+/// undetermined document has no template to be judged against.
+fn report_for(
+    types: &[DocumentType],
+    type_key: Option<&str>,
+    content: &str,
+) -> Option<ValidationReport> {
+    let key = type_key?;
+    let ty = types.iter().find(|t| t.key == key)?;
+    Some(validate(content, &ty.template))
+}
+
+/// Candidates are advisory; a row written by an older build (or edited by hand)
+/// should cost the listing nothing more than an empty list.
+fn parse_candidates(raw: &str) -> Vec<TypeCandidate> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
+    Ok(DocumentBinding {
+        id: row.id,
+        tenant_id: row.tenant_id,
+        project_id: row.project_id,
+        node_id: row.node_id,
+        path: row.path,
+        type_key: row.type_key,
+        state: BindingState::parse(&row.state)
+            .with_context(|| format!("unknown binding state: {}", row.state))?,
+        confidence: row.confidence,
+        source: row.source.as_deref().and_then(DetectionSource::parse),
+        candidates: parse_candidates(&row.candidates),
+        conforms: row.conforms,
+        validation: serde_json::from_str(&row.validation).ok(),
+        content_sha: row.content_sha,
+        created_at: rfc3339(row.created_at),
+        updated_at: rfc3339(row.updated_at),
+    })
+}
+
+impl DocumentsService {
+    /// Classify ingested files against the workspace's effective type
+    /// catalogue and record the result as bindings.
+    ///
+    /// A binding a person has already ruled on is never re-guessed: its type
+    /// stands, and the run only refreshes conformance against the current
+    /// content. Everything else is re-classified, so improving a type's
+    /// template improves detection on the next run.
+    pub async fn classify_ingested(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        files: Vec<IngestedFile>,
+    ) -> Result<ClassifyOutcome> {
+        let types = self.list_types(ctx, workspace_id).await?;
+        // Every binding in scope, not a page of them: the run has to know
+        // whether each file was already ruled on, and a page would silently
+        // re-guess the rest.
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let existing: BTreeMap<Uuid, document_binding::Model> =
+            rows.into_iter().map(|row| (row.id, row)).collect();
+
+        let now = OffsetDateTime::now_utc();
+        let mut written: Vec<document_binding::Model> = Vec::new();
+        let mut skipped = 0usize;
+
+        for file in files {
+            if !is_prose_path(&file.path) {
+                skipped += 1;
+                continue;
+            }
+            let id = binding_row_id(workspace_id, project_id, &file.node_id);
+            let prior = existing.get(&id);
+            let sha = content_digest(&file.content);
+
+            // A binding that already has a better answer than this run can
+            // produce keeps it; only its conformance is refreshed against what
+            // the file says today.
+            let keep = prior.and_then(keep_existing_verdict);
+
+            let (type_key, state, confidence, source, candidates) = match keep {
+                Some(state) => (
+                    prior.and_then(|p| p.type_key.clone()),
+                    state,
+                    prior.and_then(|p| p.confidence),
+                    prior.and_then(|p| p.source.as_deref().and_then(DetectionSource::parse)),
+                    prior
+                        .map(|p| parse_candidates(&p.candidates))
+                        .unwrap_or_default(),
+                ),
+                None => {
+                    let c = classify(&file.path, &file.content, &types);
+                    let state = if c.type_key.is_some() {
+                        BindingState::Detected
+                    } else {
+                        BindingState::Unknown
+                    };
+                    let confidence = c.type_key.as_ref().map(|_| c.confidence);
+                    let source = c.type_key.as_ref().map(|_| c.source);
+                    (c.type_key, state, confidence, source, c.candidates)
+                }
+            };
+
+            let report = report_for(&types, type_key.as_deref(), &file.content);
+            written.push(document_binding::Model {
+                id,
+                tenant_id: workspace_id,
+                project_id,
+                node_id: file.node_id,
+                path: file.path,
+                type_key,
+                state: state.as_str().to_string(),
+                confidence,
+                source: source.map(|s| s.as_str().to_string()),
+                candidates: serde_json::to_string(&candidates)?,
+                conforms: report.as_ref().map(|r| r.conforms),
+                validation: match &report {
+                    Some(r) => serde_json::to_string(r)?,
+                    None => "{}".to_string(),
+                },
+                content_sha: sha,
+                created_at: prior.map(|p| p.created_at).unwrap_or(now),
+                updated_at: now,
+            });
+        }
+
+        self.repo.upsert_bindings(&written).await?;
+        let bindings = written
+            .into_iter()
+            .map(binding_from_row)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ClassifyOutcome { bindings, skipped })
+    }
+
+    /// Effective bindings: workspace-level ones, plus the project's own when a
+    /// project is named — the same inheritance documents use.
+    pub async fn list_bindings(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        page: PageQuery,
+    ) -> Result<(Vec<DocumentBinding>, u32)> {
+        let (rows, total) = self
+            .repo
+            .list_bindings(
+                workspace_id,
+                binding_scope(project_id),
+                page.offset() as u64,
+                Some(page.limit() as u64),
+            )
+            .await?;
+        let bindings = rows
+            .into_iter()
+            .map(binding_from_row)
+            .collect::<Result<Vec<_>>>()?;
+        Ok((bindings, u32::try_from(total).unwrap_or(u32::MAX)))
+    }
+
+    /// Rule on a binding: accept the proposal, set a type outright, say the
+    /// file is not a document, or put it back in the undecided queue.
+    ///
+    /// `content` is optional and only affects conformance: pass the file's
+    /// current text to have the new type's template applied immediately, omit
+    /// it to leave the last verdict (and its `content_sha`) alone.
+    pub async fn decide_binding(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        id: Uuid,
+        decision: BindingDecision,
+    ) -> Result<DocumentBinding> {
+        let mut row = self
+            .repo
+            .get_binding(workspace_id, id)
+            .await?
+            .context("no such document binding")?;
+        let types = self.list_types(ctx, workspace_id).await?;
+
+        match decision.action {
+            BindingAction::Confirm => {
+                if row.type_key.is_none() {
+                    bail!("nothing to confirm: this binding has no proposed type");
+                }
+                row.state = BindingState::Confirmed.as_str().to_string();
+            }
+            BindingAction::Set { type_key } => {
+                if !types.iter().any(|t| t.key == type_key) {
+                    bail!("unknown document type: {type_key}");
+                }
+                // A person's choice is `manual` and final; the Spec Quality
+                // detector is one more opinion, so it stays `detected` and
+                // still waits for someone to accept it.
+                let source = decision.source.unwrap_or(DetectionSource::Manual);
+                row.state = match source {
+                    DetectionSource::Manual => BindingState::Manual,
+                    _ => BindingState::Detected,
+                }
+                .as_str()
+                .to_string();
+                row.confidence = match source {
+                    DetectionSource::Manual => Some(1.0),
+                    _ => decision.confidence,
+                };
+                row.source = Some(source.as_str().to_string());
+                row.type_key = Some(type_key);
+            }
+            BindingAction::Reject => {
+                row.state = BindingState::NotADocument.as_str().to_string();
+                row.type_key = None;
+                row.confidence = None;
+                row.source = Some(DetectionSource::Manual.as_str().to_string());
+                row.conforms = None;
+                row.validation = "{}".to_string();
+            }
+            BindingAction::Reset => {
+                row.state = BindingState::Unknown.as_str().to_string();
+                row.type_key = None;
+                row.confidence = None;
+                row.source = None;
+                row.conforms = None;
+                row.validation = "{}".to_string();
+            }
+        }
+
+        if let Some(content) = decision.content {
+            let report = report_for(&types, row.type_key.as_deref(), &content);
+            row.conforms = report.as_ref().map(|r| r.conforms);
+            row.validation = match &report {
+                Some(r) => serde_json::to_string(r)?,
+                None => "{}".to_string(),
+            };
+            row.content_sha = content_digest(&content);
+        }
+        row.updated_at = OffsetDateTime::now_utc();
+        self.repo.upsert_binding(row.clone()).await?;
+        binding_from_row(row)
+    }
+
+    pub async fn delete_binding(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
+        self.repo.delete_binding(workspace_id, id).await
+    }
+}
+
 fn rfc3339(t: OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_default()
 }
@@ -1341,5 +1677,65 @@ mod tests {
         );
         assert!(!status.complete);
         assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
+    }
+}
+
+#[cfg(test)]
+mod reclassification_tests {
+    //! Which verdicts a re-classification is allowed to overwrite.
+    //!
+    //! Pure: the rule is a function of one row, and getting it wrong either
+    //! discards a person's decision or throws away an answer we paid an LLM for.
+    #![allow(clippy::expect_used)]
+
+    use time::OffsetDateTime;
+
+    use super::*;
+
+    fn row(state: &str, source: Option<&str>) -> document_binding::Model {
+        let now = OffsetDateTime::now_utc();
+        document_binding::Model {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            project_id: None,
+            node_id: "node".into(),
+            path: "docs/thing.md".into(),
+            type_key: Some("prd".into()),
+            state: state.into(),
+            confidence: Some(0.6),
+            source: source.map(str::to_string),
+            candidates: "[]".into(),
+            conforms: Some(false),
+            validation: "{}".into(),
+            content_sha: "sha".into(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn a_persons_ruling_is_never_re_guessed() {
+        for state in ["confirmed", "manual", "not_a_document"] {
+            assert!(
+                keep_existing_verdict(&row(state, Some("manual"))).is_some(),
+                "{state} must survive a re-scan"
+            );
+        }
+    }
+
+    /// Offline scoring already had its turn on this file and did not settle it.
+    /// Re-running it to discard the answer that did would be strictly worse.
+    #[test]
+    fn a_detectors_verdict_outlives_the_scoring_that_could_not_place_the_file() {
+        assert!(keep_existing_verdict(&row("detected", Some("spec_quality"))).is_some());
+    }
+
+    /// Our own earlier guess is exactly what a re-scan is for: improving a
+    /// type's template has to be able to change it.
+    #[test]
+    fn our_own_guess_is_replaced() {
+        assert!(keep_existing_verdict(&row("detected", Some("heuristic"))).is_none());
+        assert!(keep_existing_verdict(&row("detected", Some("front_matter"))).is_none());
+        assert!(keep_existing_verdict(&row("unknown", None)).is_none());
     }
 }

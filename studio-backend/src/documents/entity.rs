@@ -199,3 +199,56 @@ pub mod document {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// An ingested repository file bound to a document type.
+///
+/// The content is **not** here — it stays in the artifact graph, addressed by
+/// `node_id`. This row only records what we decided the file is, how we decided
+/// it, and how it fared against that type's template. Copying each `.md` into a
+/// second table would leave two versions of one file to drift apart on every
+/// re-sync, and buy nothing.
+pub mod document_binding {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_document_bindings")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(tenant_id, project_id, node_id)` — one
+        /// binding per graph node per scope, and the `ON CONFLICT` target.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        /// Workspace tenant (the scope).
+        pub tenant_id: Uuid,
+        /// NULL = workspace-level; else the owning project id.
+        pub project_id: Option<Uuid>,
+        /// `gts.cf.studio.artifact.file` node instance id.
+        pub node_id: String,
+        pub path: String,
+        /// NULL while the type is undetermined.
+        pub type_key: Option<String>,
+        /// `detected` | `confirmed` | `manual` | `unknown` | `not_a_document`.
+        pub state: String,
+        pub confidence: Option<f32>,
+        /// `front_matter` | `heuristic` | `spec_quality` | `manual`.
+        pub source: Option<String>,
+        /// JSON array of `TypeCandidate`.
+        pub candidates: String,
+        /// NULL when never validated (no type bound yet).
+        pub conforms: Option<bool>,
+        /// JSON `ValidationReport` from the last check, `{}` when never run.
+        pub validation: String,
+        /// Digest of the content the verdicts above were computed from.
+        pub content_sha: String,
+        pub created_at: OffsetDateTime,
+        pub updated_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

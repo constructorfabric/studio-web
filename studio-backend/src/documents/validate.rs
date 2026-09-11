@@ -39,10 +39,10 @@ pub struct ValidationReport {
 
 /// A heading found in the document: its level, normalized title, and the word
 /// count of the body that follows it up to the next heading.
-struct Heading {
-    level: usize,
-    title_norm: String,
-    body_words: usize,
+pub(super) struct Heading {
+    pub(super) level: usize,
+    pub(super) title_norm: String,
+    pub(super) body_words: usize,
 }
 
 fn normalize(s: &str) -> String {
@@ -51,7 +51,7 @@ fn normalize(s: &str) -> String {
 
 /// Split front-matter (a leading `--- ... ---` YAML-ish block) from the body,
 /// returning the simple `key: value` pairs and the remaining markdown.
-fn split_front_matter(content: &str) -> (HashMap<String, String>, &str) {
+pub(super) fn split_front_matter(content: &str) -> (HashMap<String, String>, &str) {
     let mut fm = HashMap::new();
     let rest = content
         .strip_prefix("---\n")
@@ -87,7 +87,7 @@ fn split_front_matter(content: &str) -> (HashMap<String, String>, &str) {
 }
 
 /// Parse all ATX headings and the word count of each one's body.
-fn headings(body: &str) -> Vec<Heading> {
+pub(super) fn headings(body: &str) -> Vec<Heading> {
     let lines: Vec<&str> = body.lines().collect();
     let mut heads: Vec<Heading> = Vec::new();
     let mut pending_body = 0usize;
@@ -225,13 +225,18 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
 
     // Placeholders.
     if spec.rules.forbid_placeholders {
+        // Over the prose only. Technical writing quotes `<alpha-value>`,
+        // `<head>` and `{{ .Values }}` inside code as examples, and a document
+        // ingested from a real repository is full of them -- flagging those
+        // would make the check useless on exactly the documents that need it.
+        let prose = strip_code(content);
         for marker in ["{{", "TODO", "TBD"] {
-            if content.contains(marker) {
+            if prose.contains(marker) {
                 conforms = false;
                 issues.push(format!("Leftover placeholder: {marker}"));
             }
         }
-        if has_angle_placeholder(content) {
+        if has_angle_placeholder(&prose) {
             conforms = false;
             issues.push("Leftover placeholder: <…> template marker".to_string());
         }
@@ -242,6 +247,39 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
         sections,
         issues,
     }
+}
+
+/// The document with its code removed — fenced blocks and inline spans.
+///
+/// Only the placeholder scan uses this. A document written against a template
+/// leaves its markers in the prose; a document *about* software quotes angle-
+/// and brace-wrapped tokens in code, and there is no way to tell the two apart
+/// except by where they sit.
+fn strip_code(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut in_fence = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        // Inline spans, backticks included. The flag resets each line, so one
+        // stray backtick costs the rest of that line and nothing more.
+        let mut in_span = false;
+        for ch in line.chars() {
+            if ch == '`' {
+                in_span = !in_span;
+            } else if !in_span {
+                out.push(ch);
+            }
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Detect `<title>`-style human placeholders (angle-wrapped words/spaces),
@@ -384,6 +422,46 @@ Too short.
         assert!(!report.conforms);
         assert!(
             report.issues.iter().any(|i| i.contains("Section is empty")),
+            "{:?}",
+            report.issues
+        );
+    }
+
+    /// Real technical prose quotes angle- and brace-wrapped tokens in code.
+    /// Those are examples, not leftovers from a template — and a repository we
+    /// ingest is full of them.
+    #[test]
+    fn code_spans_and_fences_are_not_placeholders() {
+        let spec = spec(vec![sec("context", "Context", true, None)]);
+        let body = format!(
+            "{FRONT}## Context\n\n\
+             Tailwind leaves a slot for `<alpha-value>`, and the sheet is loaded in `<head>`.\n\n\
+             ```yaml\nimage: {{{{ .Values.image }}}}\n# TODO: not ours\n```\n\n\
+             That is all.\n"
+        );
+        let report = validate(&body, &spec);
+        assert!(
+            report.issues.iter().all(|i| !i.contains("placeholder")),
+            "{:?}",
+            report.issues
+        );
+        assert!(report.conforms, "{:?}", report.issues);
+    }
+
+    /// A marker left in the prose is still a marker.
+    #[test]
+    fn placeholders_in_prose_are_still_caught() {
+        let spec = spec(vec![sec("context", "Context", true, None)]);
+        let body = format!("{FRONT}## Context\n\nTBD, see <the other doc>.\n");
+        let report = validate(&body, &spec);
+        assert!(!report.conforms);
+        assert!(
+            report.issues.iter().any(|i| i.contains("TBD")),
+            "{:?}",
+            report.issues
+        );
+        assert!(
+            report.issues.iter().any(|i| i.contains('\u{2026}')),
             "{:?}",
             report.issues
         );

@@ -275,6 +275,42 @@ export interface Connection {
   created_at_epoch_secs: number;
 }
 
+/** How a document binding's type was decided. */
+export type DocDetectionSource = "front_matter" | "heuristic" | "spec_quality" | "manual";
+
+/** Where a binding stands on "do we know what this file is?". */
+export type DocBindingState = "detected" | "confirmed" | "manual" | "unknown" | "not_a_document";
+
+export interface DocTypeCandidate {
+  type_key: string;
+  /** 0.0–1.0. */
+  confidence: number;
+  /** Why this type scored what it did, in words. */
+  why: string;
+}
+
+/** An ingested repository file joined to a document type. The content is NOT
+ *  here — it stays in the artifact graph, addressed by `node_id`. */
+export interface DocBinding {
+  id: string;
+  tenant_id: string;
+  project_id?: string | null;
+  inherited: boolean;
+  node_id: string;
+  path: string;
+  type_key?: string | null;
+  state: DocBindingState;
+  confidence?: number | null;
+  source?: DocDetectionSource | null;
+  candidates: DocTypeCandidate[];
+  conforms?: boolean | null;
+  /** The last validation in full — which sections are missing or thin. */
+  validation?: DocValidation | null;
+  content_sha: string;
+  created_at: string;
+  updated_at: string;
+}
+
 /** A pull request opened for a published change, or the one already open. */
 export interface OpenedPullRequest {
   number: number;
@@ -1613,6 +1649,70 @@ export const api = {
       token,
     );
   },
+
+
+  /* ── studio-documents: ingested files bound to types ── */
+
+  /** Classify ingested files against the workspace's document types. Send a
+   *  few dozen per call — the whole set in one request blows the body limit. */
+  classifyDocFiles: (
+    token: string,
+    workspaceId: string,
+    projectId: string | null,
+    files: { node_id: string; path: string; content: string }[],
+  ) =>
+    request<{ items: DocBinding[]; skipped: number }>(
+      projectId
+        ? `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/document-bindings/classify`
+        : `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/classify`,
+      token,
+      { method: "POST", body: JSON.stringify({ files }) },
+    ),
+
+  docBindings: (
+    token: string,
+    workspaceId: string,
+    projectId: string | null,
+    page?: { offset?: number; limit?: number },
+  ) => {
+    const q = new URLSearchParams();
+    if (page?.offset != null) q.set("offset", String(page.offset));
+    if (page?.limit != null) q.set("limit", String(page.limit));
+    const suffix = q.toString() ? `?${q}` : "";
+    return request<{ items: DocBinding[]; total: number }>(
+      projectId
+        ? `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/document-bindings${suffix}`
+        : `/studio-documents/v1/workspaces/${workspaceId}/document-bindings${suffix}`,
+      token,
+    );
+  },
+
+  /** Rule on what an ingested file is. Pass `content` to re-check conformance
+   *  against the new type in the same call. */
+  decideDocBinding: (
+    token: string,
+    workspaceId: string,
+    id: string,
+    body: {
+      action: "confirm" | "set" | "reject" | "reset";
+      type_key?: string;
+      source?: "manual" | "spec_quality";
+      confidence?: number;
+      content?: string;
+    },
+  ) =>
+    request<DocBinding>(
+      `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${id}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+
+  deleteDocBinding: (token: string, workspaceId: string, id: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${id}`,
+      token,
+      { method: "DELETE" },
+    ),
 
   /** Publish one file into a repository through a connection: commit it, and
    *  optionally cut the branch first and open a pull request after. The

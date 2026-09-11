@@ -19,10 +19,10 @@ use uuid::Uuid;
 use super::intake::Answer;
 use super::model::{Analysis, AnalysisState, StageStatus};
 use super::model::{
-    Capability, DocStatus, Document, DocumentType, Owner, Question, QuestionKind, Rules, Section,
-    Stage, TemplateSpec,
+    Capability, DetectionSource, DocStatus, Document, DocumentBinding, DocumentType, Owner,
+    Question, QuestionKind, Rules, Section, Stage, TemplateSpec,
 };
-use super::service::DocumentsService;
+use super::service::{BindingAction, BindingDecision, DocumentsService, IngestedFile};
 use super::validate::{SectionStatus, ValidationReport};
 use crate::pagination::PageQuery;
 
@@ -333,6 +333,102 @@ pub struct UpdateDocumentDto {
     pub content: Option<String>,
     /// "draft", "review" or "approved" — forward-only.
     pub status: Option<String>,
+}
+
+// ── ingested-document bindings ───────────────────────────────────────────────
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct IngestedFileDto {
+    /// Instance id of the artifact-graph file node holding this content.
+    pub node_id: String,
+    /// Repository path, e.g. `docs/adr/0007-shell-tokens.md`.
+    pub path: String,
+    /// The file's current text. Read to classify and validate; never stored.
+    pub content: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ClassifyRequestDto {
+    pub files: Vec<IngestedFileDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TypeCandidateDto {
+    pub type_key: String,
+    /// 0.0–1.0.
+    pub confidence: f64,
+    /// Why this type scored what it did, in words, for the person deciding.
+    pub why: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocumentBindingDto {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub project_id: Option<Uuid>,
+    /// True when this binding is inherited from the workspace into a project
+    /// view (listed for a project but owned at workspace level).
+    pub inherited: bool,
+    pub node_id: String,
+    pub path: String,
+    /// The bound type, absent while undetermined.
+    pub type_key: Option<String>,
+    /// "detected" | "confirmed" | "manual" | "unknown" | "not_a_document".
+    pub state: String,
+    pub confidence: Option<f64>,
+    /// "front_matter" | "heuristic" | "spec_quality" | "manual".
+    pub source: Option<String>,
+    /// What else it might be — what to offer when correcting the type.
+    pub candidates: Vec<TypeCandidateDto>,
+    /// Absent when the binding has no type and so nothing to be judged against.
+    pub conforms: Option<bool>,
+    /// The last validation in full — which sections are missing or thin.
+    pub validation: Option<ValidationReportDto>,
+    /// Digest of the content these verdicts were computed from, so a caller can
+    /// tell a current verdict from one that predates a re-sync.
+    pub content_sha: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocumentBindingListDto {
+    pub items: Vec<DocumentBindingDto>,
+    /// Bindings in this scope across every page.
+    pub total: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ClassifyResultDto {
+    pub items: Vec<DocumentBindingDto>,
+    /// Files that were not prose at all and so got no binding.
+    pub skipped: i64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DecideBindingDto {
+    /// What is being decided:
+    /// - `confirm` — accept the proposed type;
+    /// - `set` — bind `type_key`;
+    /// - `reject` — this file is not a document;
+    /// - `reset` — back to undetermined, so classification may propose again.
+    pub action: String,
+    /// Required for `set`.
+    pub type_key: Option<String>,
+    /// Who decided. Omit for a person; pass `spec_quality` when recording the
+    /// external detector's verdict, which stays a proposal awaiting a person.
+    pub source: Option<String>,
+    /// The detector's confidence, for `source: spec_quality`.
+    pub confidence: Option<f64>,
+    /// The file's current text, to re-check conformance in the same call.
+    pub content: Option<String>,
 }
 
 // ── conversions ──────────────────────────────────────────────────────────────
@@ -1299,6 +1395,229 @@ async fn delete_document(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── ingested-document bindings ───────────────────────────────────────────────
+
+fn binding_dto(b: DocumentBinding, inherited: bool) -> DocumentBindingDto {
+    DocumentBindingDto {
+        id: b.id,
+        tenant_id: b.tenant_id,
+        project_id: b.project_id,
+        inherited,
+        node_id: b.node_id,
+        path: b.path,
+        type_key: b.type_key,
+        state: b.state.as_str().to_string(),
+        confidence: b.confidence.map(f64::from),
+        source: b.source.map(|s| s.as_str().to_string()),
+        candidates: b
+            .candidates
+            .into_iter()
+            .map(|c| TypeCandidateDto {
+                type_key: c.type_key,
+                confidence: f64::from(c.confidence),
+                why: c.why,
+            })
+            .collect(),
+        conforms: b.conforms,
+        validation: b.validation.map(Into::into),
+        content_sha: b.content_sha,
+        created_at: b.created_at,
+        updated_at: b.updated_at,
+    }
+}
+
+fn ingested_files(body: ClassifyRequestDto) -> Vec<IngestedFile> {
+    body.files
+        .into_iter()
+        .map(|f| IngestedFile {
+            node_id: f.node_id,
+            path: f.path,
+            content: f.content,
+        })
+        .collect()
+}
+
+/// Parse the decision, rejecting the combinations that cannot mean anything —
+/// a `set` with no type, or a source the caller is not allowed to claim.
+fn binding_decision(body: DecideBindingDto) -> Result<BindingDecision, CanonicalError> {
+    let action = match body.action.trim() {
+        "confirm" => BindingAction::Confirm,
+        "set" => {
+            let type_key = body.type_key.clone().unwrap_or_default();
+            if type_key.trim().is_empty() {
+                return Err(DocumentsError::invalid_argument()
+                    .with_constraint("action \"set\" requires type_key")
+                    .create());
+            }
+            BindingAction::Set { type_key }
+        }
+        "reject" => BindingAction::Reject,
+        "reset" => BindingAction::Reset,
+        other => {
+            return Err(DocumentsError::invalid_argument()
+                .with_constraint(format!(
+                    "unknown action \"{other}\" — expected confirm, set, reject or reset"
+                ))
+                .create());
+        }
+    };
+    // Only the two sources a caller can legitimately speak for: itself
+    // (`manual`) or the external detector whose verdict it is relaying.
+    let source = match body.source.as_deref().map(str::trim) {
+        None | Some("") | Some("manual") => None,
+        Some("spec_quality") => Some(DetectionSource::SpecQuality),
+        Some(other) => {
+            return Err(DocumentsError::invalid_argument()
+                .with_constraint(format!(
+                    "source \"{other}\" cannot be claimed here — expected manual or spec_quality"
+                ))
+                .create());
+        }
+    };
+    Ok(BindingDecision {
+        action,
+        source,
+        confidence: body.confidence.map(|c| c as f32),
+        content: body.content,
+    })
+}
+
+async fn classify_workspace_files(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path(workspace_id): Path<Uuid>,
+    Json(body): Json<ClassifyRequestDto>,
+) -> ApiResult<JsonBody<ClassifyResultDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    let outcome = service
+        .classify_ingested(&ctx, workspace_id, None, ingested_files(body))
+        .await
+        .map_err(internal)?;
+    Ok(Json(ClassifyResultDto {
+        items: outcome
+            .bindings
+            .into_iter()
+            .map(|b| binding_dto(b, false))
+            .collect(),
+        skipped: outcome.skipped as i64,
+    }))
+}
+
+async fn classify_project_files(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<ClassifyRequestDto>,
+) -> ApiResult<JsonBody<ClassifyResultDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    let outcome = service
+        .classify_ingested(&ctx, workspace_id, Some(project_id), ingested_files(body))
+        .await
+        .map_err(internal)?;
+    Ok(Json(ClassifyResultDto {
+        items: outcome
+            .bindings
+            .into_iter()
+            .map(|b| binding_dto(b, false))
+            .collect(),
+        skipped: outcome.skipped as i64,
+    }))
+}
+
+async fn list_workspace_bindings(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path(workspace_id): Path<Uuid>,
+    Query(page): Query<PageQuery>,
+) -> ApiResult<JsonBody<DocumentBindingListDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    let (items, total) = service
+        .list_bindings(workspace_id, None, page)
+        .await
+        .map_err(internal)?;
+    Ok(Json(DocumentBindingListDto {
+        items: items.into_iter().map(|b| binding_dto(b, false)).collect(),
+        total,
+    }))
+}
+
+async fn list_project_bindings(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<PageQuery>,
+) -> ApiResult<JsonBody<DocumentBindingListDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    let (items, total) = service
+        .list_bindings(workspace_id, Some(project_id), page)
+        .await
+        .map_err(internal)?;
+    Ok(Json(DocumentBindingListDto {
+        items: items
+            .into_iter()
+            .map(|b| {
+                let inherited = b.project_id.is_none();
+                binding_dto(b, inherited)
+            })
+            .collect(),
+        total,
+    }))
+}
+
+async fn decide_binding(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<DecideBindingDto>,
+) -> ApiResult<JsonBody<DocumentBindingDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    let decision = binding_decision(body)?;
+    let binding = service
+        .decide_binding(&ctx, workspace_id, id, decision)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(binding_dto(binding, false)))
+}
+
+async fn delete_binding(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    service
+        .delete_binding(workspace_id, id)
+        .await
+        .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── registration ─────────────────────────────────────────────────────────────
 
 pub fn register_routes(
@@ -1879,23 +2198,197 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
-    OperationBuilder::delete("/studio-documents/v1/workspaces/{workspace_id}/documents/{id}")
-        .operation_id("studio_documents.delete_document")
-        .summary("Delete a document")
-        .description(
-            "Deletes the document, and the quality verdicts recorded against it \
+    router =
+        OperationBuilder::delete("/studio-documents/v1/workspaces/{workspace_id}/documents/{id}")
+            .operation_id("studio_documents.delete_document")
+            .summary("Delete a document")
+            .description(
+                "Deletes the document, and the quality verdicts recorded against it \
              with it.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("workspace_id", "Workspace tenant id")
-        .path_param("id", "Document id")
-        .handler(delete_document)
-        .no_content_response(StatusCode::NO_CONTENT, "Document deleted")
-        .error_401(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi)
-        .layer(Extension(service))
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("workspace_id", "Workspace tenant id")
+            .path_param("id", "Document id")
+            .handler(delete_document)
+            .no_content_response(StatusCode::NO_CONTENT, "Document deleted")
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    // ── ingested-document bindings ──────────────────────────────────────────
+    // Classification reads content the caller already holds (it loaded the
+    // files to show them) rather than reaching into the artifact graph itself:
+    // this gear owns document types, not the graph, and staying a pure function
+    // of (path, content, catalogue) keeps it testable and keeps the graph the
+    // single copy of the bytes.
+    const CLASSIFY_DESC: &str = "Classify ingested files against the workspace's effective \
+         document types and record the result as bindings. A binding a person has \
+         already ruled on keeps its type; only its conformance is refreshed. Files \
+         whose path is not prose (source, images, lockfiles) get no binding and are \
+         counted as skipped. Send a few dozen files per call — the whole repository \
+         in one body exceeds the gateway's request-size limit.";
+
+    router = OperationBuilder::post(
+        "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify",
+    )
+    .operation_id("studio_documents.classify_workspace_files")
+    .summary("Classify ingested files at workspace level")
+    .description(CLASSIFY_DESC)
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .json_request::<ClassifyRequestDto>(openapi, "Ingested files to classify")
+    .handler(classify_workspace_files)
+    .json_response_with_schema::<ClassifyResultDto>(
+        openapi,
+        StatusCode::OK,
+        "Bindings written, and how many files were skipped",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::post(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify",
+    )
+    .operation_id("studio_documents.classify_project_files")
+    .summary("Classify ingested files for a project")
+    .description(CLASSIFY_DESC)
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .json_request::<ClassifyRequestDto>(openapi, "Ingested files to classify")
+    .handler(classify_project_files)
+    .json_response_with_schema::<ClassifyResultDto>(
+        openapi,
+        StatusCode::OK,
+        "Bindings written, and how many files were skipped",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router =
+        OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/document-bindings")
+            .operation_id("studio_documents.list_workspace_bindings")
+            .summary("List workspace-level document bindings")
+            .description(
+                "What the workspace's own ingested files were decided to be: the type                  bound to each, how it was decided, and how it fared against that                  type's template. A project's own bindings are not here — read those                  through the project route, which also returns these as inherited.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("workspace_id", "Workspace tenant id")
+            .query_param_typed(
+                "offset",
+                false,
+                "Zero-based index of the first binding",
+                "integer",
+            )
+            .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+            .handler(list_workspace_bindings)
+            .json_response_with_schema::<DocumentBindingListDto>(
+                openapi,
+                StatusCode::OK,
+                "Workspace-level bindings",
+            )
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    router = OperationBuilder::get(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings",
+    )
+    .operation_id("studio_documents.list_project_bindings")
+    .summary("List a project's effective document bindings")
+    .description(
+        "The project's own bindings plus the workspace-level ones it inherits \
+         (flagged `inherited`).",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .query_param_typed(
+        "offset",
+        false,
+        "Zero-based index of the first binding",
+        "integer",
+    )
+    .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+    .handler(list_project_bindings)
+    .json_response_with_schema::<DocumentBindingListDto>(
+        openapi,
+        StatusCode::OK,
+        "Effective bindings for the project",
+    )
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::put(
+        "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",
+    )
+    .operation_id("studio_documents.decide_binding")
+    .summary("Confirm, correct, reject or reset a document binding")
+    .description(
+        "Rule on what an ingested file is. `confirm` accepts the proposed type, \
+                 `set` binds one outright, `reject` marks the file as not a document, and \
+                 `reset` puts it back in the undecided queue. Pass `content` to re-check \
+                 conformance against the new type in the same call. A binding a person has \
+                 ruled on is never re-guessed by a later classification run.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("id", "Binding id")
+    .json_request::<DecideBindingDto>(openapi, "The decision to apply")
+    .handler(decide_binding)
+    .json_response_with_schema::<DocumentBindingDto>(
+        openapi,
+        StatusCode::OK,
+        "The binding after the decision",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::delete(
+        "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",
+    )
+    .operation_id("studio_documents.delete_binding")
+    .summary("Forget a document binding")
+    .description(
+        "Removes the record only — the file itself lives in the artifact graph and is \
+         untouched. A later classification run may propose a type for it again.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("id", "Binding id")
+    .handler(delete_binding)
+    .no_content_response(StatusCode::NO_CONTENT, "Binding forgotten")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router.layer(Extension(service))
 }

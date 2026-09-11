@@ -8,6 +8,8 @@
 //! instance of a type, owned by a workspace or project tenant.
 
 use serde::{Deserialize, Serialize};
+
+use super::validate::ValidationReport;
 use uuid::Uuid;
 
 /// Who owns a document type, in the order the levels overlay:
@@ -579,6 +581,146 @@ pub struct Document {
     /// Subject id of the creator (as a string principal).
     pub created_by: String,
     /// RFC 3339 UTC timestamps.
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ── Ingested documents ──────────────────────────────────────────────────────
+// A document written in Studio knows its type. A document that already existed
+// in a repository does not, and its content stays where ingest put it — the
+// artifact graph. A **binding** is the thin record that joins the two: which
+// graph node, which type, how we decided, and whether it conforms. The content
+// is never copied here, so a re-sync cannot leave two versions of one file.
+
+/// How a binding's type was decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionSource {
+    /// The document declared it in its front matter.
+    FrontMatter,
+    /// Our offline scoring proposed it (sections, path, title, front matter).
+    Heuristic,
+    /// The external Spec Quality `purpose` detector proposed it.
+    SpecQuality,
+    /// A person chose it.
+    Manual,
+}
+
+impl DetectionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DetectionSource::FrontMatter => "front_matter",
+            DetectionSource::Heuristic => "heuristic",
+            DetectionSource::SpecQuality => "spec_quality",
+            DetectionSource::Manual => "manual",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "front_matter" => Some(DetectionSource::FrontMatter),
+            "heuristic" => Some(DetectionSource::Heuristic),
+            "spec_quality" => Some(DetectionSource::SpecQuality),
+            "manual" => Some(DetectionSource::Manual),
+            _ => None,
+        }
+    }
+}
+
+/// Where a binding stands on the question "do we know what this file is?".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingState {
+    /// A type was proposed; nobody has looked at it yet.
+    Detected,
+    /// A person accepted the proposal.
+    Confirmed,
+    /// A person chose the type themselves, proposal or not.
+    Manual,
+    /// Nothing scored well enough — this one needs a person.
+    Unknown,
+    /// A person said this file is not a document at all; stop proposing types
+    /// for it and leave it out of the queue.
+    NotADocument,
+}
+
+impl BindingState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BindingState::Detected => "detected",
+            BindingState::Confirmed => "confirmed",
+            BindingState::Manual => "manual",
+            BindingState::Unknown => "unknown",
+            BindingState::NotADocument => "not_a_document",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "detected" => Some(BindingState::Detected),
+            "confirmed" => Some(BindingState::Confirmed),
+            "manual" => Some(BindingState::Manual),
+            "unknown" => Some(BindingState::Unknown),
+            "not_a_document" => Some(BindingState::NotADocument),
+            _ => None,
+        }
+    }
+
+    /// Whether a person has ruled on this binding. A settled binding is never
+    /// overwritten by a re-run of the classifier.
+    pub fn is_settled(self) -> bool {
+        matches!(
+            self,
+            BindingState::Confirmed | BindingState::Manual | BindingState::NotADocument
+        )
+    }
+}
+
+/// One type the classifier considered, with its score and the reason for it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypeCandidate {
+    pub type_key: String,
+    /// 0.0–1.0.
+    pub confidence: f32,
+    /// Why this type scored what it did, in words, for the person deciding.
+    pub why: String,
+}
+
+/// An ingested file bound to a document type (or knowingly not bound yet).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DocumentBinding {
+    pub id: Uuid,
+    /// Workspace tenant — the same scope documents use.
+    pub tenant_id: Uuid,
+    /// Owning project, or `None` for a workspace-level binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Uuid>,
+    /// Instance id of the `gts.cf.studio.artifact.file` node holding the bytes.
+    pub node_id: String,
+    /// Repository path, kept here so the queue can be read without the graph.
+    pub path: String,
+    /// The bound type, or `None` while undetermined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_key: Option<String>,
+    pub state: BindingState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<DetectionSource>,
+    /// What else it might be — what a person picks from when correcting.
+    #[serde(default)]
+    pub candidates: Vec<TypeCandidate>,
+    /// Conformance from the last validation, or `None` if never validated
+    /// (an unbound document has no template to be judged against).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conforms: Option<bool>,
+    /// The last validation in full — what is missing, not just whether
+    /// anything is. `None` alongside `conforms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<ValidationReport>,
+    /// Digest of the content last classified/validated, so the caller can tell
+    /// a stale verdict from a current one after a re-sync.
+    pub content_sha: String,
     pub created_at: String,
     pub updated_at: String,
 }

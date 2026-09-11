@@ -172,6 +172,36 @@ async function runDetector(
   }
 }
 
+/** Ask the `purpose` detector what kind of document this is.
+ *
+ *  The third and most expensive step of document-type detection (see the
+ *  studio-documents `classify` module): offline scoring runs on everything,
+ *  and only what it could not decide is worth an LLM round-trip. Returns
+ *  `null` when the detector declines to name a type.
+ *
+ *  Lives here rather than in the Documents tab because this is the module that
+ *  owns talking to the detector service — submit, poll, and the error shapes. */
+export async function detectDocType(
+  token: string,
+  path: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<{ docType: string | null; confidence: number | null }> {
+  const view = await runDetector(
+    "purpose",
+    { text, path, classify_doc_type: true },
+    token,
+    { signal },
+  );
+  const r = (view.result ?? {}) as { doc_type?: unknown; doc_type_confidence?: unknown };
+  const docType = typeof r.doc_type === "string" && r.doc_type.trim() ? r.doc_type.trim() : null;
+  const confidence = typeof r.doc_type_confidence === "number" ? r.doc_type_confidence : null;
+  return { docType, confidence };
+}
+
+/** True when an error came from the user pressing Stop, not from a failure. */
+export const isDetectorCancel = isCancel;
+
 /* ── Helpers ── */
 
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;

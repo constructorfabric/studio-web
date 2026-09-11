@@ -8,11 +8,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, Order, QueryFilter};
 use toolkit_db::DBProvider;
-use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict};
+use toolkit_db::secure::{
+    SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureInsertManyExt, SecureOnConflict,
+};
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
-use super::entity::{analysis, capability, doc_type, document, stage};
+use super::entity::{analysis, capability, doc_type, document, document_binding, stage};
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
 /// key)` the primary key and gives `upsert_type` an idempotent conflict target.
@@ -27,6 +29,11 @@ const CAPABILITY_NS: Uuid = Uuid::from_u128(0x8b41_7cd2_0e69_4a5f_9d38_1e07_c4b5
 /// And for a detector's verdict on a document.
 const ANALYSIS_NS: Uuid = Uuid::from_u128(0x5c93_a80f_6d17_4e22_ab44_7f95_2306_e1d8);
 
+/// And for an ingested file's binding to a type. Keying on `(tenant, project,
+/// node)` means re-classifying the same file updates one row instead of
+/// appending a second opinion about it.
+const BINDING_NS: Uuid = Uuid::from_u128(0x2b41_e6c7_8d35_4f90_a7e2_5c18_93ab_f604);
+
 /// Which documents a list call wants.
 pub enum DocScope {
     /// Only workspace-level documents (`project_id IS NULL`).
@@ -34,6 +41,15 @@ pub enum DocScope {
     /// Effective set for a project: workspace-level (inherited) + the project's
     /// own (`project_id IS NULL OR project_id = pid`).
     Effective(Uuid),
+}
+
+/// Deterministic id for a binding, so re-classification is an upsert.
+pub fn binding_row_id(workspace_id: Uuid, project_id: Option<Uuid>, node_id: &str) -> Uuid {
+    let project = project_id.map(|p| p.to_string()).unwrap_or_default();
+    Uuid::new_v5(
+        &BINDING_NS,
+        format!("{workspace_id}|{project}|{node_id}").as_bytes(),
+    )
 }
 
 /// Deterministic id for a tenant-defined type.
@@ -377,6 +393,123 @@ impl DocumentsRepo {
         let conn = self.db.conn()?;
         let result = document::Entity::delete_many()
             .filter(document::Column::Id.eq(id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+}
+
+impl DocumentsRepo {
+    // ── document bindings (ingested files) ──────────────────────────────────
+
+    /// Effective bindings for a scope, newest first, with the total across
+    /// every page.
+    pub async fn list_bindings(
+        &self,
+        workspace_id: Uuid,
+        scope: DocScope,
+        offset: u64,
+        limit: Option<u64>,
+    ) -> Result<(Vec<document_binding::Model>, u64)> {
+        let conn = self.db.conn()?;
+        let filter = match scope {
+            DocScope::WorkspaceLevel => {
+                Condition::all().add(document_binding::Column::ProjectId.is_null())
+            }
+            DocScope::Effective(project_id) => Condition::any()
+                .add(document_binding::Column::ProjectId.is_null())
+                .add(document_binding::Column::ProjectId.eq(project_id)),
+        };
+        let scoped = || {
+            document_binding::Entity::find()
+                .secure()
+                .scope_with(&AccessScope::for_tenant(workspace_id))
+                .filter(filter.clone())
+        };
+        let total = scoped().count(&conn).await?;
+        // By path, so the review queue reads like the repository it came from
+        // rather than shuffling as verdicts are recorded.
+        let mut query = scoped()
+            .order_by(document_binding::Column::Path, Order::Asc)
+            .order_by(document_binding::Column::Id, Order::Asc)
+            .offset(offset);
+        if let Some(limit) = limit {
+            query = query.limit(limit);
+        }
+        Ok((query.all(&conn).await?, total))
+    }
+
+    pub async fn get_binding(
+        &self,
+        workspace_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<document_binding::Model>> {
+        let conn = self.db.conn()?;
+        let row = document_binding::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .filter(Condition::all().add(document_binding::Column::Id.eq(id)))
+            .one(&conn)
+            .await?;
+        Ok(row)
+    }
+
+    /// Insert or update one binding. `created_at` is left as it was on
+    /// conflict, so a re-classified file keeps the date it first appeared.
+    pub async fn upsert_binding(&self, model: document_binding::Model) -> Result<()> {
+        self.upsert_bindings(std::slice::from_ref(&model)).await
+    }
+
+    /// Batch form — a classification run writes a whole repository at once.
+    ///
+    /// Split into bounded statements: a multi-row insert binds one parameter
+    /// per column per row, and a repository with thousands of files would blow
+    /// past Postgres's parameter ceiling in one statement.
+    pub async fn upsert_bindings(&self, models: &[document_binding::Model]) -> Result<()> {
+        const ROWS_PER_STATEMENT: usize = 500;
+
+        let Some(first) = models.first() else {
+            return Ok(());
+        };
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(first.tenant_id);
+        for chunk in models.chunks(ROWS_PER_STATEMENT) {
+            let on_conflict = SecureOnConflict::<document_binding::Entity>::columns([
+                document_binding::Column::Id,
+            ])
+            .update_columns([
+                document_binding::Column::Path,
+                document_binding::Column::TypeKey,
+                document_binding::Column::State,
+                document_binding::Column::Confidence,
+                document_binding::Column::Source,
+                document_binding::Column::Candidates,
+                document_binding::Column::Conforms,
+                document_binding::Column::Validation,
+                document_binding::Column::ContentSha,
+                document_binding::Column::UpdatedAt,
+            ])?;
+            document_binding::Entity::insert_many(
+                chunk
+                    .iter()
+                    .cloned()
+                    .map(IntoActiveModel::into_active_model),
+            )
+            .secure()
+            .scope_unchecked(&scope)?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn delete_binding(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
+        let conn = self.db.conn()?;
+        let result = document_binding::Entity::delete_many()
+            .filter(document_binding::Column::Id.eq(id))
             .secure()
             .scope_with(&AccessScope::for_tenant(workspace_id))
             .exec(&conn)

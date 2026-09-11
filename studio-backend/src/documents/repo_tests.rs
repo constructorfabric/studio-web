@@ -25,10 +25,11 @@ use toolkit_db::sea_orm_migration::MigratorTrait;
 use toolkit_db::{ConnectOpts, DBProvider, connect_db};
 use uuid::Uuid;
 
-use crate::documents::entity::{analysis, capability, doc_type, document, stage};
+use crate::documents::entity::{analysis, capability, doc_type, document, document_binding, stage};
 use crate::documents::migrations::Migrator;
 use crate::documents::repo::{
-    DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
+    DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
+    type_row_id,
 };
 
 /// The migrations, run once against the shared database.
@@ -403,4 +404,236 @@ async fn deleting_a_document_takes_its_verdicts_with_it() {
             .is_empty(),
         "the verdict went with the document"
     );
+}
+
+// ── ingested-document bindings ───────────────────────────────────────────────
+
+fn binding(
+    ws: Uuid,
+    project: Option<Uuid>,
+    node_id: &str,
+    path: &str,
+    type_key: Option<&str>,
+    state: &str,
+) -> document_binding::Model {
+    let now = OffsetDateTime::now_utc();
+    document_binding::Model {
+        id: binding_row_id(ws, project, node_id),
+        tenant_id: ws,
+        project_id: project,
+        node_id: node_id.to_string(),
+        path: path.to_string(),
+        type_key: type_key.map(str::to_string),
+        state: state.to_string(),
+        confidence: type_key.map(|_| 0.76),
+        source: type_key.map(|_| "heuristic".to_string()),
+        candidates: "[]".to_string(),
+        conforms: type_key.map(|_| false),
+        validation: "{}".to_string(),
+        content_sha: "sha".to_string(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// `m0007` carries the nullable columns an undetermined binding needs, and the
+/// `REAL` confidence. Asserted by writing through them rather than by reading
+/// DDL, the way the tombstone column is.
+#[tokio::test]
+async fn a_binding_round_trips_including_the_columns_that_may_be_null() {
+    let repo = repo().await;
+    let ws = tenant();
+    repo.upsert_bindings(&[
+        binding(
+            ws,
+            None,
+            "node-a",
+            "docs/adr/0001.md",
+            Some("adr"),
+            "detected",
+        ),
+        binding(ws, None, "node-b", "README.md", None, "unknown"),
+    ])
+    .await
+    .expect("insert");
+
+    let (rows, total) = repo
+        .list_bindings(ws, DocScope::WorkspaceLevel, 0, None)
+        .await
+        .expect("list");
+    assert_eq!(total, 2);
+    let undetermined = rows
+        .iter()
+        .find(|r| r.node_id == "node-b")
+        .expect("the undetermined one");
+    assert_eq!(undetermined.type_key, None);
+    assert_eq!(undetermined.confidence, None);
+    assert_eq!(undetermined.conforms, None);
+    let detected = rows
+        .iter()
+        .find(|r| r.node_id == "node-a")
+        .expect("the detected one");
+    assert_eq!(detected.confidence, Some(0.76));
+    assert_eq!(detected.source.as_deref(), Some("heuristic"));
+}
+
+/// Re-classifying the same file has to update one row. The id is uuid5 of
+/// `(tenant, project, node)` precisely so a second run cannot append a second
+/// opinion about the same file.
+#[tokio::test]
+async fn re_classifying_the_same_file_updates_one_row() {
+    let repo = repo().await;
+    let ws = tenant();
+    repo.upsert_binding(binding(
+        ws,
+        None,
+        "node-a",
+        "docs/thing.md",
+        None,
+        "unknown",
+    ))
+    .await
+    .expect("first run");
+    repo.upsert_binding(binding(
+        ws,
+        None,
+        "node-a",
+        "docs/thing.md",
+        Some("prd"),
+        "detected",
+    ))
+    .await
+    .expect("second run");
+
+    let (rows, total) = repo
+        .list_bindings(ws, DocScope::WorkspaceLevel, 0, None)
+        .await
+        .expect("list");
+    assert_eq!(total, 1, "one file, one binding");
+    assert_eq!(rows[0].type_key.as_deref(), Some("prd"));
+    assert_eq!(rows[0].state, "detected");
+}
+
+/// The effective set for a project: its own bindings plus the workspace-level
+/// ones it inherits — and nothing belonging to a sibling project.
+#[tokio::test]
+async fn a_project_sees_its_own_bindings_and_the_inherited_ones() {
+    let repo = repo().await;
+    let ws = tenant();
+    let (project, sibling) = (Uuid::new_v4(), Uuid::new_v4());
+    repo.upsert_bindings(&[
+        binding(
+            ws,
+            None,
+            "node-ws",
+            "docs/shared.md",
+            Some("prd"),
+            "detected",
+        ),
+        binding(ws, Some(project), "node-p", "docs/mine.md", None, "unknown"),
+        binding(
+            ws,
+            Some(sibling),
+            "node-s",
+            "docs/theirs.md",
+            None,
+            "unknown",
+        ),
+    ])
+    .await
+    .expect("insert");
+
+    let (rows, total) = repo
+        .list_bindings(ws, DocScope::Effective(project), 0, None)
+        .await
+        .expect("effective");
+    assert_eq!(total, 2);
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    assert!(paths.contains(&"docs/shared.md"), "{paths:?}");
+    assert!(paths.contains(&"docs/mine.md"), "{paths:?}");
+    assert!(!paths.contains(&"docs/theirs.md"), "{paths:?}");
+
+    let (ws_only, ws_total) = repo
+        .list_bindings(ws, DocScope::WorkspaceLevel, 0, None)
+        .await
+        .expect("workspace level");
+    assert_eq!(
+        ws_total, 1,
+        "a project's own binding is not workspace-level"
+    );
+    assert_eq!(ws_only[0].path, "docs/shared.md");
+}
+
+/// The same graph node bound at workspace and at project level is two rows, not
+/// a collision — the project id is part of the identity.
+#[tokio::test]
+async fn the_same_node_at_two_levels_is_two_bindings() {
+    let repo = repo().await;
+    let ws = tenant();
+    let project = Uuid::new_v4();
+    repo.upsert_bindings(&[
+        binding(ws, None, "node-a", "docs/thing.md", Some("prd"), "detected"),
+        binding(
+            ws,
+            Some(project),
+            "node-a",
+            "docs/thing.md",
+            Some("design"),
+            "manual",
+        ),
+    ])
+    .await
+    .expect("insert");
+
+    let (rows, total) = repo
+        .list_bindings(ws, DocScope::Effective(project), 0, None)
+        .await
+        .expect("effective");
+    assert_eq!(total, 2);
+    assert_ne!(rows[0].id, rows[1].id);
+}
+
+/// The state vocabulary is a CHECK constraint, not a convention. A row written
+/// by a future build with a state this one does not know must be refused here,
+/// where it is cheap, rather than read back as an unparseable binding.
+#[tokio::test]
+async fn a_state_outside_the_vocabulary_is_refused_by_the_database() {
+    let repo = repo().await;
+    let ws = tenant();
+    let refused = repo
+        .upsert_binding(binding(
+            ws,
+            None,
+            "node-a",
+            "docs/thing.md",
+            None,
+            "somewhat_sure",
+        ))
+        .await;
+    assert!(refused.is_err(), "the CHECK constraint is real");
+}
+
+#[tokio::test]
+async fn forgetting_a_binding_leaves_the_others_alone() {
+    let repo = repo().await;
+    let ws = tenant();
+    repo.upsert_bindings(&[
+        binding(ws, None, "node-a", "a.md", None, "unknown"),
+        binding(ws, None, "node-b", "b.md", None, "unknown"),
+    ])
+    .await
+    .expect("insert");
+
+    let gone = repo
+        .delete_binding(ws, binding_row_id(ws, None, "node-a"))
+        .await
+        .expect("delete");
+    assert!(gone);
+
+    let (rows, total) = repo
+        .list_bindings(ws, DocScope::WorkspaceLevel, 0, None)
+        .await
+        .expect("list");
+    assert_eq!(total, 1);
+    assert_eq!(rows[0].node_id, "node-b");
 }
