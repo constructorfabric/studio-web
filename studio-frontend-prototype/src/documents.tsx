@@ -29,6 +29,7 @@ import {
   DocType,
   DocValidation,
   RemoteRepo,
+  SpecFinding,
   WrittenFile,
 } from "./api";
 import { detectDocType, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
@@ -573,6 +574,21 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "chosen by hand",
 };
 
+/** A detector says how it went in its own words. These are the ones the
+ *  prototype writes (`materializeFinding` in spec-quality.tsx); anything else a
+ *  future detector invents reads as neutral rather than as a failure. */
+const FINDING_TONE: Record<string, { bg: string; fg: string }> = {
+  "gate-passed": { bg: "var(--success-soft)", fg: "var(--success)" },
+  clean: { bg: "var(--success-soft)", fg: "var(--success)" },
+  "gate-failed": { bg: "var(--destructive-soft)", fg: "var(--destructive)" },
+  high: { bg: "var(--destructive-soft)", fg: "var(--destructive)" },
+  some: { bg: "var(--warning-soft)", fg: "var(--warning)" },
+  analyzed: { bg: "var(--info-soft)", fg: "var(--info)" },
+};
+
+const findingTone = (severity?: string | null) =>
+  FINDING_TONE[severity ?? ""] ?? { bg: "var(--muted)", fg: "var(--muted-foreground)" };
+
 type BindingFilter = "review" | "bound" | "ignored" | "all";
 
 /** The files Studio pulled out of the repository, and what we think each is. */
@@ -601,6 +617,8 @@ function IngestedDocumentsView({
    *  decision can re-check conformance without re-reading the graph; the
    *  server never stores it. */
   const [contentByNode, setContentByNode] = useState<Record<string, string>>({});
+  /** Detector verdicts read back from the graph, keyed by document node id. */
+  const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
   const abortRef = useRef<AbortController | null>(null);
 
   const typeName = useCallback(
@@ -614,6 +632,19 @@ function IngestedDocumentsView({
       setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
     } catch (e) {
       setErr(errText(e));
+    }
+    // Findings are their own nodes in the graph and outlive this tab, the
+    // session and the detector run that produced them. A failure to read them
+    // must not cost the queue itself: the bindings above are the point, the
+    // verdicts are what is known about them so far.
+    try {
+      const found = await api.listSpecFindings(token, projectTenantId);
+      const byNode: Record<string, SpecFinding[]> = {};
+      for (const f of found) (byNode[f.subject] ??= []).push(f);
+      for (const list of Object.values(byNode)) list.sort((a, b) => a.detector.localeCompare(b.detector));
+      setFindings(byNode);
+    } catch {
+      // Leave whatever was already read; the column simply shows nothing.
     }
   }, [token, workspaceId, projectTenantId]);
 
@@ -745,14 +776,24 @@ function IngestedDocumentsView({
    *  only when asked. Its answer is a proposal, not a decision — it lands as
    *  `detected` and still waits for a person. */
   const refineWithSpecQuality = async () => {
+    // Skip what a detector has already looked at. The verdict is in the graph
+    // and shown in the list, so paying for it again buys nothing — including
+    // when the answer was "recognised too little to place", which is a result.
+    const analysed = (b: DocBinding) =>
+      (findings[b.node_id] ?? []).some((f) => f.detector === "purpose");
     const targets = bindings.filter(
-      (b) => b.state === "unknown" && contentByNode[b.node_id],
+      (b) => b.state === "unknown" && contentByNode[b.node_id] && !analysed(b),
     );
+    const alreadyDone = bindings.filter((b) => b.state === "unknown" && analysed(b)).length;
     if (targets.length === 0) {
       setNote(
-        bindings.some((b) => b.state === "unknown")
-          ? "Run Scan first — Spec Quality needs each document's text, which the scan loads."
-          : "Nothing undetermined to refine.",
+        alreadyDone > 0
+          ? `Nothing left to refine — Spec Quality has already looked at ${alreadyDone} of ${
+              alreadyDone === 1 ? "these" : "them"
+            }, and its verdict is in the list.`
+          : bindings.some((b) => b.state === "unknown")
+            ? "Run Scan first — Spec Quality needs each document's text, which the scan loads."
+            : "Nothing undetermined to refine.",
       );
       return;
     }
@@ -779,6 +820,33 @@ function IngestedDocumentsView({
         // for. It always names a type, so without the first check a run over
         // unrelated files comes back with all of them called the same thing.
         const recognised = specShare >= MIN_SPEC_SHARE;
+
+        // Keep the verdict in the graph whichever way it went. The call cost an
+        // LLM round-trip, and "the detector recognised almost none of this
+        // file" is worth knowing next time as much as a confident answer is —
+        // without it, every scan pays again to learn the same thing.
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "purpose",
+                subject: b.node_id,
+                path: b.path,
+                severity: recognised ? "analyzed" : "unrecognised",
+                summary: docType
+                  ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
+                  : "purpose: no type named",
+                score: specShare,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {
+            // The binding below is the decision; losing its trace is not worth
+            // failing the run the person is watching.
+          });
+
         if (docType && recognised && types.some((t) => t.key === docType)) {
           await api.decideDocBinding(token, workspaceId, b.id, {
             action: "set",
@@ -800,6 +868,7 @@ function IngestedDocumentsView({
                 declined === 1 ? "it" : "them"
               }`
             : "") +
+          (alreadyDone ? `; ${alreadyDone} had been analysed before` : "") +
           ".",
       );
     } catch (e) {
@@ -924,6 +993,7 @@ function IngestedDocumentsView({
               <span>Document type</span>
               <span>Why</span>
               <span>Conforms</span>
+              <span>Analysis</span>
               <span />
             </div>
             {shown.map((b) => (
@@ -975,6 +1045,25 @@ function IngestedDocumentsView({
                     <span className={b.conforms ? "ing-ok" : "ing-bad"}>
                       {b.conforms ? "✓" : `${b.validation?.issues.length ?? 0} issue(s)`}
                     </span>
+                  )}
+                </span>
+                <span className="ing-findings">
+                  {(findings[b.node_id] ?? []).length === 0 ? (
+                    <span className="ing-dash">—</span>
+                  ) : (
+                    (findings[b.node_id] ?? []).map((f) => (
+                      <span
+                        key={f.detector}
+                        className="ing-state"
+                        title={f.summary ?? f.detector}
+                        style={{
+                          background: findingTone(f.severity).bg,
+                          color: findingTone(f.severity).fg,
+                        }}
+                      >
+                        {f.detector}
+                      </span>
+                    ))
                   )}
                 </span>
                 <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
@@ -1047,6 +1136,38 @@ function IngestedDocumentsView({
                   )}
                 </div>
                 <Checklist report={selected.validation ?? null} />
+                <div style={card}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Analysis</div>
+                  {(findings[selected.node_id] ?? []).length === 0 ? (
+                    <p className="empty" style={{ fontSize: 12, margin: 0 }}>
+                      No detector has looked at this document yet. Run one from the Analyze tab, or
+                      refine the undetermined above.
+                    </p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {(findings[selected.node_id] ?? []).map((f) => (
+                        <div key={f.detector} style={{ fontSize: 12 }}>
+                          <span
+                            className="ing-state"
+                            style={{
+                              background: findingTone(f.severity).bg,
+                              color: findingTone(f.severity).fg,
+                            }}
+                          >
+                            {f.detector}
+                          </span>{" "}
+                          {f.severity ?? "recorded"}
+                          {f.score != null && (
+                            <span className="ing-conf"> · {Math.round(f.score * 100)}%</span>
+                          )}
+                          {f.summary && (
+                            <div style={{ opacity: 0.7, marginTop: 2 }}>{f.summary}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -1068,7 +1189,7 @@ const INGESTED_CSS = `
 .ing-count { opacity: 0.6; margin-left: 4px; }
 .ing-split { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 12px; align-items: start; }
 .ing-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.4fr) 110px 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.2fr) 100px minmax(0,1fr) 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
 .ing-row:first-child { border-top: none; }
 .ing-row.on { background: var(--accent); }
 .ing-row-head { font-weight: 600; cursor: default; background: var(--surface-raised); }
@@ -1081,6 +1202,7 @@ const INGESTED_CSS = `
 .ing-ok { color: var(--success); }
 .ing-bad { color: var(--warning); }
 .ing-dash { opacity: 0.4; }
+.ing-findings { display: flex; gap: 4px; flex-wrap: wrap; }
 .ing-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .ing-actions button { font-size: 11px; padding: 2px 8px; }
 .ing-side { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 8px; }

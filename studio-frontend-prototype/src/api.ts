@@ -311,6 +311,27 @@ export interface DocBinding {
   updated_at: string;
 }
 
+/** One detector's verdict on one document, as it is kept in the artifact graph.
+ *
+ *  A finding is a node of its own (`gts.cf.studio.artifact.spec_finding`) joined
+ *  to the document by a `finding_on` edge, and it carries the subject's id in
+ *  its own payload — so reading them back is one listing, not a graph walk. */
+export interface SpecFinding {
+  /** `bloat` | `purpose` | `leak` | `traceability`. */
+  detector: string;
+  /** Instance id of the document node this is about. */
+  subject: string;
+  path?: string | null;
+  /** The detector's own word for how it went, e.g. `gate-passed`, `high`. */
+  severity?: string | null;
+  summary?: string | null;
+  /** Whatever number the detector reports, when it reports one. */
+  score?: number | null;
+  /** The raw result, kept so a later reader is not limited to what this build
+   *  thought worth summarising. */
+  details?: unknown;
+}
+
 /** A pull request opened for a published change, or the one already open. */
 export interface OpenedPullRequest {
   number: number;
@@ -2041,6 +2062,36 @@ export const api = {
       "edges",
     ),
   }),
+
+
+  /** Every detector verdict recorded for a scope, newest page first.
+   *
+   *  Findings are ordinary artifact nodes, so this is `listArtifactNodes` with
+   *  the finding type — paged here because a project that has been analysed a
+   *  few times has more findings than documents. */
+  listSpecFindings: async (token: string, scope: string): Promise<SpecFinding[]> => {
+    const out: SpecFinding[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await api.listArtifactNodes(token, "spec_finding", scope, cursor, 200);
+      for (const n of page.nodes ?? []) {
+        const v = n.value as Record<string, unknown>;
+        if (typeof v.detector === "string" && typeof v.subject === "string") {
+          out.push({
+            detector: v.detector,
+            subject: v.subject,
+            path: typeof v.path === "string" ? v.path : null,
+            severity: typeof v.severity === "string" ? v.severity : null,
+            summary: typeof v.summary === "string" ? v.summary : null,
+            score: typeof v.score === "number" ? v.score : null,
+            details: v.details,
+          });
+        }
+      }
+      cursor = page.next_cursor;
+    } while (cursor);
+    return out;
+  },
 
   /** Register an already-uploaded manual/generated file in the artifact graph.
    * The graph stores metadata and the file-storage reference, never bytes. */
