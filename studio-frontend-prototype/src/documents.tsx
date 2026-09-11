@@ -33,7 +33,7 @@ import {
   StageStatus,
   WrittenFile,
 } from "./api";
-import { detectDocType, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
+import { detectDocType, detectLeak, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -609,6 +609,8 @@ function IngestedDocumentsView({
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<BindingFilter>("review");
+  /** "" = every type, "-" = the ones with no type yet. */
+  const [typeFilter, setTypeFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -920,6 +922,111 @@ function IngestedDocumentsView({
     }
   };
 
+  /** Check the bound documents for content belonging to another kind.
+   *
+   *  This runs here rather than in the Analyze tab for a reason the service
+   *  itself enforces: `leak` refuses a document whose type it has not been
+   *  told, because "foreign content" means nothing until you have said what
+   *  native content would be. A bound document has a type; nothing is guessed.
+   *
+   *  As with the purpose run, the verdict goes two places — the finding to the
+   *  graph, the pass/fail to the binding, which is what a stage gating on
+   *  `leak` waits for. */
+  const runLeakChecks = async () => {
+    const already = (b: DocBinding) =>
+      (findings[b.node_id] ?? []).some((f) => f.detector === "leak");
+    const targets = bindings.filter(
+      (b) => b.type_key && contentByNode[b.node_id] && !already(b),
+    );
+    const alreadyDone = bindings.filter((b) => b.type_key && already(b)).length;
+
+    if (targets.length === 0) {
+      setNote(
+        alreadyDone > 0
+          ? `Nothing left to check — leak has already looked at ${alreadyDone}.`
+          : bindings.some((b) => b.type_key)
+            ? "Run Scan first — the detector needs each document's text, which the scan loads."
+            : "No document has a type yet, and leak cannot run without one.",
+      );
+      return;
+    }
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    let clean = 0;
+    let leaky = 0;
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const b = targets[i];
+        setProgress(`Leak ${i + 1}/${targets.length} · ${basename(b.path)}`);
+        const { passed, leakShare, foreignRoles, taskId } = await detectLeak(
+          token,
+          b.path,
+          contentByNode[b.node_id],
+          b.type_key as string,
+          ctrl.signal,
+        );
+        if (passed === true) clean += 1;
+        else if (passed === false) leaky += 1;
+
+        const share = leakShare == null ? "" : ` (${Math.round(leakShare * 100)}% foreign)`;
+        const summary =
+          passed === true
+            ? `leak: clean${share}`
+            : passed === false
+              ? `leak: reads partly as ${foreignRoles.join(", ") || "another kind"}${share}`
+              : "leak: no verdict";
+
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "leak",
+                subject: b.node_id,
+                path: b.path,
+                severity:
+                  passed === true ? "clean" : passed === false ? "high" : "analyzed",
+                summary,
+                score: leakShare ?? undefined,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {
+            // The run the person is watching matters more than its trace.
+          });
+
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "leak", {
+            state: passed === true ? "passed" : passed === false ? "failed" : "pending",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {
+            // Same.
+          });
+      }
+      await reload();
+      setNote(
+        `Checked ${targets.length} document${targets.length === 1 ? "" : "s"}: ` +
+          `${clean} clean, ${leaky} carrying another kind's content` +
+          (alreadyDone ? `; ${alreadyDone} had been checked before` : "") +
+          ".",
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote(`Stopped after ${clean + leaky}.`);
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
   /** Apply one person's decision to one binding, re-validating when we still
    *  hold the file's text. */
   const decide = async (
@@ -946,8 +1053,18 @@ function IngestedDocumentsView({
     return { review, bound, ignored, all: bindings.length };
   }, [bindings]);
 
+  /** The types this project's documents actually are, for the picker. Offering
+   *  the whole catalogue would list types nothing here has. */
+  const presentTypes = useMemo(() => {
+    const keys = new Set<string>();
+    for (const b of bindings) if (b.type_key) keys.add(b.type_key);
+    return [...keys].sort((a, b) => typeName(a).localeCompare(typeName(b)));
+  }, [bindings, typeName]);
+
   const shown = useMemo(() => {
     const list = bindings.filter((b) => {
+      if (typeFilter === "-" && b.type_key) return false;
+      if (typeFilter && typeFilter !== "-" && b.type_key !== typeFilter) return false;
       switch (filter) {
         case "review":
           return NEEDS_REVIEW.includes(b.state);
@@ -960,7 +1077,7 @@ function IngestedDocumentsView({
       }
     });
     return [...list].sort((a, b) => a.path.localeCompare(b.path));
-  }, [bindings, filter]);
+  }, [bindings, filter, typeFilter]);
 
   const selected = useMemo(
     () => shown.find((b) => b.id === selectedId) ?? null,
@@ -997,6 +1114,13 @@ function IngestedDocumentsView({
         >
           Refine undetermined with Spec Quality
         </button>
+        <button
+          onClick={runLeakChecks}
+          disabled={busy || counts.bound === 0}
+          title="Check each bound document for content that belongs to another kind of document"
+        >
+          Check bound documents for leaks
+        </button>
         {busy && abortRef.current && (
           <button onClick={() => abortRef.current?.abort()}>Stop</button>
         )}
@@ -1031,6 +1155,20 @@ function IngestedDocumentsView({
             {f.label} <span className="ing-count">{f.count}</span>
           </button>
         ))}
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          title="Show one kind of document"
+          style={{ marginLeft: "auto", fontSize: 12 }}
+        >
+          <option value="">All types</option>
+          {presentTypes.map((k) => (
+            <option key={k} value={k}>
+              {typeName(k)}
+            </option>
+          ))}
+          <option value="-">Undetermined</option>
+        </select>
       </div>
 
       {shown.length === 0 ? (

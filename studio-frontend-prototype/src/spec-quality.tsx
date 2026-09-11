@@ -259,6 +259,79 @@ export interface DocTypeVerdict {
  *  files that are not one. */
 export const MIN_SPEC_SHARE = 0.5;
 
+/** Ask the `leak` detector whether a document contains content that belongs to
+ *  some other kind of document.
+ *
+ *  It needs to be told which type the document is — without `doc_type` (or a
+ *  path it recognises, like `PRD.md`) the service answers 422, because "foreign
+ *  content" only means something once you have said what native content would
+ *  be. That is why this belongs to a caller that already knows the type: a
+ *  bound document has one, and nothing has to be guessed.
+ *
+ *  Unlike `purpose`, the verdict is top-level and plain: `passed`, with the
+ *  share of the document that read as foreign and the sections it came from.
+ *
+ *  ## Why `verify: false`
+ *
+ *  The service verifies its own candidates with an LLM by default, and on this
+ *  deployment that pass clears every one of them. Measured on two documents of
+ *  known kind, declared correctly and incorrectly:
+ *
+ *  ```text
+ *                                  declared as   passed   share
+ *    a design contract             design        yes      0.00
+ *    a design contract             adr           NO       0.68
+ *    a design contract             prd           NO       1.00
+ *    a real ADR                    adr           yes      0.00
+ *    a real ADR                    prd           NO       0.99
+ *    a real ADR                    design        NO       0.99
+ *  ```
+ *
+ *  With verification on, all six pass — including the ADR read as a PRD at
+ *  0.99 raw. Unverified, the answer is exactly the question this queue asks:
+ *  does the document match the type it is bound to. A check that never fires is
+ *  not evidence that documents are clean, and a gate wired to one would open
+ *  for everything while looking like it had checked.
+ */
+export async function detectLeak(
+  token: string,
+  path: string,
+  text: string,
+  docType: string,
+  signal?: AbortSignal,
+): Promise<LeakVerdict> {
+  const view = await runDetector(
+    "leak",
+    { text, path, doc_type: docType, gate_threshold: 0.05, verify: false },
+    token,
+    { signal },
+  );
+  const r = (view.result ?? {}) as {
+    passed?: unknown;
+    leak_share?: unknown;
+    foreign_roles?: unknown;
+  };
+  return {
+    passed: typeof r.passed === "boolean" ? r.passed : null,
+    leakShare: typeof r.leak_share === "number" ? r.leak_share : null,
+    foreignRoles: Array.isArray(r.foreign_roles) ? r.foreign_roles.map(String) : [],
+    taskId: view.task_id,
+  };
+}
+
+/** What the `leak` detector concluded about one document. */
+export interface LeakVerdict {
+  /** Whether the foreign share stayed under the threshold. `null` when the
+   *  service answered without one, which keeps a gate shut rather than
+   *  guessing. */
+  passed: boolean | null;
+  /** How much of the document read as belonging to another kind, 0.0–1.0. */
+  leakShare: number | null;
+  /** The kinds it read as — `design` and `requirement` inside an ADR, say. */
+  foreignRoles: string[];
+  taskId: string;
+}
+
 /** True when an error came from the user pressing Stop, not from a failure. */
 export const isDetectorCancel = isCancel;
 
