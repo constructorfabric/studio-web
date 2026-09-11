@@ -19,6 +19,7 @@ pub(crate) mod gts;
 pub(crate) mod intake;
 mod migrations;
 mod model;
+pub(crate) mod port;
 mod repo;
 #[cfg(test)]
 mod repo_tests;
@@ -95,6 +96,14 @@ impl toolkit::Gear for StudioDocumentsGear {
         }
 
         let service = Arc::new(DocumentsService::new(repo, account_management));
+
+        // Offer classification to whoever walks a repository. Registered here,
+        // in `init`, so it is on the hub before any gear's REST phase resolves
+        // it; a deployment without this gear's database never gets here, and
+        // the consumer treats an absent client as "do not classify".
+        ctx.client_hub()
+            .register::<dyn port::DocumentClassifier>(service.clone());
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-documents already initialized"))?;

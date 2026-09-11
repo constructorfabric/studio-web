@@ -126,6 +126,29 @@ proposal, `set` a type outright, `reject` (this file is not a document), or
 caller may claim, and it lands as a proposal rather than a decision. Pass
 `content` to re-check conformance against the new type in the same call.
 
+## When it happens
+
+A sync classifies the prose it reads, as it reads it. That is the only moment
+the whole repository's text is in hand, and doing it then is the difference
+between a synced repository whose documents are known and one that merely has
+files in it.
+
+Neither gear can answer alone: `studio-artifact-ingest` walks the repository and
+ends up holding every file's path and text; `studio-documents` owns the type
+catalogue and decides what each file is. So the seam between them is a trait
+this gear declares (`documents::port::DocumentClassifier`) and the ingest gear
+calls — published on the ClientHub, because the documents gear stands down when
+it has no database and a consumer that finds no client should simply not
+classify rather than fail a repository sync.
+
+Classification never fails the sync. The repository is ingested either way, and
+the pass is idempotent, so a failure costs a re-run of the cheap half rather
+than the clone.
+
+The portal's **Scan repository** does the same thing on demand, for the
+repositories that were synced before this existed and for a checkout the IDE
+cloned after the fact.
+
 ## Why classification takes content in the request
 
 The gear owns document types, not the graph. Keeping `classify` a pure function

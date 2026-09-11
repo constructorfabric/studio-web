@@ -21,6 +21,7 @@ use super::model::{
     Document, DocumentBinding, DocumentType, Owner, Requirement, Stage, StageStatus, TYPE_GTS_ID,
     TemplateSpec, TypeCandidate, builtin_capabilities, builtin_stages, builtin_types,
 };
+use super::port::{ClassifiedCounts, DocumentClassifier, IngestedDocument};
 use super::repo::{
     DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
     type_row_id,
@@ -970,6 +971,37 @@ pub struct ClassifyOutcome {
     /// Files whose path is not prose at all (source, images, lockfiles). They
     /// get no binding — there is nothing to be undecided about.
     pub skipped: usize,
+}
+
+#[async_trait::async_trait]
+impl DocumentClassifier for DocumentsService {
+    async fn classify_ingested(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        files: Vec<IngestedDocument>,
+    ) -> Result<ClassifiedCounts> {
+        let outcome = DocumentsService::classify_ingested(
+            self,
+            ctx,
+            workspace_id,
+            project_id,
+            files
+                .into_iter()
+                .map(|f| IngestedFile {
+                    node_id: f.node_id,
+                    path: f.path,
+                    content: f.content,
+                })
+                .collect(),
+        )
+        .await?;
+        Ok(ClassifiedCounts {
+            classified: outcome.bindings.len(),
+            skipped: outcome.skipped,
+        })
+    }
 }
 
 /// Which decision is being made, rather than a soup of optional flags the
