@@ -25,7 +25,9 @@
 //! Patterns (client fetch, `GtsTypeId::new(<&str>)`, `resolve_metadata`) mirror
 //! the in-crate `connectors` gear, which already reads tenant metadata.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use account_management_sdk::AccountManagementClient;
 use async_trait::async_trait;
@@ -37,12 +39,12 @@ use authz_resolver_sdk::{
 use gts::GtsTypeId;
 use serde::Deserialize;
 use toolkit::Gear;
-use toolkit::client_hub::ClientScope;
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit::context::GearCtx;
 use toolkit::gts::PluginV1;
 use toolkit_security::SecurityContext;
 use toolkit_security::pep_properties;
-use tracing::info;
+use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use uuid::Uuid;
 
@@ -102,7 +104,7 @@ impl Gear for StudioAuthZPlugin {
         RegisterResult::ensure_all_ok(&results)?;
 
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
-        let service = Arc::new(Service::new(am));
+        let service = Arc::new(Service::new(am, ctx.client_hub()));
         self.service
             .set(service.clone())
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
@@ -151,14 +153,134 @@ struct GrantDef {
 
 /* ── Service ── */
 
+/// How long a person's organization list is reused before it is read again.
+///
+/// This runs on every authorization decision, so reading memberships per
+/// request would put an indexed `SELECT` in front of every call through the
+/// gateway. Memberships change rarely and the window is short, so the cost of
+/// the staleness is bounded and stated: a membership granted takes effect
+/// within this long, and one revoked stops working within this long — which
+/// still satisfies ADR-0011 §7's "without waiting for a new external login".
+const MEMBERSHIP_TTL: Duration = Duration::from_secs(10);
+
+/// A subject's organizations, with when and against which generation they were
+/// read.
+type MembershipCache = HashMap<Uuid, CachedMemberships>;
+
+struct CachedMemberships {
+    read_at: Instant,
+    generation: u64,
+    organizations: Arc<Vec<Uuid>>,
+}
+
 pub struct Service {
     am: Arc<dyn AccountManagementClient>,
+    /// Held rather than resolved at construction: `studio-user` publishes the
+    /// reader in its own `init`, and this plugin does not depend on that gear,
+    /// so init order guarantees nothing. Looked up once, on first use.
+    hub: Arc<ClientHub>,
+    organizations: OnceLock<Option<Arc<dyn crate::user_profile::OrganizationReader>>>,
+    cache: Mutex<MembershipCache>,
 }
 
 impl Service {
     #[must_use]
-    pub fn new(am: Arc<dyn AccountManagementClient>) -> Self {
-        Self { am }
+    pub fn new(am: Arc<dyn AccountManagementClient>, hub: Arc<ClientHub>) -> Self {
+        Self {
+            am,
+            hub,
+            organizations: OnceLock::new(),
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The reader, looked up once.
+    ///
+    /// `None` when `studio-user` is not in this assembly or has no database. The
+    /// clamp then behaves exactly as it did before memberships existed, which
+    /// is the safe direction: it reaches less, never more.
+    fn organization_reader(&self) -> Option<&Arc<dyn crate::user_profile::OrganizationReader>> {
+        self.organizations
+            .get_or_init(|| {
+                let reader = self
+                    .hub
+                    .get_scoped::<dyn crate::user_profile::OrganizationReader>(
+                        &ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
+                    )
+                    .ok();
+                if reader.is_none() {
+                    warn!(
+                        "studio-authz: studio-user is not available — the tenant clamp stays on \
+                         the token's tenant, so a person cannot reach an organization they are \
+                         only a member of"
+                    );
+                }
+                reader
+            })
+            .as_ref()
+    }
+
+    /// Every tenant this request may reach.
+    ///
+    /// The tenant the request arrived with, plus the organizations the caller is
+    /// a member of. The first is kept deliberately: it is what the clamp has
+    /// always been, so this change can only widen, and nothing that works today
+    /// stops working — including service accounts, which have a tenant and no
+    /// memberships. Dropping it is a separate step, after the things that still
+    /// depend on it are gone (ADR-0018 §3).
+    async fn reachable_tenants(&self, request: &EvaluationRequest, tid: Uuid) -> Vec<Uuid> {
+        let mut tids = vec![tid];
+        let Some(reader) = self.organization_reader() else {
+            return tids;
+        };
+        let subject = request.subject.id;
+        let generation = reader.membership_generation();
+        if let Some(cached) = self.cached(subject, generation) {
+            extend_unique(&mut tids, &cached);
+            return tids;
+        }
+        match reader.organizations_of(&subject.to_string()).await {
+            Ok(orgs) => {
+                let orgs = Arc::new(orgs);
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.insert(
+                        subject,
+                        CachedMemberships {
+                            read_at: Instant::now(),
+                            generation,
+                            organizations: orgs.clone(),
+                        },
+                    );
+                }
+                extend_unique(&mut tids, &orgs);
+            }
+            Err(error) => {
+                // Not fatal, and not a denial: the caller keeps the reach they
+                // had before memberships were consulted. Failing closed here
+                // would make a database hiccup look like a revoked membership.
+                warn!(%subject, "studio-authz: cannot read memberships: {error:#}");
+            }
+        }
+        tids
+    }
+
+    /// A cached answer is good while it is young *and* nothing has changed
+    /// membership since it was taken. The generation is what makes a write
+    /// visible immediately; the age is only a backstop.
+    fn cached(&self, subject: Uuid, generation: u64) -> Option<Arc<Vec<Uuid>>> {
+        let mut cache = self.cache.lock().ok()?;
+        match cache.get(&subject) {
+            Some(entry)
+                if entry.generation == generation && entry.read_at.elapsed() < MEMBERSHIP_TTL =>
+            {
+                Some(entry.organizations.clone())
+            }
+            Some(_) => {
+                cache.remove(&subject);
+                None
+            }
+            None => None,
+        }
     }
 
     fn tenant_of(request: &EvaluationRequest) -> Option<Uuid> {
@@ -299,7 +421,10 @@ impl AuthZResolverPluginClient for Service {
     ) -> Result<EvaluationResponse, AuthZResolverError> {
         let (tid, privilege) = match Plan::for_request(&request) {
             Plan::Deny => return Ok(deny()),
-            Plan::Clamp(tid) => return Ok(tenant_clamp(&request, tid)),
+            Plan::Clamp(tid) => {
+                let tids = self.reachable_tenants(&request, tid).await;
+                return Ok(tenant_clamp(&request, &tids));
+            }
             Plan::Roles { tid, privilege } => (tid, privilege),
         };
 
@@ -307,10 +432,12 @@ impl AuthZResolverPluginClient for Service {
         // tenant clamp (behaviour == today, fail-safe).
         let sec = Service::read_ctx(&request, tid);
         let Some(cfg) = self.read_access_config(&sec, tid).await else {
-            return Ok(tenant_clamp(&request, tid));
+            let tids = self.reachable_tenants(&request, tid).await;
+            return Ok(tenant_clamp(&request, &tids));
         };
         if cfg.model != "roles" {
-            return Ok(tenant_clamp(&request, tid));
+            let tids = self.reachable_tenants(&request, tid).await;
+            return Ok(tenant_clamp(&request, &tids));
         }
 
         let subject_id = request.subject.id.to_string();
@@ -353,7 +480,8 @@ impl AuthZResolverPluginClient for Service {
         // An org-scoped grant carries the privilege across the whole tenant:
         // that is exactly the tenant clamp (incl. the hierarchy subtree).
         if org_grant {
-            return Ok(tenant_clamp(&request, tid));
+            let tids = self.reachable_tenants(&request, tid).await;
+            return Ok(tenant_clamp(&request, &tids));
         }
 
         // No grant at all → deny. Roles NARROW: tenant membership by itself does
@@ -368,7 +496,11 @@ impl AuthZResolverPluginClient for Service {
         // intersecting with the scope ids can only keep those that live inside
         // the tenant — a scope id outside the subtree drops out at evaluation,
         // so a grant can never reach across tenants.
-        let mut constraints = tenant_constraints(&request, tid);
+        // The grant's own tenant, not the caller's whole reach: this branch
+        // narrows to the scopes one grant names, and starting from a wider set
+        // would let a project-scoped grant pull in an organization the grant
+        // says nothing about.
+        let mut constraints = tenant_constraints(&request, &[tid]);
         for c in &mut constraints {
             c.predicates.push(Predicate::In(InPredicate::new(
                 pep_properties::OWNER_TENANT_ID,
@@ -391,11 +523,21 @@ impl AuthZResolverPluginClient for Service {
 /// hierarchy subtree branches when the caller supports them. Returned as a bare
 /// `Vec<Constraint>` so the role path can AND further narrowing into each branch
 /// (constraints are OR-combined; predicates within one are AND-combined).
-fn tenant_constraints(request: &EvaluationRequest, tid: Uuid) -> Vec<Constraint> {
+/// The clamp, over every tenant the caller may reach.
+///
+/// Constraints in a response are OR-ed and predicates inside one are AND-ed
+/// (`authz_resolver_sdk::constraints`), so "any of these tenants" is a list of
+/// constraints and nothing more exotic. `InTenantSubtree` carries a single
+/// root, which is why the subtree arms are one per tenant rather than one with
+/// a list.
+///
+/// `tids` is never empty: it always contains the tenant the request arrived
+/// with, so this can only ever widen what a caller could already reach.
+fn tenant_constraints(request: &EvaluationRequest, tids: &[Uuid]) -> Vec<Constraint> {
     let mut constraints = vec![Constraint {
         predicates: vec![Predicate::In(InPredicate::new(
             pep_properties::OWNER_TENANT_ID,
-            [tid],
+            tids.to_vec(),
         ))],
     }];
     let hierarchy = request
@@ -411,11 +553,13 @@ fn tenant_constraints(request: &EvaluationRequest, tid: Uuid) -> Vec<Constraint>
                 .iter()
                 .any(|p| p == prop)
             {
-                constraints.push(Constraint {
-                    predicates: vec![Predicate::InTenantSubtree(InTenantSubtreePredicate::new(
-                        prop, tid,
-                    ))],
-                });
+                for tid in tids {
+                    constraints.push(Constraint {
+                        predicates: vec![Predicate::InTenantSubtree(
+                            InTenantSubtreePredicate::new(prop, *tid),
+                        )],
+                    });
+                }
             }
         }
     }
@@ -423,11 +567,20 @@ fn tenant_constraints(request: &EvaluationRequest, tid: Uuid) -> Vec<Constraint>
 }
 
 /// static-authz behaviour: allow, clamped to the context tenant (+ subtree).
-fn tenant_clamp(request: &EvaluationRequest, tid: Uuid) -> EvaluationResponse {
+/// Append the ones that are not already there, preserving order.
+fn extend_unique(into: &mut Vec<Uuid>, more: &[Uuid]) {
+    for id in more {
+        if !into.contains(id) {
+            into.push(*id);
+        }
+    }
+}
+
+fn tenant_clamp(request: &EvaluationRequest, tids: &[Uuid]) -> EvaluationResponse {
     EvaluationResponse {
         decision: true,
         context: EvaluationResponseContext {
-            constraints: tenant_constraints(request, tid),
+            constraints: tenant_constraints(request, tids),
             ..Default::default()
         },
     }
@@ -518,6 +671,108 @@ mod tests {
         "gts.cf.core.rg.group.v1~",
         "gts.cf.core.users.user.v1~",
     ];
+
+    const ORG_A: Uuid = Uuid::from_u128(0xa1);
+    const ORG_B: Uuid = Uuid::from_u128(0xb2);
+
+    /// A request that can express the subtree predicates, so the clamp's
+    /// hierarchy arms are actually built.
+    fn hierarchical(resource_type: &str) -> EvaluationRequest {
+        let mut r = request(resource_type);
+        r.context.capabilities = vec![Capability::TenantHierarchy];
+        r.context.supported_properties = vec![
+            pep_properties::OWNER_TENANT_ID.to_string(),
+            pep_properties::RESOURCE_ID.to_string(),
+        ];
+        r
+    }
+
+    fn owner_tenant_values(constraints: &[Constraint]) -> Vec<Uuid> {
+        constraints
+            .iter()
+            .flat_map(|c| &c.predicates)
+            .filter_map(|p| match p {
+                Predicate::In(inp) => Some(inp),
+                _ => None,
+            })
+            .flat_map(|inp| inp.values.iter())
+            .filter_map(|v| v.as_str().and_then(|s| Uuid::parse_str(s).ok()))
+            .collect()
+    }
+
+    fn subtree_roots(constraints: &[Constraint]) -> Vec<Uuid> {
+        constraints
+            .iter()
+            .flat_map(|c| &c.predicates)
+            .filter_map(|p| match p {
+                // The root is carried as a JSON value, so the test reads it the
+                // same way the PEP compiler does.
+                Predicate::InTenantSubtree(t) => t
+                    .root_tenant_id
+                    .as_str()
+                    .and_then(|s| Uuid::parse_str(s).ok()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The point of reading memberships: a person reaches the organizations
+    /// they belong to, not only the one their token names.
+    #[test]
+    fn the_clamp_covers_every_tenant_the_caller_may_reach() {
+        let c = tenant_constraints(&hierarchical(STUDIO_RESOURCES[0]), &[TENANT, ORG_A, ORG_B]);
+        let mut owners = owner_tenant_values(&c);
+        owners.sort();
+        let mut expected = vec![TENANT, ORG_A, ORG_B];
+        expected.sort();
+        assert_eq!(owners, expected, "every reachable tenant is in the IN arm");
+
+        // One subtree arm per tenant per supported property: `InTenantSubtree`
+        // carries a single root, so a set is a list of arms.
+        let roots = subtree_roots(&c);
+        for tid in [TENANT, ORG_A, ORG_B] {
+            assert_eq!(
+                roots.iter().filter(|r| **r == tid).count(),
+                2,
+                "{tid} needs a subtree arm for the owner tenant and one for the resource"
+            );
+        }
+    }
+
+    /// With one tenant the clamp is what it always was — this change widens and
+    /// never narrows, which is what makes it safe to land before the things
+    /// that still read the token's tenant are gone.
+    #[test]
+    fn one_tenant_produces_the_clamp_it_always_did() {
+        let c = tenant_constraints(&hierarchical(STUDIO_RESOURCES[0]), &[TENANT]);
+        assert_eq!(owner_tenant_values(&c), vec![TENANT]);
+        assert_eq!(subtree_roots(&c), vec![TENANT, TENANT]);
+    }
+
+    /// A gear that cannot express subtrees still gets the flat arm, and it
+    /// still lists every reachable tenant.
+    #[test]
+    fn without_the_hierarchy_capability_the_flat_arm_still_covers_the_set() {
+        let c = tenant_constraints(&request(STUDIO_RESOURCES[0]), &[TENANT, ORG_A]);
+        assert!(
+            subtree_roots(&c).is_empty(),
+            "no capability, no subtree arms"
+        );
+        let mut owners = owner_tenant_values(&c);
+        owners.sort();
+        let mut expected = vec![TENANT, ORG_A];
+        expected.sort();
+        assert_eq!(owners, expected);
+    }
+
+    /// Duplicates never reach the clamp: a person whose token already names one
+    /// of their organizations gets it once.
+    #[test]
+    fn a_tenant_already_present_is_not_added_twice() {
+        let mut tids = vec![TENANT];
+        extend_unique(&mut tids, &[ORG_A, TENANT, ORG_A]);
+        assert_eq!(tids, vec![TENANT, ORG_A]);
+    }
 
     /// The read that would recurse must be guarded, or the PDP asks itself
     /// whether it may ask itself.
