@@ -632,12 +632,44 @@ function IngestedDocumentsView({
    *  text. A node without text was ingested from the connector's tree API
    *  (metadata only) — there is nothing to read, so it is reported, not
    *  silently dropped. */
+  /** The text of every file in the project's checkouts, keyed by repo-relative
+   *  path.
+   *
+   *  The clone is the only place the content reliably is: a graph file node
+   *  carries `text` only when ingest read it from one, and a sync that went
+   *  through the connector's tree API leaves every node metadata-only. Reading
+   *  the node and giving up left the queue empty on projects whose clone was
+   *  right there.
+   *
+   *  One flat map across repositories. Two repositories with the same path is
+   *  the one case it cannot tell apart; the graph node ids still keep those
+   *  files as separate bindings, so the cost is a wrong preview, not a wrong
+   *  identity. */
+  const readCheckouts = useCallback(async (): Promise<Record<string, string>> => {
+    const settings = await api.workspaceSettings(token, projectTenantId).catch(() => null);
+    const repos = (settings?.repos ?? []).filter((r) => r.source !== "local");
+    const byPath: Record<string, string> = {};
+    for (const repo of repos) {
+      try {
+        const { files } = await api.repoFiles(token, projectTenantId, repo.target || repo.name);
+        for (const f of files) if (!(f.path in byPath)) byPath[f.path] = f.text;
+      } catch {
+        // One repository that was never cloned must not stop the others.
+      }
+    }
+    return byPath;
+  }, [token, projectTenantId]);
+
+  /** Walk the ingested file nodes, take each one's text from the checkout (or
+   *  from the node, when ingest did capture it), and classify what is prose. */
   const scan = async () => {
     setBusy(true);
     setErr(null);
     setNote("");
     setProgress("Reading the repository's files…");
     try {
+      const fromCheckout = await readCheckouts();
+
       const nodes: ArtifactNode[] = [];
       let cursor: string | undefined;
       do {
@@ -654,9 +686,7 @@ function IngestedDocumentsView({
       } while (cursor);
 
       if (nodes.length === 0) {
-        setNote(
-          "No files ingested yet — run Sync on a repository in the Artifacts tab first.",
-        );
+        setNote("No files ingested yet — run Sync on a repository in the Artifacts tab first.");
         return;
       }
 
@@ -665,8 +695,9 @@ function IngestedDocumentsView({
       const seen: Record<string, string> = {};
       for (const n of nodes) {
         const path = typeof n.value.path === "string" ? n.value.path : "";
-        const text = typeof n.value.text === "string" ? n.value.text : "";
         if (!path || n.value.is_dir) continue;
+        const text =
+          fromCheckout[path] ?? (typeof n.value.text === "string" ? n.value.text : "");
         if (!text) {
           withoutText += 1;
           continue;
@@ -677,8 +708,9 @@ function IngestedDocumentsView({
 
       if (files.length === 0) {
         setNote(
-          `None of the ${nodes.length} ingested files carry their text. Open the project in the ` +
-            "IDE so the repository is cloned, then run Sync again — the clone is what gives files content.",
+          `None of the ${nodes.length} ingested files carry their text, and no checkout of ` +
+            "this project's repositories has one either. Open the project in the IDE so the " +
+            "repository is cloned, then scan again.",
         );
         return;
       }
