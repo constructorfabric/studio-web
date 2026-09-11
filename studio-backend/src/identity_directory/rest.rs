@@ -68,6 +68,13 @@ pub struct PlatformIdentityListDto {
 #[derive(Clone)]
 pub struct Memberships(pub Option<Arc<dyn crate::user_profile::AssignmentRecorder>>);
 
+/// Who a subject is, for the administrator gate.
+///
+/// `None` when studio-user is inert, and the gate then has only the token to go
+/// on — which is what it has always had.
+#[derive(Clone)]
+pub struct People(pub Option<Arc<dyn crate::user_profile::OrganizationReader>>);
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct BackfillReportDto {
@@ -93,13 +100,29 @@ fn to_dto(identity: DirectoryIdentity) -> PlatformIdentityDto {
     }
 }
 
-fn require_platform_admin(ctx: &SecurityContext) -> ApiResult<()> {
-    if ctx.subject_tenant_id() != PLATFORM_ROOT_TENANT_ID {
-        return Err(IdentityDirectoryError::permission_denied()
+/// Is the caller a platform administrator?
+///
+/// A membership of the platform root, or — while ADR-0018 §3's migration runs —
+/// the token's tenant. The membership is the answer about the person; the token
+/// is the answer about one of their logins, and it is the one being retired.
+///
+/// Without studio-user there is only the token, which is what this gate has
+/// always used.
+async fn require_platform_admin(ctx: &SecurityContext, people: &People) -> ApiResult<()> {
+    let by_membership = match people.0.as_deref() {
+        Some(reader) => reader
+            .is_platform_admin(&ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
+    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID || by_membership {
+        Ok(())
+    } else {
+        Err(IdentityDirectoryError::permission_denied()
             .with_reason("PLATFORM_ADMIN_REQUIRED")
-            .create());
+            .create())
     }
-    Ok(())
 }
 
 fn configured_service(
@@ -116,9 +139,10 @@ fn configured_service(
 
 async fn list_identities(
     Extension(ctx): Extension<SecurityContext>,
+    Extension(people): Extension<People>,
     Extension(service): Extension<Option<Arc<IdentityDirectoryService>>>,
 ) -> ApiResult<JsonBody<PlatformIdentityListDto>> {
-    require_platform_admin(&ctx)?;
+    require_platform_admin(&ctx, &people).await?;
     let service = configured_service(service)?;
     let directory = service.list(&ctx).await.map_err(|error| {
         CanonicalError::internal(format!("identity directory failed: {error:#}")).create()
@@ -131,12 +155,13 @@ async fn list_identities(
 
 async fn assign_identity(
     Extension(ctx): Extension<SecurityContext>,
+    Extension(people): Extension<People>,
     Extension(service): Extension<Option<Arc<IdentityDirectoryService>>>,
     Extension(memberships): Extension<Memberships>,
     Path(identity_id): Path<String>,
     Json(req): Json<AssignIdentityRequest>,
 ) -> ApiResult<StatusCode> {
-    require_platform_admin(&ctx)?;
+    require_platform_admin(&ctx, &people).await?;
     let role = req.role.trim().to_ascii_lowercase();
     if !matches!(role.as_str(), "owner" | "member") {
         return Err(IdentityDirectoryError::invalid_argument()
@@ -160,10 +185,11 @@ async fn assign_identity(
 
 async fn backfill_memberships(
     Extension(ctx): Extension<SecurityContext>,
+    Extension(people): Extension<People>,
     Extension(service): Extension<Option<Arc<IdentityDirectoryService>>>,
     Extension(memberships): Extension<Memberships>,
 ) -> ApiResult<JsonBody<BackfillReportDto>> {
-    require_platform_admin(&ctx)?;
+    require_platform_admin(&ctx, &people).await?;
     let service = configured_service(service)?;
     let Some(recorder) = memberships.0.as_deref() else {
         return Err(CanonicalError::service_unavailable()
@@ -191,6 +217,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<IdentityDirectoryService>>,
     memberships: Memberships,
+    people: People,
 ) -> Router {
     let router = OperationBuilder::get("/studio-identity/v1/users")
         .operation_id("studio_identity.list_users")
@@ -258,4 +285,5 @@ pub fn register_routes(
         // reaches both of the earlier routes.
         .layer(Extension(service))
         .layer(Extension(memberships))
+        .layer(Extension(people))
 }

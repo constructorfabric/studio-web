@@ -43,6 +43,13 @@ const SOURCE_CREATION: &str = "creation";
 /// and last way in, and the one an owner most wants to be able to tell apart.
 const SOURCE_INVITATION: &str = "invitation";
 
+/// `membership.source` for a row the installation seeded from configuration.
+const SOURCE_BOOTSTRAP: &str = "bootstrap";
+
+/// The tenant every organization hangs under, and the one whose membership
+/// makes somebody a platform administrator.
+pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
+
 /// Bumped by every write that changes who belongs where.
 ///
 /// Consumers that cache a person's organizations — the Studio PDP does, because
@@ -713,6 +720,55 @@ impl IdentityService {
         )
         .await?;
         Ok(())
+    }
+
+    /// Is the person behind `subject` a platform administrator?
+    ///
+    /// The question is "do they hold a membership of the platform root", not
+    /// "what does their token say". A token names the tenant of *one login*, so
+    /// reading administrative rights from it made a person an administrator
+    /// through one sign-in method and an ordinary member through another
+    /// (ADR-0018 §3).
+    ///
+    /// This is the half of that ADR that replaces the token reading. The
+    /// callers still accept the old signal as well while the migration runs —
+    /// see the note on each one.
+    pub async fn is_platform_admin(&self, subject: &str) -> Result<bool> {
+        Ok(self
+            .organizations_of(subject)
+            .await?
+            .contains(&PLATFORM_ROOT_TENANT_ID))
+    }
+
+    /// Seed the memberships that make the configured identities administrators.
+    ///
+    /// Idempotent, and run at every start: an installation states who its
+    /// administrators are, and the row that makes it true is written from that
+    /// statement rather than from whoever happens to carry an attribute.
+    ///
+    /// Without this there is a lockout waiting at the end of the migration: once
+    /// the token signal is removed, a deployment whose administrators were only
+    /// ever administrators *by token* would have none, and no way to make one.
+    pub async fn seed_platform_admins(&self, subjects: &[String]) -> Result<usize> {
+        let mut seeded = 0;
+        for subject in subjects {
+            let subject = subject.trim();
+            if subject.is_empty() {
+                continue;
+            }
+            let user_id = self
+                .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+                .await?;
+            self.record_membership(
+                &user_id,
+                &PLATFORM_ROOT_TENANT_ID.to_string(),
+                crate::access_config::ROLE_OWNER,
+                SOURCE_BOOTSTRAP,
+            )
+            .await?;
+            seeded += 1;
+        }
+        Ok(seeded)
     }
 
     /// The organizations the person behind `subject` is a member of.
