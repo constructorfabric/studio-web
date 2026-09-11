@@ -45,26 +45,28 @@ const basename = (p: string) => p.split(/[\\/]/).pop() || p;
 const slug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "section";
 
-/** Where a project's documents came from. */
-type DocSource = "studio" | "repository";
-
-/** Project-level: work with the project's documents (own + inherited from the
- *  workspace). Document types are defined at the workspace level — see
- *  [`DocumentTypesTab`] — so this view only reads them for the create picker. */
+/** Project-level: what the project's repository actually contains.
+ *
+ *  Authoring lives at the workspace, next to the types — see
+ *  [`WorkspaceDocumentsTab`]. A document reaches a project by being written
+ *  into its repository, and reaches this view by being ingested and identified.
+ *  That is the whole of it: this tab reports, it does not author. */
 export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
+  onOpenStudio,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
   workspaceId: string;
   /** The open project tenant. */
   projectTenantId: string;
+  /** Open this project in the IDE — where a document is actually edited. */
+  onOpenStudio: () => void;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [source, setSource] = useState<DocSource>("studio");
 
   useEffect(() => {
     let alive = true;
@@ -81,44 +83,55 @@ export function DocumentsTab({
     };
   }, [token, workspaceId]);
 
-  // A project's documents arrive two ways, and each needs a different first
-  // move: one you create from a template, the other you identify. Same tab,
-  // because to everyone downstream they are the same documents.
-  const SOURCES: { id: DocSource; label: string; hint: string }[] = [
-    { id: "studio", label: "Written here", hint: "Created from a type's template" },
-    { id: "repository", label: "From the repository", hint: "Ingested files bound to a type" },
-  ];
+  return (
+    <div className="documents">
+      {err && <div className="error">{err}</div>}
+      <IngestedDocumentsView
+        token={token}
+        workspaceId={workspaceId}
+        projectTenantId={projectTenantId}
+        types={types}
+        onOpenStudio={onOpenStudio}
+      />
+    </div>
+  );
+}
+
+/** Workspace-level: the documents the workspace itself keeps, written from its
+ *  own types and published into a repository from here.
+ *
+ *  It sits beside the type catalogue on purpose. A type, its template and its
+ *  questionnaire are workspace property, and so is a document written from one
+ *  before any project has claimed it. */
+export function WorkspaceDocumentsTab({
+  token,
+  workspaceId,
+}: {
+  token: string;
+  workspaceId: string;
+}) {
+  const [types, setTypes] = useState<DocType[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .docTypes(token, workspaceId)
+      .then((r) => {
+        if (alive) setTypes(r.items);
+      })
+      .catch((e) => {
+        if (alive) setErr(errText(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, workspaceId]);
 
   return (
     <div className="documents">
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        {SOURCES.map((s) => (
-          <button
-            key={s.id}
-            title={s.hint}
-            className={source === s.id ? "primary" : undefined}
-            onClick={() => setSource(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
       {err && <div className="error">{err}</div>}
-      {source === "studio" ? (
-        <DocumentsView
-          token={token}
-          workspaceId={workspaceId}
-          projectTenantId={projectTenantId}
-          types={types}
-        />
-      ) : (
-        <IngestedDocumentsView
-          token={token}
-          workspaceId={workspaceId}
-          projectTenantId={projectTenantId}
-          types={types}
-        />
-      )}
+      <DocumentsView token={token} workspaceId={workspaceId} types={types} />
     </div>
   );
 }
@@ -198,12 +211,10 @@ function DocTypesFlow() {
 function DocumentsView({
   token,
   workspaceId,
-  projectTenantId,
   types,
 }: {
   token: string;
   workspaceId: string;
-  projectTenantId: string;
   types: DocType[];
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -230,11 +241,11 @@ function DocumentsView({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      setDocs((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
+      setDocs((await api.workspaceDocuments(token, workspaceId)).items);
     } catch (e) {
       setErr(errText(e));
     }
-  }, [token, workspaceId, projectTenantId]);
+  }, [token, workspaceId]);
 
   useEffect(() => {
     void reload();
@@ -274,7 +285,7 @@ function DocumentsView({
         title: title.trim(),
       };
       if (answers) body.answers = answers;
-      const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, body);
+      const doc = await api.createWorkspaceDocument(token, workspaceId, body);
       setNewTitle("");
       setShowQ(false);
       await reload();
@@ -503,7 +514,7 @@ function DocumentsView({
         <PublishModal
           token={token}
           doc={publishing}
-          tenantId={projectTenantId}
+          tenantId={workspaceId}
           onClose={() => setPublishing(null)}
         />
       )}
@@ -511,7 +522,7 @@ function DocumentsView({
         <ScaffoldModal
           scaffold={scaffold}
           token={token}
-          projectTenantId={projectTenantId}
+          projectTenantId={workspaceId}
           onBack={() => setScaffold(null)}
           onClose={() => setScaffold(null)}
         />
@@ -567,11 +578,14 @@ function IngestedDocumentsView({
   workspaceId,
   projectTenantId,
   types,
+  onOpenStudio,
 }: {
   token: string;
   workspaceId: string;
   projectTenantId: string;
   types: DocType[];
+  /** Editing a document is the IDE's job — this hands the project over to it. */
+  onOpenStudio: () => void;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<BindingFilter>("review");
@@ -958,6 +972,15 @@ function IngestedDocumentsView({
                   <div style={{ fontSize: 12, color: "var(--muted,#6b7280)" }}>
                     {typeName(selected.type_key)}
                   </div>
+                  {/* The file lives in the repository, so the repository's
+                      editor is where it is changed. Studio reports on it. */}
+                  <button
+                    onClick={onOpenStudio}
+                    style={{ marginTop: 10, width: "100%" }}
+                    title="Open this project in the IDE to edit the file"
+                  >
+                    Edit in the IDE →
+                  </button>
                   {selected.candidates.length > 0 && (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>

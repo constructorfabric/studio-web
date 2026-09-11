@@ -411,10 +411,21 @@ impl DocumentsService {
         let docs = self.all_documents(workspace_id, Some(project_id)).await?;
         let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let analyses = self.repo.list_analyses(workspace_id, &ids).await?;
+        // Every binding in scope, not a page: a stage asks whether the project
+        // has a document of some type at all, and a page would answer about
+        // whichever ones happened to sort first.
+        let (binding_rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(Some(project_id)), 0, None)
+            .await?;
+        let bindings = binding_rows
+            .into_iter()
+            .map(binding_from_row)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(stages
             .into_iter()
-            .map(|stage| evaluate_stage(stage, &docs, &analyses))
+            .map(|stage| evaluate_stage(stage, &docs, &bindings, &analyses))
             .collect())
     }
 
@@ -689,14 +700,29 @@ fn stage_from_row(row: stage::Model, workspace_id: Option<Uuid>) -> Result<Stage
 /// * Only `passed` opens a gate. Missing, pending, failed and anything this
 ///   build does not recognise all keep it shut -- a gate that opens on a value
 ///   we cannot interpret is worse than one that stays closed.
-fn evaluate_stage(stage: Stage, docs: &[Document], analyses: &[analysis::Model]) -> StageStatus {
+/// * A requirement is met by a document created in Studio **or** by a
+///   repository file someone bound to that type. A project whose PRD has always
+///   lived in its repository has a PRD, and a journey that called it missing
+///   was reporting on where the file is kept rather than on the project.
+/// * Only a binding a PERSON settled counts. `detected` is the classifier's
+///   opinion, and a stage is a claim about the project -- opening one on an
+///   unreviewed guess would make the journey say what nobody agreed to.
+fn evaluate_stage(
+    stage: Stage,
+    docs: &[Document],
+    bindings: &[DocumentBinding],
+    analyses: &[analysis::Model],
+) -> StageStatus {
     let requirements: Vec<Requirement> = stage
         .requires
         .iter()
         .map(|type_key| {
             let doc = docs.iter().find(|d| &d.type_key == type_key);
+            let bound = bindings.iter().find(|b| {
+                b.type_key.as_deref() == Some(type_key.as_str())
+                    && matches!(b.state, BindingState::Confirmed | BindingState::Manual)
+            });
             let analyses_outstanding = match doc {
-                None => Vec::new(),
                 Some(doc) => stage
                     .gates
                     .iter()
@@ -709,11 +735,19 @@ fn evaluate_stage(stage: Stage, docs: &[Document], analyses: &[analysis::Model])
                     })
                     .cloned()
                     .collect(),
+                // A repository file carries no verdicts: `studio_document_analyses`
+                // keys on a document id, and this one has none. So its gates stay
+                // shut rather than opening without evidence -- the same judgement
+                // the third bullet above makes, applied where the evidence cannot
+                // exist yet rather than where it disagrees.
+                None if bound.is_some() => stage.gates.clone(),
+                None => Vec::new(),
             };
             Requirement {
                 type_key: type_key.clone(),
-                present: doc.is_some(),
-                conforms: doc.is_some_and(|d| d.conforms),
+                present: doc.is_some() || bound.is_some(),
+                conforms: doc.is_some_and(|d| d.conforms)
+                    || bound.is_some_and(|b| b.conforms == Some(true)),
                 analyses_outstanding,
             }
         })
@@ -1597,7 +1631,7 @@ mod tests {
 
     #[test]
     fn a_stage_that_requires_nothing_is_complete() {
-        let status = evaluate_stage(stage_with(&[], &[]), &[], &[]);
+        let status = evaluate_stage(stage_with(&[], &[]), &[], &[], &[]);
         assert!(status.complete);
         assert!(status.requirements.is_empty());
     }
@@ -1606,7 +1640,7 @@ mod tests {
     fn a_missing_document_is_reported_once_not_as_four_failing_detectors() {
         // `present: false` is the fact that matters; listing every gate as
         // outstanding on top of it would bury it.
-        let status = evaluate_stage(stage_with(&["prd"], &["bloat", "leak"]), &[], &[]);
+        let status = evaluate_stage(stage_with(&["prd"], &["bloat", "leak"]), &[], &[], &[]);
         assert!(!status.complete);
         let req = &status.requirements[0];
         assert!(!req.present);
@@ -1615,7 +1649,7 @@ mod tests {
 
     #[test]
     fn a_document_that_does_not_conform_does_not_complete_its_stage() {
-        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", false)], &[]);
+        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", false)], &[], &[]);
         assert!(!status.complete);
         assert!(status.requirements[0].present);
         assert!(!status.requirements[0].conforms);
@@ -1623,13 +1657,18 @@ mod tests {
 
     #[test]
     fn structure_alone_completes_a_stage_that_gates_nothing() {
-        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", true)], &[]);
+        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", true)], &[], &[]);
         assert!(status.complete);
     }
 
     #[test]
     fn a_gate_with_no_verdict_stays_shut() {
-        let status = evaluate_stage(stage_with(&["prd"], &["bloat"]), &[doc("prd", true)], &[]);
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[],
+            &[],
+        );
         assert!(!status.complete);
         assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
     }
@@ -1640,6 +1679,7 @@ mod tests {
             let status = evaluate_stage(
                 stage_with(&["prd"], &["bloat"]),
                 &[doc("prd", true)],
+                &[],
                 &[verdict("bloat", state)],
             );
             assert!(!status.complete, "{state} should not open the gate");
@@ -1653,6 +1693,7 @@ mod tests {
         let status = evaluate_stage(
             stage_with(&["prd"], &["bloat"]),
             &[doc("prd", true)],
+            &[],
             &[verdict("bloat", "inconclusive")],
         );
         assert!(!status.complete);
@@ -1663,6 +1704,7 @@ mod tests {
         let status = evaluate_stage(
             stage_with(&["prd"], &["bloat"]),
             &[doc("prd", true)],
+            &[],
             &[verdict("bloat", "passed")],
         );
         assert!(status.complete, "{:?}", status.requirements);
@@ -1673,10 +1715,122 @@ mod tests {
         let status = evaluate_stage(
             stage_with(&["prd"], &["bloat"]),
             &[doc("prd", true)],
+            &[],
             &[verdict("leak", "passed")],
         );
         assert!(!status.complete);
         assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
+    }
+
+    fn bound(type_key: &str, state: BindingState, conforms: Option<bool>) -> DocumentBinding {
+        DocumentBinding {
+            id: Uuid::nil(),
+            tenant_id: WS,
+            project_id: None,
+            node_id: "node".to_string(),
+            path: "docs/prd.md".to_string(),
+            type_key: Some(type_key.to_string()),
+            state,
+            confidence: Some(0.8),
+            source: Some(DetectionSource::Heuristic),
+            candidates: Vec::new(),
+            conforms,
+            validation: None,
+            content_sha: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// A project whose PRD has always lived in its repository has a PRD.
+    #[test]
+    fn a_confirmed_binding_satisfies_a_required_type() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &[]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[],
+        );
+        assert!(status.requirements[0].present);
+        assert!(status.requirements[0].conforms);
+        assert!(status.complete);
+    }
+
+    #[test]
+    fn a_binding_a_person_chose_counts_the_same_as_one_they_accepted() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &[]),
+            &[],
+            &[bound("prd", BindingState::Manual, Some(true))],
+            &[],
+        );
+        assert!(status.complete);
+    }
+
+    /// The classifier's own proposal is not a claim the project can make.
+    #[test]
+    fn an_unreviewed_proposal_does_not_open_a_stage() {
+        for state in [
+            BindingState::Detected,
+            BindingState::Unknown,
+            BindingState::NotADocument,
+        ] {
+            let status = evaluate_stage(
+                stage_with(&["prd"], &[]),
+                &[],
+                &[bound("prd", state, Some(true))],
+                &[],
+            );
+            assert!(
+                !status.requirements[0].present,
+                "{state:?} must not satisfy a requirement"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bound_file_that_fails_its_checklist_does_not_complete_the_stage() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &[]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(false))],
+            &[],
+        );
+        assert!(status.requirements[0].present);
+        assert!(!status.requirements[0].conforms);
+        assert!(!status.complete);
+    }
+
+    /// A repository file carries no detector verdicts yet, so a gated stage
+    /// stays shut on one — but it says which gates, rather than pretending the
+    /// document is missing.
+    #[test]
+    fn a_gated_stage_stays_shut_on_a_document_that_has_no_verdicts_to_show() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat", "leak"]),
+            &[],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[],
+        );
+        assert!(status.requirements[0].present);
+        assert_eq!(
+            status.requirements[0].analyses_outstanding,
+            ["bloat", "leak"]
+        );
+        assert!(!status.complete);
+    }
+
+    /// A document in Studio still answers for itself: a binding of the same
+    /// type must not smuggle a gate open on its behalf.
+    #[test]
+    fn a_studio_document_keeps_its_own_verdicts() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[bound("prd", BindingState::Confirmed, Some(true))],
+            &[verdict("bloat", "passed")],
+        );
+        assert!(status.complete);
     }
 }
 

@@ -240,6 +240,26 @@ async fn rewriting_a_stage_updates_its_order_in_place() {
     assert_eq!(rows[0].ordinal, 95);
 }
 
+/// Editing a stage's gates has to take. A column left out of the conflict
+/// update makes the first write of a key permanent however many edits follow
+/// it, and a gate nobody can remove is worse than one nobody set.
+#[tokio::test]
+async fn rewriting_a_stage_updates_its_gates_in_place() {
+    let repo = repo().await;
+    let ws = tenant();
+    let mut gated = stage_row(ws, "discovery", "Discovery", false);
+    gated.gates = "[\"bloat\"]".to_string();
+    repo.upsert_stage(gated).await.expect("insert");
+
+    let mut regated = stage_row(ws, "discovery", "Discovery", false);
+    regated.gates = "[\"purpose\",\"leak\"]".to_string();
+    repo.upsert_stage(regated).await.expect("re-gate");
+
+    let rows = repo.list_stages(&[ws]).await.expect("list");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].gates, "[\"purpose\",\"leak\"]");
+}
+
 #[tokio::test]
 async fn deleting_a_workspace_override_leaves_the_organization_row_alone() {
     // The safety property of `delete_type`: a workspace reverting `prd` must

@@ -144,6 +144,11 @@ impl DocumentsRepo {
                 stage::Column::Required,
                 stage::Column::Ordinal,
                 stage::Column::Requires,
+                // `Gates` belongs here for the same reason `Requires` does: the
+                // request names a desired state, and a column left out of the
+                // conflict update makes the first write of a key permanent
+                // however many edits follow it.
+                stage::Column::Gates,
                 stage::Column::Hidden,
                 stage::Column::UpdatedAt,
             ])?;

@@ -17,6 +17,19 @@ this describes.
 Both paths end in the same place: a document, a type, and a conformance verdict
 against that type's template.
 
+## Where each of those lives in the portal
+
+A workspace owns the catalogue and the authoring: document types, the journey's
+stages and capabilities, and the documents written from those types before any
+project has claimed one. A project's **Documents** tab is what its repository
+actually contains — it reports, it does not author. A document reaches a project
+by being written into its repository, and reaches that tab by being ingested and
+identified; editing it is the IDE's job, because the file is in the repository
+and that is where the repository's editor is.
+
+That split is why the journey counts both (below): a project whose PRD has
+always lived in its repository has a PRD.
+
 ## Where the content lives, and where it does not
 
 The content stays in the artifact graph, where `studio-artifact-ingest` put it.

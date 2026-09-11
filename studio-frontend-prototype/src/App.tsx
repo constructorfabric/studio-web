@@ -12,7 +12,7 @@ import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
 import { ObjectTypes } from "./object-types";
 import { ProjectKits } from "./kits";
-import { DocumentsTab, DocumentTypesTab } from "./documents";
+import { DocumentsTab, DocumentTypesTab, WorkspaceDocumentsTab } from "./documents";
 import { ProcessCatalogTab } from "./process-catalog";
 import { runRepoSync, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
@@ -2381,12 +2381,51 @@ function ProjectsView({
         onChanged={onChanged}
       />
       <div style={{ marginTop: 20 }}>
-        <DocumentTypesTab token={token} workspaceId={root.id} />
-      </div>
-      <div style={{ marginTop: 20 }}>
-        <ProcessCatalogTab token={token} workspaceId={root.id} />
+        <WorkspaceCatalogue token={token} workspaceId={root.id} />
       </div>
     </>
+  );
+}
+
+
+/** What a workspace owns and every project under it inherits: the document
+ *  types, the journey, and the documents written from those types before any
+ *  project has claimed them.
+ *
+ *  Tabs rather than a stack of panels: these are three catalogues, not three
+ *  sections of one page, and stacking them buried the two below the fold.
+ */
+type CatalogueTab = "types" | "process" | "documents";
+
+function WorkspaceCatalogue({ token, workspaceId }: { token: string; workspaceId: string }) {
+  const [tab, setTab] = useState<CatalogueTab>("types");
+  const TABS: { id: CatalogueTab; label: string; hint: string }[] = [
+    { id: "types", label: "Document types", hint: "Templates, section checklists and rules" },
+    { id: "process", label: "Process", hint: "The journey's stages and the capability vocabulary" },
+    {
+      id: "documents",
+      label: "Documents",
+      hint: "Written from a type here, then published into a repository",
+    },
+  ];
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            title={t.hint}
+            className={tab === t.id ? "primary" : undefined}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
+      {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
+      {tab === "documents" && <WorkspaceDocumentsTab token={token} workspaceId={workspaceId} />}
+    </div>
   );
 }
 
@@ -3114,7 +3153,12 @@ function ProjectScreen({
         )}
         {tab === "kits" && <ProjectKits token={token} projectId={proj.id} />}
         {tab === "documents" && (
-          <DocumentsTab token={token} workspaceId={workspace.id} projectTenantId={proj.id} />
+          <DocumentsTab
+            token={token}
+            workspaceId={workspace.id}
+            projectTenantId={proj.id}
+            onOpenStudio={() => onOpenStudio(proj)}
+          />
         )}
         {tab === "analyze" && (
           <SpecQuality token={token} workspaceId={proj.id} parentWorkspaceId={workspace.id} />
