@@ -789,6 +789,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       const d = e.data as { type?: string; dirty?: number };
       if (typeof d?.type === "string" && d.type.startsWith("studio.")) {
         stopInitRetry(sp.wsId); // the bridge is alive — handshake done
+        const waiting = takePendingEditorOpen();
+        if (waiting) openInStudioEditor(waiting);
       }
       if (d?.type === "studio.status" && typeof d.dirty === "number") {
         const dirty = d.dirty; // narrow before the closure
@@ -3204,7 +3206,7 @@ function ProjectScreen({
             token={token}
             workspaceId={workspace.id}
             projectTenantId={proj.id}
-            onOpenStudio={() => onOpenStudio(proj)}
+            onOpenFile={(path) => openDocumentInStudio(path, () => onOpenStudio(proj))}
           />
         )}
         {tab === "analyze" && (
@@ -4472,6 +4474,40 @@ function ArtifactsView({
       <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
     </>
   );
+}
+
+/** A file the portal asked the IDE to open before the IDE existed.
+ *
+ *  Opening a document means starting a session when none is running, and a
+ *  `studio.openInEditor` posted at an iframe that has not loaded its bridge yet
+ *  is simply lost — the same failure the `studio.init` retry exists for. So the
+ *  path waits here and goes out on the bridge's first sign of life.
+ *
+ *  Module-scoped rather than a prop threaded from the shell to the project
+ *  screen: one browser tab opens one file at a time, and the listener that
+ *  drains it lives several components above the button that fills it. */
+let pendingEditorOpen: string | null = null;
+
+function takePendingEditorOpen(): string | null {
+  const path = pendingEditorOpen;
+  pendingEditorOpen = null;
+  return path;
+}
+
+/** Open a document where documents are edited: the project's IDE session.
+ *
+ *  Two steps because the second only works once the first has happened. The
+ *  session may not be running at all, and even a fresh iframe spends its first
+ *  load events on the session gate's redirect, so the path is both posted now
+ *  (for a session already up) and remembered for the bridge's first message.
+ *
+ *  The path is repo-relative, which is what the IDE's opener wants: it resolves
+ *  against every workspace root and each root's children, because a repository
+ *  is cloned to `/workspace/<name>`. */
+function openDocumentInStudio(path: string, start: () => void): void {
+  pendingEditorOpen = path;
+  start();
+  openInStudioEditor(path);
 }
 
 /** Ask every embedded Studio (Theia) iframe to open a file in its editor. The

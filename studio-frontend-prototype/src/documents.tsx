@@ -57,15 +57,16 @@ export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
-  onOpenStudio,
+  onOpenFile,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
   workspaceId: string;
   /** The open project tenant. */
   projectTenantId: string;
-  /** Open this project in the IDE — where a document is actually edited. */
-  onOpenStudio: () => void;
+  /** Open one document where documents are edited: the project's IDE, at that
+   *  file. The path is repo-relative, which is what the IDE's opener wants. */
+  onOpenFile: (path: string) => void;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -93,7 +94,7 @@ export function DocumentsTab({
         workspaceId={workspaceId}
         projectTenantId={projectTenantId}
         types={types}
-        onOpenStudio={onOpenStudio}
+        onOpenFile={onOpenFile}
       />
     </div>
   );
@@ -598,14 +599,14 @@ function IngestedDocumentsView({
   workspaceId,
   projectTenantId,
   types,
-  onOpenStudio,
+  onOpenFile,
 }: {
   token: string;
   workspaceId: string;
   projectTenantId: string;
   types: DocType[];
-  /** Editing a document is the IDE's job — this hands the project over to it. */
-  onOpenStudio: () => void;
+  /** Editing a document is the IDE's job — this hands it the file. */
+  onOpenFile: (path: string) => void;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<BindingFilter>("review");
@@ -1299,9 +1300,9 @@ function IngestedDocumentsView({
                   {/* The file lives in the repository, so the repository's
                       editor is where it is changed. Studio reports on it. */}
                   <button
-                    onClick={onOpenStudio}
+                    onClick={() => onOpenFile(selected.path)}
                     style={{ marginTop: 10, width: "100%" }}
-                    title="Open this project in the IDE to edit the file"
+                    title={`Open ${selected.path} in the IDE`}
                   >
                     Edit in the IDE →
                   </button>
