@@ -332,6 +332,28 @@ export interface SpecFinding {
   details?: unknown;
 }
 
+/** One document type a stage cannot do without, and how the project stands on it. */
+export interface StageRequirement {
+  type_key: string;
+  /** A document of this type exists in the project — written here, or a
+   *  repository file someone bound to the type. */
+  present: boolean;
+  /** It passes its type's structural check. */
+  conforms: boolean;
+  /** Detectors the stage gates on that have not passed: missing, pending or
+   *  failed. Empty when the stage gates nothing, or everything passed. */
+  analyses_outstanding: string[];
+}
+
+/** Where a project stands against one stage of its workspace's journey. */
+export interface StageStatus {
+  key: string;
+  label: string;
+  required: boolean;
+  complete: boolean;
+  requirements: StageRequirement[];
+}
+
 /** A pull request opened for a published change, or the one already open. */
 export interface OpenedPullRequest {
   number: number;
@@ -1671,6 +1693,18 @@ export const api = {
     );
   },
 
+
+
+  /** Where a project stands against the stages of its workspace's journey.
+   *
+   *  Computed, never stored: a stage is complete when the documents it names
+   *  are there, conform, and have passed whatever detectors it gates on. A
+   *  stored flag would go stale the moment one of them is edited. */
+  projectStageStatus: (token: string, workspaceId: string, projectId: string) =>
+    request<{ items: StageStatus[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/stage-status`,
+      token,
+    ),
 
   /* ── studio-documents: ingested files bound to types ── */
 
