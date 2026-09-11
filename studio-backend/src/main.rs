@@ -28,6 +28,7 @@ mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into st
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
+mod studio_events; // studio-events: the assembly's one push channel to the portal (SSE + replay)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 #[cfg(feature = "theia-bridge")]
 mod studio_theia; // ADR-0010: backend-to-backend bridge to the Theia node backend (opt-in)

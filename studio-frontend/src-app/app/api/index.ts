@@ -15,3 +15,10 @@ export {
   PLATFORM_ROOT_TENANT_ID,
 } from './types';
 export { accountsMockMap, identityMockMap } from './mocks';
+export {
+  StudioEventsApiService,
+  STUDIO_EVENTS_API_BASE_URL,
+  type StudioEvent,
+  type StudioEventPage,
+  type StudioRunEvent,
+} from './StudioEventsApiService';

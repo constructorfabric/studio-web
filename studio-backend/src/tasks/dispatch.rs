@@ -30,9 +30,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, Condition, EntityTrait};
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
+use toolkit::client_hub::ClientHub;
 use toolkit_db::Db;
 use toolkit_db::outbox::{LeasedMessageHandler, MessageResult, OutboxMessage};
 use toolkit_db::secure::{SecureEntityExt, SecureUpdateExt};
@@ -42,6 +43,38 @@ use uuid::Uuid;
 
 use super::registry::{ProgressSink, TaskContext, TaskOutcome};
 use super::{PAYLOAD_TYPE, RunState, entity, registry};
+use crate::studio_events::{StudioEvent, StudioEventPublisher};
+
+/// The `source` every event this gear publishes carries.
+const EVENT_SOURCE: &str = "studio-tasks";
+/// The `subject_type` those events are about.
+const EVENT_SUBJECT: &str = "task_run";
+
+/// Announce a run's transition on the `studio-events` channel, so a portal
+/// watching a run is told instead of polling for it.
+///
+/// The publisher is resolved per event rather than held: gear init order is not
+/// guaranteed, and an assembly without the channel must lose nothing but the
+/// announcement. Best-effort by contract — a run's outcome is the row, not this.
+fn announce(hub: &ClientHub, tenant: Uuid, run_id: Uuid, kind: &str, payload: Value) {
+    // Only what this transition actually set is in `payload`: a field that is
+    // absent means "unchanged", and a consumer merges rather than overwrites.
+    // Sending `null` for the fields a patch left alone would tell a client the
+    // run had just lost its summary, or its counts.
+    let Ok(events) = hub.get::<dyn StudioEventPublisher>() else {
+        return;
+    };
+    events.publish(
+        StudioEvent::new(
+            tenant,
+            kind,
+            EVENT_SUBJECT,
+            run_id.to_string(),
+            EVENT_SOURCE,
+        )
+        .with_payload(payload),
+    );
+}
 
 /// The identity the worker acts as. Fixed, because it appears in audit trails
 /// and in every scoped read the handlers make.
@@ -62,11 +95,17 @@ const CANCEL_POLL: Duration = Duration::from_secs(5);
 /// back to its row.
 pub(super) struct DbProgress {
     pub(super) db: Db,
+    /// Resolves the studio-events publisher per report; see [`announce`].
+    pub(super) hub: Arc<ClientHub>,
 }
 
 #[async_trait]
 impl ProgressSink for DbProgress {
     async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String, detail: Option<Value>) {
+        // Copies for the announcement: the write below moves both into the
+        // statement it builds.
+        let phase_line = phase.clone();
+        let detail_for_event = detail.clone();
         let write = async {
             let conn = self.db.conn()?;
             let mut update = entity::Entity::update_many()
@@ -92,6 +131,22 @@ impl ProgressSink for DbProgress {
         if let Err(e) = write.await {
             warn!(run_id = %run_id, "studio-tasks: could not record progress: {e:#}");
         }
+        let mut event = serde_json::Map::new();
+        event.insert("run_id".into(), json!(run_id));
+        event.insert("state".into(), json!(RunState::Running.as_str()));
+        event.insert("phase".into(), json!(phase_line));
+        // Only when the report carried counts: a phase-only report leaves the
+        // run's recorded result alone, and so must the announcement.
+        if let Some(detail) = detail_for_event {
+            event.insert("result".into(), detail);
+        }
+        announce(
+            &self.hub,
+            tenant,
+            run_id,
+            "task.progress",
+            Value::Object(event),
+        );
     }
 }
 
@@ -118,6 +173,8 @@ async fn cancel_requested(db: &Db, tenant: Uuid, id: Uuid) -> bool {
 pub struct TaskDispatcher {
     db: Db,
     progress: Arc<dyn ProgressSink>,
+    /// Resolves the studio-events publisher per transition; see [`announce`].
+    hub: Arc<ClientHub>,
     /// Cancelled when the gear stops, so a long handler is told to wind up
     /// instead of being dropped mid-write.
     shutdown: CancellationToken,
@@ -127,12 +184,21 @@ pub struct TaskDispatcher {
 }
 
 impl TaskDispatcher {
-    pub fn new(db: Db, shutdown: CancellationToken, ready: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        db: Db,
+        shutdown: CancellationToken,
+        ready: Arc<AtomicBool>,
+        hub: Arc<ClientHub>,
+    ) -> Self {
         Self {
-            progress: Arc::new(DbProgress { db: db.clone() }),
+            progress: Arc::new(DbProgress {
+                db: db.clone(),
+                hub: Arc::clone(&hub),
+            }),
             db,
             shutdown,
             ready,
+            hub,
         }
     }
 
@@ -163,7 +229,27 @@ impl TaskDispatcher {
 
     /// Apply a state transition to the row. Best-effort: the queue decides
     /// whether a message is done, this table only records it.
-    async fn record(&self, tenant: Uuid, id: Uuid, patch: Patch<'_>) {
+    async fn record(&self, tenant: Uuid, id: Uuid, task_type: &str, patch: Patch<'_>) {
+        let kind = format!("task.{}", patch.state.as_str());
+        let payload = {
+            let mut event = serde_json::Map::new();
+            event.insert("run_id".into(), json!(id));
+            event.insert("task_type".into(), json!(task_type));
+            event.insert("state".into(), json!(patch.state.as_str()));
+            if let Some(attempts) = patch.attempts {
+                event.insert("attempts".into(), json!(attempts));
+            }
+            if let Some(summary) = patch.summary {
+                event.insert("summary".into(), json!(summary));
+            }
+            if let Some(error) = patch.error {
+                event.insert("error".into(), json!(error));
+            }
+            if let Some(result) = patch.result {
+                event.insert("result".into(), result.clone());
+            }
+            Value::Object(event)
+        };
         let write = async {
             let conn = self.db.conn()?;
             let mut update = entity::Entity::update_many()
@@ -207,6 +293,7 @@ impl TaskDispatcher {
         if let Err(e) = write.await {
             warn!(run_id = %id, "studio-tasks: could not record the run outcome: {e:#}");
         }
+        announce(&self.hub, tenant, id, &kind, payload);
     }
 }
 
@@ -281,8 +368,13 @@ impl LeasedMessageHandler for TaskDispatcher {
         }
         if row.cancel_requested {
             info!(run_id = %run_id, "studio-tasks: run cancelled before it started");
-            self.record(tenant, run_id, Patch::state(RunState::Cancelled))
-                .await;
+            self.record(
+                tenant,
+                run_id,
+                &row.task_type,
+                Patch::state(RunState::Cancelled),
+            )
+            .await;
             return MessageResult::Ok;
         }
 
@@ -316,6 +408,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 self.record(
                     tenant,
                     run_id,
+                    &row.task_type,
                     Patch {
                         error: Some(&reason),
                         ..Patch::state(RunState::Failed)
@@ -345,6 +438,7 @@ impl LeasedMessageHandler for TaskDispatcher {
             self.record(
                 tenant,
                 run_id,
+                &row.task_type,
                 Patch {
                     error: Some(&reason),
                     ..Patch::state(RunState::Failed)
@@ -371,6 +465,7 @@ impl LeasedMessageHandler for TaskDispatcher {
         self.record(
             tenant,
             run_id,
+            &row.task_type,
             Patch {
                 attempts: Some(attempt),
                 starting: true,
@@ -428,8 +523,13 @@ impl LeasedMessageHandler for TaskDispatcher {
         // whatever the handler returned on its way out.
         if cancelled {
             info!(run_id = %run_id, "studio-tasks: run stopped on request");
-            self.record(tenant, run_id, Patch::state(RunState::Cancelled))
-                .await;
+            self.record(
+                tenant,
+                run_id,
+                &row.task_type,
+                Patch::state(RunState::Cancelled),
+            )
+            .await;
             return MessageResult::Ok;
         }
 
@@ -444,6 +544,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 self.record(
                     tenant,
                     run_id,
+                    &row.task_type,
                     Patch {
                         summary: summary.as_deref(),
                         result: result.as_ref(),
@@ -463,6 +564,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 self.record(
                     tenant,
                     run_id,
+                    &row.task_type,
                     Patch {
                         error: Some(&reason),
                         ..Patch::state(RunState::Failed)
@@ -482,6 +584,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                     self.record(
                         tenant,
                         run_id,
+                        &row.task_type,
                         Patch {
                             error: Some(&reason),
                             ..Patch::state(RunState::Failed)
@@ -499,6 +602,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                     self.record(
                         tenant,
                         run_id,
+                        &row.task_type,
                         Patch {
                             error: Some(&reason),
                             ..Patch::state(RunState::Queued)

@@ -10,6 +10,7 @@
 
 import { api, type RepoEntry } from "./api";
 import { errText } from "./format";
+import { currentCursor, followRun, type RunEventPayload } from "./studio-events";
 
 /** Where a sync's nodes are tagged: the parent workspace (so a workspace-level
  *  graph sees every project) and the project itself (so a project-level graph
@@ -79,8 +80,22 @@ function counts(t: {
     .join(" · ");
 }
 
-const POLL_MS = 1200;
 const DEADLINE_MS = 5 * 60 * 1000;
+
+/** The counts an `artifact.ingest` run reports, as they arrive on an event. */
+function countsOf(result: RunEventPayload["result"]): Parameters<typeof counts>[0] & {
+  stored: number;
+} {
+  const n = (key: string) => Number((result as Record<string, unknown> | null)?.[key] ?? 0) || 0;
+  return {
+    issues: n("issues"),
+    pull_requests: n("pull_requests"),
+    files: n("files"),
+    comments: n("comments"),
+    commits: n("commits"),
+    stored: n("stored"),
+  };
+}
 
 /**
  * Sync one attached repository into the artifact graph and follow the job to
@@ -105,6 +120,10 @@ export async function runRepoSync(
 
   onProgress({ line: "queued…", running: true, stored: 0 });
   try {
+    // The cursor is read BEFORE the enqueue: a run that fails in milliseconds
+    // (a rejected credential, say) would otherwise be over before the stream is
+    // open, and this is what replays those events.
+    const cursor = await currentCursor(token);
     const { task_id } = await api.syncArtifacts(token, {
       provider: parsed.provider,
       secret_ref: repo.token_ref,
@@ -114,32 +133,31 @@ export async function runRepoSync(
       project_id: scope.projectId,
       repo_dir: repo.target || repo.name,
     });
-    const deadline = Date.now() + DEADLINE_MS;
-    for (;;) {
-      await new Promise((res) => setTimeout(res, POLL_MS));
-      const t = await api.artifactSyncTask(token, task_id);
-      if (t.status === "succeeded") {
-        onProgress({ line: counts(t) || "done", running: false, stored: t.stored });
-        return;
-      }
-      // `cancelled` too: somebody stopped the run from Background work, and
-      // polling for a state it will never leave is how you hang a UI.
-      if (t.status === "failed" || t.status === "cancelled") {
-        return done(t.message || `sync ${t.status}`);
-      }
-      // Live line: the current phase, the counts, and how many objects are
-      // already in the graph.
-      const phase = (t.message || t.status).replace(/…$/, "");
-      const c = counts(t);
-      onProgress({
-        line: `${phase}${c ? ` — ${c}` : ""}${t.stored ? ` · ${t.stored} in graph` : ""}…`,
-        running: true,
-        stored: t.stored,
-      });
-      if (Date.now() > deadline) {
-        return done("timed out — still running server-side");
-      }
+    // studio-tasks announces every transition of this run on studio-events, so
+    // there is nothing to poll: the line below moves when the backend says so.
+    const end = await followRun(
+      token,
+      task_id,
+      (e) => {
+        const c = countsOf(e.result);
+        const phase = (e.phase || e.state).replace(/…$/, "");
+        const line = counts(c);
+        onProgress({
+          line: `${phase}${line ? ` — ${line}` : ""}${c.stored ? ` · ${c.stored} in graph` : ""}…`,
+          running: true,
+          stored: c.stored,
+        });
+      },
+      { fromSeq: cursor, timeoutMs: DEADLINE_MS },
+    );
+    const c = countsOf(end.result);
+    if (end.state === "succeeded") {
+      onProgress({ line: counts(c) || "done", running: false, stored: c.stored });
+      return;
     }
+    // `cancelled` too: somebody stopped the run from Background work, and
+    // waiting for a state it will never leave is how you hang a UI.
+    return done(end.error || end.summary || `sync ${end.state}`);
   } catch (e) {
     return done(errText(e));
   }

@@ -1,10 +1,12 @@
 //! Where forwarded Theia events go after the ingress authenticates them.
 //!
-//! The ingress is transport; the sink is policy. [`LoggingEventSink`] is the
-//! default and needs no infrastructure. `EventBrokerEventSink` (behind the
-//! `theia-event-broker` feature) plugs in here without touching the ingress:
-//! it takes an `EventBrokerApi` from ClientHub and republishes each event as a
-//! typed event, tenant-scoped by the reverse-resolved identity.
+//! The ingress is transport; the sink is policy. [`StudioEventsSink`] is the
+//! default: it republishes onto the assembly's own `studio-events` channel, so
+//! the portal sees Theia activity through the same stream as everything else.
+//! `EventBrokerEventSink` (behind the `theia-event-broker` feature) plugs in
+//! here without touching the ingress: it takes an `EventBrokerApi` from
+//! ClientHub and republishes each event as a typed event, tenant-scoped by the
+//! reverse-resolved identity.
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -38,13 +40,30 @@ pub trait TheiaEventSink: Send + Sync {
     async fn accept(&self, event: TheiaForwardedEvent);
 }
 
-/// Default sink: structured trace only, zero infrastructure. Keeps the phase-3
-/// Theia→studio loop observable before the event-broker sink is wired.
-#[allow(dead_code)] // the non-broker fallback sink; unused under `theia-event-broker`
-pub struct LoggingEventSink;
+/// Default sink: republish onto the `studio-events` channel, so a forwarded
+/// Theia event reaches the portal like any other studio event.
+///
+/// The bridge's vocabulary stops here. Downstream the event is just
+/// `theia.<kind>` about a **workspace**, with everything Theia-specific —
+/// session id, sequence, the raw callback argument — inside `payload`. That is
+/// what keeps one producer's protocol out of the contract every consumer has
+/// to live with.
+///
+/// The publisher is resolved lazily rather than at construction: gear init
+/// order is not guaranteed, and with no channel available this degrades to the
+/// structured trace it has always emitted.
+pub struct StudioEventsSink {
+    hub: std::sync::Arc<toolkit::client_hub::ClientHub>,
+}
+
+impl StudioEventsSink {
+    pub fn new(hub: std::sync::Arc<toolkit::client_hub::ClientHub>) -> Self {
+        Self { hub }
+    }
+}
 
 #[async_trait]
-impl TheiaEventSink for LoggingEventSink {
+impl TheiaEventSink for StudioEventsSink {
     async fn accept(&self, event: TheiaForwardedEvent) {
         tracing::info!(
             kind = %event.kind,
@@ -54,6 +73,27 @@ impl TheiaEventSink for LoggingEventSink {
             sequence = ?event.sequence,
             payload_bytes = event.payload.to_string().len(),
             "studio-theia: received forwarded Theia event"
+        );
+        let Ok(events) = self
+            .hub
+            .get::<dyn crate::studio_events::StudioEventPublisher>()
+        else {
+            return; // no channel in this assembly — the trace above is the record
+        };
+        events.publish(
+            crate::studio_events::StudioEvent::new(
+                event.tenant_id,
+                format!("theia.{}", event.kind),
+                "workspace",
+                event.workspace_id.to_string(),
+                "studio-theia",
+            )
+            .with_payload(serde_json::json!({
+                "workspace_id": event.workspace_id,
+                "session_id": event.session_id,
+                "sequence": event.sequence,
+                "event": event.payload,
+            })),
         );
     }
 }
