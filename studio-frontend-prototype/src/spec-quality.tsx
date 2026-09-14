@@ -196,8 +196,10 @@ export async function detectDocType(
   const r = (view.result ?? {}) as {
     doc_type?: unknown;
     mixture?: Record<string, unknown>;
+    gate?: Record<string, unknown>;
   };
   const docType = typeof r.doc_type === "string" && r.doc_type.trim() ? r.doc_type.trim() : null;
+  const passed = r.gate?.passed ?? r.gate?.ok;
 
   // `mixture` is how much of the document each section role accounts for.
   // `other` is the share that is not specification content at all, so what is
@@ -205,7 +207,12 @@ export async function detectDocType(
   // and that, not `gate`, is what says whether `doc_type` means anything.
   const other = Number(r.mixture?.other ?? 0);
   const specShare = Number.isFinite(other) ? Math.max(0, Math.min(1, 1 - other)) : 0;
-  return { docType, specShare };
+  return {
+    docType,
+    specShare,
+    gatePassed: typeof passed === "boolean" ? passed : null,
+    taskId: view.task_id,
+  };
 }
 
 /** What the `purpose` detector concluded about one document. */
@@ -215,6 +222,15 @@ export interface DocTypeVerdict {
   /** How much of the document read as specification content rather than
    *  `other`, 0.0–1.0 — the detector's own evidence for the type it named. */
   specShare: number;
+  /** Whether the purpose gate passed: `leak_share` under its threshold, i.e.
+   *  no foreign content where the type says there should be none.
+   *
+   *  This is the one thing `gate` is good for. It is not evidence for
+   *  `doc_type` — see [`MIN_SPEC_SHARE`] — but it is exactly what a stage that
+   *  gates on `purpose` is asking about. */
+  gatePassed: boolean | null;
+  /** The upstream task, so a disputed verdict can be traced to its run. */
+  taskId: string;
 }
 
 /** Below this, the detector recognised too little of the document for the type
@@ -239,9 +255,161 @@ export interface DocTypeVerdict {
  *  roadmap and fails a genuine ADR; gating on it would reject the real
  *  documents and keep the noise.
  *
- *  At 0.5 the sample keeps every real specification and drops four of the five
- *  files that are not one. */
+ *  At 0.5 the sample keeps every real specification and drops the files that
+ *  are not one.
+ *
+ *  `deploy/README.md` sits above the cut at 0.89 and was written down here as
+ *  the one non-specification that gets through. It is not one: asked again, its
+ *  mixture is `design 0.57, requirement 0.43, other 0.00` — every section reads
+ *  as design or requirement, and the reasons hold up ("declares published
+ *  images, tag rules, and runtime constraints"). It is a deployment design
+ *  document that happens to be called README. The detector was right and the
+ *  label was mine. */
 export const MIN_SPEC_SHARE = 0.5;
+
+/** Ask the `leak` detector whether a document contains content that belongs to
+ *  some other kind of document.
+ *
+ *  It needs to be told which type the document is — without `doc_type` (or a
+ *  path it recognises, like `PRD.md`) the service answers 422, because "foreign
+ *  content" only means something once you have said what native content would
+ *  be. That is why this belongs to a caller that already knows the type: a
+ *  bound document has one, and nothing has to be guessed.
+ *
+ *  Unlike `purpose`, the verdict is top-level and plain: `passed`, with the
+ *  share of the document that read as foreign and the sections it came from.
+ *
+ *  ## Why `verify: false`
+ *
+ *  The service verifies its own candidates with an LLM by default, and on this
+ *  deployment that pass clears every one of them. Measured on two documents of
+ *  known kind, declared correctly and incorrectly:
+ *
+ *  ```text
+ *                                  declared as   passed   share
+ *    a design contract             design        yes      0.00
+ *    a design contract             adr           NO       0.68
+ *    a design contract             prd           NO       1.00
+ *    a real ADR                    adr           yes      0.00
+ *    a real ADR                    prd           NO       0.99
+ *    a real ADR                    design        NO       0.99
+ *  ```
+ *
+ *  With verification on, all six pass — including the ADR read as a PRD at
+ *  0.99 raw. Unverified, the answer is exactly the question this queue asks:
+ *  does the document match the type it is bound to. A check that never fires is
+ *  not evidence that documents are clean, and a gate wired to one would open
+ *  for everything while looking like it had checked.
+ */
+export async function detectLeak(
+  token: string,
+  path: string,
+  text: string,
+  docType: string,
+  signal?: AbortSignal,
+): Promise<LeakVerdict> {
+  const view = await runDetector(
+    "leak",
+    { text, path, doc_type: docType, gate_threshold: 0.05, verify: false },
+    token,
+    { signal },
+  );
+  const r = (view.result ?? {}) as {
+    passed?: unknown;
+    leak_share?: unknown;
+    foreign_roles?: unknown;
+  };
+  return {
+    passed: typeof r.passed === "boolean" ? r.passed : null,
+    leakShare: typeof r.leak_share === "number" ? r.leak_share : null,
+    foreignRoles: Array.isArray(r.foreign_roles) ? r.foreign_roles.map(String) : [],
+    taskId: view.task_id,
+  };
+}
+
+/** What the `leak` detector concluded about one document. */
+export interface LeakVerdict {
+  /** Whether the foreign share stayed under the threshold. `null` when the
+   *  service answered without one, which keeps a gate shut rather than
+   *  guessing. */
+  passed: boolean | null;
+  /** How much of the document read as belonging to another kind, 0.0–1.0. */
+  leakShare: number | null;
+  /** The kinds it read as — `design` and `requirement` inside an ADR, say. */
+  foreignRoles: string[];
+  taskId: string;
+}
+
+/** Ask the `bloat` detector which documents repeat each other.
+ *
+ *  Set-wise: one run over the whole set, and the result is clusters of
+ *  duplicated text rather than a verdict per document. But each cluster names
+ *  the files it occurs in, and that is enough to say the one thing a stage
+ *  needs to know about a single document — whether any of it is also somewhere
+ *  else.
+ *
+ *  Only duplication **across** documents counts. A document that repeats itself
+ *  is a different (and lesser) complaint, and failing a stage for it would
+ *  bury the one bloat exists for: two documents saying the same thing, so that
+ *  changing one silently leaves the other lying.
+ */
+export async function detectBloat(
+  token: string,
+  docs: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<BloatVerdicts> {
+  const view = await runDetector("bloat", { docs }, token, { signal });
+  const r = (view.result ?? {}) as { clusters?: unknown };
+  const clusters = Array.isArray(r.clusters) ? r.clusters : [];
+
+  /** path → the other paths it shares text with. */
+  const shares = new Map<string, Set<string>>();
+  for (const raw of clusters) {
+    const cluster = raw as { occurrences?: { file?: unknown }[] };
+    const files = [
+      ...new Set(
+        (cluster.occurrences ?? [])
+          .map((o) => (typeof o.file === "string" ? o.file : ""))
+          .filter(Boolean),
+      ),
+    ];
+    // One file, however many times: that is a document repeating itself.
+    if (files.length < 2) continue;
+    for (const file of files) {
+      const others = shares.get(file) ?? new Set<string>();
+      for (const other of files) if (other !== file) others.add(other);
+      shares.set(file, others);
+    }
+  }
+
+  const verdicts: BloatVerdicts = { byPath: {}, taskId: view.task_id, pairs: [] };
+  for (const path of Object.keys(docs)) {
+    verdicts.byPath[path] = [...(shares.get(path) ?? [])].sort();
+  }
+  // The same fact as a relation, for the graph: an unordered pair, once.
+  const seen = new Set<string>();
+  for (const [path, others] of shares) {
+    for (const other of others) {
+      const [a, b] = path < other ? [path, other] : [other, path];
+      const key = `${a}|${b}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        verdicts.pairs.push([a, b]);
+      }
+    }
+  }
+  return verdicts;
+}
+
+/** Which documents of a set repeat which others. */
+export interface BloatVerdicts {
+  /** Every document in the set, mapped to the others it shares text with.
+   *  Empty array = nothing of it is duplicated elsewhere. */
+  byPath: Record<string, string[]>;
+  /** The same relation, deduplicated and unordered, for the graph. */
+  pairs: [string, string][];
+  taskId: string;
+}
 
 /** True when an error came from the user pressing Stop, not from a failure. */
 export const isDetectorCancel = isCancel;

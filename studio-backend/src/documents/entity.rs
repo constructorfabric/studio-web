@@ -138,13 +138,19 @@ pub mod analysis {
     #[sea_orm(table_name = "studio_document_analyses")]
     #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
     pub struct Model {
-        /// Deterministic v5 UUID of `(document_id, detector)`: one verdict per
+        /// Deterministic v5 UUID of `(subject, detector)`: one verdict per
         /// detector per document, replaced when the analysis is re-run.
         #[sea_orm(primary_key, auto_increment = false)]
         pub id: Uuid,
         /// Workspace tenant, as for the document itself.
         pub tenant_id: Uuid,
-        pub document_id: Uuid,
+        /// The Studio document this is about. NULL when it is about a bound
+        /// repository file instead — exactly one of the two is set, which the
+        /// database checks.
+        pub document_id: Option<Uuid>,
+        /// The ingested-file binding this is about, for a document that lives
+        /// in the repository rather than in `studio_documents`.
+        pub binding_id: Option<Uuid>,
         pub detector: String,
         /// `pending`, `passed` or `failed`.
         pub state: String,

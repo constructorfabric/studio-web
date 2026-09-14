@@ -17,6 +17,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { api, type TaskRun, type TaskSchedule } from "./api";
 import { errText } from "./format";
+import { subscribeStudioEvents } from "./studio-events";
 
 /** How often the list refreshes while something is still moving. */
 const LIVE_POLL_MS = 4000;
@@ -123,17 +124,42 @@ export function BackgroundWork({ token, query }: { token: string; query: string 
     };
   }, [token, state, taskType]);
 
-  // Poll only while something can still change; a page of finished runs is
-  // static and does not need re-fetching.
+  // studio-tasks announces every run transition on studio-events, so the list
+  // refreshes when something actually happens rather than on a timer. The
+  // interval stays as a floor: it covers a deployment without the channel, and
+  // a reload is cheap next to a missed state change.
   const live = (runs ?? []).some((r) => r.state === "queued" || r.state === "running");
   useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => {
+    const refresh = () => {
       load().catch(() => {
         /* a failed refresh keeps the last good list */
       });
-    }, LIVE_POLL_MS);
-    return () => clearInterval(timer);
+    };
+    // A busy run reports progress several times a second; one reload per burst
+    // is what the list actually needs.
+    let coalesce: ReturnType<typeof setTimeout> | null = null;
+    const refreshSoon = () => {
+      if (coalesce) return;
+      coalesce = setTimeout(() => {
+        coalesce = null;
+        refresh();
+      }, 300);
+    };
+    const unsubscribe = subscribeStudioEvents(token, {
+      onEvent: (event) => {
+        if (event.subject_type === "task_run") refreshSoon();
+      },
+    });
+    const stop = () => {
+      if (coalesce) clearTimeout(coalesce);
+      unsubscribe();
+    };
+    if (!live) return stop;
+    const timer = setInterval(refresh, LIVE_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      stop();
+    };
   }, [live, token, state, taskType]);
 
   const filtered = useMemo(() => {

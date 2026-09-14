@@ -26,6 +26,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0005::Migration),
             Box::new(m0006::Migration),
             Box::new(m0007::Migration),
+            Box::new(m0008::Migration),
         ]
     }
 }
@@ -473,6 +474,76 @@ CREATE TABLE IF NOT EXISTS studio_document_bindings (
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_document_bindings;")
                 .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A detector's verdict is about a document — and a document is now either one
+/// Studio holds or a repository file someone bound to a type. Same verdict,
+/// same table, one nullable subject column each and a CHECK that exactly one of
+/// them is set.
+mod m0008 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0008_analyses_of_bound_files"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "ALTER TABLE studio_document_analyses ALTER COLUMN document_id DROP NOT NULL;",
+                r"ALTER TABLE studio_document_analyses
+    ADD COLUMN IF NOT EXISTS binding_id UUID
+        REFERENCES studio_document_bindings (id) ON DELETE CASCADE;",
+                // Exactly one subject. A row about both, or about neither, is
+                // a verdict nothing can read back -- and it would still count
+                // against a stage gate.
+                r"ALTER TABLE studio_document_analyses
+    DROP CONSTRAINT IF EXISTS studio_document_analyses_one_subject;",
+                r"ALTER TABLE studio_document_analyses
+    ADD CONSTRAINT studio_document_analyses_one_subject CHECK (
+        (document_id IS NOT NULL AND binding_id IS NULL)
+     OR (document_id IS NULL AND binding_id IS NOT NULL)
+    );",
+                // `UNIQUE (document_id, detector)` from m0006 still holds for
+                // document rows; NULLs are distinct in Postgres, so it says
+                // nothing about binding rows and they need their own.
+                r"CREATE UNIQUE INDEX IF NOT EXISTS uq_studio_document_analyses_binding_detector
+    ON studio_document_analyses (binding_id, detector)
+    WHERE binding_id IS NOT NULL;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "DROP INDEX IF EXISTS uq_studio_document_analyses_binding_detector;",
+                r"ALTER TABLE studio_document_analyses
+    DROP CONSTRAINT IF EXISTS studio_document_analyses_one_subject;",
+                "DELETE FROM studio_document_analyses WHERE document_id IS NULL;",
+                "ALTER TABLE studio_document_analyses DROP COLUMN IF EXISTS binding_id;",
+                "ALTER TABLE studio_document_analyses ALTER COLUMN document_id SET NOT NULL;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
             Ok(())
         }
     }

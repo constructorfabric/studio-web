@@ -95,6 +95,50 @@ Our own guess is exactly what a re-scan is *for*: improving a type's template
 has to be able to change it. Either way the run refreshes conformance against
 what the file says today.
 
+## What a stage counts
+
+A stage requirement is met by a document created in Studio **or** by a
+repository file someone bound to that type — only one a person settled, never an
+unreviewed proposal.
+
+A stage's *gates* are met the same way from either side. A detector's verdict is
+a row in `studio_document_analyses` whose subject is one or the other: a
+document Studio holds, or a binding. Exactly one of the two columns is set,
+which the database checks, and forgetting either subject takes its verdicts with
+it.
+
+That row is an **index**, not the record. The finding itself — detector, score,
+raw result — lives in the artifact graph joined to the file node, which is what
+survives and what the queue shows. The row answers the one question a gate asks,
+cheaply: did this detector pass for this document. Walking the graph to answer
+it, per stage, per requirement, is not the shape of that question.
+
+Only `passed` opens a gate. Pending, failed, and anything this build cannot
+interpret keep it shut, and verdicts never cross between the two kinds of
+subject: a document's passing verdict says nothing about a repository file of
+the same type.
+
+## Which detectors a stage can gate on
+
+| detector | shape | gateable |
+|---|---|---|
+| `purpose` | per document, `gate.passed` | yes |
+| `leak` | per document, `passed` + `leak_share` — needs the document's type, which a binding has | yes |
+| `bloat` | set-wise: clusters of duplicated text, each naming the files it occurs in | yes, derived |
+| `traceability` | set-wise: pairs between documents | no |
+
+`bloat` has no per-document verdict in its response, but every cluster names its
+files, and that answers the one question a stage asks: is any of this document
+also somewhere else. Only duplication **across** documents counts — a document
+that repeats itself is a lesser complaint, and failing a stage for it would bury
+the one bloat exists for, which is two documents saying the same thing so that
+changing one silently leaves the other lying.
+
+`traceability` is not gateable, and not for want of a rule: `extract` returns no
+pairs for any document set or identifier notation we could construct, and
+`classify` then reports `passed` on a comparison it never made. Written up in
+`studio-backend/docs/spec-quality-issues.md`.
+
 ## The person's ruling
 
 `PUT …/document-bindings/{id}` takes one explicit action — `confirm` the
@@ -102,6 +146,29 @@ proposal, `set` a type outright, `reject` (this file is not a document), or
 `reset` back to the queue. `source: spec_quality` is the one other source a
 caller may claim, and it lands as a proposal rather than a decision. Pass
 `content` to re-check conformance against the new type in the same call.
+
+## When it happens
+
+A sync classifies the prose it reads, as it reads it. That is the only moment
+the whole repository's text is in hand, and doing it then is the difference
+between a synced repository whose documents are known and one that merely has
+files in it.
+
+Neither gear can answer alone: `studio-artifact-ingest` walks the repository and
+ends up holding every file's path and text; `studio-documents` owns the type
+catalogue and decides what each file is. So the seam between them is a trait
+this gear declares (`documents::port::DocumentClassifier`) and the ingest gear
+calls — published on the ClientHub, because the documents gear stands down when
+it has no database and a consumer that finds no client should simply not
+classify rather than fail a repository sync.
+
+Classification never fails the sync. The repository is ingested either way, and
+the pass is idempotent, so a failure costs a re-run of the cheap half rather
+than the clone.
+
+The portal's **Scan repository** does the same thing on demand, for the
+repositories that were synced before this existed and for a checkout the IDE
+cloned after the fact.
 
 ## Why classification takes content in the request
 

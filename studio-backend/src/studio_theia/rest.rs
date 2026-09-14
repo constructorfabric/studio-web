@@ -189,8 +189,9 @@ async fn ingest_events(
         .get("event")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    // TODO(ADR-0010 phase 3, next slice): swap LoggingEventSink for an
-    // event-broker sink — the trusted identity below is exactly its input.
+    // The sink decides where this goes: `studio-events` by default (the
+    // portal's stream), the event-broker under its feature. The trusted
+    // identity below is its input either way.
     service
         .sink()
         .accept(TheiaForwardedEvent {

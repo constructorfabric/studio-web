@@ -60,7 +60,8 @@ this gear exposes sits on that side of the line.
 
 ## Two ways in
 
-- **REST** (`/studio-insight/v1/{query,components/metrics,pull,push,health}`)
+- **REST** (`/studio-insight/v1/{query,components/metrics,components/pull-requests,
+  pull,push,health}`)
   for the portal and out-of-process callers.
 - **An in-process `InsightClient`** published to the ClientHub, so another gear
   reaches Insight without a network hop back through our own gateway.
@@ -75,6 +76,7 @@ operation is a change here and nowhere else.
 |---|---|
 | `POST /query` | run one read-only statement; returns columns, rows, `truncated` |
 | `POST /components/metrics` | delivery metrics for one repository, sliced by component |
+| `POST /components/pull-requests` | pull requests for one repository, by state, sliced by component |
 | `POST /pull` | read a resource from Insight |
 | `POST /push` | send one to it |
 | `GET /health` | is the upstream configured, and does it answer a `SELECT 1` |

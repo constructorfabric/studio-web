@@ -30,9 +30,16 @@ import {
   DocValidation,
   RemoteRepo,
   SpecFinding,
+  StageStatus,
   WrittenFile,
 } from "./api";
-import { detectDocType, isDetectorCancel, MIN_SPEC_SHARE } from "./spec-quality";
+import {
+  detectBloat,
+  detectDocType,
+  detectLeak,
+  isDetectorCancel,
+  MIN_SPEC_SHARE,
+} from "./spec-quality";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -56,15 +63,16 @@ export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
-  onOpenStudio,
+  onOpenFile,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
   workspaceId: string;
   /** The open project tenant. */
   projectTenantId: string;
-  /** Open this project in the IDE — where a document is actually edited. */
-  onOpenStudio: () => void;
+  /** Open one document where documents are edited: the project's IDE, at that
+   *  file. The path is repo-relative, which is what the IDE's opener wants. */
+  onOpenFile: (path: string) => void;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -92,7 +100,7 @@ export function DocumentsTab({
         workspaceId={workspaceId}
         projectTenantId={projectTenantId}
         types={types}
-        onOpenStudio={onOpenStudio}
+        onOpenFile={onOpenFile}
       />
     </div>
   );
@@ -597,17 +605,19 @@ function IngestedDocumentsView({
   workspaceId,
   projectTenantId,
   types,
-  onOpenStudio,
+  onOpenFile,
 }: {
   token: string;
   workspaceId: string;
   projectTenantId: string;
   types: DocType[];
-  /** Editing a document is the IDE's job — this hands the project over to it. */
-  onOpenStudio: () => void;
+  /** Editing a document is the IDE's job — this hands it the file. */
+  onOpenFile: (path: string) => void;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<BindingFilter>("review");
+  /** "" = every type, "-" = the ones with no type yet. */
+  const [typeFilter, setTypeFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -619,6 +629,10 @@ function IngestedDocumentsView({
   const [contentByNode, setContentByNode] = useState<Record<string, string>>({});
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
+  /** Where the project stands against its workspace's journey. */
+  const [stages, setStages] = useState<StageStatus[]>([]);
+  /** The types a stage wants and the project has no document for. */
+  const [seeding, setSeeding] = useState<string[] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const typeName = useCallback(
@@ -637,6 +651,14 @@ function IngestedDocumentsView({
     // session and the detector run that produced them. A failure to read them
     // must not cost the queue itself: the bindings above are the point, the
     // verdicts are what is known about them so far.
+    // The journey is computed from the documents, so it is re-read whenever
+    // they are. A workspace that has defined no stages simply has nothing to
+    // say, which the panel renders as nothing at all.
+    try {
+      setStages((await api.projectStageStatus(token, workspaceId, projectTenantId)).items);
+    } catch {
+      setStages([]);
+    }
     try {
       const found = await api.listSpecFindings(token, projectTenantId);
       const byNode: Record<string, SpecFinding[]> = {};
@@ -808,7 +830,7 @@ function IngestedDocumentsView({
       for (let i = 0; i < targets.length; i += 1) {
         const b = targets[i];
         setProgress(`Spec Quality ${i + 1}/${targets.length} · ${basename(b.path)}`);
-        const { docType, specShare } = await detectDocType(
+        const { docType, specShare, gatePassed, taskId } = await detectDocType(
           token,
           b.path,
           contentByNode[b.node_id],
@@ -821,10 +843,16 @@ function IngestedDocumentsView({
         // unrelated files comes back with all of them called the same thing.
         const recognised = specShare >= MIN_SPEC_SHARE;
 
-        // Keep the verdict in the graph whichever way it went. The call cost an
-        // LLM round-trip, and "the detector recognised almost none of this
-        // file" is worth knowing next time as much as a confident answer is —
-        // without it, every scan pays again to learn the same thing.
+        const summary = docType
+          ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
+          : "purpose: no type named";
+
+        // Two writes, for two different things, and neither is a copy of the
+        // other. The graph keeps the finding itself — the detector, the score,
+        // the raw result — joined to the file, which is what survives and what
+        // the list shows. The binding keeps the pass/fail, which is the one
+        // question a stage gate asks and the only one it can afford to walk a
+        // graph for.
         void api
           .saveQualityFindings(token, {
             findings: [
@@ -832,10 +860,15 @@ function IngestedDocumentsView({
                 detector: "purpose",
                 subject: b.node_id,
                 path: b.path,
-                severity: recognised ? "analyzed" : "unrecognised",
-                summary: docType
-                  ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
-                  : "purpose: no type named",
+                severity:
+                  gatePassed === true
+                    ? "gate-passed"
+                    : gatePassed === false
+                      ? "gate-failed"
+                      : recognised
+                        ? "analyzed"
+                        : "unrecognised",
+                summary,
                 score: specShare,
               },
             ],
@@ -845,6 +878,21 @@ function IngestedDocumentsView({
           .catch(() => {
             // The binding below is the decision; losing its trace is not worth
             // failing the run the person is watching.
+          });
+
+        // `gate` is `leak_share` against a threshold — no foreign content where
+        // the type says there should be none. Useless as evidence for the type
+        // it named, exactly right as the verdict a stage gating on `purpose`
+        // waits for. Unknown stays `pending`: a gate never opens on a value we
+        // could not interpret.
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "purpose", {
+            state: gatePassed === true ? "passed" : gatePassed === false ? "failed" : "pending",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {
+            // Same reasoning: the person is watching the queue, not the gate.
           });
 
         if (docType && recognised && types.some((t) => t.key === docType)) {
@@ -881,6 +929,208 @@ function IngestedDocumentsView({
     }
   };
 
+  /** Check the bound documents for content belonging to another kind.
+   *
+   *  This runs here rather than in the Analyze tab for a reason the service
+   *  itself enforces: `leak` refuses a document whose type it has not been
+   *  told, because "foreign content" means nothing until you have said what
+   *  native content would be. A bound document has a type; nothing is guessed.
+   *
+   *  As with the purpose run, the verdict goes two places — the finding to the
+   *  graph, the pass/fail to the binding, which is what a stage gating on
+   *  `leak` waits for. */
+  const runLeakChecks = async () => {
+    const already = (b: DocBinding) =>
+      (findings[b.node_id] ?? []).some((f) => f.detector === "leak");
+    const targets = bindings.filter(
+      (b) => b.type_key && contentByNode[b.node_id] && !already(b),
+    );
+    const alreadyDone = bindings.filter((b) => b.type_key && already(b)).length;
+
+    if (targets.length === 0) {
+      setNote(
+        alreadyDone > 0
+          ? `Nothing left to check — leak has already looked at ${alreadyDone}.`
+          : bindings.some((b) => b.type_key)
+            ? "Run Scan first — the detector needs each document's text, which the scan loads."
+            : "No document has a type yet, and leak cannot run without one.",
+      );
+      return;
+    }
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    let clean = 0;
+    let leaky = 0;
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const b = targets[i];
+        setProgress(`Leak ${i + 1}/${targets.length} · ${basename(b.path)}`);
+        const { passed, leakShare, foreignRoles, taskId } = await detectLeak(
+          token,
+          b.path,
+          contentByNode[b.node_id],
+          b.type_key as string,
+          ctrl.signal,
+        );
+        if (passed === true) clean += 1;
+        else if (passed === false) leaky += 1;
+
+        const share = leakShare == null ? "" : ` (${Math.round(leakShare * 100)}% foreign)`;
+        const summary =
+          passed === true
+            ? `leak: clean${share}`
+            : passed === false
+              ? `leak: reads partly as ${foreignRoles.join(", ") || "another kind"}${share}`
+              : "leak: no verdict";
+
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "leak",
+                subject: b.node_id,
+                path: b.path,
+                severity:
+                  passed === true ? "clean" : passed === false ? "high" : "analyzed",
+                summary,
+                score: leakShare ?? undefined,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {
+            // The run the person is watching matters more than its trace.
+          });
+
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "leak", {
+            state: passed === true ? "passed" : passed === false ? "failed" : "pending",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {
+            // Same.
+          });
+      }
+      await reload();
+      setNote(
+        `Checked ${targets.length} document${targets.length === 1 ? "" : "s"}: ` +
+          `${clean} clean, ${leaky} carrying another kind's content` +
+          (alreadyDone ? `; ${alreadyDone} had been checked before` : "") +
+          ".",
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote(`Stopped after ${clean + leaky}.`);
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
+  /** Find the documents that repeat each other.
+   *
+   *  One run over the whole set, because that is the only way the question
+   *  makes sense — "does this document say what another one already says" has
+   *  no answer from one document. The per-document verdict falls out of which
+   *  files each duplicate cluster names.
+   *
+   *  Unlike the other two runs this one cannot skip what it has already seen:
+   *  a verdict about a set goes stale the moment the set changes, so adding one
+   *  document re-judges all of them. */
+  const runBloatCheck = async () => {
+    const targets = bindings.filter((b) => b.type_key && contentByNode[b.node_id]);
+    if (targets.length < 2) {
+      setNote(
+        targets.length === 1
+          ? "Duplication is a question about two documents; this project has one."
+          : "No bound documents with text to compare. Run Scan first.",
+      );
+      return;
+    }
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    setProgress(`Comparing ${targets.length} documents…`);
+    try {
+      const docs: Record<string, string> = {};
+      for (const b of targets) docs[b.path] = contentByNode[b.node_id];
+      const { byPath, pairs, taskId } = await detectBloat(token, docs, ctrl.signal);
+
+      let repeating = 0;
+      for (const b of targets) {
+        const others = byPath[b.path] ?? [];
+        const clean = others.length === 0;
+        if (!clean) repeating += 1;
+        const summary = clean
+          ? "bloat: nothing repeated elsewhere"
+          : `bloat: repeats ${others.map(basename).join(", ")}`;
+
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "bloat",
+                subject: b.node_id,
+                path: b.path,
+                severity: clean ? "clean" : "high",
+                summary,
+                score: others.length,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {});
+
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "bloat", {
+            state: clean ? "passed" : "failed",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {});
+      }
+
+      // The relation itself, for the graph: which document repeats which.
+      const nodeOf = new Map(targets.map((b) => [b.path, b.node_id]));
+      const duplicates = pairs
+        .map(([a, b]) => ({ from: nodeOf.get(a) ?? "", to: nodeOf.get(b) ?? "" }))
+        .filter((d) => d.from && d.to);
+      if (duplicates.length > 0) {
+        void api
+          .saveQualityFindings(token, {
+            duplicates,
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {});
+      }
+
+      await reload();
+      setNote(
+        `Compared ${targets.length} documents: ${targets.length - repeating} repeat nothing, ` +
+          `${repeating} share text with another.`,
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote("Stopped.");
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
   /** Apply one person's decision to one binding, re-validating when we still
    *  hold the file's text. */
   const decide = async (
@@ -907,8 +1157,18 @@ function IngestedDocumentsView({
     return { review, bound, ignored, all: bindings.length };
   }, [bindings]);
 
+  /** The types this project's documents actually are, for the picker. Offering
+   *  the whole catalogue would list types nothing here has. */
+  const presentTypes = useMemo(() => {
+    const keys = new Set<string>();
+    for (const b of bindings) if (b.type_key) keys.add(b.type_key);
+    return [...keys].sort((a, b) => typeName(a).localeCompare(typeName(b)));
+  }, [bindings, typeName]);
+
   const shown = useMemo(() => {
     const list = bindings.filter((b) => {
+      if (typeFilter === "-" && b.type_key) return false;
+      if (typeFilter && typeFilter !== "-" && b.type_key !== typeFilter) return false;
       switch (filter) {
         case "review":
           return NEEDS_REVIEW.includes(b.state);
@@ -921,7 +1181,7 @@ function IngestedDocumentsView({
       }
     });
     return [...list].sort((a, b) => a.path.localeCompare(b.path));
-  }, [bindings, filter]);
+  }, [bindings, filter, typeFilter]);
 
   const selected = useMemo(
     () => shown.find((b) => b.id === selectedId) ?? null,
@@ -958,6 +1218,20 @@ function IngestedDocumentsView({
         >
           Refine undetermined with Spec Quality
         </button>
+        <button
+          onClick={runLeakChecks}
+          disabled={busy || counts.bound === 0}
+          title="Check each bound document for content that belongs to another kind of document"
+        >
+          Check bound documents for leaks
+        </button>
+        <button
+          onClick={runBloatCheck}
+          disabled={busy || counts.bound < 2}
+          title="Find the documents that repeat each other"
+        >
+          Compare bound documents for duplication
+        </button>
         {busy && abortRef.current && (
           <button onClick={() => abortRef.current?.abort()}>Stop</button>
         )}
@@ -966,6 +1240,21 @@ function IngestedDocumentsView({
       </div>
 
       {err && <div className="error">{err}</div>}
+
+      <JourneyPanel stages={stages} types={types} onSeed={setSeeding} />
+
+      {seeding && (
+        <SeedModal
+          token={token}
+          tenantId={projectTenantId}
+          typeKeys={seeding}
+          types={types}
+          onClose={() => {
+            setSeeding(null);
+            void reload();
+          }}
+        />
+      )}
 
       <div className="ing-filters">
         {FILTERS.map((f) => (
@@ -977,6 +1266,20 @@ function IngestedDocumentsView({
             {f.label} <span className="ing-count">{f.count}</span>
           </button>
         ))}
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          title="Show one kind of document"
+          style={{ marginLeft: "auto", fontSize: 12 }}
+        >
+          <option value="">All types</option>
+          {presentTypes.map((k) => (
+            <option key={k} value={k}>
+              {typeName(k)}
+            </option>
+          ))}
+          <option value="-">Undetermined</option>
+        </select>
       </div>
 
       {shown.length === 0 ? (
@@ -1107,9 +1410,9 @@ function IngestedDocumentsView({
                   {/* The file lives in the repository, so the repository's
                       editor is where it is changed. Studio reports on it. */}
                   <button
-                    onClick={onOpenStudio}
+                    onClick={() => onOpenFile(selected.path)}
                     style={{ marginTop: 10, width: "100%" }}
-                    title="Open this project in the IDE to edit the file"
+                    title={`Open ${selected.path} in the IDE`}
                   >
                     Edit in the IDE →
                   </button>
@@ -1177,6 +1480,434 @@ function IngestedDocumentsView({
   );
 }
 
+
+
+/** Picking somewhere to write: a source connection and one of its repositories.
+ *
+ *  Shared because both things that write to a repository need exactly this and
+ *  nothing more — publishing one document, and seeding the ones a journey is
+ *  still missing. Only source hosts are offered: a model-provider connection
+ *  has no repositories at all, so listing it would only produce a confusing
+ *  400 later.
+ */
+function useRepoTarget(token: string, tenantId: string) {
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionId, setConnectionId] = useState("");
+  const [repos, setRepos] = useState<RemoteRepo[]>([]);
+  const [repo, setRepo] = useState("");
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [conns, provs] = await Promise.all([
+          api.connections(token, tenantId),
+          api.connectorProviders(token).catch(() => ({ items: [] as ConnectorProvider[] })),
+        ]);
+        const sourceHosts = new Set(
+          provs.items.filter((p) => p.category === "source_code").map((p) => p.provider),
+        );
+        const usable = conns.items.filter((c) => sourceHosts.has(c.provider));
+        if (!alive) return;
+        setConnections(usable);
+        if (usable.length > 0) setConnectionId(usable[0].id);
+      } catch (e) {
+        if (alive) setErr(errText(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [token, tenantId]);
+
+  useEffect(() => {
+    if (!connectionId) return;
+    let alive = true;
+    setLoadingRepos(true);
+    setRepos([]);
+    setRepo("");
+    api
+      .connectionRepositories(token, connectionId, tenantId)
+      .then((r) => {
+        if (!alive) return;
+        setRepos(r.items);
+        if (r.items.length > 0) setRepo(r.items[0].full_path);
+      })
+      .catch((e) => {
+        if (alive) setErr(errText(e));
+      })
+      .finally(() => {
+        if (alive) setLoadingRepos(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, connectionId, tenantId]);
+
+  const selectedRepo = useMemo(
+    () => repos.find((r) => r.full_path === repo) ?? null,
+    [repos, repo],
+  );
+  return {
+    connections,
+    connectionId,
+    setConnectionId,
+    repos,
+    repo,
+    setRepo,
+    selectedRepo,
+    loadingRepos,
+    err,
+    setErr,
+  };
+}
+
+/** The two pickers, rendered the same way wherever a repository is chosen. */
+function RepoTargetFields({ target }: { target: ReturnType<typeof useRepoTarget> }) {
+  return (
+    <>
+      <div>
+        <label style={qLabel}>Connection</label>
+        <select
+          value={target.connectionId}
+          onChange={(e) => target.setConnectionId(e.target.value)}
+          style={{ width: "100%" }}
+        >
+          {target.connections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label} · {c.provider} · {c.account}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label style={qLabel}>Repository</label>
+        <select
+          value={target.repo}
+          onChange={(e) => target.setRepo(e.target.value)}
+          disabled={target.loadingRepos || target.repos.length === 0}
+          style={{ width: "100%" }}
+        >
+          {target.loadingRepos && <option>loading…</option>}
+          {!target.loadingRepos && target.repos.length === 0 && (
+            <option value="">none reachable</option>
+          )}
+          {target.repos.map((r) => (
+            <option key={r.id} value={r.full_path}>
+              {r.full_path}
+            </option>
+          ))}
+        </select>
+      </div>
+    </>
+  );
+}
+
+/** Writes the documents a journey asks for and the project has none of.
+ *
+ *  A template, not a document: what lands in the repository is the type's own
+ *  skeleton, with its sections and its front matter, for someone to fill in
+ *  where documents are actually edited. That is the whole point of putting it
+ *  there rather than in a text area here — the next person to touch it opens
+ *  the IDE, not this tab.
+ *
+ *  One branch and one pull request for the lot. The connector opens a request
+ *  on the first file and finds the same one for the rest, so a seeding run
+ *  arrives as a single thing to review rather than as five.
+ */
+function SeedModal({
+  token,
+  tenantId,
+  typeKeys,
+  types,
+  onClose,
+}: {
+  token: string;
+  tenantId: string;
+  typeKeys: string[];
+  types: DocType[];
+  onClose: () => void;
+}) {
+  const target = useRepoTarget(token, tenantId);
+  const [branch, setBranch] = useState("studio/seed-documents");
+  const [base, setBase] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set(typeKeys));
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [written, setWritten] = useState<WrittenFile[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const wanted = typeKeys
+    .map((key) => types.find((t) => t.key === key))
+    .filter((t): t is DocType => !!t);
+
+  const seed = async () => {
+    setBusy(true);
+    setErr(null);
+    const done: WrittenFile[] = [];
+    try {
+      const chosen = wanted.filter((t) => selected.has(t.key));
+      for (let i = 0; i < chosen.length; i += 1) {
+        const type = chosen[i];
+        setProgress(`Writing ${i + 1}/${chosen.length} · ${type.name}`);
+        done.push(
+          await api.writeRepoFile(token, target.connectionId, tenantId, {
+            repo: target.repo,
+            branch: branch.trim(),
+            ...(base.trim() ? { base: base.trim() } : {}),
+            path: `docs/${type.key}.md`,
+            content: type.body,
+            message: `docs: add the ${type.name} template`,
+            pull_request: {
+              title: "Add the documents the journey requires",
+              body:
+                "Templates for the document types this project's journey asks for and the " +
+                "repository did not have. Fill them in here; Studio reads them back and " +
+                "checks them against the same types.",
+            },
+          }),
+        );
+      }
+      setWritten(done);
+    } catch (e) {
+      setErr(errText(e));
+      // Keep what did land: a partial run is worth reporting honestly rather
+      // than looking like nothing happened.
+      if (done.length > 0) setWritten(done);
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
+  const pr = written?.find((w) => w.pull_request)?.pull_request ?? null;
+  const canSeed =
+    !!target.connectionId && !!target.repo && branch.trim().length > 0 && selected.size > 0 && !busy;
+
+  return (
+    <div style={modalBackdrop} onClick={onClose}>
+      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Write the missing documents</span>
+          <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
+          Each type's template goes into the repository as a file, on one branch and one pull
+          request. They are skeletons — fill them in where documents are edited.
+        </p>
+
+        {written ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13 }}>
+              Wrote {written.length} file{written.length === 1 ? "" : "s"} to{" "}
+              <code>{branch.trim()}</code>.
+            </div>
+            {written.map((w) => (
+              <div key={w.path} style={{ fontSize: 12, opacity: 0.75 }}>
+                {w.updated ? "updated" : "created"} <code>{w.path}</code>
+              </div>
+            ))}
+            {pr && (
+              <div style={{ fontSize: 13 }}>
+                {pr.created ? "Opened pull request" : "Added to the request already open"}{" "}
+                <b>#{pr.number}</b>.
+                {pr.url && (
+                  <>
+                    {" "}
+                    <a href={pr.url} target="_blank" rel="noreferrer">
+                      Review it →
+                    </a>
+                  </>
+                )}
+              </div>
+            )}
+            {err && <div className="error">{err}</div>}
+            <div style={{ marginTop: 8 }}>
+              <button className="primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {target.connections.length === 0 ? (
+              <p className="empty" style={{ fontSize: 12 }}>
+                No source connections reach this project. Add one under Connections first.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={qLabel}>Documents</label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {wanted.map((t) => (
+                      <label key={t.key} style={{ fontSize: 12, display: "flex", gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(t.key)}
+                          onChange={(e) =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(t.key);
+                              else next.delete(t.key);
+                              return next;
+                            })
+                          }
+                        />
+                        <span>
+                          {t.name} <code style={qTag}>docs/{t.key}.md</code>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <RepoTargetFields target={target} />
+
+                <div>
+                  <label style={qLabel}>Branch</label>
+                  <input
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <label style={qLabel}>
+                    Base<span style={qTag}>optional</span>
+                  </label>
+                  <input
+                    value={base}
+                    onChange={(e) => setBase(e.target.value)}
+                    placeholder={target.selectedRepo?.default_branch ?? "default branch"}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {(err || target.err) && <div className="error" style={{ marginTop: 10 }}>{err ?? target.err}</div>}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 16 }}>
+              <button className="primary" onClick={seed} disabled={!canSeed}>
+                {busy ? "Writing…" : `Write ${selected.size} file${selected.size === 1 ? "" : "s"}`}
+              </button>
+              <button onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+              {progress && <span style={{ fontSize: 12, opacity: 0.7 }}>{progress}</span>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** What the workspace's journey still wants from this project.
+ *
+ *  The catalogue has been able to answer this since stages grew requirements,
+ *  and nothing asked. Which is a shame, because it is the one view that says
+ *  what to do next rather than what happens to be there: a stage names the
+ *  document types it cannot do without and the detectors those documents must
+ *  pass, and this is the project measured against that.
+ *
+ *  Both kinds of document count — written in Studio, or a repository file
+ *  someone bound to the type — so a project whose PRD has always lived in its
+ *  repository reads as having a PRD. */
+function JourneyPanel({
+  stages,
+  types,
+  onSeed,
+}: {
+  stages: StageStatus[];
+  types: DocType[];
+  /** Offer to write the missing documents into the repository. */
+  onSeed: (typeKeys: string[]) => void;
+}) {
+  const typeName = (key: string) => types.find((t) => t.key === key)?.name ?? key;
+
+  // Stages that ask for nothing say nothing: a journey is mostly those, and
+  // listing them buries the two that actually want something.
+  const asking = stages.filter((s) => s.requirements.length > 0);
+  if (asking.length === 0) return null;
+
+  const missing = [
+    ...new Set(
+      asking.flatMap((s) => s.requirements.filter((r) => !r.present).map((r) => r.type_key)),
+    ),
+  ];
+
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>What the journey needs</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.6 }}>
+          {asking.filter((s) => s.complete).length} of {asking.length} stages complete
+        </span>
+      </div>
+
+      <div className="jr-stages">
+        {asking.map((stage) => (
+          <div key={stage.key} className="jr-stage">
+            <span className={stage.complete ? "ing-ok" : "ing-dash"} style={{ width: 14 }}>
+              {stage.complete ? "✓" : "○"}
+            </span>
+            <span className="jr-label">
+              {stage.label}
+              {stage.required && <span style={qTag}>required</span>}
+            </span>
+            <span className="jr-reqs">
+              {stage.requirements.map((r) => (
+                <span
+                  key={r.type_key}
+                  className="ing-state"
+                  title={
+                    !r.present
+                      ? "No document of this type in the project"
+                      : !r.conforms
+                        ? "Present, but it does not pass its type's checklist"
+                        : r.analyses_outstanding.length > 0
+                          ? `Waiting on ${r.analyses_outstanding.join(", ")}`
+                          : "Present, conforming, and past every gate"
+                  }
+                  style={
+                    !r.present
+                      ? { background: "var(--warning-soft)", color: "var(--warning)" }
+                      : !r.conforms || r.analyses_outstanding.length > 0
+                        ? { background: "var(--info-soft)", color: "var(--info)" }
+                        : { background: "var(--success-soft)", color: "var(--success)" }
+                  }
+                >
+                  {typeName(r.type_key)}
+                  {r.present && r.analyses_outstanding.length > 0 && (
+                    <> · {r.analyses_outstanding.join(", ")}</>
+                  )}
+                </span>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {missing.length > 0 && (
+        <div className="jr-seed">
+          <span>
+            {missing.length} required document{missing.length === 1 ? " is" : "s are"} not in this
+            repository yet.
+          </span>
+          <button className="primary" onClick={() => onSeed(missing)}>
+            Write {missing.length === 1 ? "it" : "them"} from the templates →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const INGESTED_CSS = `
 .ingested { display: flex; flex-direction: column; gap: 12px; }
 .ing-head h2 { margin: 0 0 4px; font-size: 16px; }
@@ -1203,6 +1934,11 @@ const INGESTED_CSS = `
 .ing-bad { color: var(--warning); }
 .ing-dash { opacity: 0.4; }
 .ing-findings { display: flex; gap: 4px; flex-wrap: wrap; }
+.jr-stages { display: flex; flex-direction: column; gap: 6px; }
+.jr-stage { display: grid; grid-template-columns: 14px minmax(120px, 200px) minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12px; }
+.jr-label { font-weight: 500; }
+.jr-reqs { display: flex; gap: 4px; flex-wrap: wrap; }
+.jr-seed { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; }
 .ing-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .ing-actions button { font-size: 11px; padding: 2px 8px; }
 .ing-side { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 8px; }
@@ -1266,10 +2002,7 @@ function PublishModal({
   tenantId: string;
   onClose: () => void;
 }) {
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [connectionId, setConnectionId] = useState("");
-  const [repos, setRepos] = useState<RemoteRepo[]>([]);
-  const [repo, setRepo] = useState("");
+  const target = useRepoTarget(token, tenantId);
   const [mode, setMode] = useState<PublishMode>("pull_request");
   const [branch, setBranch] = useState(`studio/${slugPath(doc.title)}`);
   const [base, setBase] = useState("");
@@ -1277,72 +2010,16 @@ function PublishModal({
   const [prBody, setPrBody] = useState("");
   const [path, setPath] = useState(suggestedPath(doc));
   const [message, setMessage] = useState(`docs: publish ${doc.title}`);
-  const [loadingRepos, setLoadingRepos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [written, setWritten] = useState<WrittenFile | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
-  // Only source hosts can be published to; a model-provider connection has no
-  // repositories at all, so offering it would only produce a confusing 400.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [conns, provs] = await Promise.all([
-          api.connections(token, tenantId),
-          api.connectorProviders(token).catch(() => ({ items: [] as ConnectorProvider[] })),
-        ]);
-        const sourceHosts = new Set(
-          provs.items.filter((p) => p.category === "source_code").map((p) => p.provider),
-        );
-        const usable = conns.items.filter((c) => sourceHosts.has(c.provider));
-        if (!alive) return;
-        setConnections(usable);
-        if (usable.length > 0) setConnectionId(usable[0].id);
-      } catch (e) {
-        if (alive) setErr(errText(e));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [token, tenantId]);
-
-  useEffect(() => {
-    if (!connectionId) return;
-    let alive = true;
-    setLoadingRepos(true);
-    setRepos([]);
-    setRepo("");
-    api
-      .connectionRepositories(token, connectionId, tenantId)
-      .then((r) => {
-        if (!alive) return;
-        setRepos(r.items);
-        if (r.items.length > 0) setRepo(r.items[0].full_path);
-      })
-      .catch((e) => {
-        if (alive) setErr(errText(e));
-      })
-      .finally(() => {
-        if (alive) setLoadingRepos(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [token, connectionId, tenantId]);
-
-  const selectedRepo = useMemo(
-    () => repos.find((r) => r.full_path === repo) ?? null,
-    [repos, repo],
-  );
 
   const publish = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const result = await api.writeRepoFile(token, connectionId, tenantId, {
-        repo,
+      const result = await api.writeRepoFile(token, target.connectionId, tenantId, {
+        repo: target.repo,
         ...(branch.trim() ? { branch: branch.trim() } : {}),
         ...(base.trim() ? { base: base.trim() } : {}),
         path: path.trim(),
@@ -1368,8 +2045,8 @@ function PublishModal({
   // A request has to come from somewhere. The server says so too, but saying
   // it here means the person is not told after a commit has already landed.
   const canPublish =
-    !!connectionId &&
-    !!repo &&
+    !!target.connectionId &&
+    !!target.repo &&
     path.trim().length > 0 &&
     (mode === "commit" || branch.trim().length > 0) &&
     !busy;
@@ -1446,44 +2123,13 @@ function PublishModal({
           </div>
         ) : (
           <>
-            {connections.length === 0 ? (
+            {target.connections.length === 0 ? (
               <p className="empty" style={{ fontSize: 12 }}>
                 No source connections reach this project. Add one under Connections first.
               </p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={qLabel}>Connection</label>
-                  <select
-                    value={connectionId}
-                    onChange={(e) => setConnectionId(e.target.value)}
-                    style={{ width: "100%" }}
-                  >
-                    {connections.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label} · {c.provider} · {c.account}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={qLabel}>Repository</label>
-                  <select
-                    value={repo}
-                    onChange={(e) => setRepo(e.target.value)}
-                    disabled={loadingRepos || repos.length === 0}
-                    style={{ width: "100%" }}
-                  >
-                    {loadingRepos && <option>loading…</option>}
-                    {!loadingRepos && repos.length === 0 && <option value="">none reachable</option>}
-                    {repos.map((r) => (
-                      <option key={r.id} value={r.full_path}>
-                        {r.full_path}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <RepoTargetFields target={target} />
 
                 <div>
                   <label style={qLabel}>How</label>
@@ -1515,7 +2161,7 @@ function PublishModal({
                     onChange={(e) => setBranch(e.target.value)}
                     placeholder={
                       mode === "commit"
-                        ? (selectedRepo?.default_branch ?? "default branch")
+                        ? (target.selectedRepo?.default_branch ?? "default branch")
                         : "studio/…"
                     }
                     style={{ width: "100%" }}
@@ -1532,7 +2178,7 @@ function PublishModal({
                   <input
                     value={base}
                     onChange={(e) => setBase(e.target.value)}
-                    placeholder={selectedRepo?.default_branch ?? "default branch"}
+                    placeholder={target.selectedRepo?.default_branch ?? "default branch"}
                     style={{ width: "100%" }}
                   />
                 </div>
@@ -1577,7 +2223,11 @@ function PublishModal({
               </div>
             )}
 
-            {err && <div className="error" style={{ marginTop: 10 }}>{err}</div>}
+            {(err || target.err) && (
+              <div className="error" style={{ marginTop: 10 }}>
+                {err ?? target.err}
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 16 }}>
               <button className="primary" onClick={publish} disabled={!canPublish}>

@@ -195,7 +195,11 @@ host from `STUDIO_LLM_HOST`, key from `STUDIO_LLM_API_KEY`),
 Ours (in-crate): **`studio_session`** — per-workspace Theia IDE containers
 via bollard: mints a session gate token, injects env (repos, PATs resolved
 from credstore, gateway URL), binds ports 41000-41099 on loopback, reaps
-expired sessions (ADR-0003); **`keycloak_idp_plugin`** — real user
+expired sessions (ADR-0003); **`studio_events`** — the assembly's one push
+channel to the portal: `GET /studio-events/v1/stream` (SSE, per-tenant) plus a
+cursor-replay endpoint, fed by any gear through `dyn StudioEventPublisher` in
+the ClientHub — studio-tasks announces every run transition on it (ADR-0013);
+**`keycloak_idp_plugin`** — real user
 provisioning over the Keycloak Admin API.
 
 ## 8. Day-to-day development

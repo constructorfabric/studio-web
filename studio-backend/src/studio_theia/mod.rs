@@ -4,7 +4,7 @@
 //!
 //! Phase 2: endpoint discovery resolves through [`discovery::StudioSessionResolver`]
 //! (studio-session control endpoint + per-session S2S token); the event ingress
-//! authenticates and traces (phase 3 republishes to `event-broker`). Dormant
+//! authenticates and republishes onto `studio-events`. Dormant
 //! unless `studio-theia.enabled = true`. See
 //! `docs/adr/0010-theia-backend-bridge.md` and
 //! `docs/theia-bridge-contract-v1.md`.

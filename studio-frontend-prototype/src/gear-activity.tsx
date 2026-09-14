@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { CatalogNode, ComponentMetrics, ComponentSpecInput } from "./api";
+import type {
+  CatalogNode,
+  ComponentMetrics,
+  ComponentPullRequests,
+  ComponentSpecInput,
+} from "./api";
 import { errText } from "./format";
 
 /* ============================================================================
@@ -12,12 +17,28 @@ import { errText } from "./format";
  * it matches them as whole path segments, so nobody has to maintain a map from
  * crate to directory. One request per repository answers the whole list.
  *
- * What arrives is deliberately narrow — commits, files, lines, authors, and a
- * weekly series. Cycle time, review latency and CI outcomes are not here: those
- * belong to a pull request and a pipeline run, which are repository-level
- * entities, and inventing a per-gear number for them would be a lie with a
- * chart around it.
+ * Two requests per repository: commit activity, and pull requests counted by
+ * the state they are in now. A PR belongs to a repository, so the second one is
+ * an *attribution* through the files its commits touched — dependable for what
+ * merged (~97% reach their files), only indicative for what was abandoned
+ * (~29% of closed, ~46% of open), and a PR touching three gears counts in all
+ * three. The panel says so rather than leaving the reader to assume the rows
+ * partition the repository.
+ *
+ * CI is not here and cannot be: a pipeline run names a commit, not a file, so
+ * there is nothing to attribute it with.
  * ==========================================================================*/
+
+/** Pull requests touching one gear, by the state they are in now. */
+export interface GearPullRequests {
+  open: number;
+  merged: number;
+  closed: number;
+  total: number;
+  /** Null when nothing merged in the window — not the same as zero hours. */
+  mergedCycleHours: number | null;
+  authors: number;
+}
 
 /** One gear's numbers over the selected window. */
 export interface GearActivity {
@@ -26,6 +47,8 @@ export interface GearActivity {
   linesAdded: number;
   linesRemoved: number;
   authors: number;
+  /** Absent when the repository has no pull requests in the window at all. */
+  pullRequests?: GearPullRequests;
   /** Ascending by date, gaps filled with zeros so a quiet week reads as quiet
    *  rather than as missing. */
   points: { date: string; added: number; removed: number; commits: number }[];
@@ -136,7 +159,7 @@ function weekStarts(from: string, to: string): string[] {
   return out;
 }
 
-function indexOf(pages: ComponentMetrics[]): ActivityIndex {
+function indexOf(pages: ComponentMetrics[], prPages: ComponentPullRequests[]): ActivityIndex {
   const byGear = new Map<string, GearActivity>();
   let truncated = false;
   const from = pages[0]?.from;
@@ -174,6 +197,28 @@ function indexOf(pages: ComponentMetrics[]): ActivityIndex {
       });
     }
   }
+
+  // Pull requests arrive from their own call, keyed by the same component name.
+  // A gear with commits but no pull requests in the window simply has none of
+  // this, and the panel omits the block rather than drawing zeros. The reverse
+  // — a PR opened in the window whose commits are older than it, so the gear has
+  // no commit activity to attach to — is dropped here, because the panel only
+  // exists for a gear that moved.
+  for (const page of prPages) {
+    truncated = truncated || page.truncated;
+    for (const row of page.components) {
+      const gear = byGear.get(row.component);
+      if (!gear) continue;
+      gear.pullRequests = {
+        open: row.open,
+        merged: row.merged,
+        closed: row.closed,
+        total: row.total,
+        mergedCycleHours: row.merged_cycle_hours ?? null,
+        authors: row.authors,
+      };
+    }
+  }
   return { status: "ready", from, to, byGear, truncated };
 }
 
@@ -199,20 +244,39 @@ export function useGearActivity(token: string, gears: CatalogNode[] | null, days
     let live = true;
     setState((cur) => ({ ...cur, status: "loading" }));
     const from = daysAgo(days);
-    Promise.all(
-      plan.map((p) =>
-        api.insightComponentMetrics(token, {
-          repository: p.repository,
-          from,
-          components: p.components,
-          include_other: false,
-          bucket: "week",
-          limit: Math.min(p.components.length, 500),
-        }),
+    const limit = (p: (typeof plan)[number]) => Math.min(p.components.length, 500);
+    Promise.all([
+      Promise.all(
+        plan.map((p) =>
+          api.insightComponentMetrics(token, {
+            repository: p.repository,
+            from,
+            components: p.components,
+            include_other: false,
+            bucket: "week",
+            limit: limit(p),
+          }),
+        ),
       ),
-    )
-      .then((pages) => {
-        if (live) setState(indexOf(pages));
+      // Pull requests are a second question with its own coverage, so they get
+      // their own call — and their own failure. A warehouse without them is not
+      // a reason to lose the commit activity as well.
+      Promise.all(
+        plan.map((p) =>
+          api
+            .insightComponentPullRequests(token, {
+              repository: p.repository,
+              from,
+              components: p.components,
+              include_other: false,
+              limit: limit(p),
+            })
+            .catch(() => null),
+        ),
+      ),
+    ])
+      .then(([pages, prPages]) => {
+        if (live) setState(indexOf(pages, prPages.filter((p) => p !== null)));
       })
       .catch((e) => {
         if (live) setState({ ...EMPTY, status: "error", error: errText(e) });
@@ -368,6 +432,35 @@ export function MiniChurn({ points }: { points: GearActivity["points"] }) {
   );
 }
 
+/** Pull requests, as four numbers rather than a chart.
+ *
+ * Three counts and a mean is not a chart's job — a stacked bar here would spend
+ * the categorical palette to say what four labelled numbers already say, and it
+ * would collide with the blue/red the churn chart above uses for a different
+ * meaning. The number is the chart. */
+export function PullRequestTiles({ prs }: { prs: GearPullRequests }) {
+  const hours = prs.mergedCycleHours;
+  const cycle =
+    hours === null ? "—" : hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours.toFixed(1)}h`;
+  const tiles = [
+    { label: "Open", value: compact(prs.open) },
+    { label: "Merged", value: compact(prs.merged) },
+    { label: "Closed", value: compact(prs.closed) },
+    { label: "Merge time", value: cycle, note: hours === null ? "nothing merged" : "mean, opened → merged" },
+  ];
+  return (
+    <div className="act-tiles">
+      {tiles.map((t) => (
+        <div className="act-tile" key={t.label}>
+          <span className="act-label">{t.label}</span>
+          <span className="act-value">{t.value}</span>
+          {t.note && <span className="act-sub">{t.note}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The five numbers, as stat tiles. */
 export function ActivityTiles({ activity }: { activity: GearActivity }) {
   const tiles: { label: string; value: string; tone?: "added" | "removed" }[] = [
@@ -423,12 +516,14 @@ export const ACTIVITY_CSS = `
 .gcat .act-panel > header h2 { font-size:13px; font-weight:600; margin:0; }
 .gcat .act-note { color:var(--studio-muted); font-size:11.5px; margin:0 0 12px; }
 .gcat .act-note code { font-family:var(--studio-mono); font-size:11px; }
+.gcat .act-prs-note { margin-top:16px; }
 .gcat .act-empty { color:var(--studio-muted); font-size:12px; margin:8px 0; }
 
 .gcat .act-tiles { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
 .gcat .act-tile { flex:1 1 84px; min-width:0; background:var(--studio-surface-raised);
   border-radius:var(--radius-md); padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
 .gcat .act-label { font-size:10.5px; color:var(--studio-muted); }
+.gcat .act-sub { font-size:10px; color:var(--studio-muted); }
 .gcat .act-value { font-size:17px; font-weight:600; letter-spacing:-.01em; }
 .gcat .ink-added { color:var(--act-added); }
 .gcat .ink-removed { color:var(--act-removed); }

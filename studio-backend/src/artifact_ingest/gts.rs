@@ -741,6 +741,52 @@ pub fn traces_to_edge(from: &str, to: &str) -> GtsEdge {
 
 #[cfg(test)]
 mod tests {
+
+    /// The classification pass names the node the walk is about to store, and
+    /// it computes that name through [`file_instance_id`] rather than by
+    /// repeating the key. If the two ever disagree, every binding points at a
+    /// node that does not exist — silently, because a binding keeps working
+    /// and simply never matches anything in the graph.
+    #[test]
+    fn the_file_key_is_the_same_whoever_asks_for_it() {
+        let node = file_node_cloned(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            "docs/adr/0007.md",
+            42,
+            Some("# ADR".to_string()),
+            Some("deadbeef"),
+        );
+        assert_eq!(
+            node.instance_id,
+            file_instance_id("scope", "connector", "acme/specs", "docs/adr/0007.md"),
+        );
+    }
+
+    /// And the tree-API node keys on the same thing, so a repository ingested
+    /// both ways is one node per file rather than two.
+    #[test]
+    fn the_tree_and_the_clone_agree_on_a_files_identity() {
+        let from_tree = file_node(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            RemoteFile {
+                path: "docs/adr/0007.md".to_string(),
+                sha: "abc".to_string(),
+                is_dir: false,
+                size: Some(42),
+            },
+        );
+        assert_eq!(
+            from_tree.instance_id,
+            file_instance_id("scope", "connector", "acme/specs", "docs/adr/0007.md"),
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -227,6 +227,173 @@ tsx 255880 · js 223559 · yaml 196383 · go 82550 · mjs 72902
 Churn counts generated files and lockfiles exactly like hand-written code, so
 read this as "where the bytes went", not as effort.
 
+### Pull requests, by state and by gear
+
+A PR belongs to a repository, so there is no `component` dimension to group it
+by. But a PR touches files, and files have paths — so a PR can be **attributed**
+to every gear it touched. The chain is:
+
+```text
+silver.class_git_pull_requests          state, author, branches, timestamps
+  └─ pr_id ─► class_git_pull_requests_commits ─► commit_hash
+                                                    └─► insight.git_commit_file_changes ─► file_path
+```
+
+Three things have to be right or the answer is quietly wrong.
+
+**Deduplicate by `_version`.** The PR table keeps every ingested version of a
+row — 2 702 rows for 2 111 distinct PRs — and a row carries the state it had
+when it was ingested. So a PR that was opened and later merged appears both as
+OPEN and as MERGED, and a bare `GROUP BY state` reports it twice. Collapsing to
+the current state first (`argMax(col, _version) … GROUP BY pr_id`) is what makes
+the three counts add up to the PR count instead of exceeding it by a quarter.
+
+**Join on the merge commit *and* the PR's commits.** Which one carries the files
+depends on how the repository merges, and getting this wrong silently drops most
+of a repo:
+
+| repository | merges via | `merge_commit_hash` has files | PR commits have files |
+| --- | --- | --- | --- |
+| `gears-frontx` | squash | 70 of 75 merged | 4 of 75 |
+| `gears-rust` | merge commit | 0 of 314 | 309 of 314 |
+
+A squash leaves one new commit that the PR's own commits never became; a merge
+commit has an empty diff of its own. `UNION DISTINCT` of the two covers both.
+
+**Unmerged PRs are only partly attributable**, and that is structural rather
+than a gap to fix. `git_commit_file_changes` is built from the repository's
+history; a closed-without-merge PR's commits usually never entered it:
+
+| current state | PRs | attributable to files | |
+| --- | --- | --- | --- |
+| MERGED | 1 428 | 1 391 | **97%** |
+| CLOSED | 560 | 164 | 29% |
+| OPEN | 123 | 57 | 46% |
+
+So: PR-per-gear is dependable for what shipped, indicative for what was
+abandoned. Say which one a dashboard means.
+
+#### The query
+
+```sql
+WITH prs AS (
+  SELECT pr_id,
+         argMax(state, _version)             AS state,
+         argMax(merge_commit_hash, _version)  AS merge_sha,
+         argMax(created_on, _version)         AS created_on,
+         argMax(closed_on, _version)          AS closed_on
+  FROM silver.class_git_pull_requests
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  GROUP BY pr_id
+),
+pr_commit AS (
+  SELECT pr_id, commit_hash FROM silver.class_git_pull_requests_commits
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  UNION DISTINCT
+  SELECT pr_id, merge_sha FROM prs WHERE merge_sha != ''
+),
+touched AS (
+  SELECT DISTINCT pc.pr_id AS pr_id,
+         arrayJoin(arrayFilter(g -> has(splitByChar('/', f.file_path), g),
+           ['api-gateway','credstore','chat-engine','mini-chat','file-storage',
+            'types-registry','account-management','graph-storage'])) AS gear
+  FROM pr_commit AS pc
+  INNER JOIN insight.git_commit_file_changes AS f ON f.commit_hash = pc.commit_hash
+  WHERE f.project_key = 'constructorfabric' AND f.repo_slug = 'gears-rust'
+)
+SELECT t.gear AS gear,
+       countIf(p.state = 'OPEN')   AS open,
+       countIf(p.state = 'MERGED') AS merged,
+       countIf(p.state = 'CLOSED') AS closed,
+       count() AS total,
+       round(avgIf(dateDiff('hour', p.created_on, p.closed_on), p.state = 'MERGED'), 1) AS merged_cycle_h
+FROM touched AS t INNER JOIN prs AS p ON p.pr_id = t.pr_id
+GROUP BY gear ORDER BY total DESC
+```
+
+```text
+gear                open  merged  closed  total  merged_cycle_h
+account-management     1      53       4     58           110.9
+api-gateway            1      36      15     52           149.7
+mini-chat              1      37      13     51           140.1
+credstore              1      35      13     49           168.0
+types-registry         1      33      10     44            96.2
+chat-engine            1      35       2     38           100.2
+file-storage           1      23       0     24           121.0
+graph-storage          0       2       0      2           274.5
+```
+
+`has(splitByChar('/', file_path), g)` is the same whole-segment match
+`/components/metrics` uses, so a gear is found without anybody maintaining a
+crate → directory map, and `credstore` does not swallow `credstore-sdk`.
+
+All of this is also a typed operation —
+[`POST /components/pull-requests`](#pull-requests-per-component-the-typed-operation)
+— so a caller does not have to get the three traps above right. The statement is
+here because knowing what it does is the difference between reading the numbers
+and believing them.
+
+**A PR that touches three gears counts in all three.** The column does not sum
+to the repository's PR count, and it should not: the question is "how much pull
+request traffic passes through this gear", not "how were the PRs divided up".
+
+Grouping by path depth instead — `arrayStringConcat(arraySlice(splitByChar('/',
+f.file_path), 1, 3), '/')` — works too, but on a Rust workspace the top of that
+ranking is `Cargo.lock`, `Cargo.toml` and `CHANGELOG.md`: the root files nearly
+every PR touches. Naming the gears avoids it.
+
+#### Review load, the same way
+
+`insight.git_review_events` carries `pr_id`, so the same `touched` CTE answers
+who reviewed what:
+
+```sql
+WITH prs AS (
+  SELECT pr_id, argMax(merge_commit_hash, _version) AS merge_sha
+  FROM silver.class_git_pull_requests
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  GROUP BY pr_id
+),
+pr_commit AS (
+  SELECT pr_id, commit_hash FROM silver.class_git_pull_requests_commits
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  UNION DISTINCT
+  SELECT pr_id, merge_sha FROM prs WHERE merge_sha != ''
+),
+touched AS (
+  SELECT DISTINCT pc.pr_id AS pr_id,
+         arrayJoin(arrayFilter(g -> has(splitByChar('/', f.file_path), g),
+           ['api-gateway','credstore','chat-engine','mini-chat','file-storage',
+            'types-registry','account-management'])) AS gear
+  FROM pr_commit AS pc
+  INNER JOIN insight.git_commit_file_changes AS f ON f.commit_hash = pc.commit_hash
+  WHERE f.project_key = 'constructorfabric' AND f.repo_slug = 'gears-rust'
+)
+SELECT t.gear AS gear,
+       countIf(e.event_kind = 'review')  AS reviews,
+       countIf(e.event_kind = 'comment') AS comments,
+       countDistinct(e.actor_person_id)  AS reviewers
+FROM touched AS t
+INNER JOIN insight.git_review_events AS e ON e.pr_id = t.pr_id
+GROUP BY gear ORDER BY reviews DESC
+```
+
+```text
+gear                reviews  comments  reviewers
+mini-chat               595       804         18
+account-management      583       831         22
+credstore               555       711         19
+chat-engine             507       684         12
+file-storage            467       648         13
+types-registry          333       511         13
+api-gateway             304       550         14
+```
+
+**The PR window is shorter than the git window.** Pull requests start
+2026-05-26 in this warehouse while commits go back to 2025-12, so a 12-month
+PR chart is mostly empty by construction. Check `min(created_on)` before
+choosing a range.
+
 ### Everything a component did
 
 That one is a typed operation rather than a statement — see
@@ -326,6 +493,7 @@ the portal's IdP.
 | --- | --- |
 | `POST /cf/studio-insight/v1/query` | Run one read-only statement; returns `columns`, `rows`, `row_count`, `truncated`. |
 | `POST /cf/studio-insight/v1/components/metrics` | Delivery metrics for one repository, sliced by component. |
+| `POST /cf/studio-insight/v1/components/pull-requests` | Pull requests by state, sliced by component. |
 | `POST /cf/studio-insight/v1/pull` | Generic GET on `{base}{api_path}/{resource}` — the escape hatch for endpoints Insight has yet to publish. |
 | `POST /cf/studio-insight/v1/push` | Generic POST on the same. |
 | `GET /cf/studio-insight/v1/health` | `configured`, `base_url`, `instance_id`, and a live `SELECT 1` probe (`reachable`, `probe_ms`, `detail`). |
@@ -498,10 +666,13 @@ query upstream, so omit it when no chart is being drawn.
 
 Two limits worth knowing before building a dashboard on this:
 
-* **No PR or CI metrics at this granularity.** Cycle time, review latency and
-  pipeline outcomes exist only per repository, because that is the entity a PR
-  and a pipeline run belong to. Read those from `git_metric_observations` /
-  `ci_metric_observations` through `/query` with a `repository` dimension filter.
+* **This operation returns no PR or CI metrics.** Neither exists as a
+  dimension below the repository, because that is the entity a PR and a
+  pipeline run belong to. A PR can still be *attributed* to the gears it
+  touched — see [Pull requests, by state and by gear](#pull-requests-by-state-and-by-gear)
+  for the join and its coverage — but that is a statement through `/query`,
+  not this endpoint. CI has no equivalent: a pipeline run names a commit, not a
+  file, so there is nothing to attribute it with.
 * **Churn is not delivery.** `lines_added` counts generated files, vendored
   code and lockfiles exactly like hand-written logic. Declare components with
   prefixes that exclude what you do not mean, rather than reading the raw
@@ -511,14 +682,71 @@ Everything interpolated into the generated statement is validated (repository
 charset, `YYYY-MM-DD` dates, depth 1–6, limit ≤ 500) *and* escaped. A malformed
 `repository` is a 400 with a field violation, not an upstream error.
 
+## Pull requests per component (the typed operation)
+
+The cookbook above shows the join by hand. `POST
+/cf/studio-insight/v1/components/pull-requests` is the same thing as an
+operation, so a caller does not have to get the three traps right:
+
+```json
+{
+  "repository": "constructorfabric/gears-rust",
+  "from": "2026-05-01",
+  "components": [{"key": "api-gateway"}, {"key": "credstore"}, {"key": "mini-chat"}],
+  "include_other": false
+}
+```
+
+```json
+{
+  "repository": "constructorfabric/gears-rust",
+  "from": "2026-05-01", "to": "2026-09-11",
+  "components": [
+    {"component": "api-gateway", "open": 1, "merged": 36, "closed": 15,
+     "total": 52, "merged_cycle_hours": 149.8, "authors": 14},
+    {"component": "mini-chat",   "open": 1, "merged": 37, "closed": 13,
+     "total": 51, "merged_cycle_hours": 140.1, "authors": 16}
+  ],
+  "truncated": false
+}
+```
+
+It takes the same arguments as `components/metrics` — `repository`, the window,
+`components` (path prefix or directory name, the key by default), `depth`,
+`include_other`, `limit` — and applies the same validation, escaping and
+longest-matcher-wins rule, because it renders from the same validated query.
+
+Three differences worth knowing:
+
+* **The window is on when a pull request was *opened*.** An open PR older than
+  the window is out of scope. The alternative — current state, no window — makes
+  a date filter mean nothing for two of the three states.
+* **`merged_cycle_hours` is absent, not zero, when nothing merged.** It is also
+  computed in minutes and divided, because `dateDiff('hour', …)` truncates:
+  23 of `gears-rust`'s 590 pull requests merge inside an hour, so hour
+  granularity records them as zero and drags the mean down — and excluding them
+  to avoid that drags it up. Minutes avoid both.
+* **The rows do not partition the repository's pull requests.** One touching
+  three components is counted in all three. The question is how much pull
+  request traffic passes through a component, not how the PRs were divided up.
+
+And the coverage from the cookbook applies unchanged: ~97% of merged pull
+requests reach their files, ~29% of closed and ~46% of open ones. A PR that
+reaches no file is absent rather than counted against some fallback component,
+which is why these totals sit below the repository's.
+
 ### In the portal
 
 The prototype's **Components** page is the first consumer
 (`studio-frontend-prototype/src/gear-activity.tsx`). It groups the catalogue by
-the `repository` each crate publishes from, sends the gear names as components
-(one request per repository, `include_other: false`, `bucket: "week"`), and gets
-back a row and a weekly series per gear. Nobody maintains a crate → directory
-map: 47 of the gears in `gears-rust` resolve on name alone.
+the `repository` each crate publishes from and sends the gear names as
+components — **two** requests per repository, `components/metrics` with
+`bucket: "week"` and `components/pull-requests`, both with
+`include_other: false`. Nobody maintains a crate → directory map: 47 of the
+gears in `gears-rust` resolve on name alone.
+
+Pull requests are a separate call on purpose, and their failure is swallowed: a
+warehouse without them is not a reason to lose the commit activity too.
 
 Each list card then carries a 12-week churn sparkline and the headline numbers,
 and a gear's page gets a **Delivery activity** panel: five stat tiles, a weekly
@@ -526,6 +754,12 @@ bipolar column chart (lines added above the zero rule, removed below, one scale
 for both arms), a table view of the same numbers, and a 30 / 90 / 365-day window
 switch. The two data colours are the validated diverging pair (blue ↔ red) —
 ΔE 21.6 light / 19.2 dark under simulated protanopia, ≥3:1 on both surfaces.
+
+Under it, a **Pull requests** block: open, merged, closed and the mean merge
+time, as four tiles rather than a chart. Three counts and a mean is what a stat
+tile is for; a stacked bar would spend the categorical palette restating four
+labelled numbers, and its hues would collide with the blue/red the churn chart
+above already uses for a different meaning.
 
 The panel says plainly when it has nothing: the upstream is off, the request
 failed, or no directory named after the gear changed in the window — which
@@ -544,9 +778,10 @@ STUDIO_INSIGHT_API_KEY=<token> STUDIO_TOKEN=<portal jwt> scripts/insight-smoke.s
 
 Four checks on the upstream contract — `SELECT 1` succeeds, a missing token is
 a 401, a non-`SELECT` is a 400, the catalog is readable — and, with a portal
-token, seven on the gear: the health probe, a statement passed through, a
+token, eight on the gear: the health probe, a statement passed through, a
 rejected statement mapped to 400, components derived by depth, components
-resolved by name with a weekly series, and two malformed requests refused.
+resolved by name with a weekly series, pull requests per named gear in every
+state, and two malformed requests refused.
 
 It then **re-runs every ```sql block on this page** through the gear. Not to
 check the figures — the warehouse moves, and they are a snapshot of
@@ -555,5 +790,5 @@ renamed table, a dropped measure, a tightened upstream. A doc that prints
 answers has to be executable, or it rots without saying so.
 
 ```text
-16 passed, 0 failed
+19 passed, 0 failed
 ```

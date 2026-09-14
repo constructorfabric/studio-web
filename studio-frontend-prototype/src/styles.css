@@ -192,7 +192,6 @@ h2 {
   margin: 0 0 0.75rem;
 }
 
-.wordmark { display: flex; align-items: center; gap: 10px; }
 /* The product's mark (public/favicon.png), not a tinted "CS" tile of our own —
    the portal ships this image and nothing else as its logo, so inventing a
    monogram here was the one piece of branding the two could not share. It is a
@@ -336,11 +335,13 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 .account-orgs button .sub { color: var(--muted-foreground); font-size: 12px; }
 
 /* Account popover: identity on the left, context on the right. */
-/* The popover must escape the sidebar: inside it the two panes have ~200px
-   to share and collapse into one cramped column. Anchored to the account
-   button and floated over the content instead. */
+/* Anchored to the account control in the top bar and floated over the
+   content: two panes need ~500px, which no control-width dropdown has. */
 .account-menu.two-pane {
-  position: absolute; left: 8px; bottom: 100%; z-index: 60;
+  /* Hangs from the identity control in the top bar, so it opens downward and
+     aligns to the right edge — it used to sit at the foot of the nav column
+     and open upward from there. */
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
   /* flex-direction is explicit: the base .account-menu is a column, and
      inheriting it here is what stacked the panes instead of pairing them. */
   display: flex; flex-direction: row; padding: 0; overflow: hidden;
@@ -395,49 +396,117 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .hint { color: var(--muted-foreground); font-size: 13px; }
 .hint code { background: var(--muted); padding: 1px 6px; border-radius: var(--radius-md); font-size: 12px; }
 
-/* ── App shell: sidebar + content ── */
-.shell { display: flex; min-height: 100vh; }
-.sidebar {
-  width: 232px; flex-shrink: 0;
+/* ── App chrome ──────────────────────────────────────────────────────────────
+   One 56px bar across the top and nothing else. The screen below owns the full
+   width; navigation is an overlay drawer, so nothing reserves space for it
+   while it is closed, and the filter panel is an overlay for the same reason.
+   This is the product's layout (studio-frontend's app/layout/Layout.tsx) — two
+   permanent columns flanking the content was the last structural tell that the
+   prototype and the portal were different applications. */
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+.appbar {
+  display: flex; align-items: center;
+  height: 56px; flex: 0 0 56px;
+  padding: 0 1rem 0 0.5rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 30;
+}
+/* The drawer control, in the place the product puts it: 40px with a 20px
+   glyph, which is the kit's `lg` button. */
+.bar-burger {
+  width: 40px; height: 40px; flex: none; padding: 0;
+  display: grid; place-items: center;
+  border: none; background: none; color: var(--muted-foreground);
+  border-radius: var(--radius-lg); font-size: 18px; cursor: pointer;
+}
+.bar-burger:hover { background: var(--muted); color: var(--foreground); }
+.appbar .brand { display: flex; align-items: center; gap: 10px; margin-left: 0.75rem; }
+.appbar .brand strong {
+  font-size: 16px; font-weight: 600; line-height: 1.5rem; white-space: nowrap;
+  color: var(--foreground);
+}
+.appbar .bar-sep { width: 1px; height: 24px; flex: none; background: var(--border); margin-left: 1rem; }
+.appbar .bar-context { display: flex; align-items: center; min-width: 0; margin-left: 1.5rem; }
+.appbar .bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; padding-left: 12px; }
+
+/* One 36px round control in the right-hand cluster — the shell's IconPill: the
+   kit's `default` height, square by aspect, muted fill, glyph inheriting the
+   control's own colour. */
+.pill {
+  position: relative;
+  width: 36px; height: 36px; flex: none; padding: 0;
+  display: grid; place-items: center;
+  border: none; border-radius: var(--radius-full);
+  background: var(--muted); color: var(--muted-foreground);
+  font-size: 16px; cursor: pointer;
+}
+.pill:hover:not(:disabled) { background: var(--muted); color: var(--foreground); }
+
+/* Everything below the bar. The IDE host and the portal content are siblings
+   here, so the bar stays put while either one is showing. */
+.screen { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The work area takes the full width under the bar; cards inside cap their own
+   line lengths, the shell itself no longer caps anything. */
+.content { flex: 1; min-width: 0; padding: 1.75rem 2.25rem 4rem; }
+
+/* ── Overlay drawer ─────────────────────────────────────────────────────────
+   Over the top bar too: the drawer is the whole navigation, not a column
+   beside it. The scrim covers everything to the right of the panel, which
+   itself stays at full brightness. */
+.drawer-scrim {
+  position: fixed; inset: 0 0 0 320px; z-index: 50;
+  border: none; padding: 0; cursor: default;
+  background: rgb(15 18 24 / 0.48);
+}
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; width: 320px; z-index: 51;
+  display: flex; flex-direction: column; overflow-y: auto;
+  /* --left-menu, not --card. The kit's own Sidebar paints itself on this token
+     and its menu rows draw hover and active from the matching
+     --left-menu-hover / --left-menu-active; the shell's Menu.tsx overrides the
+     panel to bg-card, where in the light theme those two states land
+     white-on-white and only the label darkens. Keeping the token the states
+     were designed against costs a barely perceptible tint (#f1f5f9 against
+     #ffffff) and keeps the row feedback the product intends. */
   background: var(--left-menu);
   border-right: 1px solid var(--left-menu-border);
-  padding: 1.25rem 0.9rem;
-  display: flex; flex-direction: column; gap: 1.25rem;
-  position: sticky; top: 0; height: 100vh;
+  box-shadow: var(--shadow-lg);
 }
-.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
-.sidebar nav button {
+/* The panel's own header, mirroring the bar it covers: the close control sits
+   exactly where the burger was. */
+.drawer-head {
+  height: 56px; flex: none; display: flex; align-items: center;
+  padding: 0 7px; border-bottom: 1px solid var(--left-menu-border);
+}
+.drawer-head strong {
+  margin-left: 0.75rem; font-size: 16px; font-weight: 600; line-height: 1.5rem;
+  white-space: nowrap; color: var(--foreground);
+}
+.drawer nav { display: flex; flex-direction: column; gap: 6px; padding: 14px 11px; }
+/* Row metrics are the kit's SidebarMenuButton: 38px, rounded-lg, a 10px inset,
+   a 10px gap, medium weight on the body role. */
+.drawer nav button {
   text-align: left; border: none; background: transparent;
-  padding: 9px 12px; border-radius: var(--radius-lg); font-weight: 500;
+  min-height: 38px; padding: 0 10px; border-radius: var(--radius-lg);
+  font-weight: 500; font-size: var(--text-body-size);
   color: var(--left-menu-foreground);
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; width: 100%;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
-.sidebar nav button .ico { width: 20px; text-align: center; }
-/* Hover raises the item onto the card surface at partial strength; active
-   commits to it. Same two-step the product's menu uses — the difference
-   between the states is opacity, not hue. */
-.sidebar nav button:hover {
-  background: color-mix(in oklab, var(--left-menu-hover) 55%, transparent);
+.drawer nav button .ico { width: 18px; min-width: 18px; text-align: center; flex: none; }
+.drawer nav button:hover {
+  background: color-mix(in oklab, var(--left-menu-hover) 65%, transparent);
   color: var(--left-menu-active-foreground);
 }
-.sidebar nav button.active {
+.drawer nav button.active {
   background: var(--left-menu-active);
   color: var(--left-menu-active-foreground);
-  font-weight: 600;
-  box-shadow: var(--shadow-sm);
 }
-/* The brand colour lands on the active item's glyph, not on its label. */
-.sidebar nav button.active .ico { color: var(--primary); }
-.sidebar .spacer { flex: 1; }
-.sidebar .whoami {
-  border-top: 1px solid var(--border); padding-top: 0.9rem;
-  font-size: 12.5px; color: var(--muted-foreground);
-  display: flex; flex-direction: column; gap: 8px;
-}
-/* The work area takes all width between the nav and the filter panel; cards
-   inside cap their own line lengths, the shell itself fills the screen. */
-.content { flex: 1; min-width: 0; padding: 1.75rem 2.25rem 4rem; }
+/* The brand colour lands on the active item's glyph, not on its label — the kit
+   tints SidebarMenuIcon with --primary and leaves the text alone. */
+.drawer nav button.active .ico { color: var(--primary); }
 
 /* ── Console-style nav sections, account menu, home hub ── */
 .nav-section { margin-top: 6px; }
@@ -445,11 +514,17 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted-foreground); padding: 8px 10px 2px;
 }
+/* In the bar the identity is the avatar and nothing else — the product's
+   UserMenu is a 36px round trigger, and the name and scope the old footer
+   button printed beside it are in the menu it opens. */
 .account-button {
-  display: flex; gap: 10px; align-items: center; width: 100%;
-  background: none; border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 8px 10px; cursor: pointer; text-align: left;
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; flex: none;
+  background: none; border: none; border-radius: var(--radius-full);
+  cursor: pointer;
 }
+.account-button .account-lines { display: none; }
+.account-button .account-avatar { width: 36px; height: 36px; border-radius: var(--radius-full); }
 .account-avatar {
   width: 28px; height: 28px; border-radius: var(--radius-lg); flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
@@ -464,7 +539,7 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .account-menu {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background);
   padding: 8px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  box-shadow: var(--shadow-lg);
 }
 .account-menu-head {
   display: flex; flex-direction: column; gap: 2px;
@@ -495,7 +570,7 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   position: absolute; top: 105%; left: 0; right: 0; z-index: 30;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  box-shadow: var(--shadow-lg);
 }
 .org-menu button {
   display: flex; align-items: center; gap: 8px; text-align: left;
@@ -508,20 +583,30 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .path-bar .org-select-name { flex: 0 1 auto; max-width: 220px; font-weight: 600; }
 .path-bar .org-menu { left: 0; right: auto; min-width: 220px; }
 .path-sep { color: var(--muted-foreground); font-size: 14px; }
+
+/* The path in the bar takes the product's ContextSwitcher treatment: no box of
+   its own, a 36px hit area that tints on hover, and the name at the same
+   16px/600 the product name beside it uses. As a row inside 56px it cannot
+   wrap, so each segment truncates instead. */
+.bar-context .path-bar { margin: 0; flex-wrap: nowrap; min-width: 0; }
+.bar-context .org-select {
+  height: 36px; padding: 0 10px; border: none; background: none;
+  border-radius: var(--radius-lg); min-width: 0;
+}
+.bar-context .org-select:hover:not(:disabled) { background: var(--muted); }
+.bar-context .org-select-name {
+  font-size: 16px; font-weight: 600; line-height: 1.5rem;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bar-context .org-menu { top: calc(100% + 4px); }
 button.danger {
   background: var(--destructive); border-color: var(--destructive); color: var(--destructive-foreground);
 }
 button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destructive) 85%, black); border-color: color-mix(in oklab, var(--destructive) 85%, black); }
 .danger-zone { border-color: color-mix(in srgb, var(--destructive) 35%, var(--border)); }
-.sidebar.collapsed .org-select-name, .sidebar.collapsed .org-select .chev { display: none; }
 /* Collapsed: the switcher becomes just its avatar — borderless and centered,
    at the same badge size as the CS logo on top and the account avatar below,
    so the three sit on one axis instead of a stray, smaller box. */
-.sidebar.collapsed .org-nav .org-select { border: none; background: none; padding: 6px 0; justify-content: center; }
-.sidebar.collapsed .org-nav .org-select .account-avatar {
-  width: 28px; height: 28px; border-radius: var(--radius-lg); font-size: 13px; margin: 0 auto;
-}
-.sidebar.collapsed .org-nav .org-menu { left: 0; right: auto; min-width: 200px; }
 .account-menu > button { text-align: left; }
 
 /* Small uppercase context label (org name above the portfolio, etc.). */
@@ -563,7 +648,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .grant-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
 .grant-add select { min-width: 140px; }
 @media (max-width: 720px) { .access-models { grid-template-columns: 1fr; } }
-/* ── Project-context sidebar (the nav follows what you're in) ── */
+/* ── Project context (the nav follows what you are in) ── */
 .proj-content { min-width: 0; }
 /* Project switcher reuses the org switcher shell; mark the current project. */
 .org-menu button.on { color: var(--primary); font-weight: 600; }
@@ -598,69 +683,19 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .login-dev summary:hover { color: var(--primary); }
 .login-dev form { margin-top: 10px; }
 
-/* ── Collapsible sidebar ── */
-.sidebar-toggle {
-  border: none; background: none; color: var(--muted-foreground);
-  padding: 4px 8px; border-radius: var(--radius-md); font-size: 13px; flex: 0 0 auto;
-}
-.sidebar-toggle:hover { background: var(--accent); color: var(--primary); }
-.sidebar.collapsed { width: 64px; padding: 1.25rem 0.5rem; }
-.sidebar.collapsed .product-button strong,
-.sidebar.collapsed .product-button .chev { display: none; }
-.sidebar.collapsed .product-switch { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-/* Collapsed rail: every item is a centered rounded square, so the active/hover
-   fill is a neat badge (matching the avatars) instead of a wide full-width
-   pill, and the icons sit on one evenly spaced column. */
-.sidebar.collapsed nav { align-items: center; gap: 4px; }
-.sidebar.collapsed nav button {
-  font-size: 0; gap: 0; justify-content: center;
-  width: 40px; height: 40px; padding: 0; border-radius: var(--radius-lg); align-self: center;
-}
-.sidebar.collapsed .nav-section { margin-top: 2px; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; }
 /* Group break (e.g. Work → Monitor) reads as a short centered divider instead
    of a random gap. */
-.sidebar.collapsed .nav-section-monitor,
-.sidebar.collapsed .nav-section-project-setup {
-  margin-top: 10px; padding-top: 10px; position: relative;
-}
-.sidebar.collapsed .nav-section-monitor::before,
-.sidebar.collapsed .nav-section-project-setup::before {
-  content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-  width: 24px; height: 1px; background: var(--border);
-}
-.sidebar.collapsed nav button .ico { font-size: 15px; }
-.sidebar.collapsed nav button svg { width: 18px; height: 18px; }
-.sidebar.collapsed nav button .dirty-dot { font-size: 9px; margin: 0; position: absolute; transform: translate(10px, -8px); }
-.sidebar.collapsed .nav-section-title { display: none; }
-.sidebar.collapsed .space-x,
-.sidebar.collapsed .space-refresh,
-.sidebar.collapsed .space-stop { display: none; }
-.sidebar.collapsed .account-lines { display: none; }
-.sidebar.collapsed .account-button { justify-content: center; padding: 8px 4px; }
-.sidebar.collapsed .account-menu { position: fixed; left: 70px; bottom: 16px; z-index: 40; min-width: 220px; }
 
 /* ── Product switcher & connector catalog ── */
-.product-switch { position: relative; }
-.product-button {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  background: none; border: none; padding: 4px 6px; cursor: pointer;
-  /* The shell's product name: 16px, 600, on --foreground. */
-  font-size: 16px; line-height: 1.5rem; color: var(--foreground); border-radius: var(--radius-lg);
+/* The product family at the foot of the drawer: ordinary menu rows, so they
+   take the row metrics above rather than a switcher of their own. Separated
+   from the working areas by a rule, the way the shell's drawer separates its
+   tenant band. */
+.drawer-products {
+  margin-top: auto;
+  border-top: 1px solid var(--left-menu-border);
 }
-.product-button strong { font-weight: 600; }
-.product-button:hover { background: var(--accent); }
-.product-button .chev { color: var(--muted-foreground); font-size: 11px; }
-.product-menu {
-  position: absolute; top: 110%; left: 0; z-index: 30; min-width: 190px;
-  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-}
-.product-menu button {
-  text-align: left; border: none; background: none;
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-}
-.product-menu .check { margin-left: auto; color: var(--primary); }
+.drawer-products .check { margin-left: auto; color: var(--primary); }
 .catalog { margin-top: 10px; }
 .catalog-row {
   display: grid; grid-template-columns: 2fr 1fr 120px 110px;
@@ -731,8 +766,11 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .perm-list code { font-size: 12px; }
 
 /* ── Spaces: sessions embedded in the portal window ── */
+/* Fills the screen area under the bar. It used to be a full-height sibling of
+   the nav column and claimed the viewport with height:100vh — which, with a
+   bar above it, pushed 56px of itself off the bottom. */
 .spaces-host {
-  flex: 1; min-width: 0; height: 100vh; position: sticky; top: 0;
+  flex: 1; min-width: 0; min-height: 0;
   flex-direction: column; background: var(--background);
 }
 .space-bar {
@@ -755,20 +793,25 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .space-stop { padding: 2px 6px; flex: 0 0 auto; font-size: 10px; color: var(--destructive); }
 .dirty-dot { color: var(--warning); margin-left: 6px; font-size: 10px; }
 .content > h1 { margin-bottom: 0.25rem; }
+/* Narrow viewports: the bar keeps its shape, so only the context slot has to
+   give — the drawer and the filter panel are overlays at every width. */
 @media (max-width: 720px) {
-  .shell { flex-direction: column; }
-  .sidebar { width: auto; height: auto; position: static; flex-direction: row; align-items: center; }
-  .sidebar nav { flex-direction: row; }
-  .sidebar .whoami { border: none; padding: 0; }
+  .appbar .bar-context, .appbar .bar-sep { display: none; }
+  .drawer { width: min(320px, 86vw); }
+  .drawer-scrim { left: min(320px, 86vw); }
 }
 
 /* ── Right panel: context-aware filters ── */
+/* The mirror of the drawer, on the other side: an overlay, not a column. It
+   used to be a permanent 264px rail with a 56px collapsed stub — which is the
+   second column the product does not have. The stub is gone; what opens it is
+   the funnel in the top bar's right-hand cluster, beside the identity. */
 .rightbar {
-  width: 264px; flex-shrink: 0;
+  position: fixed; top: 0; bottom: 0; right: 0; width: 320px; z-index: 51;
   background: var(--card);
   border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
   padding: 1.25rem 1rem;
-  position: sticky; top: 0; height: 100vh;
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 1.1rem;
   animation: rightbar-in 0.18s ease;
@@ -777,11 +820,14 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   from { transform: translateX(16px); opacity: 0; }
   to { transform: none; opacity: 1; }
 }
-.rightbar.collapsed {
-  width: 56px;
-  padding: 1.25rem 0.5rem;
-  align-items: center;
-  overflow: visible;
+.rightbar-scrim {
+  position: fixed; inset: 0 320px 0 0; z-index: 50;
+  border: none; padding: 0; cursor: default;
+  background: rgb(15 18 24 / 0.48);
+}
+@media (max-width: 720px) {
+  .rightbar { width: min(320px, 86vw); }
+  .rightbar-scrim { right: min(320px, 86vw); }
 }
 .rightbar-head { display: flex; justify-content: space-between; align-items: center; }
 .rightbar-head h2 { margin: 0; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
@@ -793,13 +839,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   text-align: center; padding: 0 5px;
 }
 
-.funnel {
-  position: relative;
-  width: 38px; height: 38px; padding: 0;
-  display: grid; place-items: center;
-  font-size: 17px; border-radius: var(--radius-lg);
-}
-.funnel .count {
+.pill .count {
   position: absolute; top: -6px; right: -6px;
   background: var(--primary); color: var(--primary-foreground);
   border-radius: var(--radius-full); font-size: 10px; font-weight: 700;
@@ -824,9 +864,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   color: var(--primary); font-weight: 600;
 }
 
-@media (max-width: 980px) {
-  .rightbar { display: none; }
-}
+
 /* ── Dark theme ──────────────────────────────────────────────────────────────
    A snapshot of the real frontend's dark theme (studio-frontend's
    app/themes/dark.ts), the same way :root above snapshots default.ts. It is a
@@ -923,7 +961,6 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 }
 .work-create .field-label:first-child { margin-top: 0; }
 /* Hovers: Theia's neutral list / toolbar greys (no blue tint). */
-:root[data-theme="dark"] .sidebar nav button:hover,
 :root[data-theme="dark"] .ptable tbody tr:hover td,
 :root[data-theme="dark"] .wb-item:hover:not(:disabled) { background: var(--secondary); }
 :root[data-theme="dark"] button:hover:not(:disabled) { background: var(--secondary); border-color: var(--input); }
@@ -939,7 +976,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 :root[data-theme="dark"] .account-avatar,
 :root[data-theme="dark"] .badge.you,
 :root[data-theme="dark"] .count-pill,
-:root[data-theme="dark"] .funnel .count,
+:root[data-theme="dark"] .pill .count,
 :root[data-theme="dark"] .studio-ai .sa-send {
   background: var(--primary); border-color: var(--primary); color: var(--primary-foreground);
 }

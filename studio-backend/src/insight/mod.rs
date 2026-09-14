@@ -4,8 +4,9 @@
 //!
 //! This gear wraps that external service so the rest of the assembly has one
 //! place of contact for it. The seam is exposed two ways:
-//!   * a REST surface (`/studio-insight/v1/{query,components/metrics,pull,push,
-//!     health}`) for the portal and out-of-process callers, and
+//!   * a REST surface (`/studio-insight/v1/{query,components/metrics,
+//!     components/pull-requests,pull,push,health}`) for the portal and
+//!     out-of-process callers, and
 //!   * an in-process [`InsightClient`] published to the ClientHub, so another
 //!     gear can reach Insight without a network hop through our own gateway.
 //!

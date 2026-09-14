@@ -26,6 +26,10 @@ use super::clone;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
 use crate::connectors::driver::{ConnectionAuth, ConnectorDriver};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use crate::documents::port::{DocumentClassifier, IngestedDocument, is_prose_path};
 use crate::tasks::registry::SyncReporter;
 
 /// Hard cap on pages per channel — a runaway loop backstop, not a real limit.
@@ -112,6 +116,11 @@ pub struct IngestService {
     /// documents (PDF/docx/…) so their content is indexed for search. `None`
     /// leaves binary files as metadata-only, exactly as before.
     file_parser: Option<Arc<dyn FileParserClientV1>>,
+    /// studio-documents, when that gear is running: a sync ends by asking it
+    /// what the prose files it just read are. `None` leaves a repository
+    /// ingested but unclassified, which is what a deployment without the
+    /// documents database gets.
+    classifier: Option<Arc<dyn DocumentClassifier>>,
     /// The studio-session workspaces root (`STUDIO_WORKSPACES_ROOT`). When a
     /// sync names a workspace + repo dir and the session gear has already
     /// cloned it here, ingest reads that checkout instead of cloning its own —
@@ -161,6 +170,7 @@ impl IngestService {
         drivers: HashMap<String, Arc<dyn ConnectorDriver>>,
         graph: Arc<dyn GraphStore>,
         file_parser: Option<Arc<dyn FileParserClientV1>>,
+        classifier: Option<Arc<dyn DocumentClassifier>>,
         workspaces_root: Option<PathBuf>,
         work_root: Option<PathBuf>,
     ) -> Self {
@@ -169,6 +179,7 @@ impl IngestService {
             drivers,
             graph,
             file_parser,
+            classifier,
             workspaces_root,
             work_root,
         }
@@ -225,6 +236,12 @@ impl IngestService {
             base_url: base_url.clone(),
             token: token.to_string(),
         };
+
+        // The prose the walk turns up, kept for the classification pass at the
+        // end. Only prose, and only from a checkout: a tree-API sync has no
+        // text to offer, and copying every source file's bytes to find that out
+        // would be the expensive way to learn nothing.
+        let mut prose: Vec<IngestedDocument> = Vec::new();
 
         let mut nodes: Vec<GtsNode> = Vec::new();
         // Relations between the nodes, and the author nodes they reference.
@@ -424,6 +441,18 @@ impl IngestService {
                         Some(t) => Some(t),
                         None => self.parse_binary_text(ctx, &dir, &wf.path, wf.size).await,
                     };
+                    if let Some(content) = text.as_deref().filter(|_| is_prose_path(&wf.path)) {
+                        prose.push(IngestedDocument {
+                            node_id: gts::file_instance_id(
+                                source_scope,
+                                connector_id,
+                                repo_full_path,
+                                &wf.path,
+                            ),
+                            path: wf.path.clone(),
+                            content: content.to_string(),
+                        });
+                    }
                     nodes.push(gts::file_node_cloned(
                         source_scope,
                         &repo_id,
@@ -469,6 +498,40 @@ impl IngestService {
                         );
                     }
                 }
+            }
+        }
+
+        // Decide what the prose is, now, while the whole repository's text is in
+        // hand. Doing it here rather than on someone pressing a button later is
+        // the difference between a synced repository whose documents are known
+        // and one that merely has files in it.
+        //
+        // It never fails the sync. The repository is ingested either way, and
+        // the pass is idempotent, so a failure costs a re-run of the cheap half
+        // rather than the clone.
+        if let (Some(classifier), Some(workspace)) = (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) && !prose.is_empty()
+        {
+            let count = prose.len();
+            progress.set(format!("classifying {count} document(s)…"));
+            let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
+            match classifier
+                .classify_ingested(ctx, workspace, project, std::mem::take(&mut prose))
+                .await
+            {
+                Ok(counts) => info!(
+                    classified = counts.classified,
+                    skipped = counts.skipped,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: documents classified"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: classification failed; the repository is ingested but its documents are unidentified"
+                ),
             }
         }
 

@@ -551,7 +551,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     setProjectTab("overview");
   }, [crumb.nestedId]);
   const [accountMenu, setAccountMenu] = useState(false);
-  const [productMenu, setProductMenu] = useState(false);
   // Active organization — the top context, now that the level above projects is
   // back. Lifted to the shell so the sidebar switcher (where "Home" used to be)
   // and the portfolio share one selection. null = "resolve a sensible default".
@@ -572,22 +571,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     setDash(null);
     setStudio(null);
     setAccountMenu(false);
-    setProductMenu(false);
+    setMenuOpen(false);
   };
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("studio.sidebar") === "collapsed";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("studio.sidebar", sidebarCollapsed ? "collapsed" : "open");
-    } catch {
-      /* non-fatal */
-    }
-  }, [sidebarCollapsed]);
+  /** The navigation drawer. Closed is the resting state and it is not
+   *  remembered: an overlay that covered the screen on every load would be a
+   *  worse sidebar, not a drawer. */
+  const [menuOpen, setMenuOpen] = useState(false);
   const [home, setHome] = useState<Tenant | null>(null);
   const [accessState, setAccessState] = useState<"loading" | "ready" | "unassigned">(
     "loading",
@@ -800,6 +789,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       const d = e.data as { type?: string; dirty?: number };
       if (typeof d?.type === "string" && d.type.startsWith("studio.")) {
         stopInitRetry(sp.wsId); // the bridge is alive — handshake done
+        const waiting = takePendingEditorOpen();
+        if (waiting) openInStudioEditor(waiting);
       }
       if (d?.type === "studio.status" && typeof d.dirty === "number") {
         const dirty = d.dirty; // narrow before the closure
@@ -835,21 +826,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   }, [token]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [componentCategories, setComponentCategories] = useState<string[]>([]);
-  const [panelOpen, setPanelOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("studio.filterPanel") !== "collapsed";
-    } catch {
-      return true;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("studio.filterPanel", panelOpen ? "open" : "collapsed");
-    } catch {
-      /* private mode etc. — non-fatal */
-    }
-  }, [panelOpen]);
+  /** The filter panel, opened from the funnel in the top bar. Same reasoning
+   *  as the drawer: it is an overlay now, so it opens closed and the old
+   *  "studio.filterPanel" preference is not read — remembering "open" would
+   *  put a panel over the content on every load. */
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // The saved theme applies on login, not on the first visit to Profile —
   // ProfileView only edits it.
@@ -1060,315 +1041,416 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   return (
     <div className="shell">
-      <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
-        {/* Product switcher (console pattern): the portal is one door of the
-            product family — API docs and the IdP admin are the real others. */}
-        <div className="wordmark product-switch">
-          <button className="product-button" onClick={() => setProductMenu((v) => !v)}>
-            <img className="logo" src={PRODUCT_MARK} alt="" />
-            <strong>Constructor Studio</strong>
-            <span className="chev">▾</span>
-          </button>
-          <button
-            className="sidebar-toggle"
-            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={() => {
-              setSidebarCollapsed((v) => !v);
-              setProductMenu(false);
-              setAccountMenu(false);
-            }}
-          >
-            {sidebarCollapsed ? "⟩" : "⟨"}
-          </button>
-          {productMenu && (
-            <div className="product-menu">
-              <button onClick={() => setProductMenu(false)}>
-                <span className="ico">▦</span> Studio <span className="check">✓</span>
-              </button>
-              <button
-                onClick={() => {
-                  window.open("/cf/docs", "_blank", "noopener");
-                  setProductMenu(false);
-                }}
-              >
-                <span className="ico">⧉</span> Docs &amp; API
-              </button>
-              <button title="Organizations, members, workspaces administration" onClick={() => openAdmin()}>
-                <span className="ico">🛡</span> Admin
-              </button>
-            </div>
+      {/* The only chrome in the flow: one 56px row carrying the control that
+          opens the navigation drawer, the product, the context the session is
+          in, and the session's own affordances. Everything below it belongs to
+          the screen. */}
+      <header className="appbar">
+        <button
+          className="bar-burger"
+          aria-label="Open global navigation"
+          title="Navigation"
+          onClick={() => setMenuOpen(true)}
+        >
+          ☰
+        </button>
+        <span className="brand">
+          <img className="logo" src={PRODUCT_MARK} alt="" />
+          <strong>Constructor Studio</strong>
+        </span>
+        <span className="bar-sep" aria-hidden />
+        {/* Where the session is: organization › workspace › project. It used to
+            sit above the content, which meant every screen started with a row
+            of chrome; in the bar it is the same control the product puts
+            there. */}
+        <div className="bar-context">
+          {!adminOpen && (
+            <PathBar
+              orgs={orgOptions}
+              activeOrg={activeOrg}
+              onPickOrg={(id) => {
+                setActiveOrgId(id);
+                setCrumb({});
+                setView("projects");
+                setActiveSpace(null);
+              }}
+              workspaces={orgWorkspaces}
+              currentWorkspaceId={crumb.projectId}
+              onPickWorkspace={(id) => {
+                setCrumb(id ? { projectId: id } : {});
+                setView("projects");
+                setActiveSpace(null);
+              }}
+              projects={nestedProjects}
+              currentProjectId={crumb.nestedId}
+              currentProjectName={projectLabel}
+              onPickProject={(p) => {
+                if (p) {
+                  setProjectLabel(p.name);
+                  setCrumb({ projectId: crumb.projectId, nestedId: p.id });
+                  setProjectTab("overview");
+                } else {
+                  setProjectLabel(undefined);
+                  setCrumb({ projectId: crumb.projectId });
+                }
+                setView("projects");
+                setActiveSpace(null);
+              }}
+            />
           )}
         </div>
-        <nav>
-          {adminOpen ? (
-            <>
-              <div className="nav-section">
-                <button title="Back to Studio" onClick={() => setAdminOpen(false)}>
-                  <span className="ico">←</span> Back to Studio
-                </button>
-              </div>
-              {/* Org selector: shown under the platform flag, or whenever there
-                  is more than one organization to manage (so the Organizations
-                  admin can switch which one it acts on). A single org resolves
-                  implicitly and needs no picker. */}
-              {(showPlatform || orgs.length > 1) && (
-              <div className="nav-section org-select-wrap">
-                <button className="org-select" onClick={() => setAdminOrgMenu((v) => !v)}>
-                  <span className="account-avatar small">
-                    {(adminOrgId === "__new__" ? "+" : (adminOrg?.name ?? "?")).slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="org-select-name">
-                    {adminOrgId === "__new__" ? "New organization" : adminOrg?.name ?? "Select organization"}
-                  </span>
-                  <span className="chev">▾</span>
-                </button>
-                {adminOrgMenu && (
-                  <div className="org-menu">
-                    {orgs.map((o) => (
-                      <button
-                        key={o.id}
-                        onClick={() => {
-                          setAdminOrgId(o.id);
-                          setAdminOrgMenu(false);
-                        }}
+        <div className="bar-right">
+          {!activeSpace && (
+            <button
+              className="pill"
+              title={panelOpen ? "Hide filters" : "Show filters"}
+              aria-label="Filters"
+              onClick={() => setPanelOpen((v) => !v)}
+            >
+              <span aria-hidden>🎛</span>
+              {activeFilterCount(panelView, filters) > 0 && (
+                <span className="count">{activeFilterCount(panelView, filters)}</span>
+              )}
+            </button>
+          )}
+          <div className="whoami">
+            {accountMenu && (
+              <div className="account-menu two-pane">
+                {/* Left: who you are and what you can do as yourself. */}
+                <div className="pane-left">
+                  <div className="account-menu-head">
+                    <span className="account-user">{userName}</span>
+                    {userEmail && <span>{userEmail}</span>}
+                    {/* The home tenant IS the access scope — say so explicitly. */}
+                    {home && (
+                      <span
+                        className="scope-line"
+                        title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
                       >
-                        <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
-                        {o.name} {o.self_managed ? "🔒" : ""}
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => {
-                        setAdminOrgId("__new__");
-                        setAdminView("tenants");
-                        setAdminOrgMenu(false);
-                      }}
-                    >
-                      ＋ New organization
-                    </button>
+                        {home.tenant_type === TENANT_TYPES.organization
+                          ? `Scope: ${home.name} subtree`
+                          : `Scope: entire platform${
+                              orgs.filter((o) => o.self_managed).length
+                                ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
+                                : ""
+                            }`}
+                      </span>
+                    )}
                   </div>
-                )}
-              </div>
-              )}
-              <div className="nav-section">
-                <div className="nav-section-title admin-title">Administration</div>
-                {ADMIN_NAV.map((n) => (
                   <button
-                    key={n.id}
-                    className={adminView === n.id ? "active" : ""}
-                    title={n.label}
-                    onClick={() => setAdminView(n.id)}
-                  >
-                    <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
-                  </button>
-                ))}
-              </div>
-              {showPlatform && (
-                <div className="nav-section">
-                  <div className="nav-section-title admin-title">Platform (tenant hierarchy)</div>
-                  {PLATFORM_NAV.map((n) => (
-                    <button
-                      key={n.id}
-                      className={adminView === n.id ? "active" : ""}
-                      title="The organization level concept v2 hides — still real, still administrable"
-                      onClick={() => setAdminView(n.id)}
-                    >
-                      <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="nav-section">
-                <div className="nav-section-title admin-title">IdP</div>
-                <button
-                  title="Keycloak administration console"
-                  onClick={() => window.open("https://localhost:8443/admin/", "_blank", "noopener")}
-                >
-                  <span className="ico">🛡</span> IdP console ↗
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-            {/* Organization / workspace switchers used to live here; the
-                horizontal path picker (org › workspace › project) above the
-                content is now the single place to switch context, so the
-                sidebar keeps only the nav surfaces below. */}
-            {projectOpen && (
-              // ── Project context: the open project's tabs live in the sidebar ──
-              <div className="nav-section nav-section-project">
-                <div className="nav-section-title">{projectLabel ?? "Project"}</div>
-                {PROJECT_TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    className={projectTab === t.id ? "active" : ""}
-                    title={t.label}
                     onClick={() => {
-                      setProjectTab(t.id);
+                      setAdminOpen(false);
+                      setView("profile");
                       setActiveSpace(null);
+                      setAccountMenu(false);
                     }}
                   >
-                    <span className="ico">
-                      <NavIcon name={t.icon} />
-                    </span>{" "}
-                    {t.label}
+                    Profile
                   </button>
-                ))}
+                  <button onClick={() => openAdmin()}>Admin settings</button>
+                  <button onClick={onLogout}>Sign out</button>
+                </div>
+
+                {/* Right: where you are working — organizations first, then the
+                    projects of the one in context. The level above projects is
+                    back, so the menu groups by it instead of a flat column. */}
+                <ContextPane
+                  token={token}
+                  orgs={orgOptions}
+                  homeId={home?.id ?? null}
+                  createOrgId={implicitOrgId}
+                  workspaces={workspaces}
+                  crumb={crumb}
+                  onPick={(next) => {
+                    setAdminOpen(false);
+                    setCrumb(next);
+                    setView("projects");
+                    setActiveSpace(null);
+                    setAccountMenu(false);
+                  }}
+                  onChanged={() => void refresh()}
+                />
               </div>
             )}
-            {
-              // ── Organization context: work surfaces of the whole org ──
-              NAV_SECTIONS.map((sec) => {
-                const items = sec.items;
-                return (
-                  <div
-                    key={sec.title ?? "_top"}
-                    className={`nav-section${sec.title ? ` nav-section-${sec.title.toLowerCase()}` : ""}`}
-                  >
-                    {sec.title && <div className="nav-section-title">{sec.title}</div>}
-                    {items.map((n) => (
+            <button
+              className="account-button"
+              onClick={() => setAccountMenu((v) => !v)}
+              title="Account"
+            >
+              <span className="account-avatar">{userInitials}</span>
+              <span className="account-lines">
+                <span className="account-name">{userName}</span>
+                {/* The context lives here, next to the identity — the two
+                    questions "who am I" and "where am I" get one answer spot. */}
+                <span className="scope-line">
+                  {workspaces.find((w) => w.id === crumb.projectId)?.name ??
+                    userEmail ??
+                    home?.name ??
+                    ""}
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {menuOpen && (
+        <>
+          {/* Covers everything to the right of the panel; the panel itself
+              stays at full brightness, as the product draws it. */}
+          <button
+            type="button"
+            className="drawer-scrim"
+            aria-label="Close global navigation"
+            onClick={() => setMenuOpen(false)}
+          />
+          <aside
+            className="drawer"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setMenuOpen(false);
+            }}
+          >
+            <div className="drawer-head">
+              <button
+                className="bar-burger"
+                aria-label="Close global navigation"
+                onClick={() => setMenuOpen(false)}
+              >
+                ✕
+              </button>
+              <strong>Constructor Studio</strong>
+            </div>
+            <nav
+              onClick={(e) => {
+                // Picking a destination closes the drawer, the way the
+                // product's does once a screen has mounted. Two exceptions stay
+                // open because they act *inside* the panel rather than
+                // navigating: the organization picker, which unfolds a submenu,
+                // and a space row's own controls (hide, refresh, stop).
+                const el = e.target as HTMLElement;
+                if (!el.closest(".org-select-wrap") && !el.closest("button.ghost")) {
+                  setMenuOpen(false);
+                }
+              }}
+            >
+              {adminOpen ? (
+                <>
+                  <div className="nav-section">
+                    <button title="Back to Studio" onClick={() => setAdminOpen(false)}>
+                      <span className="ico">←</span> Back to Studio
+                    </button>
+                  </div>
+                  {/* Org selector: shown under the platform flag, or whenever there
+                      is more than one organization to manage (so the Organizations
+                      admin can switch which one it acts on). A single org resolves
+                      implicitly and needs no picker. */}
+                  {(showPlatform || orgs.length > 1) && (
+                  <div className="nav-section org-select-wrap">
+                    <button className="org-select" onClick={() => setAdminOrgMenu((v) => !v)}>
+                      <span className="account-avatar small">
+                        {(adminOrgId === "__new__" ? "+" : (adminOrg?.name ?? "?")).slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="org-select-name">
+                        {adminOrgId === "__new__" ? "New organization" : adminOrg?.name ?? "Select organization"}
+                      </span>
+                      <span className="chev">▾</span>
+                    </button>
+                    {adminOrgMenu && (
+                      <div className="org-menu">
+                        {orgs.map((o) => (
+                          <button
+                            key={o.id}
+                            onClick={() => {
+                              setAdminOrgId(o.id);
+                              setAdminOrgMenu(false);
+                            }}
+                          >
+                            <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
+                            {o.name} {o.self_managed ? "🔒" : ""}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => {
+                            setAdminOrgId("__new__");
+                            setAdminView("tenants");
+                            setAdminOrgMenu(false);
+                          }}
+                        >
+                          ＋ New organization
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  )}
+                  <div className="nav-section">
+                    <div className="nav-section-title admin-title">Administration</div>
+                    {ADMIN_NAV.map((n) => (
                       <button
                         key={n.id}
-                        className={view === n.id && !activeSpace ? "active" : ""}
+                        className={adminView === n.id ? "active" : ""}
                         title={n.label}
-                        onClick={() => {
-                          setView(n.id);
-                          setActiveSpace(null); // portal navigation leaves the space
-                        }}
+                        onClick={() => setAdminView(n.id)}
                       >
                         <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
                       </button>
                     ))}
                   </div>
-                );
-              })
-            }
-            </>
-          )}
-          {spaces.length > 0 && (
-            <div className="nav-spaces">
-              <div className="nav-spaces-title">Spaces</div>
-              {spaces.map((s) => (
-                <div key={s.wsId} className="space-row">
-                  <button
-                    className={activeSpace === s.wsId ? "active" : ""}
-                    onClick={() => {
-                      setActiveSpace(s.wsId);
-                      setAdminOpen(false); // a space is a Studio surface
-                    }}
-                    title={`Switch to ${s.wsName}${
-                      spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
-                    }`}
-                  >
-                    <span className="ico">⚙</span> {s.wsName}
-                    {(spaceDirty[s.wsId] ?? 0) > 0 && <span className="dirty-dot">●</span>}
-                  </button>
-                  <button
-                    className="ghost space-x"
-                    title="Hide space (the IDE session keeps running)"
-                    onClick={() => closeSpace(s.wsId)}
-                  >
-                    ✕
-                  </button>
-                  <button
-                    className="ghost space-refresh"
-                    title="Refresh IDE without stopping the session"
-                    onClick={() => refreshSpace(s.wsId)}
-                  >
-                    ↻
-                  </button>
-                  <button
-                    className="ghost space-stop"
-                    title="Stop IDE session and release Kubernetes resources"
-                    onClick={() => void stopSpace(s.wsId)}
-                  >
-                    Stop
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </nav>
-        <div className="spacer" />
-        <div className="whoami">
-          {accountMenu && (
-            <div className="account-menu two-pane">
-              {/* Left: who you are and what you can do as yourself. */}
-              <div className="pane-left">
-                <div className="account-menu-head">
-                  <span className="account-user">{userName}</span>
-                  {userEmail && <span>{userEmail}</span>}
-                  {/* The home tenant IS the access scope — say so explicitly. */}
-                  {home && (
-                    <span
-                      className="scope-line"
-                      title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
-                    >
-                      {home.tenant_type === TENANT_TYPES.organization
-                        ? `Scope: ${home.name} subtree`
-                        : `Scope: entire platform${
-                            orgs.filter((o) => o.self_managed).length
-                              ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
-                              : ""
-                          }`}
-                    </span>
+                  {showPlatform && (
+                    <div className="nav-section">
+                      <div className="nav-section-title admin-title">Platform (tenant hierarchy)</div>
+                      {PLATFORM_NAV.map((n) => (
+                        <button
+                          key={n.id}
+                          className={adminView === n.id ? "active" : ""}
+                          title="The organization level concept v2 hides — still real, still administrable"
+                          onClick={() => setAdminView(n.id)}
+                        >
+                          <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+                        </button>
+                      ))}
+                    </div>
                   )}
+                  <div className="nav-section">
+                    <div className="nav-section-title admin-title">IdP</div>
+                    <button
+                      title="Keycloak administration console"
+                      onClick={() => window.open("https://localhost:8443/admin/", "_blank", "noopener")}
+                    >
+                      <span className="ico">🛡</span> IdP console ↗
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                {/* Organization / workspace switchers used to live here; the
+                    horizontal path picker (org › workspace › project) above the
+                    content is now the single place to switch context, so the
+                    sidebar keeps only the nav surfaces below. */}
+                {projectOpen && (
+                  // ── Project context: the open project's tabs live in the sidebar ──
+                  <div className="nav-section nav-section-project">
+                    <div className="nav-section-title">{projectLabel ?? "Project"}</div>
+                    {PROJECT_TABS.map((t) => (
+                      <button
+                        key={t.id}
+                        className={projectTab === t.id ? "active" : ""}
+                        title={t.label}
+                        onClick={() => {
+                          setProjectTab(t.id);
+                          setActiveSpace(null);
+                        }}
+                      >
+                        <span className="ico">
+                          <NavIcon name={t.icon} />
+                        </span>{" "}
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {
+                  // ── Organization context: work surfaces of the whole org ──
+                  NAV_SECTIONS.map((sec) => {
+                    const items = sec.items;
+                    return (
+                      <div
+                        key={sec.title ?? "_top"}
+                        className={`nav-section${sec.title ? ` nav-section-${sec.title.toLowerCase()}` : ""}`}
+                      >
+                        {sec.title && <div className="nav-section-title">{sec.title}</div>}
+                        {items.map((n) => (
+                          <button
+                            key={n.id}
+                            className={view === n.id && !activeSpace ? "active" : ""}
+                            title={n.label}
+                            onClick={() => {
+                              setView(n.id);
+                              setActiveSpace(null); // portal navigation leaves the space
+                            }}
+                          >
+                            <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })
+                }
+                </>
+              )}
+              {spaces.length > 0 && (
+                <div className="nav-spaces">
+                  <div className="nav-spaces-title">Spaces</div>
+                  {spaces.map((s) => (
+                    <div key={s.wsId} className="space-row">
+                      <button
+                        className={activeSpace === s.wsId ? "active" : ""}
+                        onClick={() => {
+                          setActiveSpace(s.wsId);
+                          setAdminOpen(false); // a space is a Studio surface
+                        }}
+                        title={`Switch to ${s.wsName}${
+                          spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
+                        }`}
+                      >
+                        <span className="ico">⚙</span> {s.wsName}
+                        {(spaceDirty[s.wsId] ?? 0) > 0 && <span className="dirty-dot">●</span>}
+                      </button>
+                      <button
+                        className="ghost space-x"
+                        title="Hide space (the IDE session keeps running)"
+                        onClick={() => closeSpace(s.wsId)}
+                      >
+                        ✕
+                      </button>
+                      <button
+                        className="ghost space-refresh"
+                        title="Refresh IDE without stopping the session"
+                        onClick={() => refreshSpace(s.wsId)}
+                      >
+                        ↻
+                      </button>
+                      <button
+                        className="ghost space-stop"
+                        title="Stop IDE session and release Kubernetes resources"
+                        onClick={() => void stopSpace(s.wsId)}
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <button
-                  onClick={() => {
-                    setAdminOpen(false);
-                    setView("profile");
-                    setActiveSpace(null);
-                    setAccountMenu(false);
-                  }}
-                >
-                  Profile
-                </button>
-                <button onClick={() => openAdmin()}>Admin settings</button>
-                <button onClick={onLogout}>Sign out</button>
-              </div>
-
-              {/* Right: where you are working — organizations first, then the
-                  projects of the one in context. The level above projects is
-                  back, so the menu groups by it instead of a flat column. */}
-              <ContextPane
-                token={token}
-                orgs={orgOptions}
-                homeId={home?.id ?? null}
-                createOrgId={implicitOrgId}
-                workspaces={workspaces}
-                crumb={crumb}
-                onPick={(next) => {
-                  setAdminOpen(false);
-                  setCrumb(next);
-                  setView("projects");
-                  setActiveSpace(null);
-                  setAccountMenu(false);
+              )}
+            </nav>
+            {/* The product family, at the foot of the drawer rather than
+                hanging off the wordmark: the portal is one door, the API docs
+                and the IdP admin are the others. */}
+            <nav className="drawer-products">
+              <button className="active" onClick={() => setMenuOpen(false)}>
+                <span className="ico">▦</span> Studio <span className="check">✓</span>
+              </button>
+              <button
+                onClick={() => {
+                  window.open("/cf/docs", "_blank", "noopener");
+                  setMenuOpen(false);
                 }}
-                onChanged={() => void refresh()}
-              />
-            </div>
-          )}
-          <button
-            className="account-button"
-            onClick={() => setAccountMenu((v) => !v)}
-            title="Account"
-          >
-            <span className="account-avatar">{userInitials}</span>
-            <span className="account-lines">
-              <span className="account-name">{userName}</span>
-              {/* The context lives here, next to the identity — the two
-                  questions "who am I" and "where am I" get one answer spot. */}
-              <span className="scope-line">
-                {workspaces.find((w) => w.id === crumb.projectId)?.name ??
-                  userEmail ??
-                  home?.name ??
-                  ""}
-              </span>
-            </span>
-          </button>
-        </div>
-      </aside>
+              >
+                <span className="ico">⧉</span> Docs &amp; API
+              </button>
+              <button
+                title="Organizations, members, workspaces administration"
+                onClick={() => openAdmin()}
+              >
+                <span className="ico">🛡</span> Admin
+              </button>
+            </nav>
+          </aside>
+        </>
+      )}
 
+      {/* Everything below the bar. The IDE host and the portal content are
+          siblings inside it — exactly one of the two is showing — so neither
+          can claim the viewport out from under the bar. */}
+      <div className="screen">
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
       {/* While the portal is active the host stays rendered but parked as a
@@ -1462,43 +1544,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       <div className="content" style={activeSpace ? { display: "none" } : undefined}>
         {/* Floating assistant, bottom-right, on every portal screen (mockups). */}
         <StudioAI token={token} />
-        {/* Horizontal path picker (org › workspace › project) — replaces the
-            in-view breadcrumb trail. Each level is a dropdown; picking a project
-            opens it, "All projects" drops back to the workspace's project list. */}
-        {!adminOpen && (
-          <PathBar
-            orgs={orgOptions}
-            activeOrg={activeOrg}
-            onPickOrg={(id) => {
-              setActiveOrgId(id);
-              setCrumb({});
-              setView("projects");
-              setActiveSpace(null);
-            }}
-            workspaces={orgWorkspaces}
-            currentWorkspaceId={crumb.projectId}
-            onPickWorkspace={(id) => {
-              setCrumb(id ? { projectId: id } : {});
-              setView("projects");
-              setActiveSpace(null);
-            }}
-            projects={nestedProjects}
-            currentProjectId={crumb.nestedId}
-            currentProjectName={projectLabel}
-            onPickProject={(p) => {
-              if (p) {
-                setProjectLabel(p.name);
-                setCrumb({ projectId: crumb.projectId, nestedId: p.id });
-                setProjectTab("overview");
-              } else {
-                setProjectLabel(undefined);
-                setCrumb({ projectId: crumb.projectId });
-              }
-              setView("projects");
-              setActiveSpace(null);
-            }}
-          />
-        )}
         {error && <div className="error">{error}</div>}
         {adminOpen ? (
           <>
@@ -1680,16 +1725,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpen={(s) => openSpace(studio, s)}
           />
         )}
+        </div>
       </div>
 
-      {!activeSpace && (
+      {!activeSpace && panelOpen && (
         <FilterPanel
           view={panelView}
           token={token}
           filters={filters}
           onChange={setFilters}
-          open={panelOpen}
-          onToggle={() => setPanelOpen((v) => !v)}
+          onClose={() => setPanelOpen(false)}
           componentCategories={componentCategories}
         />
       )}
@@ -1697,23 +1742,25 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   );
 }
 
-/* ── Right panel: context-aware filters ── */
+/* ── Filters: an overlay from the right, opened from the top bar ──────────────
+   It renders only while open — the caller decides that — so there is no
+   collapsed state to draw here any more. The funnel that used to be a 56px
+   rail pinned to the edge of every screen is one control in the bar's
+   right-hand cluster, which is where the product keeps session affordances. */
 
 function FilterPanel({
   view,
   token,
   filters,
   onChange,
-  open,
-  onToggle,
+  onClose,
   componentCategories,
 }: {
   view: PanelView;
   token: string;
   filters: Filters;
   onChange: (f: Filters) => void;
-  open: boolean;
-  onToggle: () => void;
+  onClose: () => void;
   componentCategories: string[];
 }) {
   const [models, setModels] = useState<import("./api").Model[]>([]);
@@ -1734,19 +1781,20 @@ function FilterPanel({
   const noFilters = view === "profile" || view === "dashboard";
   const hasSearch = !noFilters && view !== "system";
 
-  if (!open) {
-    return (
-      <aside className="rightbar collapsed">
-        <button className="funnel" title="Show filters" onClick={onToggle}>
-          <span aria-hidden>🎛</span>
-          {count > 0 && <span className="count">{count}</span>}
-        </button>
-      </aside>
-    );
-  }
-
   return (
-    <aside className="rightbar">
+    <>
+      <button
+        type="button"
+        className="rightbar-scrim"
+        aria-label="Close filters"
+        onClick={onClose}
+      />
+      <aside
+        className="rightbar"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+      >
       <div className="rightbar-head">
         <h2>
           Filters {count > 0 && <span className="count-pill">{count}</span>}
@@ -1757,8 +1805,8 @@ function FilterPanel({
               reset
             </button>
           )}
-          <button className="ghost" title="Hide filters" onClick={onToggle}>
-            ⇥
+          <button className="ghost" title="Hide filters" onClick={onClose}>
+            ✕
           </button>
         </div>
       </div>
@@ -1897,7 +1945,8 @@ function FilterPanel({
           )}
         </>
       )}
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -3157,7 +3206,7 @@ function ProjectScreen({
             token={token}
             workspaceId={workspace.id}
             projectTenantId={proj.id}
-            onOpenStudio={() => onOpenStudio(proj)}
+            onOpenFile={(path) => openDocumentInStudio(path, () => onOpenStudio(proj))}
           />
         )}
         {tab === "analyze" && (
@@ -4425,6 +4474,40 @@ function ArtifactsView({
       <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
     </>
   );
+}
+
+/** A file the portal asked the IDE to open before the IDE existed.
+ *
+ *  Opening a document means starting a session when none is running, and a
+ *  `studio.openInEditor` posted at an iframe that has not loaded its bridge yet
+ *  is simply lost — the same failure the `studio.init` retry exists for. So the
+ *  path waits here and goes out on the bridge's first sign of life.
+ *
+ *  Module-scoped rather than a prop threaded from the shell to the project
+ *  screen: one browser tab opens one file at a time, and the listener that
+ *  drains it lives several components above the button that fills it. */
+let pendingEditorOpen: string | null = null;
+
+function takePendingEditorOpen(): string | null {
+  const path = pendingEditorOpen;
+  pendingEditorOpen = null;
+  return path;
+}
+
+/** Open a document where documents are edited: the project's IDE session.
+ *
+ *  Two steps because the second only works once the first has happened. The
+ *  session may not be running at all, and even a fresh iframe spends its first
+ *  load events on the session gate's redirect, so the path is both posted now
+ *  (for a session already up) and remembered for the bridge's first message.
+ *
+ *  The path is repo-relative, which is what the IDE's opener wants: it resolves
+ *  against every workspace root and each root's children, because a repository
+ *  is cloned to `/workspace/<name>`. */
+function openDocumentInStudio(path: string, start: () => void): void {
+  pendingEditorOpen = path;
+  start();
+  openInStudioEditor(path);
 }
 
 /** Ask every embedded Studio (Theia) iframe to open a file in its editor. The

@@ -363,6 +363,133 @@ impl ComponentQuery {
         }
     }
 
+    /// Pull requests touching each component, counted by their **current**
+    /// state, over the window they were *opened* in.
+    ///
+    /// Three things this statement has to get right, each of which is silently
+    /// wrong if skipped:
+    ///
+    /// * **De-duplicate by `_version`.** The PR table keeps every ingested
+    ///   version of a row, and a row carries the state it had *then* — so one
+    ///   pull request appears as OPEN and again as MERGED. `argMax(…, _version)`
+    ///   collapses it to the state it is in now.
+    /// * **Join on the merge commit *and* the PR's own commits.** Which one
+    ///   carries the files depends on how the repository merges: a squash
+    ///   leaves one new commit the PR's commits never became, a merge commit
+    ///   has an empty diff of its own. Taking either alone loses most of a
+    ///   repository — `gears-frontx` attributes 70 of 75 merged PRs through the
+    ///   merge sha and 4 through their commits; `gears-rust` is the exact
+    ///   opposite.
+    /// * **Attribution is partial for what did not merge.**
+    ///   `git_commit_file_changes` is built from repository history, and an
+    ///   abandoned PR's commits usually never entered it. A PR that reaches no
+    ///   file is absent here rather than counted against some fallback
+    ///   component, which is why these totals sit below the repository's.
+    ///
+    /// A pull request that touches three components is counted in all three.
+    /// The rows are not a partition of the repository's pull requests, and
+    /// saying so is the caller's job.
+    pub fn to_pull_request_sql(&self) -> String {
+        // The PR side of the join is narrowed by when a pull request was
+        // OPENED. An open PR older than the window is therefore out of scope —
+        // the alternative (state as of now, no window) makes a date filter mean
+        // nothing for two of the three states.
+        let opened_in_window = format!(
+            "toDate(opened_at) >= {} AND toDate(opened_at) <= {}",
+            self.lower_bound(),
+            self.upper_bound(),
+        );
+        format!(
+            "SELECT component, \
+             toString({from_expr}) AS range_from, \
+             toString({to_expr}) AS range_to, \
+             countIf(state = 'OPEN') AS open, \
+             countIf(state = 'MERGED') AS merged, \
+             countIf(state = 'CLOSED') AS closed, \
+             count() AS total, \
+             round(avgIf(cycle_hours, state = 'MERGED'), 1) AS merged_cycle_hours, \
+             uniqExact(author) AS authors \
+             FROM (SELECT DISTINCT \
+             pr.pr_id AS pr_id, \
+             pr.state AS state, \
+             pr.author AS author, \
+             pr.cycle_hours AS cycle_hours, \
+             {component_expr} AS component \
+             FROM ({prs}) AS pr \
+             INNER JOIN ({pr_commits}) AS pc ON pc.pr_id = pr.pr_id \
+             INNER JOIN insight.git_commit_file_changes AS f \
+             ON f.commit_hash = pc.commit_hash \
+             WHERE {file_repo}){other_filter} \
+             GROUP BY component, range_from, range_to \
+             ORDER BY total DESC, component ASC \
+             LIMIT {limit}",
+            from_expr = self.lower_bound(),
+            to_expr = self.upper_bound(),
+            component_expr = self.component_expr(),
+            prs = self.pull_requests_select(&opened_in_window),
+            pr_commits = self.pr_commit_select(),
+            file_repo = self.repo_filter("f"),
+            other_filter = self.other_filter(),
+            limit = self.limit,
+        )
+    }
+
+    /// One row per pull request, collapsed to its current version.
+    ///
+    /// Cycle time is computed in minutes and divided, not taken in hours:
+    /// `dateDiff('hour', …)` truncates, so a pull request merged inside an hour
+    /// records as zero and drags the mean down — and excluding those to avoid
+    /// that drags it up instead. 23 of `gears-rust`'s 590 are exactly that, so
+    /// neither bias is hypothetical. Minutes avoid both.
+    fn pull_requests_select(&self, having: &str) -> String {
+        format!(
+            "SELECT pr_id, \
+             argMax(state, _version) AS state, \
+             argMax(author_name, _version) AS author, \
+             argMax(created_on, _version) AS opened_at, \
+             dateDiff('minute', argMax(created_on, _version), argMax(closed_on, _version)) / 60 \
+             AS cycle_hours \
+             FROM silver.class_git_pull_requests AS p \
+             WHERE {repo} \
+             GROUP BY pr_id \
+             HAVING {having}",
+            repo = self.repo_filter("p"),
+            having = having,
+        )
+    }
+
+    /// Every commit a pull request can be recognised by: the ones it carries,
+    /// and the squash/merge commit it became.
+    fn pr_commit_select(&self) -> String {
+        format!(
+            "SELECT pr_id, commit_hash \
+             FROM silver.class_git_pull_requests_commits AS c \
+             WHERE {commits_repo} \
+             UNION DISTINCT \
+             SELECT pr_id, argMax(merge_commit_hash, _version) AS commit_hash \
+             FROM silver.class_git_pull_requests AS m \
+             WHERE {merge_repo} \
+             GROUP BY pr_id \
+             HAVING commit_hash != ''",
+            commits_repo = self.repo_filter("c"),
+            merge_repo = self.repo_filter("m"),
+        )
+    }
+
+    /// `<alias>.project_key = … AND <alias>.repo_slug = …`, for whichever table
+    /// is being narrowed. A caller that named a bare repository gets the slug
+    /// alone, which then matches in any org.
+    fn repo_filter(&self, alias: &str) -> String {
+        match &self.project_key {
+            Some(p) => format!(
+                "{alias}.project_key = {} AND {alias}.repo_slug = {}",
+                sql_string(p),
+                sql_string(&self.repo_slug),
+            ),
+            None => format!("{alias}.repo_slug = {}", sql_string(&self.repo_slug)),
+        }
+    }
+
     /// The de-duplicated per-file rows both statements aggregate over.
     ///
     /// The `DISTINCT` is not cosmetic: a commit reachable from several branches
@@ -371,14 +498,7 @@ impl ComponentQuery {
     /// author) before aggregating is what makes `lines_added` a number about
     /// the repository rather than about the mirror's branch topology.
     fn inner_select(&self, with_day: bool) -> String {
-        let repo_filter = match &self.project_key {
-            Some(p) => format!(
-                "f.project_key = {} AND f.repo_slug = {}",
-                sql_string(p),
-                sql_string(&self.repo_slug)
-            ),
-            None => format!("f.repo_slug = {}", sql_string(&self.repo_slug)),
-        };
+        let repo_filter = self.repo_filter("f");
         // A commit has exactly one committer_date, so carrying the day through
         // the DISTINCT cannot split a row that would otherwise collapse.
         let day = if with_day {
@@ -421,6 +541,22 @@ pub struct ComponentRow {
     pub files_changed: u64,
     pub lines_added: i64,
     pub lines_removed: i64,
+    pub authors: u64,
+}
+
+/// One component's pull-request counts, read back off Insight's generic page.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PullRequestRow {
+    pub component: String,
+    pub range_from: String,
+    pub range_to: String,
+    pub open: u64,
+    pub merged: u64,
+    pub closed: u64,
+    pub total: u64,
+    /// Average hours from opened to merged, over the merged ones. `None` when
+    /// nothing merged in the window — which is not the same as zero hours.
+    pub merged_cycle_hours: Option<f64>,
     pub authors: u64,
 }
 
@@ -699,6 +835,79 @@ mod tests {
             sdk < gear,
             "the longer segment must be tested first:\n{sql}"
         );
+    }
+
+    #[test]
+    fn pull_requests_collapse_to_their_current_state_and_reach_files_both_ways() {
+        let sql = ComponentQuery::new(ComponentQueryInput {
+            from: Some("2026-05-01".into()),
+            components: vec![seg("api-gateway"), seg("credstore")],
+            include_other: false,
+            ..input("constructorfabric/gears-rust")
+        })
+        .expect("valid")
+        .to_pull_request_sql();
+
+        // One row per pull request, at the state it is in now: the table keeps
+        // a row per ingested version, each carrying the state it had then.
+        assert!(sql.contains("argMax(state, _version) AS state"), "{sql}");
+        assert!(sql.contains("GROUP BY pr_id"), "{sql}");
+
+        // Both ways a pull request reaches its files, or a squash-merging
+        // repository (or a merge-committing one) silently reports almost none.
+        assert!(sql.contains("class_git_pull_requests_commits"), "{sql}");
+        assert!(sql.contains("UNION DISTINCT"), "{sql}");
+        assert!(sql.contains("argMax(merge_commit_hash, _version)"), "{sql}");
+
+        // Hours would truncate every sub-hour merge to zero.
+        assert!(sql.contains("dateDiff('minute'"), "{sql}");
+        assert!(!sql.contains("dateDiff('hour'"), "{sql}");
+
+        // The window is on when a pull request was opened.
+        assert!(
+            sql.contains("toDate(opened_at) >= toDate('2026-05-01')"),
+            "{sql}"
+        );
+
+        // Every table in the join is narrowed to the repository — a missing one
+        // would join the whole warehouse and still look like a plausible answer.
+        for alias in ["p", "c", "m", "f"] {
+            assert!(
+                sql.contains(&format!("{alias}.project_key = 'constructorfabric'")),
+                "`{alias}` is not narrowed to the repository:{nl}{sql}",
+                nl = "
+"
+            );
+        }
+        assert!(sql.contains("WHERE component != 'other'"), "{sql}");
+    }
+
+    #[test]
+    fn a_pull_request_row_reads_back_off_insights_generic_page() {
+        let row: PullRequestRow = serde_json::from_value(serde_json::json!({
+            "component": "api-gateway",
+            "range_from": "2026-05-01",
+            "range_to": "2026-09-11",
+            "open": 1,
+            "merged": 36,
+            "closed": 15,
+            "total": 52,
+            "merged_cycle_hours": 149.8,
+            "authors": 14,
+        }))
+        .expect("wire shape");
+        assert_eq!(row.merged, 36);
+        assert_eq!(row.merged_cycle_hours, Some(149.8));
+
+        // Nothing merged in the window is absent, not zero hours.
+        let quiet: PullRequestRow = serde_json::from_value(serde_json::json!({
+            "component": "graph-storage",
+            "range_from": "2026-05-01", "range_to": "2026-09-11",
+            "open": 0, "merged": 0, "closed": 2, "total": 2,
+            "merged_cycle_hours": null, "authors": 1,
+        }))
+        .expect("wire shape");
+        assert_eq!(quiet.merged_cycle_hours, None);
     }
 
     #[test]

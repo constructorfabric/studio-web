@@ -8,6 +8,7 @@ import {
   ActivityTiles,
   ChurnChart,
   MiniChurn,
+  PullRequestTiles,
   compact,
   useGearActivity,
 } from "./gear-activity";
@@ -1298,11 +1299,23 @@ function ActivityPanel({
         <>
           <p className="act-note">
             Commits touching a <code>{name}</code> directory, {index.from} → {index.to}, from
-            Constructor Insight. Pull-request cycle time and CI outcomes are not shown: those belong
-            to the repository, not to one gear inside it.
+            Constructor Insight. CI runs are not here and cannot be: a pipeline run names a commit,
+            not a file.
           </p>
           <ActivityTiles activity={activity} />
           <ChurnChart points={activity.points} label={`Weekly change in ${name}`} />
+          {activity.pullRequests && (
+            <>
+              <p className="act-note act-prs-note">
+                <b>Pull requests</b> opened in the window that touched <code>{name}</code>, by the
+                state they are in now. A PR belongs to the repository, so this is an attribution
+                through the files it changed: one touching three gears counts in all three, and a
+                PR abandoned without merging often has no file record at all — dependable for what
+                shipped, indicative for what did not.
+              </p>
+              <PullRequestTiles prs={activity.pullRequests} />
+            </>
+          )}
         </>
       )}
     </section>

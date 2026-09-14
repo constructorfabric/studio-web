@@ -453,7 +453,12 @@ impl AnalysisState {
 /// remembers what the analysis said.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Analysis {
-    pub document_id: Uuid,
+    /// The Studio document this verdict is about, when it is about one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<Uuid>,
+    /// The bound repository file it is about, when it is about one of those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<Uuid>,
     pub detector: Detector,
     pub state: AnalysisState,
     /// The upstream task this verdict came from, so a disputed result can be

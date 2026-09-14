@@ -187,11 +187,33 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 }
             };
 
+            // studio-documents, if this deployment runs it. Resolved here, in
+            // the REST phase, where every gear has initialized — the same
+            // reason the graph client is not fetched in `init`. Absent is a
+            // normal state: the gear stands down without a database, and a
+            // repository then syncs without being classified.
+            let classifier = match ctx
+                .client_hub()
+                .get::<dyn crate::documents::port::DocumentClassifier>()
+            {
+                Ok(c) => {
+                    info!(
+                        "studio-artifact-ingest: studio-documents wired — a sync classifies the prose it reads"
+                    );
+                    Some(c)
+                }
+                Err(e) => {
+                    warn!(error = %e, "studio-artifact-ingest: studio-documents unavailable — files stay unclassified");
+                    None
+                }
+            };
+
             Some(Arc::new(IngestService::new(
                 credstore,
                 drivers,
                 graph,
                 file_parser,
+                classifier,
                 workspaces_root,
                 work_root,
             )))

@@ -124,6 +124,16 @@ else
     && ok "named components resolve to their directories, with a weekly series" \
     || bad "components by name -> $code $body"
 
+  # Pull requests, the same slice: named gears, all three states, and the mean
+  # merge time. `api-gateway` lives at gears/system/api-gateway/.
+  body=$(curl -sS "${CURL_OPTS[@]}" --max-time 180 -w '\n%{http_code}' "${auth[@]}" \
+    -d '{"repository":"constructorfabric/gears-rust","from":"2026-05-01","components":[{"key":"api-gateway"},{"key":"credstore"}],"include_other":false}' \
+    "$BACKEND/cf/studio-insight/v1/components/pull-requests")
+  code=${body##*$'\n'}; body=${body%$'\n'*}
+  [[ "$code" == 200 && "$body" == *'"api-gateway"'* && "$body" == *'"merged"'* ]] \
+    && ok "pull requests answer per named gear, in every state" \
+    || bad "components/pull-requests -> $code $body"
+
   body=$(curl -sS "${CURL_OPTS[@]}" --max-time 60 -w '\n%{http_code}' "${auth[@]}" \
     -d '{"repository":"a/b/c"}' "$BACKEND/cf/studio-insight/v1/components/metrics")
   code=${body##*$'\n'}; body=${body%$'\n'*}

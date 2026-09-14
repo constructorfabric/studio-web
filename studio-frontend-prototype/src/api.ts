@@ -332,6 +332,28 @@ export interface SpecFinding {
   details?: unknown;
 }
 
+/** One document type a stage cannot do without, and how the project stands on it. */
+export interface StageRequirement {
+  type_key: string;
+  /** A document of this type exists in the project — written here, or a
+   *  repository file someone bound to the type. */
+  present: boolean;
+  /** It passes its type's structural check. */
+  conforms: boolean;
+  /** Detectors the stage gates on that have not passed: missing, pending or
+   *  failed. Empty when the stage gates nothing, or everything passed. */
+  analyses_outstanding: string[];
+}
+
+/** Where a project stands against one stage of its workspace's journey. */
+export interface StageStatus {
+  key: string;
+  label: string;
+  required: boolean;
+  complete: boolean;
+  requirements: StageRequirement[];
+}
+
 /** A pull request opened for a published change, or the one already open. */
 export interface OpenedPullRequest {
   number: number;
@@ -597,6 +619,37 @@ export interface ComponentMetrics {
   bucket?: string | null;
   /** Sparse: a bucket with no commits has no point, rather than a zero. */
   series: ComponentTrendPoint[];
+  truncated: boolean;
+}
+
+export interface ComponentPullRequestsQuery {
+  repository: string;
+  /** Inclusive `YYYY-MM-DD` on when a PR was **opened**; defaults to 30 days. */
+  from?: string;
+  to?: string;
+  depth?: number;
+  components?: ComponentSpecInput[];
+  include_other?: boolean;
+  limit?: number;
+}
+
+export interface ComponentPullRequestsRow {
+  component: string;
+  open: number;
+  merged: number;
+  closed: number;
+  /** Not a share of the repository's PRs: one touching three gears is in all three. */
+  total: number;
+  /** Absent when nothing merged in the window — not the same as zero hours. */
+  merged_cycle_hours?: number | null;
+  authors: number;
+}
+
+export interface ComponentPullRequests {
+  repository: string;
+  from: string;
+  to: string;
+  components: ComponentPullRequestsRow[];
   truncated: boolean;
 }
 
@@ -1672,6 +1725,18 @@ export const api = {
   },
 
 
+
+  /** Where a project stands against the stages of its workspace's journey.
+   *
+   *  Computed, never stored: a stage is complete when the documents it names
+   *  are there, conform, and have passed whatever detectors it gates on. A
+   *  stored flag would go stale the moment one of them is edited. */
+  projectStageStatus: (token: string, workspaceId: string, projectId: string) =>
+    request<{ items: StageStatus[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/stage-status`,
+      token,
+    ),
+
   /* ── studio-documents: ingested files bound to types ── */
 
   /** Classify ingested files against the workspace's document types. Send a
@@ -1724,6 +1789,25 @@ export const api = {
   ) =>
     request<DocBinding>(
       `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${id}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+
+
+  /** Record one detector's verdict against a bound repository file.
+   *
+   *  The full finding goes to the artifact graph; this is the index a stage
+   *  gate reads, so a stage can depend on a detector having passed for a
+   *  document that lives in the repository. */
+  recordBindingAnalysis: (
+    token: string,
+    workspaceId: string,
+    bindingId: string,
+    detector: string,
+    body: { state: "pending" | "passed" | "failed"; task_id?: string; summary?: string },
+  ) =>
+    request<unknown>(
+      `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/${bindingId}/analyses/${detector}`,
       token,
       { method: "PUT", body: JSON.stringify(body) },
     ),
@@ -2192,6 +2276,12 @@ export const api = {
       token,
     ),
 
+  /** Pull requests for one repository, sliced by component (studio-insight). */
+  insightComponentPullRequests: (token: string, body: ComponentPullRequestsQuery) =>
+    request<ComponentPullRequests>("/studio-insight/v1/components/pull-requests", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /** Delivery metrics for one repository, sliced by component (studio-insight). */
   insightComponentMetrics: (token: string, body: ComponentMetricsQuery) =>
     request<ComponentMetrics>("/studio-insight/v1/components/metrics", token, {

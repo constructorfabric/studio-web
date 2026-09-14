@@ -28,7 +28,7 @@ use super::INSIGHT_INSTANCE_ID;
 use super::client::{InsightClient, InsightError, SqlPage};
 use super::components::{
     Bucket, ComponentMatch, ComponentPoint, ComponentQuery, ComponentQueryInput, ComponentRow,
-    ComponentSpec,
+    ComponentSpec, PullRequestRow,
 };
 
 #[resource_error(gts_id!("cf.studio._.insight.v1~"))]
@@ -243,6 +243,61 @@ pub struct ComponentMetricsResponse {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
+pub struct ComponentPullRequestsRequest {
+    /// `owner/name` (or a bare `name`), e.g. `constructorfabric/gears-rust`.
+    pub repository: String,
+    /// Inclusive `YYYY-MM-DD` window on when a pull request was **opened**.
+    /// Both default to the last 30 days.
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    /// Path segments to group by when `components` is empty. On a workspace
+    /// repository the top of that ranking is usually `Cargo.lock` and friends —
+    /// the root files nearly every pull request touches — so naming the
+    /// components is worth it here.
+    #[serde(default)]
+    pub depth: Option<u8>,
+    #[serde(default)]
+    pub components: Vec<ComponentSpecDto>,
+    #[serde(default)]
+    pub include_other: Option<bool>,
+    /// Rows to return, ordered by pull-request count. Default 50, max 500.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentPullRequestsRow {
+    pub component: String,
+    /// Counted by the state each pull request is in **now**.
+    pub open: u64,
+    pub merged: u64,
+    pub closed: u64,
+    /// `open + merged + closed`. Not a share of the repository's pull requests:
+    /// one that touches three components is counted in all three.
+    pub total: u64,
+    /// Mean hours from opened to merged, over the merged ones. Absent when
+    /// nothing merged in the window — which is not the same as zero hours.
+    pub merged_cycle_hours: Option<f64>,
+    /// Distinct pull-request authors.
+    pub authors: u64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentPullRequestsResponse {
+    pub repository: String,
+    /// The window actually used, resolved here when the request defaulted it.
+    pub from: String,
+    pub to: String,
+    pub components: Vec<ComponentPullRequestsRow>,
+    pub truncated: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
 pub struct PullRequest {
     /// The Insight resource to read (appended to `{base_url}{api_path}`).
     pub resource: String,
@@ -327,21 +382,15 @@ async fn component_metrics(
         .transpose()
         .map_err(|detail| bad_argument("bucket", detail))?;
 
-    let query = ComponentQuery::new(ComponentQueryInput {
-        repository: repository.clone(),
-        from: req.from.clone(),
-        to: req.to.clone(),
-        depth: req.depth,
-        components: req
-            .components
-            .into_iter()
-            .map(ComponentSpecDto::into_spec)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|detail| bad_argument("components", detail))?,
-        include_other: req.include_other.unwrap_or(true),
-        limit: req.limit,
-    })
-    .map_err(|detail| bad_argument("repository", detail))?;
+    let query = component_query(
+        &repository,
+        req.from.clone(),
+        req.to.clone(),
+        req.depth,
+        req.components,
+        req.include_other,
+        req.limit,
+    )?;
 
     let page = handle
         .0
@@ -407,6 +456,84 @@ async fn component_metrics(
         bucket: bucket.map(|b| b.as_str().to_string()),
         series,
         truncated,
+    }))
+}
+
+/// The component query both component operations share: same validation, same
+/// matching, same escaping — only the statement rendered from it differs.
+fn component_query(
+    repository: &str,
+    from: Option<String>,
+    to: Option<String>,
+    depth: Option<u8>,
+    components: Vec<ComponentSpecDto>,
+    include_other: Option<bool>,
+    limit: Option<u32>,
+) -> ApiResult<ComponentQuery> {
+    let specs = components
+        .into_iter()
+        .map(ComponentSpecDto::into_spec)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|detail| bad_argument("components", detail))?;
+    ComponentQuery::new(ComponentQueryInput {
+        repository: repository.to_string(),
+        from,
+        to,
+        depth,
+        components: specs,
+        include_other: include_other.unwrap_or(true),
+        limit,
+    })
+    .map_err(|detail| bad_argument("repository", detail))
+}
+
+async fn component_pull_requests(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<ComponentPullRequestsRequest>,
+) -> ApiResult<JsonBody<ComponentPullRequestsResponse>> {
+    let repository = req.repository.trim().to_string();
+    let query = component_query(
+        &repository,
+        req.from.clone(),
+        req.to.clone(),
+        req.depth,
+        req.components,
+        req.include_other,
+        req.limit,
+    )?;
+
+    let page = handle
+        .0
+        .query(&query.to_pull_request_sql())
+        .await
+        .map_err(to_canonical)?;
+
+    let mut from = req.from.unwrap_or_default();
+    let mut to = req.to.unwrap_or_default();
+    let mut components = Vec::with_capacity(page.rows.len());
+    for row in page.rows {
+        let row: PullRequestRow =
+            serde_json::from_value(row).map_err(|e| unreadable("pull-request row", e))?;
+        from = row.range_from;
+        to = row.range_to;
+        components.push(ComponentPullRequestsRow {
+            component: row.component,
+            open: row.open,
+            merged: row.merged,
+            closed: row.closed,
+            total: row.total,
+            merged_cycle_hours: row.merged_cycle_hours,
+            authors: row.authors,
+        });
+    }
+
+    Ok(Json(ComponentPullRequestsResponse {
+        repository,
+        from,
+        to,
+        components,
+        truncated: page.truncated,
     }))
 }
 
@@ -517,6 +644,30 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Per-component metrics, ordered by churn",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-insight/v1/components/pull-requests")
+        .operation_id("studio_insight.component_pull_requests")
+        .summary("Pull requests for one repository, sliced by component")
+        .description(
+            "Counts pull requests by the state they are in now — open, merged,              closed — for each component they touched, with the mean merge              cycle time and the number of distinct authors. A pull request              belongs to a repository, so there is no component dimension to              group it by; it is attributed here through the files its commits              changed, which means two caveats worth repeating to whoever reads              the numbers. One that touches three components is counted in all              three, so the rows do not partition the repository's pull              requests. And attribution needs the commits to exist in the              repository's history: ~97% of merged pull requests reach their              files, against ~29% of closed and ~46% of open ones, because an              abandoned branch's commits often never landed. Dependable for what              shipped, indicative for what did not.",
+        )
+        .tag("StudioInsight")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ComponentPullRequestsRequest>(
+            openapi,
+            "Repository, window and component map",
+        )
+        .handler(component_pull_requests)
+        .json_response_with_schema::<ComponentPullRequestsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Pull-request counts per component",
         )
         .error_400(openapi)
         .error_401(openapi)

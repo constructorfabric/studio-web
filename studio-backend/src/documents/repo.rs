@@ -241,6 +241,25 @@ impl DocumentsRepo {
         Ok(rows)
     }
 
+    /// The same, for verdicts about bound repository files.
+    pub async fn list_binding_analyses(
+        &self,
+        workspace_id: Uuid,
+        binding_ids: &[Uuid],
+    ) -> Result<Vec<analysis::Model>> {
+        if binding_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.db.conn()?;
+        let rows = analysis::Entity::find()
+            .filter(analysis::Column::BindingId.is_in(binding_ids.to_vec()))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
     /// Record (or replace) one detector's verdict.
     pub async fn upsert_analysis(&self, model: analysis::Model) -> Result<()> {
         let conn = self.db.conn()?;

@@ -17,15 +17,16 @@ use crate::studio_theia::rest;
 use crate::studio_theia::sdk::TheiaControlClientV1;
 use crate::studio_theia::service::TheiaService;
 #[cfg(not(feature = "theia-event-broker"))]
-use crate::studio_theia::sink::LoggingEventSink;
+use crate::studio_theia::sink::StudioEventsSink;
 
 /// Backend-to-backend bridge to the per-session Theia node backend.
 ///
 /// Publishes [`TheiaControlClientV1`] (studio→Theia control calls) and mounts
 /// the Theia→studio event ingress. Endpoint discovery is resolved lazily from
 /// `ClientHub` via [`StudioSessionResolver`] (phase 2); the event ingress
-/// authenticates the S2S token and traces (phase 3 republishes to
-/// `event-broker`). Dormant unless `studio-theia.enabled = true`.
+/// authenticates the S2S token and republishes onto `studio-events` — the
+/// portal's stream — or onto `event-broker` under its feature. Dormant unless
+/// `studio-theia.enabled = true`.
 #[toolkit::gear(name = "studio-theia", capabilities = [rest])]
 pub struct StudioTheiaGear {
     service: OnceLock<Arc<TheiaService>>,
@@ -74,7 +75,8 @@ impl Gear for StudioTheiaGear {
             crate::studio_theia::sink::EventBrokerEventSink::new(ctx.client_hub()),
         );
         #[cfg(not(feature = "theia-event-broker"))]
-        let sink: Arc<dyn crate::studio_theia::sink::TheiaEventSink> = Arc::new(LoggingEventSink);
+        let sink: Arc<dyn crate::studio_theia::sink::TheiaEventSink> =
+            Arc::new(StudioEventsSink::new(ctx.client_hub()));
         let service = Arc::new(TheiaService::new(
             cfg,
             endpoint_resolver,
