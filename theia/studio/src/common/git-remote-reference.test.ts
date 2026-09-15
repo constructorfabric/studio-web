@@ -6,7 +6,7 @@ import {
 describe('git remote checkout references', () => {
     it.each([
         ['git@github.com:constructorfabric/studio.git', 'github.com', 'constructorfabric', 'studio'],
-        ['https://github.com/cyberfabric/ai-courses.git', 'github.com', 'cyberfabric', 'ai-courses'],
+        ['https://github.com/constructorfabric/ai-courses.git', 'github.com', 'constructorfabric', 'ai-courses'],
         ['ssh://git@git.acronis.com:7989/real/cyber-repo.git', 'git.acronis.com', 'real', 'cyber-repo'],
         ['https://gitlab.com/group/subgroup/repo.git', 'gitlab.com', 'group/subgroup', 'repo']
     ])('extracts owner and repository from %s', (remoteUrl, host, org, repo) => {

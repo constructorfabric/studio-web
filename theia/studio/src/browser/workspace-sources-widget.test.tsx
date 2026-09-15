@@ -145,11 +145,11 @@ describe('WorkspaceSourcesWidget', () => {
         await setInputValue(
             '[data-testid="workspace-source-input-remote-url"]',
             widget.node,
-            'git@github.com:cyberfabric/ai-courses.git'
+            'git@github.com:constructorfabric/ai-courses.git'
         );
 
         expect(text(widget.node, '[data-testid="workspace-source-resolved-local-path"]'))
-            .toBe('/workspace/workspace-sources/cyberfabric/ai-courses');
+            .toBe('/workspace/workspace-sources/constructorfabric/ai-courses');
     });
 
     it('derives remote checkout previews from a Windows config path when resolveRootUri is absent', async () => {
@@ -172,11 +172,11 @@ describe('WorkspaceSourcesWidget', () => {
         await setInputValue(
             '[data-testid="workspace-source-input-remote-url"]',
             widget.node,
-            'git@github.com:cyberfabric/ai-courses.git'
+            'git@github.com:constructorfabric/ai-courses.git'
         );
 
         expect(text(widget.node, '[data-testid="workspace-source-resolved-local-path"]'))
-            .toBe('C:/workspace/workspace-sources/cyberfabric/ai-courses');
+            .toBe('C:/workspace/workspace-sources/constructorfabric/ai-courses');
     });
 
     it('uses a destructive confirmation before removal', async () => {
