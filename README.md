@@ -215,6 +215,13 @@ git push origin infra-v0.1.0
 
 - [`studio-backend/README.md`](studio-backend/README.md) — backend architecture
   and development.
+- [`docs/api-conventions.md`](docs/api-conventions.md) — the rules every REST
+  operation and every published event follows, and how they are enforced. Read
+  this before adding an endpoint.
+- [`docs/events-catalog.md`](docs/events-catalog.md) — the `studio-events`
+  vocabulary: every `subject_type` and `kind` a consumer may rely on.
+- [`docs/adr/0020-one-contract-with-the-frontend.md`](docs/adr/0020-one-contract-with-the-frontend.md)
+  — why the contract is enforced by a ratchet rather than by review.
 - [`studio-frontend/docs/studio-events.md`](studio-frontend/docs/studio-events.md)
   — consuming the push channel from the portal: how a screen is told that
   background work finished instead of polling for it.
