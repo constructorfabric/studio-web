@@ -250,6 +250,24 @@ jobs:
           node-version: 22
       - run: node theia/docker/gate.test.mjs
 
+  # The one check that spans all three trees: every URL either portal calls has
+  # to exist in the backend's committed API surface (rule G3 of
+  # docs/api-conventions.md). It carries no filter on purpose — a backend path
+  # can move without the frontend job running, and a frontend call can be
+  # rewritten without the backend job running, and this job is what notices
+  # either way. Seconds, and no toolchain beyond Node.
+  test-api-usage:
+    name: Contract — both portals call endpoints that exist
+    # No `needs` and no filter: it must not inherit the component selection that
+    # is exactly what lets this drift through.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node scripts/check-api-usage.mjs
+
   test-infra:
     needs: test-changes
     if: needs.test-changes.outputs.infra == 'true'
@@ -337,13 +355,14 @@ jobs:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.
     name: 1. Tests passed
-    needs: [test-changes, test-backend, test-frontend, test-prototype, test-theia-session-gate, test-infra, test-deployment-config]
+    needs: [test-changes, test-backend, test-frontend, test-prototype, test-api-usage, test-theia-session-gate, test-infra, test-deployment-config]
     if: >-
       always() &&
       (needs.test-changes.result == 'success' || needs.test-changes.result == 'skipped') &&
       (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
       (needs.test-prototype.result == 'success' || needs.test-prototype.result == 'skipped') &&
+      needs.test-api-usage.result == 'success' &&
       (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
       (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
       (needs.test-deployment-config.result == 'success' || needs.test-deployment-config.result == 'skipped')
