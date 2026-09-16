@@ -51,6 +51,30 @@ cargo run -- --config config/dev.yaml run            # migrations apply on start
 ./demo/demo-groups.sh <user-id>                      # user-groups scenario
 ```
 
+### The API contract
+
+Every REST operation this assembly registers follows
+[`docs/api-conventions.md`](../docs/api-conventions.md), and the rules are a
+test rather than a review note:
+
+```bash
+cargo test api_contract                                          # the rules, the snapshot
+cargo run --quiet -- api-contract > docs/api-contract.json       # regenerate the surface
+cargo run --quiet -- api-contract --violations                   # what is still broken, with baseline lines
+node ../scripts/check-api-usage.mjs                              # do both portals call paths that exist?
+```
+
+`api-contract` reads the source — no config, database or listener, same as
+`gts-types` — and emits the surface the code declares: method, path,
+`operation_id`, tag, summary, request and response DTOs, declared errors. It is
+**not** the OpenAPI document (that one is built at boot and served at
+`/cf/docs`); it is the half that can be proven offline, and its diff is what a
+frontend reviewer reads.
+
+Existing breaks are listed in [`docs/api-contract-baseline.txt`](docs/api-contract-baseline.txt)
+and the test asserts the live set equals that file exactly, so the file can only
+shrink. Adding a line to it is a deliberate, reviewable act.
+
 ### GTS types
 
 Every GTS document the assembly registers — both registries — is emitted offline and

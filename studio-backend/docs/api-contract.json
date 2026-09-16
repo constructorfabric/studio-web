@@ -1,0 +1,2650 @@
+{
+  "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
+  "open_violations": 174,
+  "operations": [
+    {
+      "method": "DELETE",
+      "path": "/studio-components-catalog/v1/field-schemas/{describes}",
+      "operation_id": "studio_components_catalog.delete_field_schema",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Revert one component type to the built-in field schema",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-connector/v1/connections/{id}",
+      "operation_id": "studio_connector.delete_connection",
+      "tag": "StudioConnectors",
+      "summary": "Remove a connection and its stored token",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/organizations/{organization_id}/capabilities/{key}",
+      "operation_id": "studio_documents.delete_organization_capability",
+      "tag": "StudioDocuments",
+      "summary": "Revert an organization's own capability, falling back to the platform catalogue",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/organizations/{organization_id}/stages/{key}",
+      "operation_id": "studio_documents.delete_organization_stage",
+      "tag": "StudioDocuments",
+      "summary": "Revert an organization's own journey stage, falling back to the platform catalogue",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/organizations/{organization_id}/types/{key}",
+      "operation_id": "studio_documents.delete_organization_type",
+      "tag": "StudioDocuments",
+      "summary": "Revert an organization's own document type, falling back to the platform catalogue",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/capabilities/{key}",
+      "operation_id": "studio_documents.delete_capability",
+      "tag": "StudioDocuments",
+      "summary": "Revert a workspace's own capability, falling back to what it inherits",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",
+      "operation_id": "studio_documents.delete_binding",
+      "tag": "StudioDocuments",
+      "summary": "Forget a document binding",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}",
+      "operation_id": "studio_documents.delete_document",
+      "tag": "StudioDocuments",
+      "summary": "Delete a document",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/stages/{key}",
+      "operation_id": "studio_documents.delete_stage",
+      "tag": "StudioDocuments",
+      "summary": "Revert a workspace's own journey stage, falling back to what it inherits",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/types/{key}",
+      "operation_id": "studio_documents.delete_type",
+      "tag": "StudioDocuments",
+      "summary": "Revert a workspace's own document type, falling back to what it inherits",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-domain-model/v1/types/{id}/fields/{name}",
+      "operation_id": "studio_domain_model.remove_field",
+      "tag": "StudioDomainModel",
+      "summary": "Drop a field from a type",
+      "authenticated": true,
+      "responses": [
+        "EditFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}",
+      "operation_id": "studio_kits.remove_installation",
+      "tag": "StudioKits",
+      "summary": "Remove a project's desired kit installation",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-organizations/v1/organizations/{org_id}",
+      "operation_id": "studio_organizations.delete_organization",
+      "tag": "StudioOrganizations",
+      "summary": "Delete an organization",
+      "authenticated": true,
+      "responses": [
+        "OrganizationDeletionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-scheduler/v1/schedules/{id}",
+      "operation_id": "studio_scheduler.delete",
+      "tag": "StudioScheduler",
+      "summary": "Remove a schedule",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-session/v1/sessions/{id}",
+      "operation_id": "studio_session.delete_session",
+      "tag": "StudioSessions",
+      "summary": "Stop and remove an IDE session",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-user/v1/me/memberships/{org_id}",
+      "operation_id": "studio_user.leave_organization",
+      "tag": "StudioUser",
+      "summary": "Leave an organization",
+      "authenticated": true,
+      "responses": [
+        "LeaveResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-user/v1/organizations/{org_id}/invitations/{invitation_id}",
+      "operation_id": "studio_user.revoke_invitation",
+      "tag": "StudioUser",
+      "summary": "Withdraw an invitation",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-user/v1/users/{user_id}/memberships/{org_id}",
+      "operation_id": "studio_user.delete_membership",
+      "tag": "StudioUser",
+      "summary": "Remove a user's membership in an organization (organization owner)",
+      "authenticated": true,
+      "responses": [
+        "LeaveResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/spec-quality/v1/health",
+      "operation_id": "spec_quality.health",
+      "tag": "SpecQuality",
+      "summary": "Upstream liveness (maps to the service's /healthz)",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/spec-quality/v1/status",
+      "operation_id": "spec_quality.status",
+      "tag": "SpecQuality",
+      "summary": "Whether the spec-quality wrapper is configured (no secrets)",
+      "authenticated": true,
+      "responses": [
+        "SpecQualityStatusDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/spec-quality/v1/tasks",
+      "operation_id": "spec_quality.list_tasks",
+      "tag": "SpecQuality",
+      "summary": "List recent spec-quality tasks",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/spec-quality/v1/tasks/{task_id}",
+      "operation_id": "spec_quality.get_task",
+      "tag": "SpecQuality",
+      "summary": "Poll a submitted spec-quality task",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/edges",
+      "operation_id": "studio_artifact_ingest.list_edges",
+      "tag": "StudioArtifactIngest",
+      "summary": "List relations between ingested artifact nodes",
+      "authenticated": true,
+      "responses": [
+        "ArtifactEdgeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/nodes",
+      "operation_id": "studio_artifact_ingest.list_nodes",
+      "tag": "StudioArtifactIngest",
+      "summary": "List ingested artifact nodes",
+      "authenticated": true,
+      "responses": [
+        "ArtifactNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/repo-files",
+      "operation_id": "studio_artifact_ingest.repo_files",
+      "tag": "StudioArtifactIngest",
+      "summary": "Text files from a repository checkout",
+      "authenticated": true,
+      "responses": [
+        "RepoFilesResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/tasks/{id}",
+      "operation_id": "studio_artifact_ingest.task_status",
+      "tag": "StudioArtifactIngest",
+      "summary": "Poll a background sync task",
+      "authenticated": true,
+      "responses": [
+        "TaskStatusResponse"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/components",
+      "operation_id": "studio_components_catalog.list_gears",
+      "tag": "StudioComponentsCatalog",
+      "summary": "List every node of every type this organization marks as a component",
+      "authenticated": true,
+      "responses": [
+        "CatalogNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/field-schemas",
+      "operation_id": "studio_components_catalog.list_field_schemas",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The field schema each component type is rendered against",
+      "authenticated": true,
+      "responses": [
+        "FieldSchemaListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/profiles",
+      "operation_id": "studio_components_catalog.list_profiles",
+      "tag": "StudioComponentsCatalog",
+      "summary": "List Studio-managed, editable Gear profiles",
+      "authenticated": true,
+      "responses": [
+        "CatalogNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/gear-repo",
+      "operation_id": "studio_components_catalog.get_project_repo",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The gear repository connected to a project (0 or 1 node)",
+      "authenticated": true,
+      "responses": [
+        "CatalogNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/tasks/{id}",
+      "operation_id": "studio_components_catalog.task_status",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Poll a background catalog sync task",
+      "authenticated": true,
+      "responses": [
+        "CatalogTaskStatusResponse"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/types",
+      "operation_id": "studio_components_catalog.list_types",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Every node type the graph holds, and which are components here",
+      "authenticated": true,
+      "responses": [
+        "CatalogTypeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/types/counts",
+      "operation_id": "studio_components_catalog.count_types",
+      "tag": "StudioComponentsCatalog",
+      "summary": "How many nodes of each type the graph holds",
+      "authenticated": true,
+      "responses": [
+        "TypeCountListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/versions",
+      "operation_id": "studio_components_catalog.list_versions",
+      "tag": "StudioComponentsCatalog",
+      "summary": "List ingested crate versions, optionally filtered to one crate",
+      "authenticated": true,
+      "responses": [
+        "CatalogNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-connector/v1/connections",
+      "operation_id": "studio_connector.list_connections",
+      "tag": "StudioConnectors",
+      "summary": "List connections visible to the caller",
+      "authenticated": true,
+      "responses": [
+        "ConnectionListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-connector/v1/connections/{id}/repositories",
+      "operation_id": "studio_connector.list_repositories",
+      "tag": "StudioConnectors",
+      "summary": "List repositories reachable through a connection",
+      "authenticated": true,
+      "responses": [
+        "RemoteRepoListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-connector/v1/connections/{id}/targets",
+      "operation_id": "studio_connector.list_targets",
+      "tag": "StudioConnectors",
+      "summary": "List channels a notification connection can post to",
+      "authenticated": true,
+      "responses": [
+        "NotifyTargetListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-connector/v1/graph-sync/tasks/{task_id}",
+      "operation_id": "studio_connector.graph_sync_task",
+      "tag": "StudioConnectors",
+      "summary": "Poll a repository import",
+      "authenticated": true,
+      "responses": [
+        "GraphSyncTaskDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-connector/v1/providers",
+      "operation_id": "studio_connector.list_providers",
+      "tag": "StudioConnectors",
+      "summary": "List source providers this deployment can connect to",
+      "authenticated": true,
+      "responses": [
+        "ProviderListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/organizations/{organization_id}/capabilities",
+      "operation_id": "studio_documents.list_organization_capabilities",
+      "tag": "StudioDocuments",
+      "summary": "List the capability vocabulary an organization publishes",
+      "authenticated": true,
+      "responses": [
+        "CapabilityListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/organizations/{organization_id}/stages",
+      "operation_id": "studio_documents.list_organization_stages",
+      "tag": "StudioDocuments",
+      "summary": "List the journey stages an organization publishes",
+      "authenticated": true,
+      "responses": [
+        "StageListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/organizations/{organization_id}/types",
+      "operation_id": "studio_documents.list_organization_types",
+      "tag": "StudioDocuments",
+      "summary": "List the document types an organization publishes",
+      "authenticated": true,
+      "responses": [
+        "DocumentTypeListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/capabilities",
+      "operation_id": "studio_documents.list_capabilities",
+      "tag": "StudioDocuments",
+      "summary": "List the capability vocabulary for a workspace",
+      "authenticated": true,
+      "responses": [
+        "CapabilityListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings",
+      "operation_id": "studio_documents.list_workspace_bindings",
+      "tag": "StudioDocuments",
+      "summary": "List workspace-level document bindings",
+      "authenticated": true,
+      "responses": [
+        "DocumentBindingListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents",
+      "operation_id": "studio_documents.list_workspace_documents",
+      "tag": "StudioDocuments",
+      "summary": "List workspace-level documents",
+      "authenticated": true,
+      "responses": [
+        "DocumentListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}",
+      "operation_id": "studio_documents.get_document",
+      "tag": "StudioDocuments",
+      "summary": "Get one document",
+      "authenticated": true,
+      "responses": [
+        "DocumentDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses",
+      "operation_id": "studio_documents.list_project_analyses",
+      "tag": "StudioDocuments",
+      "summary": "Every recorded verdict for a project's effective documents",
+      "authenticated": true,
+      "responses": [
+        "AnalysisListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings",
+      "operation_id": "studio_documents.list_project_bindings",
+      "tag": "StudioDocuments",
+      "summary": "List a project's effective document bindings",
+      "authenticated": true,
+      "responses": [
+        "DocumentBindingListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
+      "operation_id": "studio_documents.list_project_documents",
+      "tag": "StudioDocuments",
+      "summary": "List a project's effective documents (own + inherited)",
+      "authenticated": true,
+      "responses": [
+        "DocumentListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status",
+      "operation_id": "studio_documents.project_stage_status",
+      "tag": "StudioDocuments",
+      "summary": "Where a project stands against its workspace's stages",
+      "authenticated": true,
+      "responses": [
+        "StageStatusListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/stages",
+      "operation_id": "studio_documents.list_stages",
+      "tag": "StudioDocuments",
+      "summary": "List the journey stages a workspace's projects may pass through",
+      "authenticated": true,
+      "responses": [
+        "StageListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/types",
+      "operation_id": "studio_documents.list_types",
+      "tag": "StudioDocuments",
+      "summary": "List effective document types for a workspace",
+      "authenticated": true,
+      "responses": [
+        "DocumentTypeListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/model/graph",
+      "operation_id": "studio_domain_model.model_graph",
+      "tag": "StudioDomainModel",
+      "summary": "Read the model graph back out of Graph Storage",
+      "authenticated": true,
+      "responses": [
+        "ModelGraphResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/model/versions",
+      "operation_id": "studio_domain_model.list_revisions",
+      "tag": "StudioDomainModel",
+      "summary": "The model's change history",
+      "authenticated": true,
+      "responses": [
+        "RevisionsResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/objects",
+      "operation_id": "studio_domain_model.list_objects",
+      "tag": "StudioDomainModel",
+      "summary": "List stored domain objects",
+      "authenticated": true,
+      "responses": [
+        "ObjectListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/objects/graph",
+      "operation_id": "studio_domain_model.objects_graph",
+      "tag": "StudioDomainModel",
+      "summary": "The instance graph: created objects and their relations",
+      "authenticated": true,
+      "responses": [
+        "ObjectsGraphResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/relations",
+      "operation_id": "studio_domain_model.relation_catalog",
+      "tag": "StudioDomainModel",
+      "summary": "The relation catalog with endpoint typing",
+      "authenticated": true,
+      "responses": [
+        "RelationCatalogResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/types",
+      "operation_id": "studio_domain_model.list_types",
+      "tag": "StudioDomainModel",
+      "summary": "The stored domain-model ontology",
+      "authenticated": true,
+      "responses": [
+        "TypesResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/types/{id}",
+      "operation_id": "studio_domain_model.get_type",
+      "tag": "StudioDomainModel",
+      "summary": "One domain type, with everything it inherits",
+      "authenticated": true,
+      "responses": [
+        "EffectiveTypeResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-domain-model/v1/types/{id}/conformance",
+      "operation_id": "studio_domain_model.conformance",
+      "tag": "StudioDomainModel",
+      "summary": "How the stored objects measure up against the type",
+      "authenticated": true,
+      "responses": [
+        "ConformanceResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-events/v1/events",
+      "operation_id": "studio_events.events",
+      "tag": "StudioEvents",
+      "summary": "Replay recently published events",
+      "authenticated": true,
+      "responses": [
+        "StudioEventPage"
+      ],
+      "errors": [
+        "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-events/v1/stream",
+      "operation_id": "studio_events.stream",
+      "tag": "StudioEvents",
+      "summary": "Live event stream for the caller's tenant (SSE)",
+      "authenticated": true,
+      "responses": [
+        "StudioEventDto"
+      ],
+      "errors": [
+        "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-identity/v1/users",
+      "operation_id": "studio_identity.list_users",
+      "tag": "StudioIdentity",
+      "summary": "List identities known to Studio's Keycloak realm",
+      "authenticated": true,
+      "responses": [
+        "PlatformIdentityListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-insight/v1/health",
+      "operation_id": "studio_insight.health",
+      "tag": "StudioInsight",
+      "summary": "Whether the Insight upstream is configured and answering",
+      "authenticated": true,
+      "responses": [
+        "InsightHealth"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog",
+      "operation_id": "studio_kits.list_catalog",
+      "tag": "StudioKits",
+      "summary": "List kits available to Constructor Studio",
+      "authenticated": true,
+      "responses": [
+        "KitListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/projects/{project_id}/installations",
+      "operation_id": "studio_kits.list_project_installations",
+      "tag": "StudioKits",
+      "summary": "List desired kit installations for a project",
+      "authenticated": true,
+      "responses": [
+        "KitInstallationListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/projects/{project_id}/repositories",
+      "operation_id": "studio_kits.list_project_repositories",
+      "tag": "StudioKits",
+      "summary": "List the repositories the project's running IDE has mounted",
+      "authenticated": true,
+      "responses": [
+        "ProjectRepositoryListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/client-config",
+      "operation_id": "studio_llm.client_config",
+      "tag": "StudioLlm",
+      "summary": "Client settings for the proxied LLM (model, prompt-role handling)",
+      "authenticated": true,
+      "responses": [
+        "LlmClientConfigDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/models",
+      "operation_id": "studio_llm.list_models",
+      "tag": "StudioLlm",
+      "summary": "OpenAI-compatible model list (proxied)",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-organizations/v1/capabilities",
+      "operation_id": "studio_organizations.capabilities",
+      "tag": "StudioOrganizations",
+      "summary": "What this installation lets people do with organizations",
+      "authenticated": true,
+      "responses": [
+        "OrganizationCapabilitiesDto"
+      ],
+      "errors": [
+        "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-scheduler/v1/schedules",
+      "operation_id": "studio_scheduler.list",
+      "tag": "StudioScheduler",
+      "summary": "List schedules",
+      "authenticated": true,
+      "responses": [
+        "ScheduleListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-scheduler/v1/schedules/{id}",
+      "operation_id": "studio_scheduler.get",
+      "tag": "StudioScheduler",
+      "summary": "One schedule, and when it is next due",
+      "authenticated": true,
+      "responses": [
+        "ScheduleDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-session/v1/sessions",
+      "operation_id": "studio_session.list_sessions",
+      "tag": "StudioSessions",
+      "summary": "List IDE sessions of the caller's tenant",
+      "authenticated": true,
+      "responses": [
+        "SessionListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-session/v1/sessions/{id}",
+      "operation_id": "studio_session.get_session",
+      "tag": "StudioSessions",
+      "summary": "Get one IDE session (state refreshes to running when ready)",
+      "authenticated": true,
+      "responses": [
+        "SessionDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-tasks/v1/runs",
+      "operation_id": "studio_tasks.list_runs",
+      "tag": "StudioTasks",
+      "summary": "List background runs",
+      "authenticated": true,
+      "responses": [
+        "RunListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-tasks/v1/runs/{id}",
+      "operation_id": "studio_tasks.get_run",
+      "tag": "StudioTasks",
+      "summary": "What happened to one run",
+      "authenticated": true,
+      "responses": [
+        "RunDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-tasks/v1/task-types",
+      "operation_id": "studio_tasks.list_task_types",
+      "tag": "StudioTasks",
+      "summary": "What kinds of background work this deployment can run",
+      "authenticated": true,
+      "responses": [
+        "TaskTypeListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/operations",
+      "operation_id": "studio_theia.get_operation_deltas",
+      "tag": "StudioTheia",
+      "summary": "Cursor backfill of operation events after a sequence",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/repositories",
+      "operation_id": "studio_theia.get_repositories",
+      "tag": "StudioTheia",
+      "summary": "Repositories the IDE has mounted for a workspace",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/session",
+      "operation_id": "studio_theia.get_session_info",
+      "tag": "StudioTheia",
+      "summary": "Session identity + feature flags for a workspace's IDE",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/status",
+      "operation_id": "studio_theia.get_runtime_status",
+      "tag": "StudioTheia",
+      "summary": "IDE runtime status for a workspace's live session",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me",
+      "operation_id": "studio_user.get_me",
+      "tag": "StudioUser",
+      "summary": "Resolve the caller to their canonical Studio user and profile",
+      "authenticated": true,
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/aliases",
+      "operation_id": "studio_user.list_my_aliases",
+      "tag": "StudioUser",
+      "summary": "List the external identities attributed to the caller",
+      "authenticated": true,
+      "responses": [
+        "AliasListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/invitations",
+      "operation_id": "studio_user.my_invitations",
+      "tag": "StudioUser",
+      "summary": "Invitations waiting for the signed-in person",
+      "authenticated": true,
+      "responses": [
+        "InvitationListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/logins",
+      "operation_id": "studio_user.get_my_logins",
+      "tag": "StudioUser",
+      "summary": "List the caller's linked sign-in methods",
+      "authenticated": true,
+      "responses": [
+        "LoginListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/memberships",
+      "operation_id": "studio_user.get_my_memberships",
+      "tag": "StudioUser",
+      "summary": "List the caller's organization memberships and roles",
+      "authenticated": true,
+      "responses": [
+        "MembershipListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/organizations/{org_id}/invitations",
+      "operation_id": "studio_user.list_organization_invitations",
+      "tag": "StudioUser",
+      "summary": "List an organization's invitations",
+      "authenticated": true,
+      "responses": [
+        "InvitationListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/users/{user_id}",
+      "operation_id": "studio_user.get_user",
+      "tag": "StudioUser",
+      "summary": "Read any user's profile (platform admin)",
+      "authenticated": true,
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/users/{user_id}/memberships",
+      "operation_id": "studio_user.get_user_memberships",
+      "tag": "StudioUser",
+      "summary": "List a user's organization memberships (platform admin)",
+      "authenticated": true,
+      "responses": [
+        "MembershipListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "<dynamic@src/studio_session/rest.rs>",
+      "operation_id": "studio_session.ide_proxy.{}.{}getpost",
+      "tag": "StudioSessions",
+      "summary": "Reverse proxy to a Kubernetes IDE session",
+      "authenticated": false,
+      "errors": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-connector/v1/connections/{id}",
+      "operation_id": "studio_connector.patch_connection",
+      "tag": "StudioConnectors",
+      "summary": "Relabel a connection, move it, or rotate its credential",
+      "authenticated": true,
+      "request": "PatchConnectionRequest",
+      "responses": [
+        "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-domain-model/v1/types/{id}/fields/{name}",
+      "operation_id": "studio_domain_model.edit_field",
+      "tag": "StudioDomainModel",
+      "summary": "Change a field a type declares",
+      "authenticated": true,
+      "request": "EditFieldRequest",
+      "responses": [
+        "EditFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-scheduler/v1/schedules/{id}",
+      "operation_id": "studio_scheduler.patch",
+      "tag": "StudioScheduler",
+      "summary": "Change a schedule's cadence, policies or payload",
+      "authenticated": true,
+      "request": "PatchScheduleRequest",
+      "responses": [
+        "ScheduleDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/spec-quality/v1/analyze-batch",
+      "operation_id": "spec_quality.analyze_batch",
+      "tag": "SpecQuality",
+      "summary": "Run one detector over a set of documents, as a single run",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/spec-quality/v1/analyze/bloat",
+      "operation_id": "spec_quality.analyze_bloat",
+      "tag": "SpecQuality",
+      "summary": "Submit a bloat (cross-document duplication) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/spec-quality/v1/analyze/leak",
+      "operation_id": "spec_quality.analyze_leak",
+      "tag": "SpecQuality",
+      "summary": "Submit a leak (foreign-content verdict) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/spec-quality/v1/analyze/purpose",
+      "operation_id": "spec_quality.analyze_purpose",
+      "tag": "SpecQuality",
+      "summary": "Submit a purpose (section roles + purpose gate) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/spec-quality/v1/analyze/traceability",
+      "operation_id": "spec_quality.analyze_traceability",
+      "tag": "SpecQuality",
+      "summary": "Submit a traceability (ID graph / drift) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/files",
+      "operation_id": "studio_artifact_ingest.add_file",
+      "tag": "StudioArtifactIngest",
+      "summary": "Register an uploaded or generated project artifact",
+      "authenticated": true,
+      "request": "ManualFileRequest",
+      "responses": [
+        "ManualFileResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/quality",
+      "operation_id": "studio_artifact_ingest.save_quality",
+      "tag": "StudioArtifactIngest",
+      "summary": "Persist spec-quality detector results into the artifact graph",
+      "authenticated": true,
+      "request": "QualityFindingsRequest",
+      "responses": [
+        "QualityFindingsResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/search",
+      "operation_id": "studio_artifact_ingest.search",
+      "tag": "StudioArtifactIngest",
+      "summary": "Search the artifact graph (semantic when embeddings exist, else lexical)",
+      "authenticated": true,
+      "request": "SearchRequest",
+      "responses": [
+        "ArtifactNodeListResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/sync",
+      "operation_id": "studio_artifact_ingest.sync",
+      "tag": "StudioArtifactIngest",
+      "summary": "Enqueue a background sync of a connector source into the graph",
+      "authenticated": true,
+      "request": "SyncRequest",
+      "responses": [
+        "SyncEnqueued"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/components/{name}/profile",
+      "operation_id": "studio_components_catalog.save_profile",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create or replace Studio-managed metadata for one Gear",
+      "authenticated": true,
+      "request": "SaveGearProfileRequest",
+      "responses": [
+        "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/create-repo",
+      "operation_id": "studio_components_catalog.create_repo",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create a new repository via the connector and set it as the project's gear repo",
+      "authenticated": true,
+      "request": "CreateRepoRequest",
+      "responses": [
+        "CreateRepoResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/gear-repo",
+      "operation_id": "studio_components_catalog.set_project_repo",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Connect (or update) the gear repository for a project",
+      "authenticated": true,
+      "request": "SetProjectRepoRequest",
+      "responses": [
+        "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/scaffold",
+      "operation_id": "studio_components_catalog.scaffold_gear",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Write a scaffolded gear skeleton into the project's connected gear repo",
+      "authenticated": true,
+      "request": "ScaffoldRequest",
+      "responses": [
+        "ScaffoldResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/sync",
+      "operation_id": "studio_components_catalog.sync",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Enqueue a background sync of the crates.io keyword into the graph",
+      "authenticated": true,
+      "request": "SyncRequestDto",
+      "responses": [
+        "CatalogSyncEnqueued"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/connections",
+      "operation_id": "studio_connector.create_connection",
+      "tag": "StudioConnectors",
+      "summary": "Add a connection to a source host",
+      "authenticated": true,
+      "request": "CreateConnectionRequest",
+      "responses": [
+        "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/connections/{id}/files",
+      "operation_id": "studio_connector.write_file",
+      "tag": "StudioConnectors",
+      "summary": "Publish one file into a repository through a connection",
+      "authenticated": true,
+      "request": "WriteFileDto",
+      "responses": [
+        "WrittenFileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/connections/{id}/graph-sync",
+      "operation_id": "studio_connector.graph_sync",
+      "tag": "StudioConnectors",
+      "summary": "Import a repository into the knowledge graph (background task)",
+      "authenticated": true,
+      "request": "GraphSyncRequest",
+      "responses": [
+        "GraphSyncAcceptedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/connections/{id}/messages",
+      "operation_id": "studio_connector.send_message",
+      "tag": "StudioConnectors",
+      "summary": "Post a message through a notification connection",
+      "authenticated": true,
+      "request": "SendMessageRequest",
+      "responses": [
+        "SentMessageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/connections/{id}/test",
+      "operation_id": "studio_connector.test_connection",
+      "tag": "StudioConnectors",
+      "summary": "Re-verify a stored credential",
+      "authenticated": true,
+      "responses": [
+        "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/probe",
+      "operation_id": "studio_connector.probe_connection",
+      "tag": "StudioConnectors",
+      "summary": "Verify a credential without storing it",
+      "authenticated": true,
+      "request": "ProbeConnectionRequest",
+      "responses": [
+        "IdentityDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/organizations/{organization_id}/capabilities",
+      "operation_id": "studio_documents.upsert_organization_capability",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a capability for every workspace in an organization",
+      "authenticated": true,
+      "request": "UpsertCapabilityDto",
+      "responses": [
+        "CapabilityDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/organizations/{organization_id}/stages",
+      "operation_id": "studio_documents.upsert_organization_stage",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a journey stage for every workspace in an organization",
+      "authenticated": true,
+      "request": "UpsertStageDto",
+      "responses": [
+        "StageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/organizations/{organization_id}/types",
+      "operation_id": "studio_documents.upsert_organization_type",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a document type for every workspace in an organization",
+      "authenticated": true,
+      "request": "UpsertTypeDto",
+      "responses": [
+        "DocumentTypeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/capabilities",
+      "operation_id": "studio_documents.upsert_capability",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a capability in one workspace",
+      "authenticated": true,
+      "request": "UpsertCapabilityDto",
+      "responses": [
+        "CapabilityDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify",
+      "operation_id": "studio_documents.classify_workspace_files",
+      "tag": "StudioDocuments",
+      "summary": "Classify ingested files at workspace level",
+      "authenticated": true,
+      "request": "ClassifyRequestDto",
+      "responses": [
+        "ClassifyResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents",
+      "operation_id": "studio_documents.create_workspace_document",
+      "tag": "StudioDocuments",
+      "summary": "Create a workspace-level document from a type",
+      "authenticated": true,
+      "request": "CreateDocumentDto",
+      "responses": [
+        "DocumentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}/validate",
+      "operation_id": "studio_documents.validate_document",
+      "tag": "StudioDocuments",
+      "summary": "Re-run the structural conformance check",
+      "authenticated": true,
+      "responses": [
+        "ValidationReportDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify",
+      "operation_id": "studio_documents.classify_project_files",
+      "tag": "StudioDocuments",
+      "summary": "Classify ingested files for a project",
+      "authenticated": true,
+      "request": "ClassifyRequestDto",
+      "responses": [
+        "ClassifyResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
+      "operation_id": "studio_documents.create_project_document",
+      "tag": "StudioDocuments",
+      "summary": "Create a project-level document from a type",
+      "authenticated": true,
+      "request": "CreateDocumentDto",
+      "responses": [
+        "DocumentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/stages",
+      "operation_id": "studio_documents.upsert_stage",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a journey stage in one workspace",
+      "authenticated": true,
+      "request": "UpsertStageDto",
+      "responses": [
+        "StageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/types",
+      "operation_id": "studio_documents.upsert_type",
+      "tag": "StudioDocuments",
+      "summary": "Define, replace or hide a document type in one workspace",
+      "authenticated": true,
+      "request": "UpsertTypeDto",
+      "responses": [
+        "DocumentTypeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/model/import",
+      "operation_id": "studio_domain_model.import_model",
+      "tag": "StudioDomainModel",
+      "summary": "Upload a domain model to make it the active ontology",
+      "authenticated": true,
+      "request": "ImportModelRequest",
+      "responses": [
+        "ImportModelResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/model/revert",
+      "operation_id": "studio_domain_model.revert_model",
+      "tag": "StudioDomainModel",
+      "summary": "Restore the model to an earlier version",
+      "authenticated": true,
+      "request": "RevertRequest",
+      "responses": [
+        "RevertResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/model/sync",
+      "operation_id": "studio_domain_model.sync_model",
+      "tag": "StudioDomainModel",
+      "summary": "Sync the domain model into the graph as a graph",
+      "authenticated": true,
+      "responses": [
+        "ModelSyncResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/objects",
+      "operation_id": "studio_domain_model.create_object",
+      "tag": "StudioDomainModel",
+      "summary": "Create an object of a domain type",
+      "authenticated": true,
+      "request": "CreateObjectRequest",
+      "responses": [
+        "CreateObjectResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/relations",
+      "operation_id": "studio_domain_model.create_relation",
+      "tag": "StudioDomainModel",
+      "summary": "Relate two domain objects",
+      "authenticated": true,
+      "request": "CreateRelationRequest",
+      "responses": [
+        "CreateRelationResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/types/{id}/fields",
+      "operation_id": "studio_domain_model.add_field",
+      "tag": "StudioDomainModel",
+      "summary": "Extend a domain type with a new field",
+      "authenticated": true,
+      "request": "AddFieldRequest",
+      "responses": [
+        "AddFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-identity/v1/memberships/backfill",
+      "operation_id": "studio_identity.backfill_memberships",
+      "tag": "StudioIdentity",
+      "summary": "Record Studio memberships for identities the IdP already calls assigned",
+      "authenticated": true,
+      "responses": [
+        "BackfillReportDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-identity/v1/users/{identity_id}/assignment",
+      "operation_id": "studio_identity.assign_user",
+      "tag": "StudioIdentity",
+      "summary": "Assign an identity to an organization",
+      "authenticated": true,
+      "request": "AssignIdentityRequest",
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-insight/v1/components/metrics",
+      "operation_id": "studio_insight.component_metrics",
+      "tag": "StudioInsight",
+      "summary": "Delivery metrics for one repository, sliced by component",
+      "authenticated": true,
+      "request": "ComponentMetricsRequest",
+      "responses": [
+        "ComponentMetricsResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-insight/v1/components/pull-requests",
+      "operation_id": "studio_insight.component_pull_requests",
+      "tag": "StudioInsight",
+      "summary": "Pull requests for one repository, sliced by component",
+      "authenticated": true,
+      "request": "ComponentPullRequestsRequest",
+      "responses": [
+        "ComponentPullRequestsResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-insight/v1/pull",
+      "operation_id": "studio_insight.pull",
+      "tag": "StudioInsight",
+      "summary": "Read a resource from Constructor Insight",
+      "authenticated": true,
+      "request": "PullRequest",
+      "responses": [
+        "InsightData"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-insight/v1/push",
+      "operation_id": "studio_insight.push",
+      "tag": "StudioInsight",
+      "summary": "Save a resource to Constructor Insight",
+      "authenticated": true,
+      "request": "PushRequest",
+      "responses": [
+        "InsightData"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-insight/v1/query",
+      "operation_id": "studio_insight.query",
+      "tag": "StudioInsight",
+      "summary": "Run a read-only SQL query against Constructor Insight",
+      "authenticated": true,
+      "request": "QueryRequest",
+      "responses": [
+        "QueryResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/projects/{project_id}/installations",
+      "operation_id": "studio_kits.request_installation",
+      "tag": "StudioKits",
+      "summary": "Request a registered kit for a project",
+      "authenticated": true,
+      "request": "RequestKitInstallationDto",
+      "responses": [
+        "KitInstallationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize",
+      "operation_id": "studio_kits.materialize_installation",
+      "tag": "StudioKits",
+      "summary": "Install a requested kit in the project's running IDE",
+      "authenticated": true,
+      "request": "MaterializeKitInstallationDto",
+      "responses": [
+        "KitInstallationDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile",
+      "operation_id": "studio_kits.reconcile_installation",
+      "tag": "StudioKits",
+      "summary": "Materialize this kit wherever its scope says it belongs",
+      "authenticated": true,
+      "responses": [
+        "KitInstallationDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-llm/v1/chat/completions",
+      "operation_id": "studio_llm.chat_completions",
+      "tag": "StudioLlm",
+      "summary": "OpenAI-compatible chat completions (proxied to the configured LLM upstream)",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-notify/v1/messages",
+      "operation_id": "studio_notify.send",
+      "tag": "StudioNotify",
+      "summary": "Queue a notification for delivery",
+      "authenticated": true,
+      "request": "SendRequest",
+      "responses": [
+        "QueuedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-organizations/v1/organizations",
+      "operation_id": "studio_organizations.create_organization",
+      "tag": "StudioOrganizations",
+      "summary": "Create an organization and own it",
+      "authenticated": true,
+      "request": "CreateOrganizationRequest",
+      "responses": [
+        "OrganizationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-scheduler/v1/schedules",
+      "operation_id": "studio_scheduler.create",
+      "tag": "StudioScheduler",
+      "summary": "Create a schedule",
+      "authenticated": true,
+      "request": "CreateScheduleRequest",
+      "responses": [
+        "ScheduleDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-scheduler/v1/schedules/{id}/run-now",
+      "operation_id": "studio_scheduler.run_now",
+      "tag": "StudioScheduler",
+      "summary": "Fire a schedule immediately",
+      "authenticated": true,
+      "responses": [
+        "FiredDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-session/v1/sessions",
+      "operation_id": "studio_session.create_session",
+      "tag": "StudioSessions",
+      "summary": "Launch (or reuse) a Theia IDE session for a workspace",
+      "authenticated": true,
+      "request": "CreateSessionRequest",
+      "responses": [
+        "SessionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-tasks/v1/runs/{id}/cancel",
+      "operation_id": "studio_tasks.cancel_run",
+      "tag": "StudioTasks",
+      "summary": "Ask a run to stop",
+      "authenticated": true,
+      "responses": [
+        "RunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-tasks/v1/runs/{id}/retry",
+      "operation_id": "studio_tasks.retry_run",
+      "tag": "StudioTasks",
+      "summary": "Put a failed or cancelled run back on the queue",
+      "authenticated": true,
+      "responses": [
+        "RunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/open",
+      "operation_id": "studio_theia.open_in_editor",
+      "tag": "StudioTheia",
+      "summary": "Reveal/open a file in the running IDE",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/operations",
+      "operation_id": "studio_theia.enqueue_operation",
+      "tag": "StudioTheia",
+      "summary": "Queue a save/commit/push through the IDE operation journal",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry",
+      "operation_id": "studio_theia.retry_operation",
+      "tag": "StudioTheia",
+      "summary": "Retry a failed operation by id",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/me",
+      "operation_id": "studio_user.update_me",
+      "tag": "StudioUser",
+      "summary": "Update the caller's own profile",
+      "authenticated": true,
+      "request": "UpdateProfileRequest",
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/me/aliases",
+      "operation_id": "studio_user.claim_my_alias",
+      "tag": "StudioUser",
+      "summary": "Claim an external identity as the caller's own (attributes nothing yet)",
+      "authenticated": true,
+      "request": "AliasRefRequest",
+      "responses": [
+        "AliasWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/me/aliases/confirm",
+      "operation_id": "studio_user.confirm_my_aliases",
+      "tag": "StudioUser",
+      "summary": "Confirm the caller's identities from their own connector credentials",
+      "authenticated": true,
+      "responses": [
+        "ConfirmReportDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/me/aliases/revoke",
+      "operation_id": "studio_user.revoke_my_alias",
+      "tag": "StudioUser",
+      "summary": "Withdraw an external identity the caller holds",
+      "authenticated": true,
+      "request": "AliasRefRequest",
+      "responses": [
+        "AliasWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/me/invitations/accept",
+      "operation_id": "studio_user.accept_invitation",
+      "tag": "StudioUser",
+      "summary": "Accept an invitation and become a member",
+      "authenticated": true,
+      "request": "AcceptInvitationRequest",
+      "responses": [
+        "OrgMembershipDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/merge",
+      "operation_id": "studio_user.merge_users",
+      "tag": "StudioUser",
+      "summary": "Merge one user into another (platform admin)",
+      "authenticated": true,
+      "request": "MergeRequest",
+      "responses": [
+        "MergeResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/organizations/{org_id}/invitations",
+      "operation_id": "studio_user.invite_to_organization",
+      "tag": "StudioUser",
+      "summary": "Invite an address into an organization",
+      "authenticated": true,
+      "request": "InviteRequest",
+      "responses": [
+        "InvitationCreatedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/resolve",
+      "operation_id": "studio_user.resolve_identity",
+      "tag": "StudioUser",
+      "summary": "Resolve a (provider, subject) to a canonical user id (platform admin)",
+      "authenticated": true,
+      "request": "ResolveRequest",
+      "responses": [
+        "ResolveResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-user/v1/users/{user_id}/aliases",
+      "operation_id": "studio_user.add_alias",
+      "tag": "StudioUser",
+      "summary": "Attribute a non-login external identifier to a user (platform admin)",
+      "authenticated": true,
+      "request": "AddAliasRequest",
+      "responses": [
+        "AliasWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "<dynamic@src/studio_session/rest.rs>",
+      "operation_id": "studio_session.ide_proxy.{}.{}getpost",
+      "tag": "StudioSessions",
+      "summary": "Reverse proxy to a Kubernetes IDE session",
+      "authenticated": false,
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "<dynamic@src/studio_theia/rest.rs>",
+      "operation_id": "studio_theia.ingest_events",
+      "tag": "StudioTheia",
+      "summary": "Theia->studio S2S event ingress",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/field-schemas/{describes}",
+      "operation_id": "studio_components_catalog.save_field_schema",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the field schema this tenant renders one component type against",
+      "authenticated": true,
+      "request": "SaveFieldSchemaRequest",
+      "responses": [
+        "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/types/{type_id}/component",
+      "operation_id": "studio_components_catalog.set_type_component",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Mark a type as one of this organization's components, or unmark it",
+      "authenticated": true,
+      "request": "SetTypeComponentRequest",
+      "responses": [
+        "CatalogTypeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",
+      "operation_id": "studio_documents.decide_binding",
+      "tag": "StudioDocuments",
+      "summary": "Confirm, correct, reject or reset a document binding",
+      "authenticated": true,
+      "request": "DecideBindingDto",
+      "responses": [
+        "DocumentBindingDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}",
+      "operation_id": "studio_documents.record_binding_analysis",
+      "tag": "StudioDocuments",
+      "summary": "Record one detector's verdict on a bound repository file",
+      "authenticated": true,
+      "request": "RecordAnalysisDto",
+      "responses": [
+        "AnalysisDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}",
+      "operation_id": "studio_documents.update_document",
+      "tag": "StudioDocuments",
+      "summary": "Update a document's content, title or status",
+      "authenticated": true,
+      "request": "UpdateDocumentDto",
+      "responses": [
+        "DocumentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}",
+      "operation_id": "studio_documents.record_analysis",
+      "tag": "StudioDocuments",
+      "summary": "Record one detector's verdict on a document",
+      "authenticated": true,
+      "request": "RecordAnalysisDto",
+      "responses": [
+        "AnalysisDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/users/{user_id}/memberships/{org_id}",
+      "operation_id": "studio_user.put_membership",
+      "tag": "StudioUser",
+      "summary": "Set a user's role or standing in an organization (organization owner)",
+      "authenticated": true,
+      "request": "PutMembershipRequest",
+      "responses": [
+        "OrgMembershipDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    }
+  ]
+}

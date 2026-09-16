@@ -5,6 +5,7 @@
 //! only loads layered config and hands control to `toolkit::bootstrap`.
 
 mod access_config; // the Studio access-config document: one shape, one reader, one writer
+mod api_contract; // the mechanical half of docs/api-conventions.md, as a ratchet
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
@@ -95,6 +96,18 @@ enum Commands {
         #[arg(long)]
         apply: bool,
     },
+    /// Print the API surface this binary declares (JSON) and exit.
+    ///
+    /// Built from the source alone — no config, no database, no listener.
+    /// Regenerates `docs/api-contract.json`, which `cargo test` drift-checks
+    /// (see `api_contract`). NOT the OpenAPI document: that one needs a booted
+    /// assembly and is served at `/cf/docs`.
+    ApiContract {
+        /// Print the open rule violations instead of the surface, with the
+        /// baseline lines to paste.
+        #[arg(long)]
+        violations: bool,
+    },
     /// Print every GTS document this assembly registers (JSON) and exit.
     ///
     /// Built from the code alone — no config, no database, no registry, no
@@ -129,6 +142,17 @@ async fn main() -> Result<()> {
     // its output must not depend on which profile was passed.
     if matches!(cli.command, Some(Commands::GtsTypes)) {
         print!("{}", gts_inventory::to_pretty_json()?);
+        return Ok(());
+    }
+
+    // Same shape as `gts-types`: read out of the code, so it needs no profile
+    // and no database, and it is the snapshot `cargo test` drift-checks.
+    if let Some(Commands::ApiContract { violations }) = &cli.command {
+        if *violations {
+            api_contract::print_violations();
+        } else {
+            print!("{}", api_contract::to_pretty_json()?);
+        }
         return Ok(());
     }
 
@@ -185,7 +209,7 @@ async fn main() -> Result<()> {
         Commands::Migrate => run_migrate(config).await,
         Commands::Bootstrap { apply } => database_bootstrap::run(config, apply).await,
         // Both handled above, before the config was loaded.
-        Commands::GtsTypes | Commands::GtsAudit { .. } => Ok(()),
+        Commands::ApiContract { .. } | Commands::GtsTypes | Commands::GtsAudit { .. } => Ok(()),
     }
 }
 

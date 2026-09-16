@@ -1,0 +1,229 @@
+# Operations that break docs/api-conventions.md and are not fixed yet.
+#
+# One `<rule><TAB><METHOD> <path>` line each. `studio-backend/src/api_contract.rs`
+# asserts the live violation set equals this file exactly, so:
+#
+#   * a new violation fails the build;
+#   * a violation that has been fixed also fails the build, until its line is
+#     deleted here. The file only ever shrinks.
+#
+# Adding a line is a deliberate, reviewable act. See ADR-0020.
+#
+# 174 entries at 2026-09-16.
+
+# --- description (6) ---------------------------------------------------
+# Rule F2. No description, or one too short to say when to call the
+# operation. The cheapest entries in this file to clear.
+description	POST /spec-quality/v1/analyze/bloat
+description	POST /spec-quality/v1/analyze/leak
+description	POST /spec-quality/v1/analyze/purpose
+description	POST /spec-quality/v1/analyze/traceability
+description	POST /studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify
+description	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
+
+# --- domain-prefix (9) ---------------------------------------------------
+# Rule A1. `spec-quality` predates the `studio-` prefix. The rename is a
+# path change with a deprecation window (rule G1).
+domain-prefix	GET /spec-quality/v1/health
+domain-prefix	GET /spec-quality/v1/status
+domain-prefix	GET /spec-quality/v1/tasks
+domain-prefix	GET /spec-quality/v1/tasks/{task_id}
+domain-prefix	POST /spec-quality/v1/analyze-batch
+domain-prefix	POST /spec-quality/v1/analyze/bloat
+domain-prefix	POST /spec-quality/v1/analyze/leak
+domain-prefix	POST /spec-quality/v1/analyze/purpose
+domain-prefix	POST /spec-quality/v1/analyze/traceability
+
+# --- list-envelope (39) ---------------------------------------------------
+# Rule B1. A collection that is not `{ items, total }`. Two shapes here:
+# a differently named array (`nodes`, `edges`, `aliases`, `events`, ...) and a
+# missing `total`, which is why several screens cannot say "N of M".
+#
+# StudioEventPage is the one entry that may survive on purpose: it is a cursor
+# window, not an offset page, and `latest_seq` does the job `total` does
+# elsewhere. Its array still has to become `items`.
+list-envelope	GET /studio-artifact-ingest/v1/edges
+list-envelope	GET /studio-artifact-ingest/v1/nodes
+list-envelope	GET /studio-components-catalog/v1/components
+list-envelope	GET /studio-components-catalog/v1/field-schemas
+list-envelope	GET /studio-components-catalog/v1/profiles
+list-envelope	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
+list-envelope	GET /studio-components-catalog/v1/types
+list-envelope	GET /studio-components-catalog/v1/types/counts
+list-envelope	GET /studio-components-catalog/v1/versions
+list-envelope	GET /studio-connector/v1/connections
+list-envelope	GET /studio-connector/v1/connections/{id}/repositories
+list-envelope	GET /studio-connector/v1/connections/{id}/targets
+list-envelope	GET /studio-connector/v1/providers
+list-envelope	GET /studio-documents/v1/organizations/{organization_id}/capabilities
+list-envelope	GET /studio-documents/v1/organizations/{organization_id}/stages
+list-envelope	GET /studio-documents/v1/organizations/{organization_id}/types
+list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/capabilities
+list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses
+list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
+list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/stages
+list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/types
+list-envelope	GET /studio-domain-model/v1/model/versions
+list-envelope	GET /studio-domain-model/v1/objects
+list-envelope	GET /studio-events/v1/events
+list-envelope	GET /studio-identity/v1/users
+list-envelope	GET /studio-kits/v1/catalog
+list-envelope	GET /studio-kits/v1/projects/{project_id}/installations
+list-envelope	GET /studio-kits/v1/projects/{project_id}/repositories
+list-envelope	GET /studio-scheduler/v1/schedules
+list-envelope	GET /studio-session/v1/sessions
+list-envelope	GET /studio-tasks/v1/runs
+list-envelope	GET /studio-tasks/v1/task-types
+list-envelope	GET /studio-user/v1/me/aliases
+list-envelope	GET /studio-user/v1/me/invitations
+list-envelope	GET /studio-user/v1/me/logins
+list-envelope	GET /studio-user/v1/me/memberships
+list-envelope	GET /studio-user/v1/organizations/{org_id}/invitations
+list-envelope	GET /studio-user/v1/users/{user_id}/memberships
+list-envelope	POST /studio-artifact-ingest/v1/search
+
+# --- local-task-endpoint (4) ---------------------------------------------------
+# Rule D2. A private background-status endpoint beside studio-tasks.
+# Each is a second vocabulary for the frontend to learn for the same thing.
+local-task-endpoint	GET /spec-quality/v1/tasks/{task_id}
+local-task-endpoint	GET /studio-artifact-ingest/v1/tasks/{id}
+local-task-endpoint	GET /studio-components-catalog/v1/tasks/{id}
+local-task-endpoint	GET /studio-connector/v1/graph-sync/tasks/{task_id}
+
+# --- op-id-verb (36) ---------------------------------------------------
+# Rule A2. The operation_id does not start with a verb from the closed
+# list. Two kinds: a synonym of a lifecycle verb (`save`/`set`/`put`/`edit` for
+# update or upsert, `add` for create, `remove` for delete) and a bare noun
+# (`health`, `status`, `graph`, `model`, `objects`, `my`, ...), which leaves a
+# generated client with a method name that does not say what it does.
+op-id-verb	DELETE /studio-domain-model/v1/types/{id}/fields/{name}
+op-id-verb	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
+op-id-verb	GET /spec-quality/v1/health
+op-id-verb	GET /spec-quality/v1/status
+op-id-verb	GET /studio-artifact-ingest/v1/repo-files
+op-id-verb	GET /studio-artifact-ingest/v1/tasks/{id}
+op-id-verb	GET /studio-components-catalog/v1/tasks/{id}
+op-id-verb	GET /studio-connector/v1/graph-sync/tasks/{task_id}
+op-id-verb	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
+op-id-verb	GET /studio-domain-model/v1/model/graph
+op-id-verb	GET /studio-domain-model/v1/objects/graph
+op-id-verb	GET /studio-domain-model/v1/relations
+op-id-verb	GET /studio-domain-model/v1/types/{id}/conformance
+op-id-verb	GET /studio-events/v1/events
+op-id-verb	GET /studio-insight/v1/health
+op-id-verb	GET /studio-llm/v1/client-config
+op-id-verb	GET /studio-organizations/v1/capabilities
+op-id-verb	GET /studio-user/v1/me/invitations
+op-id-verb	PATCH /studio-domain-model/v1/types/{id}/fields/{name}
+op-id-verb	POST /studio-artifact-ingest/v1/files
+op-id-verb	POST /studio-artifact-ingest/v1/quality
+op-id-verb	POST /studio-components-catalog/v1/components/{name}/profile
+op-id-verb	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
+op-id-verb	POST /studio-connector/v1/connections/{id}/files
+op-id-verb	POST /studio-connector/v1/connections/{id}/graph-sync
+op-id-verb	POST /studio-domain-model/v1/types/{id}/fields
+op-id-verb	POST /studio-insight/v1/components/metrics
+op-id-verb	POST /studio-insight/v1/components/pull-requests
+op-id-verb	POST /studio-kits/v1/projects/{project_id}/installations
+op-id-verb	POST /studio-llm/v1/chat/completions
+op-id-verb	POST /studio-user/v1/users/{user_id}/aliases
+op-id-verb	PUT /studio-components-catalog/v1/field-schemas/{describes}
+op-id-verb	PUT /studio-components-catalog/v1/types/{type_id}/component
+op-id-verb	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}
+op-id-verb	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
+op-id-verb	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
+
+# --- path-literal (3) ---------------------------------------------------
+# Rule A3. The path is built from a variable, so no client can be
+# generated from it and this file cannot name the operation precisely.
+path-literal	GET <dynamic@src/studio_session/rest.rs>
+path-literal	POST <dynamic@src/studio_session/rest.rs>
+path-literal	POST <dynamic@src/studio_theia/rest.rs>
+
+# --- scope-in-path (60) ---------------------------------------------------
+# Rule C. The scope is a path segment, so the same thought needs one
+# operation per scope. Fixing this is the expensive migration: the tenant moves
+# into the security context and a project becomes `?project_id=`, which collapses
+# the studio-documents duplicates and reshapes studio-theia and studio-kits.
+scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/capabilities/{key}
+scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/stages/{key}
+scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/types/{key}
+scope-in-path	DELETE /studio-documents/v1/workspaces/{workspace_id}/capabilities/{key}
+scope-in-path	DELETE /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}
+scope-in-path	DELETE /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
+scope-in-path	DELETE /studio-documents/v1/workspaces/{workspace_id}/stages/{key}
+scope-in-path	DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}
+scope-in-path	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
+scope-in-path	DELETE /studio-organizations/v1/organizations/{org_id}
+scope-in-path	DELETE /studio-user/v1/me/memberships/{org_id}
+scope-in-path	DELETE /studio-user/v1/organizations/{org_id}/invitations/{invitation_id}
+scope-in-path	DELETE /studio-user/v1/users/{user_id}/memberships/{org_id}
+scope-in-path	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
+scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/capabilities
+scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/stages
+scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/types
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/capabilities
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/document-bindings
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/documents
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/stages
+scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/types
+scope-in-path	GET /studio-kits/v1/projects/{project_id}/installations
+scope-in-path	GET /studio-kits/v1/projects/{project_id}/repositories
+scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/operations
+scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
+scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/session
+scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/status
+scope-in-path	GET /studio-user/v1/organizations/{org_id}/invitations
+scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/create-repo
+scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
+scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/scaffold
+scope-in-path	POST /studio-documents/v1/organizations/{organization_id}/capabilities
+scope-in-path	POST /studio-documents/v1/organizations/{organization_id}/stages
+scope-in-path	POST /studio-documents/v1/organizations/{organization_id}/types
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/capabilities
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/documents
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/validate
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/stages
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/types
+scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations
+scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
+scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile
+scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/open
+scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations
+scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry
+scope-in-path	POST /studio-user/v1/organizations/{org_id}/invitations
+scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}
+scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}
+scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
+scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
+scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
+
+# --- typed-response (17) ---------------------------------------------------
+# Rule B3. The response is registered without a schema, so the shape is
+# invisible to /cf/docs and to client generation. studio-theia, spec-quality and
+# studio-llm proxy an upstream body through verbatim; each needs a DTO of ours.
+typed-response	GET /spec-quality/v1/health
+typed-response	GET /spec-quality/v1/tasks
+typed-response	GET /spec-quality/v1/tasks/{task_id}
+typed-response	GET /studio-llm/v1/models
+typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/operations
+typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
+typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/session
+typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/status
+typed-response	POST /spec-quality/v1/analyze-batch
+typed-response	POST /spec-quality/v1/analyze/bloat
+typed-response	POST /spec-quality/v1/analyze/leak
+typed-response	POST /spec-quality/v1/analyze/purpose
+typed-response	POST /spec-quality/v1/analyze/traceability
+typed-response	POST /studio-llm/v1/chat/completions
+typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/open
+typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/operations
+typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry
