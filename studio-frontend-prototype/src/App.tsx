@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv } from "./env";
 import { errText, matches, relTime } from "./format";
 import { ProjectsPortfolio } from "./projects";
@@ -5076,24 +5076,49 @@ function ArtifactsView({
   // It is a Sources action now, and this list re-reads on mount — which is the
   // only moment it can have changed, because you have to leave to run one.
   const [refreshKey] = useState(0);
+  /** Which origin's artifacts are showing. Synced is the default because it is
+   *  where nearly everything is; hand-added files are the exception. */
+  const [origin, setOrigin] = useState<"ingested" | "manual">("ingested");
   return (
     <>
       <h1>Artifacts</h1>
       <p className="subtitle">
-        What a sync pulled into this project's graph — issues, pull requests and files — plus files
-        added by hand. The repositories they came from are on the Sources tab.
+        Everything this project knows about its own work. The repositories it came from are on the
+        Sources tab.
       </p>
-      {/* Sources moved out to their own section. This tab lists what a sync
-          PRODUCED, and attaching a repository is not a thing you do while
-          reading that list. The two were on one page mostly because the sync
-          button had to live somewhere. */}
-      <IngestedArtifacts
-        token={token}
-        scope={workspace.id}
-        target={workspace}
-        refreshKey={refreshKey}
-      />
-      <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
+      {/* Where an artifact CAME FROM is the first thing to choose, because it
+          decides everything after it: a synced artifact has a forge, an author
+          and a state, and a hand-added file has bytes and a version. They were
+          two stacked cards, which put a nine-thousand-row table above a
+          usually-empty one and made the second easy to miss entirely. */}
+      <div className="doc-views" role="tablist" aria-label="Where artifacts came from">
+        <button
+          role="tab"
+          aria-selected={origin === "ingested"}
+          className={origin === "ingested" ? "doc-view on" : "doc-view"}
+          onClick={() => setOrigin("ingested")}
+        >
+          From repositories
+        </button>
+        <button
+          role="tab"
+          aria-selected={origin === "manual"}
+          className={origin === "manual" ? "doc-view on" : "doc-view"}
+          onClick={() => setOrigin("manual")}
+        >
+          Added by hand
+        </button>
+      </div>
+      {origin === "ingested" ? (
+        <IngestedArtifacts
+          token={token}
+          scope={workspace.id}
+          target={workspace}
+          refreshKey={refreshKey}
+        />
+      ) : (
+        <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
+      )}
     </>
   );
 }
@@ -5101,6 +5126,84 @@ function ArtifactsView({
 /** The ingested-artifacts viewer: issues and pull requests pulled from the
  *  attached sources by the artifact-ingest gear and read back from the graph
  *  store. Reloads whenever `refreshKey` changes (i.e. after a Sync). */
+/** The node types a repository sync actually writes into the graph.
+ *
+ *  Three of these were being ingested and never shown. On the development graph
+ *  at the time of writing: 8529 files, 5227 COMMENTS, 4965 COMMITS, 2210
+ *  issues, 800 pull requests, 89 AUTHORS. The sync task has always reported
+ *  `comments` and `commits` in its progress counts (see api.artifactSyncTask) —
+ *  the work was done, the door was just missing. Roughly ten thousand nodes
+ *  were unreachable from the portal.
+ *
+ *  `user` is last because it is a by-product: authors are extracted so issues
+ *  and commits can point at a person, not because anybody browses them. */
+type ArtTab = "issue" | "pull_request" | "commit" | "comment" | "file" | "user";
+
+const ART_TABS: { id: ArtTab; label: string; plural: string }[] = [
+  { id: "issue", label: "Issues", plural: "issues" },
+  { id: "pull_request", label: "Pull requests", plural: "pull requests" },
+  { id: "commit", label: "Commits", plural: "commits" },
+  { id: "comment", label: "Comments", plural: "comments" },
+  { id: "file", label: "Files", plural: "files" },
+  { id: "user", label: "Authors", plural: "authors" },
+];
+
+/** One column of the artifact table. `render` gets the node's payload. */
+interface ArtColumn {
+  key: string;
+  label: string;
+  /** Right-aligned, tabular — for counts and sizes. */
+  num?: boolean;
+  render: (v: import("./api").ArtifactNode["value"]) => ReactNode;
+}
+
+/** Truncate a body to something that fits a table cell. Comments are the reason
+ *  this exists: a CodeRabbit review body is kilobytes of markdown, and pasting
+ *  it into a row makes the row taller than the viewport. */
+function excerpt(s: unknown, max = 120): string {
+  const text = typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "";
+  if (!text) return "—";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
+  issue: [
+    { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
+    { key: "state", label: "State", render: (v) => String(v.state ?? "—") },
+    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
+    { key: "labels", label: "Labels", render: (v) => (Array.isArray(v.labels) && v.labels.length ? v.labels.join(", ") : "—") },
+    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+  ],
+  pull_request: [
+    { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
+    { key: "state", label: "State", render: (v) => (v.merged ? "merged" : String(v.state ?? "—")) },
+    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
+    { key: "branches", label: "Branches", render: (v) => (v.source_branch ? `${v.source_branch} → ${v.target_branch ?? "?"}` : "—") },
+    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+  ],
+  commit: [
+    { key: "title", label: "Message", render: (v) => excerpt(v.title ?? (v as Record<string, unknown>).message, 90) },
+    { key: "sha", label: "SHA", render: (v) => <code>{String((v as Record<string, unknown>).short_sha ?? "").slice(0, 7) || "—"}</code> },
+    { key: "author", label: "Author", render: (v) => String((v as Record<string, unknown>).author_name ?? v.author ?? "—") },
+    { key: "created", label: "Committed", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+  ],
+  comment: [
+    { key: "body", label: "Comment", render: (v) => excerpt((v as Record<string, unknown>).body) },
+    { key: "on", label: "On", render: (v) => { const n = (v as Record<string, unknown>).target_number; return n != null ? `#${n}` : "—"; } },
+    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
+    { key: "created", label: "Written", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+  ],
+  file: [
+    { key: "path", label: "Path", render: (v) => <code>{String(v.path ?? "(no path)")}</code> },
+    { key: "size", label: "Size", num: true, render: (v) => (typeof v.size === "number" ? `${(v.size / 1024).toFixed(1)} KB` : "—") },
+    { key: "sha", label: "SHA", render: (v) => <code>{v.sha ? String(v.sha).slice(0, 7) : "—"}</code> },
+  ],
+  user: [
+    { key: "login", label: "Login", render: (v) => String((v as Record<string, unknown>).login ?? v.title ?? "—") },
+    { key: "provider", label: "Provider", render: (v) => String(v.provider ?? "—") },
+  ],
+};
+
 function IngestedArtifacts({
   token,
   scope,
@@ -5127,7 +5230,7 @@ function IngestedArtifacts({
   const [repos, setRepos] = useState<import("./api").ArtifactNode[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<"issue" | "pull_request" | "file">("issue");
+  const [tab, setTab] = useState<ArtTab>("issue");
 
   const load = useCallback(
     (nextOffset: number) => {
@@ -5173,8 +5276,7 @@ function IngestedArtifacts({
 
   const rows = nodes ?? [];
 
-  const emptyLabel =
-    tab === "issue" ? "issues" : tab === "pull_request" ? "pull requests" : "files";
+  const emptyLabel = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
 
   return (
     <div className="card">
@@ -5200,19 +5302,18 @@ function IngestedArtifacts({
         Issues, pull requests and repository files pulled from the attached sources by Sync. Stored
         in the graph as typed GTS nodes — this reads them back.
       </p>
-      <div className="row" style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button className={tab === "issue" ? "primary" : "ghost"} onClick={() => setTab("issue")}>
-          Issues
-        </button>
-        <button
-          className={tab === "pull_request" ? "primary" : "ghost"}
-          onClick={() => setTab("pull_request")}
-        >
-          Pull requests
-        </button>
-        <button className={tab === "file" ? "primary" : "ghost"} onClick={() => setTab("file")}>
-          Files
-        </button>
+      <div className="doc-views" role="tablist" aria-label="Artifact kind">
+        {ART_TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? "doc-view on" : "doc-view"}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
       <div className="row" style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ fontSize: 12, opacity: 0.7 }}>Repo</label>
@@ -5267,69 +5368,57 @@ function IngestedArtifacts({
         <p className="empty">
           Nothing ingested yet — hit Sync on a repository above to pull its {emptyLabel}.
         </p>
-      ) : tab === "file" ? (
-        <ul className="rows">
-          {rows.map((n) => {
-              const v = n.value;
-              const kb = typeof v.size === "number" ? `${(v.size / 1024).toFixed(1)} KB` : "";
-              return (
-                <li key={n.instance_id}>
-                  <div className="grow">
-                    <div className="name" style={{ fontFamily: "var(--mono, monospace)" }}>
-                      {v.path ?? "(no path)"}
-                    </div>
-                    <div className="sub">
-                      {kb}
-                      {v.sha ? `${kb ? " · " : ""}${String(v.sha).slice(0, 7)}` : ""}
-                    </div>
-                  </div>
-                  {typeof v.path === "string" && v.path && (
-                    <button
-                      className="ghost"
-                      onClick={() => void studio?.openFile(target, String(v.path))}
-                      disabled={!studio || studio.opening === target.id}
-                      title="Open this file in the Studio editor"
-                    >
-                      Open in editor
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-        </ul>
       ) : (
-        <ul className="rows">
-          {rows.map((n) => {
+        /* One table driven by ART_COLUMNS rather than a branch per kind. Six
+           kinds x a bespoke row each is six places to forget a column; the
+           spec says what each kind shows and this renders it. */
+        <table className="ptable">
+          <thead>
+            <tr>
+              {ART_COLUMNS[tab].map((c) => (
+                <th key={c.key} className={c.num ? "pnum" : undefined}>
+                  {c.label}
+                </th>
+              ))}
+              <th aria-label="actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((n) => {
               const v = n.value;
               const url = typeof v.url === "string" ? v.url : undefined;
+              const path = typeof v.path === "string" ? v.path : "";
               return (
-                <li key={n.instance_id}>
-                  <div className="grow">
-                    <div className="name">
-                      {v.number != null ? `#${v.number} ` : ""}
-                      {v.title ?? "(untitled)"}
-                    </div>
-                    <div className="sub">
-                      {v.state ?? "?"}
-                      {v.author ? ` · ${v.author}` : ""}
-                      {tab === "pull_request" && v.source_branch
-                        ? ` · ${v.source_branch} → ${v.target_branch ?? "?"}`
-                        : ""}
-                      {tab === "pull_request" && v.merged ? " · merged" : ""}
-                      {Array.isArray(v.labels) && v.labels.length > 0
-                        ? ` · ${v.labels.join(", ")}`
-                        : ""}
-                    </div>
-                  </div>
-                  {url && (
-                    <a className="ghost" href={url} target="_blank" rel="noreferrer">
-                      Open
-                    </a>
-                  )}
-                </li>
+                <tr key={n.instance_id}>
+                  {ART_COLUMNS[tab].map((c, i) => (
+                    <td key={c.key} className={c.num ? "pnum" : i === 0 ? "acell-lead" : undefined}>
+                      {c.render(v)}
+                    </td>
+                  ))}
+                  <td className="pactions">
+                    {/* A file opens in the editor; everything else opens where
+                        it came from. A commit or a comment has no meaning
+                        inside the IDE — its home is the forge. */}
+                    {tab === "file" && path ? (
+                      <button
+                        className="ghost"
+                        onClick={() => void studio?.openFile(target, path)}
+                        disabled={!studio || studio.opening === target.id}
+                        title="Open this file in the Studio editor"
+                      >
+                        Open in editor
+                      </button>
+                    ) : url ? (
+                      <a className="ghost" href={url} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    ) : null}
+                  </td>
+                </tr>
               );
             })}
-        </ul>
+          </tbody>
+        </table>
       )}
       {total != null && total > PAGE && (
         <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>

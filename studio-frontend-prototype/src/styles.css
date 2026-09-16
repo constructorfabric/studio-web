@@ -1494,6 +1494,22 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 /* A non-zero finding count is the one number on these tables that is a reason
    to act, so it is the one that carries the state colour. */
 .pnum-attn { color: var(--warning-foreground); font-weight: 600; }
+/* The first column of the artifacts table — the title, path or comment body.
+   It is the one the eye lands on, and the one that has to be allowed to stay
+   long: the cells are pre-truncated, so clamping here is belt-and-braces
+   against a payload that arrives without a title at all. */
+/* No `max-width: 0` here. That is the usual trick for an ellipsised table
+   cell, but it only works under `table-layout: fixed` — on an auto-layout
+   table the browser reads it as "make this column as narrow as possible" and
+   the lead column collapsed to 186px. The cell text is already truncated
+   before it is rendered (see `excerpt`), so a generous cap is enough. */
+.ptable td.acell-lead {
+  font-weight: 600; color: var(--foreground);
+  max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Every other cell stays quiet, so a row reads as "one thing, then its
+   attributes" rather than five equally loud values. */
+.ptable td code { font-size: 11px; color: var(--muted-foreground); }
 .pname { font-weight: 600; color: var(--foreground); }
 .pname:hover { color: var(--primary); }
 

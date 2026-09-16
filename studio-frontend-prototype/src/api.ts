@@ -2175,9 +2175,19 @@ export const api = {
       token,
     ),
 
-  /** Read back the ingested artifact nodes, optionally filtered by type
-   * substring (`issue`, `pull_request`, `file`, `repo`) and scoped to a tenant
-   * (`scope` matches a node's workspace_id OR project_id). */
+  /** Read back the ingested artifact nodes, optionally filtered by type leaf
+   * and scoped to a tenant (`scope` matches a node's workspace_id OR
+   * project_id).
+   *
+   * The leaf is matched EXACTLY, not by substring, against every artifact type
+   * the gear knows (artifact_ingest/gts.rs `ALL_NODE_TYPES`): `repo`, `issue`,
+   * `pull_request`, `file`, `user`, `spec_finding`, `comment`, `commit`. An
+   * unknown value lists nothing rather than everything, so a typo is silent.
+   *
+   * Omitting the type lists only the four FIRST-CLASS types (repo, file, issue,
+   * pull_request) — which is what this comment used to say was the whole set.
+   * It is not: comments, commits and authors are ingested and listable, they
+   * are simply not in the default projection. */
   listArtifactNodes: (
     token: string,
     type?: string,
