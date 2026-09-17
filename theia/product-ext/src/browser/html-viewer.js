@@ -29,50 +29,18 @@ const {
 const { slotStrip, renderDocCluster } = require('./slot-strip');
 const { previewBase } = require('./preview-url');
 
-const INJECTED = 'data-studio-injected';
+/*
+ * Anchoring moved to `element-anchor.js` when the rich Markdown surface needed
+ * the same model. The note above still explains WHY it is a child-index path;
+ * that file explains what it does and does not promise, and is tested on its
+ * own. The root is a parameter there, so a page anchors within its body and an
+ * editor within its content element.
+ */
+const { INJECTED, resolvePath: resolveIn, anchorFor } = require('./element-anchor');
 
-// --- anchoring --------------------------------------------------------------
-
-function realChildren(parent) {
-    return [...parent.children].filter(c => !c.hasAttribute(INJECTED));
-}
-
-function pathOf(el, doc) {
-    const path = [];
-    let node = el;
-    while (node && node !== doc.body) {
-        const parent = node.parentElement;
-        if (!parent) { return undefined; }
-        const idx = realChildren(parent).indexOf(node);
-        if (idx < 0) { return undefined; }
-        path.unshift(idx);
-        node = parent;
-    }
-    return node === doc.body ? path : undefined;
-}
-
+/** This surface anchors within the rendered page's body. */
 function resolvePath(path, doc) {
-    let node = doc.body;
-    for (const idx of path) {
-        const kids = realChildren(node);
-        if (!kids[idx]) { return undefined; }
-        node = kids[idx];
-    }
-    return node === doc.body ? undefined : node;
-}
-
-function snippetOf(el) {
-    return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 90);
-}
-
-function describe(el) {
-    let d = el.tagName.toLowerCase();
-    if (el.id) { d += '#' + el.id; }
-    else if (el.className && typeof el.className === 'string') {
-        const first = el.className.trim().split(/\s+/)[0];
-        if (first) { d += '.' + first; }
-    }
-    return d;
+    return resolveIn(path, doc && doc.body);
 }
 
 function commentCount(threads) {
@@ -417,11 +385,11 @@ class HtmlViewerWidget extends Widget {
         e.stopPropagation();
         const el = e.target;
         if (!el || el.nodeType !== 1 || el.closest('[' + INJECTED + ']')) { return; }
-        const path = pathOf(el, doc);
-        if (!path || !path.length) { return; }
+        const anchor = anchorFor(el, doc.body);
+        if (!anchor || !anchor.path.length) { return; }
         const thread = {
             id: newId(),
-            anchor: { type: 'element', path, tag: el.tagName.toLowerCase(), describe: describe(el), snippet: snippetOf(el) },
+            anchor,
             resolved: false,
             messages: []
         };
