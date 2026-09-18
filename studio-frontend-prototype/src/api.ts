@@ -1,3 +1,5 @@
+import { parseProblem, type Problem } from "./problem";
+
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is served by the backend at /cf/docs.
 
@@ -1074,11 +1076,24 @@ export function shortTypeName(gtsType: string): string {
 }
 
 export class ApiError extends Error {
+  /**
+   * The body read as RFC 9457 problem+json, when it is one.
+   *
+   * Every failure this backend produces is a canonical problem
+   * (`docs/errors-catalog.md`), so this is populated for anything that reached
+   * the assembly. It is absent when the failure did not: a proxy answering HTML,
+   * a gateway timeout, a body that never arrived. Screens read `problem.category`
+   * rather than `status`, because the status does not identify the failure —
+   * `400` is three different categories.
+   */
+  readonly problem?: Problem;
+
   constructor(
     public status: number,
     public body: unknown,
   ) {
     super(`API error ${status}`);
+    this.problem = parseProblem(body);
   }
 }
 

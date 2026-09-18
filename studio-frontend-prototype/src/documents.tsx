@@ -44,7 +44,7 @@ import {
   useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
-import { relTime } from "./format";
+import { errText, relTime } from "./format";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
   inFilter,
@@ -53,12 +53,6 @@ import {
   type SpecCandidate,
   type SpecFilter,
 } from "./spec-rows";
-
-/** Human-readable message from an ApiError (title/detail) or any Error. */
-function errText(e: unknown): string {
-  const x = e as { detail?: string; title?: string; message?: string } | null;
-  return x?.detail || x?.title || x?.message || String(e);
-}
 
 const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
