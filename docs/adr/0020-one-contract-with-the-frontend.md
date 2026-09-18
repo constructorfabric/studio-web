@@ -160,18 +160,20 @@ it mirrors.
 * The rules bind every operation written from today, including in branches now
   in flight. Adapting one is usually a `description` and an `operation_id`.
 * The baseline file is the migration backlog, and it is honest about its size:
-  **174 entries on the day it was written**, over 169 operations.
+  **239 entries on the day it was written**, over 176 operations.
 
   | Rule | Entries | What it is |
   | --- | ---: | --- |
+  | `error-404` | 61 | addressed by id, 404 undeclared (B8) |
   | `scope-in-path` | 60 | the scope is a path segment (rule C) |
   | `list-envelope` | 39 | a collection that is not `{ items, total }` (B1) |
   | `op-id-verb` | 36 | a synonym or a bare noun where a verb belongs (A2) |
   | `typed-response` | 17 | a response with no schema (B3) |
-  | `domain-prefix` | 9 | `spec-quality` predates `studio-` (A1) |
+  | `domain-prefix` | 10 | `spec-quality` predates `studio-` (A1) |
   | `description` | 6 | nothing written down (F2) |
   | `local-task-endpoint` | 4 | a private background-status endpoint (D2) |
   | `path-literal` | 3 | a path built from a variable (A3) |
+  | `error-500` | 3 | nothing is exempt from failing (B9) |
 
   Nine rules have **no** entries at all — `summary`, `tag`, `tag-per-domain`,
   `auth`, `error-401`, `op-id`, `op-id-unique`, `domain-registered`,

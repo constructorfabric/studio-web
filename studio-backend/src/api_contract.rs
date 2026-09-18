@@ -629,6 +629,30 @@ fn violations(operations: &[Operation], structs: &BTreeMap<String, StructShape>)
                 "an authenticated operation can answer 401 and does not declare it".into(),
             ));
         }
+        // An operation addressed by id can be asked for one that is not there,
+        // or that the caller may not see — `not_found` is the answer to both
+        // (docs/errors-catalog.md). Undeclared, it is absent from the generated
+        // client and from `api-contract.json`, so the portal writes the 404 path
+        // from memory or not at all.
+        if operation
+            .path
+            .as_deref()
+            .is_some_and(|path| path.contains('{'))
+            && !operation.errors.contains("404")
+        {
+            broken.push((
+                "error-404",
+                "the path is addressed by id and 404 is not declared".into(),
+            ));
+        }
+        // Every operation can fail internally, and a client that has not been
+        // told so is a client whose only 500 handler is a blank screen.
+        if !operation.errors.contains("500") {
+            broken.push((
+                "error-500",
+                "no operation is exempt from failing, and 500 is not declared".into(),
+            ));
+        }
 
         // --- B. response shape --------------------------------------------------
         let lists_a_collection = operation

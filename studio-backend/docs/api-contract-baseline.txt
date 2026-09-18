@@ -9,7 +9,7 @@
 #
 # Adding a line is a deliberate, reviewable act. See ADR-0020.
 #
-# 174 entries at 2026-09-16.
+# 239 entries at 2026-09-18.
 
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
@@ -21,7 +21,7 @@ description	POST /spec-quality/v1/analyze/traceability
 description	POST /studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify
 description	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
 
-# --- domain-prefix (9) ---------------------------------------------------
+# --- domain-prefix (10) ---------------------------------------------------
 # Rule A1. `spec-quality` predates the `studio-` prefix. The rename is a
 # path change with a deprecation window (rule G1).
 domain-prefix	GET /spec-quality/v1/capabilities
@@ -34,6 +34,81 @@ domain-prefix	POST /spec-quality/v1/analyze/bloat
 domain-prefix	POST /spec-quality/v1/analyze/leak
 domain-prefix	POST /spec-quality/v1/analyze/purpose
 domain-prefix	POST /spec-quality/v1/analyze/traceability
+
+# --- error-404 (61) ---------------------------------------------------
+# Rule B8. The path is addressed by an id, so the thing can be absent — or
+# present and not this caller's to see, which answers the same way. The
+# operation does not declare 404, so it is missing from the generated client
+# and from api-contract.json, and the portal writes that path from memory.
+error-404	DELETE /studio-components-catalog/v1/field-schemas/{describes}
+error-404	DELETE /studio-documents/v1/organizations/{organization_id}/capabilities/{key}
+error-404	DELETE /studio-documents/v1/organizations/{organization_id}/stages/{key}
+error-404	DELETE /studio-documents/v1/organizations/{organization_id}/types/{key}
+error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/capabilities/{key}
+error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}
+error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
+error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/stages/{key}
+error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}
+error-404	DELETE /studio-domain-model/v1/types/{id}/fields/{name}
+error-404	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
+error-404	GET /spec-quality/v1/tasks/{task_id}
+error-404	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
+error-404	GET /studio-documents/v1/organizations/{organization_id}/capabilities
+error-404	GET /studio-documents/v1/organizations/{organization_id}/stages
+error-404	GET /studio-documents/v1/organizations/{organization_id}/types
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/capabilities
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/document-bindings
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/documents
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/stages
+error-404	GET /studio-documents/v1/workspaces/{workspace_id}/types
+error-404	GET /studio-domain-model/v1/types/{id}
+error-404	GET /studio-domain-model/v1/types/{id}/conformance
+error-404	GET /studio-kits/v1/projects/{project_id}/installations
+error-404	GET /studio-kits/v1/projects/{project_id}/repositories
+error-404	GET /studio-user/v1/organizations/{org_id}/invitations
+error-404	GET /studio-user/v1/users/{user_id}/memberships
+error-404	PATCH /studio-domain-model/v1/types/{id}/fields/{name}
+error-404	POST /studio-components-catalog/v1/components/{name}/profile
+error-404	POST /studio-components-catalog/v1/projects/{project_id}/create-repo
+error-404	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
+error-404	POST /studio-components-catalog/v1/projects/{project_id}/scaffold
+error-404	POST /studio-documents/v1/organizations/{organization_id}/capabilities
+error-404	POST /studio-documents/v1/organizations/{organization_id}/stages
+error-404	POST /studio-documents/v1/organizations/{organization_id}/types
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/capabilities
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/documents
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/validate
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/stages
+error-404	POST /studio-documents/v1/workspaces/{workspace_id}/types
+error-404	POST /studio-domain-model/v1/types/{id}/fields
+error-404	POST /studio-identity/v1/users/{identity_id}/assignment
+error-404	POST /studio-kits/v1/projects/{project_id}/installations
+error-404	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
+error-404	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile
+error-404	POST /studio-user/v1/organizations/{org_id}/invitations
+error-404	POST /studio-user/v1/users/{user_id}/aliases
+error-404	PUT /studio-components-catalog/v1/field-schemas/{describes}
+error-404	PUT /studio-components-catalog/v1/types/{type_id}/component
+error-404	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}
+error-404	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}
+error-404	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
+error-404	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
+error-404	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
+
+# --- error-500 (3) ---------------------------------------------------
+# Rule B9. Nothing is exempt from failing. Three GETs predate the rule; the
+# two dynamic-path operations are not here because a path that cannot be read
+# is caught by `path-literal` first and checked no further.
+error-500	GET /studio-events/v1/events
+error-500	GET /studio-events/v1/stream
+error-500	GET /studio-organizations/v1/capabilities
 
 # --- list-envelope (39) ---------------------------------------------------
 # Rule B1. A collection that is not `{ items, total }`. Two shapes here:

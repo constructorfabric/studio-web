@@ -88,6 +88,25 @@ doc comment says which and why.
 gateway derives its route policy from these, so leaving it to a default is
 leaving authentication to a default.
 
+**B8 `[error-404]` — an operation addressed by id declares `.error_404(…)`.**
+A path with a `{param}` can be asked for something that is not there, or that is
+there and not this caller's to see — `not_found` is the answer to both. An
+undeclared error is absent from the generated client and from
+`api-contract.json`, so the portal writes that path from memory or not at all.
+
+**B9 `[error-500]` — every operation declares `.error_500(…)`.** Nothing is
+exempt from failing, and a client that was never told so is a client whose only
+500 handler is a blank screen.
+
+**B10 *(by review)* — the failure body is the canonical problem, and its
+vocabulary is [`errors-catalog.md`](errors-catalog.md).** Every failing response
+is RFC 9457 `application/problem+json` in one of sixteen categories. A client
+branches on `type`, never on `status`: `400` is `invalid_argument` or
+`failed_precondition` or `out_of_range`, `409` is `already_exists` or `aborted`,
+and `500` is three more. A gear that needs to say something new says it in
+`context`, and a `context` field a screen is expected to read lands in the
+catalogue in the same PR.
+
 ## C. Scope
 
 **C1 `[scope-in-path]` — the tenant never appears in the API.** It comes from
@@ -222,7 +241,7 @@ Fix them, or — if the break is deliberate and agreed — add the
 `<rule><TAB><METHOD> <path>` line to studio-backend/docs/api-contract-baseline.txt.
 ```
 
-The baseline holds **174 entries** today, against 169 operations — the migration
+The baseline holds **239 entries** today, against 176 operations — the migration
 backlog, rule by rule. Nine of the checked rules have no entries at all
 (`summary`, `tag`, `tag-per-domain`, `auth`, `error-401`, `op-id`,
 `op-id-unique`, `domain-registered`, `path-version`): that part of the
