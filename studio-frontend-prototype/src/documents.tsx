@@ -40,12 +40,7 @@ import {
   isDetectorCancel,
   MIN_SPEC_SHARE,
 } from "./spec-quality";
-
-/** Human-readable message from an ApiError (title/detail) or any Error. */
-function errText(e: unknown): string {
-  const x = e as { detail?: string; title?: string; message?: string } | null;
-  return x?.detail || x?.title || x?.message || String(e);
-}
+import { errText } from "./format";
 
 const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
