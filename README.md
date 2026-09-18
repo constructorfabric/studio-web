@@ -220,6 +220,9 @@ git push origin infra-v0.1.0
   this before adding an endpoint.
 - [`docs/events-catalog.md`](docs/events-catalog.md) — the `studio-events`
   vocabulary: every `subject_type` and `kind` a consumer may rely on.
+- [`docs/errors-catalog.md`](docs/errors-catalog.md) — the error contract: the
+  sixteen canonical categories, what a screen may read from one, and why it
+  branches on `type` rather than on the HTTP status.
 - [`docs/adr/0020-one-contract-with-the-frontend.md`](docs/adr/0020-one-contract-with-the-frontend.md)
   — why the contract is enforced by a ratchet rather than by review.
 - [`studio-frontend/docs/studio-events.md`](studio-frontend/docs/studio-events.md)
