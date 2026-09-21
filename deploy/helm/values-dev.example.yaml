@@ -77,8 +77,30 @@ ingress:
   enabled: true
   className: traefik
 
-# Studio owns this namespace, so it may govern it. The numbers and the
+# OFF, and not because the numbers are wrong.
+#
+# Studio owns this namespace, but owning it is not the same as being allowed to
+# write its quota. The `studio-deployer` ServiceAccount these workflows run as
+# has no `patch` on `resourcequotas` or `limitranges`, and by design must not be
+# able to grant itself any — so the chart renders both objects and the deploy's
+# server-side dry-run refuses them:
+#
+#   resourcequotas "studio-dev" is forbidden: User
+#   "system:serviceaccount:studio-dev:studio-deployer" cannot patch resource
+#   "resourcequotas" in API group "" in the namespace "studio-dev"
+#
+# That is every Deploy Services run to dev stopping at validation. It stops
+# safely — the dry-run runs before `helm upgrade`, so nothing is half-applied —
+# but it stops.
+#
+# The ceiling itself does not disappear while this is off: the hand-applied
+# ResourceQuota and LimitRange that predate the chart are still in the namespace
+# and still enforced. What is missing is git describing them, which is what
+# turning this on was for.
+#
+# Turn it back on in the same change as the one-time Role an administrator
+# applies — see "Namespace capacity" in deploy/README.md. The numbers and the
 # arithmetic behind them are in the chart's own values.yaml; this only turns
 # them on. Four concurrent IDE sessions plus one on its way out.
 capacity:
-  enabled: true
+  enabled: false

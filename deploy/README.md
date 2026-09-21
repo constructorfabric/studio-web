@@ -61,6 +61,57 @@ One image, any environment:
 
   Repeat with the target namespace for test/prod. Do not grant the application
   deployer general access to Roles or RoleBindings.
+- **Namespace capacity is off until an administrator opens it**
+  (`capacity.enabled`). The chart renders the namespace's `ResourceQuota` and
+  `LimitRange` so the ceiling is reviewed like any other number, but the
+  `studio-deployer` ServiceAccount the workflows run as cannot write either, and
+  must not be able to grant itself the right. With it on, every deploy to that
+  namespace stops at the server-side dry-run:
+
+  ```text
+  Error from server (Forbidden): resourcequotas "studio-dev" is forbidden:
+  User "system:serviceaccount:studio-dev:studio-deployer" cannot patch
+  resource "resourcequotas" in API group "" in the namespace "studio-dev"
+  ```
+
+  It stops safely — the dry-run precedes `helm upgrade`, so nothing is
+  half-applied — but nothing deploys either. Same shape as the session Role
+  above: an administrator grants it once, then the flag goes on.
+
+  ```bash
+  kubectl --kubeconfig /path/to/admin.kubeconfig apply -f - <<'YAML'
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: studio-deployer-capacity
+    namespace: studio-dev
+  rules:
+    - apiGroups: [""]
+      resources: ["resourcequotas", "limitranges"]
+      # No `delete`: the chart only ever creates or updates these, and a
+      # deployer that can delete a quota can lift its own ceiling.
+      verbs: ["get", "list", "create", "patch", "update"]
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: studio-deployer-capacity
+    namespace: studio-dev
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: studio-deployer-capacity
+  subjects:
+    - kind: ServiceAccount
+      name: studio-deployer
+      namespace: studio-dev
+  YAML
+  ```
+
+  Then set `capacity.enabled: true` for that environment in the same change, so
+  the flag and the permission it needs are reviewed together. Until then the
+  hand-applied quota stays in force — the ceiling exists, git just does not
+  describe it yet.
 - **User invites are optional**: set `backend.idpAdmin.baseUrl` +
   `idp_admin_secret` to enable the Keycloak Admin provisioning plugin;
   without them the plugin self-deprioritizes.
