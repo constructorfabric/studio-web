@@ -164,9 +164,13 @@ Routine delivery flow:
    runs **Test changed components**, then **Build & Publish**, producing a
    complete immutable `sha-<commit>` image set while rebuilding only affected
    components. It never deploys automatically.
-2. In **Studio Delivery**, choose **Deploy existing images** and select
-   **Services**. Select `dev` and a `sha-<commit>` tag for a branch snapshot,
-   or select `dev`/`test` and a published `v*` tag for a release.
+2. To publish and deploy in one reviewed run, choose **Build, publish and
+   deploy**, select **Services** and the target environment. It tests first,
+   publishes the changed components, then deploys those components while
+   retaining the running tags for components that did not change. Alternatively,
+   choose **Deploy existing images** and select **Services**. Select `dev` and
+   a `sha-<commit>` tag for a branch snapshot, or select `dev`/`test` and a
+   published `v*` tag for a release.
 3. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
    `infra-v*` tag, then choose **Deploy existing images** and
    **Infrastructure** in **Studio Delivery**.
@@ -180,10 +184,11 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 - **Studio Delivery** is the only user-facing Actions workflow. It runs tests
   for every pull request and push; a push then publishes images only after its
   tests succeed. Pull requests never publish or deploy.
-- Manual operations are **Build and publish** (tests followed by a build) and
-  **Deploy existing images**. The latter selects **Services** or
-  **Infrastructure**. Services can deploy `backend`, `frontend`, `prototype`,
-  or `all`. SHA
+- Manual operations are **Build and publish** (tests followed by a build),
+  **Build, publish and deploy** (tests, changed-image publishing and a
+  deployment in one run), and **Deploy existing images**. Deployment
+  operations select **Services** or **Infrastructure**. Services can deploy
+  `backend`, `frontend`, `prototype`, or `all`. SHA
   snapshots are dev-only; release tags may be promoted to configured shared
   environments. Infrastructure accepts only published `infra-v*` tags.
 

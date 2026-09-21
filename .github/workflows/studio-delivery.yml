@@ -16,9 +16,10 @@ on:
         default: Build and publish
         options:
           - Build and publish
+          - Build, publish and deploy
           - Deploy existing images
       deployment_type:
-        description: Deployment type (required only for Deploy existing images)
+        description: Deployment type (required for a deployment operation)
         required: false
         type: choice
         default: Services
@@ -30,7 +31,7 @@ on:
         required: false
         type: string
       environment:
-        description: Deployment target (required only for Deploy existing images)
+        description: Deployment target (required for a deployment operation)
         required: false
         type: choice
         default: dev
@@ -63,8 +64,8 @@ permissions:
 concurrency:
   # Deployments serialize independently per target environment. A dev deploy
   # must never cancel an explicit test deploy (or the other way around).
-  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.operation != 'Deploy existing images' }}
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.operation != 'Deploy existing images' && github.event.inputs.operation != 'Build, publish and deploy') }}
 
 env:
   REGISTRY: ghcr.io
@@ -76,7 +77,7 @@ env:
 jobs:
   test-changes:
     name: Detect changed components
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish'
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'
     runs-on: ubuntu-latest
     outputs:
       # A release tag is an explicit reproducibility point. Test every service
@@ -397,7 +398,7 @@ jobs:
     # test-complete proves the complete matrix; test-changes is also listed so
     # this job can consume the selected-component outputs directly.
     needs: [test-complete, test-changes]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Build and publish')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'))
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
@@ -1015,15 +1016,18 @@ jobs:
     # Keep deployment as a visible continuation of the delivery graph. For a
     # manual deploy the test jobs are intentionally skipped, so test-complete
     # is a fast gate rather than a rebuild or a second test run.
-    needs: build-complete
+    needs: [build-complete, build-require-ci]
     # A manual deploy intentionally skips the build jobs and consumes an
     # existing immutable image. `always()` prevents GitHub's implicit
     # success() guard from treating those skipped transitive dependencies as
     # a reason to skip this explicit deployment stage.
-    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.deployment_type == 'Services'
+    if: always() && github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.deployment_type == 'Services'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+      # For Build, publish and deploy the source-validation step derives the
+      # immutable tag from the selected ref. An existing-image deployment may
+      # still specify an explicit tag and must match that same source ref.
+      IMAGE_TAG: ${{ github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.image_tag || '' }}
       NAMESPACE: studio-${{ github.event.inputs.environment }}
       KUBECONFIG: /tmp/studio-kubeconfig
     runs-on: ubuntu-24.04
@@ -1190,9 +1194,24 @@ jobs:
 
           case "${{ github.event.inputs.component }}" in
             all)
-              backend_tag="$IMAGE_TAG"
-              frontend_tag="$IMAGE_TAG"
-              prototype_tag="$IMAGE_TAG"
+              if [ "${{ github.event.inputs.operation }}" = "Build, publish and deploy" ]; then
+                # Incremental builds publish only changed components. Retain
+                # the running tag for every other component rather than
+                # waiting for an image that was intentionally not built.
+                if [ "${{ needs.build-require-ci.outputs.backend }}" = "true" ]; then
+                  backend_tag="$IMAGE_TAG"
+                fi
+                if [ "${{ needs.build-require-ci.outputs.frontend }}" = "true" ]; then
+                  frontend_tag="$IMAGE_TAG"
+                fi
+                if [ "${{ needs.build-require-ci.outputs.prototype }}" = "true" ]; then
+                  prototype_tag="$IMAGE_TAG"
+                fi
+              else
+                backend_tag="$IMAGE_TAG"
+                frontend_tag="$IMAGE_TAG"
+                prototype_tag="$IMAGE_TAG"
+              fi
               ;;
             backend) backend_tag="$IMAGE_TAG" ;;
             frontend) frontend_tag="$IMAGE_TAG" ;;
@@ -1359,10 +1378,17 @@ jobs:
     # See deploy-services: a deployment consumes an existing immutable image,
     # but still follows the common stage gate in the visual graph.
     needs: build-complete
-    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.deployment_type == 'Infrastructure' && github.ref == 'refs/heads/main'
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.deployment_type == 'Infrastructure' &&
+      (
+        (github.event.inputs.operation == 'Deploy existing images' && github.ref == 'refs/heads/main') ||
+        (github.event.inputs.operation == 'Build, publish and deploy' && github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v'))
+      )
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-      INFRA_TAG: ${{ github.event.inputs.infra_tag }}
+      INFRA_TAG: ${{ github.event.inputs.operation == 'Build, publish and deploy' && github.ref_name || github.event.inputs.infra_tag }}
       NAMESPACE: studio-${{ github.event.inputs.environment }}
       KUBECONFIG: /tmp/studio-kubeconfig
     runs-on: ubuntu-24.04
