@@ -99,6 +99,25 @@ describe('ManifestGenerator', () => {
     expect(manifest.metaData.publicPath).toBe('/mfes/demo-mfe/');
   });
 
+  it("carries a federated package's own domains through untouched", () => {
+    const domains = [
+      {
+        id: 'gts.frontx.mfes.mfe.domain.v1~acme.demo.mfe.settings.v1~',
+        sharedProperties: [],
+        actions: [],
+        extensionsActions: [],
+        defaultActionTimeout: 5000,
+        lifecycleStages: [],
+        extensionsLifecycleStages: [],
+      },
+    ];
+    writePackage('demo-mfe', mfJson, { ...mfEnriched, domains });
+
+    const [config] = generate();
+
+    expect(config.domains).toEqual(domains);
+  });
+
   const IFRAME_ENTRY_ID =
     'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1';
 

@@ -107,6 +107,7 @@ interface RawMfeJson {
   manifest?: RawManifest;
   devUrl?: string;
   entries?: RawDeclaredEntry[];
+  domains?: RawDomain[];
   extensions?: unknown[];
   schemas?: unknown[];
 }
@@ -176,6 +177,7 @@ interface OutMfeEntryFrame {
 
 interface OutMfeManifestConfig {
   manifest?: OutMfManifest;
+  domains?: RawDomain[];
   entries: Array<OutMfeEntryMF | OutMfeEntryFrame>;
   extensions?: unknown[];
   schemas?: unknown[];
@@ -247,9 +249,12 @@ export class ManifestGenerator {
 
   private processPackage(packageDir: string): OutMfeManifestConfig {
     const pkgPath = join(this.mfePackagesDir, packageDir);
-    const rawMfeJson = JSON.parse(
-      readFileSync(join(pkgPath, 'mfe.json'), 'utf-8')
-    ) as RawMfeJson;
+    let rawMfeJson: RawMfeJson;
+    try {
+      rawMfeJson = JSON.parse(readFileSync(join(pkgPath, 'mfe.json'), 'utf-8')) as RawMfeJson;
+    } catch (err) {
+      throw new Error(`[${packageDir}] Cannot parse mfe.json: ${String(err)}`);
+    }
 
     // A package whose every entry is a frame has no build output to read:
     // no remote entry, no expose assets, no mf-manifest.json. All it needs
@@ -271,9 +276,10 @@ export class ManifestGenerator {
 
     return {
       manifest: outManifest,
+      ...(mfeJson.domains !== undefined && { domains: mfeJson.domains }),
       entries: outEntries,
-      ...(mfeJson.extensions ? { extensions: mfeJson.extensions } : {}),
-      ...(mfeJson.schemas ? { schemas: mfeJson.schemas } : {}),
+      extensions: mfeJson.extensions,
+      ...(mfeJson.schemas !== undefined && { schemas: mfeJson.schemas }),
     };
   }
 
@@ -281,7 +287,9 @@ export class ManifestGenerator {
    * A frame package: `--base-path` wins as it does for a remote, and the
    * package's declared development address answers otherwise. The address
    * lands on each entry rather than on a manifest, because a frame package
-   * has no manifest to put it on.
+   * has no manifest to put it on. `domains`, `extensions` and `schemas` are
+   * a package's own to declare either way, so they pass through exactly as
+   * they do on the federated branch.
    */
   private processFramePackage(
     packageDir: string,
@@ -289,9 +297,10 @@ export class ManifestGenerator {
   ): OutMfeManifestConfig {
     const publicPath = this.resolveFramePublicPath(packageDir, mfeJson.devUrl);
     return {
+      ...(mfeJson.domains !== undefined && { domains: mfeJson.domains }),
       entries: mfeJson.entries.map((entry) => ({ ...entry, publicPath })),
-      ...(mfeJson.extensions ? { extensions: mfeJson.extensions } : {}),
-      ...(mfeJson.schemas ? { schemas: mfeJson.schemas } : {}),
+      ...(mfeJson.extensions !== undefined && { extensions: mfeJson.extensions }),
+      ...(mfeJson.schemas !== undefined && { schemas: mfeJson.schemas }),
     };
   }
 
