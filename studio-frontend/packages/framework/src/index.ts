@@ -149,10 +149,6 @@ export type { JSONSchema } from '@gears-frontx/gts-plugin';
 // MFE Abstract Classes (re-exported from @gears-frontx/mfes for convenience)
 export {
   ChildMfeBridge,
-  // Concrete counterpart of ChildMfeBridge, alongside it: a handler for an
-  // entry type the shipped MfeHandlerMF does not own (e.g. a frame) still
-  // needs the real bridge implementation to hand its own bridge factory.
-  ChildMfeBridgeImpl,
   ParentMfeBridge,
   MfeHandler,
   MfeBridgeFactory,
@@ -178,7 +174,10 @@ export type {
 } from '@gears-frontx/mfes';
 
 // MFE Concrete Implementations (re-exported from @gears-frontx/mfes for convenience)
-export { MfeHandlerMF } from '@gears-frontx/mfes';
+// ChildMfeBridgeImpl is the concrete counterpart of the abstract ChildMfeBridge
+// above: a handler for an entry type the shipped MfeHandlerMF does not own
+// (e.g. a frame) needs it to hand its own bridge factory.
+export { MfeHandlerMF, ChildMfeBridgeImpl } from '@gears-frontx/mfes';
 export { gtsPlugin } from '@gears-frontx/gts-plugin';
 
 // GTS Derived Schemas (application-layer registration)
