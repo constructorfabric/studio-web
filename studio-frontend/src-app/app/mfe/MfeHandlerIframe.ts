@@ -94,7 +94,16 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
         let frame: HTMLIFrameElement | null = null;
 
         const show = (url: string | null): void => {
-          if (url === null) return;
+          if (url === null) {
+            // Both "not said yet" and "said there is none" (readUrl's two
+            // nulls) mean the frame has nowhere to point — including after
+            // one was already shown, when the property is cleared. Drop the
+            // stale frame rather than leave it loaded on a dead address, and
+            // forget it so the next real address builds a fresh one.
+            frame = null;
+            container.replaceChildren(createWaiting());
+            return;
+          }
           if (frame === null) {
             container.replaceChildren();
             frame = createFrame();

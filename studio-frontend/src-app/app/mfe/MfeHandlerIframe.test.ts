@@ -167,4 +167,44 @@ describe('MfeHandlerIframe', () => {
     expect(frameIn(second)?.getAttribute('src')).toBe('https://example.test/again');
     expect(harness.subscribers.get(URL_PROPERTY)).toHaveLength(1);
   });
+
+  // The previous test unmounts before mounting again, which a single shared
+  // `unsubscribe` closure survives unharmed — nothing there exercises the
+  // per-container keying the WeakMap exists for. This one mounts both
+  // containers first, so their two subscriptions are live at once, and only
+  // then unmounts one: the bug the ADR warns about would move the wrong
+  // container's frame, not leave it alone.
+  it('keeps two concurrently mounted containers independent', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    const harness = createBridge('https://example.test/page');
+
+    await lifecycle.mount(first, harness.bridge as never);
+    await lifecycle.mount(second, harness.bridge as never);
+    const firstFrame = frameIn(first)!;
+
+    await lifecycle.unmount(first);
+    harness.emit('https://example.test/second-address');
+
+    expect(frameIn(second)?.getAttribute('src')).toBe('https://example.test/second-address');
+    expect(firstFrame.getAttribute('src')).toBe('https://example.test/page');
+    expect(harness.subscribers.get(URL_PROPERTY)).toHaveLength(1);
+  });
+
+  it('returns to the waiting state when the address is cleared, and rebuilds the frame when one returns', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const harness = createBridge('https://example.test/page');
+
+    await lifecycle.mount(container, harness.bridge as never);
+    expect(frameIn(container)?.getAttribute('src')).toBe('https://example.test/page');
+
+    harness.emit(null);
+    expect(frameIn(container)).toBeNull();
+    expect(container.textContent).not.toBe('');
+
+    harness.emit('https://example.test/again');
+    expect(frameIn(container)?.getAttribute('src')).toBe('https://example.test/again');
+  });
 });

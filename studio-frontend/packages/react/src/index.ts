@@ -473,9 +473,6 @@ export type {
 // MFE Abstract classes
 export {
   ChildMfeBridge,
-  // Concrete counterpart of ChildMfeBridge: a handler for an entry type the
-  // shipped MfeHandlerMF does not own needs it to hand its own bridge factory.
-  ChildMfeBridgeImpl,
   ParentMfeBridge,
   MfeHandler,
   MfeBridgeFactory,
@@ -499,7 +496,10 @@ export type {
 } from '@gears-frontx/framework';
 
 // MFE Concrete implementations
-export { MfeHandlerMF, gtsPlugin } from '@gears-frontx/framework';
+// ChildMfeBridgeImpl is the concrete counterpart of the abstract ChildMfeBridge
+// above: a handler for an entry type the shipped MfeHandlerMF does not own
+// needs it to hand its own bridge factory.
+export { MfeHandlerMF, ChildMfeBridgeImpl, gtsPlugin } from '@gears-frontx/framework';
 
 // GTS Derived Schemas (application-layer registration)
 export { themeSchema, languageSchema, extensionScreenSchema } from '@gears-frontx/framework';
