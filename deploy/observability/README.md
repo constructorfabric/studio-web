@@ -115,8 +115,8 @@ so it runs against a metric this cluster is known to produce. The exception is
 ### Installing them
 
 ```bash
-make alerts ALERT_WEBHOOK_URL=https://hooks.example.com/...   # rules + delivery
-make alerts                                                    # rules only
+make alerts ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...  # rules + delivery
+make alerts                                                        # rules only
 ```
 
 `make grafana` (and therefore `make all`) depends on `alerts`, so the ConfigMap
@@ -129,10 +129,13 @@ make alerts && kubectl -n studio-monitoring rollout restart deploy/grafana
 
 ### Where a firing alert goes
 
-Nowhere, until somebody supplies `ALERT_WEBHOOK_URL`. That is not an oversight
-to be tidied up later — it is the one input this repository cannot hold. There
-is no Alertmanager in the cluster and no chat webhook the cluster owns, and a
-URL that grants the right to post into a room does not belong in git.
+A **Discord channel**, through an incoming webhook — the contact point is
+`type: discord`, provisioned from `grafana/alerting/contactpoints.yaml.template`.
+
+Nowhere, though, until somebody supplies `ALERT_WEBHOOK_URL`, which is the one
+input this repository cannot hold: a Discord webhook URL is not a name, it is a
+bearer capability to post into that channel. Get it from Discord → the channel
+→ Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL.
 
 Without it, `make alerts` installs `rules.yaml` alone, prints that delivery is
 unconfigured, and the alerts are visible in Grafana's Alerting UI. With it, it
@@ -141,10 +144,36 @@ to one receiver, `severity: page` repeating every 4 h and `severity: ticket`
 daily. The two files travel together because a notification policy naming a
 receiver that was never provisioned makes Grafana fail provisioning at startup.
 
-Note where the URL ends up: the `studio-alerts` ConfigMap, not a Secret.
-Grafana provisioning reads files and a webhook URL is not a field it accepts as
-a secure setting, so anyone who can read ConfigMaps in `studio-monitoring`
-holds the capability to post into that room.
+Confirm the channel end before wiring Grafana to it:
+
+```bash
+grafana/alerting/test-delivery.sh https://discord.com/api/webhooks/...
+```
+
+It posts one notification in the shape Grafana really sends and reports what
+Discord answered. Worth doing first, because the two halves fail into the same
+silence: Grafana logs a delivery failure and tells nobody, so "the webhook is
+wrong" and "the rules never fired" look identical from the channel.
+
+**Two things about Discord specifically**, both measured against
+`grafana/grafana:12.3.1` rather than read off a doc page:
+
+- **`url` goes in `settings`, not `secureSettings`.** Grafana's own
+  `/api/alert-notifiers` reports it as `secure: true`, which reads like an
+  invitation to do the opposite — but file provisioning validates against
+  `settings` and refuses the file, and a refused alerting file does not degrade
+  provisioning, it aborts Grafana startup. Once ingested it *is* encrypted and
+  redacted from the provisioning API; it is only the ConfigMap that holds it in
+  clear. So the caveat stands: anyone who can read ConfigMaps in
+  `studio-monitoring` can post into that channel.
+- **The body is a custom template, not `default.message`.** Grafana puts the
+  whole body into Discord's `content`, which Discord caps at 2000 characters
+  and Grafana truncates to exactly that. `default.message` prints labels and
+  annotations first and the Source and Silence links LAST, and with the runbook
+  paragraphs these rules carry, two alerts already render 1838 of those 2000 —
+  so a group of three loses the link you were about to click. The template here
+  prints the rule, the summary and the link, at roughly 146 characters per
+  alert, which keeps a group of ten intact.
 
 ### Verifying the latency rule
 
@@ -378,10 +407,10 @@ open http://localhost:12345/
 
 - **Logs and traces.** Loki + an Alloy DaemonSet, Tempo for the OTLP spans the
   toolkit already knows how to emit.
-- **A place for an alert to arrive.** The rules exist (see **Alerts**); the
-  destination does not. There is no Alertmanager here and no chat webhook the
-  cluster owns, so until one is supplied `make alerts` installs the rules alone
-  and says so out loud.
+- **A webhook URL for the alerts channel.** The destination is chosen and the
+  contact point is written (Discord — see **Where a firing alert goes**); the
+  URL is not in the repository and cannot be. Until it is supplied,
+  `make alerts` installs the rules alone and says so out loud.
 - **Domain metrics for `studio-session`.** Session start latency, failures to
   create, live sessions per tenant, idle reaping. These do not exist in any gear
   yet and need code (the pattern is a meter in the gear, as in

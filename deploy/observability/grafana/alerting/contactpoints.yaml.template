@@ -1,23 +1,41 @@
-# Where a firing alert goes. A template rather than a finished file, because
-# the destination is the one part of this stack that does not exist in the
-# repository: there is no Alertmanager here, no chat connection configured for
-# the cluster, and no webhook URL that would be safe to commit.
+# Where a firing alert goes: a Discord channel, through an incoming webhook.
 #
-# `make alerts ALERT_WEBHOOK_URL=https://...` renders it. Without that variable
-# the target installs the rules alone and says so — alerts are then visible in
-# Grafana's Alerting UI and delivered nowhere, which is a state worth being
-# told about rather than discovering during an incident.
+# A template rather than a finished file, because the destination is the one
+# part of this stack that cannot be committed. A Discord webhook URL is not a
+# name — it is a bearer capability to post into that channel, held by whoever
+# has the string.
 #
-# The URL ends up in the `studio-alerts` ConfigMap, not in a Secret: Grafana
-# provisioning reads files, and a webhook URL is not one of the fields it
-# accepts as a secure setting. Treat a chat webhook accordingly — it is a
-# capability to post into that room, and anyone who can read ConfigMaps in
-# studio-monitoring holds it.
+# `make alerts ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...` renders
+# it. Without that variable the target installs the rules alone and says so —
+# alerts are then visible in Grafana's Alerting UI and delivered nowhere, which
+# is a state worth being told about rather than discovering during an incident.
 #
-# `type: webhook` is the lowest common denominator and posts Grafana's own JSON
-# payload. Slack and Discord both accept it at an incoming-webhook URL; for
-# richer formatting, change `type` to `slack` or `discord` here — the rules and
-# the policy below do not care which.
+# GET THE URL: Discord → the channel → Edit Channel → Integrations → Webhooks →
+# New Webhook → Copy Webhook URL. The webhook's own name and avatar are set
+# there, and `use_discord_username: true` below is what makes Grafana honour
+# them instead of posting as "Grafana".
+#
+# `url` GOES IN `settings`, NOT `secureSettings`, and this is worth stating
+# because Grafana contradicts itself about it. `/api/alert-notifiers` reports
+# the Discord `url` as `secure: true`, which reads like an invitation to put it
+# under `secureSettings` — but file provisioning validates the integration
+# against `settings` alone and refuses the file:
+#
+#     failed to validate integration "studio-oncall" of type "discord":
+#     could not find webhook url property in settings
+#
+# and a refused alerting file does not degrade provisioning, it ABORTS Grafana
+# startup. Verified against grafana/grafana:12.3.1, the image the cluster runs.
+#
+# So the URL is in this ConfigMap in plaintext and there is no version of this
+# file where it is not. Anyone who can read ConfigMaps in studio-monitoring can
+# post into the channel. That is acceptable for an alerts room and not much
+# else; rotating the webhook in Discord is one click if it stops being so.
+#
+# Discord is not the only option and the rules do not care. `type: slack`,
+# `type: webhook` and the rest take the same `name`, so switching destinations
+# is this block and nothing else — policies.yaml names the receiver, not its
+# kind.
 
 apiVersion: 1
 
@@ -25,8 +43,50 @@ contactPoints:
   - orgId: 1
     name: studio-oncall
     receivers:
-      - uid: studio-oncall-webhook
-        type: webhook
+      - uid: studio-oncall-discord
+        type: discord
         settings:
+          # The title is Grafana's own: "[FIRING:2] <alertname> (Studio page)".
+          # It lands in the embed, which has a 256-character ceiling nothing
+          # here comes close to.
+          title: '{{ template "default.title" . }}'
+          # The body is NOT `default.message`, and that is a measured decision
+          # rather than a taste one.
+          #
+          # Grafana puts the whole body in Discord's `content` — the embed
+          # carries only the title — and Discord caps `content` at 2000
+          # characters. Grafana truncates to exactly that, appending an
+          # ellipsis, so nothing is rejected and nothing is silently lost.
+          # What IS lost is the tail, and `default.message` prints each alert
+          # as labels, then annotations, then Source and Silence links LAST.
+          # Measured on grafana/grafana:12.3.1 with these rules: two alerts
+          # render 1838 of the 2000 characters, because the descriptions here
+          # are runbook paragraphs. A group of three is already truncated, and
+          # the first thing cut is the link you were going to click.
+          #
+          # So the body carries the summary and the link, per alert, and drops
+          # `description` — which is not lost, it is on the rule and on the
+          # dashboard the link goes to. That keeps a ten-alert group inside the
+          # ceiling with the links intact.
+          #
+          # Bare URLs on purpose: Discord renders `[text](url)` as a link only
+          # inside embeds, and this text is `content`, where the markdown form
+          # would show up literally.
+          #
+          # `rulename` before `alertname` because of one case that WILL happen:
+          # when a datasource is unreachable Grafana fires a synthetic alert per
+          # rule whose `alertname` is literally "DatasourceError", so a body
+          # keyed on `alertname` prints the same word five times and never says
+          # which rules went blind. Those alerts carry `rulename`; ordinary ones
+          # do not, and their `alertname` is already the rule title.
+          message: |-
+            {{ if .Alerts.Firing }}{{ len .Alerts.Firing }} firing{{ end }}{{ if .Alerts.Resolved }}{{ if .Alerts.Firing }} · {{ end }}{{ len .Alerts.Resolved }} resolved{{ end }}
+            {{ range .Alerts.Firing }}
+            **{{ if .Labels.rulename }}{{ .Labels.rulename }}{{ else }}{{ .Labels.alertname }}{{ end }}**{{ if .Labels.env }} · `{{ .Labels.env }}`{{ end }}{{ if .Labels.namespace }} · `{{ .Labels.namespace }}`{{ end }}
+            {{ .Annotations.summary }}
+            {{ .GeneratorURL }}
+            {{ end }}{{ range .Alerts.Resolved }}
+            **{{ if .Labels.rulename }}{{ .Labels.rulename }}{{ else }}{{ .Labels.alertname }}{{ end }}** resolved{{ if .Labels.env }} · `{{ .Labels.env }}`{{ end }}
+            {{ end }}
+          use_discord_username: true
           url: ${ALERT_WEBHOOK_URL}
-          httpMethod: POST
