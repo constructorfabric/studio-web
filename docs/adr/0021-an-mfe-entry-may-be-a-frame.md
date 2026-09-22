@@ -107,9 +107,14 @@ no `manifest` block in its `mfe.json` at all; it declares a top-level `devUrl`
 instead, which is the one thing a federated package's `remoteEntry` was being
 read for. The page address is then resolved by the ladder already there:
 `/mfes/<package>/` from `--base-path` in a production image, and `devUrl`
-otherwise. `manifest` becomes optional in the generated config, which
-`bootstrap.ts` already tolerates — both `resolveRuntimePublicPaths` and
-`mfeStylesheetHrefs` guard on its absence.
+otherwise.
+
+`manifest` becomes optional in the generated config, and `bootstrap.ts` has to
+be taught to tolerate that. It does not today: `MfeManifestConfig.manifest` is
+required, and both `resolveRuntimePublicPaths` and `mfeStylesheetHrefs` reach
+through `config.manifest.metaData` with the optional chaining on `metaData`
+rather than on `manifest`, so the first frame package to reach either of them
+throws. Both guards are part of this change, not something inherited.
 
 This work belongs here rather than in #321. The frame entry is born in this
 change; the first product package to use one should find the pipeline already
@@ -130,10 +135,20 @@ shell would prove the handler and nothing else.
 
 ### The address property is the one from the #310 contract, and the shell seeds it
 
-`...comm.shared_property.v1~constructor_studio.space.frame_url.v1~`, with its
+`...comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~`, with its
 constant in `@constructor-studio/mfe-shared`, is added to the screen domain's
 shared properties — without that, contract validation refuses an entry that
-requires it. At start-up the shell puts the fixture's page address into it,
+requires it.
+
+The id differs by one token from the one #310 wrote down. #310 spells it
+`constructor_studio.space.frame_url.v1~`, which the GTS parser rejects —
+`validateGtsID` answers *"Invalid GTS segment #2 … Too few tokens"*, because an
+instance segment is five tokens and that one is four. #310 states the five-token
+rule itself, in the same section, so this is a slip in the contract rather than a
+disagreement with it. The `mfe` namespace token restores the count and matches
+the entry id two lines above it in the same contract,
+`constructor_studio.space.mfe.main.v1`. Whoever implements the other half of
+#310 takes this spelling, not the issue's. At start-up the shell puts the fixture's page address into it,
 read from the generated manifest so the value is correct in development and in
 a production image alike.
 
