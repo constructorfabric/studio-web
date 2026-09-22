@@ -161,10 +161,42 @@ describe('bootstrapMFE (host-app)', () => {
       'https://studio-dev.cfabric.org',
     );
 
-    expect(resolved.manifest.metaData.publicPath).toBe(
+    // `manifest` is optional on the config type now (a frame package has
+    // none), but this config declares one — optional chaining here is a type
+    // narrowing formality, not a weaker assertion: an absent manifest would
+    // still fail this `.toBe` on a `publicPath` mismatch.
+    expect(resolved.manifest?.metaData.publicPath).toBe(
       'https://studio-dev.cfabric.org/mfes/projects-mfe/',
     );
-    expect(resolved.entries[0].manifest).toBe(resolved.manifest);
+    expect((resolved.entries[0] as { manifest?: unknown }).manifest).toBe(resolved.manifest);
+  });
+
+  it('survives a manifest config that has no manifest at all', async () => {
+    // What the generator emits for a frame package. Before ADR-0021 both
+    // readers dereferenced config.manifest directly and threw on this.
+    const frameConfig = {
+      entries: [
+        {
+          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1',
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.mfe.frame_url.v1~',
+          publicPath: 'http://localhost:3080/',
+        },
+      ],
+    };
+
+    const { resolveRuntimePublicPaths, mfeStylesheetHrefs } = await import('./bootstrap');
+
+    expect(() =>
+      resolveRuntimePublicPaths([frameConfig as never], 'http://localhost:5173')
+    ).not.toThrow();
+    expect(resolveRuntimePublicPaths([frameConfig as never], 'http://localhost:5173')).toEqual([
+      frameConfig,
+    ]);
+    expect(() => mfeStylesheetHrefs([frameConfig as never])).not.toThrow();
+    expect(mfeStylesheetHrefs([frameConfig as never])).toEqual([]);
   });
 
   it('declares the frame address on the screen domain', () => {

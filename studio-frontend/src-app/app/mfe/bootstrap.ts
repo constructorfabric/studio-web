@@ -71,14 +71,27 @@ const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
  * because most MFEs target host-owned domains; an MFE declares `domains`
  * only when it owns an ExtensionDomain instance (e.g., demo-mfe owns the
  * widgets domain — registered here so extensions targeting that domain
- * resolve content-addressed at the runtime store).
+ * resolve content-addressed at the runtime store). `manifest` is optional
+ * because a frame package (ADR-0021) has no remote to describe one for — it
+ * carries a `publicPath` on each entry instead.
  */
 interface MfeManifestConfig {
-  manifest: MfManifest;
+  manifest?: MfManifest;
   domains?: ExtensionDomain[];
-  entries: MfeEntryMF[];
+  entries: Array<MfeEntryMF | MfeEntryFrameConfig>;
   extensions?: Extension[];
   schemas?: JSONSchema[];
+}
+
+/** A frame entry as the generator emits it: an address, and no module. */
+interface MfeEntryFrameConfig {
+  id: string;
+  requiredProperties: string[];
+  actions: string[];
+  domainActions: string[];
+  urlProperty: string;
+  publicPath: string;
+  optionalProperties?: string[];
 }
 
 /** Resolve deploy-time same-origin MFE paths without baking an environment hostname into the image. */
@@ -87,30 +100,41 @@ export function resolveRuntimePublicPaths(
   origin: string,
 ): MfeManifestConfig[] {
   return manifests.map((config) => {
-    const configuredPath = config.manifest.metaData?.publicPath;
-    if (!configuredPath?.startsWith('/')) return config;
+    // Narrowed to a local so TS carries "defined" through the rest of this
+    // closure — `config.manifest` on its own stays optional even after the
+    // guard below, because the guard tests `configuredPath`, not `manifest`.
+    const sourceManifest = config.manifest;
+    const configuredPath = sourceManifest?.metaData?.publicPath;
+    if (sourceManifest === undefined || !configuredPath?.startsWith('/')) return config;
 
     const manifest: MfManifest = {
-      ...config.manifest,
+      ...sourceManifest,
       metaData: {
-        ...config.manifest.metaData,
+        ...sourceManifest.metaData,
         publicPath: new URL(configuredPath, origin).href,
       },
     };
     return {
       ...config,
       manifest,
-      entries: config.entries.map((entry) => ({ ...entry, manifest })),
+      // Only an MF entry carries its own `manifest` field to refresh; a frame
+      // entry (ADR-0021) has none and passes through unchanged — though a
+      // manifest-bearing config's entries are always MF entries in practice.
+      entries: config.entries.map((entry) =>
+        'manifest' in entry ? { ...entry, manifest } : entry
+      ),
     };
   });
 }
 
-function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
+export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
   const hrefs: string[] = [];
   for (const config of manifests) {
-    const baseUrl = config.manifest.metaData?.publicPath;
+    const baseUrl = config.manifest?.metaData?.publicPath;
     if (!baseUrl) continue;
     for (const entry of config.entries) {
+      // A frame entry (ADR-0021) exposes no chunks — nothing to add.
+      if (!('exposeAssets' in entry)) continue;
       const css = entry.exposeAssets?.css;
       for (const path of [...(css?.sync ?? []), ...(css?.async ?? [])]) {
         hrefs.push(new URL(path, baseUrl).href);
@@ -239,7 +263,7 @@ class OptionalDomainFactory extends ExtensionDomainImplementationFactory {
  * and Extension type schemas owned by parent MFEs) are registered separately
  * via `registerNonActionSchemas` because they have no action ID counterpart.
  */
-function collectDeclaredActionIds(entries: MfeEntryMF[]): Set<string> {
+function collectDeclaredActionIds(entries: Array<MfeEntryMF | MfeEntryFrameConfig>): Set<string> {
   const declaredActionIds = new Set<string>();
   for (const entry of entries) {
     for (const actionId of entry.actions) declaredActionIds.add(actionId);
@@ -342,8 +366,11 @@ async function registerMfePackage(
   // failure — invalid manifests/entries fail startup loudly rather than
   // persisting broken state into the registry. The aggregator script inlines
   // the resolved MfManifest object into each entry's `manifest` field so the
-  // host registers entries opaquely — no spread/override needed here.
-  registry.typeSystem.register(config.manifest);
+  // host registers entries opaquely — no spread/override needed here. A
+  // frame package (ADR-0021) carries no manifest at all: nothing to enrich.
+  if (config.manifest !== undefined) {
+    registry.typeSystem.register(config.manifest);
+  }
   // Registration order: schemas → manifest → domains → entries → extensions.
   // Domains MUST be registered before any extension references them so the
   // content-addressed dispatcher can resolve target-domain ownership at the
