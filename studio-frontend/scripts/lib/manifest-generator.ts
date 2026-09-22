@@ -85,6 +85,43 @@ interface RawEnrichedMfeJson {
   schemas?: RawSchema[];
 }
 
+/**
+ * An entry as declared in a package's own mfe.json, read before we know
+ * whether the package is federated. This is the frame entry's actual shape
+ * (ADR-0021): a federated entry's remaining fields (`manifest`,
+ * `exposedModule`, `exposeAssets`, declared on `RawEntry`) live in the
+ * enriched mfe-manifest.json instead and are read only once enrichment
+ * confirms the package is federated.
+ */
+interface RawDeclaredEntry {
+  id: string;
+  requiredProperties: string[];
+  optionalProperties?: string[];
+  actions: string[];
+  domainActions: string[];
+  urlProperty: string;
+}
+
+/** A package's own mfe.json, read before we know whether it is federated. */
+interface RawMfeJson {
+  manifest?: RawManifest;
+  devUrl?: string;
+  entries?: RawDeclaredEntry[];
+  extensions?: unknown[];
+  schemas?: unknown[];
+}
+
+/**
+ * The Module Federation entry subtype. An entry id that does not start with
+ * this descends from `entry.v1~` by some other route — today an iframe entry
+ * (ADR-0021) — and carries no remote to enrich from.
+ */
+const FRONTX_MFE_ENTRY_MF = 'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~';
+
+function isFederatedEntry(entry: { id: string }): boolean {
+  return entry.id.startsWith(FRONTX_MFE_ENTRY_MF);
+}
+
 // ---------------------------------------------------------------------------
 // Output shape types (mirror the SDK MfManifest / MfeEntryMF types; kept
 // local so the script has no dependency on @gears-frontx packages at run time)
@@ -127,12 +164,21 @@ interface OutMfeEntryMF {
   exposeAssets: OutMfManifestAssets;
 }
 
+interface OutMfeEntryFrame {
+  id: string;
+  requiredProperties: string[];
+  actions: string[];
+  domainActions: string[];
+  urlProperty: string;
+  publicPath: string;
+  optionalProperties?: string[];
+}
+
 interface OutMfeManifestConfig {
-  manifest: OutMfManifest;
-  domains?: RawDomain[];
-  entries: OutMfeEntryMF[];
-  extensions: RawExtension[];
-  schemas?: RawSchema[];
+  manifest?: OutMfManifest;
+  entries: Array<OutMfeEntryMF | OutMfeEntryFrame>;
+  extensions?: unknown[];
+  schemas?: unknown[];
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +247,21 @@ export class ManifestGenerator {
 
   private processPackage(packageDir: string): OutMfeManifestConfig {
     const pkgPath = join(this.mfePackagesDir, packageDir);
+    const rawMfeJson = JSON.parse(
+      readFileSync(join(pkgPath, 'mfe.json'), 'utf-8')
+    ) as RawMfeJson;
+
+    // A package whose every entry is a frame has no build output to read:
+    // no remote entry, no expose assets, no mf-manifest.json. All it needs
+    // resolving is the address its page is served from.
+    //
+    // A package that declares no entries at all takes the federated path, so
+    // the familiar "build the MFE first" error still reaches whoever forgot
+    // to build, rather than a package silently coming out empty.
+    const declaredEntries = rawMfeJson.entries ?? [];
+    if (declaredEntries.length > 0 && !declaredEntries.some(isFederatedEntry)) {
+      return this.processFramePackage(packageDir, { ...rawMfeJson, entries: declaredEntries });
+    }
 
     const mfeJson = this.readEnrichedMfeJson(pkgPath, packageDir);
     const publicPath = this.resolvePublicPath(mfeJson, packageDir);
@@ -210,11 +271,45 @@ export class ManifestGenerator {
 
     return {
       manifest: outManifest,
-      ...(mfeJson.domains !== undefined && { domains: mfeJson.domains }),
       entries: outEntries,
-      extensions: mfeJson.extensions,
-      ...(mfeJson.schemas !== undefined && { schemas: mfeJson.schemas }),
+      ...(mfeJson.extensions ? { extensions: mfeJson.extensions } : {}),
+      ...(mfeJson.schemas ? { schemas: mfeJson.schemas } : {}),
     };
+  }
+
+  /**
+   * A frame package: `--base-path` wins as it does for a remote, and the
+   * package's declared development address answers otherwise. The address
+   * lands on each entry rather than on a manifest, because a frame package
+   * has no manifest to put it on.
+   */
+  private processFramePackage(
+    packageDir: string,
+    mfeJson: RawMfeJson & { entries: RawDeclaredEntry[] }
+  ): OutMfeManifestConfig {
+    const publicPath = this.resolveFramePublicPath(packageDir, mfeJson.devUrl);
+    return {
+      entries: mfeJson.entries.map((entry) => ({ ...entry, publicPath })),
+      ...(mfeJson.extensions ? { extensions: mfeJson.extensions } : {}),
+      ...(mfeJson.schemas ? { schemas: mfeJson.schemas } : {}),
+    };
+  }
+
+  private resolveFramePublicPath(packageDir: string, devUrl: string | undefined): string {
+    if (this.globalBaseUrl !== null) {
+      return this.globalBaseUrl.endsWith('/') ? this.globalBaseUrl : `${this.globalBaseUrl}/`;
+    }
+    if (this.globalBasePath !== null) {
+      const root = this.globalBasePath.replace(/\/+$/, '');
+      return `${root}/${packageDir}/`;
+    }
+    if (!devUrl) {
+      throw new Error(
+        `[${packageDir}] a frame package needs a "devUrl" in mfe.json, ` +
+          `or a --base-path/--base-url to be served from.`
+      );
+    }
+    return devUrl.endsWith('/') ? devUrl : `${devUrl}/`;
   }
 
   private readEnrichedMfeJson(pkgPath: string, packageDir: string): RawEnrichedMfeJson {

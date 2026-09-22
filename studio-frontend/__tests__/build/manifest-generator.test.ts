@@ -98,4 +98,50 @@ describe('ManifestGenerator', () => {
     const manifest = config.manifest as { metaData: { publicPath: string } };
     expect(manifest.metaData.publicPath).toBe('/mfes/demo-mfe/');
   });
+
+  const IFRAME_ENTRY_ID =
+    'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1';
+
+  const framePackage = {
+    devUrl: 'http://localhost:3080/',
+    entries: [
+      {
+        id: IFRAME_ENTRY_ID,
+        requiredProperties: [],
+        actions: [],
+        domainActions: [],
+        urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.frame_url.v1~',
+      },
+    ],
+    extensions: [],
+  };
+
+  it('accepts a frame package with no build manifest at all', () => {
+    writePackage('frame-mfe', framePackage);
+
+    const [config] = generate();
+
+    expect(config.manifest).toBeUndefined();
+    expect((config.entries as Array<Record<string, unknown>>)[0]).toMatchObject({
+      id: IFRAME_ENTRY_ID,
+      urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.frame_url.v1~',
+      publicPath: 'http://localhost:3080/',
+    });
+  });
+
+  it('serves a frame package from /mfes in a production image', () => {
+    writePackage('frame-mfe', framePackage);
+
+    const [config] = generate('/mfes');
+
+    expect((config.entries as Array<Record<string, unknown>>)[0]).toMatchObject({
+      publicPath: '/mfes/frame-mfe/',
+    });
+  });
+
+  it('still refuses a federated package whose build manifest is missing', () => {
+    writePackage('demo-mfe', mfJson);
+
+    expect(() => generate()).toThrow(/mfe-manifest\.json not found/);
+  });
 });
