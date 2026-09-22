@@ -57,7 +57,7 @@ import {
   createContextPublishHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
-import { publishStudioContext } from '@/app/mfe/sharedContext';
+import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
 
@@ -125,6 +125,22 @@ export function resolveRuntimePublicPaths(
       ),
     };
   });
+}
+
+/**
+ * The address of the first frame entry in the catalogue. Read from the
+ * generated manifests rather than hard-coded so it is right in development
+ * (the package's own preview origin) and in a production image (/mfes/...)
+ * without a second source of truth.
+ */
+function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
+  for (const config of manifests) {
+    for (const entry of config.entries) {
+      const framed = entry as { urlProperty?: string; publicPath?: string };
+      if (framed.urlProperty && framed.publicPath) return framed.publicPath;
+    }
+  }
+  return null;
 }
 
 export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
@@ -494,6 +510,10 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     (await response.json()) as MfeManifestConfig[],
     window.location.origin,
   );
+  // Seeded unconditionally, like publishStudioContext above: an MFE requiring
+  // this property should read `null`, never `undefined`, even when the
+  // catalogue turns out to have no frame entry (or no manifests at all).
+  publishFrameUrl(app, firstFrameUrl(manifests));
 
   if (manifests.length === 0) {
     console.warn(

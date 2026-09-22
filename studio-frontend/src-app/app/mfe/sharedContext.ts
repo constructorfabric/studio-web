@@ -9,6 +9,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+  STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
 import { APP_CONTEXT_SLICE_KEY, type ContextEntity } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY, type SessionProfile } from '@/app/slices/appSessionSlice';
@@ -70,6 +71,19 @@ export function publishSelectedWorkspace(app: FrontXApp): void {
 
 export function publishSessionProfile(app: FrontXApp): void {
   publish(app, STUDIO_SHARED_PROPERTY_SESSION_PROFILE, sessionState(app).profile ?? null);
+}
+
+/**
+ * The address a frame-entry MFE loads. Every publisher above is three lines
+ * because it reads its own slice of the store; this one takes `url` as a
+ * parameter instead because there is no store slice to read — the source of
+ * truth is the generated manifest catalogue (see bootstrap.ts's
+ * `firstFrameUrl`), which this module has no business knowing the shape of.
+ * Seeded at start-up with the fixture's static page; #321 replaces the
+ * source of the value, not this channel.
+ */
+export function publishFrameUrl(app: FrontXApp, url: string | null): void {
+  publish(app, STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL, url);
 }
 
 export function publishStudioContext(app: FrontXApp): void {

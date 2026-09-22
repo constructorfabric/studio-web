@@ -6,8 +6,9 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+  STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
-import { publishStudioContext } from './sharedContext';
+import { publishFrameUrl, publishStudioContext } from './sharedContext';
 
 describe('publishStudioContext', () => {
   it('seeds every context property the MFEs may declare as required', () => {
@@ -34,6 +35,32 @@ describe('publishStudioContext', () => {
     );
     expect(updateSharedProperty).toHaveBeenCalledWith(
       STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+      null
+    );
+  });
+});
+
+describe('publishFrameUrl', () => {
+  it('publishes the frame address', () => {
+    const updateSharedProperty = vi.fn();
+    const app = { mfeRegistry: { updateSharedProperty } } as unknown as FrontXApp;
+
+    publishFrameUrl(app, 'http://localhost:3080/');
+
+    expect(updateSharedProperty).toHaveBeenCalledWith(
+      STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+      'http://localhost:3080/'
+    );
+  });
+
+  it('publishes null when there is no address', () => {
+    const updateSharedProperty = vi.fn();
+    const app = { mfeRegistry: { updateSharedProperty } } as unknown as FrontXApp;
+
+    publishFrameUrl(app, null);
+
+    expect(updateSharedProperty).toHaveBeenCalledWith(
+      STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
       null
     );
   });
