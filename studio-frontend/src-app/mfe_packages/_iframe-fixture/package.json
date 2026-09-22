@@ -1,0 +1,16 @@
+{
+  "name": "@constructor-studio/iframe-fixture",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build && vite preview --port 3080",
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
+    "preview": "vite preview --port 3080"
+  },
+  "devDependencies": {
+    "vite": "6.4.3",
+    "typescript": "5.4.2"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "devUrl": "http://localhost:3080/",
+  "entries": [
+    {
+      "id": "gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.fixture.mfe.main.v1",
+      "requiredProperties": [
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~"
+      ],
+      "actions": [],
+      "domainActions": [],
+      "urlProperty": "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~"
+    }
+  ],
+  "extensions": [
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.fixture.screens.main.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.fixture.mfe.main.v1",
+      "presentation": {
+        "label": "Frame fixture",
+        "icon": "lucide:frame",
+        "route": "/fixture/frame",
+        "order": 900,
+        "level": "organization",
+        "section": "frame-fixture"
+      }
+    }
+  ]
+}
