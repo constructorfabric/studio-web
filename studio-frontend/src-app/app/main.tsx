@@ -23,6 +23,7 @@ import sharedPropertyContextSectionSchemaJson from '@/app/mfe/schemas/shared_pro
 import actionContextWorkspacesPublishSchemaJson from '@/app/mfe/schemas/action_context_workspaces_publish.v1.json';
 import sharedPropertySessionProfileSchemaJson from '@/app/mfe/schemas/shared_property_session_user_profile.v1.json';
 import sharedPropertySpaceFrameUrlSchemaJson from '@/app/mfe/schemas/shared_property_space_frame_url.v1.json';
+import entryIframeSchemaJson from '@/app/mfe/schemas/entry_iframe.v1.json';
 import App from './App';
 
 // Import all themes
@@ -78,6 +79,10 @@ gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
 // checks the type is in the registry, so an unregistered id fails registration
 // and takes bootstrapMFE with it.
 gtsPlugin.registerSchema(sharedPropertySpaceFrameUrlSchemaJson as JSONSchema);
+// A frame is an entry the host loads into an iframe. Registered before any
+// package declaring one: GTS refuses to register an instance whose type has
+// no schema, and the refusal takes bootstrapMFE down with it.
+gtsPlugin.registerSchema(entryIframeSchemaJson as JSONSchema);
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);

@@ -1,0 +1,16 @@
+{
+  "$id": "gts://gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "An entry the host loads into an iframe instead of importing as a module. Derived from the base entry type rather than from entry_mf.v1~, which is the whole mechanism: handler resolution is prefix matching, so MfeHandlerMF never matches this type and the two loaders never compete. The entry carries no address — only the id of the shared property one arrives in — so the loader learns nothing about Theia, sessions, or whoever writes that property. See docs/adr/0021-an-mfe-entry-may-be-a-frame.md.",
+  "allOf": [
+    { "$ref": "gts://gts.frontx.mfes.mfe.entry.v1~" }
+  ],
+  "properties": {
+    "urlProperty": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "The id of the shared property carrying the frame's address. Must also appear in this entry's requiredProperties, and therefore in the domain's sharedProperties, or registration fails contract validation."
+    }
+  },
+  "required": ["urlProperty"]
+}
