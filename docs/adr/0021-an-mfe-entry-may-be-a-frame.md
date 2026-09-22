@@ -177,6 +177,13 @@ goes away when `placement: hidden` exists.
   check when #323 starts posting messages into one.
 * The rail carries a demonstration item in every environment, production
   included, between this change and #318.
+* The frame is created with no `sandbox` and no `referrerpolicy`. Under `/mfes/`
+  in a production image it is same-origin with the portal, so its document can
+  reach `window.parent` directly. Nothing is inside it yet but a static page
+  this repository ships, and #323 is the issue that puts a real application
+  there and starts posting messages across that boundary — it is the place to
+  decide what the frame may be trusted with, and to say so rather than inherit
+  this silence.
 * The eventual move to `alpha.7` now has one more caller of the bridge's
   identity fields to update.
 * The generator's new branch is the price #321 does not pay. It is also the
