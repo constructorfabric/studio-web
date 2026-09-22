@@ -1,3 +1,5 @@
+// @cpt-dod:cpt-frontx-dod-mfe-isolation-mf-vite-plugin:p1
+
 /**
  * Assembles public/generated-mfe-manifests.json from every package under
  * src-app/mfe_packages/ that carries an mfe.json.
@@ -256,16 +258,32 @@ export class ManifestGenerator {
       throw new Error(`[${packageDir}] Cannot parse mfe.json: ${String(err)}`);
     }
 
-    // A package whose every entry is a frame has no build output to read:
-    // no remote entry, no expose assets, no mf-manifest.json. All it needs
-    // resolving is the address its page is served from.
+    // A package is either federated or framed, never a mixture of the two
+    // (ADR-0021) — the branch below is chosen once per package, not per
+    // entry. A package whose every entry is a frame has no build output to
+    // read: no remote entry, no expose assets, no mf-manifest.json. All it
+    // needs resolving is the address its page is served from.
     //
     // A package that declares no entries at all takes the federated path, so
     // the familiar "build the MFE first" error still reaches whoever forgot
     // to build, rather than a package silently coming out empty.
     const declaredEntries = rawMfeJson.entries ?? [];
-    if (declaredEntries.length > 0 && !declaredEntries.some(isFederatedEntry)) {
+    const federatedEntries = declaredEntries.filter(isFederatedEntry);
+    if (declaredEntries.length > 0 && federatedEntries.length === 0) {
       return this.processFramePackage(packageDir, { ...rawMfeJson, entries: declaredEntries });
+    }
+    if (federatedEntries.length > 0 && federatedEntries.length < declaredEntries.length) {
+      // Left uncaught, this package would take the federated path below and
+      // fail deep inside buildEntries with "has no exposeAssets" on the frame
+      // entry — a message that sends the reader off to rebuild a package that
+      // has nothing to build. Naming the real cause here, before either path
+      // is taken, is cheaper than letting them find that out.
+      const frameEntry = declaredEntries.find((entry) => !isFederatedEntry(entry))!;
+      throw new Error(
+        `[${packageDir}] mixes a federated entry with a frame entry ("${frameEntry.id}"). ` +
+          `A package is either federated or framed, never both (ADR-0021) — move the frame ` +
+          `entry into a package of its own.`
+      );
     }
 
     const mfeJson = this.readEnrichedMfeJson(pkgPath, packageDir);

@@ -100,14 +100,19 @@ nothing.
 
 ### Not every entry is federated, and the manifest generator learns it
 
-`generate-mfe-manifests.ts` gains one branch: an entry whose type does not
-descend from the Module Federation subtype skips enrichment entirely — no
-`mf-manifest.json`, no `remoteEntry`, no `exposeAssets`. Such a package carries
-no `manifest` block in its `mfe.json` at all; it declares a top-level `devUrl`
-instead, which is the one thing a federated package's `remoteEntry` was being
-read for. The page address is then resolved by the ladder already there:
-`/mfes/<package>/` from `--base-path` in a production image, and `devUrl`
-otherwise.
+`generate-mfe-manifests.ts` gains one branch, chosen per package rather than
+per entry: when none of a package's declared entries descend from the Module
+Federation subtype, the whole package skips enrichment entirely — no
+`mf-manifest.json`, no `remoteEntry`, no `exposeAssets`. A package is either
+federated or framed, never a mixture of the two; one that declares both an MF
+entry and a frame entry is a configuration error the generator rejects, with
+a message that names the mixture, rather than one that takes the federated
+path and fails deep inside expecting a build that was never meant to exist.
+A frame package carries no `manifest` block in its `mfe.json` at all; it
+declares a top-level `devUrl` instead, which is the one thing a federated
+package's `remoteEntry` was being read for. The page address is then resolved
+by the ladder already there: `/mfes/<package>/` from `--base-path` in a
+production image, and `devUrl` otherwise.
 
 `manifest` becomes optional in the generated config, and `bootstrap.ts` has to
 be taught to tolerate that. It does not today: `MfeManifestConfig.manifest` is
@@ -126,8 +131,10 @@ knowing what it is.
 Vite config omits the federation plugin and builds one static page. Two of the
 three build scripts need nothing: `build:mfes` discovers it by the `--port` in
 its preview script and runs `vite build`, and `package:mfe-assets` copies its
-`dist/` beside every other remote. Port 3080; 3070 is spoken for by
-`space-mfe`.
+`dist/` beside every other remote. Port 3080: every other preview port already
+in use — 3010, 3020, 3030, 3040, 3050 and 3060 — is spoken for by an existing
+package, 3070 is reserved by ADR-0008 for a future `inbox-mfe`, and 3099
+belongs to `_blank-mfe`; 3080 is the first free one.
 
 A fixture that is loaded the way a product package is loaded proves the whole
 path — build, manifest, registry, handler, mount. One assembled by hand in the
@@ -177,13 +184,13 @@ goes away when `placement: hidden` exists.
   check when #323 starts posting messages into one.
 * The rail carries a demonstration item in every environment, production
   included, between this change and #318.
-* The frame is created with no `sandbox` and no `referrerpolicy`. Under `/mfes/`
-  in a production image it is same-origin with the portal, so its document can
-  reach `window.parent` directly. Nothing is inside it yet but a static page
-  this repository ships, and #323 is the issue that puts a real application
-  there and starts posting messages across that boundary — it is the place to
-  decide what the frame may be trusted with, and to say so rather than inherit
-  this silence.
+* The frame is created with `referrerpolicy="no-referrer"` but no `sandbox`.
+  Under `/mfes/` in a production image it is same-origin with the portal
+  regardless, so its document can reach `window.parent` directly. Nothing is
+  inside it yet but a static page this repository ships, and #323 is the
+  issue that puts a real application there and starts posting messages across
+  that boundary — it is the place to decide what the frame may be trusted
+  with, and to say so rather than inherit this silence.
 * The eventual move to `alpha.7` now has one more caller of the bridge's
   identity fields to update.
 * The generator's new branch is the price #321 does not pay. It is also the

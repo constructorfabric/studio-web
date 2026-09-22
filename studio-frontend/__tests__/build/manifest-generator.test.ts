@@ -163,4 +163,25 @@ describe('ManifestGenerator', () => {
 
     expect(() => generate()).toThrow(/mfe-manifest\.json not found/);
   });
+
+  it('refuses a package that mixes a federated entry with a frame entry', () => {
+    // No enriched dist/mfe-manifest.json is written: the mixture is caught
+    // where the branch is chosen, before the federated path ever goes
+    // looking for a build to read.
+    writePackage('mixed-mfe', {
+      manifest: mfJson.manifest,
+      entries: [
+        { id: MF_ENTRY_ID },
+        {
+          id: IFRAME_ENTRY_ID,
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.frame_url.v1~',
+        },
+      ],
+    });
+
+    expect(() => generate()).toThrow(/mixes a federated entry with a frame entry/);
+  });
 });

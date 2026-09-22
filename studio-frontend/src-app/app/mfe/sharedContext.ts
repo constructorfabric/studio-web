@@ -79,8 +79,9 @@ export function publishSessionProfile(app: FrontXApp): void {
  * parameter instead because there is no store slice to read — the source of
  * truth is the generated manifest catalogue (see bootstrap.ts's
  * `firstFrameUrl`), which this module has no business knowing the shape of.
- * Seeded at start-up with the fixture's static page; #321 replaces the
- * source of the value, not this channel.
+ * Seeded at start-up with the fixture's static page — the step #321
+ * describes. #322 is where the session gate's per-session address replaces
+ * that seed; either way, the value changes, not this channel.
  */
 export function publishFrameUrl(app: FrontXApp, url: string | null): void {
   publish(app, STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL, url);

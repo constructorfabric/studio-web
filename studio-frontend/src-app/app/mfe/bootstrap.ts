@@ -132,8 +132,12 @@ export function resolveRuntimePublicPaths(
  * generated manifests rather than hard-coded so it is right in development
  * (the package's own preview origin) and in a production image (/mfes/...)
  * without a second source of truth.
+ *
+ * Exported for a test: `publish()` in sharedContext.ts swallows a throw into
+ * a `console.warn`, so a wrong answer here has no other failure mode than a
+ * frame silently stuck on "Waiting for the address…" forever.
  */
-function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
+export function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
   for (const config of manifests) {
     for (const entry of config.entries) {
       const framed = entry as { urlProperty?: string; publicPath?: string };

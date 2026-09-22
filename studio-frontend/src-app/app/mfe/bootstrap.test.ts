@@ -199,6 +199,48 @@ describe('bootstrapMFE (host-app)', () => {
     expect(mfeStylesheetHrefs([frameConfig as never])).toEqual([]);
   });
 
+  it("resolves a frame package's publicPath as the first frame url", async () => {
+    const federatedConfig = {
+      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
+      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
+    };
+    const frameConfig = {
+      entries: [
+        {
+          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1',
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.mfe.frame_url.v1~',
+          publicPath: 'http://localhost:3080/',
+        },
+      ],
+    };
+
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([federatedConfig as never, frameConfig as never])).toBe(
+      'http://localhost:3080/',
+    );
+  });
+
+  it('answers null when the catalogue has only federated packages', async () => {
+    const federatedConfig = {
+      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
+      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
+    };
+
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([federatedConfig as never])).toBeNull();
+  });
+
+  it('answers null for an empty catalogue', async () => {
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([])).toBeNull();
+  });
+
   it('declares the frame address on the screen domain', () => {
     // A domain that does not declare a property cannot deliver it: an entry
     // requiring one fails contract validation instead (ADR-0021).

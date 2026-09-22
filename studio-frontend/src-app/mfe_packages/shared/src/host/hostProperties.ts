@@ -26,8 +26,10 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE =
 /**
  * The address the frame of a frame-entry micro-frontend loads (ADR-0021).
  * The entry names this property rather than carrying an address, so the
- * loader knows nothing about who answers it: a static page today, the
- * session gate's per-session address once #322 lands.
+ * loader knows nothing about who answers it: a static page today (#321),
+ * the session gate's per-session address once #322 replaces that seed. What
+ * happens across the boundary once something is loaded is #323, a separate
+ * step again.
  */
 export const STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~';

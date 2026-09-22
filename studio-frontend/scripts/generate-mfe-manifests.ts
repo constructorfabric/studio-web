@@ -6,7 +6,7 @@
  * Usage: npx tsx scripts/generate-mfe-manifests.ts [--base-url <url> | --base-path <path>]
  */
 
-import { join } from 'path';
+import { join } from 'node:path';
 import { ManifestGenerator } from './lib/manifest-generator.js';
 
 function parseArgs(argv: string[]): { baseUrl: string | null; basePath: string | null } {

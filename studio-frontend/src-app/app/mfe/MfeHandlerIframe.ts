@@ -41,6 +41,24 @@ class IframeBridgeFactory extends MfeBridgeFactory<ChildMfeBridgeImpl> {
 /** What one mounted container owns, so unmount can undo exactly that. */
 interface MountState {
   unsubscribe: () => void;
+  wrapper: HTMLElement;
+}
+
+/**
+ * The container the mount manager hands `mount` is, in practice, a shadow
+ * root (see docs/adr/0021-an-mfe-entry-may-be-a-frame.md) carrying a
+ * `<style id="__frontx-shadow-isolation__">` element `createShadowRoot`
+ * seeds it with — and, under a mount strategy that shares one container
+ * among several extensions, siblings this handler has no business touching.
+ * `replaceChildren()` on the container itself would erase all of that, so
+ * the handler owns one wrapper `<div>` per mount instead: everything it
+ * shows lives inside the wrapper, and unmount removes only the wrapper.
+ */
+function createWrapper(): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.style.width = '100%';
+  wrapper.style.height = '100%';
+  return wrapper;
 }
 
 /**
@@ -65,6 +83,11 @@ function createFrame(): HTMLIFrameElement {
   // read back as the string 'none' — see borderTopStyle.js's `set()`.
   frame.style.border = '0';
   frame.setAttribute('title', 'Embedded application');
+  // Costs nothing today and narrows what the embedded document learns about
+  // where it was loaded from. No `sandbox`: that decision belongs to #323,
+  // once something other than this repository's own static page is inside
+  // the frame (see docs/adr/0021-an-mfe-entry-may-be-a-frame.md).
+  frame.setAttribute('referrerpolicy', 'no-referrer');
   return frame;
 }
 
@@ -92,6 +115,7 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
     const lifecycle: MfeEntryLifecycle<ChildMfeBridge> = {
       mount(container, bridge) {
         let frame: HTMLIFrameElement | null = null;
+        const wrapper = createWrapper();
 
         const show = (url: string | null): void => {
           if (url === null) {
@@ -101,18 +125,19 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
             // stale frame rather than leave it loaded on a dead address, and
             // forget it so the next real address builds a fresh one.
             frame = null;
-            container.replaceChildren(createWaiting());
+            wrapper.replaceChildren(createWaiting());
             return;
           }
           if (frame === null) {
-            container.replaceChildren();
+            wrapper.replaceChildren();
             frame = createFrame();
-            container.appendChild(frame);
+            wrapper.appendChild(frame);
           }
           frame.setAttribute('src', url);
         };
 
-        container.replaceChildren(createWaiting());
+        wrapper.replaceChildren(createWaiting());
+        container.appendChild(wrapper);
         show(readUrl(bridge.getProperty(entry.urlProperty)));
 
         // Re-read rather than trust the notification's argument: this is what
@@ -122,7 +147,7 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
           show(readUrl(bridge.getProperty(entry.urlProperty)));
         });
 
-        mounted.set(container, { unsubscribe });
+        mounted.set(container, { unsubscribe, wrapper });
       },
 
       unmount(container) {
@@ -130,7 +155,9 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
         if (state === undefined) return;
         state.unsubscribe();
         mounted.delete(container);
-        container.replaceChildren();
+        // Removes only what this handler put in the container — never a
+        // sibling's DOM, and never the shadow root's own isolation style.
+        state.wrapper.remove();
       },
     };
 
