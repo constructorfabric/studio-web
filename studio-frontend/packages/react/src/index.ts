@@ -473,6 +473,9 @@ export type {
 // MFE Abstract classes
 export {
   ChildMfeBridge,
+  // Concrete counterpart of ChildMfeBridge: a handler for an entry type the
+  // shipped MfeHandlerMF does not own needs it to hand its own bridge factory.
+  ChildMfeBridgeImpl,
   ParentMfeBridge,
   MfeHandler,
   MfeBridgeFactory,
