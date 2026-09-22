@@ -1,5 +1,5 @@
 {
-  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.frame_url.v1~",
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "The address a frame-entry micro-frontend loads, or null while there is none. The entry names this property instead of carrying an address, so the loader is told where to point without learning who decided it — a static page in iteration 2, the session gate's per-session address in iteration 3. See docs/adr/0021-an-mfe-entry-may-be-a-frame.md.",
   "allOf": [

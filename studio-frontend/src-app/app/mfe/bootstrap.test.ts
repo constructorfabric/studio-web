@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isValidGtsID } from '@globaltypesystem/gts-ts';
 import { STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL } from '@constructor-studio/mfe-shared';
 import { buildStudioScreenDomain } from './bootstrap';
 
@@ -171,5 +172,13 @@ describe('bootstrapMFE (host-app)', () => {
     // requiring one fails contract validation instead (ADR-0021).
     const domain = buildStudioScreenDomain();
     expect(domain.sharedProperties).toContain(STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL);
+  });
+
+  it('gives the frame address a well-formed GTS id', () => {
+    // A short instance segment (four tokens instead of five) registers fine
+    // and fails much later, inside bootstrapMFE, as "No schema found for
+    // instance" — a message that reads like a missing schema rather than a
+    // malformed id. Running the id through the real parser catches it here.
+    expect(isValidGtsID(STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL)).toBe(true);
   });
 });

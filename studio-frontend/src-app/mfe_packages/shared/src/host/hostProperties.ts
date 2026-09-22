@@ -30,4 +30,4 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE =
  * session gate's per-session address once #322 lands.
  */
 export const STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL =
-  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.frame_url.v1~';
+  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~';
