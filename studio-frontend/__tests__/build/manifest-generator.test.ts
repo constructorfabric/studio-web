@@ -1,0 +1,101 @@
+// @vitest-environment node
+
+/**
+ * Characterises the manifest generator before it learns about frame entries
+ * (ADR-0021). A federated package must come out of this refactor unchanged.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { ManifestGenerator } from '../../scripts/lib/manifest-generator';
+
+let root: string;
+
+function writePackage(name: string, mfeJson: unknown, enriched?: unknown): void {
+  const dir = join(root, 'packages', name);
+  mkdirSync(join(dir, 'dist'), { recursive: true });
+  writeFileSync(join(dir, 'mfe.json'), JSON.stringify(mfeJson));
+  if (enriched !== undefined) {
+    writeFileSync(join(dir, 'dist', 'mfe-manifest.json'), JSON.stringify(enriched));
+  }
+}
+
+function generate(basePath: string | null = null): Array<Record<string, unknown>> {
+  const out = join(root, 'out.json');
+  new ManifestGenerator(join(root, 'packages'), out, 'dist/mfe-manifest.json', null, basePath).run();
+  return JSON.parse(readFileSync(out, 'utf-8')) as Array<Record<string, unknown>>;
+}
+
+const MF_ENTRY_ID =
+  'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~acme.demo.mfe.main.v1';
+
+/**
+ * The package's own mfe.json. A real one declares its entries here too — the
+ * generator reads them to tell a federated package from a frame package.
+ */
+const mfJson = {
+  manifest: { id: 'gts.frontx.mfes.mfe.mf_manifest.v1~acme.demo.mfe.manifest.v1' },
+  entries: [{ id: MF_ENTRY_ID }],
+};
+
+const mfEnriched = {
+  manifest: {
+    id: 'gts.frontx.mfes.mfe.mf_manifest.v1~acme.demo.mfe.manifest.v1',
+    name: 'demo',
+    remoteEntry: 'http://localhost:3011/assets/remoteEntry.js',
+    metaData: {
+      name: 'demo',
+      type: 'app',
+      buildInfo: { buildVersion: '1', buildName: 'demo' },
+      remoteEntry: { name: 'remoteEntry.js', path: 'assets', type: 'module' },
+      globalName: 'demo',
+      publicPath: 'auto',
+    },
+    shared: [],
+  },
+  entries: [
+    {
+      id: MF_ENTRY_ID,
+      requiredProperties: [],
+      actions: [],
+      domainActions: [],
+      exposedModule: './lifecycle',
+      exposeAssets: { js: { sync: ['a.js'], async: [] }, css: { sync: [], async: [] } },
+    },
+  ],
+  extensions: [],
+};
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'mfe-manifests-'));
+});
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe('ManifestGenerator', () => {
+  it('emits a federated package with its remote entry and expose assets', () => {
+    writePackage('demo-mfe', mfJson, mfEnriched);
+
+    const [config] = generate();
+
+    expect(config.manifest).toMatchObject({ id: mfEnriched.manifest.id });
+    expect(config.entries).toHaveLength(1);
+    expect((config.entries as Array<Record<string, unknown>>)[0]).toMatchObject({
+      id: MF_ENTRY_ID,
+      exposedModule: './lifecycle',
+    });
+  });
+
+  it('resolves a production public path from --base-path', () => {
+    writePackage('demo-mfe', mfJson, mfEnriched);
+
+    const [config] = generate('/mfes');
+
+    const manifest = config.manifest as { metaData: { publicPath: string } };
+    expect(manifest.metaData.publicPath).toBe('/mfes/demo-mfe/');
+  });
+});
