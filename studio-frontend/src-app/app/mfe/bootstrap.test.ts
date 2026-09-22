@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL } from '@constructor-studio/mfe-shared';
+import { buildStudioScreenDomain } from './bootstrap';
 
 const registerDomain = vi.fn();
 const updateSharedProperty = vi.fn();
@@ -162,5 +164,12 @@ describe('bootstrapMFE (host-app)', () => {
       'https://studio-dev.cfabric.org/mfes/projects-mfe/',
     );
     expect(resolved.entries[0].manifest).toBe(resolved.manifest);
+  });
+
+  it('declares the frame address on the screen domain', () => {
+    // A domain that does not declare a property cannot deliver it: an entry
+    // requiring one fails contract validation instead (ADR-0021).
+    const domain = buildStudioScreenDomain();
+    expect(domain.sharedProperties).toContain(STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL);
   });
 });

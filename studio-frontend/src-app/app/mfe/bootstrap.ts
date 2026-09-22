@@ -51,6 +51,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+  STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
 import {
   createContextPublishHandler,
@@ -373,6 +374,32 @@ async function registerMfePackage(
 }
 
 /**
+ * The screen domain this host registers: the framework's `screenDomain` plus
+ * the studio context properties a screen-mounted MFE may ask for, and the
+ * frame address a frame-entry MFE's `urlProperty` names (ADR-0021). Exported
+ * so a test can read what the shell declares without standing up a registry.
+ */
+export function buildStudioScreenDomain(): ExtensionDomain {
+  return {
+    ...screenDomain,
+    actions: [
+      ...screenDomain.actions,
+      STUDIO_ACTION_CONTEXT_PUBLISH,
+      STUDIO_ACTION_WORKSPACES_PUBLISH,
+    ],
+    sharedProperties: [
+      ...screenDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+      STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+    ],
+  };
+}
+
+/**
  * Bootstrap MFE system for the host application.
  *
  * Synchronously registers the four well-known domains (screen, sidebar,
@@ -392,22 +419,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     throw new Error('[MFE Bootstrap] mfeRegistry is not available on app instance');
   }
 
-  const studioScreenDomain: ExtensionDomain = {
-    ...screenDomain,
-    actions: [
-      ...screenDomain.actions,
-      STUDIO_ACTION_CONTEXT_PUBLISH,
-      STUDIO_ACTION_WORKSPACES_PUBLISH,
-    ],
-    sharedProperties: [
-      ...screenDomain.sharedProperties,
-      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
-      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
-      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
-      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
-      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
-    ],
-  };
+  const studioScreenDomain: ExtensionDomain = buildStudioScreenDomain();
   /*
    * The overlay domain carries the studio context too, and it has to be stated
    * here: the framework's `overlayDomain` declares theme and language only, and

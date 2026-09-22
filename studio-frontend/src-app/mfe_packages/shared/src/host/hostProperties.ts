@@ -22,3 +22,12 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_SECTION =
 /** `{id, name}` of the workspace in scope, or `null` when the organization has none. */
 export const STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~';
+
+/**
+ * The address the frame of a frame-entry micro-frontend loads (ADR-0021).
+ * The entry names this property rather than carrying an address, so the
+ * loader knows nothing about who answers it: a static page today, the
+ * session gate's per-session address once #322 lands.
+ */
+export const STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL =
+  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.frame_url.v1~';

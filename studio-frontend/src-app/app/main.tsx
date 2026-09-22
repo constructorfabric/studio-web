@@ -22,6 +22,7 @@ import sharedPropertyContextWorkspaceSchemaJson from '@/app/mfe/schemas/shared_p
 import sharedPropertyContextSectionSchemaJson from '@/app/mfe/schemas/shared_property_context_section.v1.json';
 import actionContextWorkspacesPublishSchemaJson from '@/app/mfe/schemas/action_context_workspaces_publish.v1.json';
 import sharedPropertySessionProfileSchemaJson from '@/app/mfe/schemas/shared_property_session_user_profile.v1.json';
+import sharedPropertySpaceFrameUrlSchemaJson from '@/app/mfe/schemas/shared_property_space_frame_url.v1.json';
 import App from './App';
 
 // Import all themes
@@ -72,6 +73,11 @@ gtsPlugin.registerSchema(sharedPropertyContextWorkspaceSchemaJson as JSONSchema)
 // crossing between them.
 gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
+// The address a frame-entry MFE loads. Registered for the same reason as the
+// context properties above: `sharedProperties` carries an `x-gts-ref` that
+// checks the type is in the registry, so an unregistered id fails registration
+// and takes bootstrapMFE with it.
+gtsPlugin.registerSchema(sharedPropertySpaceFrameUrlSchemaJson as JSONSchema);
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);
