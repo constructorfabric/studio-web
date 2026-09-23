@@ -96,7 +96,22 @@ longer on the page.
 
 The frame is created with explicit `width: 100%`, `height: 100%` and no border,
 for the shadow root's sake, and shows a waiting state while the property holds
-nothing.
+nothing. The waiting state carries `role="status"`, because it is not only an
+opening screen: it comes back when the address is cleared after a frame has
+been on display, and that is a change a screen reader would otherwise pass
+over in silence.
+
+### Redrawing is driven by the value, not by the notification
+
+`updateSharedProperty` notifies every subscriber on every write, whether or not
+the value changed, so the same address arrives again on any republish — a
+session refetch, a reconnect, a second writer agreeing with the first. The
+lifecycle therefore remembers what each mount is currently showing and does
+nothing when the new value equals it. Assigning `src` the address a frame
+already holds is a fresh navigation rather than a no-op: the frame reloads, and
+once a real editor is inside, that is unsaved work. The waiting state is
+cheaper to redraw but no more welcome, since replacing a live region announces
+it again.
 
 ### Not every entry is federated, and the manifest generator learns it
 

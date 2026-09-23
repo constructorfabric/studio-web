@@ -91,9 +91,16 @@ function createFrame(): HTMLIFrameElement {
   return frame;
 }
 
+/**
+ * `role="status"` because this element is not only the first thing a mount
+ * shows: it also comes back, after a frame has been on screen, when the
+ * address is cleared. That is a change a sighted user sees and a screen
+ * reader would otherwise pass over in silence.
+ */
 function createWaiting(): HTMLElement {
   const waiting = document.createElement('div');
   waiting.dataset.state = 'waiting';
+  waiting.setAttribute('role', 'status');
   waiting.style.padding = '1rem';
   waiting.textContent = 'Waiting for the address…';
   return waiting;
@@ -116,8 +123,22 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
       mount(container, bridge) {
         let frame: HTMLIFrameElement | null = null;
         const wrapper = createWrapper();
+        // What the wrapper is currently showing: an address, `null` for the
+        // waiting state, and `undefined` until the first render — so the
+        // first call always draws something, whichever of the two it is.
+        let shown: string | null | undefined;
 
         const show = (url: string | null): void => {
+          if (url === shown) {
+            // A write to a shared property notifies every subscriber whether
+            // or not the value changed, so the same address arrives again on
+            // any republish. Assigning `src` an address the frame already
+            // holds is a fresh navigation, not a no-op: the frame reloads and
+            // loses whatever it held, which is unsaved work once a real
+            // editor is inside. Redrawing the waiting state is cheaper but no
+            // more welcome — it would re-announce itself to a screen reader.
+            return;
+          }
           if (url === null) {
             // Both "not said yet" and "said there is none" (readUrl's two
             // nulls) mean the frame has nowhere to point — including after
@@ -126,17 +147,17 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
             // forget it so the next real address builds a fresh one.
             frame = null;
             wrapper.replaceChildren(createWaiting());
-            return;
+          } else {
+            if (frame === null) {
+              wrapper.replaceChildren();
+              frame = createFrame();
+              wrapper.appendChild(frame);
+            }
+            frame.setAttribute('src', url);
           }
-          if (frame === null) {
-            wrapper.replaceChildren();
-            frame = createFrame();
-            wrapper.appendChild(frame);
-          }
-          frame.setAttribute('src', url);
+          shown = url;
         };
 
-        wrapper.replaceChildren(createWaiting());
         container.appendChild(wrapper);
         show(readUrl(bridge.getProperty(entry.urlProperty)));
 

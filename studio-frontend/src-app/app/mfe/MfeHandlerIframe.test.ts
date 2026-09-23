@@ -80,7 +80,7 @@ describe('MfeHandlerIframe', () => {
     expect(handler.priority).toBeGreaterThan(0);
   });
 
-  it('shows a waiting state while the property holds nothing', async () => {
+  it('shows a waiting state while the property holds nothing, and announces it', async () => {
     const lifecycle = await handler.load(entry, 'ext-1');
     const container = document.createElement('div');
     const { bridge } = createBridge(null);
@@ -89,6 +89,9 @@ describe('MfeHandlerIframe', () => {
 
     expect(frameIn(container)).toBeNull();
     expect(container.textContent).not.toBe('');
+    // The waiting state is not only an opening screen: it comes back when the
+    // address is cleared, and a live region is what tells a screen reader so.
+    expect(container.querySelector('[data-state="waiting"]')?.getAttribute('role')).toBe('status');
   });
 
   it('points the frame at the address already in the property', async () => {
@@ -190,6 +193,40 @@ describe('MfeHandlerIframe', () => {
     expect(frameIn(second)?.getAttribute('src')).toBe('https://example.test/second-address');
     expect(firstFrame.getAttribute('src')).toBe('https://example.test/page');
     expect(harness.subscribers.get(URL_PROPERTY)).toHaveLength(1);
+  });
+
+  // A shared property notifies every subscriber on every write, changed or
+  // not, so the same address arrives again whenever the host republishes it.
+  // `src = src` is a fresh navigation in a browser, not a no-op: the frame
+  // would reload and drop whatever the embedded application held.
+  it('leaves the frame alone when the address is published again unchanged', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const harness = createBridge('https://example.test/page');
+
+    await lifecycle.mount(container, harness.bridge as never);
+    const frame = frameIn(container)!;
+    const touched = vi.spyOn(frame, 'setAttribute');
+
+    harness.emit('https://example.test/page');
+
+    expect(touched).not.toHaveBeenCalled();
+    expect(frameIn(container)).toBe(frame);
+    expect(frame.getAttribute('src')).toBe('https://example.test/page');
+  });
+
+  it('leaves the waiting state alone when nothing is published again', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const harness = createBridge(null);
+
+    await lifecycle.mount(container, harness.bridge as never);
+    const waiting = container.querySelector('[data-state="waiting"]');
+
+    harness.emit(null);
+
+    // Same node, not an equal one: replacing a live region re-announces it.
+    expect(container.querySelector('[data-state="waiting"]')).toBe(waiting);
   });
 
   it('returns to the waiting state when the address is cleared, and rebuilds the frame when one returns', async () => {
