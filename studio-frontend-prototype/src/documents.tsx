@@ -17,7 +17,6 @@ import {
 
 import {
   api,
-  ArtifactNode,
   Connection,
   ConnectorProvider,
   Doc,
@@ -35,10 +34,11 @@ import {
   WrittenFile,
 } from "./api";
 import {
-  detectBloat,
-  detectDocTypes,
-  detectLeak,
-  detectTraceability,
+  collectBatch,
+  interpretBloat,
+  interpretDocType,
+  interpretLeak,
+  interpretTrace,
   isDetectorCancel,
   MIN_SPEC_SHARE,
   useSpecQualityCapabilities,
@@ -713,21 +713,6 @@ function DocumentsView({
 // each file IS, so the same templates that govern documents written in Studio
 // can be applied to documents that were not.
 
-/** Extensions that can hold a specification, mirroring `DOC_EXT` in
- *  `documents/classify.rs`.
- *
- *  A preview, not the contract: the server decides what a file is, during the
- *  sync, and records `not_a_document` for everything else. This is only here so
- *  the browser does not hold a repository's source bytes in memory to hand the
- *  detectors prose they will never be asked about. */
-const DOC_EXT = ["md", "markdown", "txt", "rst", "adoc", "asciidoc"];
-
-function isProsePath(path: string): boolean {
-  const leaf = path.split(/[\\/]/).pop() ?? path;
-  if (!leaf.includes(".")) return false;
-  return DOC_EXT.includes(leaf.split(".").pop()!.toLowerCase());
-}
-
 /** Page size when walking the artifact graph's file nodes. The server clamps
  *  this to 200, so it is the fewest round trips the walk can take. */
 const NODE_PAGE = 200;
@@ -878,10 +863,6 @@ function IngestedDocumentsView({
   const [progress, setProgress] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  /** Content from the last scan, keyed by graph node id. Held only so a
-   *  decision can re-check conformance without re-reading the graph; the
-   *  server never stores it. */
-  const [contentByNode, setContentByNode] = useState<Record<string, string>>({});
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
   /** Which repository each document came from, keyed by its graph node id.
@@ -1056,116 +1037,32 @@ function IngestedDocumentsView({
     [],
   );
 
-  /** Walk the artifact graph's file nodes and classify everything that has
-   *  text. A node without text was ingested from the connector's tree API
-   *  (metadata only) — there is nothing to read, so it is reported, not
-   *  silently dropped. */
-  /** The text of every file in the project's checkouts, keyed by repo-relative
-   *  path.
+  /** Read the queue again, files and all.
    *
-   *  The clone is the only place the content reliably is: a graph file node
-   *  carries `text` only when ingest read it from one, and a sync that went
-   *  through the connector's tree API leaves every node metadata-only. Reading
-   *  the node and giving up left the queue empty on projects whose clone was
-   *  right there.
+   *  What this screen shows is the sync's work, and the sync runs elsewhere --
+   *  in the Sources tab, or on a push nobody here saw. There used to be a
+   *  button that pulled every file's text through the browser to feed the
+   *  detectors; the detectors read for themselves now, so the one thing left
+   *  worth offering is the thing a person wants right after a sync: look
+   *  again.
    *
-   *  One flat map across repositories. Two repositories with the same path is
-   *  the one case it cannot tell apart; the graph node ids still keep those
-   *  files as separate bindings, so the cost is a wrong preview, not a wrong
-   *  identity. */
-  const readCheckouts = useCallback(async (): Promise<Record<string, string>> => {
-    const settings = await api.workspaceSettings(token, projectTenantId).catch(() => null);
-    const repos = (settings?.repos ?? []).filter((r) => r.source !== "local");
-    const byPath: Record<string, string> = {};
-    for (const repo of repos) {
-      try {
-        const { files } = await api.repoFiles(token, projectTenantId, repo.target || repo.name);
-        for (const f of files) if (!(f.path in byPath)) byPath[f.path] = f.text;
-      } catch {
-        // One repository that was never cloned must not stop the others.
-      }
-    }
-    return byPath;
-  }, [token, projectTenantId]);
-
-  /** Load the repository's text for the detectors.
-   *
-   *  This used to classify as well: it read every ingested file node, pulled
-   *  each file's text out of a checkout through `repo-files`, and posted it
-   *  back to `/classify` in batches -- a full round trip through the browser
-   *  of text the backend had just read off its own disk. That is where "Read
-   *  4000 files…" came from, and the 413 the fetch layer still apologises for.
-   *
-   *  The sync already classifies, and does it better: `artifact_ingest` decides
-   *  while the whole repository's text is in hand, which is the difference
-   *  between a synced repository whose documents are known and one that merely
-   *  has files in it. A second implementation here could only ever reach the
-   *  same answer, later and more expensively. So the classify half is gone and
-   *  the screen shows what the sync decided.
-   *
-   *  The reading half stays, because the Spec Quality detectors below run in
-   *  the browser and take the text from `contentByNode`. Moving THEM to the
-   *  backend is a separate decision -- the sync runs on every push, and a
-   *  quality pass is not a thing to run on every push -- and until it is made,
-   *  this is what fills their input. */
-  const loadForAnalysis = async () => {
+   *  It re-walks the file listing, which `reload` deliberately does not -- a
+   *  sync is exactly the event that changes what that walk would answer. */
+  const recheck = async () => {
     setBusy(true);
     setErr(null);
     setNote("");
-    setProgress("Reading the repository's files…");
+    setProgress("Looking again…");
     try {
-      const fromCheckout = await readCheckouts();
-
-      const nodes: ArtifactNode[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await api.listArtifactNodes(
-          token,
-          "file",
-          projectTenantId,
-          cursor,
-          NODE_PAGE,
-        );
-        nodes.push(...(page.nodes ?? []));
-        cursor = page.next_cursor;
-        setProgress(`Read ${nodes.length} file${nodes.length === 1 ? "" : "s"}…`);
-      } while (cursor);
-
-      if (nodes.length === 0) {
-        setNote("No files ingested yet — run Sync on a repository in the Sources tab first.");
-        return;
-      }
-
-      // Only prose is worth holding: the detectors read documents, and the
-      // classifier -- which is the sync's now -- needs nothing from here.
-      const seen: Record<string, string> = {};
-      let withoutText = 0;
-      for (const n of nodes) {
-        const path = typeof n.value.path === "string" ? n.value.path : "";
-        if (!path || n.value.is_dir || !isProsePath(path)) continue;
-        const text =
-          fromCheckout[path] ?? (typeof n.value.text === "string" ? n.value.text : "");
-        if (!text) {
-          withoutText += 1;
-          continue;
-        }
-        seen[n.instance_id] = text;
-      }
-
-      setContentByNode((prev) => ({ ...prev, ...seen }));
       await reload();
-      const held = Object.keys(seen).length;
+      const files = await readFiles();
+      setCandidates(files.candidates);
+      setRepoByNode(files.repoByNode);
       setNote(
-        held === 0
-          ? "None of the ingested documents carries its text, and no checkout of this " +
-              "project's repositories has it either — so there is nothing for the detectors " +
-              "to read. A sync with a clone volume fills this in; opening the project in the " +
-              "IDE also clones it."
-          : `Read ${held} document${held === 1 ? "" : "s"}` +
-              (withoutText
-                ? `, ${withoutText} had no text available`
-                : "") +
-              ". The detectors below can run on them.",
+        files.candidates.length === 0
+          ? "Nothing new. Every file the sync pulled in already has a verdict."
+          : `${files.candidates.length} file${files.candidates.length === 1 ? "" : "s"} ` +
+            "the sync has not placed yet.",
       );
     } catch (e) {
       setErr(errText(e));
@@ -1186,7 +1083,7 @@ function IngestedDocumentsView({
     const analysed = (b: DocBinding) =>
       (findings[b.node_id] ?? []).some((f) => f.detector === "purpose");
     const targets = bindings.filter(
-      (b) => b.state === "unknown" && contentByNode[b.node_id] && !analysed(b),
+      (b) => b.state === "unknown" && !analysed(b),
     );
     const alreadyDone = bindings.filter((b) => b.state === "unknown" && analysed(b)).length;
     if (targets.length === 0) {
@@ -1209,38 +1106,40 @@ function IngestedDocumentsView({
     let named = 0;
     let declined = 0;
     try {
-      // One run for the whole set: the backend submits each document and waits
-      // for its verdict, and this follows that run. What a verdict MEANS is
-      // still decided here — see the two checks below.
-      const byNode = new Map(targets.map((b) => [b.node_id, b] as const));
-      const verdicts = await detectDocTypes(
+      // One run for the whole set: the backend reads each document off the
+      // checkout, submits it and waits for its verdict, and this follows that
+      // run. What a verdict MEANS is still decided here — see the two checks
+      // below — and so is which documents were worth asking about.
+      setProgress(`Spec Quality · asking about ${targets.length} document(s)…`);
+      const run = await api.analyzeProjectDocuments(
         token,
-        targets.map((b) => ({
-          id: b.node_id,
-          path: b.path,
-          text: contentByNode[b.node_id],
-        })),
-        {
-          onProgress: (phase) => {
-            // The run reports `3/20 · <node id>`; the person wants the name.
-            const [count, node] = phase.split(" · ");
-            const named = node ? byNode.get(node)?.path : undefined;
-            setProgress(`Spec Quality ${count}${named ? ` · ${basename(named)}` : ""}`);
-          },
-          signal: ctrl.signal,
-        },
+        workspaceId,
+        projectTenantId,
+        "purpose",
+        targets.map((b) => b.id),
       );
+      const collected = await collectBatch(token, run.run_id, {
+        onProgress: (phase) => {
+          // The run reports `3/20 · <path>`; the person wants the name.
+          const [count, path] = phase.split(" · ");
+          setProgress(`Spec Quality ${count}${path ? ` · ${basename(path)}` : ""}`);
+        },
+        signal: ctrl.signal,
+      });
 
       for (const b of targets) {
-        const verdict = verdicts.get(b.node_id);
-        if (!verdict) continue;
-        if ("error" in verdict) {
+        const got = collected.get(b.path);
+        if (!got) continue;
+        if ("error" in got) {
           // One document the sweep could not analyse is not a failed run: the
           // others have verdicts, and this one is simply still unplaced.
           declined += 1;
           continue;
         }
-        const { docType, specShare, gatePassed, taskId } = verdict;
+        const { docType, specShare, gatePassed, taskId } = interpretDocType(
+          got.result,
+          got.taskId,
+        );
         // Two things have to hold before a verdict is worth recording: the
         // detector recognised enough of the document for the type it named to
         // mean anything, and that name is one this workspace has a template
@@ -1306,7 +1205,6 @@ function IngestedDocumentsView({
             type_key: docType,
             source: "spec_quality",
             confidence: specShare,
-            content: contentByNode[b.node_id],
           });
           named += 1;
         } else {
@@ -1347,18 +1245,14 @@ function IngestedDocumentsView({
   const runLeakChecks = async () => {
     const already = (b: DocBinding) =>
       (findings[b.node_id] ?? []).some((f) => f.detector === "leak");
-    const targets = bindings.filter(
-      (b) => b.type_key && contentByNode[b.node_id] && !already(b),
-    );
+    const targets = bindings.filter((b) => b.type_key && !already(b));
     const alreadyDone = bindings.filter((b) => b.type_key && already(b)).length;
 
     if (targets.length === 0) {
       setNote(
         alreadyDone > 0
           ? `Nothing left to check — leak has already looked at ${alreadyDone}.`
-          : bindings.some((b) => b.type_key)
-            ? "Run Scan first — the detector needs each document's text, which the scan loads."
-            : "No document has a type yet, and leak cannot run without one.",
+          : "No document has a type yet, and leak cannot run without one.",
       );
       return;
     }
@@ -1371,16 +1265,25 @@ function IngestedDocumentsView({
     let clean = 0;
     let leaky = 0;
     try {
-      for (let i = 0; i < targets.length; i += 1) {
-        const b = targets[i];
-        setProgress(`Leak ${i + 1}/${targets.length} · ${basename(b.path)}`);
-        const { passed, leakShare, foreignRoles, taskId } = await detectLeak(
-          token,
-          b.path,
-          contentByNode[b.node_id],
-          b.type_key as string,
-          ctrl.signal,
-        );
+      // The server reads the documents. This names which ones, because which
+      // documents deserve a detector is a decision and only the reading moved.
+      setProgress(`Leak · asking about ${targets.length} document(s)…`);
+      const run = await api.analyzeProjectDocuments(
+        token,
+        workspaceId,
+        projectTenantId,
+        "leak",
+        targets.map((b) => b.id),
+      );
+      const collected = await collectBatch(token, run.run_id, {
+        onProgress: (phase) => setProgress(`Leak · ${phase}`),
+        signal: ctrl.signal,
+      });
+
+      for (const b of targets) {
+        const got = collected.get(b.path);
+        if (!got || "error" in got) continue;
+        const { passed, leakShare, foreignRoles, taskId } = interpretLeak(got.result, got.taskId);
         if (passed === true) clean += 1;
         else if (passed === false) leaky += 1;
 
@@ -1453,7 +1356,7 @@ function IngestedDocumentsView({
    *  Set-wise, like bloat, and for the same reason: "what does this reference"
    *  has no answer from one document. */
   const runTraceCheck = async () => {
-    const targets = bindings.filter((b) => b.type_key && contentByNode[b.node_id]);
+    const targets = bindings.filter((b) => b.type_key);
     if (targets.length < 2) {
       setNote(
         targets.length === 1
@@ -1470,11 +1373,30 @@ function IngestedDocumentsView({
     setNote("");
     setProgress(`Tracing references across ${targets.length} documents…`);
     try {
-      const docs: Record<string, string> = {};
-      for (const b of targets) docs[b.path] = contentByNode[b.node_id];
-      const { byPath, recognised, taskId } = await detectTraceability(token, docs, {
+      // One analysis over the whole set — the server reads it — and the set is
+      // one item, because "which of these references which" has no answer for
+      // a document on its own.
+      const run = await api.analyzeProjectDocuments(
+        token,
+        workspaceId,
+        projectTenantId,
+        "traceability",
+        targets.map((b) => b.id),
+      );
+      const collected = await collectBatch(token, run.run_id, {
+        onProgress: (phase) => setProgress(`Traceability · ${phase}`),
         signal: ctrl.signal,
       });
+      const whole = [...collected.values()][0];
+      if (!whole || "error" in whole) {
+        setErr(whole && "error" in whole ? whole.error : "the traceability run reported nothing");
+        return;
+      }
+      const { byPath, recognised, taskId } = interpretTrace(
+        whole.result,
+        whole.taskId,
+        targets.map((b) => b.path),
+      );
 
       // The service does not document this response, so an unreadable shape
       // must not be reported as "nothing references anything" — that reads as
@@ -1550,7 +1472,7 @@ function IngestedDocumentsView({
    *  a verdict about a set goes stale the moment the set changes, so adding one
    *  document re-judges all of them. */
   const runBloatCheck = async () => {
-    const targets = bindings.filter((b) => b.type_key && contentByNode[b.node_id]);
+    const targets = bindings.filter((b) => b.type_key);
     if (targets.length < 2) {
       setNote(
         targets.length === 1
@@ -1567,9 +1489,29 @@ function IngestedDocumentsView({
     setNote("");
     setProgress(`Comparing ${targets.length} documents…`);
     try {
-      const docs: Record<string, string> = {};
-      for (const b of targets) docs[b.path] = contentByNode[b.node_id];
-      const { byPath, pairs, taskId } = await detectBloat(token, docs, ctrl.signal);
+      // Same shape as traceability, and for the same reason: "does this repeat
+      // another" is a question about a set.
+      const run = await api.analyzeProjectDocuments(
+        token,
+        workspaceId,
+        projectTenantId,
+        "bloat",
+        targets.map((b) => b.id),
+      );
+      const collected = await collectBatch(token, run.run_id, {
+        onProgress: (phase) => setProgress(`Duplication · ${phase}`),
+        signal: ctrl.signal,
+      });
+      const whole = [...collected.values()][0];
+      if (!whole || "error" in whole) {
+        setErr(whole && "error" in whole ? whole.error : "the duplication run reported nothing");
+        return;
+      }
+      const { byPath, pairs, taskId } = interpretBloat(
+        whole.result,
+        whole.taskId,
+        targets.map((b) => b.path),
+      );
 
       let repeating = 0;
       for (const b of targets) {
@@ -1636,19 +1578,20 @@ function IngestedDocumentsView({
     }
   };
 
-  /** Apply one person's decision to one binding, re-validating when we still
-   *  hold the file's text. */
+  /** Apply one person's decision to one binding.
+   *
+   *  The decision goes alone: conformance against the newly named type is
+   *  recomputed by the server, which reads the file off the checkout. This
+   *  used to send the text along, because the browser happened to be holding
+   *  it -- and when it was not, the binding silently kept a verdict about the
+   *  previous type. */
   const decide = async (
     b: DocBinding,
     body: Parameters<typeof api.decideDocBinding>[3],
   ) => {
     setErr(null);
     try {
-      const content = contentByNode[b.node_id];
-      const updated = await api.decideDocBinding(token, workspaceId, b.id, {
-        ...body,
-        ...(content ? { content } : {}),
-      });
+      const updated = await api.decideDocBinding(token, workspaceId, b.id, body);
       setBindings((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
     } catch (e) {
       setErr(errText(e));
@@ -1700,12 +1643,6 @@ function IngestedDocumentsView({
     [shown, selectedId],
   );
 
-  /** Whether the sync has pulled any prose in at all.
-   *
-   *  It separates the two empty states this screen can be in, which want
-   *  different first moves: files waiting to be read, or nothing to read. */
-  const filesPulled = candidates.length > 0;
-
   const FILTERS: { id: SpecFilter; label: string; count: number }[] = [
     // First, because it is the state a freshly synced project is in: prose the
     // sync found, nothing has read yet.
@@ -1731,10 +1668,11 @@ function IngestedDocumentsView({
       </div>
 
       <div className="ing-bar">
-        <button className="primary" onClick={loadForAnalysis} disabled={busy}>
-          {busy ? "Working…" : "Read documents for analysis"}
+        <button onClick={recheck} disabled={busy}>
+          {busy ? "Working…" : "Look again"}
         </button>
         <button
+          className="primary"
           onClick={refineWithSpecQuality}
           disabled={busy || counts["needs-review"] === 0}
           title="Ask the Spec Quality purpose detector about the documents scoring could not place"
@@ -1837,23 +1775,23 @@ function IngestedDocumentsView({
              Both routes stay offered either way, because a new project can
              inherit a repository and an old one can still need a PRD. */
           <div className="ing-start">
-            <h3>{filesPulled ? "Nothing read yet" : "No documents yet"}</h3>
+            <h3>No documents yet</h3>
             <p>
               This is where the project&apos;s documentation lives — what it declares, what
               type each document is, and what the detectors find in them.
             </p>
             <div className="ing-start-routes">
-              <button className="primary" onClick={loadForAnalysis} disabled={busy}>
-                {busy ? "Working…" : "Read documents for analysis"}
-              </button>
-              <button onClick={onWriteDoc} disabled={busy}>
+              <button className="primary" onClick={onWriteDoc} disabled={busy}>
                 Write the first one
+              </button>
+              <button onClick={recheck} disabled={busy}>
+                {busy ? "Working…" : "Look again"}
               </button>
             </div>
             <p className="ing-start-note">
-              {filesPulled
-                ? "The sync works out which template each file was written against as it pulls them in; anything it cannot place waits here for you to say. Reading them here is what the detectors need to run."
-                : "Connect a repository under Sources and a scan will read whatever prose is already in it. Until then, documents written here are the project's."}
+              Connect a repository under Sources and its sync will read whatever prose is
+              already in it, working out which template each file was written against as it
+              goes. Until then, documents written here are the project&apos;s.
             </p>
           </div>
         ) : (

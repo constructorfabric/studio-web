@@ -222,12 +222,6 @@ async function runDetector(
   throw new Error(end.error || "analysis failed");
 }
 
-/** The purpose payload for one document — the same body whether it is analysed
- *  on its own or as part of a sweep. */
-export function docTypePayload(path: string, text: string) {
-  return { text, path, classify_doc_type: true };
-}
-
 /** Read a `purpose` result.
  *
  *  Separate from the sweep that produces it, because a sweep gets its verdicts
@@ -267,6 +261,54 @@ interface BatchOutcome {
   error?: string;
 }
 
+/** Follow a batch run the SERVER submitted, and read back what each item got.
+ *
+ *  The submitting half moved: a detector run is started by
+ *  `POST /studio-documents/.../quality/{detector}`, which reads the documents
+ *  off the checkout rather than being handed them. What did not move is this —
+ *  waiting for the run and fetching each verdict — because the run deliberately
+ *  reports pointers rather than verdicts: a verdict is a sizeable document and
+ *  a run's result is broadcast to everyone in the tenant.
+ *
+ *  Returns one entry per item the run reported, keyed by the id the caller gave
+ *  it. An item the run could not finish carries its reason instead of a result,
+ *  because losing the others to it would be worse than saying so. */
+export async function collectBatch(
+  token: string,
+  runId: string,
+  { onProgress, signal }: { onProgress?: (phase: string) => void; signal?: AbortSignal } = {},
+): Promise<Map<string, { taskId: string; result: unknown } | { error: string }>> {
+  const out = new Map<string, { taskId: string; result: unknown } | { error: string }>();
+  const end = await followRun(
+    token,
+    runId,
+    (e) => onProgress?.(e.phase || e.state),
+    // A sweep is minutes per document by design; the run's own per-document
+    // deadline is what bounds it, not this.
+    { timeoutMs: 6 * 60 * 60 * 1000, signal },
+  ).catch((e: unknown) => {
+    if (signal?.aborted) throw new Error(CANCELLED);
+    throw e;
+  });
+  if (end.state !== "succeeded") {
+    throw new Error(end.error || `the analysis ${end.state}`);
+  }
+  const outcomes = ((end.result ?? {}) as { items?: BatchOutcome[] }).items ?? [];
+  for (const outcome of outcomes) {
+    if (outcome.status !== "succeeded" || !outcome.task_id) {
+      out.set(outcome.id, { error: outcome.error || outcome.status });
+      continue;
+    }
+    try {
+      const view = await sqFetch<TaskView>(`/v1/tasks/${outcome.task_id}`, token, { signal });
+      out.set(outcome.id, { taskId: outcome.task_id, result: view.result });
+    } catch (e) {
+      out.set(outcome.id, { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
 /** Ask the `purpose` detector about many documents, as ONE backend run.
  *
  *  This replaces the loop that used to live in the Documents tab: submit, wait,
@@ -276,64 +318,6 @@ interface BatchOutcome {
  *  Verdicts come back per document, keyed by the id the caller gave. A document
  *  whose analysis did not finish gets its reason instead — one bad file does
  *  not cost the sweep. */
-export async function detectDocTypes(
-  token: string,
-  items: { id: string; path: string; text: string }[],
-  { onProgress, signal }: { onProgress?: (phase: string) => void; signal?: AbortSignal } = {},
-): Promise<Map<string, DocTypeVerdict | { error: string }>> {
-  const verdicts = new Map<string, DocTypeVerdict | { error: string }>();
-  if (items.length === 0) return verdicts;
-  if (signal?.aborted) throw new Error(CANCELLED);
-
-  const fromSeq = await currentCursor(token);
-  const queued = await sqFetch<{ run_id: string; count: number }>(
-    `/v1/analyze-batch`,
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        detector: "purpose",
-        items: items.map((d) => ({ id: d.id, payload: docTypePayload(d.path, d.text) })),
-      }),
-      signal,
-    },
-  );
-
-  const end = await followRun(
-    token,
-    queued.run_id,
-    (e) => onProgress?.(e.phase || e.state),
-    // A sweep is minutes per document by design; the run's own per-document
-    // deadline is what bounds it, not this.
-    { fromSeq, timeoutMs: 6 * 60 * 60 * 1000, signal },
-  ).catch((e: unknown) => {
-    if (signal?.aborted) throw new Error(CANCELLED);
-    throw e;
-  });
-
-  if (end.state !== "succeeded") {
-    throw new Error(end.error || `the sweep ${end.state}`);
-  }
-
-  const outcomes = ((end.result ?? {}) as { items?: BatchOutcome[] }).items ?? [];
-  for (const outcome of outcomes) {
-    if (outcome.status !== "succeeded" || !outcome.task_id) {
-      verdicts.set(outcome.id, { error: outcome.error || outcome.status });
-      continue;
-    }
-    // The run named the upstream task rather than carrying the verdict: a
-    // verdict is a sizeable document and the run's result is broadcast to the
-    // whole tenant. This read is of something already finished.
-    try {
-      const view = await sqFetch<TaskView>(`/v1/tasks/${outcome.task_id}`, token, { signal });
-      verdicts.set(outcome.id, interpretDocType(view.result, outcome.task_id));
-    } catch (e) {
-      verdicts.set(outcome.id, { error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  return verdicts;
-}
-
 /** What the `purpose` detector concluded about one document. */
 export interface DocTypeVerdict {
   /** The type it named. It always names one, hence `specShare`. */
@@ -420,20 +404,14 @@ export const MIN_SPEC_SHARE = 0.5;
  *  not evidence that documents are clean, and a gate wired to one would open
  *  for everything while looking like it had checked.
  */
-export async function detectLeak(
-  token: string,
-  path: string,
-  text: string,
-  docType: string,
-  signal?: AbortSignal,
-): Promise<LeakVerdict> {
-  const view = await runDetector(
-    "leak",
-    { text, path, doc_type: docType, gate_threshold: 0.05, verify: false },
-    token,
-    { signal },
-  );
-  const r = (view.result ?? {}) as {
+/** Read one leak verdict.
+ *
+ *  Split from the submitting half, which moved to the server: a detector run
+ *  is started by `POST /studio-documents/.../quality/leak`, which reads the
+ *  documents off the checkout rather than being handed them. Interpreting what
+ *  came back is unchanged and stays here, next to the types it produces. */
+export function interpretLeak(result: unknown, taskId: string): LeakVerdict {
+  const r = (result ?? {}) as {
     passed?: unknown;
     leak_share?: unknown;
     foreign_roles?: unknown;
@@ -442,7 +420,7 @@ export async function detectLeak(
     passed: typeof r.passed === "boolean" ? r.passed : null,
     leakShare: typeof r.leak_share === "number" ? r.leak_share : null,
     foreignRoles: Array.isArray(r.foreign_roles) ? r.foreign_roles.map(String) : [],
-    taskId: view.task_id,
+    taskId: taskId,
   };
 }
 
@@ -472,13 +450,18 @@ export interface LeakVerdict {
  *  bury the one bloat exists for: two documents saying the same thing, so that
  *  changing one silently leaves the other lying.
  */
-export async function detectBloat(
-  token: string,
-  docs: Record<string, string>,
-  signal?: AbortSignal,
-): Promise<BloatVerdicts> {
-  const view = await runDetector("bloat", { docs }, token, { signal });
-  const r = (view.result ?? {}) as { clusters?: unknown };
+/** Read one bloat verdict.
+ *
+ *  Split from the submitting half, which moved to the server: a detector run
+ *  is started by `POST /studio-documents/.../quality/bloat`, which reads the
+ *  documents off the checkout rather than being handed them. Interpreting what
+ *  came back is unchanged and stays here, next to the types it produces. */
+export function interpretBloat(
+  result: unknown,
+  taskId: string,
+  paths: string[],
+): BloatVerdicts {
+  const r = (result ?? {}) as { clusters?: unknown };
   const clusters = Array.isArray(r.clusters) ? r.clusters : [];
 
   /** path → the other paths it shares text with. */
@@ -501,8 +484,8 @@ export async function detectBloat(
     }
   }
 
-  const verdicts: BloatVerdicts = { byPath: {}, taskId: view.task_id, pairs: [] };
-  for (const path of Object.keys(docs)) {
+  const verdicts: BloatVerdicts = { byPath: {}, taskId: taskId, pairs: [] };
+  for (const path of paths) {
     verdicts.byPath[path] = [...(shares.get(path) ?? [])].sort();
   }
   // The same fact as a relation, for the graph: an unordered pair, once.
@@ -545,23 +528,23 @@ export interface BloatVerdicts {
  *  render as "no references", and the first is a bug in this reader while the
  *  second is a fact about the documents.
  */
-export async function detectTraceability(
-  token: string,
-  docs: Record<string, string>,
-  opts?: { mode?: "extract" | "classify"; signal?: AbortSignal },
-): Promise<TraceVerdicts> {
-  const view = await runDetector(
-    "traceability",
-    { docs, mode: opts?.mode ?? "extract", verify: false },
-    token,
-    { signal: opts?.signal },
-  );
-  const r = (view.result ?? {}) as Record<string, unknown>;
+/** Read one traceability verdict.
+ *
+ *  Split from the submitting half, which moved to the server: a detector run
+ *  is started by `POST /studio-documents/.../quality/traceability`, which reads the
+ *  documents off the checkout rather than being handed them. Interpreting what
+ *  came back is unchanged and stays here, next to the types it produces. */
+export function interpretTrace(
+  result: unknown,
+  taskId: string,
+  paths: string[],
+): TraceVerdicts {
+  const r = (result ?? {}) as Record<string, unknown>;
   const rawEdges = r.edges ?? r.links ?? r.references ?? r.pairs;
   const recognised = Array.isArray(rawEdges);
 
   const byPath: Record<string, string[]> = {};
-  for (const path of Object.keys(docs)) byPath[path] = [];
+  for (const path of paths) byPath[path] = [];
   const pairs: [string, string][] = [];
 
   if (Array.isArray(rawEdges)) {
@@ -583,7 +566,7 @@ export async function detectTraceability(
   }
   for (const list of Object.values(byPath)) list.sort();
 
-  return { byPath, pairs, recognised, taskId: view.task_id };
+  return { byPath, pairs, recognised, taskId: taskId };
 }
 
 /** How a set of documents references itself. */

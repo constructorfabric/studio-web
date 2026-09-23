@@ -1765,6 +1765,7 @@ async fn list_project_bindings(
 async fn decide_binding(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
     Path((workspace_id, id)): Path<(Uuid, Uuid)>,
     Json(body): Json<DecideBindingDto>,
 ) -> ApiResult<JsonBody<DocumentBindingDto>> {
@@ -1772,7 +1773,35 @@ async fn decide_binding(
         .authorize(&ctx, workspace_id)
         .await
         .map_err(no_tenant)?;
-    let decision = binding_decision(body)?;
+    let mut decision = binding_decision(body)?;
+
+    // A decision that names a type changes what conformance MEANS for this
+    // file, so the old verdict is about the wrong template the moment the
+    // decision lands. The caller used to send the text along to have it
+    // recomputed; it no longer holds any, so the server reads the file the
+    // decision is about -- the same checkout the detectors read.
+    //
+    // Best effort by design: a deployment with no checkout, or a file the
+    // clone does not have, must not cost the person their decision. The
+    // binding keeps its previous verdict, exactly as it did when `content`
+    // was omitted.
+    if decision.content.is_none()
+        && matches!(
+            decision.action,
+            BindingAction::Set { .. } | BindingAction::Confirm
+        )
+        && let Ok(reader) = quality.reader()
+    {
+        match service
+            .quality_docs(&ctx, workspace_id, None, &[id], reader.as_ref())
+            .await
+        {
+            Ok(docs) => decision.content = docs.into_iter().next().map(|d| d.text),
+            Err(error) => {
+                tracing::warn!(%error, %id, "studio-documents: conformance not re-checked");
+            }
+        }
+    }
     let binding = service
         .decide_binding(&ctx, workspace_id, id, decision)
         .await

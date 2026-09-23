@@ -1899,6 +1899,31 @@ export const api = {
       { method: "POST", body: JSON.stringify({ files }) },
     ),
 
+  /** Run a Spec Quality detector over a project's documents.
+   *
+   *  Carries binding ids, NOT text. The server reads the documents from the
+   *  checkout a sync left on disk — which is where they already are — and
+   *  enqueues one run. This replaces the portal reading every file out through
+   *  `repo-files` and posting it back, which is what made a whole-set detector
+   *  a request big enough for the gateway to refuse.
+   *
+   *  Which bindings deserve a detector stays here: that is policy, and only the
+   *  reading of them moved. */
+  analyzeProjectDocuments: (
+    token: string,
+    workspaceId: string,
+    projectId: string,
+    detector: "purpose" | "leak" | "bloat" | "traceability",
+    bindingIds: string[],
+  ) =>
+    request<{ run_id: string; poll: string; documents: number }>(
+      `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(
+        projectId,
+      )}/quality/${encodeURIComponent(detector)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ binding_ids: bindingIds }) },
+    ),
+
   docBindings: (
     token: string,
     workspaceId: string,
