@@ -156,6 +156,15 @@ describe('registerAppContextEffects', () => {
     expect(handle.navigation.navigate).not.toHaveBeenCalled();
   });
 
+  // Reviewer finding (vasylcf): the chain's own workspace pick below the
+  // organization — no `enter`, no name — had no test.
+  it('a workspace picked in the chain below the organization keeps the screen and leaves the project', async () => {
+    await emit('app/context/workspace/changed', { workspaceId: 'w2' });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'projects', org: 'o1', workspace: 'w2' }, 'push');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(handle.materialize).not.toHaveBeenCalled();
+  });
+
   it('drops a workspace announced for an organization since left', async () => {
     await emit('app/context/workspace/changed', { workspaceId: 'w2', organizationId: 'o9', enter: true });
     expect(handle.navigation.navigate).not.toHaveBeenCalled();

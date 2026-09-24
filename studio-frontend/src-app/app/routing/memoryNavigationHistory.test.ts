@@ -1,3 +1,9 @@
+/**
+ * Lives here, not next to the helper in `src-app/__test-utils__/`: vitest's
+ * shared exclude list (`DEFAULT_TEST_EXCLUDE` in `vitest.shared.ts`) drops
+ * `**\/__test-utils__/**`, so a test placed there is never collected. The
+ * routing folder is the helper's only consumer.
+ */
 import { describe, expect, it } from 'vitest';
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
 
