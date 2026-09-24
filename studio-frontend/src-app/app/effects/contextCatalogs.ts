@@ -72,15 +72,13 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
   let workspacesInFlightFor: string | null = null;
   const projectsInFlightFor = new Set<string>();
 
+  // A failure here is the caller's to judge: swallowed into an empty list it
+  // would read as "member of nothing" and show the administrator the
+  // onboarding screen (reviewer finding).
   const platformOrganizations = async (rootId: string): Promise<Tenant[]> => {
     const accounts = apiRegistry.getService(AccountsApiService);
-    try {
-      const children = (await accounts.getChildren({ tenantId: rootId }).fetch())?.items ?? [];
-      return children.filter(isOrganization);
-    } catch (error) {
-      console.warn('Failed to list organizations under the platform root:', message(error));
-      return [];
-    }
+    const children = (await accounts.getChildren({ tenantId: rootId }).fetch())?.items ?? [];
+    return children.filter(isOrganization);
   };
 
   const memberOrganizations = async (): Promise<Tenant[]> => {

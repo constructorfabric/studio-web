@@ -95,6 +95,21 @@ describe('createContextCatalogs', () => {
     expect(dispatch).toHaveBeenCalledWith(setContextAccess('unassigned'));
   });
 
+  // Reviewer finding (vasylcf): the platform administrator's path swallowed its
+  // failure into an empty list, which read as "member of nothing".
+  it("does not report no access when the platform administrator's list merely failed", async () => {
+    accounts.getMe.fetch.mockResolvedValue({ subject_tenant_id: PLATFORM_ROOT_TENANT_ID });
+    accounts.getChildren.mockReturnValue({ fetch: () => Promise.reject(new Error('502')) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(dispatch).not.toHaveBeenCalledWith(setContextAccess('unassigned'));
+    expect(dispatch).not.toHaveBeenCalledWith(setContextOrganizations([]));
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('does not report no access when the resolve merely failed', async () => {
     accounts.getMe.fetch.mockRejectedValue(new Error('network'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
