@@ -218,18 +218,25 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     context = contextOf(app);
     if (context.org && context.workspacesStatus === 'pending') catalogs.loadWorkspaces(context.org.id);
 
-    // Workspace and project: only a screen below the organization carries them.
-    if (ownerLevel !== 'organization') {
-      if (context.workspacesStatus === 'ready') {
-        if (wanted.workspace && !context.workspaces.some((workspace) => workspace.id === wanted.workspace)) {
-          warn(`Workspace ${wanted.workspace} is not in this organization; opening the first one`);
-          wanted.workspace = undefined;
-          wanted.project = undefined;
-          wanted.section = undefined;
-        }
-        wanted.workspace ??= context.workspace?.id ?? context.workspaces[0]?.id;
-        if (wanted.workspace && wanted.workspace !== context.workspace?.id) dispatch(setContextWorkspace(wanted.workspace));
+    // Workspace: below the organization the address names it; at the
+    // organization level the address carries none and the slice's choice is
+    // the preference the next descent starts from (ADR-0022). Either way it
+    // is checked against the list once that is known, and defaulted from it —
+    // the catalog reducers keep or drop a selection, they never pick one.
+    if (ownerLevel === 'organization') wanted.workspace = undefined;
+    if (context.workspacesStatus === 'ready') {
+      if (wanted.workspace && !context.workspaces.some((workspace) => workspace.id === wanted.workspace)) {
+        warn(`Workspace ${wanted.workspace} is not in this organization; opening the first one`);
+        wanted.workspace = undefined;
+        wanted.project = undefined;
+        wanted.section = undefined;
       }
+      wanted.workspace ??= context.workspace?.id ?? context.workspaces[0]?.id;
+      if (wanted.workspace && wanted.workspace !== context.workspace?.id) dispatch(setContextWorkspace(wanted.workspace));
+    }
+
+    // Project: only a screen below the organization carries it.
+    if (ownerLevel !== 'organization') {
       if (wanted.workspace) next.workspace = wanted.workspace;
 
       context = contextOf(app);

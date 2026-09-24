@@ -76,13 +76,20 @@ const {
       state.access = action.payload;
     },
 
-    /** The resolved organization list and which of them is current. */
-    setContextOrganizations: (
-      state: AppContextState,
-      action: ReducerPayload<{ current: ContextEntity | null; items: ContextEntity[] }>
-    ) => {
-      state.org = action.payload.current;
-      state.orgs = action.payload.items;
+    /**
+     * The organizations on offer. Which of them is in scope is the address's
+     * to say (ADR-0022): one the list no longer vouches for is dropped, with
+     * everything under it, and none is picked in its place.
+     */
+    setContextOrganizations: (state: AppContextState, action: ReducerPayload<ContextEntity[]>) => {
+      state.orgs = action.payload;
+      if (!state.org || action.payload.some((org) => org.id === state.org?.id)) return;
+      state.org = null;
+      state.workspace = null;
+      state.workspaces = [];
+      state.workspacesStatus = 'pending';
+      state.project = null;
+      state.projects = [];
     },
 
     setContextOrg: (state: AppContextState, action: ReducerPayload<string>) => {
@@ -97,13 +104,13 @@ const {
     },
 
     // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
-    setContextWorkspaces: (
-      state: AppContextState,
-      action: ReducerPayload<ContextEntity[]>
-    ) => {
+    /** The workspaces of the organization in scope. Same rule as the organizations: keep or drop, never pick. */
+    setContextWorkspaces: (state: AppContextState, action: ReducerPayload<ContextEntity[]>) => {
       state.workspaces = action.payload;
-      const kept = action.payload.find((item) => item.id === state.workspace?.id);
-      state.workspace = kept ?? action.payload[0] ?? null;
+      if (!state.workspace || action.payload.some((item) => item.id === state.workspace?.id)) return;
+      state.workspace = null;
+      state.project = null;
+      state.projects = [];
     },
     // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
 

@@ -64,9 +64,7 @@ describe('createContextCatalogs', () => {
 
     await createContextCatalogs(app, onChange).loadOrganizations();
 
-    expect(dispatch).toHaveBeenCalledWith(
-      setContextOrganizations({ current: { id: 'o1', name: 'Org', count: 0 }, items: [{ id: 'o1', name: 'Org', count: 0 }] })
-    );
+    expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([{ id: 'o1', name: 'Org', count: 0 }]));
     expect(dispatch).toHaveBeenCalledWith(setContextAccess('ready'));
     expect(onChange).toHaveBeenCalled();
   });
@@ -80,9 +78,7 @@ describe('createContextCatalogs', () => {
 
     await createContextCatalogs(app, onChange).loadOrganizations();
 
-    expect(dispatch).toHaveBeenCalledWith(
-      setContextOrganizations({ current: { id: 'o1', name: 'Org', count: 0 }, items: [{ id: 'o1', name: 'Org', count: 0 }] })
-    );
+    expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([{ id: 'o1', name: 'Org', count: 0 }]));
     expect(identity.myMemberships.fetch).not.toHaveBeenCalled();
   });
 

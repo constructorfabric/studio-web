@@ -147,8 +147,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
           ? await platformOrganizations(homeTenantId)
           : await memberOrganizations();
       const items = organizations.map(toEntity);
-      const current = items[0] ?? null;
-      dispatch(setContextOrganizations({ current, items }));
+      dispatch(setContextOrganizations(items));
       // An authenticated person with no organization is a supported state, and
       // the shell has to say so rather than render an empty switcher.
       dispatch(setContextAccess(items.length > 0 ? 'ready' : 'unassigned'));

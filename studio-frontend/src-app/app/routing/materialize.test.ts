@@ -235,6 +235,15 @@ describe('materialize', () => {
     expect(mocks.mountScreen).not.toHaveBeenCalled();
   });
 
+  // Reviewer finding (MarinaLitueva): the default used to be the reducer's pick.
+  it('fills the workspace preference from the list at the organization level, without writing it to the address', () => {
+    const { materialize, adapter, state } = setup('/?screen=people;org=o1', { ...ready, workspace: null });
+    materialize();
+    expect(state().workspace).toEqual(WS);
+    expect(adapter.url()).toBe('/?screen=people;org=o1');
+    expect(mocks.publish).toHaveBeenCalled();
+  });
+
   it('does not carry a workspace on an organization-level screen', () => {
     const { materialize, adapter } = setup('/?screen=people;org=o1;workspace=w1', ready);
     materialize();

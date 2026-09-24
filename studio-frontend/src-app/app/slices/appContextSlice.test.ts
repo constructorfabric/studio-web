@@ -1,5 +1,73 @@
 import { describe, expect, it } from 'vitest';
-import reducer, { openContextProject, rememberProject, setContextProjects } from './appContextSlice';
+import reducer, {
+  openContextProject,
+  rememberProject,
+  setContextOrg,
+  setContextOrganizations,
+  setContextProjects,
+  setContextWorkspace,
+  setContextWorkspaces,
+  type AppContextState,
+} from './appContextSlice';
+
+const O1 = { id: 'o1', name: 'One' };
+const O2 = { id: 'o2', name: 'Two' };
+const W1 = { id: 'w1', name: 'Work' };
+const W2 = { id: 'w2', name: 'Other' };
+
+function inScope(): AppContextState {
+  let state = reducer(undefined, { type: '@@init' });
+  state = reducer(state, setContextOrganizations([O1, O2]));
+  state = reducer(state, setContextOrg('o2'));
+  state = reducer(state, setContextWorkspaces([W1, W2]));
+  state = reducer(state, setContextWorkspace('w2'));
+  state = reducer(state, setContextProjects([{ id: 'p1', name: 'Atlas' }]));
+  return state;
+}
+
+// Reviewer finding (MarinaLitueva): the catalog reducers used to pick a
+// selection of their own — items[0] for organizations, kept-or-first for
+// workspaces — so a re-read could move the scope before materialize moved it back.
+describe('the catalog reducers keep or drop a selection, and never pick one', () => {
+  it('a fresh organization list selects nothing', () => {
+    const state = reducer(undefined, setContextOrganizations([O1, O2]));
+    expect(state.orgs).toEqual([O1, O2]);
+    expect(state.org).toBeNull();
+  });
+
+  it('a re-read that still lists the organization in scope leaves it, and what is under it, alone', () => {
+    const state = reducer(inScope(), setContextOrganizations([O2, O1]));
+    expect(state.org).toEqual(O2);
+    expect(state.workspace).toEqual(W2);
+    expect(state.projects).toHaveLength(1);
+  });
+
+  it('an organization no longer on offer is dropped with everything under it', () => {
+    const state = reducer(inScope(), setContextOrganizations([O1]));
+    expect(state.org).toBeNull();
+    expect(state.workspace).toBeNull();
+    expect(state.workspaces).toEqual([]);
+    expect(state.workspacesStatus).toBe('pending');
+    expect(state.projects).toEqual([]);
+  });
+
+  it('a fresh workspace list selects nothing', () => {
+    const state = reducer(undefined, setContextWorkspaces([W1, W2]));
+    expect(state.workspace).toBeNull();
+  });
+
+  it('a workspace list that still has the one in scope keeps it', () => {
+    const state = reducer(inScope(), setContextWorkspaces([W2]));
+    expect(state.workspace).toEqual(W2);
+    expect(state.projects).toHaveLength(1);
+  });
+
+  it('a workspace no longer listed is dropped with its projects', () => {
+    const state = reducer(inScope(), setContextWorkspaces([W1]));
+    expect(state.workspace).toBeNull();
+    expect(state.projects).toEqual([]);
+  });
+});
 
 describe('rememberProject', () => {
   const start = reducer(undefined, { type: '@@init' });

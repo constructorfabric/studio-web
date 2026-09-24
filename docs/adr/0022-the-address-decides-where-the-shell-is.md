@@ -186,7 +186,11 @@ fetches: the organizations the person may act in, the workspaces of the
 organization in scope, and the projects known for a workspace. Each catalog
 arrives on its own time and re-runs `materialize` against the current route;
 the route never waits for a catalog, and a catalog never picks a value the
-route did not name.
+route did not name. The catalog reducers write the list and drop a selection
+the list no longer vouches for — an organization the person has left, a
+workspace since deleted — but they pick none: the first organization, the
+first workspace and the section a level opens on are all `materialize`'s
+defaults, filled in the same pass that checks the address against the list.
 
 A project named in the address is resolved in this order: the cache of the
 workspace's projects (an `opened` publish, a sibling list, a previous visit),
@@ -204,8 +208,9 @@ Two handlers still write the workspace *selection*, and that is deliberate:
 name is data the address cannot carry, and the reducer selects as it
 remembers), and `setContextWorkspace` at the organization level, where the
 address carries no workspace and the slice's choice is the preference the next
-descent starts from (see "The parameters a level carries"). Below the
-organization the address decides, and `materialize` applies it.
+descent starts from (see "The parameters a level carries"); until something
+has chosen one, `materialize` fills that preference with the first of the list.
+Below the organization the address decides, and `materialize` applies it.
 
 The mount is the last step: if the mounted group is not the route's group,
 `materialize` calls `mountScreen` with the group's owner and, when the mount
