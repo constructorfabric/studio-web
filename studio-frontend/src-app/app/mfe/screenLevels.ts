@@ -14,6 +14,9 @@ export const SCREEN_LEVELS = ['organization', 'workspace', 'project'] as const;
 
 export type ScreenLevel = (typeof SCREEN_LEVELS)[number];
 
+/** The order of a screen that declares none: after every screen that does. */
+export const UNDECLARED_ORDER = 999;
+
 // 'hidden' is registered and mountable but never listed: a screen reached by
 // something other than the rail, such as opening an artifact.
 export type ScreenPlacement = 'main' | 'settings' | 'hidden';
@@ -75,7 +78,7 @@ export function resolveLevelMenu(
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-4
   const byOrder = [...ofLevel].sort(
-    (a, b) => (a.presentation.order ?? 999) - (b.presentation.order ?? 999),
+    (a, b) => (a.presentation.order ?? UNDECLARED_ORDER) - (b.presentation.order ?? UNDECLARED_ORDER),
   );
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-4
 

@@ -13,7 +13,14 @@
  */
 import type { ScreenExtension } from '@gears-frontx/react';
 import { validateName } from '@gears-frontx/routing';
-import { SCREEN_LEVELS, entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
+import {
+  SCREEN_LEVELS,
+  UNDECLARED_ORDER,
+  entryPointOf,
+  levelOf,
+  sectionOf,
+  type ScreenLevel,
+} from '@/app/mfe/screenLevels';
 
 export interface ScreenGroup {
   token: string;
@@ -32,7 +39,7 @@ function ownerRank(extension: ScreenExtension): [number, number, number] {
   return [
     SCREEN_LEVELS.indexOf(levelOf(extension)),
     sectionOf(extension) === undefined ? 0 : 1,
-    extension.presentation.order ?? 999,
+    extension.presentation.order ?? UNDECLARED_ORDER,
   ];
 }
 
