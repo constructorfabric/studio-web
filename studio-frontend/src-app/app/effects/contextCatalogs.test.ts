@@ -83,6 +83,31 @@ describe('createContextCatalogs', () => {
     expect(identity.myMemberships.fetch).not.toHaveBeenCalled();
   });
 
+  // Reviewer finding (vasylcf): the old suite pinned the difference between
+  // "member of nothing" and "the resolve failed"; both cases come back here.
+  it('reports no access when a person is a member of nothing', async () => {
+    accounts.getMe.fetch.mockResolvedValue({ subject_tenant_id: 'home' });
+    identity.myMemberships.fetch.mockResolvedValue({ items: [] });
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([]));
+    expect(dispatch).toHaveBeenCalledWith(setContextAccess('unassigned'));
+  });
+
+  it('does not report no access when the resolve merely failed', async () => {
+    accounts.getMe.fetch.mockRejectedValue(new Error('network'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(dispatch).not.toHaveBeenCalledWith(setContextAccess('unassigned'));
+    expect(dispatch).not.toHaveBeenCalledWith(setContextAccess('ready'));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('drops a workspace list that arrives for an organization since left', async () => {
     let resolve!: (value: unknown) => void;
     accounts.getWorkspaces.mockReturnValue({ fetch: () => new Promise((r) => { resolve = r; }) });

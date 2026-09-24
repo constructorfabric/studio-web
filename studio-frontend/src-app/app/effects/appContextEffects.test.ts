@@ -162,6 +162,29 @@ describe('registerAppContextEffects', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  // Reviewer finding (vasylcf): the created-workspace handler branches on the
+  // level, and the old suite's two cases for it were not carried over.
+  it('a workspace created at the organization level joins the list as the preference, without navigating', async () => {
+    handle.navigation.currentRoute.mockReturnValue({ token: 'organization', org: 'o1', section: 'workspaces' });
+    await emit('app/context/workspace/created', { id: 'w2', name: 'Two', organizationId: 'o1' });
+    expect(dispatch).toHaveBeenCalledWith(addContextWorkspace({ id: 'w2', name: 'Two' }));
+    expect(handle.materialize).toHaveBeenCalled();
+    expect(handle.navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  it('a workspace created below the organization is entered on the current screen, leaving the project', async () => {
+    await emit('app/context/workspace/created', { id: 'w2', name: 'Two', organizationId: 'o1' });
+    expect(dispatch).toHaveBeenCalledWith(addContextWorkspace({ id: 'w2', name: 'Two' }));
+    expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'projects', org: 'o1', workspace: 'w2' }, 'push');
+  });
+
+  it('drops a workspace created under an organization since left', async () => {
+    await emit('app/context/workspace/created', { id: 'w2', name: 'Two', organizationId: 'o9' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(handle.navigation.navigate).not.toHaveBeenCalled();
+    expect(handle.materialize).not.toHaveBeenCalled();
+  });
+
   it('an opened project is remembered, then navigated to', async () => {
     handle.navigation.currentRoute.mockReturnValue({ token: 'projects', org: 'o1', workspace: 'w1' });
     await emit('app/context/project/opened', { id: 'p1', name: 'Atlas', workspaceId: 'w1' });
