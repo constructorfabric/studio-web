@@ -127,19 +127,15 @@ describe('MfeScreenContainer', () => {
     });
   });
 
-  // Asking for the level rather than mounting a screen of its own choosing is
-  // what keeps one way into a screen: which item the level opens on is
-  // `resolveLevelMenu`'s to decide, and the section that item names is written
-  // by the same handler every other navigation goes through.
-  it('asks for the outermost level once the slot reports its root', async () => {
+  // Which screen opens is the address's to say: the container only tells the
+  // effects that the slot is there and the manifests are in (ADR-0022).
+  it('asks the effects to start routing once the slot reports its root', async () => {
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
     await waitFor(() => {
-      expect(mockEmit).toHaveBeenCalledWith('app/context/level/requested', {
-        level: 'organization',
-      });
+      expect(mockEmit).toHaveBeenCalledWith('app/routing/start');
     });
   });
 
@@ -160,9 +156,7 @@ describe('MfeScreenContainer', () => {
     render(<MfeScreenContainer />);
 
     await waitFor(() => {
-      expect(mockEmit).toHaveBeenCalledWith('app/context/level/requested', {
-        level: 'organization',
-      });
+      expect(mockEmit).toHaveBeenCalledWith('app/routing/start');
     });
     expect(isMountingScreen(registry as never)).toBe(false);
   });

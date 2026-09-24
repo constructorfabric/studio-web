@@ -30,13 +30,17 @@ export function MfeScreenContainer() {
       eventBus.emit('app/mfe/bootstrap', { status: 'failed' });
     });
   }, [app]);
-  const mountInitialScreen = useCallback(() => {
+  const startRouting = useCallback(() => {
     const registry = app.mfeRegistry;
     if (!registry) return;
+    // StrictMode detaches and re-attaches the slot with the doomed first
+    // mount still in flight; without this the guard in mountScreen swallows
+    // the next one and the session opens on a blank screen.
     releaseMountLock(registry);
-    if (registry.getMountedExtensions(screenDomain.id).length > 0) return;
-
-    eventBus.emit('app/context/level/requested', { level: 'organization' });
+    // Which screen opens is the address's to say, and the effects that
+    // start the router decide it (ADR-0022). Emitted on every attach: the
+    // second time only re-applies what the address already says.
+    eventBus.emit('app/routing/start');
   }, [app.mfeRegistry]);
 
   return (
@@ -50,7 +54,7 @@ export function MfeScreenContainer() {
           registry={app.mfeRegistry}
           domainId={screenDomain.id}
           className="h-full"
-          onAttached={mountInitialScreen}
+          onAttached={startRouting}
         />
       ) : null}
     </div>
