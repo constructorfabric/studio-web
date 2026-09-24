@@ -37,7 +37,7 @@ owner: studio-team
   - [The workspace level has no menu](#the-workspace-level-has-no-menu)
   - [The entry point is the first item of the level](#the-entry-point-is-the-first-item-of-the-level)
   - [Counts arrive with the list that shows them](#counts-arrive-with-the-list-that-shows-them)
-  - [Nothing owns the address yet](#nothing-owns-the-address-yet)
+  - [The address decides, and only the shell writes it](#the-address-decides-and-only-the-shell-writes-it)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -142,17 +142,17 @@ rest on are the Definitions of Done, which are traced.
 
 **Error Scenarios**:
 - The level below is empty — an organization with no workspace, a workspace with no project; the member stays where they are and the screen says so.
-- The screen of the new level fails to mount; the level does not change and the rail keeps naming the level that is actually on screen.
+- The screen of the new level fails to mount; the shell falls back to the level's entry point, and when that does not mount either nothing is mounted and the console says so (ADR-0022).
 
 **Steps**:
 1. [ ] - `p1` - Member picks a workspace in the path, or opens a project from the list - `inst-1`
-2. [ ] - `p1` - Write the new level into the shell's context, clearing everything below it - `inst-2`
+2. [ ] - `p1` - Write the new level into the address, and from there into the shell's context, clearing everything below it - `inst-2`
 3. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-menu` for the new level - `inst-3`
 4. [ ] - `p1` - **IF** the level has no item to show - `inst-4`
    1. [ ] - `p1` - **RETURN** stay at the level above and report that the level below is empty - `inst-5`
 5. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-click` for the level's first item - `inst-6`
-6. [ ] - `p1` - **IF** the mount fails - `inst-7`
-   1. [ ] - `p1` - **RETURN** restore the level that is on screen, so the rail and the content agree - `inst-8`
+6. [ ] - `p1` - **IF** the mount does not happen - `inst-7`
+   1. [ ] - `p1` - **RETURN** fall back once to the level's entry point, so the rail and the content agree; when that does not mount either, nothing is mounted and the warning says so - `inst-8`
 7. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-path` so the new level is named in the top bar - `inst-9`
 8. [ ] - `p1` - **RETURN** the new level, its rail and its first section - `inst-10`
 
@@ -222,46 +222,47 @@ rest on are the Definitions of Done, which are traced.
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-click`
 
-**Input**: the chosen item, and the extension currently mounted in the screen domain
+**Input**: the chosen item, the current address, and the extension currently mounted in the screen domain
 
-**Output**: either a mounted extension, or the chosen section relayed to the mounted one
+**Output**: the address the click means and, once the shell has followed it, either a mounted extension or the chosen section relayed to the mounted one
 
 **Steps**:
-1. [x] - `p1` - **IF** the chosen item's entry is the entry of the mounted extension - `inst-1`
-   1. [x] - `p1` - Write the chosen item's section into the shell's context and publish it as the section property - `inst-2`
-   2. [x] - `p1` - **RETURN** the section changed without a remount; re-picking the open section republishes the same value and changes nothing - `inst-3`
-2. [x] - `p1` - Leave the project scope, so the section of the old screen does not outlive it - `inst-4`
-3. [x] - `p1` - Write the chosen item's section, or `null` when it declares none, and publish it - `inst-6`
-4. [x] - `p1` - Mount the chosen item in the screen domain, one mount at a time - `inst-5`
-5. [x] - `p1` - **RETURN** the mounted extension - `inst-7`
+1. [x] - `p1` - Write the address the item means — its token, the context its level carries over from the current address, and its section — as a new history entry - `inst-1`
+2. [x] - `p1` - Following the address, write its section into the shell's context, or `null` when the item declares none, and publish it as the section property - `inst-2`
+3. [x] - `p1` - Write the project scope the address names — the project it carries, or none — so the section of the old screen does not outlive it - `inst-4`
+4. [x] - `p1` - **IF** the group the address names is the one already mounted - `inst-3`
+   1. [x] - `p1` - **RETURN** the section changed without a remount; re-picking the open section republishes the same value and changes nothing - `inst-6`
+5. [x] - `p1` - Mount the group's owner in the screen domain, one mount at a time - `inst-5`
+6. [x] - `p1` - **RETURN** the mounted extension; a mount that did not happen falls back once to the level's entry point (ADR-0022) - `inst-7`
 
-The click is what decides the active item, so the click is what writes it —
-`inst-6` before `inst-5`, and by the same hand as `inst-2`. Deciding it when
-the mount finishes puts the decision on the far side of an await, where the
-next click cannot overrule it: two overlapping mounts then land in whichever
-order they happen to resolve, and the rail names a section the screen does not
-show. The mount is the slow part and the part that can fail; what the member
-asked for is known before it starts.
+The click writes the address, and the address is what decides the active item:
+the section is written when the address is applied, before the mount starts —
+`inst-2` before `inst-5` — and by the same hand for a click, for Back and
+Forward, and for a pasted link (ADR-0022). Deciding it when the mount finishes
+would put the decision on the far side of an await, where the next click cannot
+overrule it: two overlapping mounts then land in whichever order they happen to
+resolve, and the rail names a section the screen does not show. The mount is
+the slow part and the part that can fail; what the member asked for is in the
+address before it starts.
 
 One mount at a time is the rule, not the guarantee: a mount bound to a root
 that has since been detached cannot be called off, and the lock is let go for it
 so that the next one is not swallowed. So `inst-5` is about where things end up
-— once the overlapping mounts have settled, the domain holds the item asked for
-last. A mount that has been replaced and still reaches the domain last is undone
-rather than prevented, by asking for the current item again once the domain is
-free. Preventing it would need a cancellation the runtime does not offer.
-
-`inst-5`'s "one mount at a time" governs the whole click, not just its own
-step: a click that arrives while a mount is running is dropped, the relay of
-`inst-2` included. Relaying a section of the screen being replaced would leave
-that token naming the screen that arrives, and no item of its rail carries it —
-the rail then marks nothing at all.
+— once the overlapping mounts have settled, the domain holds the group the
+address names. A click that arrives while a mount is running is not dropped: it
+is in the address, and when the running mount settles the address is applied
+again, which mounts what it names now. A mount that has been replaced and still
+reaches the domain last is undone rather than prevented, by asking for the
+current group again once the domain is free; `mountScreen`'s own generation
+counter refuses the superseded one. Preventing it would need a cancellation the
+runtime does not offer.
 
 That leaves two writers of the active section, which is what
 `cpt-studiofrontend-flow-shell-levels-section` already asks for: the shell
-writes what was asked for (`inst-3` there), and the MFE's own report is adopted
-when it arrives (`inst-4`/`inst-5` there). Neither races the other — one
-answers the click, the other answers the MFE.
+writes what the address says (`inst-3` there), and the MFE's own report is
+written into the address without a history entry and adopted from there
+(`inst-4`/`inst-5` there). Neither races the other — one answers the click, the
+other answers the MFE, and both go through the address.
 
 ### Assemble the path
 
@@ -299,7 +300,7 @@ same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
 5. [ ] - `p1` - **FROM** Project **TO** Organization **WHEN** an organization-level item is chosen, skipping the level between - `inst-5`
 6. [ ] - `p1` - **FROM** Project **TO** Workspace **WHEN** the workspace is switched, because the open project is not under the new one - `inst-6`
 7. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** the organization is switched, because neither the workspace nor the project survives it - `inst-7`
-8. [ ] - `p1` - **FROM** Organization **TO** Organization **WHEN** the session is reloaded, because no level is restored without an address - `inst-8`
+8. [ ] - `p1` - **FROM** Organization **TO** the level the address names **WHEN** the session is reloaded or a link is opened, because the address is what the shell restores; an empty address stays at Organization (ADR-0022) - `inst-8`
 
 ## 5. Definitions of Done
 

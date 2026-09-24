@@ -115,18 +115,28 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
     dispatch(setContextWorkspacesStatus('pending'));
     void (async () => {
       try {
+        // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-1
         const page = await accounts.getWorkspaces({ organizationId: orgId }).fetch();
+        // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-1
+        // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-2
+        // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-3
         if (context().org?.id !== orgId) return;
+        // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-2
+        // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-3
+        // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-7
         dispatch(setContextWorkspaces((page?.items ?? []).map(toEntity)));
         dispatch(setContextWorkspacesStatus('ready'));
         onChange();
+        // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-7
       } catch (error) {
         if (context().org?.id !== orgId) return;
+        // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-4
         console.warn('Failed to list workspaces:', message(error));
         dispatch(setContextWorkspacesStatus('failed'));
         onChange();
         // Once: the retry is for an aborted duplicate, not for a gear that is down.
         if (!isRetry) eventBus.emit('app/context/workspaces/failed');
+        // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-4
       } finally {
         if (workspacesInFlightFor === orgId) workspacesInFlightFor = null;
       }

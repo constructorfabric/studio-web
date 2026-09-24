@@ -100,6 +100,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     routing.navigation.navigate(route, 'push');
   });
 
+  // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
   eventBus.on('app/context/screen/requested', ({ extensionId }) => {
     if (!routing) return;
     const target = screens().find((candidate) => candidate.id === extensionId);
@@ -108,6 +109,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     const section = sectionOf(target);
     routing.navigation.navigate(routeFor(token, levelOf(target), section ? { section } : {}), 'push');
   });
+  // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
 
   eventBus.on('app/context/org/changed', ({ orgId }) => {
     if (!routing) return;
@@ -195,12 +197,17 @@ export function registerAppContextEffects(app: FrontXApp): void {
     routing.navigation.navigate(routeFor(current.token, 'workspace'), 'push');
   });
 
+  // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
+  // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
   // The MFE's own report of the section it moved to, written without a
-  // history entry: the person did not navigate, the screen did.
+  // history entry: the person did not navigate, the screen did. The rail
+  // follows it from the address, like every other section.
   eventBus.on('app/context/project/section', ({ section }) => {
     if (!routing) return;
     const current = routing.navigation.currentRoute();
     if (!current) return;
     routing.navigation.navigate({ ...current, section: section ?? undefined }, 'replace');
   });
+  // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
+  // @cpt-end:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
 }

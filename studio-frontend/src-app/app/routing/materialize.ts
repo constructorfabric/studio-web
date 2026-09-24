@@ -125,6 +125,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     return groupOfExtension(deps.groups(), mountedId)?.token === group.token;
   };
 
+  // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
   const mountFailed = (registry: MfeRegistry, group: ScreenGroup, key: string, reason: string): void => {
     stuckOn = key;
     warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
@@ -135,6 +136,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       materialize();
       return;
     }
+    // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
     if (fallbackTo === group.token) {
       // The level's entry point did not mount either: nothing is mounted, and
       // the warning above has said so. The next address starts afresh.
@@ -146,8 +148,11 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     fallbackTo = fallback.token;
     navigation.navigate(fallback, 'replace');
     materialize();
+    // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
   };
+  // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
 
+  // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
   const mount = (registry: MfeRegistry, group: ScreenGroup): void => {
     if (isMountingScreen(registry)) return;
     const key = addressKey(group.token);
@@ -168,6 +173,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       })
       .catch((error: unknown) => mountFailed(registry, group, key, messageOf(error)));
   };
+  // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
 
   const retry = (): void => {
     stuckOn = null;
@@ -236,6 +242,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     }
 
     // Project: only a screen below the organization carries it.
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
     if (ownerLevel !== 'organization') {
       if (wanted.workspace) next.workspace = wanted.workspace;
 
@@ -262,8 +269,10 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     } else if (contextOf(app).project) {
       dispatch(closeContextProject());
     }
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
 
     // Section: of the level in scope, defaulting to that level's entry item.
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
     const levelInScope: ScreenLevel = next.project ? 'project' : ownerLevel;
     const sections = group.members
       .filter((member) => levelOf(member) === levelInScope)
@@ -282,10 +291,15 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     }
 
     publishStudioContext(app);
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');
 
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
+    // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
     if (!isMounted(registry, group)) mount(registry, group);
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
+    // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
   };
 
   return { materialize, retry };
