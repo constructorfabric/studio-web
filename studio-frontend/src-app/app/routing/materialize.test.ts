@@ -23,7 +23,12 @@ vi.mock('@/app/mfe/sharedContext', () => ({ publishStudioContext: mocks.publish 
 
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
 import { screen } from '@frontx-test-utils/screenFixture';
-import reducer, { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
+import reducer, {
+  APP_CONTEXT_SLICE_KEY,
+  setContextWorkspaces,
+  setContextWorkspacesStatus,
+  type AppContextState,
+} from '@/app/slices/appContextSlice';
 import { createShellNavigation } from './navigation';
 import { groupScreens } from './screenTokens';
 import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
@@ -75,7 +80,7 @@ function setup(url: string, initial: Partial<AppContextState>) {
   const { materialize, transition, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
   // `transition` stands in for the observer's report: in production every
   // `navigate` below would be followed by it.
-  return { materialize, transition, retry, adapter, state, catalogs, warn, navigation };
+  return { materialize, transition, retry, adapter, state, catalogs, warn, navigation, app };
 }
 
 const ready = { org: ORG, orgs: [ORG], access: 'ready' as const, workspace: WS, workspaces: [WS], workspacesStatus: 'ready' as const };
@@ -94,6 +99,16 @@ describe('materialize', () => {
     expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
     expect(adapter.length()).toBe(1);
     expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'org.overview' }));
+  });
+
+  // Reviewer finding (vasylcf, round 8): since the reducer picks nothing, this
+  // fallback is the only thing that chooses the first organization at a cold start.
+  it('picks the first organization at a cold start, once the list is known and nothing is in scope yet', () => {
+    const { materialize, adapter, state } = setup('/?screen=people', { orgs: [ORG], org: null, access: 'ready' });
+    materialize();
+    expect(adapter.url()).toBe('/?screen=people;org=o1');
+    expect(state().org).toEqual(ORG);
+    expect(adapter.length()).toBe(1);
   });
 
   // Review Focus 5
@@ -132,6 +147,39 @@ describe('materialize', () => {
     expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
   });
 
+  // Reviewer finding (vasylcf, round 8): a link naming the project alone lost it
+  // on the first pass — the project step was gated on a workspace the pending
+  // list could not yet default.
+  it('keeps a project named without a workspace while the list is pending, and opens it once the list is ready', async () => {
+    const { materialize, adapter, state, catalogs, app } = setup('/?screen=projects;org=o1;project=p1', {
+      ...ready, workspace: null, workspaces: [], workspacesStatus: 'pending',
+    });
+    catalogs.resolveProject.mockResolvedValue({ id: 'p1', name: 'Atlas', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
+    materialize();
+    expect(adapter.url()).toContain('project=p1');
+    expect(state().project).toBeNull();
+    expect(catalogs.resolveProject).not.toHaveBeenCalled();
+
+    app.store.dispatch(setContextWorkspaces([WS]));
+    app.store.dispatch(setContextWorkspacesStatus('ready'));
+    materialize();
+    expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p1;section=overview');
+    await vi.waitFor(() => expect(state().project).toEqual(ATLAS));
+    expect(adapter.length()).toBe(1);
+  });
+
+  it("moves the address to the project's own workspace when the tenant says it lives in another one of the organization", async () => {
+    const { materialize, adapter, state, catalogs } = setup('/?screen=projects;org=o1;workspace=w1;project=p9', {
+      ...ready, workspaces: [WS, WS2],
+    });
+    catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w2' });
+    materialize();
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w2;project=p9;section=overview'));
+    expect(state().workspace).toEqual(WS2);
+    await vi.waitFor(() => expect(state().project).toEqual({ id: 'p9', name: 'Nine' }));
+    expect(adapter.length()).toBe(1);
+  });
+
   it('asks for a project it does not know, and closes it when the tenant is elsewhere', async () => {
     const { materialize, adapter, catalogs, state } = setup('/?screen=projects;org=o1;workspace=w1;project=p9;section=overview', ready);
     catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w-other' });
@@ -164,21 +212,31 @@ describe('materialize', () => {
       '/?screen=projects;org=o1;workspace=w1;project=p9',
       { ...ready, workspaces: [WS, WS2] }
     );
-    let answer!: (tenant: unknown) => void;
+    const nine = { id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' };
+    let first!: (tenant: unknown) => void;
+    let second!: (tenant: unknown) => void;
     catalogs.resolveProject
-      .mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }))
-      .mockResolvedValueOnce({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
+      .mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { second = resolve; }))
+      .mockResolvedValue(nine);
     materialize();
     expect(catalogs.resolveProject).toHaveBeenCalledTimes(1);
 
     navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w2', project: 'p9' }, 'push');
     transition();
     expect(state().workspace).toEqual(WS2);
-    answer({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
+    first(nine);
 
-    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w2'));
-    expect(catalogs.resolveProject).toHaveBeenCalledTimes(2);
-    expect(state().project).toBeNull();
+    // The stale answer is not applied under w2 — no name, no move — and the pass for w2 asks again.
+    await vi.waitFor(() => expect(catalogs.resolveProject).toHaveBeenCalledTimes(2));
+    expect(state().project).toEqual({ id: 'p9', name: '' });
+    expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w2;project=p9;section=overview');
+
+    // That answer says p9 lives under w1, another workspace of the organization:
+    // the address moves to the project's workspace rather than refusing it.
+    second(nine);
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p9;section=overview'));
+    await vi.waitFor(() => expect(state().project).toEqual({ id: 'p9', name: 'Nine' }));
   });
 
   // Review Focus 1
