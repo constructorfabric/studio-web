@@ -56,9 +56,10 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const warn = deps.warn ?? ((text: string) => console.warn(text));
   const dispatch = app.store.dispatch;
   const resolving = new Set<string>();
-  let recovering = false;
   /** The screen and address of a mount that did not happen, so it is not tried again until either changes. */
   let stuckOn: string | null = null;
+  /** The entry point a failed mount fell back to, so its own failure is not fallen back from — once (ADR-0022). */
+  let fallbackTo: string | null = null;
 
   const screensOf = (registry: MfeRegistry): ScreenExtension[] =>
     registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
@@ -117,10 +118,22 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const mountFailed = (registry: MfeRegistry, group: ScreenGroup, key: string, reason: string): void => {
     stuckOn = key;
     warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
-    if (recovering) return;
-    recovering = true;
+    if (key !== addressKey(group.token)) {
+      // The address moved on while this mount was running: the failure is
+      // about a place the person has left, and the current address gets its
+      // own pass rather than being replaced by a fallback for the old one.
+      materialize();
+      return;
+    }
+    if (fallbackTo === group.token) {
+      // The level's entry point did not mount either: nothing is mounted, and
+      // the warning above has said so. The next address starts afresh.
+      fallbackTo = null;
+      return;
+    }
     const fallback = entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
     if (!fallback || fallback.token === group.token) return;
+    fallbackTo = fallback.token;
     navigation.navigate(fallback, 'replace');
     materialize();
   };
@@ -134,7 +147,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
         // The registry logs a failed chain and resolves — it never rejects — so
         // success is read off the mounted set, not off the promise.
         if (isMounted(registry, group)) {
-          recovering = false;
+          fallbackTo = null;
           stuckOn = null;
           materialize();
           return;
@@ -148,7 +161,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
   const retry = (): void => {
     stuckOn = null;
-    recovering = false;
+    fallbackTo = null;
     materialize();
   };
 

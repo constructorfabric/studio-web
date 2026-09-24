@@ -35,6 +35,7 @@ const screens = [
   screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
   screen('people', '/people', 'organization', { order: 30 }),
+  screen('gears', '/gears', 'organization', { order: 40 }),
   screen('projects.main', '/projects', 'workspace', { order: 20 }),
   screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 }),
   screen('projects.artifacts', '/projects/artifacts', 'project', { section: 'artifacts', order: 20 }),
@@ -243,6 +244,49 @@ describe('materialize', () => {
     navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1' }, 'push');
     materialize();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
+  });
+
+  // Reviewer finding (vasylcf): the guard against a second fallback was one flag
+  // for the whole session, so after an entry point failed once no later failure
+  // anywhere was fallen back from.
+  it('falls back once per address: a later failure elsewhere gets its own fallback', async () => {
+    mocks.mountScreen.mockImplementation(async () => undefined);
+    const { materialize, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    materialize();
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(4));
+    expect(mocks.mountScreen.mock.calls[2][1]).toMatchObject({ id: 'gears' });
+    expect(mocks.mountScreen.mock.calls[3][1]).toMatchObject({ id: 'org.overview' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.length()).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(4);
+  });
+
+  it('a failure about an address since left re-applies the current one instead of replacing it', async () => {
+    let finish!: () => void;
+    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { materialize, adapter, navigation } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    mocks.isMountingScreen.mockReturnValue(true);
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    mocks.isMountingScreen.mockReturnValue(false);
+    finish();
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
+    expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'gears' });
+    expect(adapter.url()).toBe('/?screen=gears;org=o1');
+    expect(adapter.length()).toBe(2);
   });
 
   it('does not treat a superseded mount as a failure while another one is running', async () => {
