@@ -26,3 +26,26 @@ export function takeReturnTo(): string | null {
   sessionStorage.removeItem(KEY_RETURN_TO);
   return value !== null && isRelative(value) ? value : null;
 }
+
+function decodedName(segment: string): string {
+  const name = segment.split('=')[0];
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+/**
+ * The query string without the named parameters, every other segment kept
+ * byte-for-byte. Deliberately not `URLSearchParams`: deleting through it
+ * re-serialises the whole query and turns the router grammar's `;` and `=`
+ * inside a value into `%3B` and `%3D` (ADR-0022) — the address the shell
+ * then reads names no screen at all.
+ */
+export function withoutCallbackParams(search: string, names: readonly string[]): string {
+  const raw = search.startsWith('?') ? search.slice(1) : search;
+  if (!raw) return '';
+  const kept = raw.split('&').filter((segment) => segment !== '' && !names.includes(decodedName(segment)));
+  return kept.length > 0 ? `?${kept.join('&')}` : '';
+}

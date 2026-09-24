@@ -18,20 +18,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useFrontX } from '@gears-frontx/react';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 import { LoginScreen } from './LoginScreen';
-import { takeReturnTo } from './returnTo';
+import { takeReturnTo, withoutCallbackParams } from './returnTo';
 
 const OIDC_CALLBACK_PARAMS = ['code', 'state', 'session_state', 'iss', 'error', 'error_description'];
 
 type Phase = 'restoring' | 'unauthenticated' | 'authenticated';
 
 function scrubCallbackParams(): void {
-  const url = new URL(window.location.href);
-  for (const p of OIDC_CALLBACK_PARAMS) url.searchParams.delete(p);
+  const { pathname, search, hash } = window.location;
   // The deep link `login()` remembered, if any, replaces what is left of the
   // callback address. Done here, before the router exists, so the history the
-  // shell later resolves already reads the restored address (ADR-0022).
+  // shell later resolves already reads the restored address (ADR-0022). The
+  // strip is segment-wise on purpose: `URLSearchParams` would re-encode the
+  // router's `;`-separated entry into something the shell cannot read.
   const returnTo = takeReturnTo();
-  window.history.replaceState({}, document.title, url.pathname + (returnTo ?? url.search + url.hash));
+  const next = pathname + (returnTo ?? withoutCallbackParams(search, OIDC_CALLBACK_PARAMS) + hash);
+  if (next !== pathname + search + hash) window.history.replaceState({}, document.title, next);
 }
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {

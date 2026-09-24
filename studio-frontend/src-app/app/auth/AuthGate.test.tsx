@@ -70,6 +70,19 @@ describe('AuthGate', () => {
     expect(sessionStorage.getItem('studio.oidc.return_to')).toBeNull();
   });
 
+  // The scrub used to go through URLSearchParams, which re-serialises the whole
+  // query and turns the router grammar's `;` and `=` into %3B and %3D — and in
+  // StrictMode the second scrub did that to the link the first one had restored.
+  it('scrubs the callback without re-encoding the address the router reads', async () => {
+    window.history.replaceState({}, '', '/?screen=people;org=o1&code=abc&state=xyz');
+    mockAuth.checkAuth.mockResolvedValue({ authenticated: true, session: { kind: 'bearer', token: 't' } });
+
+    render(<AuthGate>app-content</AuthGate>);
+
+    expect(await screen.findByText('app-content')).toBeTruthy();
+    expect(window.location.search).toBe('?screen=people;org=o1');
+  });
+
   it('lands on the login screen when checkAuth rejects — never stuck on restoring', async () => {
     mockAuth.checkAuth.mockRejectedValue(new Error('token endpoint returned a non-JSON response'));
     render(<AuthGate>app-content</AuthGate>);

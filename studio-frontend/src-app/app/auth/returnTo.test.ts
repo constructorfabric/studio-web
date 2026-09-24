@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { rememberReturnTo, takeReturnTo } from './returnTo';
+import { rememberReturnTo, takeReturnTo, withoutCallbackParams } from './returnTo';
 
 describe('returnTo', () => {
   afterEach(() => sessionStorage.clear());
@@ -21,5 +21,24 @@ describe('returnTo', () => {
     expect(takeReturnTo()).toBeNull();
     sessionStorage.setItem('studio.oidc.return_to', '/somewhere');
     expect(takeReturnTo()).toBeNull();
+  });
+});
+
+describe('withoutCallbackParams', () => {
+  const OIDC = ['code', 'state', 'session_state', 'iss', 'error', 'error_description'];
+
+  it('drops the callback parameters and leaves every other segment byte-for-byte', () => {
+    expect(withoutCallbackParams('?screen=people;org=o1&code=abc&state=xyz&iss=https%3A%2F%2Fidp', OIDC)).toBe(
+      '?screen=people;org=o1'
+    );
+  });
+
+  it('touches nothing when no callback parameter is present', () => {
+    expect(withoutCallbackParams('?screen=projects;org=o1;workspace=w1', OIDC)).toBe('?screen=projects;org=o1;workspace=w1');
+    expect(withoutCallbackParams('', OIDC)).toBe('');
+  });
+
+  it('returns an empty string when only callback parameters were there', () => {
+    expect(withoutCallbackParams('?code=abc&state=xyz', OIDC)).toBe('');
   });
 });
