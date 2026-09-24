@@ -107,6 +107,9 @@ jobs:
           # commit, not everything between the old SHA and today's main.
           base: ${{ steps.manual-base.outputs.sha }}
           ref: ${{ github.event.inputs.source_ref || github.ref }}
+          # The backend filter has multiple includes and one exclusion. With
+          # the default "some", the negated glob matches unrelated Theia files.
+          predicate-quantifier: some-with-excludes
           filters: |
             backend:
               - 'studio-backend/**'
