@@ -60,6 +60,7 @@ const {
   setContextWorkspace,
   addContextWorkspace,
   setContextProjects,
+  rememberProject,
   openContextProject,
   closeContextProject,
   setContextSection,
@@ -143,6 +144,24 @@ const {
       state.projects = action.payload;
     },
 
+    /**
+     * A project the shell learned about — from an `opened` publish, a sibling
+     * list, or a tenant read for an address that named it. Data, not a
+     * selection: which project is open is the address's to say (ADR-0022).
+     */
+    rememberProject: (state: AppContextState, action: ReducerPayload<ContextEntity>) => {
+      const listed = state.projects.find((project) => project.id === action.payload.id);
+      if (!listed) state.projects = [...state.projects, action.payload];
+      else if (action.payload.name && listed.name !== action.payload.name) listed.name = action.payload.name;
+      if (
+        state.project?.id === action.payload.id &&
+        action.payload.name &&
+        state.project.name !== action.payload.name
+      ) {
+        state.project = { ...state.project, name: action.payload.name };
+      }
+    },
+
     openContextProject: (
       state: AppContextState,
       action: ReducerPayload<ContextEntity>
@@ -172,6 +191,7 @@ export {
   setContextWorkspace,
   addContextWorkspace,
   setContextProjects,
+  rememberProject,
   openContextProject,
   closeContextProject,
   setContextSection,
