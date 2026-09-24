@@ -9,7 +9,13 @@
  * left is dropped, not applied to whatever is current now.
  */
 import { apiRegistry, eventBus, type FrontXApp } from '@gears-frontx/react';
-import { AccountsApiService, TENANT_TYPES, responseStatus, type Tenant } from '@constructor-studio/mfe-shared';
+import {
+  AccountsApiService,
+  TENANT_TYPES,
+  errorMessage,
+  responseStatus,
+  type Tenant,
+} from '@constructor-studio/mfe-shared';
 import { IdentityApiService, PLATFORM_ROOT_TENANT_ID } from '@/app/api';
 import {
   readAppContext,
@@ -50,10 +56,6 @@ function toEntity(tenant: Tenant): ContextEntity {
   };
 }
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * A 404 or 403 is the backend's answer about the tenant — outside the caller's
  * subtree account-management answers 404 by design. Anything else (a network
@@ -89,8 +91,13 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
       memberships.map(async (membership) => {
         try {
           return await accounts.getTenant({ tenantId: membership.org_id }).fetch();
-        } catch {
-          return null;
+        } catch (error) {
+          // Outside a self-managed organization's subtree the backend answers
+          // 404 by design: that membership is dropped. A read that failed for
+          // another reason says nothing about it, and the whole resolve fails
+          // rather than reading as "member of fewer" (reviewer finding).
+          if (isRefusal(error)) return null;
+          throw error;
         }
       })
     );
@@ -126,7 +133,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
       } catch (error) {
         if (context().org?.id !== orgId) return;
         // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-4
-        console.warn('Failed to list workspaces:', message(error));
+        console.warn('Failed to list workspaces:', errorMessage(error));
         dispatch(setContextWorkspacesStatus('failed'));
         onChange();
         // Once: the retry is for an aborted duplicate, not for a gear that is down.
@@ -162,7 +169,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
       // here would race it and be thrown away when the address names another.
       onChange();
     } catch (error) {
-      console.warn('Failed to resolve organizations:', message(error));
+      console.warn('Failed to resolve organizations:', errorMessage(error));
       // A failed resolve is not the same as having no access: leave the access
       // state alone so a transient failure does not show an onboarding screen
       // to somebody who has an organization.
@@ -187,7 +194,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
         onChange();
       } catch (error) {
         if (context().workspace?.id !== workspaceId) return;
-        console.warn('Failed to list projects:', message(error));
+        console.warn('Failed to list projects:', errorMessage(error));
         // Once per workspace: `materialize` asks while the list is pending,
         // and a list that could not be read is not pending. The MFE's own
         // list, published when its screen shows, still fills the switcher.
@@ -203,7 +210,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
     try {
       return await apiRegistry.getService(AccountsApiService).getTenant({ tenantId: projectId }).fetch();
     } catch (error) {
-      console.warn(`Failed to read project ${projectId}:`, message(error));
+      console.warn(`Failed to read project ${projectId}:`, errorMessage(error));
       return isRefusal(error) ? null : 'unavailable';
     }
   };

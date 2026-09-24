@@ -58,7 +58,7 @@ describe('createContextCatalogs', () => {
     accounts.getTenant.mockImplementation(({ tenantId }: { tenantId: string }) => ({
       fetch: () =>
         tenantId === 'o2'
-          ? Promise.reject(new Error('404'))
+          ? Promise.reject(Object.assign(new Error('Not Found'), { response: { status: 404 } }))
           : Promise.resolve(tenant('o1', 'Org', TENANT_TYPES.organization)),
     }));
     accounts.getWorkspaces.mockReturnValue({ fetch: () => Promise.resolve({ items: [] }) });
@@ -68,6 +68,29 @@ describe('createContextCatalogs', () => {
     expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([{ id: 'o1', name: 'Org', count: 0 }]));
     expect(dispatch).toHaveBeenCalledWith(setContextAccess('ready'));
     expect(onChange).toHaveBeenCalled();
+  });
+
+  // Reviewer finding (coderabbit): a membership whose read failed for any
+  // other reason was dropped like a refused one — a deep link to it was lost,
+  // and a person whose reads all failed was shown the onboarding screen.
+  it('does not drop a membership, or report no access, when its read merely failed', async () => {
+    accounts.getMe.fetch.mockResolvedValue({ subject_tenant_id: 'home' });
+    identity.myMemberships.fetch.mockResolvedValue({ items: [{ org_id: 'o1' }, { org_id: 'o2' }] });
+    accounts.getTenant.mockImplementation(({ tenantId }: { tenantId: string }) => ({
+      fetch: () =>
+        tenantId === 'o2'
+          ? Promise.reject(new Error('502'))
+          : Promise.resolve(tenant('o1', 'Org', TENANT_TYPES.organization)),
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(dispatch).not.toHaveBeenCalledWith(setContextAccess('unassigned'));
+    expect(dispatch.mock.calls.some(([action]) => action.type === setContextOrganizations([]).type)).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("walks the root's children for the platform administrator", async () => {
@@ -158,6 +181,40 @@ describe('createContextCatalogs', () => {
   });
 
   // Reviewer finding (vasylcf): a failed projects read must not be re-issued on every pass.
+  // Reviewer finding (vasylcf): the stale-scope guard of loadProjects had no
+  // test, unlike its twin in loadWorkspaces.
+  it('drops a projects list that arrives for a workspace since left', async () => {
+    let resolve!: (value: unknown) => void;
+    accounts.getProjects.mockReturnValue({ fetch: () => new Promise((r) => { resolve = r; }) });
+    const catalogs = createContextCatalogs(app, onChange);
+
+    catalogs.loadProjects('w1');
+    state['app/context'] = { org: { id: 'o1', name: 'Org' }, workspace: { id: 'w2', name: 'Other' } };
+    resolve({ items: [tenant('p1', 'Atlas', 'project', 'w1')] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('drops a projects failure that arrives for a workspace since left', async () => {
+    let reject!: (reason: unknown) => void;
+    accounts.getProjects.mockReturnValue({ fetch: () => new Promise((_r, rj) => { reject = rj; }) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const catalogs = createContextCatalogs(app, onChange);
+
+    catalogs.loadProjects('w1');
+    state['app/context'] = { org: { id: 'o1', name: 'Org' }, workspace: { id: 'w2', name: 'Other' } };
+    reject(new Error('down'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dispatch).not.toHaveBeenCalledWith(setContextProjectsStatus('failed'));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('marks the projects list failed when the read fails', async () => {
     accounts.getProjects.mockReturnValue({ fetch: () => Promise.reject(new Error('down')) });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
