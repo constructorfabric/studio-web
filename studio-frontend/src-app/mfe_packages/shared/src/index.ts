@@ -102,3 +102,4 @@ export {
   workspacesPath,
 } from './accounts/accountsPaths';
 export { isNotFound, orNullOnNotFound, responseStatus } from './errors/notFound';
+export { errorMessage } from './errors/message';

@@ -10,7 +10,7 @@
  * and `section`, and the only caller of `mountScreen`.
  */
 import { screenDomain, type FrontXApp, type MfeRegistry, type ScreenExtension } from '@gears-frontx/react';
-import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
+import { TENANT_TYPES, errorMessage } from '@constructor-studio/mfe-shared';
 import { entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
@@ -46,10 +46,6 @@ export interface Materializer {
   transition(): void;
   /** Forgets a mount that failed and applies the address again — for when the screen slot has re-attached. */
   retry(): void;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function createMaterializer(deps: MaterializerDeps): Materializer {
@@ -179,7 +175,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
         if (isMountingScreen(registry)) return;
         mountFailed(registry, group, startedIn, 'the actions chain did not complete');
       })
-      .catch((error: unknown) => mountFailed(registry, group, startedIn, messageOf(error)));
+      .catch((error: unknown) => mountFailed(registry, group, startedIn, errorMessage(error)));
   };
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
 
