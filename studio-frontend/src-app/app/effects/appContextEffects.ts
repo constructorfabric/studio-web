@@ -80,7 +80,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
 
   eventBus.on('app/routing/start', () => {
     if (routing) {
-      routing.materialize();
+      // The slot re-attached: whatever failed to mount before has a root again.
+      routing.retry();
       return;
     }
     routing = startRouting(app, catalogs);

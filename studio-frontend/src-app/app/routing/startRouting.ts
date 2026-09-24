@@ -26,6 +26,8 @@ export interface RoutingHandle {
   navigation: ShellNavigation;
   groups(): readonly ScreenGroup[];
   materialize(): void;
+  /** Applies the address again after the screen slot re-attached, forgetting a mount that failed. */
+  retry(): void;
   release(): void;
 }
 
@@ -51,6 +53,7 @@ export function startRouting(
     navigation,
     groups: () => groups,
     materialize: materializer.materialize,
+    retry: materializer.retry,
     release,
   };
 }

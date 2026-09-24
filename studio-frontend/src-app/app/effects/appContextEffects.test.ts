@@ -8,6 +8,7 @@ const { SCREEN_DOMAIN, listeners, mockEmit, handle, catalogs, mockStartRouting }
     navigation: { currentRoute: vi.fn(), navigate: vi.fn() },
     groups: vi.fn(),
     materialize: vi.fn(),
+    retry: vi.fn(),
     release: vi.fn(),
   };
   const catalogs = { loadOrganizations: vi.fn(), loadWorkspaces: vi.fn(), loadProjects: vi.fn(), resolveProject: vi.fn() };
@@ -86,11 +87,12 @@ describe('registerAppContextEffects', () => {
     vi.clearAllMocks();
   });
 
-  it('starts routing once the slot is attached, and only re-applies the address after that', async () => {
+  it('starts routing once the slot is attached, and only retries the address after that', async () => {
     expect(mockStartRouting).toHaveBeenCalledTimes(1);
     await emit('app/routing/start');
     expect(mockStartRouting).toHaveBeenCalledTimes(1);
-    expect(handle.materialize).toHaveBeenCalledTimes(1);
+    expect(handle.retry).toHaveBeenCalledTimes(1);
+    expect(handle.materialize).not.toHaveBeenCalled();
   });
 
   it('loads the organizations when the context is asked for', async () => {

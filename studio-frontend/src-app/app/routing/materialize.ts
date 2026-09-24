@@ -10,6 +10,7 @@
  * and `section`, and the only caller of `mountScreen`.
  */
 import { screenDomain, type FrontXApp, type MfeRegistry, type ScreenExtension } from '@gears-frontx/react';
+import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
 import { entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
@@ -38,6 +39,8 @@ export interface MaterializerDeps {
 
 export interface Materializer {
   materialize(): void;
+  /** Forgets a mount that failed and applies the address again — for when the screen slot has re-attached. */
+  retry(): void;
 }
 
 function contextOf(app: FrontXApp): AppContextState {
@@ -54,6 +57,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const dispatch = app.store.dispatch;
   const resolving = new Set<string>();
   let recovering = false;
+  /** The screen and address of a mount that did not happen, so it is not tried again until either changes. */
+  let stuckOn: string | null = null;
 
   const screensOf = (registry: MfeRegistry): ScreenExtension[] =>
     registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
@@ -81,7 +86,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       resolving.delete(projectId);
       const current = navigation.currentRoute();
       if (current?.project !== projectId) return;
-      const parentOk = tenant !== null && (tenant.parent_id === workspaceId || (orgId !== undefined && tenant.parent_id === orgId));
+      // A project may sit under its workspace or straight under the organization
+      // (the wizard does the latter) — but every workspace sits under the
+      // organization too, so the type has to say project as well.
+      const parentOk =
+        tenant !== null &&
+        tenant.tenant_type === TENANT_TYPES.project &&
+        (tenant.parent_id === workspaceId || (orgId !== undefined && tenant.parent_id === orgId));
       if (!tenant || !parentOk) {
         warn(`Project ${projectId} is not in workspace ${workspaceId}; closing it`);
         navigation.navigate({ ...current, project: undefined, section: undefined }, 'replace');
@@ -93,22 +104,52 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     });
   };
 
+  const addressKey = (token: string): string => {
+    const route = navigation.currentRoute();
+    return [token, route?.token, route?.org, route?.workspace, route?.project, route?.section].join('|');
+  };
+
+  const isMounted = (registry: MfeRegistry, group: ScreenGroup): boolean => {
+    const [mountedId] = registry.getMountedExtensions(screenDomain.id);
+    return groupOfExtension(deps.groups(), mountedId)?.token === group.token;
+  };
+
+  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, key: string, reason: string): void => {
+    stuckOn = key;
+    warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
+    if (recovering) return;
+    recovering = true;
+    const fallback = entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
+    if (!fallback || fallback.token === group.token) return;
+    navigation.navigate(fallback, 'replace');
+    materialize();
+  };
+
   const mount = (registry: MfeRegistry, group: ScreenGroup): void => {
     if (isMountingScreen(registry)) return;
+    const key = addressKey(group.token);
+    if (stuckOn === key) return;
     void mountScreen(registry, group.owner)
       .then(() => {
-        recovering = false;
-        materialize();
+        // The registry logs a failed chain and resolves — it never rejects — so
+        // success is read off the mounted set, not off the promise.
+        if (isMounted(registry, group)) {
+          recovering = false;
+          stuckOn = null;
+          materialize();
+          return;
+        }
+        // Another mount took over (a StrictMode re-attach); its own completion re-runs this.
+        if (isMountingScreen(registry)) return;
+        mountFailed(registry, group, key, 'the actions chain did not complete');
       })
-      .catch((error: unknown) => {
-        warn(`Failed to mount ${group.token}: ${messageOf(error)}`);
-        if (recovering) return;
-        recovering = true;
-        const fallback = entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
-        if (!fallback || fallback.token === group.token) return;
-        navigation.navigate(fallback, 'replace');
-        materialize();
-      });
+      .catch((error: unknown) => mountFailed(registry, group, key, messageOf(error)));
+  };
+
+  const retry = (): void => {
+    stuckOn = null;
+    recovering = false;
+    materialize();
   };
 
   const materialize = (): void => {
@@ -209,9 +250,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');
 
-    const [mountedId] = registry.getMountedExtensions(screenDomain.id);
-    if (groupOfExtension(groups, mountedId)?.token !== group.token) mount(registry, group);
+    if (!isMounted(registry, group)) mount(registry, group);
   };
 
-  return { materialize };
+  return { materialize, retry };
 }

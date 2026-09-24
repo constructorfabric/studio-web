@@ -25,6 +25,7 @@ import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHisto
 import reducer, { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { createShellNavigation } from './navigation';
 import { groupScreens } from './screenTokens';
+import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
 import { createMaterializer } from './materialize';
 
 const screen = (id: string, route: string, level: string, extra: Record<string, unknown> = {}): ScreenExtension =>
@@ -71,8 +72,8 @@ function setup(url: string, initial: Partial<AppContextState>) {
     resolveProject: vi.fn(),
   };
   const warn = vi.fn();
-  const { materialize } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
-  return { materialize, adapter, state, catalogs, warn, navigation };
+  const { materialize, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
+  return { materialize, retry, adapter, state, catalogs, warn, navigation };
 }
 
 const ready = { org: ORG, orgs: [ORG], access: 'ready' as const, workspace: WS, workspaces: [WS], workspacesStatus: 'ready' as const };
@@ -131,7 +132,7 @@ describe('materialize', () => {
 
   it('asks for a project it does not know, and closes it when the tenant is elsewhere', async () => {
     const { materialize, adapter, catalogs, state } = setup('/?screen=projects;org=o1;workspace=w1;project=p9;section=overview', ready);
-    catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', parent_id: 'w-other' });
+    catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w-other' });
     materialize();
     expect(state().project).toEqual({ id: 'p9', name: '' });
     await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1'));
@@ -141,7 +142,7 @@ describe('materialize', () => {
   // Review Focus 1
   it('accepts a project whose parent is the organization', async () => {
     const { materialize, catalogs, state } = setup('/?screen=projects;org=o1;workspace=w1;project=p9', ready);
-    catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', parent_id: 'o1' });
+    catalogs.resolveProject.mockResolvedValue({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'o1' });
     materialize();
     await vi.waitFor(() => expect(state().project).toEqual({ id: 'p9', name: 'Nine' }));
   });
@@ -221,5 +222,57 @@ describe('materialize', () => {
     const { materialize } = setup('/?screen=people;org=o1', ready);
     materialize();
     expect(mocks.mountScreen).not.toHaveBeenCalled();
+  });
+
+  // Reviewer finding: the registry logs a failed chain and resolves — it never rejects.
+  it('stops after one fallback when the chain resolves without mounting', async () => {
+    mocks.mountScreen.mockImplementation(async () => undefined);
+    const { materialize, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview'));
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    materialize();
+    materialize();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(adapter.length()).toBe(1);
+
+    // A new address is a new chance.
+    navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1' }, 'push');
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not treat a superseded mount as a failure while another one is running', async () => {
+    mocks.mountScreen.mockImplementation(async () => {
+      mocks.isMountingScreen.mockReturnValue(true);
+    });
+    const { materialize, adapter, warn } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(warn).not.toHaveBeenCalled();
+    expect(adapter.url()).toBe('/?screen=people;org=o1');
+  });
+
+  it('retries a stuck screen when asked to, once the slot is attached again', async () => {
+    mocks.mountScreen.mockImplementation(async () => undefined);
+    const { materialize, retry } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: ScreenExtension) => { mocks.mounted = [ext.id]; });
+    retry();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
+    expect(mocks.mounted).toEqual(['org.overview']);
+  });
+
+  // Reviewer finding: every workspace's parent is the organization too.
+  it('refuses a tenant that is not a project, even under the organization', async () => {
+    const { materialize, adapter, catalogs } = setup('/?screen=projects;org=o1;workspace=w1;project=w1', ready);
+    catalogs.resolveProject.mockResolvedValue({ id: 'w1', name: 'Work', tenant_type: TENANT_TYPES.workspace, parent_id: 'o1' });
+    materialize();
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1'));
   });
 });
