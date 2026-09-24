@@ -28,8 +28,13 @@ python3 .claude/skills/studio-frontend-review/scripts/find_prs.py --json
 DRY_RUN=1 .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh <N>
 
 # crontab -e   (WSL: cron must be running — `sudo service cron start`, or enable systemd in /etc/wsl.conf)
-*/30 8-20 * * 1-5  cd ~/projects/fabric/studio-web-review && git pull -q --ff-only && .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh >> ~/.cache/studio-frontend-review/cron.log 2>&1
+PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
+*/30 8-20 * * 1-5  { cd $HOME/projects/fabric/studio-web-review && git pull -q --ff-only || { echo "$(date -Is) git pull failed, skipping this run"; exit 1; }; .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh; } >> $HOME/.cache/studio-frontend-review/cron.log 2>&1
 ```
+
+`PATH` is needed because cron's default one has neither `claude` nor `~/.local/bin`. The whole line, including
+`git pull`, logs to `cron.log`, so a deleted branch or a diverged clone shows up there instead of silently
+stopping reviews.
 
 ## Option B — GitHub Actions (reviews within minutes of a push, machine-independent)
 

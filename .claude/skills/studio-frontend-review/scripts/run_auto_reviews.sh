@@ -7,9 +7,8 @@
 #
 # Env: REVIEW_RUNS (workdir root, default ~/.cache/studio-frontend-review), MAX_BUDGET_USD (per PR, default 15),
 #      CLAUDE_BIN (default claude), REVIEW_MODEL (orchestrator model, default sonnet). Run it from a checkout that has this skill (a dedicated clone on main is best:
-#      the review worktrees are created from it). Cron example (every 30 min on weekdays):
-#      */30 8-20 * * 1-5  cd ~/projects/fabric/studio-web-review && git pull -q --ff-only && \
-#                         .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh >> ~/.cache/studio-frontend-review/cron.log 2>&1
+#      the review worktrees are created from it). Cron setup (PATH, logging of git pull failures):
+#      references/automation.md, "Option A".
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
