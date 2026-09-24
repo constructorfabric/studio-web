@@ -83,10 +83,20 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const resolveLater = (projectId: string, workspaceId: string, orgId: string | undefined): void => {
     if (resolving.has(projectId)) return;
     resolving.add(projectId);
-    void catalogs.resolveProject(projectId).then((tenant) => {
+    void catalogs.resolveProject(projectId).then((lookup) => {
       resolving.delete(projectId);
       const current = navigation.currentRoute();
       if (current?.project !== projectId) return;
+      if (current.org !== orgId || current.workspace !== workspaceId) {
+        // Asked in one scope, answered in another: the pass for the scope that
+        // is current now asks again, and judges the answer against itself.
+        materialize();
+        return;
+      }
+      // A read that failed says nothing about the project: the address keeps
+      // it, the MFE has its id already, and the next pass asks again.
+      if (lookup === 'unavailable') return;
+      const tenant = lookup;
       // A project may sit under its workspace or straight under the organization
       // (the wizard does the latter) — but every workspace sits under the
       // organization too, so the type has to say project as well.

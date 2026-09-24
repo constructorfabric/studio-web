@@ -23,11 +23,19 @@ import {
   type ContextEntity,
 } from '@/app/slices/appContextSlice';
 
+/**
+ * What a tenant read for an address's project came back with: the tenant, a
+ * definite refusal (`null` — the backend answered that there is no such tenant
+ * for this caller), or nothing at all (`'unavailable'` — the read failed and
+ * said nothing about the project).
+ */
+export type ProjectLookup = Tenant | null | 'unavailable';
+
 export interface ContextCatalogs {
   loadOrganizations(): Promise<void>;
   loadWorkspaces(orgId: string, isRetry?: boolean): void;
   loadProjects(workspaceId: string): void;
-  resolveProject(projectId: string): Promise<Tenant | null>;
+  resolveProject(projectId: string): Promise<ProjectLookup>;
 }
 
 function isOrganization(tenant: Tenant): boolean {
@@ -44,6 +52,17 @@ function toEntity(tenant: Tenant): ContextEntity {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A 404 or 403 is the backend's answer about the tenant — outside the caller's
+ * subtree account-management answers 404 by design. Anything else (a network
+ * failure, an aborted request, a 5xx) is not an answer.
+ */
+function isRefusal(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const status = (error as { response?: { status?: number } }).response?.status;
+  return status === 404 || status === 403;
 }
 
 export function createContextCatalogs(app: FrontXApp, onChange: () => void): ContextCatalogs {
@@ -165,13 +184,13 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
     })();
   };
 
-  const resolveProject = async (projectId: string): Promise<Tenant | null> => {
+  const resolveProject = async (projectId: string): Promise<ProjectLookup> => {
     if (!apiRegistry.has(AccountsApiService)) return null;
     try {
       return await apiRegistry.getService(AccountsApiService).getTenant({ tenantId: projectId }).fetch();
     } catch (error) {
       console.warn(`Failed to read project ${projectId}:`, message(error));
-      return null;
+      return isRefusal(error) ? null : 'unavailable';
     }
   };
 

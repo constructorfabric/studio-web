@@ -120,9 +120,16 @@ describe('createContextCatalogs', () => {
     expect(onChange).toHaveBeenCalled();
   });
 
-  it('answers null for a project it cannot read', async () => {
-    accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(new Error('403')) });
+  it('answers null for a project the backend refuses', async () => {
+    const refused = Object.assign(new Error('Not Found'), { response: { status: 404 } });
+    accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(refused) });
     await expect(createContextCatalogs(app, onChange).resolveProject('p9')).resolves.toBeNull();
+  });
+
+  // Reviewer finding (coderabbit): a network failure is not an answer about the project.
+  it('says unavailable for a read that failed without answering', async () => {
+    accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(new Error('network')) });
+    await expect(createContextCatalogs(app, onChange).resolveProject('p9')).resolves.toBe('unavailable');
   });
 
   it('leaves the workspace list to whoever applies the address, instead of loading the first organization\'s eagerly', async () => {

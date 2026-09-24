@@ -44,6 +44,7 @@ const groups = groupScreens(screens);
 
 const ORG = { id: 'o1', name: 'Org' };
 const WS = { id: 'w1', name: 'Work' };
+const WS2 = { id: 'w2', name: 'Other' };
 const ATLAS = { id: 'p1', name: 'Atlas' };
 
 function fakeApp(initial: Partial<AppContextState>) {
@@ -138,6 +139,46 @@ describe('materialize', () => {
     expect(state().project).toEqual({ id: 'p9', name: '' });
     await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1'));
     expect(adapter.length()).toBe(1);
+  });
+
+  // Reviewer finding (coderabbit): a read that failed used to close the project
+  // and overwrite the pasted link, with nothing left to retry from.
+  it('keeps a project in the address when its read merely failed, and asks again on the next pass', async () => {
+    const { materialize, adapter, catalogs, state, warn } = setup('/?screen=projects;org=o1;workspace=w1;project=p9;section=overview', ready);
+    catalogs.resolveProject.mockResolvedValue('unavailable');
+    materialize();
+    expect(catalogs.resolveProject).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p9;section=overview');
+    expect(state().project).toEqual({ id: 'p9', name: '' });
+    expect(warn).not.toHaveBeenCalled();
+    const asked = catalogs.resolveProject.mock.calls.length;
+    materialize();
+    expect(catalogs.resolveProject).toHaveBeenCalledTimes(asked + 1);
+  });
+
+  // Reviewer finding (coderabbit): the same project id asked for under one
+  // workspace and answered under another must not be judged by the old scope.
+  it('judges a lookup by the scope that is current when it lands, not the one it was asked in', async () => {
+    const { materialize, adapter, catalogs, state, navigation } = setup(
+      '/?screen=projects;org=o1;workspace=w1;project=p9',
+      { ...ready, workspaces: [WS, WS2] }
+    );
+    let answer!: (tenant: unknown) => void;
+    catalogs.resolveProject
+      .mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }))
+      .mockResolvedValueOnce({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
+    materialize();
+    expect(catalogs.resolveProject).toHaveBeenCalledTimes(1);
+
+    navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w2', project: 'p9' }, 'push');
+    materialize();
+    expect(state().workspace).toEqual(WS2);
+    answer({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
+
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w2'));
+    expect(catalogs.resolveProject).toHaveBeenCalledTimes(2);
+    expect(state().project).toBeNull();
   });
 
   // Review Focus 1
