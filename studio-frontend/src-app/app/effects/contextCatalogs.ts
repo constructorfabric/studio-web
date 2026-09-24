@@ -133,8 +133,10 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
       // An authenticated person with no organization is a supported state, and
       // the shell has to say so rather than render an empty switcher.
       dispatch(setContextAccess(items.length > 0 ? 'ready' : 'unassigned'));
+      // The workspaces of whichever organization the address names are loaded
+      // by `materialize` on this callback; loading the first organization's
+      // here would race it and be thrown away when the address names another.
       onChange();
-      if (current) loadWorkspaces(current.id);
     } catch (error) {
       console.warn('Failed to resolve organizations:', message(error));
       // A failed resolve is not the same as having no access: leave the access

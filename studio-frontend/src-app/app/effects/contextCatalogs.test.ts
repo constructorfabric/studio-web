@@ -124,4 +124,15 @@ describe('createContextCatalogs', () => {
     accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(new Error('403')) });
     await expect(createContextCatalogs(app, onChange).resolveProject('p9')).resolves.toBeNull();
   });
+
+  it('leaves the workspace list to whoever applies the address, instead of loading the first organization\'s eagerly', async () => {
+    accounts.getMe.fetch.mockResolvedValue({ subject_tenant_id: 'home' });
+    identity.myMemberships.fetch.mockResolvedValue({ items: [{ org_id: 'o1' }] });
+    accounts.getTenant.mockReturnValue({ fetch: () => Promise.resolve(tenant('o1', 'Org', TENANT_TYPES.organization)) });
+    accounts.getWorkspaces.mockReturnValue({ fetch: () => Promise.resolve({ items: [] }) });
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(accounts.getWorkspaces).not.toHaveBeenCalled();
+  });
 });

@@ -275,4 +275,14 @@ describe('materialize', () => {
     materialize();
     await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1'));
   });
+
+  // Reviewer finding: before this branch an organization change always loaded its
+  // workspaces; an organization-level screen must not leave the list pending.
+  it('loads the workspaces of the organization in scope on an organization-level screen too', () => {
+    const { materialize, catalogs } = setup('/?screen=people;org=o1', {
+      ...ready, workspace: null, workspaces: [], workspacesStatus: 'pending',
+    });
+    materialize();
+    expect(catalogs.loadWorkspaces).toHaveBeenCalledWith('o1');
+  });
 });

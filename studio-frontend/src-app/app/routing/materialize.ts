@@ -190,10 +190,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     }
     if (wanted.org) next.org = wanted.org;
 
+    // The organization's workspaces are wanted at every level: an organization-
+    // level screen still publishes the default workspace to the MFEs.
+    context = contextOf(app);
+    if (context.org && context.workspacesStatus === 'pending') catalogs.loadWorkspaces(context.org.id);
+
     // Workspace and project: only a screen below the organization carries them.
     if (ownerLevel !== 'organization') {
-      context = contextOf(app);
-      if (context.org && context.workspacesStatus === 'pending') catalogs.loadWorkspaces(context.org.id);
       if (context.workspacesStatus === 'ready') {
         if (wanted.workspace && !context.workspaces.some((workspace) => workspace.id === wanted.workspace)) {
           warn(`Workspace ${wanted.workspace} is not in this organization; opening the first one`);
