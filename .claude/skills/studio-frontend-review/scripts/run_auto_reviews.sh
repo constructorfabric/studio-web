@@ -6,7 +6,8 @@
 #   DRY_RUN=1 run_auto_reviews.sh  full review, but publish_review.py only runs with --dry-run
 #
 # Env: REVIEW_RUNS (workdir root, default ~/.cache/studio-frontend-review), MAX_BUDGET_USD (per PR, default 15),
-#      CLAUDE_BIN (default claude), REVIEW_MODEL (orchestrator model, default sonnet). Run it from a checkout that has this skill (a dedicated clone on main is best:
+#      CLAUDE_BIN (default claude), REVIEW_MODEL (orchestrator model, default sonnet),
+#      REVIEW_ARCH_MODEL (architecture agent, default sonnet; "auto" lets plan_review.py pick opus on big PRs). Run it from a checkout that has this skill (a dedicated clone on main is best:
 #      the review worktrees are created from it). Cron setup (PATH, logging of git pull failures):
 #      references/automation.md, "Option A".
 set -euo pipefail
@@ -21,6 +22,9 @@ mkdir -p "$runs"
 # One run at a time: a cron tick that lands while the previous review is still going just exits.
 exec 9>"$runs/.lock"
 flock -n 9 || { echo "$(date -Is) another run is in progress"; exit 0; }
+
+# Every agent on Sonnet: the orchestrator via --model below, the architecture agent via plan_review.py.
+export REVIEW_ARCH_MODEL="${REVIEW_ARCH_MODEL:-sonnet}"
 
 cd "$root"
 if [ "$#" -gt 0 ]; then prs=("$@"); else mapfile -t prs < <(python3 "$here/find_prs.py"); fi

@@ -268,7 +268,8 @@ def main():
         "noise_files": noise,
         "out_of_scope_files": out_of_scope,
         "architecture_signals": arch_signals,
-        "architecture_model": "opus" if arch_opus else "sonnet",
+        # REVIEW_ARCH_MODEL pins the model regardless of signals (run_auto_reviews.sh sets it to sonnet).
+        "architecture_model": (os.environ.get("REVIEW_ARCH_MODEL") or "auto").replace("auto", "opus" if arch_opus else "sonnet"),
         "single_agent": single_agent,
         "over_budget": over_budget,
         "slices": slices,

@@ -31,7 +31,8 @@ out of scope — listed in the context pack for reference, never commented on.
 ## Model and agent budget (hard rules)
 
 - Every `Agent` call sets `model` explicitly: `sonnet` for slice reviewers and the verifier; `opus` for the
-  architecture agent **only** when the plan says `architecture_model: opus`. Never `fable`, never
+  architecture agent **only** when the plan says `architecture_model: opus` (`REVIEW_ARCH_MODEL=sonnet` in the
+  environment pins it to Sonnet; `run_auto_reviews.sh` does that, so unattended reviews are Sonnet-only). Never `fable`, never
   `subagent_type: "fork"`. Use `subagent_type: "general-purpose"`.
 - At most **10 agents per review**: 1 architecture + up to 8 slices + 1 verifier. A PR of ≤ 400 weighted lines
   is one Sonnet agent.
