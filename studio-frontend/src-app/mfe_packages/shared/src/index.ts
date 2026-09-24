@@ -101,4 +101,4 @@ export {
   tenantsPath,
   workspacesPath,
 } from './accounts/accountsPaths';
-export { isNotFound, orNullOnNotFound } from './errors/notFound';
+export { isNotFound, orNullOnNotFound, responseStatus } from './errors/notFound';

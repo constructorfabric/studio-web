@@ -168,9 +168,11 @@ describe('createContextCatalogs', () => {
   });
 
   it('answers null for a project the backend refuses', async () => {
-    const refused = Object.assign(new Error('Not Found'), { response: { status: 404 } });
-    accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(refused) });
-    await expect(createContextCatalogs(app, onChange).resolveProject('p9')).resolves.toBeNull();
+    for (const status of [404, 403]) {
+      const refused = Object.assign(new Error(`HTTP ${status}`), { response: { status } });
+      accounts.getTenant.mockReturnValue({ fetch: () => Promise.reject(refused) });
+      await expect(createContextCatalogs(app, onChange).resolveProject('p9')).resolves.toBeNull();
+    }
   });
 
   // Reviewer finding (coderabbit): a network failure is not an answer about the project.

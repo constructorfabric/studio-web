@@ -9,7 +9,7 @@
  * left is dropped, not applied to whatever is current now.
  */
 import { apiRegistry, eventBus, type FrontXApp } from '@gears-frontx/react';
-import { AccountsApiService, TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, TENANT_TYPES, responseStatus, type Tenant } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, PLATFORM_ROOT_TENANT_ID } from '@/app/api';
 import {
   readAppContext,
@@ -60,8 +60,7 @@ function message(error: unknown): string {
  * failure, an aborted request, a 5xx) is not an answer.
  */
 function isRefusal(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const status = (error as { response?: { status?: number } }).response?.status;
+  const status = responseStatus(error);
   return status === 404 || status === 403;
 }
 

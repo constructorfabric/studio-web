@@ -1,14 +1,22 @@
 import type { EndpointDescriptor } from '@gears-frontx/react';
 
 /**
+ * The HTTP status a transport error carries, or `undefined` when the failure
+ * never got an answer (a network error, an abort, a thrown non-error). The one
+ * place that knows the error shape the API client throws.
+ */
+export function responseStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  return (error as { response?: { status?: number } }).response?.status;
+}
+
+/**
  * A 404 from a tenant-metadata read is data, not a failure: AM answers it for a
  * tenant whose metadata of that type was never written. Anything else stays an
  * error, so a broken proxy is not silently read as "no attributes".
  */
 export function isNotFound(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const response = (error as { response?: { status?: number } }).response;
-  return response?.status === 404;
+  return responseStatus(error) === 404;
 }
 
 /**
