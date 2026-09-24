@@ -31,6 +31,8 @@ import type {
 } from '@gears-frontx/auth';
 import { env } from '../config/env';
 
+import { rememberReturnTo } from './returnTo';
+
 const KEY_VERIFIER = 'studio.oidc.verifier';
 const KEY_STATE = 'studio.oidc.state';
 const KEY_REFRESH = 'studio.oidc.refresh';
@@ -195,6 +197,8 @@ export class KeycloakOidcProvider implements AuthProvider {
     url.searchParams.set('code_challenge_method', 'S256');
     const idpHint = input.payload.idpHint;
     if (typeof idpHint === 'string' && idpHint) url.searchParams.set('kc_idp_hint', idpHint);
+    // The address the person came back to is the root; remember where they were.
+    rememberReturnTo();
     return { type: 'redirect', redirectUrl: url.toString() };
   }
 

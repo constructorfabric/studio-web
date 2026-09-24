@@ -59,6 +59,13 @@ describe('KeycloakOidcProvider', () => {
   });
 
   describe('login (oauth)', () => {
+    it('remembers where the person was, to return there after the callback', async () => {
+      window.history.replaceState({}, '', '/?screen=people;org=o1');
+      await provider.login({ type: 'oauth', payload: {} });
+      expect(sessionStorage.getItem('studio.oidc.return_to')).toBe('?screen=people;org=o1');
+      window.history.replaceState({}, '', '/');
+    });
+
     it('returns a redirect with PKCE S256, state, and stores the one-shot values', async () => {
       const transition = await provider.login({ type: 'oauth', payload: {} });
 

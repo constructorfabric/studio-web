@@ -18,6 +18,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useFrontX } from '@gears-frontx/react';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 import { LoginScreen } from './LoginScreen';
+import { takeReturnTo } from './returnTo';
 
 const OIDC_CALLBACK_PARAMS = ['code', 'state', 'session_state', 'iss', 'error', 'error_description'];
 
@@ -26,7 +27,11 @@ type Phase = 'restoring' | 'unauthenticated' | 'authenticated';
 function scrubCallbackParams(): void {
   const url = new URL(window.location.href);
   for (const p of OIDC_CALLBACK_PARAMS) url.searchParams.delete(p);
-  window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+  // The deep link `login()` remembered, if any, replaces what is left of the
+  // callback address. Done here, before the router exists, so the history the
+  // shell later resolves already reads the restored address (ADR-0022).
+  const returnTo = takeReturnTo();
+  window.history.replaceState({}, document.title, url.pathname + (returnTo ?? url.search + url.hash));
 }
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {

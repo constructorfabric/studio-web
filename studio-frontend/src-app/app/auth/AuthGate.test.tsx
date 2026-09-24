@@ -58,6 +58,18 @@ describe('AuthGate', () => {
     expect(await screen.findByText('app-content')).toBeTruthy();
   });
 
+  it('puts the remembered deep link back in the address once the callback is scrubbed', async () => {
+    sessionStorage.setItem('studio.oidc.return_to', '?screen=projects;org=o1;workspace=w1');
+    window.history.replaceState({}, '', '/?code=abc&state=xyz');
+    mockAuth.checkAuth.mockResolvedValue({ authenticated: true, session: { kind: 'bearer', token: 't' } });
+
+    render(<AuthGate>app-content</AuthGate>);
+
+    expect(await screen.findByText('app-content')).toBeTruthy();
+    expect(window.location.search).toBe('?screen=projects;org=o1;workspace=w1');
+    expect(sessionStorage.getItem('studio.oidc.return_to')).toBeNull();
+  });
+
   it('lands on the login screen when checkAuth rejects — never stuck on restoring', async () => {
     mockAuth.checkAuth.mockRejectedValue(new Error('token endpoint returned a non-JSON response'));
     render(<AuthGate>app-content</AuthGate>);
