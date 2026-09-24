@@ -1,5 +1,5 @@
 /**
- * The catalogs the shell reads to give the address its names (ADR-0022,
+ * The catalogs the shell reads to give the address its names (ADR-0028,
  * "`materialize` is the only writer of the context").
  *
  * Nothing here decides what is selected. Each read writes a list, or a status,

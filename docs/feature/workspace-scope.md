@@ -177,7 +177,7 @@ Definitions of Done, which are traced.
    1. [x] - `p1` - **RETURN** nothing; the answer belongs to an organization that has been left - `inst-3`
 3. [x] - `p1` - **IF** the read fails - `inst-4`
    1. [x] - `p1` - **RETURN** the workspaces already in scope, marked unread rather than emptied - `inst-5`
-4. [x] - `p1` - Keep the current workspace if it is still in the list, otherwise drop it; which one is opened in its place is the address's to say, and the first is what the shell opens when the address names none (ADR-0022) - `inst-6`
+4. [x] - `p1` - Keep the current workspace if it is still in the list, otherwise drop it; which one is opened in its place is the address's to say, and the first is what the shell opens when the address names none (ADR-0028) - `inst-6`
 5. [x] - `p1` - **RETURN** the list and the current workspace - `inst-7`
 
 ### Write the workspace

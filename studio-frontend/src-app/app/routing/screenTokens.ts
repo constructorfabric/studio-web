@@ -1,5 +1,5 @@
 /**
- * Which screens the address can name, and under which token (ADR-0022,
+ * Which screens the address can name, and under which token (ADR-0028,
  * "The token is the first segment of the route").
  *
  * A token is the first path segment of `presentation.route`, checked against

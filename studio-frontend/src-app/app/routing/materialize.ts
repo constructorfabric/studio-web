@@ -1,5 +1,5 @@
 /**
- * The address becomes the shell's state (ADR-0022).
+ * The address becomes the shell's state (ADR-0028).
  *
  * Idempotent by construction: every step compares the address with the slice
  * and the mounted screen and changes only what differs. When the state it
@@ -53,7 +53,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const resolving = new Set<string>();
   /** The screen and address of a mount that did not happen, so it is not tried again until either changes. */
   let stuckOn: string | null = null;
-  /** The entry point a failed mount fell back to, so its own failure is not fallen back from — once (ADR-0022). */
+  /** The entry point a failed mount fell back to, so its own failure is not fallen back from — once (ADR-0028). */
   let fallbackTo: string | null = null;
 
   const screensOf = (registry: MfeRegistry): ScreenExtension[] =>
@@ -221,7 +221,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     // Workspace: below the organization the address names it; at the
     // organization level the address carries none and the slice's choice is
-    // the preference the next descent starts from (ADR-0022). Either way it
+    // the preference the next descent starts from (ADR-0028). Either way it
     // is checked against the list once that is known, and defaulted from it —
     // the catalog reducers keep or drop a selection, they never pick one.
     if (ownerLevel === 'organization') wanted.workspace = undefined;

@@ -1,5 +1,5 @@
 /**
- * Reading and writing the shell's one entry (ADR-0022, "The URL is where
+ * Reading and writing the shell's one entry (ADR-0028, "The URL is where
  * navigation is decided").
  *
  * `navigate` is the only way the shell changes the address. It names only

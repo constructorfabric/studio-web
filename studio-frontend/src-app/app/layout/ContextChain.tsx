@@ -127,7 +127,7 @@ const SlotLabel: React.FC<{ slot: ChainSlot; isCurrent: boolean; hasMenu: boolea
         </span>
       ) : (
         // An address can name a project before its tenant has been read
-        // (ADR-0022): the id is published to the MFE at once, the name follows.
+        // (ADR-0028): the id is published to the MFE at once, the name follows.
         <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
       )}
       {hasMenu && (

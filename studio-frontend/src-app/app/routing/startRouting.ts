@@ -1,5 +1,5 @@
 /**
- * Where the shell starts listening to its address (ADR-0022, "Start-up and
+ * Where the shell starts listening to its address (ADR-0028, "Start-up and
  * the first report").
  *
  * Called once the screen slot is attached and every manifest is registered:

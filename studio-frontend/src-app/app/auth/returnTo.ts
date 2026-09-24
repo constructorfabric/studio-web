@@ -1,5 +1,5 @@
 /**
- * Where the person was before the sign-in redirect (ADR-0022, "A link
+ * Where the person was before the sign-in redirect (ADR-0028, "A link
  * survives the sign-in redirect").
  *
  * The OIDC `redirect_uri` is always the origin's root, so a pasted deep link
@@ -40,7 +40,7 @@ function decodedName(segment: string): string {
  * The query string without the named parameters, every other segment kept
  * byte-for-byte. Deliberately not `URLSearchParams`: deleting through it
  * re-serialises the whole query and turns the router grammar's `;` and `=`
- * inside a value into `%3B` and `%3D` (ADR-0022) — the address the shell
+ * inside a value into `%3B` and `%3D` (ADR-0028) — the address the shell
  * then reads names no screen at all.
  */
 export function withoutCallbackParams(search: string, names: readonly string[]): string {

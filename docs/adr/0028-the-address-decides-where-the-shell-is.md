@@ -1,14 +1,40 @@
-# ADR-0022: The address decides where the shell is, and the shell alone writes it
+---
+type: adr
+status: accepted
+date: 2026-09-24
+---
 
-Date: 2026-09-24
-Status: accepted
-Branch: `feat/shell-router`
-Issue: #376, under #310
+# ADR-0028: The address decides where the shell is, and the shell alone writes it
 
-## Context
+**ID**: `cpt-studio-adr-the-address-decides-where-the-shell-is`
+
+Status: accepted · 2026-09-24 · Amends ADR-0008 and the `shell-levels` feature · Relates to ADR-0021 · Issue #376, under #310 · Branch `feat/shell-router`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+  - [One entry in the screen domain, query only](#one-entry-in-the-screen-domain-query-only)
+  - [The token is the first segment of the route; the section is a parameter](#the-token-is-the-first-segment-of-the-route-the-section-is-a-parameter)
+  - [The parameters a level carries](#the-parameters-a-level-carries)
+  - [The URL is where navigation is decided](#the-url-is-where-navigation-is-decided)
+  - [`materialize` is the only writer of the context, and the only mounter](#materialize-is-the-only-writer-of-the-context-and-the-only-mounter)
+  - [Start-up and the first report](#start-up-and-the-first-report)
+  - [A link survives the sign-in redirect](#a-link-survives-the-sign-in-redirect)
+  - [What is refused, and how it degrades](#what-is-refused-and-how-it-degrades)
+  - [MFEs stay URL-unaware](#mfes-stay-url-unaware)
+  - [Considered and rejected](#considered-and-rejected)
+  - [Consequences](#consequences)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The portal has levels — organization, workspace, project — and a rail per
-level (ADR-0008, `studio-frontend/docs/sdlc/FEATURE/shell-levels.md`). It has
+level (ADR-0008, `docs/feature/shell-levels.md`). It has
 no address. `presentation.route` is a string nothing reads, and the feature
 that introduced the levels said so on purpose:
 
@@ -72,7 +98,7 @@ And the OIDC provider redirects to `${origin}/` and `AuthGate` scrubs the
 callback parameters with `window.history.replaceState`, so a pasted link
 does not survive a sign-in unless something carries it across.
 
-## Decision
+## Decision Outcome
 
 ### One entry in the screen domain, query only
 
@@ -300,7 +326,7 @@ that MFE's virtual location will already contain.
 - **Renaming the routes to single tokens** and **the hierarchy in the
   pathname** — both above, in the sections that chose otherwise.
 
-## Consequences
+### Consequences
 
 - `shell-levels.md` is amended, not rewritten: `cpt-studiofrontend-dod-shell-levels-no-address` keeps its rule about MFEs and loses "there is no
   address" and the two accepted costs; the acceptance items that expect a
@@ -333,3 +359,17 @@ that MFE's virtual location will already contain.
   address format need not change for that.
 - `FrontXConfig.routerMode` in the vendored `packages/framework` stays
   declared and unread, as it was; removing it is a template concern.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-fr-portal-levels` — the levels become addressable: a reload or a pasted link returns to the level, screen and section
+* `cpt-studio-component-portal-shell` — the shell owns the address; `src-app/app/routing/` is its only reader and writer
+* `cpt-studio-actor-shell` — navigates by writing the address, and follows it
+* `cpt-studio-actor-mfe` — stays URL-unaware; the level reaches it as shared properties and actions
+* `cpt-studio-adr-simplified-navigation-shell` — ADR-0008's shell gains the address it did not have
+* `cpt-studio-adr-an-mfe-entry-may-be-a-frame` — a frame's address arrives at runtime; the browser address never carries a session URL

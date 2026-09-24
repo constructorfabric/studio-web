@@ -19,7 +19,7 @@ declare module '@gears-frontx/react' {
     'app/user/fetch': void;
     /** MFE manifest fetch + extension registration reached a terminal state */
     'app/mfe/bootstrap': { status: 'pending' | 'ready' | 'failed' };
-    /** The screen slot is attached and every manifest is registered: the shell may start reading its address (ADR-0022). Emitted again on a re-attach; the second time only re-applies the address. */
+    /** The screen slot is attached and every manifest is registered: the shell may start reading its address (ADR-0028). Emitted again on a re-attach; the second time only re-applies the address. */
     'app/routing/start': void;
     /** Resolve the signed-in user's organizations. No payload — reads /me. */
     'app/context/fetch': void;

@@ -1,5 +1,5 @@
 /**
- * The shell's route: what the one screen-domain entry says (ADR-0022).
+ * The shell's route: what the one screen-domain entry says (ADR-0028).
  *
  * `token` names the screen group (`screenTokens.ts` derives it from the
  * manifests); the four parameters are the level context, written in this

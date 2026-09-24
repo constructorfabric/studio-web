@@ -130,14 +130,14 @@ module.exports = {
       to: { path: '^packages/[^/]+/src/' },
       comment: 'MONOREPO VIOLATION: App cannot import package internals. Use package root exports.'
     },
-    // ============ ADR-0022: ONE PLACE TALKS TO THE ROUTER ============
+    // ============ ADR-0028: ONE PLACE TALKS TO THE ROUTER ============
     {
       name: 'routing-package-only-in-routing-folder',
       severity: 'error',
       from: { pathNot: ['^src-app/app/routing/', '^src-app/__test-utils__/memoryNavigationHistory'] },
       to: { path: pkgTargets('routing') },
       comment:
-        'ADR-0022: the shell alone owns the address. `@gears-frontx/routing` is imported from src-app/app/routing/ (and its test seam) only; MFEs and shell chrome stay URL-unaware.',
+        'ADR-0028: the shell alone owns the address. `@gears-frontx/routing` is imported from src-app/app/routing/ (and its test seam) only; MFEs and shell chrome stay URL-unaware.',
     },
     {
       name: 'sdk-no-framework-import',

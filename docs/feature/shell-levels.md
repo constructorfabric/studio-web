@@ -78,7 +78,7 @@ changes the code:
   the shell sends the extension an action instead of mounting again — otherwise
   changing a section inside a project would cost a full remount and lose the
   section's own state.
-- The **address is the shell's**. ADR-0022 gives the portal one screen-domain
+- The **address is the shell's**. ADR-0028 gives the portal one screen-domain
   entry (`?screen=<token>;org=…;workspace=…;project=…;section=…`) that the
   shell alone reads and writes; a click becomes a route, and the shell follows
   the address. MFEs still read no `location`: the level reaches them as shared
@@ -142,7 +142,7 @@ rest on are the Definitions of Done, which are traced.
 
 **Error Scenarios**:
 - The level below is empty — an organization with no workspace, a workspace with no project; the member stays where they are and the screen says so.
-- The screen of the new level fails to mount; the shell falls back to the level's entry point, and when that does not mount either nothing is mounted and the console says so (ADR-0022).
+- The screen of the new level fails to mount; the shell falls back to the level's entry point, and when that does not mount either nothing is mounted and the console says so (ADR-0028).
 
 **Steps**:
 1. [ ] - `p1` - Member picks a workspace in the path, or opens a project from the list - `inst-1`
@@ -233,12 +233,12 @@ rest on are the Definitions of Done, which are traced.
 4. [x] - `p1` - **IF** the group the address names is the one already mounted - `inst-3`
    1. [x] - `p1` - **RETURN** the section changed without a remount; re-picking the open section republishes the same value and changes nothing - `inst-6`
 5. [x] - `p1` - Mount the group's owner in the screen domain, one mount at a time - `inst-5`
-6. [x] - `p1` - **RETURN** the mounted extension; a mount that did not happen falls back once to the level's entry point (ADR-0022) - `inst-7`
+6. [x] - `p1` - **RETURN** the mounted extension; a mount that did not happen falls back once to the level's entry point (ADR-0028) - `inst-7`
 
 The click writes the address, and the address is what decides the active item:
 the section is written when the address is applied, before the mount starts —
 `inst-2` before `inst-5` — and by the same hand for a click, for Back and
-Forward, and for a pasted link (ADR-0022). Deciding it when the mount finishes
+Forward, and for a pasted link (ADR-0028). Deciding it when the mount finishes
 would put the decision on the far side of an await, where the next click cannot
 overrule it: two overlapping mounts then land in whichever order they happen to
 resolve, and the rail names a section the screen does not show. The mount is
@@ -300,7 +300,7 @@ same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
 5. [ ] - `p1` - **FROM** Project **TO** Organization **WHEN** an organization-level item is chosen, skipping the level between - `inst-5`
 6. [ ] - `p1` - **FROM** Project **TO** Workspace **WHEN** the workspace is switched, because the open project is not under the new one - `inst-6`
 7. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** the organization is switched, because neither the workspace nor the project survives it - `inst-7`
-8. [ ] - `p1` - **FROM** Organization **TO** the level the address names **WHEN** the session is reloaded or a link is opened, because the address is what the shell restores; an empty address stays at Organization (ADR-0022) - `inst-8`
+8. [ ] - `p1` - **FROM** Organization **TO** the level the address names **WHEN** the session is reloaded or a link is opened, because the address is what the shell restores; an empty address stays at Organization (ADR-0028) - `inst-8`
 
 ## 5. Definitions of Done
 
@@ -543,7 +543,7 @@ The system **MUST NOT** read `location` or write browser history from any MFE,
 and **MUST** deliver the level to MFEs as shared properties and actions rather
 than as an address.
 
-The shell itself has an address (ADR-0022): one entry of the screen domain in
+The shell itself has an address (ADR-0028): one entry of the screen domain in
 the query string, holding the screen's token, the organization, the workspace,
 the project and the section as far down as the level in scope goes. Every
 navigation a person makes is a write to that entry (`src-app/app/routing/`),
@@ -580,7 +580,7 @@ shared properties would no longer be the only answer.
 - [ ] The project slot's menu shows names with no artifact count under them.
 - [ ] Every slot of the path is the same fixed width, a long name truncates inside its slot, and the top bar never wraps to a second line.
 - [ ] A screen reader announces each slot once, naming the level and the entity, and does not read the caps label separately.
-- [ ] Reloading the page returns the session to the screen, level and section it was on; an empty address opens the organization level's first item (ADR-0022).
+- [ ] Reloading the page returns the session to the screen, level and section it was on; an empty address opens the organization level's first item (ADR-0028).
 - [ ] A pasted link to a project opens that project; an id the person cannot read degrades to the level's entry point with a console warning.
 - [ ] No MFE reads `location` or pushes browser history; Back and Forward move between screens, projects and sections without a reload, and the rail follows.
 - [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.

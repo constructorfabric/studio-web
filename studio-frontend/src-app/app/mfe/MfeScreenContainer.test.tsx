@@ -128,7 +128,7 @@ describe('MfeScreenContainer', () => {
   });
 
   // Which screen opens is the address's to say: the container only tells the
-  // effects that the slot is there and the manifests are in (ADR-0022).
+  // effects that the slot is there and the manifests are in (ADR-0028).
   it('asks the effects to start routing once the slot reports its root', async () => {
     const { MfeScreenContainer } = await import('./MfeScreenContainer');
 

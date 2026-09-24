@@ -38,7 +38,7 @@ export function MfeScreenContainer() {
     // the next one and the session opens on a blank screen.
     releaseMountLock(registry);
     // Which screen opens is the address's to say, and the effects that
-    // start the router decide it (ADR-0022). Emitted on every attach: the
+    // start the router decide it (ADR-0028). Emitted on every attach: the
     // second time only re-applies what the address already says.
     eventBus.emit('app/routing/start');
   }, [app.mfeRegistry]);

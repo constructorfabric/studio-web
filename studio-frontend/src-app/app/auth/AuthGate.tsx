@@ -28,7 +28,7 @@ function scrubCallbackParams(): void {
   const { pathname, search, hash } = window.location;
   // The deep link `login()` remembered, if any, replaces what is left of the
   // callback address. Done here, before the router exists, so the history the
-  // shell later resolves already reads the restored address (ADR-0022). The
+  // shell later resolves already reads the restored address (ADR-0028). The
   // strip is segment-wise on purpose: `URLSearchParams` would re-encode the
   // router's `;`-separated entry into something the shell cannot read.
   const returnTo = takeReturnTo();

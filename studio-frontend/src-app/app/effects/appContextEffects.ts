@@ -1,5 +1,5 @@
 /**
- * App Context Effects — events in, routes out (ADR-0022).
+ * App Context Effects — events in, routes out (ADR-0028).
  *
  * Nothing here decides what is in scope. A person's action arrives as an
  * event, the handler computes the route it means and writes it with
@@ -130,7 +130,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     if (name !== undefined) dispatch(addContextWorkspace({ id: workspaceId, name }));
     if (!enter && currentGroupLevel() === 'organization') {
       // Below the organization the address decides; at its level the workspace
-      // is a preference the slice keeps for the next descent (ADR-0022).
+      // is a preference the slice keeps for the next descent (ADR-0028).
       dispatch(setContextWorkspace(workspaceId));
       routing.materialize();
       return;
