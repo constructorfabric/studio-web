@@ -11,7 +11,7 @@ import {
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
-import { APP_CONTEXT_SLICE_KEY, type ContextEntity } from '@/app/slices/appContextSlice';
+import { readAppContext } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY, type SessionProfile } from '@/app/slices/appSessionSlice';
 
 function publish(app: FrontXApp, propertyId: string, value: unknown): void {
@@ -25,33 +25,21 @@ function publish(app: FrontXApp, propertyId: string, value: unknown): void {
   }
 }
 
-interface ContextSliceShape {
-  org?: ContextEntity | null;
-  workspace?: ContextEntity | null;
-  project?: ContextEntity | null;
-  section?: string | null;
-}
-
-function contextState(app: FrontXApp): ContextSliceShape {
-  const state = app.store.getState() as Record<string, unknown>;
-  return (state[APP_CONTEXT_SLICE_KEY] as ContextSliceShape | undefined) ?? {};
-}
-
 function sessionState(app: FrontXApp): { profile?: SessionProfile | null } {
   const state = app.store.getState() as Record<string, unknown>;
   return (state[APP_SESSION_SLICE_KEY] as { profile?: SessionProfile | null } | undefined) ?? {};
 }
 
 export function publishSelectedProject(app: FrontXApp): void {
-  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, contextState(app).project?.id ?? null);
+  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, readAppContext(app).project?.id ?? null);
 }
 
 export function publishSelectedSection(app: FrontXApp): void {
-  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_SECTION, contextState(app).section ?? null);
+  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_SECTION, readAppContext(app).section ?? null);
 }
 
 export function publishSelectedOrganization(app: FrontXApp): void {
-  const org = contextState(app).org ?? null;
+  const org = readAppContext(app).org ?? null;
   publish(
     app,
     STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
@@ -61,7 +49,7 @@ export function publishSelectedOrganization(app: FrontXApp): void {
 
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-shell-owns:p1
 export function publishSelectedWorkspace(app: FrontXApp): void {
-  const workspace = contextState(app).workspace ?? null;
+  const workspace = readAppContext(app).workspace ?? null;
   publish(
     app,
     STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,

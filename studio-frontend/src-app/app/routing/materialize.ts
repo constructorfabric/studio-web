@@ -15,14 +15,13 @@ import { entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/sc
 import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
 import {
-  APP_CONTEXT_SLICE_KEY,
   closeContextProject,
   openContextProject,
+  readAppContext,
   rememberProject,
   setContextOrg,
   setContextSection,
   setContextWorkspace,
-  type AppContextState,
 } from '@/app/slices/appContextSlice';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
 import { routesEqual, type ShellRoute } from './route';
@@ -41,10 +40,6 @@ export interface Materializer {
   materialize(): void;
   /** Forgets a mount that failed and applies the address again — for when the screen slot has re-attached. */
   retry(): void;
-}
-
-function contextOf(app: FrontXApp): AppContextState {
-  return (app.store.getState() as Record<string, unknown>)[APP_CONTEXT_SLICE_KEY] as AppContextState;
 }
 
 function messageOf(error: unknown): string {
@@ -69,7 +64,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     const entry = entryPointOf(screensOf(registry), level);
     const group = entry ? groupOfExtension(deps.groups(), entry.id) : undefined;
     if (!group) return null;
-    const context = contextOf(app);
+    const context = readAppContext(app);
     const route: ShellRoute = { token: group.token };
     const org = from?.org ?? context.org?.id;
     if (org) route.org = org;
@@ -186,7 +181,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     if (!registry) return;
     const groups = deps.groups();
     if (groups.length === 0) return;
-    if (contextOf(app).access === 'unassigned') return;
+    if (readAppContext(app).access === 'unassigned') return;
 
     const address = navigation.currentRoute();
     let route = address;
@@ -205,7 +200,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     const ownerLevel = levelOf(group.owner);
 
     // Organization: validated only once the person's list is known.
-    let context = contextOf(app);
+    let context = readAppContext(app);
     if (context.orgs.length > 0) {
       if (wanted.org && !context.orgs.some((org) => org.id === wanted.org)) {
         warn(`Organization ${wanted.org} is not one of yours; staying in the current one`);
@@ -221,7 +216,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     // The organization's workspaces are wanted at every level: an organization-
     // level screen still publishes the default workspace to the MFEs.
-    context = contextOf(app);
+    context = readAppContext(app);
     if (context.org && context.workspacesStatus === 'pending') catalogs.loadWorkspaces(context.org.id);
 
     // Workspace: below the organization the address names it; at the
@@ -246,7 +241,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     if (ownerLevel !== 'organization') {
       if (wanted.workspace) next.workspace = wanted.workspace;
 
-      context = contextOf(app);
+      context = readAppContext(app);
       if (wanted.project && next.workspace) {
         // Carried in the address while the workspace list is still on its way;
         // opened only once that list can vouch for the workspace.
@@ -266,7 +261,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       } else if (context.project && !wanted.project) {
         dispatch(closeContextProject());
       }
-    } else if (contextOf(app).project) {
+    } else if (readAppContext(app).project) {
       dispatch(closeContextProject());
     }
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
@@ -285,8 +280,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       }
       const entry = entryPointOf(group.members, levelInScope);
       next.section = wanted.section ?? (entry ? sectionOf(entry) : undefined) ?? sections[0];
-      if (contextOf(app).section !== next.section) dispatch(setContextSection(next.section));
-    } else if (contextOf(app).section !== null) {
+      if (readAppContext(app).section !== next.section) dispatch(setContextSection(next.section));
+    } else if (readAppContext(app).section !== null) {
       dispatch(setContextSection(null));
     }
 

@@ -12,7 +12,7 @@ import { apiRegistry, eventBus, type FrontXApp } from '@gears-frontx/react';
 import { AccountsApiService, TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, PLATFORM_ROOT_TENANT_ID } from '@/app/api';
 import {
-  APP_CONTEXT_SLICE_KEY,
+  readAppContext,
   setContextAccess,
   setContextLoading,
   setContextOrganizations,
@@ -20,7 +20,6 @@ import {
   setContextProjectsStatus,
   setContextWorkspaces,
   setContextWorkspacesStatus,
-  type AppContextState,
   type ContextEntity,
 } from '@/app/slices/appContextSlice';
 
@@ -68,8 +67,7 @@ function isRefusal(error: unknown): boolean {
 
 export function createContextCatalogs(app: FrontXApp, onChange: () => void): ContextCatalogs {
   const dispatch = app.store.dispatch;
-  const context = (): Partial<AppContextState> =>
-    ((app.store.getState() as Record<string, unknown>)[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined) ?? {};
+  const context = () => readAppContext(app);
 
   let workspacesInFlightFor: string | null = null;
   const projectsInFlightFor = new Set<string>();

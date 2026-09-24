@@ -164,7 +164,7 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
       <BreadcrumbLink
         render={isCurrent ? <span /> : <button type="button" onClick={enter} />}
         aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name}`}
+        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}`}
         className={SLOT_CLASS}
       >
         <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu={false} />
@@ -177,7 +177,7 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
       <BreadcrumbLink
         render={<DropdownMenuTrigger />}
         aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name}, switch`}
+        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}, switch`}
         className={`${SLOT_CLASS} focus-visible:ring-2 focus-visible:ring-ring [&>span]:hover:bg-muted`}
       >
         <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu />

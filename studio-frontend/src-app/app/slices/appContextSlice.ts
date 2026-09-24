@@ -2,7 +2,7 @@
 
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-no-address:p1
-import { createSlice, type ReducerPayload } from '@gears-frontx/react';
+import { createSlice, type FrontXApp, type ReducerPayload } from '@gears-frontx/react';
 
 export interface ContextEntity {
   id: string;
@@ -206,6 +206,11 @@ const {
     },
   },
 });
+
+/** The slice as every shell module reads it off the app's store; the initial state before the slice is registered. */
+export function readAppContext(app: Pick<FrontXApp, 'store'>): AppContextState {
+  return ((app.store.getState() as Record<string, unknown>)[SLICE_KEY] as AppContextState | undefined) ?? initialState;
+}
 
 export const appContextSlice = slice;
 export {

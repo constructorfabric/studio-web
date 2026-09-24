@@ -16,12 +16,11 @@ import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
 import type { ShellRoute } from '@/app/routing/route';
 import {
-  APP_CONTEXT_SLICE_KEY,
   addContextWorkspace,
+  readAppContext,
   rememberProject,
   setContextProjects,
   setContextWorkspace,
-  type AppContextState,
 } from '@/app/slices/appContextSlice';
 
 /** Long enough for an aborted duplicate to have settled. */
@@ -39,8 +38,7 @@ function staleScope(current: string | null, claimed: string | undefined): boolea
 
 export function registerAppContextEffects(app: FrontXApp): void {
   const dispatch = app.store.dispatch;
-  const context = (): AppContextState =>
-    (app.store.getState() as Record<string, unknown>)[APP_CONTEXT_SLICE_KEY] as AppContextState;
+  const context = () => readAppContext(app);
 
   let routing: RoutingHandle | null = null;
   const catalogs = createContextCatalogs(app, () => routing?.materialize());

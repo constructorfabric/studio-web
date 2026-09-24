@@ -135,7 +135,7 @@ module.exports = {
       name: 'routing-package-only-in-routing-folder',
       severity: 'error',
       from: { pathNot: ['^src-app/app/routing/', '^src-app/__test-utils__/memoryNavigationHistory'] },
-      to: { path: '(^|/)node_modules/@gears-frontx/routing(/|$)|^@gears-frontx/routing(/|$)' },
+      to: { path: pkgTargets('routing') },
       comment:
         'ADR-0022: the shell alone owns the address. `@gears-frontx/routing` is imported from src-app/app/routing/ (and its test seam) only; MFEs and shell chrome stay URL-unaware.',
     },
