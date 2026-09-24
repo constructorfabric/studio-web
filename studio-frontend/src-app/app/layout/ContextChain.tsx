@@ -121,9 +121,15 @@ const SlotLabel: React.FC<{ slot: ChainSlot; isCurrent: boolean; hasMenu: boolea
       {slot.caps}
     </span>
     <span className="flex w-full min-w-0 items-center gap-1.5">
-      <span className="min-w-0 truncate text-[12px] leading-4 text-foreground [font-weight:var(--text-label-weight)]">
-        {slot.current.name}
-      </span>
+      {slot.current.name ? (
+        <span className="min-w-0 truncate text-[12px] leading-4 text-foreground [font-weight:var(--text-label-weight)]">
+          {slot.current.name}
+        </span>
+      ) : (
+        // An address can name a project before its tenant has been read
+        // (ADR-0022): the id is published to the MFE at once, the name follows.
+        <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
+      )}
       {hasMenu && (
         <ChevronDown
           className="size-3.5 shrink-0 text-muted-foreground"
