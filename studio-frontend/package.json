@@ -69,6 +69,7 @@
     "@gears-frontx/api": ">=0.2.0-0",
     "@gears-frontx/gts-plugin": "0.3.0-alpha.2",
     "@gears-frontx/mfes": "*",
+    "@gears-frontx/routing": "0.3.0-alpha.0",
     "@gears-frontx/ui-kit": "0.4.0-alpha.1",
     "@hookform/resolvers": "5.2.2",
     "@iconify/react": "^6.0.2",
