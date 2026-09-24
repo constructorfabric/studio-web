@@ -196,6 +196,16 @@ describe('materialize', () => {
     expect(catalogs.loadProjects).toHaveBeenCalledWith('w1');
   });
 
+  // Reviewer finding (vasylcf): an empty list was asked for again on every pass.
+  it('does not ask for the projects list again once it has been read or has failed', () => {
+    for (const projectsStatus of ['ready', 'failed'] as const) {
+      const { materialize, catalogs } = setup('/?screen=projects;org=o1;workspace=w1;project=p1', { ...ready, projects: [], projectsStatus });
+      catalogs.resolveProject.mockReturnValue(new Promise(() => undefined));
+      materialize();
+      expect(catalogs.loadProjects).not.toHaveBeenCalled();
+    }
+  });
+
   it("drops an organization that is not the person's and keeps the first", () => {
     const { materialize, adapter, warn } = setup('/?screen=people;org=stranger', ready);
     materialize();

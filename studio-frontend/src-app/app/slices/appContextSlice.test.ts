@@ -5,6 +5,7 @@ import reducer, {
   setContextOrg,
   setContextOrganizations,
   setContextProjects,
+  setContextProjectsStatus,
   setContextWorkspace,
   setContextWorkspaces,
   type AppContextState,
@@ -65,6 +66,22 @@ describe('the catalog reducers keep or drop a selection, and never pick one', ()
   it('a workspace no longer listed is dropped with its projects', () => {
     const state = reducer(inScope(), setContextWorkspaces([W1]));
     expect(state.workspace).toBeNull();
+    expect(state.projects).toEqual([]);
+  });
+});
+
+// Reviewer finding (vasylcf): the projects list had no status, so a workspace
+// whose projects could not be read was asked about again on every pass.
+describe('the projects catalog status', () => {
+  it('is ready once a list has been written, whoever wrote it', () => {
+    const state = reducer(inScope(), setContextProjects([]));
+    expect(state.projectsStatus).toBe('ready');
+  });
+
+  it('is pending again when the workspace changes', () => {
+    let state = reducer(inScope(), setContextProjectsStatus('failed'));
+    state = reducer(state, setContextWorkspace('w1'));
+    expect(state.projectsStatus).toBe('pending');
     expect(state.projects).toEqual([]);
   });
 });

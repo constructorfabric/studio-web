@@ -252,7 +252,9 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
             dispatch(openContextProject(known));
           }
           if (!known) resolveLater(wanted.project, next.workspace, next.org);
-          if (context.projects.length === 0) catalogs.loadProjects(next.workspace);
+          // The siblings for the switcher, asked for while nobody has read
+          // them; a read that failed is not asked again on every pass.
+          if (context.projectsStatus === 'pending') catalogs.loadProjects(next.workspace);
         }
       } else if (context.project && !wanted.project) {
         dispatch(closeContextProject());

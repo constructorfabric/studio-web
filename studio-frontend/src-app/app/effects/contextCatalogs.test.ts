@@ -19,6 +19,7 @@ import {
   setContextAccess,
   setContextOrganizations,
   setContextProjects,
+  setContextProjectsStatus,
   setContextWorkspaces,
   setContextWorkspacesStatus,
 } from '@/app/slices/appContextSlice';
@@ -114,6 +115,16 @@ describe('createContextCatalogs', () => {
     await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(setContextProjects([{ id: 'p1', name: 'Atlas', count: 0 }])));
     expect(accounts.getProjects).toHaveBeenCalledWith({ parentId: 'w1' });
     expect(onChange).toHaveBeenCalled();
+  });
+
+  // Reviewer finding (vasylcf): a failed projects read must not be re-issued on every pass.
+  it('marks the projects list failed when the read fails', async () => {
+    accounts.getProjects.mockReturnValue({ fetch: () => Promise.reject(new Error('down')) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    createContextCatalogs(app, onChange).loadProjects('w1');
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(setContextProjectsStatus('failed')));
+    expect(onChange).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('answers null for a project the backend refuses', async () => {

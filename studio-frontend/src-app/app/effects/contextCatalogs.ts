@@ -17,6 +17,7 @@ import {
   setContextLoading,
   setContextOrganizations,
   setContextProjects,
+  setContextProjectsStatus,
   setContextWorkspaces,
   setContextWorkspacesStatus,
   type AppContextState,
@@ -166,7 +167,11 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
   };
 
   const loadProjects = (workspaceId: string): void => {
-    if (!apiRegistry.has(AccountsApiService) || projectsInFlightFor.has(workspaceId)) return;
+    if (!apiRegistry.has(AccountsApiService)) {
+      dispatch(setContextProjects([]));
+      return;
+    }
+    if (projectsInFlightFor.has(workspaceId)) return;
     projectsInFlightFor.add(workspaceId);
     const accounts = apiRegistry.getService(AccountsApiService);
     void (async () => {
@@ -176,7 +181,12 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
         dispatch(setContextProjects((page?.items ?? []).map(toEntity)));
         onChange();
       } catch (error) {
+        if (context().workspace?.id !== workspaceId) return;
         console.warn('Failed to list projects:', message(error));
+        // Once per workspace: `materialize` asks while the list is pending,
+        // and a list that could not be read is not pending. The MFE's own
+        // list, published when its screen shows, still fills the switcher.
+        dispatch(setContextProjectsStatus('failed'));
       } finally {
         projectsInFlightFor.delete(workspaceId);
       }

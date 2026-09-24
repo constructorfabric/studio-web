@@ -10,7 +10,13 @@ export interface ContextEntity {
   count?: number;
 }
 
-export type WorkspacesStatus = 'pending' | 'ready' | 'failed';
+/**
+ * Where a catalog read stands. `failed` is not `ready` with nothing in it: an
+ * organization with no workspace and one whose workspaces could not be read
+ * are different states, and only the first is asked about again on every pass.
+ */
+export type CatalogStatus = 'pending' | 'ready' | 'failed';
+export type WorkspacesStatus = CatalogStatus;
 
 /**
  * Whether this person may act in an organization at all.
@@ -29,6 +35,7 @@ export interface AppContextState {
   workspacesStatus: WorkspacesStatus;
   project: ContextEntity | null;
   projects: ContextEntity[];
+  projectsStatus: CatalogStatus;
   section: string | null;
   loading: boolean;
   access: AccessState;
@@ -44,6 +51,7 @@ const initialState: AppContextState = {
   workspacesStatus: 'pending',
   project: null,
   projects: [],
+  projectsStatus: 'pending',
   section: null,
   loading: false,
   access: 'loading',
@@ -60,6 +68,7 @@ const {
   setContextWorkspace,
   addContextWorkspace,
   setContextProjects,
+  setContextProjectsStatus,
   rememberProject,
   openContextProject,
   closeContextProject,
@@ -90,6 +99,7 @@ const {
       state.workspacesStatus = 'pending';
       state.project = null;
       state.projects = [];
+      state.projectsStatus = 'pending';
     },
 
     setContextOrg: (state: AppContextState, action: ReducerPayload<string>) => {
@@ -101,6 +111,7 @@ const {
       state.workspacesStatus = 'pending';
       state.project = null;
       state.projects = [];
+      state.projectsStatus = 'pending';
     },
 
     // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
@@ -111,6 +122,7 @@ const {
       state.workspace = null;
       state.project = null;
       state.projects = [];
+      state.projectsStatus = 'pending';
     },
     // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
 
@@ -129,6 +141,7 @@ const {
       state.workspace = next;
       state.project = null;
       state.projects = [];
+      state.projectsStatus = 'pending';
     },
 
     addContextWorkspace: (
@@ -142,13 +155,20 @@ const {
       state.workspace = next;
       state.project = null;
       state.projects = [];
+      state.projectsStatus = 'pending';
     },
 
+    /** The projects of the workspace in scope, from whoever read them: the shell's catalog or the MFE's own list. */
     setContextProjects: (
       state: AppContextState,
       action: ReducerPayload<ContextEntity[]>
     ) => {
       state.projects = action.payload;
+      state.projectsStatus = 'ready';
+    },
+
+    setContextProjectsStatus: (state: AppContextState, action: ReducerPayload<CatalogStatus>) => {
+      state.projectsStatus = action.payload;
     },
 
     /**
@@ -198,6 +218,7 @@ export {
   setContextWorkspace,
   addContextWorkspace,
   setContextProjects,
+  setContextProjectsStatus,
   rememberProject,
   openContextProject,
   closeContextProject,
