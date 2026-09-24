@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""Plan a PR review: filter noise, weigh files, pack them into similar-sized slices.
+
+Usage: plan_review.py <PR number or URL> [--repo owner/name] [--out plan.json]
+                      [--target 700] [--max-slices 8] [--scope studio-frontend/]
+Only files under --scope are reviewed; the rest of the PR is listed as out of scope.
+Exits with code 3 when the PR touches nothing under --scope.
+Requires the GitHub CLI (`gh`) authenticated for the repo.
+"""
+import argparse
+import fnmatch
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+from collections import OrderedDict
+
+NOISE_PATTERNS = [
+    "*package-lock.json", "*pnpm-lock.yaml", "*yarn.lock", "*Cargo.lock", "*go.sum",
+    "*poetry.lock", "*uv.lock", "*Gemfile.lock", "*composer.lock", "*.lock",
+    "*.snap", "*__snapshots__/*", "*.min.js", "*.min.css", "*.map",
+    "dist/*", "*/dist/*", "dist-lib/*", "*/dist-lib/*", "build/*", "*/build/*",
+    "vendor/*", "*/vendor/*", "node_modules/*", "*/node_modules/*",
+    "*.generated.*", "*.gen.*", "*/generated/*", "*_generated.*", "*.pb.go", "*_pb2.py",
+    "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico", "*.woff", "*.woff2", "*.ttf",
+    "*.pdf", "*.zip",
+]
+
+ARCH_SIGNAL_PATTERNS = [
+    "*openapi*", "*swagger*", "*.proto", "*schema*", "*contract*", "*migrations/*", "*migration*",
+    "*package.json", "*Cargo.toml", "*go.mod", "*pyproject.toml", "*docker-compose*", "*Dockerfile*",
+    "docs/adr/*", "*/adr/*", "*routes*", "*router*", "*events*", "*errors*",
+]
+
+SPEC_PATTERNS = [
+    "docs/adr/*.md", "*/adr/*.md", "*PRD*", "*prd*", "docs/*.md", "*/docs/*.md",
+    "CLAUDE.md", "*/CLAUDE.md", "AGENTS.md", "*/AGENTS.md", "PRODUCT.md", "*spec*.md",
+]
+
+# Data-like files: reviewed, but a line of JSON/grammar costs far less attention than a line of code.
+DATA_PATTERNS = ["*.json", "*.tmLanguage*", "*.csv", "*.xml"]
+DATA_EXCEPTIONS = ["*package.json", "*tsconfig*.json", "*openapi*", "*schema*"]
+
+# Styling, demos, stories and prose: still reviewed (tokens, conventions, spec drift), but a line needs
+# roughly half the attention of a line of logic.
+LIGHT_PATTERNS = ["*.css", "*.scss", "*.sass", "*.less", "*.stories.*", "*/demo/*", "*/examples/*",
+                  "*/stories/*", "*.md", "*.mdx", "*.txt"]
+
+TEST_RE = re.compile(r"(\.|_)(test|spec|e2e)(\.|_)|(^|/)(__tests__|tests?|e2e)/")
+
+
+def gh(args):
+    res = subprocess.run(["gh"] + args, capture_output=True, text=True)
+    if res.returncode != 0:
+        sys.exit(f"gh {' '.join(args)} failed:\n{res.stderr}")
+    return res.stdout
+
+
+def matches(path, patterns):
+    return any(fnmatch.fnmatch(path, p) for p in patterns)
+
+
+def group_key(path):
+    """Feature-level grouping: the file's directory, up to 5 segments deep (tests fold onto their source dir)."""
+    parts = path.split("/")[:-1]
+    parts = [p for p in parts if p not in ("__tests__", "tests", "test", "e2e", "__snapshots__")]
+    return "/".join(parts[:5]) or "."
+
+
+def source_stem(path):
+    base = os.path.basename(path)
+    base = re.sub(r"(\.|_)(test|spec|e2e)(?=\.)", "", base)
+    return base.split(".")[0]
+
+
+def changed_new_lines(patch):
+    """Line numbers in the new file that were added (for splitting one big file into ranges)."""
+    out, r = [], 0
+    for line in (patch or "").split("\n"):
+        m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)", line)
+        if m:
+            r = int(m.group(1)); continue
+        if line.startswith("+"):
+            out.append(r); r += 1
+        elif not line.startswith("-") and not line.startswith("\\"):
+            r += 1
+    return out
+
+
+def split_file(f, cap):
+    """Split a single oversized file into pieces covering ranges of its new-file lines."""
+    lines = f["_changed_lines"]
+    n = math.ceil(f["weight"] / cap)
+    if n <= 1 or len(lines) < n:
+        return [f]
+    size = math.ceil(len(lines) / n)
+    pieces = []
+    for i in range(n):
+        chunk = lines[i * size:(i + 1) * size]
+        if not chunk:
+            break
+        start = 1 if i == 0 else chunk[0]
+        end = chunk[-1] if i < n - 1 else None
+        pieces.append({**f, "weight": f["weight"] * len(chunk) / len(lines),
+                       "lines": f"{start}-{end if end else 'end'}"})
+    return pieces
+
+
+def pack(groups, target, max_slices):
+    """Pack groups into n slices in path order; split a group only if it alone exceeds 1.3x the cap."""
+    total = sum(g["weight"] for g in groups)
+    n = max(1, math.ceil(total / target))
+    over_budget = n > max_slices
+    if over_budget:
+        n = max_slices
+    cap = max(target, total / n)
+
+    units = []
+    for g in groups:
+        g = {**g, "files": [p for f in g["files"] for p in (split_file(f, cap) if f["weight"] > 1.3 * cap else [f])]}
+        if g["weight"] > 1.3 * cap and len(g["files"]) > 1:
+            chunk, w = [], 0
+            for f in g["files"]:
+                if chunk and w + f["weight"] > cap:
+                    units.append({"key": g["key"], "files": chunk, "weight": w})
+                    chunk, w = [], 0
+                chunk.append(f)
+                w += f["weight"]
+            if chunk:
+                units.append({"key": g["key"], "files": chunk, "weight": w})
+        else:
+            units.append(g)
+
+    # Pack in path order so neighbouring feature folders share a slice (locality helps the reviewer see
+    # how files relate); close a slice once it reaches its share of the total.
+    share = total / n
+    slices, cur = [], {"files": [], "weight": 0, "areas": []}
+    for u in sorted(units, key=lambda u: u["files"][0]["path"]):
+        if cur["files"] and cur["weight"] + u["weight"] / 2 > share and len(slices) < n - 1:
+            slices.append(cur)
+            cur = {"files": [], "weight": 0, "areas": []}
+        cur["files"].extend(u["files"])
+        cur["weight"] += u["weight"]
+        if u["key"] not in cur["areas"]:
+            cur["areas"].append(u["key"])
+    slices.append(cur)
+    slices = [s for s in slices if s["files"]]
+    for i, s in enumerate(slices, 1):
+        s["id"] = i
+        s["weight"] = round(s["weight"])
+        s["files"].sort(key=lambda f: (f["path"], f.get("lines", "")))
+        for f in s["files"]:
+            f.pop("_changed_lines", None)
+            f["weight"] = round(f["weight"])
+    return slices, over_budget
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pr")
+    ap.add_argument("--repo")
+    ap.add_argument("--out")
+    ap.add_argument("--target", type=int, default=700)
+    ap.add_argument("--max-slices", type=int, default=8)
+    ap.add_argument("--scope", default="studio-frontend/", help="path prefix to review; '' for the whole PR")
+    a = ap.parse_args()
+
+    repo_args = ["--repo", a.repo] if a.repo else []
+    meta = json.loads(gh(["pr", "view", a.pr, *repo_args, "--json",
+                          "number,title,body,url,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles,author,isDraft"]))
+    owner_repo = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/", meta["url"]).group(1)
+    files = json.loads(gh(["api", "--paginate", "--slurp", f"repos/{owner_repo}/pulls/{meta['number']}/files?per_page=100"]))
+    files = [f for page in files for f in page]
+
+    reviewable, noise, out_of_scope = [], [], []
+    arch_signals = []
+    for f in files:
+        path, status = f["filename"], f["status"]
+        entry = {"path": path, "status": status, "additions": f["additions"], "deletions": f["deletions"]}
+        if a.scope and not path.startswith(a.scope):
+            out_of_scope.append(entry)
+            continue
+        # Only explicit patterns count as noise. A file GitHub returns without a patch (too large) is
+        # still reviewed — agents read its diff from the worktree — so nothing big slips through.
+        if matches(path, NOISE_PATTERNS):
+            noise.append(entry)
+            continue
+        if matches(path, DATA_PATTERNS) and not matches(path, DATA_EXCEPTIONS):
+            factor = 0.3
+        elif matches(path, LIGHT_PATTERNS):
+            factor = 0.5
+        else:
+            factor = 1.0
+        entry["weight"] = factor * (f["additions"] + 0.3 * f["deletions"])
+        entry["_changed_lines"] = changed_new_lines(f.get("patch"))
+        if "patch" not in f and f["changes"] > 0:
+            entry["no_github_patch"] = True
+        entry["is_test"] = bool(TEST_RE.search(path))
+        reviewable.append(entry)
+        if matches(path, ARCH_SIGNAL_PATTERNS):
+            arch_signals.append(f"touches {path}")
+
+    new_dirs = sorted({os.path.dirname(f["path"]) for f in reviewable if f["status"] == "added"}
+                      - {os.path.dirname(f["path"]) for f in reviewable if f["status"] != "added"})
+    new_dirs = [d for d in new_dirs if not any(d.startswith(o + "/") for o in new_dirs if o != d)]
+    for d in new_dirs[:10]:
+        arch_signals.append(f"new directory {d}/")
+
+    body = meta.get("body") or ""
+    issue_refs = sorted(set(re.findall(r"(?<![\w/])#(\d+)", body)))
+    tracker_refs = sorted(set(re.findall(r"\b[A-Z][A-Z0-9]+-\d+\b", body)))
+    if re.search(r"\b(ADR|PRD|RFC)\b", body, re.I):
+        arch_signals.append("PR description references ADR/PRD/RFC")
+
+    # Keep a test next to the source it tests: give it the source's group key if one exists.
+    # Several sources can share a stem (src/tabs/tabs.tsx and demo/tabs.tsx): pick the closest by path.
+    stems = {}
+    for f in reviewable:
+        if not f["is_test"]:
+            stems.setdefault(source_stem(f["path"]), []).append(f["path"])
+
+    def test_key(path):
+        candidates = stems.get(source_stem(path))
+        if not candidates:
+            return group_key(path)
+        best = max(candidates, key=lambda c: len(os.path.commonpath([c, path])) if os.path.dirname(c) else 0)
+        if not os.path.commonpath([best, path]):
+            return group_key(path)
+        return group_key(best)
+
+    groups = OrderedDict()
+    for f in sorted(reviewable, key=lambda f: f["path"]):
+        key = test_key(f["path"]) if f["is_test"] else group_key(f["path"])
+        g = groups.setdefault(key, {"key": key, "files": [], "weight": 0})
+        g["files"].append(f)
+        g["weight"] += f["weight"]
+
+    total_weight = sum(f["weight"] for f in reviewable)
+    if not reviewable:
+        print(f"PR #{meta['number']}: nothing reviewable under '{a.scope}' "
+              f"({len(out_of_scope)} files out of scope, {len(noise)} noise) — skipping")
+        sys.exit(3)
+    slices, over_budget = pack(list(groups.values()), a.target, a.max_slices)
+
+    # Small PRs: one Sonnet agent does everything. Opus only where architecture has real weight.
+    single_agent = total_weight <= 400
+    arch_opus = not single_agent and (total_weight > 800 or (len(arch_signals) >= 2 and total_weight > 300))
+
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        tracked = subprocess.run(["git", "-C", top, "ls-files"], capture_output=True, text=True).stdout.split()
+        spec_candidates = [p for p in tracked if matches(p, SPEC_PATTERNS) and "node_modules" not in p][:200]
+    except Exception:
+        spec_candidates = []
+
+    plan = {
+        "pr": {k: meta[k] for k in ("number", "title", "url", "baseRefName", "headRefName", "headRefOid",
+                                     "additions", "deletions", "changedFiles", "isDraft")},
+        "author": (meta.get("author") or {}).get("login"),
+        "repo": owner_repo,
+        "body": body,
+        "issue_refs": issue_refs,
+        "tracker_refs": tracker_refs,
+        "reviewable_weight": round(total_weight),
+        "scope": a.scope,
+        "noise_files": noise,
+        "out_of_scope_files": out_of_scope,
+        "architecture_signals": arch_signals,
+        "architecture_model": "opus" if arch_opus else "sonnet",
+        "single_agent": single_agent,
+        "over_budget": over_budget,
+        "slices": slices,
+        "agent_count": 1 if single_agent else 1 + len(slices),
+        "spec_candidates": spec_candidates,
+    }
+
+    out = json.dumps(plan, indent=2, ensure_ascii=False)
+    if a.out:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        with open(a.out, "w") as fh:
+            fh.write(out)
+
+    print(f"PR #{meta['number']}: {meta['title']}")
+    print(f"  +{meta['additions']} -{meta['deletions']} in {meta['changedFiles']} files; "
+          f"reviewable weight {round(total_weight)}; noise files {len(noise)}")
+    print(f"  slices: {len(slices)}  (target {a.target}, max {a.max_slices})"
+          + ("  ** OVER BUDGET — ask the user before proceeding **" if over_budget else ""))
+    for s in slices:
+        print(f"    slice {s['id']}: weight {s['weight']}, {len(s['files'])} files, areas: {', '.join(s['areas'][:4])}")
+    for n_ in noise:
+        print(f"    skipped (noise): {n_['path']}  +{n_['additions']} -{n_['deletions']}")
+    if out_of_scope:
+        print(f"    out of scope (not under '{a.scope}'): {len(out_of_scope)} files")
+    print(f"  architecture model: {'n/a (single sonnet agent)' if single_agent else plan['architecture_model']}")
+    for sig in arch_signals[:8]:
+        print(f"    signal: {sig}")
+    print(f"  review agents: {plan['agent_count']} (+1 verifier if > 5 findings)")
+    if issue_refs or tracker_refs:
+        print(f"  references in body: {' '.join('#' + i for i in issue_refs)} {' '.join(tracker_refs)}")
+    if a.out:
+        print(f"  plan written to {a.out}")
+
+
+if __name__ == "__main__":
+    main()
