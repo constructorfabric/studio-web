@@ -56,6 +56,8 @@ describe('KeycloakOidcProvider', () => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    // jsdom keeps one window per file: an address a test wrote must not outlive it.
+    window.history.replaceState({}, '', '/');
   });
 
   describe('login (oauth)', () => {
@@ -63,7 +65,6 @@ describe('KeycloakOidcProvider', () => {
       window.history.replaceState({}, '', '/?screen=people;org=o1');
       await provider.login({ type: 'oauth', payload: {} });
       expect(sessionStorage.getItem('studio.oidc.return_to')).toBe('?screen=people;org=o1');
-      window.history.replaceState({}, '', '/');
     });
 
     it('returns a redirect with PKCE S256, state, and stores the one-shot values', async () => {

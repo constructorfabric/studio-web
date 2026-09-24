@@ -161,6 +161,24 @@ describe('createContextCatalogs', () => {
     expect(dispatch).not.toHaveBeenCalledWith(setContextWorkspaces([{ id: 'w1', name: 'W', count: 0 }]));
   });
 
+  // Reviewer finding (vasylcf): the loop-breaker on the retry had no test.
+  it('asks for one retry when the workspace read fails, and none when the retry fails too', async () => {
+    accounts.getWorkspaces.mockReturnValue({ fetch: () => Promise.reject(new Error('down')) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const catalogs = createContextCatalogs(app, onChange);
+
+    catalogs.loadWorkspaces('o1');
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(setContextWorkspacesStatus('failed')));
+    expect(mockEmit).toHaveBeenCalledWith('app/context/workspaces/failed');
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    mockEmit.mockClear();
+    catalogs.loadWorkspaces('o1', true);
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    expect(mockEmit).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('loads one workspace list at a time for the same organization', () => {
     accounts.getWorkspaces.mockReturnValue({ fetch: () => new Promise(() => undefined) });
     const catalogs = createContextCatalogs(app, onChange);
