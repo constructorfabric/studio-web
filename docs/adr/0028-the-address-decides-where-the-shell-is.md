@@ -226,7 +226,9 @@ workspace of the same organization, in which case the address moves to it: a
 link may name the project alone, and the workspace in the route is then the
 shell's own default, not the person's claim. A project named without a
 workspace stays in the address while the workspace list is on its way and is
-resolved against the default once the list is there. `project.selected`
+resolved against the default once the list is there — or, when the list is
+empty, against the organization, where the wizard puts such a project.
+`project.selected`
 is published as soon as the workspace list has vouched for the workspace — not
 before, because choosing the workspace resets the open project in the slice,
 and publishing earlier would open the project, close it and open it again

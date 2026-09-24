@@ -8,6 +8,8 @@ const projectsArtifacts = screen('projects.artifacts', '/projects/artifacts', 'p
 const orgOverview = screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 });
 const orgSettings = screen('org.settings', '/organization/settings', 'organization', { section: 'settings', order: 100, placement: 'settings' });
 const people = screen('people', '/people', 'organization', { order: 30 });
+const kitsList = screen('kits.main', '/kits', 'organization', { order: 50 });
+const kitsCatalog = screen('kits.catalog', '/kits/catalog', 'organization', { section: 'catalog', order: 10 });
 const fixture = screen('fixture', '/fixture/frame', 'organization', { section: 'frame-fixture', order: 900, placement: 'hidden' });
 const badRoute = screen('bad', '/Bad_Route', 'organization');
 
@@ -39,6 +41,11 @@ describe('groupScreens', () => {
 
   it('falls back to the lowest order when every member has a section', () => {
     expect(groupOfToken(groups, 'organization')?.owner.id).toBe('org.overview');
+  });
+
+  // Reviewer finding (vasylcf): the middle tiebreaker had no fixture of its own.
+  it('prefers the member with no section over a lower order at the same level', () => {
+    expect(groupOfToken(groupScreens([kitsCatalog, kitsList]), 'kits')?.owner.id).toBe('kits.main');
   });
 
   it('leaves out a screen with no valid token', () => {
