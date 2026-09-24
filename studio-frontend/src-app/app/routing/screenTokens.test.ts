@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ScreenExtension } from '@gears-frontx/react';
+import { screen } from '@frontx-test-utils/screenFixture';
 import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } from './screenTokens';
-
-const screen = (
-  id: string,
-  route: string,
-  level: string,
-  extra: Record<string, unknown> = {}
-): ScreenExtension =>
-  ({ id, entry: `entry.${route.split('/')[1]}`, presentation: { label: id, route, level, ...extra } }) as never;
 
 const projectsList = screen('projects.main', '/projects', 'workspace', { order: 20 });
 const projectsOverview = screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 });

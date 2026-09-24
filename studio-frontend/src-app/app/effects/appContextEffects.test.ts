@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FrontXApp, ScreenExtension } from '@gears-frontx/react';
+import type { FrontXApp } from '@gears-frontx/react';
 
 type BusHandler = (payload?: unknown) => void | Promise<void>;
 
@@ -36,6 +36,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 vi.mock('@/app/routing/startRouting', () => ({ startRouting: mockStartRouting }));
 vi.mock('@/app/effects/contextCatalogs', () => ({ createContextCatalogs: vi.fn(() => catalogs) }));
 
+import { screen } from '@frontx-test-utils/screenFixture';
 import { groupScreens } from '@/app/routing/screenTokens';
 import {
   addContextWorkspace,
@@ -45,8 +46,6 @@ import {
 } from '@/app/slices/appContextSlice';
 import { registerAppContextEffects } from './appContextEffects';
 
-const screen = (id: string, route: string, level: string, extra: Record<string, unknown> = {}): ScreenExtension =>
-  ({ id, entry: `entry.${route.split('/')[1]}`, presentation: { label: id, route, level, ...extra } }) as never;
 const screens = [
   screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),

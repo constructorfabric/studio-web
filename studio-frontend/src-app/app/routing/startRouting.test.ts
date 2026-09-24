@@ -13,11 +13,10 @@ vi.mock('@/app/mfe/mountScreen', () => ({ mountScreen: mocks.mountScreen, isMoun
 vi.mock('@/app/mfe/sharedContext', () => ({ publishStudioContext: mocks.publish }));
 
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
+import { screen } from '@frontx-test-utils/screenFixture';
 import reducer, { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { startRouting } from './startRouting';
 
-const screen = (id: string, route: string, level: string, extra: Record<string, unknown> = {}): ScreenExtension =>
-  ({ id, entry: `entry.${route.split('/')[1]}`, presentation: { label: id, route, level, ...extra } }) as never;
 const screens = [
   screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
   screen('people', '/people', 'organization', { order: 30 }),
