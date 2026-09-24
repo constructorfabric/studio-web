@@ -295,7 +295,12 @@ Every refusal is a `console.warn` and a normalized `replace`; none throws.
   read off the mounted set, not off the promise, and a screen that did not
   mount is not tried again until the address changes or the slot re-attaches
   (`app/routing/start` a second time). Without that guard every catalog
-  arrival would mount again, without end.
+  arrival would mount again, without end. "The address changes" is the
+  observer's report of a transition, not a comparison of parameters: a mount
+  is judged by the visit it started in, so a quick there-and-back to the same
+  address is a new visit with an attempt of its own, a failure that settles
+  after the person has left is not held against the address they are on now,
+  and a catalog arriving in between changes nothing.
 
 ### MFEs stay URL-unaware
 

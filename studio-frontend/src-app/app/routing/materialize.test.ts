@@ -74,8 +74,10 @@ function setup(url: string, initial: Partial<AppContextState>) {
     resolveProject: vi.fn(),
   };
   const warn = vi.fn();
-  const { materialize, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
-  return { materialize, retry, adapter, state, catalogs, warn, navigation };
+  const { materialize, transition, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
+  // `transition` stands in for the observer's report: in production every
+  // `navigate` below would be followed by it.
+  return { materialize, transition, retry, adapter, state, catalogs, warn, navigation };
 }
 
 const ready = { org: ORG, orgs: [ORG], access: 'ready' as const, workspace: WS, workspaces: [WS], workspacesStatus: 'ready' as const };
@@ -160,7 +162,7 @@ describe('materialize', () => {
   // Reviewer finding (coderabbit): the same project id asked for under one
   // workspace and answered under another must not be judged by the old scope.
   it('judges a lookup by the scope that is current when it lands, not the one it was asked in', async () => {
-    const { materialize, adapter, catalogs, state, navigation } = setup(
+    const { materialize, transition, adapter, catalogs, state, navigation } = setup(
       '/?screen=projects;org=o1;workspace=w1;project=p9',
       { ...ready, workspaces: [WS, WS2] }
     );
@@ -172,7 +174,7 @@ describe('materialize', () => {
     expect(catalogs.resolveProject).toHaveBeenCalledTimes(1);
 
     navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w2', project: 'p9' }, 'push');
-    materialize();
+    transition();
     expect(state().workspace).toEqual(WS2);
     answer({ id: 'p9', name: 'Nine', tenant_type: TENANT_TYPES.project, parent_id: 'w1' });
 
@@ -288,11 +290,12 @@ describe('materialize', () => {
   // Reviewer finding: the registry logs a failed chain and resolves — it never rejects.
   it('stops after one fallback when the chain resolves without mounting', async () => {
     mocks.mountScreen.mockImplementation(async () => undefined);
-    const { materialize, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
+    const { materialize, transition, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
     await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview'));
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
+    // Catalog arrivals re-run the pass without a transition: nothing is tried again.
     materialize();
     materialize();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -302,7 +305,7 @@ describe('materialize', () => {
 
     // A new address is a new chance.
     navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1' }, 'push');
-    materialize();
+    transition();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
   });
 
@@ -311,7 +314,7 @@ describe('materialize', () => {
   // anywhere was fallen back from.
   it('falls back once per address: a later failure elsewhere gets its own fallback', async () => {
     mocks.mountScreen.mockImplementation(async () => undefined);
-    const { materialize, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
+    const { materialize, transition, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -319,7 +322,7 @@ describe('materialize', () => {
     expect(warn).toHaveBeenCalledTimes(2);
 
     navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
-    materialize();
+    transition();
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(4));
     expect(mocks.mountScreen.mock.calls[2][1]).toMatchObject({ id: 'gears' });
     expect(mocks.mountScreen.mock.calls[3][1]).toMatchObject({ id: 'org.overview' });
@@ -332,13 +335,13 @@ describe('materialize', () => {
   it('a failure about an address since left re-applies the current one instead of replacing it', async () => {
     let finish!: () => void;
     mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const { materialize, adapter, navigation } = setup('/?screen=people;org=o1', ready);
+    const { materialize, transition, adapter, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
 
     mocks.isMountingScreen.mockReturnValue(true);
     navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
-    materialize();
+    transition();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
 
     mocks.isMountingScreen.mockReturnValue(false);
@@ -347,6 +350,56 @@ describe('materialize', () => {
     expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'gears' });
     expect(adapter.url()).toBe('/?screen=gears;org=o1');
     expect(adapter.length()).toBe(2);
+  });
+
+  // Reviewer finding (vasylcf, round 3): the stuck guard was keyed by a hash of
+  // the route, which a quick there-and-back reproduces — the abandoned attempt
+  // then looked like a failure of the current visit and blocked the address.
+  it('a mount abandoned by a quick there-and-back gets a fresh attempt when it settles as a failure', async () => {
+    let finish!: () => void;
+    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { materialize, transition, adapter, navigation } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    mocks.isMountingScreen.mockReturnValue(true);
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    transition();
+    navigation.navigate({ token: 'people', org: 'o1' }, 'push');
+    transition();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    mocks.isMountingScreen.mockReturnValue(false);
+    finish();
+    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
+    expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'people' });
+    await vi.waitFor(() => expect(mocks.mounted).toEqual(['people']));
+    expect(adapter.url()).toBe('/?screen=people;org=o1');
+  });
+
+  // Reviewer finding (vasylcf, round 2): a failure about an address since left
+  // must not mark that address stuck for a later return to it.
+  it('a failure about an address since left does not block a later return to it', async () => {
+    mocks.mounted = ['gears'];
+    let finish!: () => void;
+    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { materialize, transition, navigation } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    mocks.isMountingScreen.mockReturnValue(true);
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    transition();
+    mocks.isMountingScreen.mockReturnValue(false);
+    // The chain failed before it evicted gears: nothing to mount for the current address.
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+
+    navigation.navigate({ token: 'people', org: 'o1' }, 'push');
+    transition();
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(2);
+    expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'people' });
   });
 
   it('does not treat a superseded mount as a failure while another one is running', async () => {

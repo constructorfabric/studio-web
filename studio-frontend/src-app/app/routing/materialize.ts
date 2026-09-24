@@ -38,6 +38,12 @@ export interface MaterializerDeps {
 
 export interface Materializer {
   materialize(): void;
+  /**
+   * The observer's report that the address changed. A new visit: a mount that
+   * did not happen in the previous one may be tried again, and a mount still
+   * running from it is about a place the person has left.
+   */
+  transition(): void;
   /** Forgets a mount that failed and applies the address again — for when the screen slot has re-attached. */
   retry(): void;
 }
@@ -51,8 +57,15 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   const warn = deps.warn ?? ((text: string) => console.warn(text));
   const dispatch = app.store.dispatch;
   const resolving = new Set<string>();
-  /** The screen and address of a mount that did not happen, so it is not tried again until either changes. */
-  let stuckOn: string | null = null;
+  /**
+   * Counts the address transitions the observer has reported. A mount
+   * remembers the visit it started in, so a failure is judged against the
+   * visit it belongs to — not against a hash of the route, which a quick
+   * there-and-back reproduces (reviewer finding).
+   */
+  let visit = 0;
+  /** The visit whose mount did not happen, so it is not tried again until the address changes — a catalog arriving is not that. */
+  let stuckIn: number | null = null;
   /** The entry point a failed mount fell back to, so its own failure is not fallen back from — once (ADR-0028). */
   let fallbackTo: string | null = null;
 
@@ -110,36 +123,36 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     });
   };
 
-  const addressKey = (token: string): string => {
-    const route = navigation.currentRoute();
-    return [token, route?.token, route?.org, route?.workspace, route?.project, route?.section].join('|');
-  };
-
   const isMounted = (registry: MfeRegistry, group: ScreenGroup): boolean => {
     const [mountedId] = registry.getMountedExtensions(screenDomain.id);
     return groupOfExtension(deps.groups(), mountedId)?.token === group.token;
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
-  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, key: string, reason: string): void => {
-    stuckOn = key;
-    warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
-    if (key !== addressKey(group.token)) {
+  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, startedIn: number, reason: string): void => {
+    if (startedIn !== visit) {
       // The address moved on while this mount was running: the failure is
-      // about a place the person has left, and the current address gets its
-      // own pass rather than being replaced by a fallback for the old one.
+      // about a visit the person has left, and the current address gets its
+      // own pass — its own attempt included — rather than being marked stuck
+      // or replaced by a fallback for the old one.
+      warn(`Screen "${group.token}" did not mount (${reason}); the address has moved on since`);
       materialize();
       return;
     }
+    warn(`Screen "${group.token}" did not mount (${reason}); not trying again until the address changes`);
     // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
-    if (fallbackTo === group.token) {
-      // The level's entry point did not mount either: nothing is mounted, and
-      // the warning above has said so. The next address starts afresh.
+    const fallback =
+      fallbackTo === group.token ? null : entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
+    if (!fallback || fallback.token === group.token) {
+      // The level's entry point did not mount either, or there is none to fall
+      // back to: nothing is mounted, the warning above has said so, and this
+      // visit is not tried again. The next address starts afresh.
+      stuckIn = visit;
       fallbackTo = null;
       return;
     }
-    const fallback = entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
-    if (!fallback || fallback.token === group.token) return;
+    // The fallback changes the address, so nothing is stuck: the entry point
+    // gets its one attempt, in the pass the write triggers or in this one.
     fallbackTo = fallback.token;
     navigation.navigate(fallback, 'replace');
     materialize();
@@ -150,28 +163,33 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
   const mount = (registry: MfeRegistry, group: ScreenGroup): void => {
     if (isMountingScreen(registry)) return;
-    const key = addressKey(group.token);
-    if (stuckOn === key) return;
+    if (stuckIn === visit) return;
+    const startedIn = visit;
     void mountScreen(registry, group.owner)
       .then(() => {
         // The registry logs a failed chain and resolves — it never rejects — so
         // success is read off the mounted set, not off the promise.
         if (isMounted(registry, group)) {
           fallbackTo = null;
-          stuckOn = null;
+          stuckIn = null;
           materialize();
           return;
         }
         // Another mount took over (a StrictMode re-attach); its own completion re-runs this.
         if (isMountingScreen(registry)) return;
-        mountFailed(registry, group, key, 'the actions chain did not complete');
+        mountFailed(registry, group, startedIn, 'the actions chain did not complete');
       })
-      .catch((error: unknown) => mountFailed(registry, group, key, messageOf(error)));
+      .catch((error: unknown) => mountFailed(registry, group, startedIn, messageOf(error)));
   };
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
 
+  const transition = (): void => {
+    visit += 1;
+    materialize();
+  };
+
   const retry = (): void => {
-    stuckOn = null;
+    stuckIn = null;
     fallbackTo = null;
     materialize();
   };
@@ -297,5 +315,5 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
   };
 
-  return { materialize, retry };
+  return { materialize, transition, retry };
 }

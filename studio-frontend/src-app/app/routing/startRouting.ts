@@ -47,7 +47,7 @@ export function startRouting(
     getRegistrations: () =>
       groups.map((group) => ({ extension: group.token as ExtensionToken, routeOwner: group })),
   };
-  const release = navigation.createObserver(SCREEN_DOMAIN_KEY, source, () => materializer.materialize());
+  const release = navigation.createObserver(SCREEN_DOMAIN_KEY, source, () => materializer.transition());
 
   return {
     navigation,
