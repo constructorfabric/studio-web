@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import reducer, {
+  addContextWorkspace,
   openContextProject,
   rememberProject,
   setContextOrg,
@@ -95,6 +96,23 @@ describe('the projects catalog status', () => {
   it('is pending again when the workspace changes', () => {
     let state = reducer(inScope(), setContextProjectsStatus('failed'));
     state = reducer(state, setContextWorkspace('w1'));
+    expect(state.projectsStatus).toBe('pending');
+    expect(state.projects).toEqual([]);
+  });
+
+  // Reviewer finding (vasylcf): the other two ways out of a workspace reset it too.
+  it('is pending again when the organization changes', () => {
+    let state = reducer(inScope(), setContextProjectsStatus('failed'));
+    state = reducer(state, setContextOrg('o1'));
+    expect(state.projectsStatus).toBe('pending');
+    expect(state.workspaces).toEqual([]);
+    expect(state.workspacesStatus).toBe('pending');
+  });
+
+  it('is pending again when a workspace is added and entered', () => {
+    let state = reducer(inScope(), setContextProjectsStatus('failed'));
+    state = reducer(state, addContextWorkspace({ id: 'w3', name: 'New' }));
+    expect(state.workspace).toEqual({ id: 'w3', name: 'New' });
     expect(state.projectsStatus).toBe('pending');
     expect(state.projects).toEqual([]);
   });

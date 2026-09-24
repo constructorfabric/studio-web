@@ -57,6 +57,25 @@ const initialState: AppContextState = {
   access: 'loading',
 };
 
+/**
+ * What leaving a workspace takes with it: the project in scope, the list it
+ * came from and the list's status — so the next scope reads its own list.
+ * One definition, because five reducers leave a scope (reviewer finding).
+ */
+function leaveProjectScope(state: AppContextState): void {
+  state.project = null;
+  state.projects = [];
+  state.projectsStatus = 'pending';
+}
+
+/** What leaving an organization takes with it: its workspaces, and everything under them. */
+function leaveWorkspaceScope(state: AppContextState): void {
+  state.workspace = null;
+  state.workspaces = [];
+  state.workspacesStatus = 'pending';
+  leaveProjectScope(state);
+}
+
 const {
   slice,
   setContextAccess,
@@ -100,24 +119,14 @@ const {
         return;
       }
       state.org = null;
-      state.workspace = null;
-      state.workspaces = [];
-      state.workspacesStatus = 'pending';
-      state.project = null;
-      state.projects = [];
-      state.projectsStatus = 'pending';
+      leaveWorkspaceScope(state);
     },
 
     setContextOrg: (state: AppContextState, action: ReducerPayload<string>) => {
       const next = state.orgs.find((org) => org.id === action.payload);
       if (!next || next.id === state.org?.id) return;
       state.org = next;
-      state.workspace = null;
-      state.workspaces = [];
-      state.workspacesStatus = 'pending';
-      state.project = null;
-      state.projects = [];
-      state.projectsStatus = 'pending';
+      leaveWorkspaceScope(state);
     },
 
     // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
@@ -131,9 +140,7 @@ const {
         return;
       }
       state.workspace = null;
-      state.project = null;
-      state.projects = [];
-      state.projectsStatus = 'pending';
+      leaveProjectScope(state);
     },
     // @cpt-end:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
 
@@ -150,9 +157,7 @@ const {
       const next = state.workspaces.find((workspace) => workspace.id === action.payload);
       if (!next || next.id === state.workspace?.id) return;
       state.workspace = next;
-      state.project = null;
-      state.projects = [];
-      state.projectsStatus = 'pending';
+      leaveProjectScope(state);
     },
 
     addContextWorkspace: (
@@ -164,9 +169,7 @@ const {
       const next = listed ?? action.payload;
       if (next.id === state.workspace?.id) return;
       state.workspace = next;
-      state.project = null;
-      state.projects = [];
-      state.projectsStatus = 'pending';
+      leaveProjectScope(state);
     },
 
     /** The projects of the workspace in scope, from whoever read them: the shell's catalog or the MFE's own list. */

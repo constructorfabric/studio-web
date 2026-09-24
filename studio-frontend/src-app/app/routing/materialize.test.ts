@@ -254,6 +254,15 @@ describe('materialize', () => {
     expect(mocks.publish).toHaveBeenCalled();
   });
 
+  // Reviewer finding (vasylcf): the organization-level twin of the branch above had no test.
+  it('closes the project when an organization-level screen is opened over it', () => {
+    const { materialize, state } = setup('/?screen=people;org=o1', { ...ready, project: ATLAS, projects: [ATLAS], section: 'artifacts' });
+    materialize();
+    expect(state().project).toBeNull();
+    expect(state().section).toBeNull();
+    expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'people' }));
+  });
+
   it('does not carry a workspace on an organization-level screen', () => {
     const { materialize, adapter } = setup('/?screen=people;org=o1;workspace=w1', ready);
     materialize();
