@@ -190,10 +190,22 @@ route did not name.
 
 A project named in the address is resolved in this order: the cache of the
 workspace's projects (an `opened` publish, a sibling list, a previous visit),
-then `getTenant(projectId)`. The tenant's `parent_id` must be the workspace in
-the route. `project.selected` is published as soon as the id is known, so the
-MFE opens the project without waiting; the context chain shows a skeleton in
-the project slot until the name arrives.
+then `getTenant(projectId)`. The tenant must be of the project type, and its
+`parent_id` the workspace or the organization in the route. `project.selected`
+is published as soon as the workspace list has vouched for the workspace — not
+before, because choosing the workspace resets the open project in the slice,
+and publishing earlier would open the project, close it and open it again
+while the list is on its way. The id goes out before the name: the MFE opens
+the project without waiting, and the context chain shows a skeleton in the
+project slot until the name arrives.
+
+Two handlers still write the workspace *selection*, and that is deliberate:
+`addContextWorkspace` when a workspace is picked or created on a screen (the
+name is data the address cannot carry, and the reducer selects as it
+remembers), and `setContextWorkspace` at the organization level, where the
+address carries no workspace and the slice's choice is the preference the next
+descent starts from (see "The parameters a level carries"). Below the
+organization the address decides, and `materialize` applies it.
 
 The mount is the last step: if the mounted group is not the route's group,
 `materialize` calls `mountScreen` with the group's owner and, when the mount
@@ -212,14 +224,20 @@ the `screen` key; the first report is synchronous, and `materialize` mounts
 the group at once — a mount needs no catalog. The organization, workspace and
 project parts land as their catalogs do. An empty address becomes the
 organization level's entry point and is written with `replace`, so a reload
-from then on keeps the place. When access is `unassigned` the route is not
-applied and nothing mounts; the gate shows the onboarding state as before.
+from then on keeps the place. Access is still loading when the first report
+arrives, so the first mount happens before the person's organizations are
+known; when they turn out to be none, the access gate replaces the screen slot
+with the onboarding state as before, and from then on `materialize` applies
+nothing while access is `unassigned`.
 
 ### A link survives the sign-in redirect
 
 `login()` stores the current `search` and `hash` in `sessionStorage` under
 `studio.oidc.return_to` before redirecting, and `AuthGate`'s scrub restores
-it with the same `replaceState` it already performs. Only a relative string
+it with the same `replaceState` it already performs. The scrub strips the
+callback parameters segment by segment, never through `URLSearchParams`:
+re-serialising the query encodes the router grammar's `;` and `=` into `%3B`
+and `%3D`, and the shell then reads no screen entry at all. Only a relative string
 beginning with `?` or `#` is stored or restored; an origin or a path is never
 taken from storage. Both changes live in `auth/` and import nothing from
 routing.
@@ -230,14 +248,23 @@ Every refusal is a `console.warn` and a normalized `replace`; none throws.
 
 - An unknown token — the observer reports it unresolved — lands on the
   organization level's entry point.
-- An organization outside the person's list becomes the first one; the
-  workspace and project are dropped with it.
+- An organization outside the person's list becomes the one already in
+  scope, or the first when none is; the workspace and project are dropped
+  with it.
 - A workspace outside the organization's list is dropped, and the project with
   it.
-- A project that answers 404 or 403, or whose parent is not the workspace in
-  the route, is dropped, and the section with it.
-- A mount that fails is retried once as the level's entry point; if that fails
-  too, nothing is mounted and the warning says so, which is today's behaviour.
+- A project that answers 404 or 403, whose type is not project, or whose
+  parent is neither the workspace nor the organization in the route (the
+  wizard creates a project straight under the organization), is dropped, and
+  the section with it. The type check matters: every workspace's parent is the
+  organization too.
+- A mount that does not happen is retried once as the level's entry point; if
+  that fails too, nothing is mounted and the warning says so. The registry
+  logs a failed actions chain and resolves — it never rejects — so success is
+  read off the mounted set, not off the promise, and a screen that did not
+  mount is not tried again until the address changes or the slot re-attaches
+  (`app/routing/start` a second time). Without that guard every catalog
+  arrival would mount again, without end.
 
 ### MFEs stay URL-unaware
 
