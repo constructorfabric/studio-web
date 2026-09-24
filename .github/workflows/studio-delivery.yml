@@ -93,10 +93,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           ref: ${{ github.event.inputs.source_ref || github.sha }}
+      - name: Select the parent of a manually requested commit
+        id: manual-base
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # A dispatch from main with source_ref=<old SHA> must inspect that
+          # commit, not everything between the old SHA and today's main.
+          base: ${{ steps.manual-base.outputs.sha }}
+          ref: ${{ github.event.inputs.source_ref || github.ref }}
           filters: |
             backend:
               - 'studio-backend/**'
@@ -119,7 +129,8 @@ jobs:
             infra:
               - 'studio-backend/docker/graph-postgres/**'
               - 'keycloak/**'
-              - '.github/workflows/studio-delivery.yml'
+              # Workflow syntax is checked by test-deployment-config. Run the
+              # PG19/pgvector integration test when its actual operand changes.
             deployment:
               - 'deploy/**'
               - '.github/workflows/studio-delivery.yml'
@@ -142,6 +153,8 @@ jobs:
       # gears-rust is a git dependency pinned in Cargo.toml — no second
       # checkout, and no second place to keep the revision in sync.
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
 
       - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
@@ -195,6 +208,8 @@ jobs:
         working-directory: studio-frontend
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -226,6 +241,8 @@ jobs:
         working-directory: studio-frontend-prototype
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -253,6 +270,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -281,6 +300,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -298,6 +319,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
 
       - name: Build graph PostgreSQL image
         run: >-
@@ -323,6 +346,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
 
       - name: Validate GitHub Actions workflows
         run: |
@@ -423,7 +448,11 @@ jobs:
     # test-complete proves the complete matrix; test-changes is also listed so
     # this job can consume the selected-component outputs directly.
     needs: [test-complete, test-changes]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'))
+    if: >-
+      always() &&
+      needs.test-complete.result == 'success' &&
+      needs.test-changes.result == 'success' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy')))
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
@@ -1031,7 +1060,7 @@ jobs:
     if: >-
       always() &&
       github.event.inputs.operation != 'Deploy existing images' &&
-      (needs.build-require-ci.result == 'success' || needs.build-require-ci.result == 'skipped') &&
+      needs.build-require-ci.result == 'success' &&
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
       (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped')
     runs-on: ubuntu-latest
@@ -1265,6 +1294,11 @@ jobs:
           # so the current frontend tag is the safe bootstrap value.
           prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
           keycloak_tag="$(current_tag keycloak)"
+          current_theia_image="$(kubectl get deployment studio-studio-web-backend \
+            -n "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_SESSION_IMAGE")].value}')"
+          test -n "$current_theia_image"
+          theia_tag="${current_theia_image##*:}"
 
           case "${{ github.event.inputs.component }}" in
             all)
@@ -1281,13 +1315,18 @@ jobs:
                 if [ "${{ needs.build-require-ci.outputs.prototype }}" = "true" ]; then
                   prototype_tag="$IMAGE_TAG"
                 fi
+                if [ "${{ needs.build-require-ci.outputs.backend }}" = "true" ] ||
+                   [ "${{ needs.build-require-ci.outputs.theia }}" = "true" ]; then
+                  theia_tag="$IMAGE_TAG"
+                fi
               else
                 backend_tag="$IMAGE_TAG"
                 frontend_tag="$IMAGE_TAG"
                 prototype_tag="$IMAGE_TAG"
+                theia_tag="$IMAGE_TAG"
               fi
               ;;
-            backend) backend_tag="$IMAGE_TAG" ;;
+            backend) backend_tag="$IMAGE_TAG"; theia_tag="$IMAGE_TAG" ;;
             frontend) frontend_tag="$IMAGE_TAG" ;;
             prototype) prototype_tag="$IMAGE_TAG" ;;
             *) echo "Unsupported component" >&2; exit 1 ;;
@@ -1319,14 +1358,13 @@ jobs:
           wait_for_image "$IMAGE_PREFIX/file-storage-sidecar:$backend_tag"
           wait_for_image "$IMAGE_PREFIX/studio-frontend:$frontend_tag"
           wait_for_image "$IMAGE_PREFIX/studio-frontend-prototype:$prototype_tag"
-          # The Kubernetes session driver follows the deployed backend tag;
-          # fail before Helm if the matching IDE runtime was not published.
-          wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$backend_tag"
+          wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$theia_tag"
           wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
 
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
           echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
+          echo "theia_tag=$theia_tag" >> "$GITHUB_OUTPUT"
           echo "keycloak_tag=$keycloak_tag" >> "$GITHUB_OUTPUT"
 
           for secret in \
@@ -1351,6 +1389,7 @@ jobs:
             -f "$values"
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}"
+            --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}"
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
@@ -1378,6 +1417,7 @@ jobs:
             -f "deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml" \
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}" \
+            --set-string "backend.sessions.image.tag=${{ steps.versions.outputs.theia_tag }}" \
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
@@ -1406,8 +1446,17 @@ jobs:
             deployment="studio-studio-web-$component"
             kubectl rollout status "deployment/$deployment" -n "$NAMESPACE" --timeout=3m
             images="$(kubectl get "deployment/$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[*].image}')"
-            grep -q ":$IMAGE_TAG" <<<"$images"
+            case "$component" in
+              backend) expected_tag='${{ steps.versions.outputs.backend_tag }}' ;;
+              frontend) expected_tag='${{ steps.versions.outputs.frontend_tag }}' ;;
+              frontend-prototype) expected_tag='${{ steps.versions.outputs.prototype_tag }}' ;;
+            esac
+            grep -q ":$expected_tag" <<<"$images"
           done
+
+          theia_image="$(kubectl get deployment studio-studio-web-backend -n "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_SESSION_IMAGE")].value}')"
+          [[ "$theia_image" == *":${{ steps.versions.outputs.theia_tag }}" ]]
 
           # What a browser actually gets: compression, caching, the API
           # surface and the realm issuer. Everything above this line proves

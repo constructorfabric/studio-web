@@ -170,6 +170,9 @@ Routine delivery flow:
    retaining the running tags for components that did not change. Alternatively,
    choose **Deploy existing images** and select **Services**, with `dev` or
    `test` and either a `sha-<commit>` snapshot or a published `v*` release.
+   For a manual build of a specific commit, set `source_ref` to its full SHA:
+   tests and change detection use that commit, and a Theia-only change updates
+   the session image without replacing unchanged backend/frontend images.
 3. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
    `infra-v*` tag, then choose **Deploy existing images** and
    **Infrastructure** in **Studio Delivery**.
