@@ -87,12 +87,18 @@ const {
 
     /**
      * The organizations on offer. Which of them is in scope is the address's
-     * to say (ADR-0022): one the list no longer vouches for is dropped, with
-     * everything under it, and none is picked in its place.
+     * to say (ADR-0028): the one in scope is refreshed from the list (its name
+     * and count may have changed), one the list no longer vouches for is
+     * dropped with everything under it, and none is picked in its place.
      */
     setContextOrganizations: (state: AppContextState, action: ReducerPayload<ContextEntity[]>) => {
       state.orgs = action.payload;
-      if (!state.org || action.payload.some((org) => org.id === state.org?.id)) return;
+      if (!state.org) return;
+      const kept = action.payload.find((org) => org.id === state.org?.id);
+      if (kept) {
+        state.org = kept;
+        return;
+      }
       state.org = null;
       state.workspace = null;
       state.workspaces = [];
@@ -115,10 +121,15 @@ const {
     },
 
     // @cpt-begin:cpt-studiofrontend-algo-workspace-scope-resolve:p1:inst-6
-    /** The workspaces of the organization in scope. Same rule as the organizations: keep or drop, never pick. */
+    /** The workspaces of the organization in scope. Same rule as the organizations: refresh or drop, never pick. */
     setContextWorkspaces: (state: AppContextState, action: ReducerPayload<ContextEntity[]>) => {
       state.workspaces = action.payload;
-      if (!state.workspace || action.payload.some((item) => item.id === state.workspace?.id)) return;
+      if (!state.workspace) return;
+      const kept = action.payload.find((item) => item.id === state.workspace?.id);
+      if (kept) {
+        state.workspace = kept;
+        return;
+      }
       state.workspace = null;
       state.project = null;
       state.projects = [];
@@ -174,7 +185,7 @@ const {
     /**
      * A project the shell learned about — from an `opened` publish, a sibling
      * list, or a tenant read for an address that named it. Data, not a
-     * selection: which project is open is the address's to say (ADR-0022).
+     * selection: which project is open is the address's to say (ADR-0028).
      */
     rememberProject: (state: AppContextState, action: ReducerPayload<ContextEntity>) => {
       const listed = state.projects.find((project) => project.id === action.payload.id);

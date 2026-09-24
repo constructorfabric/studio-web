@@ -43,6 +43,14 @@ describe('the catalog reducers keep or drop a selection, and never pick one', ()
     expect(state.projects).toHaveLength(1);
   });
 
+  // Reviewer finding (coderabbit): a re-read that keeps the id but renames the
+  // entity must not leave the old name in the chain and the shared properties.
+  it('a re-read refreshes the name and count of the organization in scope', () => {
+    const state = reducer(inScope(), setContextOrganizations([O1, { id: 'o2', name: 'Two, renamed', count: 4 }]));
+    expect(state.org).toEqual({ id: 'o2', name: 'Two, renamed', count: 4 });
+    expect(state.workspace).toEqual(W2);
+  });
+
   it('an organization no longer on offer is dropped with everything under it', () => {
     const state = reducer(inScope(), setContextOrganizations([O1]));
     expect(state.org).toBeNull();
@@ -60,6 +68,12 @@ describe('the catalog reducers keep or drop a selection, and never pick one', ()
   it('a workspace list that still has the one in scope keeps it', () => {
     const state = reducer(inScope(), setContextWorkspaces([W2]));
     expect(state.workspace).toEqual(W2);
+    expect(state.projects).toHaveLength(1);
+  });
+
+  it('a re-read refreshes the name and count of the workspace in scope', () => {
+    const state = reducer(inScope(), setContextWorkspaces([W1, { id: 'w2', name: 'Other, renamed', count: 2 }]));
+    expect(state.workspace).toEqual({ id: 'w2', name: 'Other, renamed', count: 2 });
     expect(state.projects).toHaveLength(1);
   });
 
