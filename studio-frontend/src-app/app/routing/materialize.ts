@@ -84,7 +84,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     return route;
   };
 
-  const resolveLater = (projectId: string, workspaceId: string, orgId: string | undefined): void => {
+  const resolveLater = (projectId: string, workspaceId: string | undefined, orgId: string | undefined): void => {
     if (resolving.has(projectId)) return;
     resolving.add(projectId);
     void catalogs.resolveProject(projectId).then((lookup) => {
@@ -101,16 +101,30 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       // it, the MFE has its id already, and the next pass asks again.
       if (lookup === 'unavailable') return;
       const tenant = lookup;
-      // A project may sit under its workspace or straight under the organization
-      // (the wizard does the latter) — but every workspace sits under the
-      // organization too, so the type has to say project as well.
-      const parentOk =
-        tenant !== null &&
-        tenant.tenant_type === TENANT_TYPES.project &&
-        (tenant.parent_id === workspaceId || (orgId !== undefined && tenant.parent_id === orgId));
-      if (!tenant || !parentOk) {
-        warn(`Project ${projectId} is not in workspace ${workspaceId}; closing it`);
+      // Every workspace sits under the organization too, so the type has to
+      // say project before the parent is looked at.
+      if (tenant === null || tenant.tenant_type !== TENANT_TYPES.project) {
+        warn(`Project ${projectId} is not a project this person can read; closing it`);
         navigation.navigate({ ...current, project: undefined, section: undefined }, 'replace');
+        materialize();
+        return;
+      }
+      // A project may sit under its workspace or straight under the organization
+      // (the wizard does the latter).
+      if (tenant.parent_id !== workspaceId && (orgId === undefined || tenant.parent_id !== orgId)) {
+        const home = readAppContext(app).workspaces.find((workspace) => workspace.id === tenant.parent_id);
+        if (!home) {
+          warn(`Project ${projectId} is not in workspace ${workspaceId ?? '(none)'}; closing it`);
+          navigation.navigate({ ...current, project: undefined, section: undefined }, 'replace');
+          materialize();
+          return;
+        }
+        // Under another workspace of this organization: the project id is the
+        // more specific fact — a link may name the project alone, and the
+        // workspace in the route is then the shell's own default — so the
+        // address moves to the project's workspace instead of refusing it.
+        // The pass that write triggers opens it there and reads its name.
+        navigation.navigate({ ...current, workspace: home.id }, 'replace');
         materialize();
         return;
       }
@@ -256,9 +270,11 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       if (wanted.workspace) next.workspace = wanted.workspace;
 
       context = readAppContext(app);
-      if (wanted.project && next.workspace) {
-        // Carried in the address while the workspace list is still on its way;
-        // opened only once that list can vouch for the workspace.
+      if (wanted.project) {
+        // Carried in the address while the workspace list is still on its way,
+        // whether or not the address named a workspace — a link may name the
+        // project alone. Opened once the list can vouch for the workspace, or
+        // say the organization has none and the project sits straight under it.
         next.project = wanted.project;
         if (context.workspacesStatus === 'ready') {
           const known = context.projects.find((project) => project.id === wanted.project);
@@ -270,9 +286,9 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
           if (!known) resolveLater(wanted.project, next.workspace, next.org);
           // The siblings for the switcher, asked for while nobody has read
           // them; a read that failed is not asked again on every pass.
-          if (context.projectsStatus === 'pending') catalogs.loadProjects(next.workspace);
+          if (next.workspace && context.projectsStatus === 'pending') catalogs.loadProjects(next.workspace);
         }
-      } else if (context.project && !wanted.project) {
+      } else if (context.project) {
         dispatch(closeContextProject());
       }
     } else if (readAppContext(app).project) {

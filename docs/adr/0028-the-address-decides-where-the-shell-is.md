@@ -221,7 +221,12 @@ defaults, filled in the same pass that checks the address against the list.
 A project named in the address is resolved in this order: the cache of the
 workspace's projects (an `opened` publish, a sibling list, a previous visit),
 then `getTenant(projectId)`. The tenant must be of the project type, and its
-`parent_id` the workspace or the organization in the route. `project.selected`
+`parent_id` the workspace or the organization in the route — or another
+workspace of the same organization, in which case the address moves to it: a
+link may name the project alone, and the workspace in the route is then the
+shell's own default, not the person's claim. A project named without a
+workspace stays in the address while the workspace list is on its way and is
+resolved against the default once the list is there. `project.selected`
 is published as soon as the workspace list has vouched for the workspace — not
 before, because choosing the workspace resets the open project in the slice,
 and publishing earlier would open the project, close it and open it again
@@ -285,10 +290,11 @@ Every refusal is a `console.warn` and a normalized `replace`; none throws.
 - A workspace outside the organization's list is dropped, and the project with
   it.
 - A project that answers 404 or 403, whose type is not project, or whose
-  parent is neither the workspace nor the organization in the route (the
-  wizard creates a project straight under the organization), is dropped, and
-  the section with it. The type check matters: every workspace's parent is the
-  organization too.
+  parent is neither the workspace nor the organization in the route, nor
+  another workspace of that organization (the wizard creates a project
+  straight under the organization; a link may name a project under a
+  workspace other than the default), is dropped, and the section with it. The
+  type check matters: every workspace's parent is the organization too.
 - A mount that does not happen is retried once as the level's entry point; if
   that fails too, nothing is mounted and the warning says so. The registry
   logs a failed actions chain and resolves — it never rejects — so success is
