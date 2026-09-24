@@ -5,9 +5,16 @@ Both options below run the same thing — `scripts/run_auto_reviews.sh` → `/st
 The identity is whatever `gh` is authenticated as; the Claude usage is whoever's Claude credentials run it.
 
 What makes it safe to run unattended:
-- `find_prs.py` picks open, non-draft PRs not authored by you whose **current head** has no review carrying
-  the `<!-- studio-frontend-review sha=<head> -->` marker. A new push → new head → one new review. No state files.
-- `plan_review.py` exits 3 when nothing reviewable is under `studio-frontend/` → nothing is posted.
+- `find_prs.py` picks open, non-draft PRs not authored by you whose **current head** is not reviewed yet: no
+  review carrying the `<!-- studio-frontend-review sha=<head> ... -->` marker and no local record in
+  `$REVIEW_RUNS/state/` (heads reviewed without posting).
+- A new push is a follow-up round: only lines added since the last reviewed head are reviewed, threads from
+  earlier rounds are re-checked in place (resolved when fixed), and a round with nothing new posts nothing.
+  So a 1000+ line PR gets one exhaustive review and then small, converging follow-ups — not a fresh full
+  review per push.
+- The runner plans before starting Claude: nothing under `studio-frontend/` (exit 3) or no new lines there
+  since the last reviewed head (exit 5) is recorded and costs no Claude run.
+- Each run starts from an empty workdir, so findings from an earlier head can't leak into the next one.
 - `publish_review.py --head-sha` refuses to post if the PR moved during the review.
 - Event is always `COMMENT` (never approve / request changes), with a visible "automated review" note.
 - Headless Claude runs with a narrow tool allowlist, no `gh api` / `git push` / `gh pr merge`; the
@@ -83,6 +90,8 @@ jobs:
 - Cost cap per PR: `MAX_BUDGET_USD` (default 15). Orchestrator model: `REVIEW_MODEL` (default `sonnet`);
   subagents follow the budget rules in `SKILL.md`.
 - The review is additive to CodeRabbit: points already in `existing-comments.md` are not repeated.
-- To pause: comment out the cron line / disable the workflow. To force a re-review of the same head:
-  edit that review on GitHub and remove its marker line (submitted reviews can't be deleted), or run
-  `run_auto_reviews.sh <N>` by hand.
+- To pause: comment out the cron line / disable the workflow. To force a full re-review of every line, run
+  `/studio-frontend-review <N> --full` by hand. Local records: `$REVIEW_RUNS/state/<owner>__<repo>-<N>.json`
+  (delete it to forget the quiet rounds; the markers on GitHub still count).
+- Option B (Actions) has no persistent `$REVIEW_RUNS`, so quiet rounds aren't remembered there: a head
+  with nothing new is planned again on the next event (cheap — exit 5 before Claude starts).

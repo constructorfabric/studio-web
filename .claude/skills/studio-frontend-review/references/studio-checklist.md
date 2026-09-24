@@ -14,6 +14,10 @@ a pure UI change skips API contracts unless it calls an endpoint.
 * Tracked files are read-only: no edits to source, generated files under git, formatting, dependencies, lockfiles or snapshots.
 * Rebuilding untracked build output is allowed when verification needs it: `dist`, `packages/*/dist`, generated `mfe.json` in `dist`. Check with `git status --short` afterwards that nothing tracked changed.
 * Use check-only commands: `cfs validate`, `cfs validate-toc <files>`. Do **not** run `cfs toc` — it rewrites the Markdown files.
+* `cfs validate` works only from `studio-frontend/` (in the repo root it answers "not initialized"); run it as
+  `cfs validate --local-only`. `prepare_review.py` already ran it at the head and the base: its output is in
+  `cfs-validate.md`, split into new-in-this-PR and pre-existing. Quote that file; never state what the tool
+  would report. A traceability convention the tool does not flag is a convention finding, not a failing check.
 
 ---
 
@@ -188,7 +192,8 @@ For changes that introduce or materially change a user-facing feature:
 * code carries `@cpt-dod` / `@cpt-algo` markers;
 * checked algorithms wrap every `inst-N` in `@cpt-begin` / `@cpt-end`;
 * a new MFE `src` is added to `codebase` in `.cf-studio/config/artifacts.toml`, otherwise its markers are never checked;
-* `cfs validate` and `cfs validate-toc <changed .md files>` must pass.
+* `cfs validate --local-only` (from `studio-frontend/`) must not report new errors — see `cfs-validate.md`;
+  a renamed heading that leaves a TOC anchor pointing at nothing shows up there.
 
 Do not require a FEATURE artifact for unrelated bug fixes, refactors or maintenance unless the project convention explicitly requires one.
 
@@ -309,9 +314,11 @@ These map onto the generic checklist's levels; use them to calibrate Studio-spec
 
 * **blocker** — deterministic production failure, data loss, security/access-control failure, or broken core flow;
 * **major** — user-visible functional regression or incorrect behavior in a supported flow;
-* **minor** — localized defect or maintainability/pattern issue with limited impact.
+* **minor** (posted as "Should fix") — localized defect or maintainability/pattern issue with limited impact;
+  also every traceability, test-coverage, duplication and convention finding, however important.
 
-Severity must be tied to a concrete failure scenario, not personal preference.
+Severity must be tied to a concrete failure scenario, not personal preference. Blocker and major are reserved
+for broken behaviour, so the author can triage by the label.
 
 ---
 

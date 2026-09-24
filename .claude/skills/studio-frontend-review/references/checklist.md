@@ -94,18 +94,44 @@ The team's testing philosophy. Apply it; don't ask for tests it considers pointl
 
 ## Severity
 
-- **blocker** — contradicts a spec/ADR, breaks a contract, a real bug on a main path, a security hole. Should not merge as is.
-- **major** — a bug on a secondary path, missing test for new logic or missing e2e for a new flow, meaningful duplication, boundary violation.
-- **minor** — smells, local improvements, small inconsistencies.
-- **nit** — optional polish. Keep few; they are dropped automatically when the review has 5+ substantive findings.
+The label is for the reader's triage, so it must mean the same on every PR: **blocker and major are for
+broken behaviour only**, each with a concrete failure (input or state → wrong result) in `failure`.
 
-Documentation findings: a doc that promises behaviour or API the code doesn't have (or hides a real
-behaviour change from consumers/agents) is **major**; a wrong number, stale wording or leftover phrase in
-an otherwise correct doc is **minor** — minor doc drift is folded into a single comment.
+- **blocker** — broken behaviour on a main path, data loss, a security or access-control hole, a broken contract
+  that consumers hit. Should not merge as is.
+- **major** — broken behaviour on a secondary path, or an ADR/spec violation that produces wrong behaviour
+  (name the behaviour).
+- **minor** (posted as **Should fix**) — everything worth changing that isn't broken behaviour: missing tests for
+  new logic, missing e2e for a new flow, traceability (`@cpt` markers, FEATURE docs, `cfs` errors), duplication,
+  boundary violations without a behaviour failure, convention deviations, smells.
+- **nit** — optional polish.
+
+`merge_findings.py` lowers a blocker/major outside `bug` / `architecture` / `spec`, or without `failure`, to
+minor. Severity never depends on how many findings there are: don't lift a missing test to major because the
+rest of the PR is clean.
+
+Documentation findings: a doc that promises behaviour or API the code doesn't have is **minor** unless a
+consumer acting on it gets wrong behaviour (then **major**, with that failure); stale wording in an otherwise
+correct doc is **minor** — minor doc drift is folded into a single comment.
+
+## Looking wider once you've found something
+
+- A confirmed bug in a function: read that function's other branches and sibling paths (the fallback, the
+  retry, the navigate/replace path, the error path) for the same class of mistake before moving on.
+- A guard or trigger condition: check what it is meant to catch *and* every normal case it also matches
+  (`items.length === 0` also matches a genuinely empty list, not only the failed load).
+- An ADR or spec that names a single writer or owner of a piece of state: grep every writer of that field
+  (assignments, reducers, setters) and report the others.
+- A rewritten or moved module: compare it with the base for dropped tests and dropped `@cpt-*` markers.
 
 ## Writing the comment
 
 - Lead with the problem in one sentence, then why it matters, then a concrete suggestion. Short code snippets are fine.
+- For a bug, trace it to the line ("`mountFailed` sets `recovering = true` at line 121 and resets it only at 137/151")
+  and give the concrete sequence that breaks it ("A fails → fallback fails → Z fails → no fallback"). Long is fine
+  when every sentence carries the reproduction.
+- If you offer ways out, offer the real ones ("re-anchor the markers, or uncheck the step") — it makes the fix easy.
+- End with `verify`: one line — the command, the test name or the manual sequence that shows the problem.
 - Point at evidence: the spec line, the existing function, the caller that breaks.
 - Ask a question instead of asserting when you're not sure of intent ("Is the empty list intentional here? The PRD says…").
 - No praise padding, no restating the diff.

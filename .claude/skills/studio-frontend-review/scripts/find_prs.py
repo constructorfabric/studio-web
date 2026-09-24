@@ -4,14 +4,16 @@
 Usage: find_prs.py [--repo owner/name] [--scope studio-frontend/] [--include-drafts] [--include-own]
                    [--json]
 A head counts as reviewed when a review by the authenticated `gh` user carries the marker that
-publish_review.py writes (`<!-- studio-frontend-review sha=<head> -->`). No local state: the PR itself
-is the record, so the same check works on a laptop and in CI.
+publish_review.py writes (`<!-- studio-frontend-review sha=<head> ... -->`), or when review_state.py has a
+local record of it (a quiet follow-up round, or a head with nothing new to review).
 Prints one PR number per line (or a JSON array with --json).
 """
 import argparse
 import json
 import subprocess
 import sys
+
+import review_state
 
 
 def gh(args):
@@ -43,6 +45,8 @@ def main():
         # beyond that is re-checked by plan_review.py, which exits 3 when nothing is in scope.
         paths = [f["path"] for f in pr.get("files") or []]
         if len(paths) < 100 and not any(p.startswith(a.scope) for p in paths):
+            continue
+        if any(e["sha"] == pr["headRefOid"] for e in review_state.load_local(a.repo, pr["number"])):
             continue
         marker = f"studio-frontend-review sha={pr['headRefOid']}"
         reviews = json.loads(gh(["api", "--paginate", "--slurp",

@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Render the approval draft from findings and their verdicts.
+"""Render the approval draft and the review summary from findings and their verdicts.
 
-Usage: render_draft.py <workdir> [--summary "text"] [--keep-nits]
-Combines findings/merged.json with verdicts from findings/verified.json (verifier agent, blocker/major)
-and findings/self_verdicts.json (orchestrator, minor/nit: {"<id>": {"verdict": ..., "verdict_reason": ...,
-optional "severity"/"body"}}). Then:
-  - drops rejected and duplicate findings;
-  - drops nits when there are 5+ substantive findings (listed at the end, not posted);
+Usage: render_draft.py <workdir> [--summary "text"]
+Combines findings/merged.json with verdicts from findings/verified.json (verifier agent) and
+findings/self_verdicts.json (orchestrator: {"<id>": {"verdict": ..., "verdict_reason": ...,
+optional "severity"/"body"/"verify"}}). Then:
+  - drops rejected and duplicate findings (nits are kept: the round is exhaustive and tiered);
   - folds minor documentation drift (findings on .md/.mdx/.txt files) into one comment when there are 2+;
   - sorts by severity then category priority and numbers the result.
-Writes <workdir>/draft.md (for the user) and <workdir>/numbered.json (to build approved.json from).
+Writes <workdir>/draft.md (for the user), <workdir>/numbered.json (to build approved.json from) and
+<workdir>/summary.md — a header saying what this round covered and the tier counts, then --summary.
+Edit summary.md after changing the approved set; the header counts are for the full set.
 """
 import argparse
 import json
 import os
 
 SEVERITY = ["blocker", "major", "minor", "nit"]
-CATEGORY = ["architecture", "spec", "bug", "duplication", "conventions", "smell", "tests"]
+LABEL = {"blocker": "BLOCKER", "major": "MAJOR", "minor": "SHOULD FIX", "nit": "NIT"}
+CATEGORY = ["architecture", "spec", "bug", "traceability", "duplication", "conventions", "smell", "tests"]
 
 
 def rank(f):
@@ -25,11 +27,30 @@ def rank(f):
     return (SEVERITY.index(sev) if sev in SEVERITY else 9, CATEGORY.index(cat) if cat in CATEGORY else 9)
 
 
+def scope_header(plan, kept, threads):
+    k, head = plan.get("round", 1), plan["pr"]["headRefOid"][:10]
+    behaviour = sum(1 for f in kept if f.get("severity") in ("blocker", "major"))
+    should = sum(1 for f in kept if f.get("severity") == "minor")
+    nits = sum(1 for f in kept if f.get("severity") == "nit")
+    counts = f"{behaviour} behaviour (blocker/major), {should} should-fix, {nits} nits"
+    if plan.get("since"):
+        since = plan["since"][:10]
+        text = (f"**Round {k}** — reviewed the lines under `{plan['scope']}` added since `{since}` (round {k - 1}); "
+                f"code unchanged since then was not re-reviewed, except for behaviour bugs, marked pre-existing. "
+                f"Findings: {counts}.")
+    else:
+        text = (f"**Round {k}** — the whole `{plan['scope']}` part of the PR at `{head}` was reviewed in one pass, "
+                f"and this is the complete list of what could be verified: {counts}. "
+                f"Later rounds review only lines changed after `{head}` and answer in existing threads.")
+    if threads:
+        text += f" Earlier threads re-checked: {threads}."
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("workdir")
     ap.add_argument("--summary", default="<summary>")
-    ap.add_argument("--keep-nits", action="store_true")
     a = ap.parse_args()
     wd = os.path.abspath(a.workdir)
     findings = json.load(open(f"{wd}/findings/merged.json"))
@@ -54,54 +75,60 @@ def main():
     kept = [f for f in findings if f.get("verdict") not in ("rejected", "duplicate")]
     dropped = [f for f in findings if f.get("verdict") in ("rejected", "duplicate")]
 
-    substantive = [f for f in kept if f.get("severity") != "nit"]
-    nits_dropped = []
-    if not a.keep_nits and len(substantive) >= 5:
-        nits_dropped = [f for f in kept if f.get("severity") == "nit"]
-        kept = substantive
-
-    # One comment for minor doc drift instead of one per file.
-    docs = [f for f in kept if f.get("severity") == "minor"
+    # One comment for minor doc drift instead of one per file, anchored where the first one was.
+    docs = [f for f in kept if f.get("severity") == "minor" and not f.get("preexisting")
             and os.path.splitext(f.get("file") or "")[1] in (".md", ".mdx", ".txt")]
     if len(docs) >= 2:
         kept = [f for f in kept if f not in docs]
         body = "Documentation that no longer matches the code in this PR:\n\n" + "\n".join(
             f"- `{f['file']}{':' + str(f['line']) if f.get('line') else ''}` — {f['title']}" for f in docs)
         kept.append({"id": "docs-drift", "severity": "minor", "category": "spec", "file": docs[0]["file"],
-                     "line": None, "title": f"Documentation drift in {len(docs)} places", "body": body,
-                     "folded": [f["id"] for f in docs]})
+                     "line": docs[0].get("line"), "title": f"Documentation drift in {len(docs)} places", "body": body,
+                     "verify": "; ".join(f.get("verify") for f in docs if f.get("verify")) or "",
+                     "verdict": "confirmed", "folded": [f["id"] for f in docs]})
     kept.sort(key=rank)
     for i, f in enumerate(kept, 1):
         f["n"] = i
 
+    threads_note = ""
+    replies_path = f"{wd}/replies.json"
+    if os.path.exists(replies_path):
+        rs = json.load(open(replies_path))
+        resolved = sum(1 for r in rs if r.get("action") == "resolve")
+        answered = sum(1 for r in rs if r.get("action") == "reply")
+        threads_note = f"{resolved} verified fixed and resolved, {answered} answered in their thread"
+
     pr = plan["pr"]
     agents = "1 sonnet" if plan["single_agent"] else f"1 {plan['architecture_model']} + {len(plan['slices'])} sonnet"
+    header = scope_header(plan, kept, threads_note)
     lines = [f"PR #{pr['number']} — {pr['title']}",
-             f"({plan['reviewable_weight']} reviewable lines, {len(plan['slices'])} slices, agents: {agents}"
-             + (" + 1 sonnet verifier" if os.path.exists(verified_path) else "") + ")", "",
-             f"Summary: {a.summary}", ""]
+             f"(round {plan.get('round', 1)}, {plan['reviewable_weight']} reviewable lines, {len(plan['slices'])} slices, "
+             f"agents: {agents}" + (" + 1 sonnet verifier" if os.path.exists(verified_path) else "") + ")", "",
+             header, "", f"Summary: {a.summary}", ""]
     for f in kept:
-        loc = f"{f.get('file')}:{f.get('line')}" if f.get("line") else f"{f.get('file')} (PR-wide)"
-        tag = f" [{f['verdict']}]" if f.get("verdict") == "downgraded" else ""
-        lines.append(f"[{f['n']}] {f.get('severity', '').upper()} · {f.get('category')} · {loc}{tag}")
+        loc = f"{f.get('file')}:{f.get('line')}" if f.get("line") else f"{f.get('file')} (no line — anchor it before publishing)"
+        tags = [t for t in (f["verdict"] if f.get("verdict") == "downgraded" else "",
+                            "pre-existing" if f.get("preexisting") else "",
+                            f"claimed {f['severity_claimed']}" if f.get("severity_claimed") else "") if t]
+        lines.append(f"[{f['n']}] {LABEL.get(f.get('severity'), '?')} · {f.get('category')} · {loc}"
+                     + (f" [{', '.join(tags)}]" if tags else ""))
         lines.append(f"    {f.get('title')}")
         for bl in f.get("body", "").strip().splitlines():
             lines.append(f"    {bl}")
+        lines.append(f"    How to verify: {f.get('verify') or '(missing — add one)'}")
         lines.append("")
     if dropped:
         lines.append("Dropped by verification: " + "; ".join(
             f"{f['id']} ({f['verdict']}{' of ' + f['duplicate_of'] if f.get('duplicate_of') else ''})" for f in dropped))
-    if nits_dropped:
-        lines.append("Nits not posted (5+ substantive findings): " + "; ".join(
-            f"{f.get('file')}:{f.get('line')} {f.get('title')}" for f in nits_dropped))
     if plan["noise_files"]:
         lines.append("Skipped as noise: " + ", ".join(x["path"] for x in plan["noise_files"]))
 
     open(f"{wd}/draft.md", "w").write("\n".join(lines) + "\n")
+    open(f"{wd}/summary.md", "w").write(header + "\n\n" + a.summary.strip() + "\n")
     json.dump(kept, open(f"{wd}/numbered.json", "w"), indent=2, ensure_ascii=False)
-    print(f"{len(kept)} findings in {wd}/draft.md ({len(dropped)} dropped)")
+    print(f"{len(kept)} findings in {wd}/draft.md ({len(dropped)} dropped); summary in {wd}/summary.md")
     for f in kept:
-        print(f"[{f['n']:2d}] {f.get('severity', ''):6s} {f.get('category', ''):12s} {f.get('title', '')[:95]}")
+        print(f"[{f['n']:2d}] {LABEL.get(f.get('severity'), '?'):10s} {f.get('category', ''):12s} {f.get('title', '')[:90]}")
 
 
 if __name__ == "__main__":
