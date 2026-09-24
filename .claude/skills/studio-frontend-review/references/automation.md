@@ -29,7 +29,7 @@ DRY_RUN=1 .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh <N>
 
 # crontab -e   (WSL: cron must be running — `sudo service cron start`, or enable systemd in /etc/wsl.conf)
 PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
-*/30 8-20 * * 1-5  { cd $HOME/projects/fabric/studio-web-review && git pull -q --ff-only || { echo "$(date -Is) git pull failed, skipping this run"; exit 1; }; .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh; } >> $HOME/.cache/studio-frontend-review/cron.log 2>&1
+*/15 8-20 * * 1-5  { cd $HOME/projects/fabric/studio-web-review && git pull -q --ff-only || { echo "$(date -Is) git pull failed, skipping this run"; exit 1; }; .claude/skills/studio-frontend-review/scripts/run_auto_reviews.sh; } >> $HOME/.cache/studio-frontend-review/cron.log 2>&1
 ```
 
 `PATH` is needed because cron's default one has neither `claude` nor `~/.local/bin`. The whole line, including
