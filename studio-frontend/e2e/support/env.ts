@@ -10,12 +10,17 @@
  *   E2E_PASSWORD
  *
  * The defaults are the compose stack's seeded `demo/studio` from
- * `docker/keycloak/realm-studio.json`, and they are defaults *only* there.
- * Away from localhost a missing credential is a configuration error, and it
- * fails here, at config load, rather than as a timed-out login form.
+ * `docker/keycloak/realm-studio.json`, and they are defaults *only* for the
+ * compose stack's own portal on port 8080. The dev server on 5173 faces
+ * whichever stand `STUDIO_STAND` chose (ADR-0031), and a stand's realm has no
+ * seeded users, so a portal there comes with no defaults: name the account.
+ * A missing credential is a configuration error, and it fails here, at
+ * config load, rather than as a timed-out login form.
  */
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+/** Where `docker-compose.yml` publishes the `frontend` service. */
+const COMPOSE_PORTAL_PORT = '8080';
 
 export interface Credentials {
   username: string;
@@ -24,7 +29,10 @@ export interface Credentials {
 
 export interface E2EEnv {
   baseUrl: string;
-  /** Compose stack: self-signed Keycloak on :8443, seeded users, disposable data. */
+  /**
+   * A portal on this machine: plain HTTP is allowed, and a self-signed
+   * certificate (the compose stack's Keycloak on :8443) is tolerated.
+   */
   isLocal: boolean;
   credentials: Credentials;
 }
@@ -51,12 +59,15 @@ function readEnv(): E2EEnv {
     );
   }
 
-  const username = process.env.E2E_USER ?? (isLocal ? 'demo' : undefined);
-  const password = process.env.E2E_PASSWORD ?? (isLocal ? 'studio' : undefined);
+  // Seeded users exist behind the compose portal and nowhere else — not
+  // behind the dev server, whose backend and realm are a stand's.
+  const isComposePortal = isLocal && url.port === COMPOSE_PORTAL_PORT;
+  const username = process.env.E2E_USER ?? (isComposePortal ? 'demo' : undefined);
+  const password = process.env.E2E_PASSWORD ?? (isComposePortal ? 'studio' : undefined);
   if (!username || !password) {
     throw new Error(
       `E2E_USER and E2E_PASSWORD must be set to run against ${baseUrl}; ` +
-        'only the compose stack has seeded defaults.',
+        `only the compose stack's portal on :${COMPOSE_PORTAL_PORT} has seeded defaults.`,
     );
   }
 

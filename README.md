@@ -15,6 +15,16 @@ The two modes run the same logical stack, but use different runtime drivers:
 Compose launches IDE containers through the local Docker daemon; Kubernetes
 launches session Pods through the namespace-scoped Kubernetes driver.
 
+## Working on the portal
+
+The portal's dev server needs neither. `npm run dev:all` in `studio-frontend/`
+faces the shared `dev` stand — its backend, data, Keycloak and IDE sessions —
+and `STUDIO_STAND=local` turns it to the Compose stack below when a backend
+branch has to be seen or the stand is down. The switch, its overrides and what
+a stand must allow are in
+[`studio-frontend/docs/stands.md`](studio-frontend/docs/stands.md)
+([ADR-0031](docs/adr/0031-the-portal-is-developed-against-a-shared-stand.md)).
+
 ## Local development with Docker Compose
 
 ### Prerequisites
