@@ -14,10 +14,23 @@ import type { Credentials } from './env';
  * sent the browser back to the portal's origin. A rejected password leaves the
  * browser on the IdP, and the origin check below names that rather than letting
  * the caller time out on a portal element that never appears.
+ *
+ * The form is filled only on an HTTPS page, without exception: every IdP this
+ * suite knows — the compose stack's self-signed Keycloak on `:8443` and the
+ * stands' realms alike — is HTTPS, and a password typed into an `http://`
+ * authorization page would be a password sent in the clear to whoever
+ * answered there.
  */
 export async function signInThroughKeycloak(page: Page, credentials: Credentials): Promise<void> {
   await page.waitForURL(/\/protocol\/openid-connect\/auth/);
-  const idpOrigin = new URL(page.url()).origin;
+  const idpUrl = new URL(page.url());
+  if (idpUrl.protocol !== 'https:') {
+    throw new Error(
+      `The IdP handed the browser an ${idpUrl.protocol} sign-in page (${idpUrl.origin}); ` +
+        'credentials are only ever entered over HTTPS.',
+    );
+  }
+  const idpOrigin = idpUrl.origin;
 
   await page.locator('#username').fill(credentials.username);
   await page.locator('#password').fill(credentials.password);

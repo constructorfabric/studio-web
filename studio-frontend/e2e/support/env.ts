@@ -29,9 +29,27 @@ export interface E2EEnv {
   credentials: Credentials;
 }
 
+/**
+ * Read the three variables once and turn them into a stand and an account.
+ *
+ * Throws, rather than returning something the runner would time out on, when
+ * a stand away from localhost comes without credentials or over plain HTTP —
+ * the suite types a real password into the sign-in form, and a portal reached
+ * over `http://` could hand the browser to anyone's form. The compose stack
+ * is the one exception: its portal is `http://localhost:8080`, and its IdP is
+ * still HTTPS (see `signInThroughKeycloak`).
+ */
 function readEnv(): E2EEnv {
   const baseUrl = process.env.E2E_BASE_URL ?? 'http://localhost:8080';
-  const isLocal = LOCAL_HOSTS.has(new URL(baseUrl).hostname);
+  const url = new URL(baseUrl);
+  const isLocal = LOCAL_HOSTS.has(url.hostname);
+
+  if (!isLocal && url.protocol !== 'https:') {
+    throw new Error(
+      `E2E_BASE_URL must be https:// away from localhost, got ${baseUrl}; ` +
+        'the suite will not send a password over plain HTTP.',
+    );
+  }
 
   const username = process.env.E2E_USER ?? (isLocal ? 'demo' : undefined);
   const password = process.env.E2E_PASSWORD ?? (isLocal ? 'studio' : undefined);
