@@ -118,6 +118,24 @@ Note contradictions between agents and likely duplicates first. Then:
 Write your verdicts to `findings/self_verdicts.json`:
 `{"<id>": {"verdict": "confirmed|downgraded|rejected|duplicate", "verdict_reason": "...", "duplicate_of": "...", "severity": "...", "verify": "..."}}`.
 
+**Reproduce behaviour findings by running them.** Reading can't tell "plausible" from "real"; a failing
+test can. For every kept blocker/major and every kept `bug` finding (at most 6 per review, biggest first):
+1. Write one reproduction test file per finding to `<workdir>/repro/<short-name>.test.ts` — rules in
+   `references/agent-briefs.md`, "Reproduction tests". When a verifier agent runs, it writes them for the
+   findings it confirms; otherwise you do.
+2. Run them — the PR's code runs, so only through the script, which sandboxes it (bubblewrap: `$HOME`
+   hidden, no credentials, no network while tests run; the first call installs and builds, ~3 min):
+   ```bash
+   python3 $S/repro_tests.py <workdir>
+   ```
+3. `findings/repro.json` per finding: `reproduced` (control cases pass, a bug case fails on an assertion) →
+   confirmed, posted with the test attached; `not-reproduced` (everything passes) → rejected by
+   `render_draft.py` unless you add `"repro_override": "<why the test missed the path>"` to its
+   self_verdicts entry after fixing and re-running once; `broken` → fix the test once and re-run, else keep
+   the reading-based verdict. Never weaken a test to make it fail.
+`repro_tests.py` exits with a message when bubblewrap is missing — then skip this step and say so in the
+summary; never run PR code outside the sandbox in auto mode.
+
 **Threads from earlier rounds** (`open-threads.json`). Only those with `needs_recheck: true` — someone
 answered after our last comment. Re-check each against the current code (more than 8: hand them to the
 verifier, see agent-briefs.md) and write `<workdir>/replies.json`:

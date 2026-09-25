@@ -71,7 +71,21 @@ def format_body(f, plan, moved_from=None):
         head += f" · pre-existing at `{plan['since'][:10]}`, not raised in round {k - 1}"
     text = (f"Line {moved_from}: " if moved_from else "") + f["body"].strip()
     body = f"{head}\n\n{text}" if head else text
-    if (f.get("verify") or "").strip():
+    if f.get("reproduced") and f.get("repro_file"):
+        sha = (plan or {}).get("pr", {}).get("headRefOid", "")[:7]
+        tests = f.get("repro_tests") or []
+        failing = ", ".join(f"`{t}`" for t in tests)
+        body += f"\n\n**Reproduced** on `{sha}`: {failing} {'fails' if len(tests) == 1 else 'fail'} (control cases pass)."
+        saved_as = f["repro_command"].split()[-1]
+        body += f"\n\n**How to verify:** save the test below as `studio-frontend/{saved_as}` and run `{f['repro_command']}`"
+        try:
+            code = [l for l in open(f["repro_file"]).read().splitlines() if not re.match(r"^//\s*(repro-for|place):", l)]
+        except OSError:
+            code = []
+        if code:
+            shown = "\n".join(code[:150]) + ("\n// … (truncated)" if len(code) > 150 else "")
+            body += f"\n\n<details><summary>Reproduction test</summary>\n\n```ts\n{shown}\n```\n</details>"
+    elif (f.get("verify") or "").strip():
         body += f"\n\n**How to verify:** {f['verify'].strip()}"
     return body
 

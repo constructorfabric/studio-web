@@ -33,6 +33,9 @@ def scope_header(plan, kept, threads):
     should = sum(1 for f in kept if f.get("severity") == "minor")
     nits = sum(1 for f in kept if f.get("severity") == "nit")
     counts = f"{behaviour} behaviour (blocker/major), {should} should-fix, {nits} nits"
+    reproduced = sum(1 for f in kept if f.get("reproduced"))
+    if reproduced:
+        counts += f"; {reproduced} reproduced by a failing test on this head"
     if plan.get("since"):
         since = plan["since"][:10]
         text = (f"**Round {k}** — reviewed the lines under `{plan['scope']}` added since `{since}` (round {k - 1}); "
@@ -68,6 +71,24 @@ def main():
         for fid, patch in json.load(open(self_path)).items():
             if fid in by_id:
                 by_id[fid].update(patch)
+    # Reproduction results (repro_tests.py): a failing test confirms, a passing one rejects — unless the
+    # orchestrator's self_verdicts entry gives "repro_override" (why the test missed the path).
+    repro_path = f"{wd}/findings/repro.json"
+    repro = json.load(open(repro_path)) if os.path.exists(repro_path) else {}
+    for fid, r in repro.items():
+        f = by_id.get(fid)
+        if not f:
+            continue
+        if r["status"] == "reproduced":
+            failing = [t["name"] for t in r["tests"] if t["status"] == "failed"]
+            f.update({"reproduced": True, "repro_file": r["file"], "repro_command": r["command"],
+                      "repro_tests": failing})
+            if f.get("verdict") in (None, "rejected"):
+                f["verdict"], f["verdict_reason"] = "confirmed", "reproduction test fails on the head"
+        elif r["status"] == "not-reproduced" and not f.get("repro_override"):
+            f["verdict"], f["verdict_reason"] = "rejected", "reproduction test passes on the head"
+        else:
+            f["repro_status"] = r["status"]
     unverified = [f["id"] for f in findings if not f.get("verdict")]
     if unverified:
         print(f"!! {len(unverified)} findings have no verdict yet: {', '.join(unverified)}")
@@ -108,6 +129,8 @@ def main():
     for f in kept:
         loc = f"{f.get('file')}:{f.get('line')}" if f.get("line") else f"{f.get('file')} (no line — anchor it before publishing)"
         tags = [t for t in (f["verdict"] if f.get("verdict") == "downgraded" else "",
+                            "REPRODUCED" if f.get("reproduced") else "",
+                            f"repro {f['repro_status']}" if f.get("repro_status") else "",
                             "pre-existing" if f.get("preexisting") else "",
                             f"claimed {f['severity_claimed']}" if f.get("severity_claimed") else "") if t]
         lines.append(f"[{f['n']}] {LABEL.get(f.get('severity'), '?')} · {f.get('category')} · {loc}"

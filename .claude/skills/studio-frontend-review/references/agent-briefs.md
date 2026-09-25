@@ -49,11 +49,42 @@ A JSON array to the given path:
 - Don't report low-confidence guesses. If you couldn't verify something, either verify it or leave it out.
 - An empty array is a valid result.
 
+## Reproduction tests
+
+One vitest file per behaviour finding, at `<workdir>/repro/<short-name>.test.ts` (`.tsx` for components).
+`scripts/repro_tests.py` copies it into the worktree, runs it sandboxed and removes it again.
+
+```ts
+// repro-for: slice-3:s3-1                 ← the finding id from merged.json
+// place: src-app/app/routing              ← directory under studio-frontend/ it runs in (imports resolve from there)
+import { describe, expect, it, vi } from 'vitest';
+…
+describe('repro: <finding title>', () => {
+  it('control: <the closest case that works today>', () => { … });   // must pass
+  it('<the expected behaviour the finding says is broken>', () => { … });  // must fail on an assertion
+});
+```
+
+- **Assert the correct behaviour** (from the spec/ADR/the finding), so the bug test *fails* on this head and
+  would pass once fixed. Never assert the buggy output.
+- **A control case is required**: the nearest variant that works (the same flow with the value the existing
+  tests use, a sibling path). It proves the harness is right; a failing control marks the file `broken`.
+  The benchmark on #380 caught exactly this: a history-length control failed because an earlier test had
+  left forward entries — without it, a broken test would have "confirmed" the bug.
+- Put controls first; keep tests independent of order (jsdom's `window` is shared within the file).
+- Reuse the repo's harnesses instead of inventing mocks: copy the `vi.hoisted` / `vi.mock` block and `setup()`
+  of the sibling test (`materialize.test.ts`, `appContextEffects.test.ts`, …), `@frontx-test-utils/*`
+  (`freshNavigationHistory`, `screenFixture`, `createMfeBridgeFixture`). Mock only what the finding is not
+  about; for a flow across modules, wire the real ones (real `startRouting` + real effects over jsdom history).
+- No network, no timers longer than `setTimeout(r, 0)`, no snapshots, no changes to tracked files.
+- Title the bug test with the expected behaviour; its failure message is quoted in the comment.
+
 ## Verifier agent
 
 ```
 You are verifying review findings for GitHub PR #<N> in <owner/repo> before they are posted.
-Do not spawn subagents. Do not modify files, commit, or post anything to GitHub.
+Do not spawn subagents. Do not modify tracked files, commit, or post anything to GitHub (writing under
+<workdir> — verdicts, reproduction tests — is expected).
 
 Worktree at the PR head: <workdir>/tree  (base branch: <base>)
 Context pack: <workdir>/context.md
@@ -77,6 +108,12 @@ Known points needing a decision:
 against the code and the base branch (`git -C <tree> show <base>:<path>`) rather than picking a side>
 
 Be adversarial: the cost of posting a wrong comment is higher than missing a minor one.
+
+For every blocker/major and every `bug` finding you confirm (at most 6, biggest first), also write a
+reproduction test to <workdir>/repro/ following .claude/skills/studio-frontend-review/references/agent-briefs.md,
+"Reproduction tests", then run `python3 .claude/skills/studio-frontend-review/scripts/repro_tests.py <workdir>`
+and read findings/repro.json: fix a `broken` file once and re-run; if a finding is `not-reproduced`, check
+whether your test really exercises the path — fix and re-run once, else reject the finding.
 
 Write <workdir>/findings/verified.json: the same array, each item with added fields
 "verdict" (confirmed | downgraded | rejected | duplicate), "verdict_reason", "duplicate_of" for

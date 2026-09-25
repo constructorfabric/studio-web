@@ -15,6 +15,11 @@ What makes it safe to run unattended:
 - The runner plans before starting Claude: nothing under `studio-frontend/` (exit 3) or no new lines there
   since the last reviewed head (exit 5) is recorded and costs no Claude run.
 - Each run starts from an empty workdir, so findings from an earlier head can't leak into the next one.
+- Behaviour findings are reproduced by running a test against the PR head (`scripts/repro_tests.py`). That
+  executes the PR's code, so it only runs inside bubblewrap (`bwrap`, installed here): read-only root,
+  `$HOME` hidden (no gh / Claude / npm credentials), `npm ci --ignore-scripts`, no network while tests run.
+  Without `bwrap` the step is skipped, never run unsandboxed. Node 24 comes from `~/.nvm` (or `REVIEW_NODE_DIR`).
+  In GitHub Actions the runner VM is disposable, so the same step can run there as is.
 - `publish_review.py --head-sha` refuses to post if the PR moved during the review.
 - Event is always `COMMENT` (never approve / request changes), with a visible "automated review" note.
 - Headless Claude runs with a narrow tool allowlist, no `gh api` / `git push` / `gh pr merge`; the
