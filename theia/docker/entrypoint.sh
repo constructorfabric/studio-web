@@ -534,6 +534,15 @@ if [ "${STUDIO_ORCA_ENABLED:-0}" = "1" ]; then
   ORCA_BIN="${ORCA_CLI:-/usr/bin/orca-ide}"
   ORCA_PORT="${STUDIO_ORCA_PORT:-6768}"
   ORCA_LOG="$STUDIO_DATA_DIR/orca-serve.log"
+  # The IDE streams an agent's terminal over the runtime's WebSocket, which
+  # takes a paired device (see theia/studio/src/node/orca-terminal-bridge.ts).
+  # `serve --json` prints a pairing offer in its readiness line; it is lifted
+  # into this file for the IDE's backend. Both the log and the file carry the
+  # device token, so only this user reads them. The runtime's device registry
+  # is wiped on every boot (below), so a file left from the last one is stale.
+  ORCA_PAIRING_FILE="$STUDIO_DATA_DIR/orca-pairing"
+  export STUDIO_ORCA_PAIRING_FILE="$ORCA_PAIRING_FILE"
+  rm -f "$ORCA_PAIRING_FILE"
   if [ -x "$ORCA_BIN" ]; then
     # Start from a clean Electron userData directory. A second boot over a
     # populated one does not serve headless: it tries to bring up a desktop
@@ -552,14 +561,34 @@ if [ "${STUDIO_ORCA_ENABLED:-0}" = "1" ]; then
     # Under a virtual display when the image has one: `orca serve` otherwise
     # reaches for X11 on some boots and dies there. With xvfb-run the same
     # three cold starts came up in 2 s each.
-    if command -v xvfb-run >/dev/null 2>&1; then
-      xvfb-run -a "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" \
-        --project-root "$WORKSPACE" > "$ORCA_LOG" 2>&1 &
-    else
-      "$ORCA_BIN" serve --no-pairing --port "$ORCA_PORT" --project-root "$WORKSPACE" \
-        > "$ORCA_LOG" 2>&1 &
-    fi
-    echo "[entrypoint] orca: runtime starting on 127.0.0.1:$ORCA_PORT (log: $ORCA_LOG)"
+    (
+      umask 077
+      if command -v xvfb-run >/dev/null 2>&1; then
+        exec xvfb-run -a "$ORCA_BIN" serve --json --port "$ORCA_PORT" \
+          --project-root "$WORKSPACE" > "$ORCA_LOG" 2>&1
+      else
+        exec "$ORCA_BIN" serve --json --port "$ORCA_PORT" --project-root "$WORKSPACE" \
+          > "$ORCA_LOG" 2>&1
+      fi
+    ) &
+    (
+      umask 077
+      for _ in $(seq 1 120); do
+        offer=$(grep -o 'orca://pair?code=[A-Za-z0-9_-]*' "$ORCA_LOG" 2>/dev/null | head -n 1 || true)
+        if [ -n "$offer" ]; then
+          printf '%s\n' "$offer" > "$ORCA_PAIRING_FILE"
+          echo "[entrypoint] orca: paired the IDE with the runtime"
+          exit 0
+        fi
+        sleep 1
+      done
+      echo "[entrypoint] orca: no pairing offer in $ORCA_LOG after 120 s —" \
+           "agent terminals will not open as tabs"
+    ) &
+    # The WebSocket listens on every interface (`serve` always binds it so);
+    # the session publishes only the gate's port, and the socket admits
+    # nothing without the paired device's token.
+    echo "[entrypoint] orca: runtime starting on port $ORCA_PORT (log: $ORCA_LOG)"
   else
     echo "[entrypoint] orca: STUDIO_ORCA_ENABLED=1 but no executable at $ORCA_BIN —" \
          "rebuild the image with STUDIO_ORCA_DEB_URL to include it"

@@ -62,6 +62,8 @@ import { GitExecutor } from './git-executor';
 import { OrcaCli } from './orca-cli';
 import { OrcaServiceImpl } from './orca-service';
 import { orcaServicePath, type OrcaService } from '../common/orca-protocol';
+import { OrcaTerminalBridge } from './orca-terminal-bridge';
+import { orcaTerminalServicePath, type OrcaTerminalClient } from '../common/orca-terminal-protocol';
 import { GitPublishService } from './git-publish-service';
 import { OperationJournal } from './operation-journal';
 import { RepositoryOperationQueue } from './repository-operation-queue';
@@ -746,6 +748,17 @@ export default new ContainerModule(bind => {
     bind(OrcaServiceImpl).toSelf().inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<OrcaService>(orcaServicePath, () => ctx.container.get(OrcaServiceImpl))
+    ).inSingletonScope();
+    // An Orca terminal, live in a Theia tab (see orca-terminal-bridge.ts). One
+    // bridge per window: its streams close with the window's connection.
+    bind(OrcaTerminalBridge).toSelf();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<OrcaTerminalClient>(orcaTerminalServicePath, client => {
+            const bridge = ctx.container.get(OrcaTerminalBridge);
+            bridge.setClient(client);
+            client.onDidCloseConnection(() => bridge.dispose());
+            return bridge;
+        })
     ).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<WorkspaceGraphClient>(workspaceGraphServicePath, client => {

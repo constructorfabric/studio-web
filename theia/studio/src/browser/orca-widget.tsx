@@ -27,6 +27,7 @@ import {
     type OrcaWorktree,
     type OrcaWorktreeChange
 } from '../common/orca-protocol';
+import { OrcaTerminalOpener } from './orca-terminal-opener';
 
 export const ORCA_WIDGET_ID = 'studio.orca';
 
@@ -50,6 +51,9 @@ export class OrcaWidget extends ReactWidget {
 
     @inject(OpenerService)
     protected readonly openers!: OpenerService;
+
+    @inject(OrcaTerminalOpener)
+    protected readonly terminalTabs!: OrcaTerminalOpener;
 
     protected status: OrcaRuntimeStatus | undefined;
     protected worktrees: OrcaWorktree[] = [];
@@ -251,8 +255,18 @@ export class OrcaWidget extends ReactWidget {
             this.followUp = '';
             if (terminal) {
                 this.messages.info(`${agent} is running in ${terminal.worktreePath || 'the worktree'}.`);
+                // Straight into its tab, as Orca does: an agent is watched
+                // and answered there, not from this panel's one-line preview.
+                await this.terminalTabs.open(terminal);
             }
             await this.loadSelection();
+        });
+    }
+
+    /** The agent's terminal, live, as a terminal tab in the middle. */
+    protected openTerminal(terminal: OrcaTerminal): void {
+        void this.run(`Opening ${terminal.title}`, async () => {
+            await this.terminalTabs.open(terminal);
         });
     }
 
@@ -558,6 +572,14 @@ export class OrcaWidget extends ReactWidget {
                             </span>
                             {terminal.preview && <code className="studio-orca-preview">{terminal.preview}</code>}
                             <span className="studio-orca-form">
+                                <button
+                                    className="theia-button"
+                                    disabled={!!this.busy}
+                                    title="Open the agent's terminal as a tab: all its output, live, and typing goes straight to it"
+                                    onClick={() => this.openTerminal(terminal)}
+                                >
+                                    Open
+                                </button>
                                 <button
                                     className="theia-button secondary"
                                     disabled={!!this.busy || !this.followUp.trim()}

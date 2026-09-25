@@ -51,6 +51,8 @@ import { PortalPresenceContribution } from './portal-presence-contribution';
 import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
+import { OrcaTerminalService, orcaTerminalServicePath } from '../common/orca-terminal-protocol';
+import { OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
 import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
@@ -191,6 +193,16 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(OrcaService).toDynamicValue(ctx =>
         ctx.container.get(WebSocketConnectionProvider).createProxy<OrcaService>(orcaServicePath)
     ).inSingletonScope();
+    // An agent's terminal, live in a terminal tab: the backend streams its PTY
+    // and pushes it through this client.
+    bind(OrcaTerminalFrontendClient).toSelf().inSingletonScope();
+    bind(OrcaTerminalService).toDynamicValue(ctx =>
+        ctx.container.get(WebSocketConnectionProvider).createProxy<OrcaTerminalService>(
+            orcaTerminalServicePath,
+            ctx.container.get(OrcaTerminalFrontendClient)
+        )
+    ).inSingletonScope();
+    bind(OrcaTerminalOpener).toSelf().inSingletonScope();
     bindViewContribution(bind, OrcaContribution);
     bind(OperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();

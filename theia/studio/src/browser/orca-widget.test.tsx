@@ -16,6 +16,7 @@ import { Container, ContainerModule } from '@theia/core/shared/inversify';
 import { MessageLoop } from '@theia/core/shared/@lumino/messaging';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { OpenerService } from '@theia/core/lib/browser/opener-service';
+import { OrcaTerminalOpener } from './orca-terminal-opener';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import URI from '@theia/core/lib/common/uri';
 import { OrcaService, type OrcaWorktree, type OrcaWorktreeChange } from '../common/orca-protocol';
@@ -70,6 +71,7 @@ describe('OrcaWidget changes', () => {
             bind(OpenerService).toConstantValue({
                 getOpener: async (uri: URI) => ({ open: async () => opened.push(uri) })
             } as never);
+            bind(OrcaTerminalOpener).toConstantValue({ open: jest.fn() } as never);
             bind(OrcaWidget).toSelf();
         });
         const container = new Container();
@@ -175,6 +177,7 @@ describe('OrcaWidget advice when the runtime is unreachable', () => {
             bind(MessageService).toConstantValue({ error: jest.fn(), info: jest.fn() } as never);
             bind(WorkspaceService).toConstantValue({ roots: Promise.resolve([]) } as never);
             bind(OpenerService).toConstantValue({ getOpener: async () => ({ open: async () => undefined }) } as never);
+            bind(OrcaTerminalOpener).toConstantValue({ open: jest.fn() } as never);
             bind(OrcaWidget).toSelf();
         }));
         let widget!: OrcaWidget;

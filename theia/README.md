@@ -223,9 +223,19 @@ and `git status` in a panel that exists so you do not need one.
 
 Requirements: an `orca` binary and a reachable runtime. The binary is looked up
 as `$ORCA_CLI`, then the desktop install for the platform, then `orca` on PATH.
-A session container should set `ORCA_CLI` and run `orca serve --no-pairing
+A session container should set `ORCA_CLI` and run `orca serve --json
 --project-root <workspace>` beside the IDE; on a developer machine the desktop
 app already provides one.
+
+**Open** on an agent shows its terminal as a terminal tab in the middle of the
+workbench: all its output live, full-size, typing straight into it. The CLI
+cannot do that — it has no attach, only `terminal read` and `terminal send` —
+so the backend subscribes to the terminal on the runtime's WebSocket
+(`terminal.subscribe`) with the client Orca ships next to its CLI
+(`resources/app.asar.unpacked/out/shared`). That socket takes a paired device:
+the entrypoint lifts the pairing offer `serve --json` prints into
+`$STUDIO_ORCA_PAIRING_FILE`. Elsewhere, `STUDIO_ORCA_PAIRING_URL` takes an
+`orca://pair?code=…` offer directly.
 
 ### Running the Orca runtime in a container (cluster notes)
 
