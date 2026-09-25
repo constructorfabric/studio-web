@@ -74,8 +74,14 @@ for pr in "${prs[@]}"; do
   round="$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p["round"], ("(lines new since " + p["since"][:10] + ")") if p["since"] else "(full)", "reviewers:", p["slice_model"])' "$wd/plan.json")"
   # A full round costs more (all the code, Opus reviewers) than a follow-up.
   case "$round" in *"(full)"*) budget="${MAX_BUDGET_USD_ROUND1:-40}" ;; *) budget="${MAX_BUDGET_USD:-15}" ;; esac
+  # Steps 2 and 2b are deterministic and slow (install, build, coverage): run them here, not inside Claude.
+  if ! python3 "$here/prepare_review.py" "$wd" > "$wd/prepare.log" 2>&1; then
+    echo "$(date -Is) PR #$pr: prepare failed"; tail -n 5 "$wd/prepare.log"; continue
+  fi
+  python3 "$here/local_checks.py" "$wd" > "$wd/local-checks.log" 2>&1 \
+    || echo "$(date -Is) PR #$pr: local checks failed, reviewing without them ($(tail -n 1 "$wd/local-checks.log"))"
   echo "$(date -Is) PR #$pr: starting round $round, budget \$$budget"
-  "$claude_bin" -p "/studio-frontend-review $pr --auto. Workdir: $wd/. Step 1 is done: $wd/plan.json is the plan for the current head, start at step 2.$dry" \
+  "$claude_bin" -p "/studio-frontend-review $pr --auto. Workdir: $wd/. Steps 1, 2 and 2b are done: plan.json, prepare_review.py (its output with the agents to launch: $wd/prepare.log) and local-checks.md. Fill the ORCHESTRATOR sections of context.md, then continue with step 3.$dry" \
     --model "${REVIEW_MODEL:-sonnet}" \
     --add-dir "$runs" \
     --permission-mode acceptEdits \

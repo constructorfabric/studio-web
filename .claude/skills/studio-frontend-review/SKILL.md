@@ -94,6 +94,19 @@ context pack `context.md` and one brief per agent in `briefs/`. Fill the `ORCHES
 
 Rely on CI (`test-frontend` etc.) for lint/type/test results — don't run them locally. `cfs` is already run.
 
+### 2b. Local checks (measure, don't guess)
+
+```bash
+python3 $S/local_checks.py <workdir>      # 3–10 min: install + build once, then coverage, jscpd, knip
+```
+
+Writes `<workdir>/local-checks.md` for this round's lines only: changed lines/branches/functions no test
+runs (vitest coverage), clones touching changed lines (jscpd), files and exports the PR adds that nothing
+uses (knip). All of it runs sandboxed. The agents read it before reviewing: a test-coverage, duplication or
+dead-code finding cites the line from it instead of a hand search, and anything it lists that the checklists
+consider worth changing belongs in the review now, not in a later round. Unattended runs get it from the
+runner before Claude starts; by hand, run it with a long timeout (≥ 10 min).
+
 ### 3. Review (parallel)
 
 Launch every agent `prepare_review.py` printed, in one message, with the printed `model` and the brief
@@ -135,6 +148,17 @@ test can. For every kept blocker/major and every kept `bug` finding (at most 6 p
    the reading-based verdict. Never weaken a test to make it fail.
 `repro_tests.py` exits with a message when bubblewrap is missing — then skip this step and say so in the
 summary; never run PR code outside the sandbox in auto mode.
+
+**Mutation probes: do the PR's tests check its key logic?** Coverage says a line runs, not that a test would
+notice it breaking. Pick 3–6 pieces of logic this PR adds that `local-checks.md` shows as executed — guards,
+conditions, branches that decide behaviour (the stale-scope guard, the retry-once flag, the refusal rule) —
+write them to `<workdir>/mutations.json` (format in `scripts/mutation_checks.py`) and run:
+```bash
+python3 $S/mutation_checks.py <workdir>
+```
+`survived` means every related test passed with that logic broken: a `tests` finding (minor) anchored on the
+line, naming the mutation and the test that should catch it; `verify` is the printed command. `killed` needs
+nothing. The worktree file is restored after each mutation.
 
 **Threads from earlier rounds** (`open-threads.json`). Only those with `needs_recheck: true` — someone
 answered after our last comment. Re-check each against the current code (more than 8: hand them to the

@@ -382,6 +382,9 @@ Rely on CI for lint/type/test status — don't re-report it.
 Known pre-existing issues — never report them: `npm run lint` fails because `typescript-eslint` is not installed;
 IDE-only TS1259 in `studio-frontend/tailwind.config.ts`.
 `cfs validate`: `{workdir}/cfs-validate.md` — the only source for what it reports.
+Local checks: `{workdir}/local-checks.md` (when present) — changed lines no test runs, clones touching changed
+lines, unused code the PR adds, measured on this head. Use it for test-coverage, duplication and dead-code
+findings and cite its line; everything in it that the checklists consider worth changing is reported now.
 
 ## Files changed (grouped by slice)
 Noise skipped: {noise}

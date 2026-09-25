@@ -20,6 +20,10 @@ What makes it safe to run unattended:
   `$HOME` hidden (no gh / Claude / npm credentials), `npm ci --ignore-scripts`, no network while tests run.
   Without `bwrap` the step is skipped, never run unsandboxed. Node 24 comes from `~/.nvm` (or `REVIEW_NODE_DIR`).
   In GitHub Actions the runner VM is disposable, so the same step can run there as is.
+- Before Claude starts, the runner also runs `prepare_review.py` and `local_checks.py` (coverage of changed
+  lines, jscpd, knip — sandboxed the same way; jscpd/knip are installed once into `$REVIEW_RUNS/tools`). A
+  failure there doesn't stop the review; it goes on without `local-checks.md`. Mutation probes
+  (`mutation_checks.py`) run inside the review, on the logic the orchestrator picks.
 - `publish_review.py --head-sha` refuses to post if the PR moved during the review.
 - Event is always `COMMENT` (never approve / request changes), with a visible "automated review" note.
 - Headless Claude runs with a narrow tool allowlist, no `gh api` / `git push` / `gh pr merge`; the

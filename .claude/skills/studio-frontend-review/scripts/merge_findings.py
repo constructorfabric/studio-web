@@ -20,7 +20,7 @@ import os
 import sys
 from collections import Counter, defaultdict
 
-RESERVED = ("merged", "verified", "to_verify", "self_verdicts", "threads", "repro")
+RESERVED = ("merged", "verified", "to_verify", "self_verdicts", "threads", "repro", "mutations")
 BEHAVIOUR = ("bug", "architecture", "spec")
 
 

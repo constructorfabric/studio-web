@@ -26,67 +26,13 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 
-HOME = os.path.expanduser("~")
-NPM_CACHE = os.path.join(os.environ.get("REVIEW_RUNS") or os.path.join(HOME, ".cache/studio-frontend-review"), "npm-cache")
-
-
-def node_dir():
-    """The Node 24 installation (the version studio-frontend's Dockerfile.src builds with)."""
-    if os.environ.get("REVIEW_NODE_DIR"):
-        return os.environ["REVIEW_NODE_DIR"]
-    found = sorted(glob.glob(os.path.join(HOME, ".nvm/versions/node/v24.*")))
-    if found:
-        return found[-1]
-    node = shutil.which("node")
-    return os.path.dirname(os.path.dirname(os.path.realpath(node))) if node else None
-
-
-def sandboxed(cmd, cwd, workdir, network, no_sandbox, timeout):
-    nd = node_dir()
-    if not nd:
-        sys.exit("node not found (set REVIEW_NODE_DIR)")
-    path = f"{nd}/bin:/usr/local/bin:/usr/bin:/bin"
-    env = {"PATH": path, "HOME": HOME, "CI": "1", "npm_config_cache": NPM_CACHE, "CFS_DECISION_LOG": "off"}
-    if no_sandbox:
-        full = cmd
-    else:
-        if not shutil.which("bwrap"):
-            sys.exit("bubblewrap (bwrap) is not installed: refusing to run PR code unsandboxed")
-        os.makedirs(NPM_CACHE, exist_ok=True)
-        full = ["bwrap", "--ro-bind", "/", "/", "--tmpfs", HOME, "--tmpfs", "/tmp", "--dev", "/dev", "--proc", "/proc",
-                "--ro-bind", nd, nd, "--bind", workdir, workdir, "--bind", NPM_CACHE, NPM_CACHE,
-                "--unshare-pid", "--die-with-parent", "--clearenv"]
-        for k, v in env.items():
-            full += ["--setenv", k, v]
-        if not network:
-            full.append("--unshare-net")
-        full += ["--chdir", cwd, *cmd]
-    try:
-        r = subprocess.run(full, cwd=cwd, env=env if no_sandbox else None, capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout + r.stderr
-    except subprocess.TimeoutExpired:
-        return None, f"timed out after {timeout} s"
+from sandbox import run as sandboxed, setup as sandbox_setup
 
 
 def setup(workdir, fe, no_sandbox):
-    mark = f"{workdir}/.repro-ready"
-    if os.path.exists(mark):
-        return True
-    log = []
-    for cmd, timeout in ((["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], 900),
-                         (["npm", "run", "build:package"], 600), (["npm", "run", "build:packages"], 900)):
-        code, out = sandboxed(cmd, fe, workdir, network=cmd[1] == "ci", no_sandbox=no_sandbox, timeout=timeout)
-        log.append(f"$ {' '.join(cmd)}  -> exit {code}\n{out[-4000:]}")
-        if code != 0:
-            open(f"{workdir}/repro-setup.log", "w").write("\n\n".join(log))
-            print(f"setup failed at `{' '.join(cmd)}` (exit {code}); see {workdir}/repro-setup.log")
-            return False
-    open(f"{workdir}/repro-setup.log", "w").write("\n\n".join(log))
-    open(mark, "w").write("ok\n")
-    return True
+    return sandbox_setup(workdir, no_sandbox)
 
 
 def header(path):
