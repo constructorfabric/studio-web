@@ -13,9 +13,11 @@ this file is the operating manual.
   reaches `main` — the only place the suite is a gate. Not on pull requests.
 - **After a deploy**: as an authenticated smoke against the stand — deferred
   until the stands have a realm-local `e2e` account (ADR-0029).
-- **Your machine**: against whatever backend you have — the compose stack, or
-  the `dev` backend once local development moves there. The defaults below are
-  the compose stack's; anything else needs explicit credentials.
+- **Your machine**: against the compose stack's portal on `:8080`, whose
+  seeded `demo/studio` are the defaults below — or against the dev server on
+  `:5173`, which faces whichever stand `STUDIO_STAND` chose
+  ([`docs/stands.md`](../docs/stands.md)) and therefore needs explicit
+  credentials.
 
 ## Running
 
@@ -32,6 +34,13 @@ If the backend never turns healthy and its log says *ONNX Runtime did not
 load*, bring the stack up with `STUDIO_EMBEDDING_PROVIDER=fake` — the sign-in
 scenario needs no embeddings.
 
+Against the dev server (`STUDIO_STAND=local npm run dev:all` in another
+terminal, so the seeded account exists behind it):
+
+```sh
+E2E_BASE_URL=http://localhost:5173 E2E_USER=demo E2E_PASSWORD=studio npm run e2e
+```
+
 Against a shared stand — a realm-local account with a password, never an SSO
 identity:
 
@@ -47,11 +56,11 @@ Only what is safe on shared data:
 npm run e2e -- --grep @readonly
 ```
 
-| Variable       | Default (compose stack only) | Meaning                                       |
-| -------------- | ---------------------------- | --------------------------------------------- |
-| `E2E_BASE_URL` | `http://localhost:8080`      | The portal. Anything else needs credentials.  |
-| `E2E_USER`     | `demo`                       | From `docker/keycloak/realm-studio.json`.     |
-| `E2E_PASSWORD` | `studio`                     |                                               |
+| Variable       | Default (compose portal on `:8080` only) | Meaning                                       |
+| -------------- | ---------------------------------------- | --------------------------------------------- |
+| `E2E_BASE_URL` | `http://localhost:8080`                  | The portal. Anything else needs credentials.  |
+| `E2E_USER`     | `demo`                                   | From `docker/keycloak/realm-studio.json`.     |
+| `E2E_PASSWORD` | `studio`                                 |                                               |
 
 A failed run leaves a trace and a screenshot under `e2e/test-results/`;
 `npx playwright show-trace <trace.zip>` opens it.

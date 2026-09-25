@@ -46,3 +46,11 @@ exposes, a working example per use case, and **Traps**.
 A dash is a page that has not been written yet, not a resource that does not
 need one. A service that gains a second consumer gets its page in that PR —
 the second consumer is the moment the knowledge stops being one person's.
+
+## Beside the API pages
+
+[`stands.md`](stands.md) is not a resource page: it is the operating note
+for which Studio the dev server talks to and the `STUDIO_STAND` switch
+([ADR-0030](../../docs/adr/0030-the-portal-is-developed-against-a-shared-stand.md)).
+It lives here for the same reason the pages above do — it is ours, not the
+template's.
