@@ -726,6 +726,11 @@ jobs:
       (needs.build-file-storage-sidecar-binary.result == 'success' || needs.build-file-storage-sidecar-binary.result == 'skipped') &&
       (needs.build-frontend-dist.result == 'success' || needs.build-frontend-dist.result == 'skipped') &&
       (needs.build-prototype-dist.result == 'success' || needs.build-prototype-dist.result == 'skipped')
+    outputs:
+      # The sha-<commit> tag of the snapshot this run published, for the jobs
+      # that consume it (`test-e2e`). Derived here rather than recomputed
+      # there, so a dispatch with a `source_ref` cannot disagree with itself.
+      immutable: ${{ steps.tags.outputs.immutable }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1062,6 +1067,86 @@ jobs:
         with:
           generate_release_notes: true
 
+  # The browser-driven gate of ADR-0029: the snapshot `build-service-images`
+  # just published, brought up as the compose stack and signed into by a real
+  # browser. Only when a merge reaches main — a pull request keeps its unit,
+  # contract and type gates, and what a runner costs in this pipeline (see the
+  # note on `test-complete`) is spent once, on the merge. Nothing is built
+  # here: every service is the sha-<commit> image, the graph database is the
+  # newest infrastructure release (docker-compose.published.yml says why it is
+  # not part of a services snapshot), and the database bootstrap is the
+  # backend image itself running its `bootstrap` subcommand —
+  # docker-compose.ci.yml explains why the local seeder is not needed.
+  #
+  # A red run fails `build-complete`, so the snapshot cannot be deployed by
+  # `Build, publish and deploy`. It does not yet stop `edge` from moving: the
+  # promotion happens inside `build-service-images`, before this job starts.
+  # Moving it behind this gate is the next change to this file.
+  test-e2e:
+    name: E2E on the published snapshot
+    needs: [build-require-ci, build-service-images]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.build-require-ci.result == 'success' &&
+      needs.build-service-images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      STUDIO_IMAGE_TAG: ${{ needs.build-service-images.outputs.immutable }}
+      # The sign-in scenario needs no embeddings, and docker-compose.ci.yml
+      # skips the model download on the strength of this.
+      STUDIO_EMBEDDING_PROVIDER: fake
+      # Read by every `docker compose` below: the published override, then the
+      # CI one on top of it.
+      COMPOSE_FILE: docker-compose.yml:docker-compose.published.yml:docker-compose.ci.yml
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bring the snapshot up
+        run: |
+          set -euo pipefail
+          test -n "$STUDIO_IMAGE_TAG"
+          docker compose pull --quiet
+          # `--wait` returns once backend and frontend, and everything they
+          # depend on, are healthy or have exited 0 — the bootstrap included.
+          docker compose up -d --no-build --wait --wait-timeout 600 backend frontend
+          docker compose ps
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - name: Install the suite
+        working-directory: studio-frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run
+        working-directory: studio-frontend
+        run: npm run e2e
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --tail 300 backend-bootstrap backend frontend keycloak
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: e2e-results
+          path: |
+            studio-frontend/e2e/test-results
+            studio-frontend/e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
   build-complete:
     # This gate appears after image build/publish jobs complete.
     name: 2. Images published
@@ -1069,13 +1154,14 @@ jobs:
     # consumes an already immutable image. So is this gate now — see the note
     # on `test-complete`: attesting that nothing was published is not worth a
     # runner when runners are what the pipeline waits on.
-    needs: [build-require-ci, build-service-images, build-infra-images]
+    needs: [build-require-ci, build-service-images, build-infra-images, test-e2e]
     if: >-
       always() &&
       github.event.inputs.operation != 'Deploy existing images' &&
       needs.build-require-ci.result == 'success' &&
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
-      (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped')
+      (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped') &&
+      (needs.test-e2e.result == 'success' || needs.test-e2e.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - run: echo "Build & Publish stage completed successfully."

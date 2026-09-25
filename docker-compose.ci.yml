@@ -1,0 +1,42 @@
+# The compose stack as the end-to-end gate runs it in CI (ADR-0029): on top of
+# docker-compose.published.yml, so every service is the published snapshot,
+# with the three services that file leaves to a local build or a download
+# pointed elsewhere. Nothing here is compiled.
+#
+#   STUDIO_IMAGE_TAG=sha-<commit> STUDIO_EMBEDDING_PROVIDER=fake \
+#   docker compose -f docker-compose.yml -f docker-compose.published.yml -f docker-compose.ci.yml \
+#     up -d --no-build --wait backend frontend
+#
+# Layered last, after the published override, so what it changes is exactly
+# what is listed below and nothing about where the other images come from.
+services:
+  # The seeder in studio-backend/docker/bootstrap-seed.sh exists to get past a
+  # first-boot deadlock in the `oagw` gear, and `oagw` sits behind the `llm`
+  # cargo feature — which the pipeline builds the published backend WITHOUT
+  # (`--no-default-features --features graph,theia-bridge`). The published
+  # image therefore seeds the root tenant on its own, as the seeder would.
+  # What the stack still needs before the backend starts is the gear
+  # databases and their migrations, which `run` does not provision: the same
+  # image, the `bootstrap` subcommand — what the Helm database-bootstrap hook
+  # runs before every deploy. The `build:` in docker-compose.yml is inert
+  # under `--no-build`.
+  backend-bootstrap:
+    image: ghcr.io/constructorfabric/studio-web/studio-backend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
+    entrypoint: ["/app/studio-backend"]
+    command: ["--config", "/app/config/docker.yaml", "bootstrap", "--apply"]
+
+  # No scenario opens the editor yet. The backend waits only for this
+  # container to exit 0, and a multi-gigabyte editor image is not what that
+  # wait is for. Point it back at the published editor (drop this block) when
+  # the Theia frame scenario lands.
+  session-image:
+    image: busybox:1.37
+    pull_policy: missing
+    entrypoint: ["true"]
+
+  # With STUDIO_EMBEDDING_PROVIDER=fake the model is never read, and a
+  # download from huggingface.co is one more network dependency a gate should
+  # not have. The backend still waits for this container to exit 0.
+  embedding-model:
+    entrypoint: ["true"]

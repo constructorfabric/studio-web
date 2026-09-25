@@ -59,6 +59,12 @@ services:
       # whatever `cf-studio-theia:local` happens to be on this machine.
       STUDIO_SESSION_IMAGE: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
       STUDIO_SESSION_ALWAYS_PULL: "true"
+    # The published image's CMD runs config/dev.yaml — the host profile, with
+    # PostgreSQL on 127.0.0.1 — because that is what `docker run` of the bare
+    # image is for. Under compose the profile is docker.yaml, which is what
+    # Dockerfile.src bakes in and what Helm passes; without this line the
+    # backend from a published image never finds the database.
+    command: ["--config", "/app/config/docker.yaml", "run"]
 
   frontend:
     image: ghcr.io/constructorfabric/studio-web/studio-frontend:${STUDIO_IMAGE_TAG:-edge}
@@ -68,8 +74,16 @@ services:
     image: ghcr.io/constructorfabric/studio-web/studio-frontend-prototype:${STUDIO_IMAGE_TAG:-edge}
     pull_policy: always
 
+  # Infrastructure, not a service: the delivery workflow publishes it from
+  # `build-infra-images` under its own tags — `sha-<commit>` only when the
+  # infrastructure itself was built, `infra-vX.Y.Z` for a release, and
+  # `infra-latest` for the newest one — and never into a services snapshot.
+  # `graph-postgres:sha-<commit>` of a services build does not exist, and the
+  # `edge` it once carried predates the image's entrypoint and exits at once
+  # under compose. The default is what the newest infrastructure release
+  # runs; pin an `infra-v*` tag to run exactly what a stand has.
   graph-postgres:
-    image: ghcr.io/constructorfabric/studio-web/graph-postgres:${STUDIO_IMAGE_TAG:-edge}
+    image: ghcr.io/constructorfabric/studio-web/graph-postgres:${STUDIO_INFRA_IMAGE_TAG:-infra-latest}
     pull_policy: always
 
   # The backend waits for this one (docker-compose.yml explains why), so it
