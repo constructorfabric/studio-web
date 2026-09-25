@@ -62,12 +62,125 @@ What was left out on purpose, or worked around to get a binary on one machine:
   an Orca panel that reports a runtime this machine may not have, and the
   Studio view is narrow enough to wrap every line.
 
+- [ ] Open a project from the portal in the local desktop Studio @andrejk666
+
+  A separate track. Today a member starts the desktop app, signs in and picks
+  a workspace in its own Studio view. The portal should offer "Open in desktop"
+  beside "Open Studio" and land them in that project in the app they already
+  have installed (ADR-0027 §6):
+
+  - the installer registers a `cfstudio://` protocol handler (electron-builder
+    `protocols`), and the app handles the link on start and when already
+    running (Electron `open-url` / second-instance);
+  - the link names the Studio and the project,
+    `cfstudio://open?studio=<url>&project=<id>`, and carries no token. The app
+    switches to that Studio if it is one it offers (or asks first when it is
+    not), signs in if it has to, and clones and opens the project through
+    `studio-git` exactly as a click in its Studio view does;
+  - the portal shows the button only when it can tell the app is installed.
+    If it cannot, it shows "Get the desktop app" linking to the installer.
+
+  Needs `studio-git` deployed (#391) for the clone, and the desktop installer
+  (#395).
+
 - [ ] ADR-0027 phases 3–5: leases, events, commands @andrejk666
 
   The portal does not know a workspace is open on a desktop, the desktop's
   events do not reach the ingress, and the portal cannot send it a command.
   `runtime: desktop` leases in `studio-session`, the ingress's desktop
   authentication path, and commands over `studio-events`.
+
+# 2026-09-25 — "signed in as Vasil, and it was not Vasil"
+
+Somebody was seen working as Vasil without being Vasil, and without ever
+having used Vasil's browser. What the tests found, and what is still a
+hypothesis:
+
+- [ ] A shared IDE session acts as whoever launched it @andrejk666
+
+  **Hypothesis for the incident, reproduced in a test.** `studio-session`
+  keeps one session per workspace on purpose, so a second member does not
+  destroy the first one's container (`two_callers_reach_one_workspace_session`).
+  But a container is launched once, and its environment is built from the
+  person who launched it: `STUDIO_ACTOR_ID`, the git author
+  (`git_identity_env`), and the agent keys read from credstore under that
+  person's identity, their private secrets first. The second member signs in
+  to the portal correctly and holds their own token, and still commits, pushes
+  and calls agents as the first, with the first person's keys.
+  `studio_session::service::tests::the_second_member_of_a_workspace_does_not_work_as_the_first`
+  reproduces it. It is `#[ignore]`d until this task is done: drop the ignore
+  when it passes.
+
+  **Still to confirm:** whether the incident was seen inside the IDE (commit
+  author, agents, names in the IDE), which is this cause, or in the portal's
+  user menu, which is not.
+
+  **Direction:** several people in one container, each acting as themselves.
+  Not one container per person. Roughly:
+  - nothing personal in the container's environment;
+  - the git author and the push credential per connection, from that
+    connection's portal token (the credential helper asks the session gate
+    who is typing);
+  - agent and LLM calls through `studio-llm-proxy` under the caller's own
+    token, instead of keys in env;
+  - terminals and agent runs owned by the connection that started them;
+  - `STUDIO_ACTOR_ID` replaced by the connection's identity wherever the
+    Studio extension records who did something (journal, audit, presence).
+
+  The Theia PoC was built single-user (ADR-0003 asked for one instance per
+  user and workspace). **ADR-0030** (proposed) amends it: one container per
+  workspace, identity per connection. What actually stands in the way:
+
+  1. **Identity is baked into the environment at launch.** The git credential
+     helper and the agent CLIs read it. Theia already has one plugin host per
+     window (`HostedPluginProcess` in a `ConnectionContainerModule`), and its
+     environment is extensible (`PluginHostEnvironmentVariable`), so identity
+     can come from the connection. The portal already hands each window its
+     own person's token.
+  2. **One working tree for everybody:** one index, one branch, one set of
+     uncommitted changes. A `git worktree` per person, as Orca already does
+     per agent task.
+  3. **One OS user for every process,** so members can read each other's
+     `/proc/*/environ`, `~/.claude` and shell history. Keep nothing
+     long-lived there and state the workspace as the trust boundary;
+     per-person uids are a later step if that boundary must move.
+
+  Phases in ADR-0030: no personal secrets in env (git through `studio-git`,
+  models through `studio-llm-proxy`), then identity per connection, then
+  "who did it" in the journal, audit and presence, then a worktree and a
+  `HOME` per person.
+
+  **Done (branch `AndrejK666/session-no-personal-env`):**
+  - the session environment no longer carries the launcher's provider keys
+    or git author (`a_session_carries_no_key_of_its_launcher`);
+  - agents reach their models through `/studio-llm/v1/providers/*` on the
+    caller's own key from their profile;
+  - each window's Claude Code and Codex requests carry that window's person.
+
+  **Still open:**
+  - `STUDIO_ACTOR_ID` is still the launcher's, which is why the ignored test
+    still fails;
+  - commits carry the neutral author until the author comes from the
+    connection;
+  - a terminal `claude` or `codex`, and Orca's agents, have no token yet;
+  - repository tokens still come in `STUDIO_SOURCES` (workspace
+    connections, not personal).
+
+- [ ] Decide what "Continue with Constructor ID" does with a live browser session @andrejk666
+
+  `keycloak/tests/account-takeover.test.mjs` shows it. A browser still signed
+  in to Keycloak as somebody else, because they closed the tab without
+  signing out, signs the next person in as them with no form shown, since
+  neither portal sends `prompt`. Sign-out itself is right in both portals
+  (RP-initiated logout). The same test clears the other suspects: an outside
+  IdP account carrying the victim's e-mail, verified or not (nOAuth), gets
+  asked for the victim's password. That holds for the realm as
+  `keycloak/realm-studio.json` configures it; the dev and test realms were not
+  read. The desktop already sends `prompt=login` (#395).
+
+  Options: a "Continue as <name>? / Not you" step before the silent sign-in,
+  plus a shorter SSO idle timeout on the realm (recommended); or `prompt=login`
+  on every sign-in.
 
 # 2026-09-17
 

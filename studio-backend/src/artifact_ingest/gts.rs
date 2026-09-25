@@ -29,9 +29,19 @@ pub const SPEC_FINDING_TYPE: &str = "gts.cf.studio.artifact.spec_finding.v1~";
 pub const COMMENT_TYPE: &str = "gts.cf.studio.artifact.comment.v1~";
 /// A commit in a repository.
 pub const COMMIT_TYPE: &str = "gts.cf.studio.artifact.commit.v1~";
+/// What search sees of a file's text: a bounded excerpt, beside the file
+/// rather than inside it.
+///
+/// It used to be a field of the file node, and every listing of files paid
+/// for it. graph-storage projects whole payloads — it cannot select fields —
+/// so the Specs screen, which wants a path and a repository per file, read
+/// 2.3 KB of excerpt out of every 2.7 KB file node, and a tenant's 9,577 files
+/// took 48 pages and eight seconds to walk. Search is the only reader the
+/// excerpt ever had, and search reaches it here just as well.
+pub const FILE_CONTENT_TYPE: &str = "gts.cf.studio.artifact.file_content.v1~";
 
 /// Every artifact node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 8] = [
+pub const ALL_NODE_TYPES: [&str; 9] = [
     REPO_TYPE,
     ISSUE_TYPE,
     PULL_REQUEST_TYPE,
@@ -40,6 +50,7 @@ pub const ALL_NODE_TYPES: [&str; 8] = [
     SPEC_FINDING_TYPE,
     COMMENT_TYPE,
     COMMIT_TYPE,
+    FILE_CONTENT_TYPE,
 ];
 
 /// The node types the artifact listing returns by default — the four
@@ -60,9 +71,21 @@ pub fn resolve_listable_types(type_filter: Option<&str>) -> Vec<&'static str> {
         None => LISTABLE_NODE_TYPES.to_vec(),
         Some(f) => ALL_NODE_TYPES
             .into_iter()
+            .filter(|t| is_listed(t))
             .filter(|t| *t == f || type_leaf(t) == f)
             .collect(),
     }
+}
+
+/// Whether nodes of this type are ever listed — by `/nodes`, the artifact
+/// index or anything else that reads the graph back as rows.
+///
+/// Every type is, except a file's content. It is not an artifact but a part of
+/// one, reached only through search, and it is the bytes that listing files
+/// stopped carrying: listing it, or mirroring it into the index, would put them
+/// straight back.
+pub fn is_listed(type_id: &str) -> bool {
+    type_id != FILE_CONTENT_TYPE
 }
 
 /// The leaf name of an artifact type id: `issue` from
@@ -93,9 +116,11 @@ pub const REL_TRACES_TO: &str = "gts.cf.studio.rel.traces_to.v1~";
 pub const REL_FINDING_ON: &str = "gts.cf.studio.rel.finding_on.v1~";
 /// comment → issue / pull_request — the artifact a comment is on.
 pub const REL_COMMENT_ON: &str = "gts.cf.studio.rel.comment_on.v1~";
+/// file_content → file — the file an excerpt was taken from.
+pub const REL_CONTENT_OF: &str = "gts.cf.studio.rel.content_of.v1~";
 
 /// Every relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 8] = [
+pub const ALL_EDGE_TYPES: [&str; 9] = [
     REL_ARTIFACT_OF,
     REL_CONTAINS,
     REL_AUTHORED_BY,
@@ -104,6 +129,7 @@ pub const ALL_EDGE_TYPES: [&str; 8] = [
     REL_TRACES_TO,
     REL_FINDING_ON,
     REL_COMMENT_ON,
+    REL_CONTENT_OF,
 ];
 
 /// The graph-storage families our types derive from.
@@ -140,7 +166,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
     (
         REPO_TYPE,
         "Repository",
@@ -181,11 +207,16 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
         "Commit",
         "A commit in the repository pulled from the connector API.",
     ),
+    (
+        FILE_CONTENT_TYPE,
+        "FileContent",
+        "A bounded excerpt of a text file, kept beside the file for search.",
+    ),
 ];
 
 /// The relation types, with a title and a description each — the catalog side
 /// of [`ALL_EDGE_TYPES`].
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 9] = [
     (
         REL_ARTIFACT_OF,
         "ArtifactOf",
@@ -226,6 +257,11 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 8] = [
         "CommentOn",
         "A comment and the issue or pull request it is on.",
     ),
+    (
+        REL_CONTENT_OF,
+        "ContentOf",
+        "A file's searchable excerpt and the file it was taken from.",
+    ),
 ];
 
 /// GTS Type Schemas registered with the **platform types-registry** at gear
@@ -259,6 +295,15 @@ pub fn type_schemas() -> Vec<Value> {
 /// artifact type. The gear composes the search text from these on write, so a
 /// producer no longer supplies a `search_text` string; a path a node's payload
 /// does not have is simply skipped.
+///
+/// `text_excerpt` is still here, and so still on the file type, although no
+/// file node carries one any more. It cannot come off: graph-storage holds a
+/// registered schema immutable, and `file.v1` re-registered with other traits
+/// is a conflict that fails the whole registration batch, on every tenant that
+/// already has the old one. A `file.v2` would not help either — a node's type
+/// cannot change under its key, so it would mean a new key for every file and
+/// for every binding and relation that names one. Left declared, the path
+/// resolves to nothing on a file and costs nothing.
 const FULL_TEXT_PATHS: [&str; 12] = [
     "/payload/title",
     "/payload/path",
@@ -288,6 +333,14 @@ const VECTOR_PATHS: [&str; 8] = [
     "/payload/text_excerpt",
 ];
 
+/// What the file-content type searches and embeds: the excerpt, and the path
+/// beside it, which is what the file type searched and embedded for a text
+/// file before the two were split — so a query ranks the same text as it did.
+///
+/// Its own declaration rather than the shared one, because a new type is free
+/// to say exactly what it holds.
+const CONTENT_PATHS: [&str; 2] = ["/payload/path", "/payload/text_excerpt"];
+
 /// The same types as **graph-storage** ontology entries.
 ///
 /// A separate document set, because the two registries answer different
@@ -301,10 +354,17 @@ pub fn graph_node_type_schemas() -> Vec<Value> {
         .into_iter()
         .map(|(id, title, description)| {
             let mut schema = derived_schema(id, title, description, OWNED_NODE_FAMILY);
-            schema["x-gts-traits"] = json!({
-                "full_text_search": FULL_TEXT_PATHS,
-                "vector_search": VECTOR_PATHS,
-            });
+            schema["x-gts-traits"] = if id == FILE_CONTENT_TYPE {
+                json!({
+                    "full_text_search": CONTENT_PATHS,
+                    "vector_search": CONTENT_PATHS,
+                })
+            } else {
+                json!({
+                    "full_text_search": FULL_TEXT_PATHS,
+                    "vector_search": VECTOR_PATHS,
+                })
+            };
             schema
         })
         .collect()
@@ -495,7 +555,10 @@ pub fn file_node(
 
 /// A File node built from a real checkout on disk: same identity as the
 /// tree-API node (keyed on path, so the two channels upsert the same instance),
-/// but carrying the snapshot `commit` and, for text files, their `text`.
+/// but carrying the snapshot `commit` and whether the file `has_text`.
+///
+/// Not the text itself. What search needs of it is the file's content node
+/// ([`file_content_node`]), so a listing of files stays a listing of paths.
 ///
 /// `threads` is the conversation the repository carries about this file in
 /// `.studio/comments/` (see [`super::comment_threads`]), and is `None` for a
@@ -510,7 +573,7 @@ pub fn file_node_cloned(
     repo_full_path: &str,
     path: &str,
     size: u64,
-    text: Option<String>,
+    has_text: bool,
     commit: Option<&str>,
     threads: Option<ThreadCounts>,
 ) -> GtsNode {
@@ -523,8 +586,7 @@ pub fn file_node_cloned(
             "is_dir": false,
             "size": size,
             "commit": commit,
-            "has_text": text.is_some(),
-            "text": text,
+            "has_text": has_text,
         }),
     };
     if let (Some(counts), Some(obj)) = (threads, node.value.as_object_mut()) {
@@ -532,6 +594,47 @@ pub fn file_node_cloned(
         obj.insert("resolved_threads".to_string(), json!(counts.resolved));
     }
     node
+}
+
+/// The instance id of a file's content node.
+///
+/// Derived from the file's own id, so whoever holds a file can name its
+/// content without reading anything: the prune that forgets a file forgets
+/// its content by this, and a re-sync upserts the same node.
+pub fn file_content_instance_id(file_id: &str) -> String {
+    anon_id(&[file_id, "content"])
+}
+
+/// The content node of `file`, or `None` when there is no text to search.
+///
+/// It carries `text`, which the graph backend bounds to a `text_excerpt` on
+/// the way in (the ceiling lives with the store that has one), and enough of
+/// the file to be read without it: `file` to map a search hit back, `path`
+/// and `repo` to say which file it is. The scope fields are stamped on by the
+/// batch that stamps the file's, so `node_in_scope` answers the same for both.
+pub fn file_content_node(file: &GtsNode, text: &str) -> Option<GtsNode> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(GtsNode {
+        type_id: FILE_CONTENT_TYPE,
+        instance_id: file_content_instance_id(&file.instance_id),
+        value: json!({
+            "file": file.instance_id,
+            "repo": file.value.get("repo"),
+            "path": file.value.get("path"),
+            "text": text,
+        }),
+    })
+}
+
+/// file_content → file.
+pub fn content_of_edge(content_id: &str, file_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_CONTENT_OF,
+        from: content_id.to_string(),
+        to: file_id.to_string(),
+    }
 }
 
 /// One pull request. `open_threads` is its unresolved review conversations,
@@ -834,7 +937,7 @@ mod tests {
             "acme/specs",
             "docs/adr/0007.md",
             42,
-            Some("# ADR".to_string()),
+            true,
             Some("deadbeef"),
             None,
         );
@@ -860,7 +963,7 @@ mod tests {
             "acme/specs",
             "docs/prd.md",
             42,
-            None,
+            false,
             None,
             None,
         );
@@ -874,7 +977,7 @@ mod tests {
             "acme/specs",
             "docs/prd.md",
             42,
-            None,
+            false,
             None,
             Some(ThreadCounts {
                 open: 0,
@@ -970,6 +1073,66 @@ mod tests {
         assert!(graph_type_id(REL_CONTAINS).starts_with(STATIC_EDGE_FAMILY));
         assert_eq!(graph_node_type_schemas().len(), ALL_NODE_TYPES.len());
         assert_eq!(graph_edge_type_schemas().len(), ALL_EDGE_TYPES.len());
+    }
+
+    /// The file node is metadata only, and its text goes to a content node
+    /// that names it, under an id anyone holding the file can compute.
+    #[test]
+    fn a_files_text_is_its_content_node_not_its_own() {
+        let file = file_node_cloned(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            "docs/prd.md",
+            42,
+            true,
+            Some("deadbeef"),
+            None,
+        );
+        assert!(file.value.get("text").is_none());
+        assert!(file.value.get("text_excerpt").is_none());
+        assert_eq!(file.value["has_text"], true);
+
+        let content = file_content_node(&file, "# PRD").expect("text has a content node");
+        assert_eq!(content.type_id, FILE_CONTENT_TYPE);
+        assert_eq!(
+            content.instance_id,
+            file_content_instance_id(&file.instance_id)
+        );
+        assert_ne!(content.instance_id, file.instance_id);
+        assert_eq!(content.value["file"], file.instance_id.as_str());
+        assert_eq!(content.value["path"], "docs/prd.md");
+        assert_eq!(content.value["repo"], "repo-id");
+        assert_eq!(content.value["text"], "# PRD");
+
+        assert!(file_content_node(&file, "  \n").is_none());
+    }
+
+    /// graph-storage refuses a changed schema under a registered id, and one
+    /// refusal fails the whole batch. The file type's traits are therefore
+    /// frozen as they were registered, excerpt path and all; only the new
+    /// content type declares the narrower pair.
+    #[test]
+    fn the_file_type_keeps_the_traits_it_was_registered_with() {
+        let schemas = graph_node_type_schemas();
+        let traits = |our: &str| {
+            let id = format!("gts://{}", graph_type_id(our));
+            schemas
+                .iter()
+                .find(|s| s["$id"] == id.as_str())
+                .map(|s| s["x-gts-traits"].clone())
+                .expect("the type is registered")
+        };
+        assert_eq!(
+            traits(FILE_TYPE),
+            json!({ "full_text_search": FULL_TEXT_PATHS, "vector_search": VECTOR_PATHS })
+        );
+        assert_eq!(
+            traits(FILE_CONTENT_TYPE),
+            json!({ "full_text_search": CONTENT_PATHS, "vector_search": CONTENT_PATHS })
+        );
+        assert!(graph_type_id(REL_CONTENT_OF).starts_with(STATIC_EDGE_FAMILY));
     }
 
     #[test]

@@ -1,28 +1,46 @@
 diff --git a/node_modules/@theia/ai-codex/lib/node/codex-service-impl.js b/node_modules/@theia/ai-codex/lib/node/codex-service-impl.js
-index 11308dc..30de754 100644
+index e96d3d5..ee78917 100644
 --- a/node_modules/@theia/ai-codex/lib/node/codex-service-impl.js
 +++ b/node_modules/@theia/ai-codex/lib/node/codex-service-impl.js
-@@ -39,7 +39,8 @@ let CodexServiceImpl = class CodexServiceImpl {
+@@ -39,7 +39,17 @@ let CodexServiceImpl = class CodexServiceImpl {
          try {
              const dynamicImport = new Function('specifier', 'return import(specifier)');
              const { Codex } = await dynamicImport('@openai/codex-sdk');
 -            const codex = new Codex();
 +            const codexPathOverride = process.env.THEIA_CODEX_PATH;
-+            const codex = new Codex(codexPathOverride ? { codexPathOverride } : undefined);
++            // Constructor Studio (ADR-0030): the member's own credential per request —
++            // `apiKey` is their Studio token and OPENAI_BASE_URL Studio's provider proxy
++            // when a session sets STUDIO_LLM_AUTH=bearer — instead of whatever key this
++            // shared process was started with.
++            const studioAuth = process.env.STUDIO_LLM_AUTH === 'bearer';
++            const codex = new Codex({
++                ...(codexPathOverride ? { codexPathOverride } : {}),
++                ...(studioAuth && request.apiKey ? { apiKey: request.apiKey } : {}),
++                ...(studioAuth && process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
++            });
              const sessionId = request.sessionId || streamId;
              let thread = this.sessionThreads.get(sessionId);
              if (!thread) {
 diff --git a/node_modules/@theia/ai-codex/src/node/codex-service-impl.ts b/node_modules/@theia/ai-codex/src/node/codex-service-impl.ts
-index c83f613..861f456 100644
+index ecde680..56e5281 100644
 --- a/node_modules/@theia/ai-codex/src/node/codex-service-impl.ts
 +++ b/node_modules/@theia/ai-codex/src/node/codex-service-impl.ts
-@@ -51,7 +51,8 @@ export class CodexServiceImpl implements CodexService {
+@@ -51,7 +51,17 @@ export class CodexServiceImpl implements CodexService {
          try {
              const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<typeof import('@openai/codex-sdk')>;
              const { Codex } = await dynamicImport('@openai/codex-sdk');
 -            const codex = new Codex();
 +            const codexPathOverride = process.env.THEIA_CODEX_PATH;
-+            const codex = new Codex(codexPathOverride ? { codexPathOverride } : undefined);
++            // Constructor Studio (ADR-0030): the member's own credential per request —
++            // `apiKey` is their Studio token and OPENAI_BASE_URL Studio's provider proxy
++            // when a session sets STUDIO_LLM_AUTH=bearer — instead of whatever key this
++            // shared process was started with.
++            const studioAuth = process.env.STUDIO_LLM_AUTH === 'bearer';
++            const codex = new Codex({
++                ...(codexPathOverride ? { codexPathOverride } : {}),
++                ...(studioAuth && request.apiKey ? { apiKey: request.apiKey } : {}),
++                ...(studioAuth && process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
++            });
  
              const sessionId = request.sessionId || streamId;
              let thread = this.sessionThreads.get(sessionId);

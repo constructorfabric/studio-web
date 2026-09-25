@@ -14,11 +14,14 @@
 mod activity;
 pub(crate) mod clone;
 mod comment_threads;
+mod entity;
 mod graph;
 #[cfg(feature = "graph")]
 pub(crate) mod graph_backend;
 pub(crate) mod gts;
+mod index;
 mod ingest_task;
+mod migrations;
 pub mod port;
 mod rest;
 mod service;
@@ -33,7 +36,7 @@ use credstore_sdk::CredStoreClientV1;
 use file_parser_sdk::FileParserClientV1;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
-use toolkit::contracts::RestApiCapability;
+use toolkit::contracts::{DatabaseCapability, RestApiCapability};
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
@@ -45,12 +48,15 @@ use service::IngestService;
 #[toolkit::gear(
     name = "studio-artifact-ingest",
     deps = [types_registry, credstore],
-    capabilities = [rest]
+    capabilities = [db, rest]
 )]
 #[derive(Default)]
 pub struct StudioArtifactIngestGear {
     /// `None` inside the `OnceLock` = booted without a driver → routes 503.
     service: std::sync::OnceLock<Option<Arc<IngestService>>>,
+    /// The artifact index (see [`index`]). `None` = no database configured,
+    /// and every listing reads the graph as it did before the index existed.
+    index: std::sync::OnceLock<Option<Arc<index::ArtifactIndex>>>,
 }
 
 #[async_trait]
@@ -65,7 +71,35 @@ impl Gear for StudioArtifactIngestGear {
         let results = registry.register(gts::type_schemas()).await?;
         RegisterResult::ensure_all_ok(&results)?;
         info!("studio-artifact-ingest: types registered");
+
+        // The index is optional in the same way studio-events' log is: without
+        // a `database:` section nothing is lost but speed, so the gear says so
+        // and carries on reading the graph.
+        let index = match ctx.db_required() {
+            Ok(db) => {
+                info!(
+                    "studio-artifact-ingest: artifact index enabled — scoped listings read Postgres"
+                );
+                Some(Arc::new(index::ArtifactIndex::new(db.db())))
+            }
+            Err(e) => {
+                warn!(
+                    "studio-artifact-ingest: no database configured — no artifact index, every \
+                     listing walks the graph. Add a `database:` section (server + dbname) to \
+                     enable it: {e}"
+                );
+                None
+            }
+        };
+        let _ = self.index.set(index);
         Ok(())
+    }
+}
+
+impl DatabaseCapability for StudioArtifactIngestGear {
+    fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        use toolkit_db::sea_orm_migration::MigratorTrait;
+        migrations::Migrator::migrations()
     }
 }
 
@@ -147,6 +181,10 @@ impl RestApiCapability for StudioArtifactIngestGear {
         } else {
             let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
             let graph = build_graph_store(ctx);
+            let graph: Arc<dyn graph::GraphStore> = match self.index.get().cloned().flatten() {
+                Some(index) => Arc::new(index::IndexedGraphStore::new(graph, index)),
+                None => graph,
+            };
 
             // Preferred file source: the studio-session workspaces root. When
             // the IDE has cloned a repo into `{root}/{workspace_id}/{repo_dir}`,

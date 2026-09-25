@@ -8,6 +8,7 @@ use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
 use super::config::LlmProxyConfig;
+use super::providers::{CredstoreKeys, Providers};
 use super::rest::{self, ProxyState};
 
 /// OpenAI-compatible LLM proxy for Theia AI inside IDE sessions.
@@ -15,15 +16,19 @@ use super::rest::{self, ProxyState};
 /// See the module docs (`super`) for the why; the how is deliberately dumb:
 /// authenticated passthrough with a server-held upstream key. No request
 /// rewriting, no model policy — that stays the mini-chat/oagw chain's job.
-#[toolkit::gear(name = "studio-llm-proxy", capabilities = [rest])]
+#[toolkit::gear(name = "studio-llm-proxy", deps = [credstore], capabilities = [rest])]
 pub struct LlmProxyGear {
     state: OnceLock<Arc<ProxyState>>,
+    /// `None` when there is no credstore to ask for the caller's key: the
+    /// provider routes are then not mounted at all.
+    providers: OnceLock<Option<Arc<Providers>>>,
 }
 
 impl Default for LlmProxyGear {
     fn default() -> Self {
         Self {
             state: OnceLock::new(),
+            providers: OnceLock::new(),
         }
     }
 }
@@ -54,6 +59,25 @@ impl Gear for LlmProxyGear {
             .timeout(Duration::from_secs(600))
             .build()?;
 
+        // The agents' own APIs, each call on the caller's key (ADR-0030).
+        let providers = match ctx
+            .client_hub()
+            .get::<dyn credstore_sdk::CredStoreClientV1>()
+        {
+            Ok(credstore) => Some(Arc::new(Providers {
+                client: client.clone(),
+                list: cfg.providers.clone(),
+                keys: Arc::new(CredstoreKeys(credstore)),
+            })),
+            Err(e) => {
+                warn!(
+                    "studio-llm-proxy: credstore unavailable ({e}); agents get no provider passthrough"
+                );
+                None
+            }
+        };
+        let _ = self.providers.set(providers);
+
         let state = Arc::new(ProxyState {
             client,
             base_url,
@@ -81,6 +105,7 @@ impl toolkit::contracts::RestApiCapability for LlmProxyGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-llm-proxy not initialized"))?
             .clone();
-        Ok(rest::register_routes(router, openapi, state))
+        let providers = self.providers.get().cloned().flatten();
+        Ok(rest::register_routes(router, openapi, state, providers))
     }
 }

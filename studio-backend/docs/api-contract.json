@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 245,
+  "open_violations": 247,
   "operations": [
     {
       "method": "DELETE",
@@ -1284,6 +1284,20 @@
       "authenticated": true,
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/providers/{provider}/{*rest}",
+      "operation_id": "studio_llm.stream_provider_get",
+      "tag": "StudioLlm",
+      "summary": "A read from the caller's model provider, on the caller's own key",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -2628,6 +2642,20 @@
       "authenticated": true,
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-llm/v1/providers/{provider}/{*rest}",
+      "operation_id": "studio_llm.stream_provider_post",
+      "tag": "StudioLlm",
+      "summary": "An agent's call to its model provider, on the caller's own key",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },

@@ -106,6 +106,24 @@ fn gone_files<'a>(
         .collect()
 }
 
+/// The content nodes that go with `gone` files.
+///
+/// Named rather than read: a content node's id is derived from its file's, so
+/// finding them costs nothing, where listing them would be the heaviest walk
+/// this gear has — it is where the excerpts went. Only a file that `has_text`
+/// was given one. Asking for the others would not fail, but a retire is an
+/// upsert, and for a key that was never written it would write one.
+fn gone_contents(gone: &[GtsNode]) -> Vec<GtsNode> {
+    gone.iter()
+        .filter(|n| n.value.get("has_text").and_then(serde_json::Value::as_bool) == Some(true))
+        .map(|n| GtsNode {
+            type_id: gts::FILE_CONTENT_TYPE,
+            instance_id: gts::file_content_instance_id(&n.instance_id),
+            value: serde_json::Value::Null,
+        })
+        .collect()
+}
+
 /// What a sync has counted.
 ///
 /// Reported live through the progress bridge as the sync runs, and again as the
@@ -627,17 +645,29 @@ impl IngestService {
                             content: String::new(),
                         });
                     }
-                    nodes.push(gts::file_node_cloned(
+                    let file = gts::file_node_cloned(
                         source_scope,
                         &repo_id,
                         connector_id,
                         repo_full_path,
                         &wf.path,
                         wf.size,
-                        text,
+                        text.is_some(),
                         commit.as_deref(),
                         threads.documents.get(&wf.path).copied(),
-                    ));
+                    );
+                    // The text goes beside the file, not into it, so listing
+                    // files never drags it along. Pushed after the file: the
+                    // edge flush comes after every node, and its endpoints
+                    // have to exist by then.
+                    let content = text
+                        .as_deref()
+                        .and_then(|t| gts::file_content_node(&file, t));
+                    nodes.push(file);
+                    if let Some(content) = content {
+                        edges.push(gts::content_of_edge(&content.instance_id, &file_id));
+                        nodes.push(content);
+                    }
                 }
             }
             None => {
@@ -1152,8 +1182,8 @@ impl IngestService {
     }
 
     /// Forget the files the graph holds for this repository that a complete
-    /// listing no longer has: their document bindings, then their nodes.
-    /// Returns how many nodes were forgotten.
+    /// listing no longer has: their document bindings, then their content
+    /// nodes, then their own. Returns how many files were forgotten.
     ///
     /// Best-effort, like every other phase after the issues and pull requests:
     /// a failure is a warning and forgets nothing more, and the next sync
@@ -1229,6 +1259,23 @@ impl IngestService {
                     return 0;
                 }
             }
+        }
+
+        // Content first, and a failure here keeps the files. The other order
+        // could strand it: a retired file is gone from every listing, so no
+        // later sync would find it gone again and come back for its content,
+        // which would stay searchable and point at nothing.
+        let contents = gone_contents(&gone);
+        if let Err(e) = self.graph.delete_nodes(ctx, &contents).await {
+            warn!(
+                error = %e,
+                repo = repo_full_path,
+                gone = gone.len(),
+                bindings,
+                "studio-artifact-ingest: could not forget the content of deleted files; \
+                 the files are kept for the next sync"
+            );
+            return 0;
         }
 
         match self.graph.delete_nodes(ctx, &gone).await {
@@ -1359,14 +1406,24 @@ impl IngestService {
             .collect())
     }
 
-    /// Read ingested nodes back for the portal, optionally filtered by type
-    /// substring (`issue`, `pull_request`, `file`, `repo`).
-    pub async fn list_nodes(
+    /// The nodes of one type set that name `scope` as their workspace or
+    /// project — from the index when the tenant has one.
+    pub async fn list_in_scope(
         &self,
         ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<std::sync::Arc<Vec<GtsNode>>> {
-        self.graph.list(ctx, type_filter).await
+        scope: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        self.graph.list_in_scope(ctx, type_filter, scope).await
+    }
+
+    /// One page of the listing, as `/nodes` asks for it.
+    pub async fn page_nodes(
+        &self,
+        ctx: &SecurityContext,
+        query: &super::graph::NodePageQuery<'_>,
+    ) -> anyhow::Result<super::graph::NodePage> {
+        self.graph.page(ctx, query).await
     }
 
     /// Read the relations between ingested nodes back for the portal
@@ -1500,10 +1557,10 @@ impl IngestService {
 
 /// What the portfolio counts, answered without a page to count.
 ///
-/// The listing endpoint gives the same number as `total`, and costs a walk of
-/// the tenant's whole typed node set to do it — once per row of a table. Here
-/// it is one projection read, shared with every other caller through the
-/// per-tenant cache.
+/// The listing endpoint gives the same number as `total`. Here it is one
+/// `COUNT` against the artifact index, or — for a tenant the index has not
+/// been filled for yet — one projection read, shared with every other caller
+/// through the per-tenant cache.
 #[async_trait::async_trait]
 impl super::port::ArtifactCounter for IngestService {
     async fn count_nodes(
@@ -1512,26 +1569,21 @@ impl super::port::ArtifactCounter for IngestService {
         type_leaf: &str,
         scope: &str,
     ) -> anyhow::Result<u32> {
-        // The same narrowing the listing endpoint applies, and for the same
-        // reason: `scope` is a payload field, so it cannot be pushed into the
-        // projection and has to be matched here.
-        let nodes = self.list_nodes(ctx, Some(type_leaf)).await?;
-        // The listing route's own predicate, not a second copy of it: two
-        // spellings of "in this scope" is how a count and a list start
-        // disagreeing about the same project.
-        let n = nodes
-            .iter()
-            .filter(|node| super::rest::node_in_scope(&node.value, Some(scope)))
-            .count();
+        // The store's own count, through the same scope rule the listing
+        // applies: two spellings of "in this scope" is how a count and a list
+        // start disagreeing about the same project.
+        let n = self
+            .graph
+            .count_in_scope(ctx, Some(type_leaf), scope)
+            .await?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 }
 
 /// The files, offered to the gear that decides what each one is.
 ///
-/// The same projection read and the same scope predicate as the count beside
-/// it — `node_in_scope` rather than a second spelling of it, because two
-/// spellings is how a list and a count start disagreeing about one project.
+/// The same store read and the same scope rule as the count beside it — the
+/// index's columns when the tenant has them, `node_in_scope` otherwise.
 #[async_trait::async_trait]
 impl super::port::ArtifactFiles for IngestService {
     async fn list_files(
@@ -1539,39 +1591,7 @@ impl super::port::ArtifactFiles for IngestService {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
-        let nodes = self.list_nodes(ctx, Some("file")).await?;
-        let mut files = Vec::new();
-        for node in nodes.iter() {
-            if !super::rest::node_in_scope(&node.value, Some(scope)) {
-                continue;
-            }
-            let obj = match node.value.as_object() {
-                Some(o) => o,
-                None => continue,
-            };
-            // A directory is not a file the way this caller means it, and a
-            // node with no path is nothing anybody can show.
-            if obj.get("is_dir").and_then(serde_json::Value::as_bool) == Some(true) {
-                continue;
-            }
-            let path = obj
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if path.is_empty() {
-                continue;
-            }
-            files.push(super::port::IngestedFile {
-                node_id: node.instance_id.clone(),
-                path: path.to_owned(),
-                repo: obj
-                    .get("repo")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            });
-        }
-        Ok(files)
+        self.graph.files_in_scope(ctx, scope).await
     }
 }
 
@@ -1601,7 +1621,7 @@ mod tests {
     /// A file node exactly as a sync in `scope` stores it.
     fn file(scope: &str, repo: &str, path: &str) -> GtsNode {
         let repo_id = gts::repo_node(scope, CONNECTOR, "github", repo).instance_id;
-        gts::file_node_cloned(scope, &repo_id, CONNECTOR, repo, path, 1, None, None, None)
+        gts::file_node_cloned(scope, &repo_id, CONNECTOR, repo, path, 1, false, None, None)
     }
 
     fn repo_id(scope: &str) -> String {
@@ -1676,6 +1696,34 @@ mod tests {
         ];
         let listed = listing(&["README.md"]);
         assert!(gone_files(&stored, &repo_id("project-a"), Some(&listed)).is_empty());
+    }
+
+    /// A gone file takes its content node along, named from its own id, and a
+    /// file that never had text names none.
+    #[test]
+    fn a_gone_file_names_its_content_and_a_file_without_text_names_none() {
+        let repo_id = repo_id("project-a");
+        let with_text = gts::file_node_cloned(
+            "project-a",
+            &repo_id,
+            CONNECTOR,
+            REPO,
+            "docs/prd.md",
+            1,
+            true,
+            None,
+            None,
+        );
+        let without = file("project-a", REPO, "logo.png");
+        let contents = gone_contents(&[with_text.clone(), without]);
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].type_id, gts::FILE_CONTENT_TYPE);
+        assert_eq!(
+            contents[0].instance_id,
+            gts::file_content_node(&with_text, "# PRD")
+                .expect("text has content")
+                .instance_id
+        );
     }
 
     /// Only files. A repository's issues and pull requests carry the same

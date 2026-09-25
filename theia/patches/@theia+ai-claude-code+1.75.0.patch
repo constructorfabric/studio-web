@@ -1,8 +1,25 @@
 diff --git a/node_modules/@theia/ai-claude-code/lib/node/claude-code-service-impl.js b/node_modules/@theia/ai-claude-code/lib/node/claude-code-service-impl.js
-index 828f58d..f85ae5f 100644
+index 6b2e431..7fa8a52 100644
 --- a/node_modules/@theia/ai-claude-code/lib/node/claude-code-service-impl.js
 +++ b/node_modules/@theia/ai-claude-code/lib/node/claude-code-service-impl.js
-@@ -192,6 +192,14 @@ let ClaudeCodeServiceImpl = class ClaudeCodeServiceImpl {
+@@ -100,7 +100,15 @@ let ClaudeCodeServiceImpl = class ClaudeCodeServiceImpl {
+                     cwd,
+                     settingSources: ['user', 'project', 'local'],
+                     canUseTool: (toolName, toolInput) => this.requestToolApproval(streamId, toolName, toolInput),
+-                    env: { ...process.env, ANTHROPIC_API_KEY: apiKey, NODE_OPTIONS: '' },
++                    // Constructor Studio (ADR-0030): in a session several people share this
++                    // backend. STUDIO_LLM_AUTH=bearer says ANTHROPIC_BASE_URL is Studio's
++                    // provider proxy and `apiKey` is the member's Studio token, which the
++                    // proxy exchanges for that member's own key. It goes as a bearer, never
++                    // as a provider key, and no key from this process's environment is used.
++                    env: process.env.STUDIO_LLM_AUTH === 'bearer'
++                        ? Object.fromEntries(Object.entries({ ...process.env, ANTHROPIC_AUTH_TOKEN: apiKey, NODE_OPTIONS: '' })
++                            .filter(([name, value]) => name !== 'ANTHROPIC_API_KEY' && value !== undefined))
++                        : { ...process.env, ANTHROPIC_API_KEY: apiKey, NODE_OPTIONS: '' },
+                     stderr: (data) => {
+                         let message = String(data);
+                         // The current claude code CLI is quite verbose and outputs a lot of
+@@ -192,6 +200,14 @@ let ClaudeCodeServiceImpl = class ClaudeCodeServiceImpl {
          return dynamicImport(importPath);
      }
      resolveClaudeCodePath() {
@@ -18,10 +35,27 @@ index 828f58d..f85ae5f 100644
              const globalPath = (0, child_process_1.execSync)('npm root -g', { encoding: 'utf8' }).trim();
              return path.join(globalPath, '@anthropic-ai/claude-agent-sdk');
 diff --git a/node_modules/@theia/ai-claude-code/src/node/claude-code-service-impl.ts b/node_modules/@theia/ai-claude-code/src/node/claude-code-service-impl.ts
-index 962407c..6144ee9 100644
+index 32b3fca..f0b03d0 100644
 --- a/node_modules/@theia/ai-claude-code/src/node/claude-code-service-impl.ts
 +++ b/node_modules/@theia/ai-claude-code/src/node/claude-code-service-impl.ts
-@@ -239,6 +239,15 @@ export class ClaudeCodeServiceImpl implements ClaudeCodeService {
+@@ -140,7 +140,15 @@ export class ClaudeCodeServiceImpl implements ClaudeCodeService {
+                     cwd,
+                     settingSources: ['user', 'project', 'local'],
+                     canUseTool: (toolName: string, toolInput: unknown) => this.requestToolApproval(streamId, toolName, toolInput),
+-                    env: { ...process.env, ANTHROPIC_API_KEY: apiKey, NODE_OPTIONS: '' },
++                    // Constructor Studio (ADR-0030): in a session several people share this
++                    // backend. STUDIO_LLM_AUTH=bearer says ANTHROPIC_BASE_URL is Studio's
++                    // provider proxy and `apiKey` is the member's Studio token, which the
++                    // proxy exchanges for that member's own key. It goes as a bearer, never
++                    // as a provider key, and no key from this process's environment is used.
++                    env: process.env.STUDIO_LLM_AUTH === 'bearer'
++                        ? Object.fromEntries(Object.entries({ ...process.env, ANTHROPIC_AUTH_TOKEN: apiKey, NODE_OPTIONS: '' })
++                            .filter(([name, value]) => name !== 'ANTHROPIC_API_KEY' && value !== undefined))
++                        : { ...process.env, ANTHROPIC_API_KEY: apiKey, NODE_OPTIONS: '' },
+                     stderr: (data: unknown) => {
+                         let message = String(data);
+ 
+@@ -239,6 +247,15 @@ export class ClaudeCodeServiceImpl implements ClaudeCodeService {
      }
  
      protected resolveClaudeCodePath(): string {

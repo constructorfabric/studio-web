@@ -43,6 +43,11 @@ pub struct LlmProxyConfig {
     /// safe choice for non-OpenAI providers; OpenAI itself accepts any.
     #[serde(default = "default_developer_message_settings")]
     pub developer_message_settings: String,
+
+    /// The agents' own APIs (Anthropic for Claude Code, OpenAI for Codex),
+    /// passed through with the caller's key — see [`super::providers`].
+    #[serde(default = "super::providers::default_providers")]
+    pub providers: Vec<super::providers::ProviderConfig>,
 }
 
 impl Default for LlmProxyConfig {
@@ -55,6 +60,7 @@ impl Default for LlmProxyConfig {
             model: String::new(),
             model_env: default_model_env(),
             developer_message_settings: default_developer_message_settings(),
+            providers: super::providers::default_providers(),
         }
     }
 }

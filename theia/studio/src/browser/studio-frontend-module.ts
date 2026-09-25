@@ -23,6 +23,7 @@ import { MarkdownEditorOpenHandler } from './markdown-editor/markdown-editor-ope
 import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
 import { GraphOpenHandler } from './graph-open-handler';
 import { ObjectDetailsWidget } from './object-details-widget';
+import { bindAgentCredentials } from './agent-credentials';
 import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-widget';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
@@ -61,6 +62,8 @@ import '../../src/browser/workspace-sources.css';
 import '../../src/browser/orca.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
+    // ADR-0030: each window's agents run on that window's person.
+    bindAgentCredentials(rebind);
     rebind(ScmHistoryGraphWidget).to(StudioScmHistoryGraphWidget);
     bind(ExplorerPresentationService).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(ExplorerPresentationService);

@@ -134,7 +134,52 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     state: Arc<ProxyState>,
+    providers: Option<Arc<super::providers::Providers>>,
 ) -> Router {
+    if let Some(providers) = providers {
+        router = OperationBuilder::post("/studio-llm/v1/providers/{provider}/{*rest}")
+            .operation_id("studio_llm.stream_provider_post")
+            .summary("An agent's call to its model provider, on the caller's own key")
+            .description(
+                "Claude Code (Anthropic Messages API) and Codex (OpenAI) are pointed here \
+                 with the member's Studio token as their bearer. The call is forwarded to \
+                 the provider with the key credstore holds for that member: their own key \
+                 from their profile first, else the one shared with the workspace. The \
+                 caller's Studio token never reaches the provider; the response streams.",
+            )
+            .tag("StudioLlm")
+            .authenticated()
+            .require_license_features::<License>([])
+            .handler(super::providers::stream_provider)
+            .json_response(
+                StatusCode::OK,
+                "The provider's answer, passed through (JSON or SSE)",
+            )
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+        router = OperationBuilder::get("/studio-llm/v1/providers/{provider}/{*rest}")
+            .operation_id("studio_llm.stream_provider_get")
+            .summary("A read from the caller's model provider, on the caller's own key")
+            .description(
+                "The GET half of the provider passthrough (a model list, a batch's state), \
+                 authenticated and keyed exactly as the POST half.",
+            )
+            .tag("StudioLlm")
+            .authenticated()
+            .require_license_features::<License>([])
+            .handler(super::providers::stream_provider)
+            .json_response(StatusCode::OK, "The provider's answer, passed through")
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+        router = router.layer(Extension(providers));
+    }
+
     router = OperationBuilder::post("/studio-llm/v1/chat/completions")
         .operation_id("studio_llm.chat_completions")
         .summary("OpenAI-compatible chat completions (proxied to the configured LLM upstream)")

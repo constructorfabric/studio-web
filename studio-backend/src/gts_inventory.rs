@@ -444,7 +444,7 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 6] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 7] = [
         (
             "dev.yaml",
             "studio-credstore-pg",
@@ -484,6 +484,13 @@ mod tests {
              its window is pruned by range, neither of which SQLite has an \
              answer for; the channel stands down here and both endpoints say \
              so, which is the same trade studio-tasks makes in this profile",
+        ),
+        (
+            "dev.yaml",
+            "studio-artifact-ingest",
+            "the artifact index is PostgreSQL only (its ordering is `COLLATE \"C\"`), \
+             and it is an optimisation rather than a store: without it every \
+             listing walks the graph as it did before, and nothing is lost",
         ),
     ];
 

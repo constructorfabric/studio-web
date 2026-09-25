@@ -2469,14 +2469,15 @@ async fn specs_per_source(
     // The bindings of this scope. A workspace reads its own; a project reads
     // its own plus what it inherits, which is the pairing every other Documents
     // read uses and the one this has to repeat to count the same rows.
-    let (workspace_id, project_id) = match service.parent_of(&ctx, scope_id).await {
-        Ok(Some(parent)) => (parent, Some(scope_id)),
-        _ => (scope_id, None),
-    };
-    let bindings = service
-        .all_bindings(workspace_id, project_id)
-        .await
-        .map_err(internal)?;
+    //
+    // A workspace counts its projects' bindings too. A repository's files are
+    // bound in the project that synced them, so the workspace's own rows alone
+    // made every source on the workspace's Sources table read "0 specs".
+    let bindings = match service.parent_of(&ctx, scope_id).await {
+        Ok(Some(parent)) => service.all_bindings(parent, Some(scope_id)).await,
+        _ => service.every_binding_under(scope_id).await,
+    }
+    .map_err(internal)?;
 
     let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
     for binding in bindings {

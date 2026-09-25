@@ -48,14 +48,15 @@ database:
         #   13 gears x 4                                         52
         #   graph-storage (its own override below)                8
         #   studio-events (its own override below)                2
+        #   studio-artifact-ingest (its own override below)       2
         #   Keycloak (KC_DB_POOL_MAX_SIZE in the chart)          10
         #   backend-bootstrap Job, transient                      2
         #   CloudNativePG instance manager + exporter             5
         #   superuser_reserved_connections                        3
         #                                                       ---
-        #                                                        82
+        #                                                        84
         #
-        # A SECOND REPLICA needs 124 for the backend alone, 144 with everyone
+        # A SECOND REPLICA needs 128 for the backend alone, 148 with everyone
         # else — which is why `max_connections` is 150 rather than the default
         # 100 (deploy/k8s/cloudnative-pg/README.md carries the table and the
         # memory that pays for it).
@@ -594,6 +595,28 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_events"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config: {}
+
+  # ── studio-artifact-ingest (the artifact index) ──
+  # A mirror of the artifact graph's listing fields — scope, repo, type,
+  # updated_at — as indexed columns, so a project's artifacts, specs and
+  # source activity are one query instead of a walk of the tenant's whole
+  # graph (src/artifact_ingest/index.rs). Filled from the graph on a tenant's
+  # first read and kept current by every ingest. Drop the block and nothing is
+  # lost but speed: every listing walks the graph as before.
+  #
+  # `pool` is small for the same reason as studio-events': each read is one
+  # indexed query, and every connection is counted against pg_main's budget.
+  studio-artifact-ingest:
+    database:
+      server: "pg_main"
+      dbname: "studio_artifact_index"
       pool:
         max_conns: 2
         min_conns: 0

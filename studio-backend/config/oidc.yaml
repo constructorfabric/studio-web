@@ -489,6 +489,28 @@ gears:
         acquire_timeout: "10s"
     config: {}
 
+  # ── studio-artifact-ingest (the artifact index) ──
+  # A mirror of the artifact graph's listing fields — scope, repo, type,
+  # updated_at — as indexed columns, so a project's artifacts, specs and
+  # source activity are one query instead of a walk of the tenant's whole
+  # graph (src/artifact_ingest/index.rs). Filled from the graph on a tenant's
+  # first read and kept current by every ingest. Drop the block and nothing is
+  # lost but speed: every listing walks the graph as before.
+  #
+  # `pool` is small for the same reason as studio-events': each read is one
+  # indexed query, and every connection is counted against pg_main's budget.
+  studio-artifact-ingest:
+    database:
+      server: "pg_main"
+      dbname: "studio_artifact_index"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config: {}
+
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into
   # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second

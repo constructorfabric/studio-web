@@ -37,3 +37,30 @@ into the image. A deployed realm must be generated independently per environment
 Brokered users are mapped to a non-root **sandbox** tenant (`…0002`), never root.
 End-to-end self-signup still needs the app to JIT-provision a real per-user tenant;
 until then social users share the sandbox tenant. Tracked as a follow-up.
+
+## Can somebody sign in as somebody else?
+
+`keycloak/tests/account-takeover.test.mjs` asks a live Keycloak. Studio finds
+a person by the token's `sub` alone and never by e-mail, so a caller becomes
+somebody else only if Keycloak hands them that person's `sub`. The test makes
+Keycloak do the logins that could:
+
+- an external IdP account with the victim's e-mail, verified and unverified
+  (nOAuth). The IdP is configured as the realm's google/github/microsoft are:
+  `trustEmail=true` and the stock `first broker login`. The outcome must be
+  that Keycloak asks for the existing account's password. A code for the
+  victim's `sub` fails the test.
+- a browser left signed in as the victim. Without `prompt=login`, the next
+  sign-in in that browser is the victim's, with no form shown. That is browser
+  SSO, and it is recorded rather than asserted: a client opts out by sending
+  `prompt=login`, and the test asserts that this works.
+
+It creates its own IdP realm, broker and victim under a random suffix and
+deletes them afterwards. It skips when no admin API answers.
+
+```bash
+NODE_EXTRA_CA_CERTS=docker/keycloak/certs/dev-ca.pem node --test keycloak/tests/account-takeover.test.mjs
+```
+
+`KC_PUBLIC`, `KC_ADMIN`, `KC_BACKCHANNEL`, `KC_ADMIN_USER` and
+`KC_ADMIN_PASSWORD` point it at another Keycloak.

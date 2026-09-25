@@ -41,6 +41,12 @@ pub enum DocScope {
     /// Effective set for a project: workspace-level (inherited) + the project's
     /// own (`project_id IS NULL OR project_id = pid`).
     Effective(Uuid),
+    /// Everything recorded under the workspace tenant: its own rows and every
+    /// project's. For a rollup that answers for the workspace as a whole --
+    /// what its sources hold -- where "only the workspace's own" would read
+    /// as zero, because a repository's files are bound in the project that
+    /// synced them.
+    Everything,
 }
 
 /// Deterministic id for a binding, so re-classification is an upsert.
@@ -369,6 +375,7 @@ impl DocumentsRepo {
             DocScope::Effective(project_id) => Condition::any()
                 .add(document::Column::ProjectId.is_null())
                 .add(document::Column::ProjectId.eq(project_id)),
+            DocScope::Everything => Condition::all(),
         };
         let scoped = || {
             document::Entity::find()
@@ -445,6 +452,7 @@ impl DocumentsRepo {
             DocScope::Effective(project_id) => Condition::any()
                 .add(document_binding::Column::ProjectId.is_null())
                 .add(document_binding::Column::ProjectId.eq(project_id)),
+            DocScope::Everything => Condition::all(),
         };
         let scoped = || {
             document_binding::Entity::find()

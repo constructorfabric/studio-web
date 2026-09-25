@@ -4,8 +4,9 @@
 //! tenant-scoped). Artifact nodes become graph-storage nodes keyed on their
 //! deterministic instance id, so a re-sync converges. File *content* never goes
 //! into the graph as such — the graph is not a blob store, and a payload is
-//! capped at 64 KiB — only the metadata plus a bounded excerpt of the text,
-//! which is what lexical and vector search index.
+//! capped at 64 KiB — only the metadata, and beside it a content node holding
+//! a bounded excerpt of the text, which is what lexical and vector search
+//! index.
 //!
 //! Only compiled with the `graph` feature (the gear itself is behind it).
 
@@ -20,7 +21,9 @@ use std::collections::{HashMap, HashSet};
 
 use toolkit_odata::ODataQuery;
 
-use super::graph::{GraphStore, GtsEdge, GtsEdgeView, GtsNode};
+use super::graph::{
+    GraphStore, GtsEdge, GtsEdgeView, GtsNode, files_behind_content, fold_content_hits,
+};
 use super::gts;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
@@ -69,9 +72,9 @@ const TRAVERSE_NODE_BUDGET: u32 = 10_000;
 /// Keep a node payload comfortably under the gear's 64 KiB ceiling; an oversized
 /// one would fail the whole atomic batch.
 const MAX_PAYLOAD_BYTES: usize = 60_000;
-/// How much of a file's text travels into the graph as `text_excerpt`. It is
-/// what search — lexical and semantic — sees of a file's *content*; the whole
-/// file stays in file storage. The gear itself caps the embedding input at its
+/// How much of a file's text travels into the graph as `text_excerpt`, on the
+/// file's content node. It is what search — lexical and semantic — sees of a
+/// file's *content*; the whole file stays in file storage. The gear itself caps the embedding input at its
 /// `embedding_input_max_bytes` (8 KiB by default), so more than this would
 /// bloat the lexical index without reaching the vector.
 const MAX_TEXT_EXCERPT_CHARS: usize = 8_000;
@@ -482,9 +485,10 @@ fn bounded_payload(value: &Value) -> Value {
         Value::Object(m) => m,
         _ => serde_json::Map::new(),
     };
-    // File content is referenced by has_text, never stored whole in the graph.
-    // What search sees of it is the excerpt, which the type declares as a
-    // searchable and vectorizable path.
+    // File content is never stored whole in the graph. What search sees of it
+    // is the excerpt, which the content type declares as a searchable and
+    // vectorizable path; only a content node carries `text` to excerpt, so a
+    // file node's payload stays metadata.
     if let Some(text) = obj.remove("text").as_ref().and_then(Value::as_str)
         && !text.trim().is_empty()
     {
@@ -563,6 +567,10 @@ fn our_edge_type(graph_type: &str) -> String {
 
 #[async_trait]
 impl GraphStore for GraphStorageBackend {
+    fn stored_payload(&self, value: &Value) -> Value {
+        bounded_payload(value)
+    }
+
     async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
         if nodes.is_empty() {
             return Ok(());
@@ -596,6 +604,11 @@ impl GraphStore for GraphStorageBackend {
     /// Hybrid retrieval: the gear embeds the query with the deployment's
     /// provider, ranks the vector and lexical arms and fuses them. Hits carry
     /// keys and names; the payload comes from a node read per hit.
+    ///
+    /// A content hit costs one more read, for the file it folds into, and a
+    /// file found by both its name and its words is one result — so up to
+    /// twice `limit` hits are asked for, within the gear's own ceiling on
+    /// `limit` (twice its arm limit), to still have `limit` after the fold.
     async fn search(
         &self,
         ctx: &SecurityContext,
@@ -607,6 +620,7 @@ impl GraphStore for GraphStorageBackend {
             .into_iter()
             .map(gts::graph_type_id)
             .collect();
+        let asked = limit.saturating_mul(2).min(SEARCH_ARM_LIMIT * 2).max(limit);
         let response = self
             .client
             .search(
@@ -615,19 +629,39 @@ impl GraphStore for GraphStorageBackend {
                     mode: SearchMode::Hybrid,
                     query: Some(text.to_owned()),
                     arm_limit: SEARCH_ARM_LIMIT.max(limit),
-                    limit,
+                    limit: asked,
                     type_patterns: patterns,
                 },
             )
             .await
             .map_err(|e| anyhow::anyhow!("graph-storage search: {e}"))?;
-        let mut out = Vec::with_capacity(response.hits.len());
+        let mut hits = Vec::with_capacity(response.hits.len());
         for hit in response.hits {
             if let Some(node) = self.node_by_key(ctx, &hit.node_key, &hit.type_id).await? {
-                out.push(node);
+                hits.push(node);
             }
         }
-        Ok(out)
+        let file_type = gts::graph_type_id(gts::FILE_TYPE);
+        let mut files = HashMap::new();
+        for id in files_behind_content(&hits) {
+            // A file that cannot be read costs its hit, not the search.
+            match self.node_by_key(ctx, &id, &file_type).await {
+                Ok(Some(file)) => {
+                    files.insert(id, file);
+                }
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    file = %id,
+                    "studio-artifact-ingest: the file behind a content hit could not be read"
+                ),
+            }
+        }
+        Ok(fold_content_hits(
+            hits,
+            &files,
+            usize::try_from(limit).unwrap_or(usize::MAX),
+        ))
     }
 
     async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()> {

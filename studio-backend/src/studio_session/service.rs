@@ -336,11 +336,30 @@ impl SessionService {
             .map_err(|_| anyhow!("secret '{token_ref}' is not valid UTF-8"))
     }
 
+    /// Where a session's agents reach their models: Studio's provider proxy,
+    /// under the gateway as the container sees it (ADR-0030). No key: each
+    /// window hands its agents its own person's token, and the proxy answers
+    /// with that person's key. `STUDIO_LLM_AUTH=bearer` is what the patched
+    /// Claude Code and Codex services read to send that token as a bearer.
+    fn agent_proxy_env(&self) -> Vec<String> {
+        let gateway = self.cfg.gateway_url.trim_end_matches('/');
+        vec![
+            "STUDIO_LLM_AUTH=bearer".to_owned(),
+            format!("ANTHROPIC_BASE_URL={gateway}/studio-llm/v1/providers/anthropic"),
+            format!("OPENAI_BASE_URL={gateway}/studio-llm/v1/providers/openai"),
+        ]
+    }
+
     /// Provider keys for the session container, read from credstore under
     /// the caller's identity. Best-effort by design: a reference that is
     /// absent or unreadable is logged and skipped, because a workspace
     /// without an Anthropic key should still get an IDE (and a working
     /// Codex agent), just without that one provider.
+    ///
+    /// No longer called at launch (ADR-0030): a shared container must not
+    /// carry one person's keys. Kept for the one-person desktop and for the
+    /// connection-scoped path that replaces it.
+    #[allow(dead_code)]
     async fn agent_env(&self, ctx: &SecurityContext) -> Vec<String> {
         let mut out = Vec::new();
         for spec in &self.cfg.agent_secrets {
@@ -381,6 +400,11 @@ impl SessionService {
     /// fails, or a user with no email address leaves that fallback in place
     /// rather than failing the launch — a session must still start, and the
     /// person can always set both in its own git config.
+    ///
+    /// No longer called at launch (ADR-0030): in a shared container it made
+    /// every member's commits the launcher's. The author has to come from the
+    /// connection that commits; this is what that lookup will reuse.
+    #[allow(dead_code)]
     async fn git_identity_env(&self, ctx: &SecurityContext) -> Vec<String> {
         // A service account has no IdP user record to read.
         if let Some(kind) = ctx.subject_type()
@@ -730,10 +754,15 @@ impl SessionService {
         if self.cfg.theia_control_enabled {
             env.push(format!("STUDIO_THEIA_S2S_TOKEN={control_token}"));
         }
-        // Provider keys for the native Theia agents (Codex, Claude Code).
-        // Orca runs the same CLIs, so these keys serve both.
-        env.extend(self.agent_env(ctx).await);
-        env.extend(self.git_identity_env(ctx).await);
+        // Nothing personal (ADR-0030). Several people type into this container,
+        // and it used to carry the launcher's provider keys (private ones
+        // first) and git author, so everybody's agents and commits were the
+        // launcher's. The agents now reach their models through Studio's
+        // provider proxy, each window with its own person's token, and the
+        // proxy uses that person's key. What goes here is only where the proxy
+        // is. Commits carry the entrypoint's neutral author until the author
+        // comes from the connection.
+        env.extend(self.agent_proxy_env());
         // Orca runtime for the IDE's Agents panel. Container-local: the
         // entrypoint starts `orca serve` beside Theia and the panel's backend
         // shells out to `orca` in the same container, so nothing is published
@@ -1537,6 +1566,209 @@ mod tests {
             service.get(&administrator, id).await.is_some(),
             "a session is reached through its workspace, not through whose home \
              tenant happened to launch it"
+        );
+    }
+
+    /// A runtime that launches: it keeps the environment each container was
+    /// started with, and lists the container afterwards the way Docker does.
+    #[derive(Default)]
+    struct LaunchingRuntime {
+        launched: Mutex<Vec<(Uuid, Vec<String>)>>,
+    }
+
+    #[async_trait]
+    impl SessionDriver for LaunchingRuntime {
+        async fn image_present(&self) -> bool {
+            true
+        }
+        async fn refresh_image(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn launch(&self, spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
+            let workspace = spec.labels[super::WS_LABEL].parse()?;
+            self.launched
+                .lock()
+                .unwrap()
+                .push((workspace, spec.env.clone()));
+            Ok(LaunchedSession {
+                handle: spec.name.clone(),
+                address: SessionAddress::Loopback { port: spec.port },
+            })
+        }
+        async fn is_running(&self, handle: &str) -> bool {
+            self.launched
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(ws, _)| handle == format!("cf-studio-session-{ws}"))
+        }
+        async fn is_reachable(&self, _address: &SessionAddress) -> bool {
+            true
+        }
+        async fn destroy(&self, _handle: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
+            Ok(self
+                .launched
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(ws, _)| AdoptedSession {
+                    handle: format!("cf-studio-session-{ws}"),
+                    ..running_session(*ws, 41000)
+                })
+                .collect())
+        }
+    }
+
+    fn person(subject: u128) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(subject))
+            .subject_type("user")
+            .subject_tenant_id(TENANT)
+            .build()
+            .expect("security context")
+    }
+
+    /// A credstore that holds a private key of the launcher's for every
+    /// reference: exactly what used to end up in a shared container.
+    struct LaunchersKeys;
+
+    #[async_trait]
+    impl credstore_sdk::CredStoreClientV1 for LaunchersKeys {
+        async fn get(
+            &self,
+            _ctx: &SecurityContext,
+            key: &credstore_sdk::SecretRef,
+        ) -> Result<Option<credstore_sdk::GetSecretResponse>, credstore_sdk::CredStoreError>
+        {
+            Ok(Some(credstore_sdk::GetSecretResponse {
+                value: credstore_sdk::SecretValue::new(
+                    format!("private-{}", key.as_ref()).into_bytes(),
+                ),
+                id: Uuid::nil(),
+                owner_tenant_id: credstore_sdk::TenantId(TENANT),
+                sharing: credstore_sdk::SharingMode::Private,
+                is_inherited: false,
+                version: 1,
+                secret_type: String::new(),
+                expires_at: None,
+            }))
+        }
+    }
+
+    /// NOTHING PERSONAL IN A SHARED CONTAINER (ADR-0030). The launcher keeps
+    /// private provider keys; none of them may reach a container other
+    /// people type into. What the container gets instead is only where
+    /// Studio's provider proxy is, and the switch that makes the agents send
+    /// each window's own token there.
+    #[tokio::test]
+    async fn a_session_carries_no_key_of_its_launcher() {
+        let root = std::env::temp_dir().join(format!("studio-session-keys-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                gateway_url: "http://gateway.test/cf/".into(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        service.set_credstore(Arc::new(LaunchersKeys)).await;
+
+        service
+            .create(&person(0x7A5), Uuid::from_u128(0xD2), None, None, vec![])
+            .await
+            .expect("Vasil opens the workspace");
+        let env = runtime.launched.lock().unwrap()[0].1.clone();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let leaked: Vec<&String> = env.iter().filter(|v| v.contains("private-")).collect();
+        assert!(
+            leaked.is_empty(),
+            "the launcher's keys reached the container: {leaked:?}"
+        );
+        for personal in [
+            "ANTHROPIC_API_KEY=",
+            "OPENAI_API_KEY=",
+            "STUDIO_GIT_AUTHOR_NAME=",
+            "STUDIO_GIT_AUTHOR_EMAIL=",
+        ] {
+            assert!(
+                !env.iter().any(|v| v.starts_with(personal)),
+                "{personal} is set in a shared container"
+            );
+        }
+        for wanted in [
+            "STUDIO_LLM_AUTH=bearer",
+            "ANTHROPIC_BASE_URL=http://gateway.test/cf/studio-llm/v1/providers/anthropic",
+            "OPENAI_BASE_URL=http://gateway.test/cf/studio-llm/v1/providers/openai",
+        ] {
+            assert!(env.iter().any(|v| v == wanted), "missing {wanted}");
+        }
+    }
+
+    /// WHO A SHARED SESSION IS. One session per workspace is deliberate (the
+    /// test above), and a session is launched once — its environment is built
+    /// from whoever launched it: `STUDIO_ACTOR_ID`, the git author, and the
+    /// agent keys read from credstore under that person's identity, their
+    /// private secrets first. So the second member to open the workspace types
+    /// into a container that commits, pushes and calls agents as the first.
+    ///
+    /// This is "signed in as Vasil, and it was not Vasil" without any login
+    /// going wrong: both tokens were right, and the IDE still was not.
+    ///
+    /// Ignored, not deleted: it states where a shared session has to get to —
+    /// several people in one container, each acting as themselves (TASKS.md,
+    /// 2026-09-25). It fails today; drop the `ignore` when it passes.
+    #[tokio::test]
+    #[ignore = "known: a shared session runs as its launcher (TASKS.md 2026-09-25)"]
+    async fn the_second_member_of_a_workspace_does_not_work_as_the_first() {
+        let root = std::env::temp_dir().join(format!("studio-session-actor-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+
+        let vasil = Uuid::from_u128(0x7A5);
+        let colleague = Uuid::from_u128(0xC011);
+        let ws = Uuid::from_u128(0xD1);
+
+        let (_, existed) = service
+            .create(&person(0x7A5), ws, None, None, vec![])
+            .await
+            .expect("Vasil opens the workspace");
+        assert!(!existed);
+        let (_, reused) = service
+            .create(&person(0xC011), ws, None, None, vec![])
+            .await
+            .expect("a colleague opens the same workspace");
+
+        let launched = runtime.launched.lock().unwrap().clone();
+        let actor = |env: &[String]| {
+            env.iter()
+                .find_map(|v| v.strip_prefix("STUDIO_ACTOR_ID=").map(str::to_owned))
+                .unwrap_or_default()
+        };
+        let actor_of_the_colleagues_ide = actor(&launched.last().expect("a launch").1);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            !reused || actor_of_the_colleagues_ide == colleague.to_string(),
+            "the colleague ({colleague}) was handed the session Vasil ({vasil}) launched, \
+             and it runs as {actor_of_the_colleagues_ide}: commits, pushes and agent calls \
+             from their keyboard are Vasil's"
         );
     }
 

@@ -115,6 +115,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 | `cpt-studio-adr-the-person-is-the-key-not-the-login` | The person is the key on the request path (ADR-0025). |
 | `cpt-studio-adr-studio-events-push-channel` | One push channel to the portal (ADR-0026). |
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio is a session on the member's machine; Git and the LLM are proxied, secrets stay on the server (ADR-0027). |
+| `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | One IDE session per workspace, one identity per connection; nothing personal in the container (ADR-0030, proposed). |
 
 ### 1.3 Architecture Layers
 
@@ -1577,8 +1578,9 @@ Each Studio gear with state has its own database on the one PostgreSQL server; c
 - [x] `p3` - **ID**: `cpt-studio-db-scheduler`
 - [x] `p3` - **ID**: `cpt-studio-db-events`
 - [x] `p3` - **ID**: `cpt-studio-db-credstore-values`
+- [x] `p3` - **ID**: `cpt-studio-db-artifact-index`
 
-`cpt-studio-db-documents` is `studio_documents`, `cpt-studio-db-users` is `studio_users`, `cpt-studio-db-tasks` is `studio_tasks`, `cpt-studio-db-scheduler` is `studio_scheduler`, `cpt-studio-db-events` is `studio_events` and `cpt-studio-db-credstore-values` is `studio_credstore_values` (`studio-backend/config/docker.yaml`). Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`).
+`cpt-studio-db-documents` is `studio_documents`, `cpt-studio-db-users` is `studio_users`, `cpt-studio-db-tasks` is `studio_tasks`, `cpt-studio-db-scheduler` is `studio_scheduler`, `cpt-studio-db-events` is `studio_events`, `cpt-studio-db-credstore-values` is `studio_credstore_values` and `cpt-studio-db-artifact-index` is `studio_artifact_index` (`studio-backend/config/docker.yaml`). Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`).
 
 #### Table: studio_document_bindings
 
@@ -1725,6 +1727,35 @@ Each Studio gear with state has its own database on the one PostgreSQL server; c
 | kind | subject_type |
 |--------|--------|
 | see [`docs/events-catalog.md`](../events-catalog.md) | |
+
+#### Table: studio_artifact_index
+
+**ID**: `cpt-studio-dbtable-artifact-index`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `tenant_id` | UUID | the graph's tenant |
+| `instance_id` | TEXT (`COLLATE "C"`) | the node key |
+| `type_id` | TEXT | `gts.cf.studio.artifact.*` |
+| `workspace_id`, `project_id`, `repo`, `path` | TEXT | payload fields, `''` when absent |
+| `is_dir` | BOOLEAN | |
+| `updated_at` | TEXT (`COLLATE "C"`) | the artifact's own, ISO-8601 |
+| `search_text` | TEXT | what `/nodes?q=` matches |
+| `payload` | JSONB | as the graph stores it |
+
+**PK**: `(tenant_id, instance_id)`
+
+**Constraints**: none beyond the key.
+
+**Additional info**: A mirror of the artifact graph for the listings graph-storage cannot narrow (payload filters, `docs/graph-storage-requests.md` §5); rebuilt from the graph whenever it cannot be trusted. `studio_artifact_index_fill` marks the tenants it is complete for. See `studio-backend/src/artifact_ingest/index.rs`.
+
+**Example**:
+
+| type_id | project_id | repo |
+|--------|--------|--------|
+| `gts.cf.studio.artifact.issue.v1~` | a project id | `acme/web` |
 
 #### Table: studio_credstore_values
 

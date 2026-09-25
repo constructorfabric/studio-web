@@ -27,7 +27,7 @@ number of gear databases — fourteen. Raising it by one raises the ceiling by
 fourteen. Give a single gear its own `pool` block instead, the way
 `graph-storage` has one.
 
-A second backend replica doubles the backend's share — 124 on its own — which
+A second backend replica doubles the backend's share — 128 on its own — which
 does not fit, and this is now the **main** thing in the way of running one.
 The other blocker, a push channel whose sequence lived in process memory, is
 gone: `studio-events` keeps its sequence and its replay window in the database
@@ -38,9 +38,12 @@ arithmetic, which is the whole reason for the number:
 
 | shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
 |---|---|---|---|---|
-| 4 (today) | 62 | 124 | 144 | no |
-| 3 | 49 | 98 | 118 | no |
-| 2 | 36 | 72 | 92 | yes |
+| 4 (today) | 64 | 128 | 148 | no |
+| 3 | 51 | 102 | 122 | no |
+| 2 | 38 | 76 | 96 | yes |
+
+(Per replica: thirteen gears on the shared pool, plus graph-storage's own 8,
+studio-events' 2 and studio-artifact-ingest's 2.)
 
 Lowering the per-gear pool is therefore not the way to make room: three
 connections per gear still does not fit, and two — the only value that does —

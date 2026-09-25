@@ -21,6 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::graph::{NodePageQuery, PageStart};
 use super::ingest_task::{IngestPayload, TASK_TYPE};
 use super::service::{IngestService, ProjectArtifact, SyncSummary};
 use crate::pagination::{PageQuery, page_of};
@@ -575,113 +576,63 @@ async fn list_nodes(
     Query(q): Query<NodesQuery>,
 ) -> ApiResult<JsonBody<ArtifactNodeListResponse>> {
     let svc = ingest.get()?;
-    let filter = q.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let nodes = svc
-        .list_nodes(&ctx, filter)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let repo = q.repo.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let needle =
-        q.q.as_deref()
+    let trimmed = |v: &Option<String>| -> Option<String> {
+        v.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(str::to_lowercase);
-    // `nodes` is the store's shared projection — possibly a cache entry other
-    // requests are reading. Narrow by reference and clone only what survives:
-    // the filters below typically keep a page out of tens of thousands.
-    let mut nodes: Vec<_> = nodes
-        .iter()
-        .filter(|n| node_in_scope(&n.value, scope))
-        // Optional repository filter: keep nodes whose `repo` matches. Repo
-        // nodes themselves carry no `repo` field, so they drop out when a repo
-        // filter is set — which is the intent (you're listing its contents).
-        .filter(|n| match repo {
-            Some(r) => n.value.get("repo").and_then(Value::as_str) == Some(r),
-            None => true,
-        })
-        // Optional text search over the human-facing fields.
-        .filter(|n| match &needle {
-            None => true,
-            Some(needle) => {
-                let v = &n.value;
-                let hay = [
-                    v.get("title").and_then(Value::as_str).unwrap_or(""),
-                    v.get("author").and_then(Value::as_str).unwrap_or(""),
-                    v.get("path").and_then(Value::as_str).unwrap_or(""),
-                    v.get("full_path").and_then(Value::as_str).unwrap_or(""),
-                ]
-                .join(" ")
-                .to_lowercase();
-                let num = v
-                    .get("number")
-                    .and_then(Value::as_i64)
-                    .map(|n| n.to_string())
-                    .unwrap_or_default();
-                hay.contains(needle.as_str()) || num.contains(needle.as_str())
-            }
-        })
+            .map(str::to_owned)
+    };
+    let (filter, scope, repo) = (trimmed(&q.r#type), trimmed(&q.scope), trimmed(&q.repo));
+    let needle = trimmed(&q.q).map(|s| s.to_lowercase());
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    // Offset wins when present (classic paginator); otherwise the legacy cursor
+    // resolves to the position just after it.
+    let start = match (q.offset, q.cursor.as_deref()) {
+        (Some(offset), _) => PageStart::Offset(offset),
+        (None, Some(cursor)) => PageStart::After(cursor),
+        (None, None) => PageStart::Offset(0),
+    };
+    let page = svc
+        .page_nodes(
+            &ctx,
+            &NodePageQuery {
+                type_filter: filter.as_deref(),
+                scope: scope.as_deref(),
+                repo: repo.as_deref(),
+                needle: needle.as_deref(),
+                by_updated: q.sort.as_deref() == Some("updated"),
+                start,
+                limit,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let end = page.start + page.nodes.len() as u64;
+    let next_cursor = (end < page.total)
+        .then(|| page.nodes.last().map(|node| node.instance_id.clone()))
+        .flatten();
+    let nodes = page
+        .nodes
+        .into_iter()
         .map(|n| {
-            // File nodes carry full text content; drop it from the listing
-            // so the payload stays small (`has_text` still flags it). A
+            // A file's text is its content node, which is not listed, so a
+            // file here has none (`has_text` still flags it). Dropped anyway,
+            // so no node that does carry one ever makes a listing heavy. A
             // dedicated content endpoint can serve the body when needed.
-            let mut value = n.value.clone();
+            let mut value = n.value;
             if let Some(obj) = value.as_object_mut() {
                 obj.remove("text");
             }
             ArtifactNodeDto {
                 type_id: n.type_id.to_string(),
-                instance_id: n.instance_id.clone(),
+                instance_id: n.instance_id,
                 value,
             }
         })
         .collect();
-    // Order: newest `updated_at` first when asked, else a stable order by
-    // instance id (the graph adapters may return storage pages in any order).
-    // ISO-8601 timestamps sort lexically, so a string compare is chronological.
-    if q.sort.as_deref() == Some("updated") {
-        nodes.sort_by(|a, b| {
-            let ua = a
-                .value
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let ub = b
-                .value
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            ub.cmp(ua).then_with(|| a.instance_id.cmp(&b.instance_id))
-        });
-    } else {
-        nodes.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
-    }
-    // The full filtered set is the total; pagination only slices a window of it.
-    let total = nodes.len() as u32;
-    // Offset wins when present (classic paginator); otherwise resolve the legacy
-    // cursor to the position just after it.
-    let start = match q.offset {
-        Some(offset) => offset.min(nodes.len()),
-        None => q
-            .cursor
-            .as_deref()
-            .and_then(|cursor| {
-                nodes
-                    .iter()
-                    .position(|node: &ArtifactNodeDto| node.instance_id == cursor)
-            })
-            .map(|index| index + 1)
-            .unwrap_or(0),
-    };
-    let end = (start + limit).min(nodes.len());
-    let page = nodes[start..end].to_vec();
-    let next_cursor = (end < nodes.len())
-        .then(|| page.last().map(|node| node.instance_id.clone()))
-        .flatten();
     Ok(Json(ArtifactNodeListResponse {
-        nodes: page,
-        total,
+        nodes,
+        total: u32::try_from(page.total).unwrap_or(u32::MAX),
         next_cursor,
     }))
 }
@@ -696,20 +647,16 @@ async fn list_edges(
     // When scoped, an edge is kept only if BOTH endpoints are in-scope nodes.
     // Build that id set from the (scope-filtered) node list first; endpoints
     // reference nodes by instance id.
-    let in_scope: Option<std::collections::HashSet<String>> = if scope.is_some() {
-        let nodes = svc
-            .list_nodes(&ctx, None)
-            .await
-            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-        Some(
-            nodes
-                .iter()
-                .filter(|n| node_in_scope(&n.value, scope))
-                .map(|n| n.instance_id.clone())
+    let in_scope: Option<std::collections::HashSet<String>> = match scope {
+        Some(scope) => Some(
+            svc.list_in_scope(&ctx, None, scope)
+                .await
+                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+                .into_iter()
+                .map(|n| n.instance_id)
                 .collect(),
-        )
-    } else {
-        None
+        ),
+        None => None,
     };
     let edges = svc
         .list_relations(&ctx)
@@ -1094,12 +1041,11 @@ async fn scoped_values(
     scope: &str,
 ) -> ApiResult<Vec<serde_json::Value>> {
     Ok(service
-        .list_nodes(ctx, Some(type_leaf))
+        .list_in_scope(ctx, Some(type_leaf), scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .iter()
-        .filter(|node| node_in_scope(&node.value, Some(scope)))
-        .map(|node| node.value.clone())
+        .into_iter()
+        .map(|node| node.value)
         .collect())
 }
 
@@ -1111,12 +1057,11 @@ async fn scoped_entries(
     scope: &str,
 ) -> ApiResult<Vec<(String, serde_json::Value)>> {
     Ok(service
-        .list_nodes(ctx, Some(type_leaf))
+        .list_in_scope(ctx, Some(type_leaf), scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .iter()
-        .filter(|node| node_in_scope(&node.value, Some(scope)))
-        .map(|node| (node.instance_id.clone(), node.value.clone()))
+        .into_iter()
+        .map(|node| (node.instance_id, node.value))
         .collect())
 }
 

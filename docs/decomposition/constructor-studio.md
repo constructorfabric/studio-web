@@ -923,7 +923,8 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - **Data**:
 
-  - None of Studio's own relational tables
+  - [x] `p1` - `cpt-studio-db-artifact-index`
+  - [x] `p1` - `cpt-studio-dbtable-artifact-index`
 
 ### 2.19 Gears, products and delivery metrics
 

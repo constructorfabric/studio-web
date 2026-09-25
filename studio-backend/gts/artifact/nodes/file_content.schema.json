@@ -1,0 +1,17 @@
+{
+  "$id": "gts://gts.cf.studio.artifact.file_content.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileContent",
+  "description": "A bounded excerpt of a text file, kept beside the file node for search.",
+  "type": "object",
+  "properties": {
+    "file": { "type": "string", "description": "file instance id." },
+    "repo": { "type": ["string", "null"], "description": "repo instance id." },
+    "path": { "type": ["string", "null"] },
+    "text_excerpt": { "type": "string", "description": "At most 8,000 characters of the file." },
+    "workspace_id": { "type": "string" },
+    "project_id": { "type": "string" }
+  },
+  "required": ["file"],
+  "additionalProperties": false
+}

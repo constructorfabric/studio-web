@@ -11,6 +11,8 @@
   ],
   "dependencies": {
     "@mdxeditor/editor": "3.55.0",
+    "@theia/ai-claude-code": "1.75.0",
+    "@theia/ai-codex": "1.75.0",
     "@theia/core": "1.75.0",
     "@theia/editor": "1.75.0",
     "@theia/filesystem": "1.75.0",

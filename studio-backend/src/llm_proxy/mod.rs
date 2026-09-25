@@ -10,4 +10,5 @@
 
 pub mod config;
 pub mod gear;
+pub mod providers;
 pub mod rest;

@@ -575,6 +575,15 @@ async fn a_project_sees_its_own_bindings_and_the_inherited_ones() {
     assert!(paths.contains(&"docs/mine.md"), "{paths:?}");
     assert!(!paths.contains(&"docs/theirs.md"), "{paths:?}");
 
+    let (_, everything) = repo
+        .list_bindings(ws, DocScope::Everything, 0, None)
+        .await
+        .expect("everything");
+    assert_eq!(
+        everything, 3,
+        "the whole workspace holds its own binding and both projects'"
+    );
+
     let (ws_only, ws_total) = repo
         .list_bindings(ws, DocScope::WorkspaceLevel, 0, None)
         .await

@@ -175,6 +175,24 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.content_of.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A relation between two artifact nodes.",
+        "title": "Relation",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.content_of.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.duplicates.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -373,6 +391,34 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file_content.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "A bounded excerpt of a text file, kept beside the file for search.",
+        "title": "FileContent",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/path",
+            "/payload/text_excerpt"
+          ],
+          "vector_search": [
+            "/payload/path",
+            "/payload/text_excerpt"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file_content.v1~"
     },
     {
       "gear": "studio-artifact-ingest",
@@ -7161,6 +7207,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.artifact.file_content.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A bounded excerpt of a text file, kept beside the file for search.",
+        "title": "FileContent",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.artifact.file_content.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.artifact.issue.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "An issue pulled from the connector API.",
@@ -7272,6 +7331,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.rel.contains.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.rel.content_of.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A file's searchable excerpt and the file it was taken from.",
+        "title": "ContentOf",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.rel.content_of.v1~"
     },
     {
       "gear": "studio-artifact-ingest",

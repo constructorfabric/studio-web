@@ -721,6 +721,15 @@ impl DocumentsService {
         rows.into_iter().map(binding_from_row).collect()
     }
 
+    /// Every binding under a workspace -- its own and all of its projects'.
+    pub async fn every_binding_under(&self, workspace_id: Uuid) -> Result<Vec<DocumentBinding>> {
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, DocScope::Everything, 0, None)
+            .await?;
+        rows.into_iter().map(binding_from_row).collect()
+    }
+
     pub async fn all_documents(
         &self,
         workspace_id: Uuid,

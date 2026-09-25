@@ -14,6 +14,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { Pager, usePaged } from "./pager";
 
 import {
   api,
@@ -48,7 +49,6 @@ import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
-const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;
 const slug = (s: string) =>
@@ -63,17 +63,15 @@ const slug = (s: string) =>
  *  draft belonging to no project is a state with no reader. The types stay
  *  workspace property; the writing moved to where the writing happens.
  *
- *  So this tab has three views of one subject. A document can reach a project
- *  two ways — written from a type here, or found in the repository by a scan —
- *  and the third view is the detector run that judges either. */
-type DocView = "specs" | "authored" | "analysis";
+ *  A document reaches a project two ways — started from a template here and
+ *  written in the IDE, or found in the repository by a sync — and both are rows
+ *  of one list, where a detector is sent a file from its row. */
 
 export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
   onOpenFile,
-  analysis,
   studioTarget,
 }: {
   token: string;
@@ -94,11 +92,12 @@ export function DocumentsTab({
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [view, setView] = useState<DocView>("specs");
-  /** An authored document the list asked the editor to open. Held here because
-   *  the list and the editor are siblings: the list knows which row was
-   *  clicked, the editor knows what to do about it. */
-  const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const studio = useStudioBridge();
+  /** A document written in Studio is edited in the IDE's markdown editor, in a
+   *  session already running or one this starts. */
+  const openInStudio = (id: string, title: string) => {
+    if (studio && studioTarget) void studio.openDocument(studioTarget, { workspaceId, id, title });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -118,72 +117,19 @@ export function DocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      {/* One list, not two. "In the repository" and "Authored" split the specs
-          by where their bytes live, which is our implementation detail, and it
-          made the question a reader actually has — what specs do we have, and
-          are they any good — answerable only by reading both and merging them
-          by eye. The Origin column keeps the difference visible where it
-          belongs: on the row. What is left beside the list is the EDITOR, a
-          place rather than a second inventory. */}
-      <div className="doc-views" role="tablist" aria-label="Specs view">
-        <button
-          role="tab"
-          aria-selected={view === "specs"}
-          className={view === "specs" ? "doc-view on" : "doc-view"}
-          onClick={() => setView("specs")}
-        >
-          Specs
-        </button>
-        <button
-          role="tab"
-          aria-selected={view === "authored"}
-          className={view === "authored" ? "doc-view on" : "doc-view"}
-          onClick={() => setView("authored")}
-        >
-          Editor
-        </button>
-        {analysis && (
-          <button
-            role="tab"
-            aria-selected={view === "analysis"}
-            className={view === "analysis" ? "doc-view on" : "doc-view"}
-            onClick={() => setView("analysis")}
-          >
-            Analysis
-          </button>
-        )}
-      </div>
-      {/* All of them stay mounted. The console holds a detector run in progress
-          and the results of the last one, and the editor holds an unsaved
-          draft — unmounting either to glance at a list would throw that away. */}
-      <div hidden={view !== "specs"}>
-        <IngestedDocumentsView
-          token={token}
-          workspaceId={workspaceId}
-          projectTenantId={projectTenantId}
-          types={types}
-          onOpenFile={onOpenFile}
-          onOpenDoc={(id) => {
-            setOpenDoc(id);
-            setView("authored");
-          }}
-          onWriteDoc={() => {
-            setOpenDoc(null);
-            setView("authored");
-          }}
-        />
-      </div>
-      <div hidden={view !== "authored"}>
-        <DocumentsView
-          token={token}
-          workspaceId={workspaceId}
-          projectTenantId={projectTenantId}
-          types={types}
-          studioTarget={studioTarget}
-          openDocId={openDoc}
-        />
-      </div>
-      {analysis && <div hidden={view !== "analysis"}>{analysis}</div>}
+      {/* One page. The Editor and Analysis views used to sit beside the list
+          as tabs, and each answered a question about a document somewhere
+          other than on its row: writing one now starts here and opens in the
+          IDE, and a detector is something you send a file to from its row. */}
+      <IngestedDocumentsView
+        token={token}
+        workspaceId={workspaceId}
+        projectTenantId={projectTenantId}
+        types={types}
+        onOpenFile={onOpenFile}
+        onOpenDoc={openInStudio}
+        canOpenDocs={!!(studio && studioTarget)}
+      />
     </div>
   );
 }
@@ -258,445 +204,6 @@ function DocTypesFlow() {
   );
 }
 
-// ── Documents ────────────────────────────────────────────────────────────────
-
-function DocumentsView({
-  token,
-  workspaceId,
-  projectTenantId,
-  types,
-  studioTarget,
-  openDocId,
-}: {
-  token: string;
-  workspaceId: string;
-  /** The project these documents belong to. Documents are authored INSIDE a
-   *  project — the workspace owns the types, the project owns the writing —
-   *  so this is where both the listing and the creation are scoped.
-   *
-   *  The project listing is the effective one: a project's own documents plus
-   *  the ones inherited from its workspace. Nothing that was written at the
-   *  workspace level becomes unreachable by scoping here. */
-  projectTenantId: string;
-  types: DocType[];
-  studioTarget?: StudioTarget;
-  /** A document the Specs list asked to open. Selecting it here rather than
-   *  keeping a second list means one inventory and one editor, which is the
-   *  whole point of merging the two tabs. */
-  openDocId?: string | null;
-}) {
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftBody, setDraftBody] = useState("");
-  const [report, setReport] = useState<DocValidation | null>(null);
-  const [newType, setNewType] = useState("");
-  const [newTitle, setNewTitle] = useState("");
-  const [showQ, setShowQ] = useState(false);
-  const [plan, setPlan] = useState<PlanRow[] | null>(null);
-  /** The capability a gap flow asked for a gear for. The skeleton itself is
-   *  the server's to compose, so this holds the question, not the answer. */
-  const [scaffold, setScaffold] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState<Doc | null>(null);
-  const [composeBusy, setComposeBusy] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const newTypeObj = useMemo(() => types.find((t) => t.key === newType) ?? null, [types, newType]);
-  const hasQuestionnaire = (newTypeObj?.questionnaire?.length ?? 0) > 0;
-
-  const selected = useMemo(() => docs.find((d) => d.id === selectedId) ?? null, [docs, selectedId]);
-
-  // The list asked for one. Honoured on every change of `openDocId`, not only
-  // the first: clicking two rows in a row must open the second.
-  useEffect(() => {
-    if (openDocId) setSelectedId(openDocId);
-  }, [openDocId]);
-  const editable = !!selected && !selected.inherited;
-
-  /* ── Editing in the IDE ──
-     The same document, opened in Studio's markdown editor instead of the
-     textarea below. One gesture: the portal reuses or launches the workspace's
-     session, mounts its space and hands the document over (see
-     ./studio-bridge). The IDE reads and writes it straight through the
-     documents gear over a `studio-doc:` URI, so there is no copy to reconcile
-     — only a reload here once it reports the write back.
-
-     This is the authoring surface: a project's Documents tab reports what its
-     repository contains, and a document gets there by being published into it.
-     Before it is published there is no file to open, which is exactly why the
-     IDE needed a way to address the row itself. */
-  const studio = useStudioBridge();
-  const opening = !!studioTarget && studio?.opening === studioTarget.id;
-  const dirty =
-    !!selected && (draftTitle !== selected.title || draftBody !== selected.content);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  /** Set when the IDE saved the document currently open here while this view
-   *  held unsaved edits — reloading is then the user's call, not ours. */
-  const [staleDoc, setStaleDoc] = useState<string | null>(null);
-  const handledSaveRef = useRef(0);
-
-  const reload = useCallback(async () => {
-    setErr(null);
-    try {
-      setDocs((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
-    } catch (e) {
-      setErr(errText(e));
-    }
-  }, [token, workspaceId, projectTenantId]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  useEffect(() => {
-    if (types.length > 0 && !newType) setNewType(types[0].key);
-  }, [types, newType]);
-
-  // The IDE wrote a document back through the gear: re-read it so the list,
-  // the status and the conformance checklist reflect what was just saved.
-  // Keyed on the report's timestamp, not on `docs`, so the reload it triggers
-  // cannot re-trigger itself.
-  useEffect(() => {
-    const saved = studio?.savedDocument;
-    if (!saved || saved.at === handledSaveRef.current) return;
-    if (saved.workspaceId !== workspaceId) return;
-    handledSaveRef.current = saved.at;
-    if (saved.documentId === selectedId && dirtyRef.current) {
-      setStaleDoc(saved.documentId); // local draft would be overwritten
-      return;
-    }
-    void reload();
-  }, [studio?.savedDocument, workspaceId, selectedId, reload]);
-
-  // A different document is a different conversation — drop the stale banner.
-  useEffect(() => setStaleDoc(null), [selectedId]);
-
-  useEffect(() => {
-    if (!selected) {
-      setDraftTitle("");
-      setDraftBody("");
-      setReport(null);
-      return;
-    }
-    setDraftTitle(selected.title);
-    setDraftBody(selected.content);
-    setReport(null);
-    api.validateDocument(token, workspaceId, selected.id).then(setReport).catch(() => setReport(null));
-  }, [selectedId, selected, token, workspaceId]);
-
-  const createDoc = async (title: string, answers?: import("./api").DocAnswer[]) => {
-    if (!newType || !title.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      // The body is composed server-side from the answers (ADR-0014 follow-up
-      // 2). It used to be built here, which made one client's markdown the de
-      // facto contract for a type that every client shares.
-      const body: {
-        type_key: string;
-        title: string;
-        content?: string;
-        answers?: import("./api").DocAnswer[];
-      } = {
-        type_key: newType,
-        title: title.trim(),
-      };
-      if (answers) body.answers = answers;
-      const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, body);
-      setNewTitle("");
-      setShowQ(false);
-      await reload();
-      setSelectedId(doc.id);
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const create = () => createDoc(newTitle);
-
-  const runCompose = async () => {
-    if (!selected) return;
-    setComposeBusy(true);
-    setErr(null);
-    try {
-      // The catalogue and the profiles are no longer fetched here: the server
-      // reads them itself and answers with the plan. The vocabulary still
-      // travels with the question, because it belongs to the workspace.
-      const vocab = await api.capabilities(token, workspaceId);
-      const caps = selected.capabilities ?? [];
-      const plan = await api.composePlan(token, caps, vocab.items ?? []);
-      setPlan(plan.items);
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setComposeBusy(false);
-    }
-  };
-
-  const save = async () => {
-    if (!selected || !editable) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.updateDocument(token, workspaceId, selected.id, { title: draftTitle, content: draftBody });
-      setReport(await api.validateDocument(token, workspaceId, selected.id));
-      await reload();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setStatus = async (status: Doc["status"]) => {
-    if (!selected || !editable) return;
-    setBusy(true);
-    try {
-      await api.updateDocument(token, workspaceId, selected.id, { status });
-      await reload();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!selected || !editable) return;
-    setBusy(true);
-    try {
-      await api.deleteDocument(token, workspaceId, selected.id);
-      setSelectedId(null);
-      await reload();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const typeName = (key: string) => types.find((t) => t.key === key)?.name ?? key;
-
-  return (
-    <>
-      {err && <div className="error">{err}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 16, alignItems: "start" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={card}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>New document</div>
-            <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ width: "100%", marginBottom: 6 }}>
-              {types.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.name}
-                  {t.owner === "workspace" ? " · workspace" : ""}
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder="Title…"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              style={{ width: "100%", marginBottom: 6 }}
-            />
-            {hasQuestionnaire ? (
-              <button className="primary" onClick={() => setShowQ(true)} disabled={busy} style={{ width: "100%" }}>
-                Fill questionnaire →
-              </button>
-            ) : (
-              <button className="primary" onClick={create} disabled={busy || !newTitle.trim()} style={{ width: "100%" }}>
-                Create from template
-              </button>
-            )}
-            {hasQuestionnaire && (
-              <p style={{ fontSize: 11, opacity: 0.7, margin: "6px 0 0" }}>
-                {newTypeObj?.name} is filled by answering a questionnaire.
-              </p>
-            )}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {docs.length === 0 && <p className="empty">No documents yet — create one from a type.</p>}
-            {docs.map((d) => (
-              <button
-                key={d.id}
-                onClick={() => setSelectedId(d.id)}
-                style={{
-                  textAlign: "left",
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: d.id === selectedId ? "var(--accent)" : "transparent",
-                  cursor: "pointer",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                }}
-              >
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {d.title || "(untitled)"}
-                  </span>
-                  <span title={d.conforms ? "conforms" : "incomplete"} style={{ marginLeft: "auto", fontSize: 11 }}>
-                    {d.conforms ? "✓" : "•"}
-                  </span>
-                </span>
-                <span style={{ fontSize: 11, opacity: 0.7, display: "flex", gap: 6 }}>
-                  <code>{typeName(d.type_key)}</code>
-                  <span>· {d.status}</span>
-                  {d.inherited && <span style={{ color: "var(--muted-foreground)" }}>· inherited</span>}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          {!selected ? (
-            <p className="empty">Select a document, or create one.</p>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 16 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} disabled={!editable} style={{ flex: 1, fontWeight: 600 }} />
-                  <select value={selected.status} onChange={(e) => setStatus(e.target.value as Doc["status"])} disabled={!editable || busy}>
-                    {STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {staleDoc === selected.id && (
-                  <div className="hint" style={{ ...card, display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ flex: 1 }}>
-                      Saved in Studio while you had unsaved changes here. Reloading takes the
-                      IDE&rsquo;s version and drops the draft below.
-                    </span>
-                    <button
-                      onClick={() => {
-                        setStaleDoc(null);
-                        void reload();
-                      }}
-                      disabled={busy}
-                    >
-                      Reload
-                    </button>
-                  </div>
-                )}
-                <textarea
-                  value={draftBody}
-                  onChange={(e) => setDraftBody(e.target.value)}
-                  disabled={!editable}
-                  spellCheck={false}
-                  style={{ width: "100%", minHeight: 420, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, lineHeight: 1.5, padding: 10, borderRadius: 8, border: "1px solid var(--border)", resize: "vertical" }}
-                />
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {studio && studioTarget && (
-                    <button
-                      className="primary"
-                      onClick={async () => {
-                        // Hand over what is on screen, not what was last
-                        // saved: the IDE reads the row from the gear, so an
-                        // unsaved draft here would simply not be there.
-                        if (dirty) await save();
-                        void studio.openDocument(studioTarget, {
-                          workspaceId,
-                          id: selected.id,
-                          title: selected.title,
-                        });
-                      }}
-                      disabled={!editable || opening || busy}
-                      title={
-                        editable
-                          ? "Edit this document in Studio's markdown editor — it opens in a session you already have running, or starts one"
-                          : "Inherited from the workspace — edit it where it is defined"
-                      }
-                    >
-                      {opening
-                        ? "Opening Studio…"
-                        : studio.isOpen(studioTarget.id)
-                          ? "Edit in Studio"
-                          : "Edit in Studio →"}
-                    </button>
-                  )}
-                  {/* Still here, and still the only editor when no session can
-                      be opened. It stays a plain button next to the hand-off so
-                      the IDE is the obvious place to write, not the exception. */}
-                  <button
-                    className={studio && studioTarget ? "" : "primary"}
-                    onClick={save}
-                    disabled={!editable || busy}
-                  >
-                    Save &amp; validate
-                  </button>
-                  {selected.type_key === "prd" && (
-                    <button onClick={runCompose} disabled={composeBusy} title="Match this spec's capabilities against the component catalog">
-                      {composeBusy ? "Composing…" : "Compose →"}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setPublishing(selected)}
-                    disabled={busy}
-                    title="Commit this document into a repository through one of the project's connections"
-                  >
-                    Publish…
-                  </button>
-                  <button onClick={remove} disabled={!editable || busy}>
-                    Delete
-                  </button>
-                  {selected.inherited && (
-                    <span className="subtitle" style={{ margin: 0 }}>
-                      Inherited from the workspace — read-only here.
-                    </span>
-                  )}
-                </div>
-              </div>
-              <Checklist report={report} />
-            </div>
-          )}
-        </div>
-      </div>
-      {showQ && newTypeObj && (
-        <QuestionnaireModal
-          type={newTypeObj}
-          busy={busy}
-          initialTitle={newTitle}
-          onCancel={() => setShowQ(false)}
-          onSubmit={(answers, title) => createDoc(title, answers)}
-        />
-      )}
-      {plan && (
-        <ComposePlanModal
-          plan={plan}
-          title={selected?.title ?? "PRD"}
-          onScaffold={(cap) => setScaffold(cap)}
-          onClose={() => setPlan(null)}
-        />
-      )}
-      {publishing && (
-        <PublishModal
-          token={token}
-          doc={publishing}
-          tenantId={workspaceId}
-          onClose={() => setPublishing(null)}
-        />
-      )}
-      {scaffold && (
-        <ScaffoldModal
-          capability={scaffold}
-          token={token}
-          projectTenantId={workspaceId}
-          onBack={() => setScaffold(null)}
-          onClose={() => setScaffold(null)}
-        />
-      )}
-    </>
-  );
-}
-
 // ── From the repository ──────────────────────────────────────────────────────
 // Scenario B: the repository already had documents in it when we connected to
 // it. Their content stays in the artifact graph — this view only decides what
@@ -709,9 +216,11 @@ function DocumentsView({
  *  so rendering the whole list costs tens of thousands of nodes for a screen
  *  that shows twenty. The rows all exist in memory — the counts on the chips
  *  are over the full list and stay exact — this only bounds what is mounted,
- *  and the footer says what is being held back rather than letting the list
- *  end silently on a lie. */
-const RENDER_PAGE = 200;
+ *  and the pager says where in the list the page is rather than letting it
+ *  end silently on a lie. A page, not "show more": appending made the list
+ *  grow without bound and put the next page's first row 200 rows down. */
+const RENDER_PAGE = 50;
+
 
 
 /** Only these need a person: everything else is either settled or not a doc. */
@@ -778,6 +287,11 @@ const findingTone = (severity?: string | null) =>
  *  made the row as tall as the document's worst day and told the reader four
  *  detector names they cannot act on from a list. The names are one click
  *  away, in the panel beside it. */
+/** The bound set, with one file sent from its row added if it is not in it. */
+function withFile(only: DocBinding | undefined, bound: DocBinding[]): DocBinding[] {
+  return only && !bound.some((b) => b.id === only.id) ? [only, ...bound] : bound;
+}
+
 function findingLabel(found: SpecFinding[] | undefined): string {
   const n = found?.length ?? 0;
   if (n === 0) return "No findings";
@@ -806,7 +320,7 @@ function IngestedDocumentsView({
   types,
   onOpenFile,
   onOpenDoc,
-  onWriteDoc,
+  canOpenDocs,
 }: {
   token: string;
   workspaceId: string;
@@ -814,15 +328,27 @@ function IngestedDocumentsView({
   types: DocType[];
   /** Editing a document is the IDE's job — this hands it the file. */
   onOpenFile: (path: string) => void;
-  /** An authored row was clicked. The editor is where such a document is read
-   *  and written; this list is an inventory, not a second editor. */
-  onOpenDoc: (id: string) => void;
-  /** Hand over to the editor with nothing open — the "write the first one"
-   *  route out of the empty state. */
-  onWriteDoc: () => void;
+  /** Open a document written in Studio in the IDE's editor. */
+  onOpenDoc: (id: string, title: string) => void;
+  /** Whether there is an IDE to open one in. */
+  canOpenDocs: boolean;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<SpecFilter>("needs-review");
+  /** The "New document" form in the bar: which template, and what it is
+   *  called. A document starts here and is written in the IDE. */
+  const [writing, setWriting] = useState(false);
+  const [newType, setNewType] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [askQuestions, setAskQuestions] = useState(false);
+  const [authored, setAuthored] = useState<Doc[]>([]);
+  const [publishing, setPublishing] = useState<Doc | null>(null);
+  const [plan, setPlan] = useState<{ title: string; rows: PlanRow[] } | null>(null);
+  const [scaffold, setScaffold] = useState<string | null>(null);
+  const newTypeObj = useMemo(
+    () => types.find((t) => t.key === (newType || types[0]?.key)) ?? null,
+    [types, newType],
+  );
   /** "any" = both origins. Kept apart from the queue filter because they ask
    *  different questions: one is "what state is it in", the other "where did
    *  it come from". */
@@ -830,6 +356,8 @@ function IngestedDocumentsView({
   /** "" = every type, "-" = the ones with no type yet. */
   const [typeFilter, setTypeFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Open a file's row, or close it when it is the one already open. */
+  const toggle = (id: string) => setSelectedId((open) => (open === id ? null : id));
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [note, setNote] = useState("");
@@ -885,6 +413,12 @@ function IngestedDocumentsView({
     // above no longer needs them — this is the detail, not the queue.
     try {
       setBindings((await api.allDocBindings(token, workspaceId, projectTenantId)).items);
+      // The documents written here, whole: their row opens onto publishing
+      // and composing, which need the document rather than its row.
+      setAuthored(
+        (await api.projectDocuments(token, workspaceId, projectTenantId).catch(() => ({ items: [] as Doc[] })))
+          .items,
+      );
     } catch {
       // The rows are still on screen; only the detail panel loses its record.
     }
@@ -929,6 +463,33 @@ function IngestedDocumentsView({
     }
     return specs;
   }, [token, workspaceId, projectTenantId]);
+
+  /** Start a document from a template: it joins this list, and opens in the
+   *  IDE with the template's sections to fill. A type with a questionnaire is
+   *  started from its answers instead of a blank template. */
+  const createDocument = async (title: string, answers?: import("./api").DocAnswer[]) => {
+    const type = newTypeObj;
+    if (!type || !title.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, {
+        type_key: type.key,
+        title: title.trim(),
+        ...(answers ? { answers } : {}),
+      });
+      setNewTitle("");
+      setAskQuestions(false);
+      setWriting(false);
+      await reload();
+      onOpenDoc(doc.id, doc.title);
+      if (!canOpenDocs) setNote(`"${doc.title}" is in the list; open the IDE to write it.`);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     void reload();
@@ -978,15 +539,17 @@ function IngestedDocumentsView({
    *  One LLM round-trip per document, so it runs only on the leftovers and
    *  only when asked. Its answer is a proposal, not a decision — it lands as
    *  `detected` and still waits for a person. */
-  const refineWithSpecQuality = async () => {
+  const refineWithSpecQuality = async (only?: DocBinding) => {
     // Skip what a detector has already looked at. The verdict is in the graph
     // and shown in the list, so paying for it again buys nothing — including
     // when the answer was "recognised too little to place", which is a result.
     const analysed = (b: DocBinding) =>
       (findings[b.node_id] ?? []).some((f) => f.detector === "purpose");
-    const targets = bindings.filter(
-      (b) => b.state === "unknown" && !analysed(b),
-    );
+    // One file sent from its row is asked about even if it was asked before:
+    // somebody chose to, and that is the point of sending it.
+    const targets = only
+      ? [only]
+      : bindings.filter((b) => b.state === "unknown" && !analysed(b));
     const alreadyDone = bindings.filter((b) => b.state === "unknown" && analysed(b)).length;
     if (targets.length === 0) {
       setNote(
@@ -1156,10 +719,14 @@ function IngestedDocumentsView({
    *  As with the purpose run, the verdict goes two places — the finding to the
    *  graph, the pass/fail to the binding, which is what a stage gating on
    *  `leak` waits for. */
-  const runLeakChecks = async () => {
+  const runLeakChecks = async (only?: DocBinding) => {
     const already = (b: DocBinding) =>
       (findings[b.node_id] ?? []).some((f) => f.detector === "leak");
-    const targets = bindings.filter((b) => b.type_key && !already(b));
+    if (only && !only.type_key) {
+      setNote("Leak judges a document against its type — give this one a type first.");
+      return;
+    }
+    const targets = only ? [only] : bindings.filter((b) => b.type_key && !already(b));
     const alreadyDone = bindings.filter((b) => b.type_key && already(b)).length;
 
     if (targets.length === 0) {
@@ -1273,8 +840,8 @@ function IngestedDocumentsView({
    *
    *  Set-wise, like bloat, and for the same reason: "what does this reference"
    *  has no answer from one document. */
-  const runTraceCheck = async () => {
-    const targets = bindings.filter((b) => b.type_key);
+  const runTraceCheck = async (only?: DocBinding) => {
+    const targets = withFile(only, bindings.filter((b) => b.type_key));
     if (targets.length < 2) {
       setNote(
         targets.length === 1
@@ -1393,8 +960,10 @@ function IngestedDocumentsView({
    *  Unlike the other two runs this one cannot skip what it has already seen:
    *  a verdict about a set goes stale the moment the set changes, so adding one
    *  document re-judges all of them. */
-  const runBloatCheck = async () => {
-    const targets = bindings.filter((b) => b.type_key);
+  const runBloatCheck = async (only?: DocBinding) => {
+    // Duplication is between documents, so one file is compared with every
+    // bound one rather than with itself.
+    const targets = withFile(only, bindings.filter((b) => b.type_key));
     if (targets.length < 2) {
       setNote(
         targets.length === 1
@@ -1561,12 +1130,11 @@ function IngestedDocumentsView({
     // forced a recompute.
   }, [rows, filter, typeFilter, originFilter]);
 
-  /** How much of `shown` is mounted. Reset whenever the view changes: a filter
-   *  is a new question, and answering it from row 400 of the previous one
-   *  would be a strange place to start reading. */
-  const [rendered, setRendered] = useState(RENDER_PAGE);
-  useEffect(() => setRendered(RENDER_PAGE), [filter, typeFilter, originFilter, view]);
-  const visible = useMemo(() => shown.slice(0, rendered), [shown, rendered]);
+  /** Which page of `shown` is mounted. Back to the first whenever the view
+   *  changes: a filter is a new question, and answering it from page 8 of the
+   *  previous one would be a strange place to start reading. */
+  const paged = usePaged(shown, `${filter}|${typeFilter}|${originFilter}|${view}`, RENDER_PAGE);
+  const visible = paged.visible;
 
   /** The row the side panel is about — always a repository one. An authored
    *  document opens in the editor instead, where it can be changed; a panel
@@ -1602,56 +1170,138 @@ function IngestedDocumentsView({
   return (
     <div className="ingested">
       <style>{INGESTED_CSS}</style>
-      <div className="ing-head">
-        <h2>Specs</h2>
-        <p>
-          Studio reads the files the repository sync pulled in and works out which template each
-          one was written against — from a type declared in its front matter, or by matching its
-          sections, path and title. Anything it cannot decide waits here for you. The Status column
-          counts what the detectors found open on each document; the analysis that produced those
-          findings is the other view.
-        </p>
-      </div>
-
+      {/* One line: what this is, and what can be done to it. The explanation
+          is a hover away rather than a paragraph above every visit, and the
+          four Spec Quality runs are one menu, not four buttons wider than the
+          table they act on. */}
       <div className="ing-bar">
-        <button onClick={recheck} disabled={busy}>
-          {busy ? "Working…" : "Look again"}
-        </button>
-        <button
-          className="primary"
-          onClick={refineWithSpecQuality}
-          disabled={busy || counts["needs-review"] === 0}
-          title="Ask the Spec Quality purpose detector about the documents scoring could not place"
+        <h2 className="ing-title">Specs</h2>
+        <span
+          className="ing-info"
+          tabIndex={0}
+          title={
+            "Studio reads the files the repository sync pulled in and works out which template each one " +
+            "was written against — from a type declared in its front matter, or by matching its sections, " +
+            "path and title. Anything it cannot decide waits here for you. The Status column counts what the " +
+            "detectors found open on each document; the analysis that produced them is the Analysis view."
+          }
         >
-          Refine undetermined with Spec Quality
-        </button>
-        <button
-          onClick={runLeakChecks}
-          disabled={busy || counts.bound === 0}
-          title="Check each bound document for content that belongs to another kind of document"
-        >
-          Check bound documents for leaks
-        </button>
-        <button
-          onClick={runBloatCheck}
-          disabled={busy || counts.bound < 2}
-          title="Find the documents that repeat each other"
-        >
-          Compare bound documents for duplication
-        </button>
-        <button
-          onClick={runTraceCheck}
-          disabled={busy || counts.bound < 2}
-          title="Build the reference graph between bound documents and find the ones nothing connects to"
-        >
-          Trace references between bound documents
-        </button>
-        {busy && abortRef.current && (
-          <button onClick={() => abortRef.current?.abort()}>Stop</button>
-        )}
+          ⓘ
+        </span>
         {progress && <span className="ing-progress">{progress}</span>}
         {note && !progress && <span className="ing-note">{note}</span>}
+        <span className="ing-bar-actions">
+          {busy && abortRef.current && (
+            <button onClick={() => abortRef.current?.abort()}>Stop</button>
+          )}
+          <button onClick={() => setWriting((w) => !w)} disabled={busy} aria-expanded={writing}>
+            New document
+          </button>
+          <button onClick={recheck} disabled={busy}>
+            {busy ? "Working…" : "Look again"}
+          </button>
+          <details className="ing-menu">
+            <summary className={busy ? "disabled" : undefined}>Spec Quality ▾</summary>
+            <div className="ing-menu-list" onClick={(e) => (e.currentTarget.parentElement as HTMLDetailsElement).removeAttribute("open")}>
+              <button
+                onClick={() => void refineWithSpecQuality()}
+                disabled={busy || counts["needs-review"] === 0}
+                title="Ask the Spec Quality purpose detector about the documents scoring could not place"
+              >
+                Refine undetermined <span className="ing-count">{counts["needs-review"]}</span>
+              </button>
+              <button
+                onClick={() => void runLeakChecks()}
+                disabled={busy || counts.bound === 0}
+                title="Check each bound document for content that belongs to another kind of document"
+              >
+                Check bound for leaks <span className="ing-count">{counts.bound}</span>
+              </button>
+              <button
+                onClick={() => void runBloatCheck()}
+                disabled={busy || counts.bound < 2}
+                title="Find the documents that repeat each other"
+              >
+                Compare bound for duplication
+              </button>
+              <button
+                onClick={() => void runTraceCheck()}
+                disabled={busy || counts.bound < 2}
+                title="Build the reference graph between bound documents and find the ones nothing connects to"
+              >
+                Trace references between bound
+              </button>
+            </div>
+          </details>
+        </span>
       </div>
+
+      {writing && (
+        /* Which template, and what it is called; the IDE is where it is
+           written. It joins the list as soon as it exists. */
+        <form
+          className="ing-new"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if ((newTypeObj?.questionnaire?.length ?? 0) > 0) setAskQuestions(true);
+            else void createDocument(newTitle);
+          }}
+        >
+          <select
+            value={newTypeObj?.key ?? ""}
+            onChange={(e) => setNewType(e.target.value)}
+            aria-label="Template"
+          >
+            {types.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="Title…"
+            aria-label="Title"
+            autoFocus
+          />
+          <button className="primary" type="submit" disabled={busy || !newTypeObj || !newTitle.trim()}>
+            {(newTypeObj?.questionnaire?.length ?? 0) > 0 ? "Answer questions…" : "Create and open in IDE"}
+          </button>
+          <button type="button" onClick={() => setWriting(false)}>
+            Cancel
+          </button>
+        </form>
+      )}
+      {askQuestions && newTypeObj && (
+        <QuestionnaireModal
+          type={newTypeObj}
+          busy={busy}
+          initialTitle={newTitle}
+          onCancel={() => setAskQuestions(false)}
+          onSubmit={(answers, title) => createDocument(title, answers)}
+        />
+      )}
+      {plan && (
+        <ComposePlanModal
+          plan={plan.rows}
+          title={plan.title}
+          onScaffold={(cap) => setScaffold(cap)}
+          onClose={() => setPlan(null)}
+        />
+      )}
+      {publishing && (
+        <PublishModal token={token} doc={publishing} tenantId={projectTenantId} onClose={() => setPublishing(null)} />
+      )}
+      {scaffold && (
+        <ScaffoldModal
+          capability={scaffold}
+          token={token}
+          projectTenantId={projectTenantId}
+          onBack={() => setScaffold(null)}
+          onClose={() => setScaffold(null)}
+        />
+      )}
 
       {err && <div className="error">{err}</div>}
 
@@ -1733,7 +1383,7 @@ function IngestedDocumentsView({
               type each document is, and what the detectors find in them.
             </p>
             <div className="ing-start-routes">
-              <button className="primary" onClick={onWriteDoc} disabled={busy}>
+              <button className="primary" onClick={() => setWriting(true)} disabled={busy}>
                 Write the first one
               </button>
               <button onClick={recheck} disabled={busy}>
@@ -1773,7 +1423,7 @@ function IngestedDocumentsView({
                     subtitle={row.path || "not in a repository yet"}
                     tone={selectedId === row.id ? "on" : undefined}
                     onClick={() =>
-                      row.origin === "authored" ? onOpenDoc(row.id) : setSelectedId(row.id)
+                      toggle(row.id)
                     }
                     stats={[
                       { label: "type", value: typeName(row.type_key) },
@@ -1822,12 +1472,18 @@ function IngestedDocumentsView({
               const b = bindings.find((x) => x.id === row.id);
               const open = row.node_id ? findings[row.node_id] : undefined;
               const repoId = row.repo || undefined;
+              const opened = selectedId === row.id && selected ? selected : null;
+              const openedDoc =
+                selectedId === row.id && row.origin === "authored"
+                  ? (authored.find((d) => d.id === row.id) ?? null)
+                  : null;
               return (
+              <Fragment key={row.id}>
               <div
-                key={row.id}
-                className={selectedId === row.id ? "ing-row on" : "ing-row"}
+                className={opened ? "ing-row on" : "ing-row"}
+                aria-expanded={opened != null || openedDoc != null}
                 onClick={() =>
-                  row.origin === "authored" ? onOpenDoc(row.id) : setSelectedId(row.id)
+                  toggle(row.id)
                 }
               >
                 {/* Name is the basename for a file and the title for a written
@@ -1835,8 +1491,10 @@ function IngestedDocumentsView({
                     here cost the widest column in the table to say the same
                     thing twice. */}
                 <span className="ing-name" title={row.path || row.name}>
+                  {/* Which way the row opens, where the document icon used
+                      to say only that it is a document. */}
                   <span className="ing-doc-ic" aria-hidden>
-                    ▤
+                    {opened || openedDoc ? "▾" : "▸"}
                   </span>
                   {row.name}
                 </span>
@@ -1955,38 +1613,104 @@ function IngestedDocumentsView({
                       )}
                     </>
                   ) : (
-                    <button onClick={() => onOpenDoc(row.id)} title="Open in the editor">
-                      Open
+                    <button
+                      onClick={() => onOpenDoc(row.id, row.name)}
+                      disabled={!canOpenDocs}
+                      title={canOpenDocs ? "Open in the IDE's editor" : "No IDE to open it in"}
+                    >
+                      IDE ↗
+                    </button>
+                  )}
+                  {/* A file is edited where it lives, so opening it in the
+                      IDE is one click from the list, not only from its
+                      detail. */}
+                  {row.origin !== "authored" && row.path && (
+                    <button onClick={() => onOpenFile(row.path)} title={`Open ${row.path} in the IDE`}>
+                      IDE ↗
                     </button>
                   )}
                 </span>
               </div>
+              {opened && detail(opened)}
+              {openedDoc && authoredDetail(openedDoc)}
+              </Fragment>
               );
             })}
           </div>
           )}
 
-          {visible.length < shown.length && (
-            /* Says what is held back rather than letting the list stop without
-               explanation — a table that ends at row 200 of 5785 with no note
-               reads as "that is all there is". */
-            <div className="ing-more">
-              <button onClick={() => setRendered((n) => n + RENDER_PAGE)} disabled={busy}>
-                Show {Math.min(RENDER_PAGE, shown.length - visible.length)} more
-              </button>
-              <span className="ing-dash">
-                {visible.length} of {shown.length}
-              </span>
-            </div>
-          )}
+          <Pager paged={paged} />
 
-          <div className="ing-side">
-            {!selected ? (
-              <p className="empty" style={{ fontSize: 12 }}>
-                Pick a file to see what the type expects of it.
-              </p>
-            ) : (
-              <>
+          {/* Tiles have no row to open under, so a picked tile's detail comes
+              after the grid. */}
+          {view === "tiles" && selected && detail(selected)}
+        </div>
+      )}
+    </div>
+  );
+
+  /** One file, opened: what it was taken for and how sure, the way to edit it,
+   *  what its type expects of it, and what the detectors found. It opens under
+   *  its own row -- as a side panel it fell below the whole table whenever the
+   *  page was narrower than the table plus the panel, where nobody saw it. */
+  /** A document written here, opened: where it is written, and the two
+   *  things done with one once it is -- committing it to a repository, and
+   *  matching what it declares against the component catalogue. */
+  function authoredDetail(doc: Doc) {
+    const compose = async () => {
+      setBusy(true);
+      setErr(null);
+      try {
+        const vocab = await api.capabilities(token, workspaceId);
+        const answer = await api.composePlan(token, doc.capabilities ?? [], vocab.items ?? []);
+        setPlan({ title: doc.title, rows: answer.items });
+      } catch (e) {
+        setErr(errText(e));
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <div className="ing-expand" onClick={(e) => e.stopPropagation()}>
+        <div style={card}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{doc.title}</div>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
+            {typeName(doc.type_key)} · {doc.status}
+            {doc.inherited ? " · inherited from the workspace" : ""}
+          </div>
+          <button
+            className="primary"
+            onClick={() => onOpenDoc(doc.id, doc.title)}
+            disabled={!canOpenDocs}
+            style={{ marginTop: 10, width: "100%" }}
+            title={canOpenDocs ? "Write it in the IDE's markdown editor" : "No IDE to open it in"}
+          >
+            Edit in the IDE →
+          </button>
+          <div className="ing-send">
+            <button onClick={() => setPublishing(doc)} disabled={busy} title="Commit it to a repository on a branch of its own">
+              Publish to repository…
+            </button>
+            <button
+              onClick={() => void compose()}
+              disabled={busy || (doc.capabilities ?? []).length === 0}
+              title={
+                (doc.capabilities ?? []).length === 0
+                  ? "It declares no capabilities to match"
+                  : "Match the capabilities it declares against the component catalogue"
+              }
+            >
+              Compose plan
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function detail(selected: DocBinding) {
+    return (
+      <div className="ing-expand" onClick={(e) => e.stopPropagation()}>
                 <div style={card}>
                   <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                     {basename(selected.path)}
@@ -2026,6 +1750,39 @@ function IngestedDocumentsView({
                   >
                     Edit in the IDE →
                   </button>
+                  {/* What the Analysis view used to be for, asked of this one
+                      file: its findings land in the Analysis card beside. */}
+                  <div className="ing-send">
+                    <span className="ing-send-label">Send to Spec Quality</span>
+                    <button
+                      onClick={() => void refineWithSpecQuality(selected)}
+                      disabled={busy}
+                      title="Purpose: which kind of document this reads as, section by section"
+                    >
+                      Purpose
+                    </button>
+                    <button
+                      onClick={() => void runLeakChecks(selected)}
+                      disabled={busy || !selected.type_key}
+                      title={selected.type_key ? "Leak: content that belongs to another kind of document" : "Give it a type first"}
+                    >
+                      Leak
+                    </button>
+                    <button
+                      onClick={() => void runBloatCheck(selected)}
+                      disabled={busy}
+                      title="Bloat: what this repeats of the bound documents"
+                    >
+                      Bloat
+                    </button>
+                    <button
+                      onClick={() => void runTraceCheck(selected)}
+                      disabled={busy}
+                      title="Traceability: what this references among the bound documents, and what references it"
+                    >
+                      Trace
+                    </button>
+                  </div>
                   {selected.candidates.length > 0 && (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>
@@ -2081,13 +1838,9 @@ function IngestedDocumentsView({
                     </div>
                   )}
                 </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
 }
 
 
@@ -2517,26 +2270,41 @@ function JourneyPanel({
 }
 
 const INGESTED_CSS = `
-.ingested { display: flex; flex-direction: column; gap: 12px; }
+.ingested { display: flex; flex-direction: column; gap: 8px; }
 .ing-start { border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; max-width: 70ch; }
 .ing-start h3 { margin: 0 0 6px; font-size: 15px; }
 .ing-start p { margin: 0; font-size: 13px; color: var(--muted-foreground); }
 .ing-start-routes { display: flex; gap: 8px; margin: 14px 0 12px; flex-wrap: wrap; }
 .ing-start-note { font-size: 12px; }
-.ing-head h2 { margin: 0 0 4px; font-size: 16px; }
-.ing-head p { margin: 0; font-size: 13px; color: var(--muted-foreground); max-width: 70ch; }
-.ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 30px; }
+.ing-title { margin: 0; font-size: 16px; }
+.ing-info { cursor: help; color: var(--muted-foreground); font-size: 13px; }
+.ing-bar-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.ing-bar-actions button, .ing-menu summary { font-size: 12px; padding: 4px 10px; }
+.ing-menu { position: relative; }
+.ing-menu summary { list-style: none; cursor: pointer; border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); border-radius: 6px; user-select: none; }
+.ing-menu summary::-webkit-details-marker { display: none; }
+.ing-menu summary.disabled { opacity: 0.6; pointer-events: none; }
+.ing-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: flex; flex-direction: column; min-width: 240px; padding: 4px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.ing-menu-list button { text-align: left; border: none; background: transparent; font-size: 12px; padding: 6px 10px; border-radius: 4px; display: flex; justify-content: space-between; gap: 12px; }
+.ing-menu-list button:hover:not(:disabled) { background: var(--accent); }
 .ing-progress, .ing-note { font-size: 12px; color: var(--muted-foreground); }
 .ing-filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .ing-filter { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); background: transparent; cursor: pointer; }
 .ing-filter.on { background: var(--accent); border-color: var(--accent-foreground); }
 .ing-count { opacity: 0.6; margin-left: 4px; }
-/* The detail panel sits beside the table only while the table can still afford
-   it. Seven columns need ~1040px before Name starts ellipsising to nothing, so
-   below 1500px the panel goes under the table and gives that width back —
-   measured: at 1280 the side-by-side split left Name 66px wide. */
-.ing-split { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 12px; align-items: start; }
-@media (max-width: 1500px) { .ing-split { grid-template-columns: minmax(0,1fr); } }
+.ing-split { display: flex; flex-direction: column; gap: 8px; }
+.ing-new { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.ing-new select, .ing-new input { font-size: 12px; height: 28px; }
+.ing-new input { flex: 1; min-width: 200px; }
+.ing-new button { font-size: 12px; }
+.ing-send { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 10px; }
+.ing-send-label { width: 100%; font-size: 11px; font-weight: 600; color: var(--muted-foreground); }
+.ing-send button { font-size: 11px; padding: 2px 8px; }
+/* A file's detail, opened under its row: what it was taken for and how to edit
+   it, what its type expects, and what the detectors found, side by side. */
+.ing-expand { display: grid; grid-template-columns: minmax(220px,1fr) minmax(260px,1.4fr) minmax(220px,1fr); gap: 10px; align-items: start; padding: 10px 14px 14px 38px; background: var(--accent); border-top: 1px solid var(--border); cursor: default; }
+@media (max-width: 1100px) { .ing-expand { grid-template-columns: 1fr; padding-left: 14px; } }
 /* overflow-x, not hidden: when the columns below cannot all fit at their
    minimums the table scrolls sideways, the way the product's does
    (its Table is overflow-x-auto). Clipping instead would simply delete the
@@ -2549,7 +2317,9 @@ const INGESTED_CSS = `
    Name and a 37px Repository, which is a row of ellipses. The floors add up to
    970px plus 72px of gaps, and .ing-table scrolls past that rather than
    shrinking anything below it. */
-.ing-row { display: grid; grid-template-columns: minmax(180px,1.6fr) 140px minmax(110px,0.9fr) minmax(160px,1.4fr) 130px 110px 140px; gap: 12px; align-items: center; padding: 10px 14px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.ing-row { display: grid; grid-template-columns: minmax(180px,1.6fr) 140px minmax(110px,0.9fr) minmax(160px,1.4fr) 130px 110px 200px; gap: 12px; align-items: center; padding: 5px 12px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.ing-row select { padding: 2px 4px; height: 24px; }
+.ing-row .ing-actions button { padding: 1px 7px; height: 22px; }
 .ing-row:first-child { border-top: none; }
 .ing-row.on { background: var(--accent); }
 /* The column row is the shipped TableHead: 10px uppercase in the mono face at
@@ -2574,7 +2344,7 @@ const INGESTED_CSS = `
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   padding: 10px 2px 2px;
   font-size: 12px;
 }
@@ -2590,11 +2360,9 @@ const INGESTED_CSS = `
 .jr-seed { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; }
 .ing-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .ing-actions button { font-size: 11px; padding: 2px 8px; }
-.ing-side { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 8px; }
 @media (max-width: 900px) {
   .ing-split { grid-template-columns: 1fr; }
   .ing-row { grid-template-columns: 1fr; gap: 4px; }
-  .ing-side { position: static; }
 }
 `;
 

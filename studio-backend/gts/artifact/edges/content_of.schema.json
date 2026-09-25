@@ -1,0 +1,13 @@
+{
+  "$id": "gts://gts.cf.studio.rel.content_of.v1~",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "rel:content_of",
+  "description": "Typed edge (content_of): a file_content node and the file it was taken from; endpoints are instance ids.",
+  "type": "object",
+  "properties": {
+    "from": { "type": "string", "description": "file_content instance id" },
+    "to":   { "type": "string", "description": "file instance id" }
+  },
+  "required": ["from", "to"],
+  "additionalProperties": false
+}

@@ -59,6 +59,40 @@ is `$filter`/`$orderby` over the payload paths a type already declares in its
 `index` trait — request 5 in [`../../docs/graph-storage-requests.md`](../../docs/graph-storage-requests.md),
 which also records where in the platform that change lives.
 
+## The artifact index: the query, written against our own table
+
+Measured again on studio-dev on 2026-09-25, the cache was not enough: a walk
+was 24–33 thousand nodes and **12–20 s**, and `/spec-rows` passed 10 s on half
+its requests. The node listing and the file listing together are over the
+cache budget, so each evicted the other and the Artifacts and Specs screens
+paid for a walk nearly every time.
+
+So the fields those reads narrow by are now columns of our own table
+(`studio_artifact_index`, [`index.rs`](index.rs)): scope, repo, type, path and
+`updated_at`, plus the payload a graph read would return. `/nodes` with a
+`scope` is one `SELECT … LIMIT` with a `COUNT`; `/source-activity`,
+`/activity`, `/edges?scope=`, the portfolio counts and the documents gear's
+file list (`/spec-rows`, `/specs-per-source`) are one indexed query each. The
+graph is still the source of truth and still serves search, relations and
+unscoped listings.
+
+- **Written** after every node upsert the graph accepts, in the same call, and
+  **deleted** after every node a re-sync forgets (`delete_nodes`).
+- **Filled** per tenant on its first read, in the background, from one walk of
+  the graph; until `studio_artifact_index_fill` has the tenant's row, reads go
+  to the graph exactly as before.
+- **Withdrawn** when an index write fails after the graph took the batch:
+  readers fall back to the graph and the next read refills.
+- **Optional**: without the gear's `database:` section there is no index and
+  nothing changes but speed.
+- **Not file content.** A file's searchable excerpt is a `file_content` node of
+  its own, joined to the file by `content_of`; search folds a hit on it back
+  into the file. Nothing lists it (`gts::is_listed`), so it has no row here,
+  and a file row is metadata only.
+
+When request 5 lands in graph-storage this table becomes redundant, and the
+thing to do is delete it rather than keep two mirrors in step.
+
 ## Reading relations back is bounded, and the bound is not a speed limit
 
 `GET /edges` used to read one node per seed for its adjacency: **8,825 reads**
