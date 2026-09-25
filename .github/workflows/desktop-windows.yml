@@ -127,6 +127,7 @@ jobs:
             theia/electron-app/dist/*.exe.blockmap
             theia/electron-app/dist/*.zip
             theia/electron-app/dist/*.yml
+            !theia/electron-app/dist/builder-debug.yml
           if-no-files-found: error
 
   release:
