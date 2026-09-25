@@ -41,6 +41,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0026](0026-studio-events-push-channel.md) | One push channel to the portal, and it is not anyone's protocol | accepted | 2026-09-11 |
 | [0027](0027-a-desktop-session-keeps-the-secrets-on-the-server.md) | A desktop Studio is a session on the member's machine, and the secrets stay on the server | accepted | 2026-09-24 |
 | [0028](0028-the-address-decides-where-the-shell-is.md) | The address decides where the shell is, and the shell alone writes it | accepted | 2026-09-24 |
+| [0029](0029-end-to-end-tests-are-few-and-do-not-know-where-they-run.md) | End-to-end tests are few, and they do not know where they run | accepted | 2026-09-25 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
