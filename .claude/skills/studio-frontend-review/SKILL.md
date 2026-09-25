@@ -14,7 +14,14 @@ Checklists (agents read both; the Studio one wins on conflict):
 - `references/checklist.md` — generic PR checklist: architecture/spec, agent-written code failure modes,
   bugs, duplication, conventions, smells, testing philosophy, severity, comment style.
 
-All paths below are relative to the repo root; `S=.claude/skills/studio-frontend-review/scripts`.
+All paths below are relative to the repo root. Run every script exactly as written —
+`python3 .claude/skills/studio-frontend-review/scripts/<name>.py …` from the repo root, one command per call,
+no `cd`, no shell variables, no pipes — so it matches the unattended allowlist.
+
+**Who runs what.** Only you, the orchestrator, run commands. Reviewer and verifier subagents use Read, Grep
+and Glob only (in a headless run a background subagent may have no Bash at all): `prepare_review.py` writes
+everything they need as files — the diffs, the base versions, the context pack. A verifier writes
+reproduction tests and verdict files; you run the scripts on them.
 
 ## Arguments and modes
 
@@ -63,7 +70,7 @@ Workdir: `<scratchpad>/pr-<N>/` when the session has a scratchpad, otherwise `${
 ### 1. Plan
 
 ```bash
-python3 $S/plan_review.py <N> --repo constructorfabric/studio-web --out <workdir>/plan.json   # add --full if asked
+python3 .claude/skills/studio-frontend-review/scripts/plan_review.py <N> --repo constructorfabric/studio-web --out <workdir>/plan.json   # add --full if asked
 ```
 
 Exit code **3**: nothing reviewable under `studio-frontend/`. Exit code **5**: a follow-up round with no new
@@ -78,7 +85,7 @@ If the plan reports `over_budget`, tell the user the reviewable size and offer (
 ### 2. Prepare context
 
 ```bash
-python3 $S/prepare_review.py <workdir>
+python3 .claude/skills/studio-frontend-review/scripts/prepare_review.py <workdir>
 ```
 
 Clears anything left in the workdir from another head, creates a detached worktree at the PR head
@@ -97,7 +104,7 @@ Rely on CI (`test-frontend` etc.) for lint/type/test results — don't run them 
 ### 2b. Local checks (measure, don't guess)
 
 ```bash
-python3 $S/local_checks.py <workdir>      # 3–10 min: install + build once, then coverage, jscpd, knip
+python3 .claude/skills/studio-frontend-review/scripts/local_checks.py <workdir>      # 3–10 min: install + build once, then coverage, jscpd, knip
 ```
 
 Writes `<workdir>/local-checks.md` for this round's lines only: changed lines/branches/functions no test
@@ -116,7 +123,7 @@ file's content as the prompt. Each writes `<workdir>/findings/<agent>.json` (for
 ### 4. Verify, dedupe, re-check threads
 
 ```bash
-python3 $S/merge_findings.py <workdir>
+python3 .claude/skills/studio-frontend-review/scripts/merge_findings.py <workdir>
 ```
 
 It lowers blocker/major findings that aren't broken behaviour (or have no `failure`) to minor and prints them.
@@ -139,7 +146,7 @@ test can. For every kept blocker/major and every kept `bug` finding (at most 6 p
 2. Run them — the PR's code runs, so only through the script, which sandboxes it (bubblewrap: `$HOME`
    hidden, no credentials, no network while tests run; the first call installs and builds, ~3 min):
    ```bash
-   python3 $S/repro_tests.py <workdir>
+   python3 .claude/skills/studio-frontend-review/scripts/repro_tests.py <workdir>
    ```
 3. `findings/repro.json` per finding: `reproduced` (control cases pass, a bug case fails on an assertion) →
    confirmed, posted with the test attached; `not-reproduced` (everything passes) → rejected by
@@ -154,7 +161,7 @@ notice it breaking. Pick 3–6 pieces of logic this PR adds that `local-checks.m
 conditions, branches that decide behaviour (the stale-scope guard, the retry-once flag, the refusal rule) —
 write them to `<workdir>/mutations.json` (format in `scripts/mutation_checks.py`) and run:
 ```bash
-python3 $S/mutation_checks.py <workdir>
+python3 .claude/skills/studio-frontend-review/scripts/mutation_checks.py <workdir>
 ```
 `survived` means every related test passed with that logic broken: a `tests` finding (minor) anchored on the
 line, naming the mutation and the test that should catch it; `verify` is the printed command. `killed` needs
@@ -173,7 +180,7 @@ is never posted again as a new finding.
 ### 5. Draft
 
 ```bash
-python3 $S/render_draft.py <workdir> --summary "<2–4 sentences, ending with the verdict: ready | ready after fixes | needs rework>"
+python3 .claude/skills/studio-frontend-review/scripts/render_draft.py <workdir> --summary "<2–4 sentences, ending with the verdict: ready | ready after fixes | needs rework>"
 ```
 
 It writes `draft.md` and `summary.md`, whose first paragraph states what this round covered and the tier
@@ -188,11 +195,10 @@ Write the approved items (from `numbered.json`, with edits) to `<workdir>/approv
 fix the counts in `summary.md`. Then:
 
 ```bash
-H=$(python3 -c "import json;print(json.load(open('<workdir>/plan.json'))['pr']['headRefOid'])")
-P="<N> --repo constructorfabric/studio-web --findings <workdir>/approved.json --summary <workdir>/summary.md --plan <workdir>/plan.json --head-sha $H"
-python3 $S/publish_review.py $P [--replies <workdir>/replies.json] [--quiet-if-empty] --dry-run
-python3 $S/publish_review.py $P [--replies <workdir>/replies.json] [--quiet-if-empty]
+python3 .claude/skills/studio-frontend-review/scripts/publish_review.py <N> --repo constructorfabric/studio-web --findings <workdir>/approved.json --summary <workdir>/summary.md --plan <workdir>/plan.json [--replies <workdir>/replies.json] [--quiet-if-empty] --dry-run
+python3 .claude/skills/studio-frontend-review/scripts/publish_review.py <N> --repo constructorfabric/studio-web --findings <workdir>/approved.json --summary <workdir>/summary.md --plan <workdir>/plan.json [--replies <workdir>/replies.json] [--quiet-if-empty]
 ```
+(`--plan` also supplies the reviewed head: the script refuses to post when the PR has moved on.)
 
 `--quiet-if-empty` in round k > 1: no new findings → no review, only the thread actions. Every finding is
 posted inline (a non-commentable line moves to the nearest commentable one in the same file); a finding on a

@@ -106,13 +106,15 @@ def main():
     a = ap.parse_args()
 
     repo_args = ["--repo", a.repo] if a.repo else []
+    plan = json.load(open(a.plan)) if a.plan else None
+    # The plan names the head that was reviewed; no shell variable needed to pass it in.
+    a.head_sha = a.head_sha or (plan or {}).get("pr", {}).get("headRefOid")
     meta = json.loads(gh(["pr", "view", a.pr, *repo_args, "--json", "number,url,headRefOid"]))
     owner_repo = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/", meta["url"]).group(1)
     if a.head_sha and a.head_sha != meta["headRefOid"]:
         print(f"PR head moved: reviewed {a.head_sha[:10]}, now {meta['headRefOid'][:10]} — not publishing")
         sys.exit(4)
     head = a.head_sha or meta["headRefOid"]
-    plan = json.load(open(a.plan)) if a.plan else None
     pages = json.loads(gh(["api", "--paginate", "--slurp", f"repos/{owner_repo}/pulls/{meta['number']}/files?per_page=100"]))
     lines = {f["filename"]: commentable_lines(f.get("patch")) for page in pages for f in page}
 

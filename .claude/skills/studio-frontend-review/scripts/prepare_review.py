@@ -62,7 +62,7 @@ def reset_workdir(workdir, head):
     for wt in ("tree", "base-tree"):
         if os.path.isdir(f"{workdir}/{wt}"):
             sh("git", "worktree", "remove", "--force", f"{workdir}/{wt}", check=False)
-    for d in ("findings", "briefs"):
+    for d in ("findings", "briefs", "diffs", "base", "since", "repro"):
         shutil.rmtree(f"{workdir}/{d}", ignore_errors=True)
     for f in ("verified.json", "approved.json", "replies.json", "summary.md", "draft.md", "numbered.json"):
         if os.path.exists(f"{workdir}/{f}"):
@@ -183,12 +183,39 @@ def own_threads(repo, n, me):
     return out
 
 
-def header(role, n, repo, tree, base, workdir):
-    return f"""{role} of GitHub PR #{n} in {repo}.
-Do not spawn subagents. Do not modify files, commit, or post anything to GitHub.
+def write_diffs(workdir, tree, base, plan):
+    """diffs/<agent>.diff and base/<path>: what reviewers read instead of running git. In a headless run a
+    background subagent may have no Bash at all, so everything it needs is a file (Read/Grep/Glob)."""
+    mb = sh("git", "-C", tree, "merge-base", base, "HEAD").strip()
+    os.makedirs(f"{workdir}/diffs", exist_ok=True)
+    every = sorted({f["path"] for s in plan["slices"] for f in s["files"]})
+    targets = {"all": every, "single" if plan["single_agent"] else "architecture": every}
+    for s in plan["slices"]:
+        targets[f"slice-{s['id']}"] = sorted({f["path"] for f in s["files"]})
+    for name, paths in targets.items():
+        diff = sh("git", "-C", tree, "diff", "--no-color", f"{mb}..HEAD", "--", *paths, check=False)
+        open(f"{workdir}/diffs/{name}.diff", "w").write(diff)
+    # base/: the merge-base; since/: the last reviewed head (follow-up rounds, for "pre-existing" checks).
+    versions = {"base": mb, **({"since": plan["since"]} if plan.get("since") else {})}
+    for folder, rev in versions.items():
+        for p in every:
+            old = subprocess.run(["git", "-C", tree, "show", f"{rev}:{p}"], capture_output=True, text=True)
+            if old.returncode == 0:
+                dest = os.path.join(workdir, folder, p)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                open(dest, "w").write(old.stdout)
+    return mb
 
-Worktree at the PR head: {tree}  (base: {base}; diff with `git -C {tree} diff {base}...HEAD -- <paths>`,
-old versions with `git -C {tree} show {base}:<path>`)
+
+def header(role, n, repo, tree, base, workdir, agent):
+    return f"""{role} of GitHub PR #{n} in {repo}.
+Do not spawn subagents. Do not modify tracked files, commit, or post anything to GitHub.
+
+Use Read, Grep and Glob — you may have no Bash in an unattended run, and everything you need is a file:
+- the PR head (full files): {tree}/<path>
+- your diff: {workdir}/diffs/{agent}.diff   (the whole PR: {workdir}/diffs/all.diff)
+- the base version of a changed file: {workdir}/base/<path>   (absent = the file is new)
+- anything else in the repo at the head: {tree}/ (Grep/Glob over it; base: {base})
 Context pack (read first): {workdir}/context.md
 Checklist (read first): {CHECKLIST}
 Studio frontend rules (read first; they override generic advice where they disagree): {STUDIO}
@@ -214,8 +241,8 @@ Rules for every reviewer:
 - For a guard or trigger condition, check what it is meant to catch *and* every normal case it also
   matches (`items.length === 0` also matches a genuinely empty list).
 - When an ADR or spec names a single writer or owner of a piece of state, grep every writer of that
-  field (`rg "\\.<field>\\s*=" `, reducers, setters) and report the others.
-- When a module is rewritten or moved, compare it with the base (`git show <base>:<path>`) for dropped
+  field (Grep for `\\.<field>\\s*=`, reducers, setters) and report the others.
+- When a module is rewritten or moved, compare it with the base (`{workdir}/base/<path>`) for dropped
   tests and dropped `@cpt-*` markers.
 """
 
@@ -230,7 +257,7 @@ Code-pattern conventions inside files are the slice reviewers' job.
 How to work:
 1. Read the spec documents listed in the context pack. Note the requirements and decisions relevant to
    this PR, especially invariants ("X is the only writer of Y", "Z never …").
-2. Get the structural picture: `git -C <tree> diff --stat <base>...HEAD`, new files/directories,
+2. Get the structural picture: the file list in the context pack and `diffs/all.diff`, new files/directories,
    changed public interfaces (exports, routes, schemas, contracts, events, error codes, component props).
 3. Read the diffs of the structural files.
 4. For each requirement/decision, check the code honours it — for an invariant, search the whole tree
@@ -255,7 +282,7 @@ How to work:
 3. Go through the checklist sections in order for every file. Before reporting a bug, check the callers.
    Before reporting duplication, search the repo for the existing implementation and name it.
 4. For conventions (checklist section 4), open 2–3 existing sibling files of the same kind first and
-   note how they are written; confirm a pattern is dominant with an `rg` count before reporting a
+   note how they are written; confirm a pattern is dominant with a Grep count before reporting a
    deviation. One finding per deviating pattern, listing all places in your slice. When you say a
    pattern is new or pre-existing, check the base branch — don't infer it.
 5. For tests, apply the checklist's testing philosophy — ask for tests of logic, not of markup.
@@ -292,6 +319,7 @@ def main():
     os.makedirs(f"{workdir}/findings", exist_ok=True)
     os.makedirs(f"{workdir}/briefs", exist_ok=True)
     open(f"{workdir}/pr-body.md", "w").write(plan.get("body") or "")
+    write_diffs(workdir, tree, base, plan)
 
     blind = plan.get("blind")
     # What others (people, CodeRabbit, earlier runs of this skill) already said, so it isn't repeated.
@@ -348,7 +376,7 @@ def main():
     context = f"""# Context pack — PR #{n} ({repo})
 
 **Title:** {pr['title']}
-**Base:** {base} — diff with `git -C {tree} diff {base}...HEAD -- <paths>`
+**Base:** {base} — diffs in `{workdir}/diffs/` (per agent and `all.diff`), base versions in `{workdir}/base/<path>`
 **Size:** +{pr['additions']} -{pr['deletions']} in {pr['changedFiles']} files; reviewable weight {plan['reviewable_weight']}.
 Assume the code is AI-agent-written (see checklist "Agent-written code").
 
@@ -400,7 +428,7 @@ Noise skipped: {noise}
     total = len(plan["slices"])
     if plan["single_agent"]:
         s = plan["slices"][0]
-        body = header("You are the single reviewer (line pass + architecture)", n, repo, tree, base, workdir) + rules
+        body = header("You are the single reviewer (line pass + architecture)", n, repo, tree, base, workdir, "single") + rules
         body += "\nYour files (review every changed line" + (" that is new since the last round" if followup else "") + "):\n"
         body += "\n".join(fmt_file(f) for f in s["files"]) + "\n"
         body += "\nThis is a small review, so you are also the architecture/spec reviewer. Do two passes.\n"
@@ -410,13 +438,13 @@ Noise skipped: {noise}
         open(f"{workdir}/briefs/single.md", "w").write(body)
         agents.append(("single", slice_model))
     else:
-        body = header("You are reviewing the architecture and spec conformance", n, repo, tree, base, workdir) + rules + ARCH_BODY
+        body = header("You are reviewing the architecture and spec conformance", n, repo, tree, base, workdir, "architecture") + rules + ARCH_BODY
         body += f"\nWrite findings to {workdir}/findings/architecture.json. Finish with a 3–5 sentence summary of the architectural shape of the PR and your overall assessment.\n"
         open(f"{workdir}/briefs/architecture.md", "w").write(body)
         agents.append(("architecture", plan["architecture_model"]))
         for s in plan["slices"]:
             k = s["id"]
-            body = header(f"You are reviewing slice {k} of {total}", n, repo, tree, base, workdir) + rules
+            body = header(f"You are reviewing slice {k} of {total}", n, repo, tree, base, workdir, f"slice-{k}") + rules
             body += "\nYour slice (review every changed line" + (" that is new since the last round" if followup else "") + " of these files):\n"
             body += "\n".join(fmt_file(f) for f in s["files"]) + "\n"
             body += SLICE_BODY

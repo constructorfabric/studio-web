@@ -100,20 +100,20 @@ Also check:
 - `line` is a changed line in the diff that shows the problem;
 - `verify` is a real command/test/sequence that would show it; fix or write it if not;
 - claims about `cfs validate` match `<workdir>/cfs-validate.md` word for word — strike anything it doesn't say;
-- `preexisting: true` findings really existed at the last reviewed head (`git -C <tree> show <since>:<path>`);
+- `preexisting: true` findings really existed at the last reviewed head (`<workdir>/since/<path>`);
 - the body doesn't overstate; fix it if it does.
 
 Known points needing a decision:
 <contradictions between reviewers and likely duplicate pairs noted by the orchestrator; settle each
-against the code and the base branch (`git -C <tree> show <base>:<path>`) rather than picking a side>
+against the code and the base version (`<workdir>/base/<path>`) rather than picking a side>
 
 Be adversarial: the cost of posting a wrong comment is higher than missing a minor one.
 
 For every blocker/major and every `bug` finding you confirm (at most 6, biggest first), also write a
 reproduction test to <workdir>/repro/ following .claude/skills/studio-frontend-review/references/agent-briefs.md,
-"Reproduction tests", then run `python3 .claude/skills/studio-frontend-review/scripts/repro_tests.py <workdir>`
-and read findings/repro.json: fix a `broken` file once and re-run; if a finding is `not-reproduced`, check
-whether your test really exercises the path — fix and re-run once, else reject the finding.
+"Reproduction tests". Don't run anything (you may have no Bash): the orchestrator runs them with
+`repro_tests.py` and fixes a `broken` file itself. Use Read/Grep/Glob only; the diffs are in <workdir>/diffs/
+and the base versions in <workdir>/base/<path>.
 
 Write <workdir>/findings/verified.json: the same array, each item with added fields
 "verdict" (confirmed | downgraded | rejected | duplicate), "verdict_reason", "duplicate_of" for
