@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 /**
- * The stand switch (ADR-0030): `STUDIO_STAND` names the Studio the dev server
+ * The stand switch (ADR-0031): `STUDIO_STAND` names the Studio the dev server
  * proxies to and signs in against, and the container's own variable names
  * replace any single value of it.
  */

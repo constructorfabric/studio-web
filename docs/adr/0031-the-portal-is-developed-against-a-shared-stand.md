@@ -4,7 +4,7 @@ status: accepted
 date: 2026-09-25
 ---
 
-# ADR-0030: The portal is developed against a shared stand, and the stack on the machine is one switch away
+# ADR-0031: The portal is developed against a shared stand, and the stack on the machine is one switch away
 
 **ID**: `cpt-studio-adr-the-portal-is-developed-against-a-shared-stand`
 

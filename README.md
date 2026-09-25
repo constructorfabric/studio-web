@@ -23,7 +23,7 @@ and `STUDIO_STAND=local` turns it to the Compose stack below when a backend
 branch has to be seen or the stand is down. The switch, its overrides and what
 a stand must allow are in
 [`studio-frontend/docs/stands.md`](studio-frontend/docs/stands.md)
-([ADR-0030](docs/adr/0030-the-portal-is-developed-against-a-shared-stand.md)).
+([ADR-0031](docs/adr/0031-the-portal-is-developed-against-a-shared-stand.md)).
 
 ## Local development with Docker Compose
 

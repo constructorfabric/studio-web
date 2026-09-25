@@ -1,5 +1,5 @@
 /**
- * Which Studio the dev server talks to — the stand switch (ADR-0030).
+ * Which Studio the dev server talks to — the stand switch (ADR-0031).
  *
  * The portal reaches its backend through same-origin paths (`/cf/*` for the
  * gateway, `/studio/*` for an IDE session) and learns its IdP from

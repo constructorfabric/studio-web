@@ -4,7 +4,7 @@
 *stand*: a backend, its data, its Keycloak and its IDE sessions. By default
 that is the shared `dev` stand, and nothing on this machine but Node is
 needed. Why, and what it means for the data, is decided in
-[ADR-0030](../../docs/adr/0030-the-portal-is-developed-against-a-shared-stand.md);
+[ADR-0031](../../docs/adr/0031-the-portal-is-developed-against-a-shared-stand.md);
 this is the operating note.
 
 ## Switching

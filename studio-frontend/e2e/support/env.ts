@@ -12,7 +12,7 @@
  * The defaults are the compose stack's seeded `demo/studio` from
  * `docker/keycloak/realm-studio.json`, and they are defaults *only* for the
  * compose stack's own portal on port 8080. The dev server on 5173 faces
- * whichever stand `STUDIO_STAND` chose (ADR-0030), and a stand's realm has no
+ * whichever stand `STUDIO_STAND` chose (ADR-0031), and a stand's realm has no
  * seeded users, so a portal there comes with no defaults: name the account.
  * A missing credential is a configuration error, and it fails here, at
  * config load, rather than as a timed-out login form.

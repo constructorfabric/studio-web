@@ -5,7 +5,7 @@ import path from 'path';
 import { renderRuntimeEnv, resolveStand, type Stand } from './scripts/lib/stands';
 
 /**
- * The dev server stands in for the container (ADR-0030): what nginx and
+ * The dev server stands in for the container (ADR-0031): what nginx and
  * `docker/10-runtime-env.sh` do for a deployed portal — carry the backend
  * paths to a backend, and tell the bundle which IdP to sign in against — Vite
  * does here for the stand `STUDIO_STAND` names (`scripts/lib/stands.ts`).
