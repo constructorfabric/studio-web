@@ -79,9 +79,10 @@ The realm's `studio-portal` client must list the dev server twice:
 
 `keycloak/realm-studio.json` in this repository lists both; a deployed realm
 is an environment Secret imported on first boot, so an administrator adds
-them on the stand. A passing `OPTIONS` preflight proves nothing — Keycloak
-answers one for any origin; the `POST` is what carries the headers. Until
-both settings are there, `STUDIO_STAND=local` is the way to work.
+them on the stand — `dev` and `test` have had both since 2026-09-25. A
+passing `OPTIONS` preflight proves nothing — Keycloak answers one for any
+origin; the `POST` is what carries the headers. On a stand missing either
+setting, `STUDIO_STAND=local` is the way to work.
 
 ## The data is real
 

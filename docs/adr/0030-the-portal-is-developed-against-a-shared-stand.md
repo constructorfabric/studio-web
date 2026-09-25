@@ -124,12 +124,12 @@ is no evidence either way: Keycloak answers `OPTIONS` for any origin.
 `keycloak/realm-studio.json` lists both, for `localhost` and `127.0.0.1`, on
 `5173` and `8080`. But a deployed realm is not that file:
 `keycloak/README.md` has each environment generate its own and mount it from
-a Secret, and Keycloak imports it once, on first boot. At the time of writing
-`dev` and `test` list the redirect URIs (added on 2026-09-25) and not yet the
-web origins: the sign-in gets as far as the code and stops on the exchange.
-Adding `http://localhost:5173` and `http://127.0.0.1:5173` there is an
-administrator's change to the stand's realm, and this decision waits for it
-before it is worth anything; nothing in this repository can make it.
+a Secret, and Keycloak imports it once, on first boot. Both settings are an
+administrator's change to the stand's realm, and nothing in this repository
+can make it. `dev` and `test` have had both since 2026-09-25 — the redirect
+URIs first, at which point the sign-in got as far as the code and stopped on
+the exchange, then the web origins, after which it went through. Another
+stand needs the same two before a dev server can face it.
 
 ### What this does to the end-to-end suite
 
@@ -180,12 +180,17 @@ rule: nothing destructive is tried out on `dev` for the sake of a screen;
   `npm ci`, `npm run dev:all`, sign in with GitHub. The stack is still what
   backend work and the CI gate run on, and `STUDIO_STAND=local` is the way
   back to it.
-- **Nothing works until the realm on `dev` lists the dev server, as a
-  redirect URI and as a web origin.** Both are an administrator's change, on
-  the stand, outside this repository. Until both land, the sign-in stops at
-  one of the two — the IdP's `Invalid parameter: redirect_uri`, or a code
-  exchange the browser blocks for CORS — and `STUDIO_STAND=local` is the way
-  to work meanwhile.
+- **A stand has to list the dev server twice — as a redirect URI and as a
+  web origin — before a dev server can face it.** Both are an administrator's
+  change, on the stand, outside this repository; `dev` and `test` have them.
+  On a stand without one of the two the sign-in stops there — the IdP's
+  `Invalid parameter: redirect_uri`, or a code exchange the browser blocks for
+  CORS — and `STUDIO_STAND=local` is the way to work meanwhile.
+- **The IDE frame is not yet exercised against a stand.** The portal seeds
+  the frame address with the fixture's static page (#321); the session
+  gate's per-session `/studio/{id}/` replaces that seed in #322. Until then
+  the `/studio` proxy and its `Origin` rewrite are proven against a
+  substitute backend only, not a session pod.
 - **A stand's outage is a local outage.** When `dev` is down or mid-deploy,
   so is the portal on every developer's machine — for as long as it takes to
   switch to `test` or `local`.
