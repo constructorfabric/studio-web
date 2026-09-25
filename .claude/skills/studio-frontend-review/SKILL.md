@@ -167,6 +167,9 @@ git worktree remove --force <workdir>/tree
 For unattended runs (`scripts/run_auto_reviews.sh`, cron, CI — setup in `references/automation.md`). The
 runner clears the workdir and runs step 1 itself (exit 3/5 never start Claude). Same pipeline, with these
 differences:
+- Never end your turn while an agent is still running. A headless session ends when you stop, and a
+  background agent's result is lost with it (a benchmark run lost its verifier this way). Wait for every
+  agent's result — reviewers and the verifier — before moving to the next step.
 - Never ask anything. Where the workflow says "ask the user", take the conservative default stated there.
 - Publish without approval, always with `--auto`, `--plan`, `--head-sha`, `--replies` when there are thread
   actions, and `--quiet-if-empty` in round k > 1. Event `COMMENT` only — never `APPROVE` or

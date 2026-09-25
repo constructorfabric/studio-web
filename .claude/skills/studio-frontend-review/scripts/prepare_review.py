@@ -293,9 +293,11 @@ def main():
     os.makedirs(f"{workdir}/briefs", exist_ok=True)
     open(f"{workdir}/pr-body.md", "w").write(plan.get("body") or "")
 
+    blind = plan.get("blind")
     # What others (people, CodeRabbit, earlier runs of this skill) already said, so it isn't repeated.
-    inline = json.loads(sh("gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/comments?per_page=100", check=False) or "[]")
-    reviews = json.loads(sh("gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/reviews?per_page=100", check=False) or "[]")
+    # A blind benchmark run (plan_review.py --at) sees none of it: later comments would give answers away.
+    inline = [] if blind else json.loads(sh("gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/comments?per_page=100", check=False) or "[]")
+    reviews = [] if blind else json.loads(sh("gh", "api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/reviews?per_page=100", check=False) or "[]")
     said = [f"- {c['user']['login']} on `{c['path']}:{c.get('line') or c.get('original_line')}`: "
             + c["body"].strip().replace("\n", " ")[:400] for page in inline for c in page]
     said += [f"- {r['user']['login']} (review, {r['state']}): " + r["body"].strip().replace("\n", " ")[:600]
@@ -303,7 +305,7 @@ def main():
     open(f"{workdir}/existing-comments.md", "w").write("\n".join(said) + "\n" if said else "none\n")
 
     me = sh("gh", "api", "user", "--jq", ".login").strip()
-    threads = own_threads(repo, n, me)
+    threads = [] if blind else own_threads(repo, n, me)
     json.dump(threads or [], open(f"{workdir}/open-threads.json", "w"), indent=2, ensure_ascii=False)
     if threads is None:
         threads_note = "Could not read review threads (GraphQL failed): don't post thread replies this run."
@@ -316,7 +318,8 @@ def main():
 
     cfs_report(workdir, tree, base, plan.get("scope") or "")
 
-    checks = sh("gh", "pr", "checks", str(n), "--repo", repo, check=False).strip() or "(no checks reported)"
+    checks = ("(benchmark run: CI of the current head is not shown)" if blind else
+              sh("gh", "pr", "checks", str(n), "--repo", repo, check=False).strip() or "(no checks reported)")
     # Only instruction files that govern the touched paths: the repo root and ancestors of changed files.
     touched_dirs = {os.path.dirname(f["path"]) for s_ in plan["slices"] for f in s_["files"]}
     def governs(doc):
@@ -387,6 +390,8 @@ Noise skipped: {noise}
     open(f"{workdir}/context.md", "w").write(context)
 
     rules = RULES.format(workdir=workdir) + (followup_block(plan) if followup else "")
+    # Slice reviewers (and the single agent) are Sonnet unless REVIEW_SLICE_MODEL says otherwise.
+    slice_model = os.environ.get("REVIEW_SLICE_MODEL") or "sonnet"
     agents = []
     total = len(plan["slices"])
     if plan["single_agent"]:
@@ -399,7 +404,7 @@ Noise skipped: {noise}
         body += "\nLine pass:" + SLICE_BODY.split("How to work:")[1]
         body += f"\nWrite findings to {workdir}/findings/single.json. Finish with a 3–5 sentence summary of the PR's shape and your overall assessment.\n"
         open(f"{workdir}/briefs/single.md", "w").write(body)
-        agents.append(("single", "sonnet"))
+        agents.append(("single", slice_model))
     else:
         body = header("You are reviewing the architecture and spec conformance", n, repo, tree, base, workdir) + rules + ARCH_BODY
         body += f"\nWrite findings to {workdir}/findings/architecture.json. Finish with a 3–5 sentence summary of the architectural shape of the PR and your overall assessment.\n"
@@ -413,7 +418,7 @@ Noise skipped: {noise}
             body += SLICE_BODY
             body += f"\nWrite findings to {workdir}/findings/slice-{k}.json. Finish with one or two sentences on the overall quality of your slice.\n"
             open(f"{workdir}/briefs/slice-{k}.md", "w").write(body)
-            agents.append((f"slice-{k}", "sonnet"))
+            agents.append((f"slice-{k}", slice_model))
 
     print(f"round {plan['round']}" + (f" (follow-up: lines new since {plan['since'][:10]})" if followup else " (full)"))
     print(f"worktree: {tree}")

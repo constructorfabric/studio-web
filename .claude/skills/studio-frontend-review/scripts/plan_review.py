@@ -99,6 +99,23 @@ def added_lines(a, b, scope):
     return res
 
 
+def git_files(base, head):
+    """The PR's files between two commits, shaped like the GitHub files API returns them (for --at)."""
+    status = {"A": "added", "M": "modified", "D": "removed", "T": "modified"}
+    kinds = dict(l.split("\t", 1)[::-1] for l in git("diff", "--name-status", "--no-renames", base, head).splitlines())
+    out = []
+    for line in git("diff", "--numstat", "--no-renames", base, head).splitlines():
+        add, dele, path = line.split("\t", 2)
+        adds, dels = (0, 0) if add == "-" else (int(add), int(dele))
+        f = {"filename": path, "status": status.get(kinds.get(path, "M")[0], "modified"),
+             "additions": adds, "deletions": dels, "changes": adds + dels}
+        if add != "-":
+            patch = git("diff", "--no-color", "--no-renames", base, head, "--", path)
+            f["patch"] = patch[patch.find("\n@@") + 1:] if "\n@@" in patch else ""
+        out.append(f)
+    return out
+
+
 def lines_new_since(since, head, base_ref, scope):
     """{path: [line numbers at head]} of the PR's added lines that were not among its added lines at `since`.
     Each side is diffed against its own merge-base, so base-branch changes pulled in by a rebase don't
@@ -243,6 +260,9 @@ def main():
     ap.add_argument("--scope", default="studio-frontend/", help="path prefix to review; '' for the whole PR")
     ap.add_argument("--full", action="store_true", help="review every changed line even if an earlier head was reviewed")
     ap.add_argument("--record-skips", action="store_true", help="record exit 3/5 heads as reviewed (unattended runs)")
+    ap.add_argument("--at", help="benchmark: plan a blind round 1 of the PR as it was at this commit "
+                                 "(files from git, no earlier rounds; prepare_review.py then hides every comment)")
+    ap.add_argument("--body-file", help="use this file as the PR description (e.g. the version before any review)")
     a = ap.parse_args()
 
     repo_args = ["--repo", a.repo] if a.repo else []
@@ -251,6 +271,17 @@ def main():
     owner_repo = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/", meta["url"]).group(1)
     files = json.loads(gh(["api", "--paginate", "--slurp", f"repos/{owner_repo}/pulls/{meta['number']}/files?per_page=100"]))
     files = [f for page in files for f in page]
+    if a.at:
+        # Benchmark: the PR as it was at an earlier commit. Files come from git against the merge-base.
+        git("fetch", "-q", "origin", meta["baseRefName"], f"pull/{meta['number']}/head", a.at)
+        meta["headRefOid"] = git("rev-parse", a.at).strip()
+        mb = git("merge-base", f"origin/{meta['baseRefName']}", meta["headRefOid"]).strip()
+        files = git_files(mb, meta["headRefOid"])
+        meta["additions"] = sum(f["additions"] for f in files)
+        meta["deletions"] = sum(f["deletions"] for f in files)
+        meta["changedFiles"] = len(files)
+    if a.body_file:
+        meta["body"] = open(a.body_file).read()
     head = meta["headRefOid"]
 
     def skip(code, msg):
@@ -260,10 +291,12 @@ def main():
         sys.exit(code)
 
     # Earlier rounds: heads this skill already reviewed, other than the current one.
-    me = gh(["api", "user", "--jq", ".login"]).strip()
-    reviews = [r for page in json.loads(gh(["api", "--paginate", "--slurp",
-               f"repos/{owner_repo}/pulls/{meta['number']}/reviews?per_page=100"])) for r in page]
-    previous = [h for h in review_state.reviewed_heads(owner_repo, meta["number"], reviews, me) if h["sha"] != head]
+    previous = []
+    if not a.at:
+        me = gh(["api", "user", "--jq", ".login"]).strip()
+        reviews = [r for page in json.loads(gh(["api", "--paginate", "--slurp",
+                   f"repos/{owner_repo}/pulls/{meta['number']}/reviews?per_page=100"])) for r in page]
+        previous = [h for h in review_state.reviewed_heads(owner_repo, meta["number"], reviews, me) if h["sha"] != head]
     since, new_lines, since_note = None, None, ""
     if previous and not a.full:
         since = previous[-1]["sha"]
@@ -376,6 +409,8 @@ def main():
         "tracker_refs": tracker_refs,
         "reviewable_weight": round(total_weight),
         "scope": a.scope,
+        # Benchmark run (--at): prepare_review.py shows the agents no comments, threads or CI of the PR.
+        "blind": bool(a.at),
         # Round k > 1 reviews only lines added since `since`, the last reviewed head (see the module doc).
         "round": len(previous) + 1,
         "since": since,
