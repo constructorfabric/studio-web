@@ -421,8 +421,8 @@ Noise skipped: {noise}
     open(f"{workdir}/context.md", "w").write(context)
 
     rules = RULES.format(workdir=workdir) + (followup_block(plan) if followup else "")
-    # Slice reviewers (and the single agent): the plan's choice (Opus in round 1 when REVIEW_ROUND1_MODEL says
-    # so), else REVIEW_SLICE_MODEL, else Sonnet.
+    # Slice reviewers (and the single agent): the plan's choice (REVIEW_ROUND1_MODEL in a full round), else
+    # REVIEW_SLICE_MODEL, else Sonnet.
     slice_model = plan.get("slice_model") or os.environ.get("REVIEW_SLICE_MODEL") or "sonnet"
     agents = []
     total = len(plan["slices"])

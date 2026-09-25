@@ -6,8 +6,8 @@
 #   DRY_RUN=1 run_auto_reviews.sh  full review, but publish_review.py only runs with --dry-run
 #
 # Env: REVIEW_RUNS (workdir root, default ~/.cache/studio-frontend-review), MAX_BUDGET_USD (follow-up round,
-#      default 15), MAX_BUDGET_USD_ROUND1 (full round, default 40), CLAUDE_BIN (default claude),
-#      REVIEW_MODEL (orchestrator model, default sonnet), REVIEW_ROUND1_MODEL (round-1 reviewers, default opus),
+#      default 15), MAX_BUDGET_USD_ROUND1 (full round, default 25), CLAUDE_BIN (default claude),
+#      REVIEW_MODEL (orchestrator model, default sonnet), REVIEW_ROUND1_MODEL (round-1 reviewers, default sonnet),
 #      REVIEW_ARCH_MODEL (architecture agent in follow-ups, default sonnet; "auto": opus on big PRs),
 #      REVIEW_REPO (default constructorfabric/studio-web).
 # Run it from a checkout that has this skill (a dedicated clone on main is best: the review worktrees are
@@ -27,10 +27,10 @@ export REVIEW_RUNS="$runs"   # review_state.py keeps its record of reviewed head
 exec 9>"$runs/.lock"
 flock -n 9 || { echo "$(date -Is) another run is in progress"; exit 0; }
 
-# Models. Round 1 — the only pass that sees all the code — has its architecture and slice reviewers on Opus
-# (a blind benchmark on #380 found 3x the behaviour bugs); follow-up rounds, the verifier and the
-# orchestrator stay on Sonnet. REVIEW_ROUND1_MODEL=sonnet makes every round Sonnet-only.
-export REVIEW_ROUND1_MODEL="${REVIEW_ROUND1_MODEL:-opus}"
+# Models: every agent on Sonnet (`sonnet` resolves to Sonnet 5). REVIEW_ROUND1_MODEL sets both reviewer models
+# of a full round — e.g. `opus`: a blind benchmark on #380 found more behaviour bugs with Opus reviewers, at
+# about three times the cost.
+export REVIEW_ROUND1_MODEL="${REVIEW_ROUND1_MODEL:-sonnet}"
 export REVIEW_ARCH_MODEL="${REVIEW_ARCH_MODEL:-sonnet}"
 # `claude -p` kills background agents still running 10 minutes after the orchestrator's turn ends; a round-1
 # review's agents run longer than that. 45 minutes, not unlimited, so a hung agent can't hold the lock forever.
@@ -86,8 +86,8 @@ for pr in "${prs[@]}"; do
     continue
   fi
   mkdir -p "$runs/state/attempts"; echo $((attempts + 1)) > "$attempts_file"
-  # A full round costs more (all the code, Opus reviewers) than a follow-up.
-  case "$round" in *"(full)"*) budget="${MAX_BUDGET_USD_ROUND1:-40}" ;; *) budget="${MAX_BUDGET_USD:-15}" ;; esac
+  # A full round reviews all the code (and runs the repro tests), so it gets a higher cap than a follow-up.
+  case "$round" in *"(full)"*) budget="${MAX_BUDGET_USD_ROUND1:-25}" ;; *) budget="${MAX_BUDGET_USD:-15}" ;; esac
   # Steps 2 and 2b are deterministic and slow (install, build, coverage): run them here, not inside Claude.
   if ! python3 "$here/prepare_review.py" "$wd" > "$wd/prepare.log" 2>&1; then
     echo "$(date -Is) PR #$pr: prepare failed"; tail -n 5 "$wd/prepare.log"; continue

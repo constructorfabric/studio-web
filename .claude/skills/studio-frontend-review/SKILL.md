@@ -52,11 +52,11 @@ A follow-up round with nothing to say posts nothing. This is what makes the revi
 - Every `Agent` call sets `model` explicitly, exactly as `prepare_review.py` prints it: the plan's
   `architecture_model` and `slice_model`. The verifier is always `sonnet`. Never `fable`, never
   `subagent_type: "fork"`. Use `subagent_type: "general-purpose"`.
-- Where the models come from: in round 1 (the only pass that sees all the code) `REVIEW_ROUND1_MODEL` sets both
-  reviewer models — `run_auto_reviews.sh` sets it to `opus`, because a blind benchmark on #380 found three
-  times the behaviour bugs with Opus reviewers. Follow-up rounds use `REVIEW_ARCH_MODEL` (`auto`: opus on big
-  PRs) and `REVIEW_SLICE_MODEL`, both Sonnet in unattended runs. Without these variables (a manual run) the
-  architecture agent is `auto` and slices are Sonnet.
+- Where the models come from: every agent is `sonnet` (Sonnet 5) by default, manual and unattended alike.
+  `REVIEW_ROUND1_MODEL` sets both reviewer models of a full round, `REVIEW_ARCH_MODEL` / `REVIEW_SLICE_MODEL`
+  those of follow-ups (`REVIEW_ARCH_MODEL=auto`: opus for the architecture agent on big PRs). Opus is only used
+  when one of these asks for it; a blind benchmark on #380 found more behaviour bugs with Opus reviewers at
+  about three times the cost.
 - At most **10 agents per review**: 1 architecture + up to 8 slices + 1 verifier. A review of ≤ 400 weighted
   lines is one agent on the slice model (most follow-up rounds: Sonnet).
 - Launch the architecture agent and all slice agents in **one message**; the verifier after they finish.

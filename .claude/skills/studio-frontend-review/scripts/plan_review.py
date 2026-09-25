@@ -388,7 +388,7 @@ def main():
         skip(3, f"nothing reviewable under '{a.scope}' ({len(out_of_scope)} files out of scope, {len(noise)} noise)")
     slices, over_budget = pack(list(groups.values()), a.target, a.max_slices)
 
-    # Small PRs: one Sonnet agent does everything. Opus only where architecture has real weight.
+    # Small PRs: one agent does everything. arch_opus only matters when REVIEW_ARCH_MODEL=auto.
     single_agent = total_weight <= 400
     round1_model = None if since else (os.environ.get("REVIEW_ROUND1_MODEL") or None)
     arch_opus = not single_agent and (total_weight > 800 or (len(arch_signals) >= 2 and total_weight > 300))
@@ -421,10 +421,9 @@ def main():
         "noise_files": noise,
         "out_of_scope_files": out_of_scope,
         "architecture_signals": arch_signals,
-        # Round 1 is the only pass that sees all the code, so REVIEW_ROUND1_MODEL (run_auto_reviews.sh: opus)
-        # sets both reviewer models for it; follow-up rounds and the verifier stay on Sonnet. Otherwise
-        # REVIEW_ARCH_MODEL pins the architecture model regardless of signals ("auto": opus on big PRs).
-        "architecture_model": round1_model or (os.environ.get("REVIEW_ARCH_MODEL") or "auto").replace("auto", "opus" if arch_opus else "sonnet"),
+        # Sonnet (5) everywhere by default. REVIEW_ROUND1_MODEL sets both reviewer models of a full round;
+        # otherwise REVIEW_ARCH_MODEL pins the architecture model ("auto": opus on big PRs, only when asked).
+        "architecture_model": round1_model or (os.environ.get("REVIEW_ARCH_MODEL") or "sonnet").replace("auto", "opus" if arch_opus else "sonnet"),
         "slice_model": round1_model or os.environ.get("REVIEW_SLICE_MODEL") or "sonnet",
         "single_agent": single_agent,
         "over_budget": over_budget,
