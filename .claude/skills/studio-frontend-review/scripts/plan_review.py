@@ -390,6 +390,7 @@ def main():
 
     # Small PRs: one Sonnet agent does everything. Opus only where architecture has real weight.
     single_agent = total_weight <= 400
+    round1_model = None if since else (os.environ.get("REVIEW_ROUND1_MODEL") or None)
     arch_opus = not single_agent and (total_weight > 800 or (len(arch_signals) >= 2 and total_weight > 300))
 
     try:
@@ -420,8 +421,11 @@ def main():
         "noise_files": noise,
         "out_of_scope_files": out_of_scope,
         "architecture_signals": arch_signals,
-        # REVIEW_ARCH_MODEL pins the model regardless of signals (run_auto_reviews.sh sets it to sonnet).
-        "architecture_model": (os.environ.get("REVIEW_ARCH_MODEL") or "auto").replace("auto", "opus" if arch_opus else "sonnet"),
+        # Round 1 is the only pass that sees all the code, so REVIEW_ROUND1_MODEL (run_auto_reviews.sh: opus)
+        # sets both reviewer models for it; follow-up rounds and the verifier stay on Sonnet. Otherwise
+        # REVIEW_ARCH_MODEL pins the architecture model regardless of signals ("auto": opus on big PRs).
+        "architecture_model": round1_model or (os.environ.get("REVIEW_ARCH_MODEL") or "auto").replace("auto", "opus" if arch_opus else "sonnet"),
+        "slice_model": round1_model or os.environ.get("REVIEW_SLICE_MODEL") or "sonnet",
         "single_agent": single_agent,
         "over_budget": over_budget,
         "slices": slices,
@@ -451,7 +455,8 @@ def main():
         print(f"    skipped (noise): {n_['path']}  +{n_['additions']} -{n_['deletions']}")
     if out_of_scope:
         print(f"    out of scope (not under '{a.scope}'): {len(out_of_scope)} files")
-    print(f"  architecture model: {'n/a (single sonnet agent)' if single_agent else plan['architecture_model']}")
+    print(f"  architecture model: {'n/a (single agent)' if single_agent else plan['architecture_model']}; "
+          f"slice model: {plan['slice_model']}")
     for sig in arch_signals[:8]:
         print(f"    signal: {sig}")
     print(f"  review agents: {plan['agent_count']} (+1 verifier if > 5 findings)")

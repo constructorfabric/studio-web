@@ -42,12 +42,16 @@ A follow-up round with nothing to say posts nothing. This is what makes the revi
 
 ## Model and agent budget (hard rules)
 
-- Every `Agent` call sets `model` explicitly: `sonnet` for slice reviewers and the verifier; `opus` for the
-  architecture agent **only** when the plan says `architecture_model: opus` (`REVIEW_ARCH_MODEL=sonnet` in the
-  environment pins it to Sonnet; `run_auto_reviews.sh` does that, so unattended reviews are Sonnet-only). Never
-  `fable`, never `subagent_type: "fork"`. Use `subagent_type: "general-purpose"`.
+- Every `Agent` call sets `model` explicitly, exactly as `prepare_review.py` prints it: the plan's
+  `architecture_model` and `slice_model`. The verifier is always `sonnet`. Never `fable`, never
+  `subagent_type: "fork"`. Use `subagent_type: "general-purpose"`.
+- Where the models come from: in round 1 (the only pass that sees all the code) `REVIEW_ROUND1_MODEL` sets both
+  reviewer models — `run_auto_reviews.sh` sets it to `opus`, because a blind benchmark on #380 found three
+  times the behaviour bugs with Opus reviewers. Follow-up rounds use `REVIEW_ARCH_MODEL` (`auto`: opus on big
+  PRs) and `REVIEW_SLICE_MODEL`, both Sonnet in unattended runs. Without these variables (a manual run) the
+  architecture agent is `auto` and slices are Sonnet.
 - At most **10 agents per review**: 1 architecture + up to 8 slices + 1 verifier. A review of ≤ 400 weighted
-  lines is one Sonnet agent (most follow-up rounds).
+  lines is one agent on the slice model (most follow-up rounds: Sonnet).
 - Launch the architecture agent and all slice agents in **one message**; the verifier after they finish.
   Don't re-launch an agent to double-check — do a targeted read yourself.
 - Every brief says the subagent must not spawn subagents (the generated briefs already do).

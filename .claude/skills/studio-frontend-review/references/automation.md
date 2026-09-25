@@ -87,8 +87,10 @@ jobs:
 
 ## Tuning
 
-- Cost cap per PR: `MAX_BUDGET_USD` (default 15). Orchestrator model: `REVIEW_MODEL` (default `sonnet`);
-  subagents follow the budget rules in `SKILL.md`.
+- Cost cap per run: `MAX_BUDGET_USD_ROUND1` for a full round (default 40), `MAX_BUDGET_USD` for a follow-up
+  (default 15). Models: round-1 reviewers `REVIEW_ROUND1_MODEL` (default `opus`; `sonnet` makes every round
+  Sonnet-only), follow-up reviewers `REVIEW_ARCH_MODEL` / `REVIEW_SLICE_MODEL` (default `sonnet`), orchestrator
+  `REVIEW_MODEL` (default `sonnet`); the verifier is always Sonnet.
 - The review is additive to CodeRabbit: points already in `existing-comments.md` are not repeated.
 - To pause: comment out the cron line / disable the workflow. To force a full re-review of every line, run
   `/studio-frontend-review <N> --full` by hand. Local records: `$REVIEW_RUNS/state/<owner>__<repo>-<N>.json`
