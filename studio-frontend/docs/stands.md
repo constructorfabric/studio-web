@@ -70,12 +70,18 @@ browser's headers pass as they are.
 
 ## What a stand needs from its side
 
-The realm's `studio-portal` client must list the dev server as a redirect
-URI: `http://localhost:5173/*` and `http://127.0.0.1:5173/*`.
-`keycloak/realm-studio.json` in this repository does; a deployed realm is an
-environment Secret imported on first boot, so an administrator adds them on
-the stand. Until then the stand answers the sign-in with
-*Invalid parameter: redirect_uri*, and `STUDIO_STAND=local` is the way to work.
+The realm's `studio-portal` client must list the dev server twice:
+
+| Client setting      | Values                                                 | Otherwise                                              |
+| ------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
+| Valid redirect URIs | `http://localhost:5173/*`, `http://127.0.0.1:5173/*`   | the IdP answers *Invalid parameter: redirect_uri*      |
+| Web origins         | `http://localhost:5173`, `http://127.0.0.1:5173`       | the code exchange is blocked for CORS (token endpoint answers 403 without CORS headers) |
+
+`keycloak/realm-studio.json` in this repository lists both; a deployed realm
+is an environment Secret imported on first boot, so an administrator adds
+them on the stand. A passing `OPTIONS` preflight proves nothing — Keycloak
+answers one for any origin; the `POST` is what carries the headers. Until
+both settings are there, `STUDIO_STAND=local` is the way to work.
 
 ## The data is real
 

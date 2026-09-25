@@ -113,15 +113,21 @@ have told it, on the one path where the pod asks.
 ### The sign-in is the stand's
 
 The browser signs in against the stand's realm, through GitHub as everybody
-on the stand does, and is sent back to `http://localhost:5173/`. That is a
-redirect URI the `studio-portal` client has to list, and `keycloak/realm-studio.json`
-lists it — for `localhost` and `127.0.0.1`, on `5173` and `8080`. But a
-deployed realm is not that file: `keycloak/README.md` has each environment
-generate its own and mount it from a Secret, and Keycloak imports it once, on
-first boot. At the time of writing both `dev` and `test` answer
-`Invalid parameter: redirect_uri` for `http://localhost:5173/`, while their
-token endpoints already answer a preflight from that origin. Adding the two
-`localhost` and two `127.0.0.1` URIs to the client on `dev` is an
+on the stand does, and is sent back to `http://localhost:5173/`. That takes
+two settings on the `studio-portal` client, not one. The address is a
+*redirect URI* the client has to list, or the IdP refuses the sign-in. And
+the code exchange that follows is a cross-origin `POST` from the dev server's
+origin to the token endpoint, which Keycloak answers with CORS headers only
+for an origin the client lists as a *web origin* — for any other it answers
+`403` with no headers at all, and the browser blocks the exchange. A preflight
+is no evidence either way: Keycloak answers `OPTIONS` for any origin.
+`keycloak/realm-studio.json` lists both, for `localhost` and `127.0.0.1`, on
+`5173` and `8080`. But a deployed realm is not that file:
+`keycloak/README.md` has each environment generate its own and mount it from
+a Secret, and Keycloak imports it once, on first boot. At the time of writing
+`dev` and `test` list the redirect URIs (added on 2026-09-25) and not yet the
+web origins: the sign-in gets as far as the code and stops on the exchange.
+Adding `http://localhost:5173` and `http://127.0.0.1:5173` there is an
 administrator's change to the stand's realm, and this decision waits for it
 before it is worth anything; nothing in this repository can make it.
 
@@ -174,10 +180,12 @@ rule: nothing destructive is tried out on `dev` for the sake of a screen;
   `npm ci`, `npm run dev:all`, sign in with GitHub. The stack is still what
   backend work and the CI gate run on, and `STUDIO_STAND=local` is the way
   back to it.
-- **Nothing works until the realm on `dev` lists the dev server.** The change
-  is an administrator's, on the stand, and outside this repository. Until it
-  lands, the default stand answers the sign-in with `Invalid parameter:
-  redirect_uri`, and `STUDIO_STAND=local` is the way to work meanwhile.
+- **Nothing works until the realm on `dev` lists the dev server, as a
+  redirect URI and as a web origin.** Both are an administrator's change, on
+  the stand, outside this repository. Until both land, the sign-in stops at
+  one of the two — the IdP's `Invalid parameter: redirect_uri`, or a code
+  exchange the browser blocks for CORS — and `STUDIO_STAND=local` is the way
+  to work meanwhile.
 - **A stand's outage is a local outage.** When `dev` is down or mid-deploy,
   so is the portal on every developer's machine — for as long as it takes to
   switch to `test` or `local`.
