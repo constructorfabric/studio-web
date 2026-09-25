@@ -26,7 +26,7 @@ if [ -z "$url" ]; then
 fi
 
 body='{
-  "content": "1 firing\n\n**Delivery test — not a real alert** · `dev` · `studio-dev`\nIf this arrived, the webhook works and Grafana can reach the channel.\nhttps://studio.monitoring.cfabric.org/alerting/list",
+  "content": "1 firing\n\n**Delivery test — not a real alert** · `dev` · `studio-dev`\nIf this arrived, the webhook works and Grafana can reach the channel.\nhttps://monitoring.cfabric.org/alerting/list",
   "embeds": [
     {
       "title": "[FIRING:1] Delivery test (Studio page)",

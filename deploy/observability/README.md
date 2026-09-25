@@ -228,53 +228,49 @@ kubectl -n studio-monitoring port-forward svc/grafana 3000:80
 kubectl -n studio-monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
-**SSO is live.** That login page offers a Keycloak button next to the local
-admin form: the `grafana` client exists in the studio realm, and the redirect
-URIs cover the port-forward, so the whole flow works today without any public
-hostname. The client is **public, with PKCE** — the same shape `studio-portal`
-uses — so there is no client secret anywhere to seal, rotate, or leak.
+**SSO is live.** The login page offers a Keycloak button next to the local
+admin form. The `grafana` client is public with PKCE, so Grafana holds no
+client secret. Its redirect URIs cover both the public host and port-forward.
 
-### The hostname: `studio.monitoring.cfabric.org`
+### Public hostname: `monitoring.cfabric.org`
 
-Everything on this side is prepared and committed — `ingress.enabled: true`,
-`ingress.hosts`, `grafana.ini.server.domain`, `root_url`, and the redirect URI
-and web origin on the `grafana` client in `keycloak/realm-studio.json`.
+Grafana serves both Studio environments at `https://monitoring.cfabric.org/`.
+Cloudflare proxies the DNS record to the same Traefik LoadBalancer as the
+frontend (`188.42.240.112`). TLS terminates at Cloudflare; the Grafana Ingress
+has no cert-manager annotations or Kubernetes TLS Secret.
 
-**Two things outside this repository have to land before it answers**, and
-they were requested together because either alone is worse than neither:
+The shared Traefik release must watch `studio-monitoring` in addition to
+`studio-dev` and `studio-test`. This repository does not own Traefik. On
+2026-09-25 its Helm release was upgraded to revision 3, chart 41.1.0, with
+`providers.kubernetesIngress.namespaces` set to
+`{studio-dev,studio-test,studio-monitoring}`. Preserve all three namespaces
+on future Traefik upgrades; setting only `studio-monitoring` would break the
+frontend routes. An Ingress may exist while Traefik ignores its namespace,
+which produces a plain 404 despite healthy Grafana pods.
 
-1. **A DNS record for `studio.monitoring.cfabric.org`.** Nothing under
-   `monitoring.cfabric.org` resolves today — not the zone apex and not this
-   name — so it has to be created rather than inherited from a wildcard. The
-   origin is the Traefik LoadBalancer, `188.42.240.112`,
-   the same entry the product's hostnames use, with Cloudflare in front
-   terminating TLS. The cluster has no cert-manager `Issuer`, which is why the
-   ingress values here carry no `tls` block and no annotations — the
-   certificate was never ours to request.
+The setting can be reapplied to the existing Helm release without changing
+other values (use the same chart version until its upgrade is planned):
 
-2. **`studio-monitoring` added to the cluster Traefik's
-   `--providers.kubernetesingress.namespaces`**, which reads
-   `studio-dev,studio-test` today. Until it does, the Ingress object exists and
-   Traefik cannot see it. That is a one-line change to a cluster-wide Traefik
-   release this repository does not own.
+```bash
+helm upgrade traefik traefik/traefik --version 41.1.0 \
+  -n traefik --kube-context webstudio --reuse-values \
+  --set 'providers.kubernetesIngress.namespaces={studio-dev,studio-test,studio-monitoring}' \
+  --wait --timeout 5m --rollback-on-failure
+```
 
-The name is environment-neutral on purpose, and product-scoped on purpose. One
-Grafana serves studio-dev and studio-test, so `grafana.studio-dev…` would
-misdescribe what it shows; `monitoring` outlives the tool, since the
-`grafana/grafana` chart is flagged deprecated upstream and the name should
-survive replacing it; and the `studio.` prefix leaves `monitoring.cfabric.org`
-a shared zone where other products get siblings rather than argue over an
-apex.
+The public host must match in `grafana/values.yaml` (`ingress.hosts`,
+`grafana.ini.server.domain`, `root_url`), the `grafana` client in
+`keycloak/realm-studio.json`, and the live Keycloak client. Grafana's OAuth
+provider uses the dev Keycloak realm; Keycloak must allow
+`https://monitoring.cfabric.org/login/generic_oauth` and the matching web
+origin. Keep the localhost callbacks so port-forward remains usable.
 
-A path on the existing host was considered and does not work: an Ingress cannot
-point at a Service in another namespace and `allowExternalNameServices` is off.
-The symptom is worth remembering either way — the frontend SPA answers `200` on
-every path, so `/grafana/api/health` returned HTML and looked like a working
-route.
+Smoke checks after an upgrade:
 
-**The port-forward keeps working** after the hostname lands. Its redirect URIs
-stay on the `grafana` client alongside the new one, so the Keycloak button
-works both ways.
+```bash
+curl -I https://monitoring.cfabric.org/       # 302 to /login
+curl https://monitoring.cfabric.org/api/health # JSON, HTTP 200
+```
 
 ### Keeping the realm and this repository in step
 

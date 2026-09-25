@@ -18,58 +18,17 @@ service:
   type: ClusterIP
   port: 80
 
-# Public access — OFF. Both routes to it are blocked outside this repository,
-# and the blockers are worth writing down because neither is obvious from here.
-#
-# A SUBDOMAIN needs a Cloudflare record. Nothing under monitoring.cfabric.org
-# resolves — neither the zone apex nor this name — so there is no wildcard to
-# inherit from; only studio-dev.cfabric.org answers, through Cloudflare, where
-# TLS also terminates. That is why this block carries no cert-manager
-# annotations and no `tls` section: the certificate was never ours to request.
-#
-# A PATH on the existing host looked free — Keycloak already answers at /auth on
-# exactly this hostname — but Traefik is scoped:
-#
-#     --providers.kubernetesingress.namespaces=studio-dev,studio-test
-#
-# An Ingress in studio-monitoring is invisible to it, and an Ingress cannot
-# point at a Service in another namespace. `allowExternalNameServices` is not
-# enabled either, so there is no way around it from here. Adding this namespace
-# to that list is a one-line change to the cluster-wide Traefik release, which
-# this repository does not own.
-#
-# NB when it is unblocked: a subdomain serves Grafana at the root, so leave
-# `serve_from_sub_path` alone; only a path-based host needs it.
+# Public access uses the same Cloudflare -> Traefik LoadBalancer path as the
+# Studio frontend. The shared Traefik release must watch studio-monitoring in
+# providers.kubernetesIngress.namespaces; this repository does not own that
+# release. See ../README.md for the exact Helm setting and verification.
 ingress:
-  # ON, and it does nothing until TWO things outside this repository happen.
-  # Both were requested together, because either alone is worse than neither:
-  #
-  #   1. A DNS record for `studio.monitoring.cfabric.org`. Nothing under
-  #      monitoring.cfabric.org resolves yet, so this name has to be created
-  #      rather than inherited; the origin is the Traefik LoadBalancer
-  #      (188.42.240.112), same as the product's hostnames, with Cloudflare in
-  #      front terminating TLS.
-  #
-  #   2. `studio-monitoring` added to the cluster Traefik's
-  #      `--providers.kubernetesingress.namespaces`, which today reads
-  #      `studio-dev,studio-test`. Until it does, this Ingress object exists
-  #      and Traefik cannot see it.
-  #
-  # Without (2) the failure is quiet rather than loud, which is why it is
-  # written here: the product's SPA answers 200 on every path, so a request
-  # that lands on the wrong route comes back looking like a working page.
   enabled: true
   ingressClassName: traefik
-  # Set this AND `grafana.ini.server.domain` to the same name — setting only
-  # one sends the OAuth redirect to a host nobody is listening on.
-  #
-  # Environment-NEUTRAL and product-SCOPED on purpose: one Grafana serves
-  # studio-dev and studio-test, so `grafana.studio-dev…` would misdescribe what
-  # it shows; "monitoring" outlives the tool, since the `grafana/grafana` chart
-  # is flagged deprecated upstream; and the `studio.` prefix leaves
-  # monitoring.cfabric.org a shared zone for other products' siblings.
+  # Keep this, grafana.ini.server.domain/root_url and the Keycloak grafana
+  # client's callback/origin on exactly the same public host.
   hosts:
-    - studio.monitoring.cfabric.org
+    - monitoring.cfabric.org
   path: /
   pathType: Prefix
   # No `tls` block and no cert-manager annotations: TLS terminates at
@@ -174,12 +133,12 @@ grafana.ini:
     # Must match the address the browser actually uses, or the OAuth round trip
     # returns to a URL nobody is listening on. Changed together with
     # `ingress.hosts`, which is the only way these two stay consistent.
-    domain: studio.monitoring.cfabric.org
+    domain: monitoring.cfabric.org
     # Spelled out rather than built from `%(protocol)s` and `%(http_port)s`:
     # Grafana itself serves plain HTTP on 3000 behind Cloudflare, so the
-    # computed value would be `http://studio.monitoring.cfabric.org:3000/` —
+    # computed value would be `http://monitoring.cfabric.org:3000/` —
     # what it sees, not what the browser used, and OAuth would return there.
-    root_url: "https://studio.monitoring.cfabric.org/"
+    root_url: "https://monitoring.cfabric.org/"
     # The port-forward stays a supported way in (`kubectl -n studio-monitoring
     # port-forward svc/grafana 3000:80`). Local sign-in works there regardless;
     # the Keycloak button needs the localhost redirect URIs, which the realm

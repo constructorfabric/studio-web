@@ -159,19 +159,19 @@
     {
       "clientId": "grafana",
       "name": "Grafana (observability)",
-      "description": "Metrics UI in studio-monitoring. Public client with PKCE like studio-portal, so Grafana holds no secret. Redirect URIs cover the port-forward; add the public host once one exists.",
+      "description": "Metrics UI in studio-monitoring. Public client with PKCE like studio-portal, so Grafana holds no secret. Redirect URIs cover the public host and port-forward.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
-        "https://studio.monitoring.cfabric.org/login/generic_oauth",
+        "https://monitoring.cfabric.org/login/generic_oauth",
         "http://localhost:3000/login/generic_oauth",
         "http://127.0.0.1:3000/login/generic_oauth"
       ],
       "webOrigins": [
-        "https://studio.monitoring.cfabric.org",
+        "https://monitoring.cfabric.org",
         "http://localhost:3000",
         "http://127.0.0.1:3000"
       ],
