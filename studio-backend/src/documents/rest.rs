@@ -1687,19 +1687,44 @@ impl Quality {
     }
 }
 
-/// Which bindings to analyse. Their TEXT is not here, and that is the point.
+/// Which bindings to analyse. Their TEXT is not here, and that is the point —
+/// except for `documents`, which is text the server cannot have.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct AnalyzeBindingsRequest {
     /// Bindings this run should cover. Naming them is the caller's decision —
     /// which documents deserve a detector is policy, and only the reading of
     /// them moved to the server.
+    #[serde(default)]
     pub binding_ids: Vec<Uuid>,
     /// Documents written in Studio this run should cover too. Their text is
     /// the document's own, and each is named in the run by
     /// `studio-doc/<id>.md`, the path its verdict comes back under.
     #[serde(default)]
     pub document_ids: Vec<Uuid>,
+    /// Texts the caller holds and the server does not: an editor's unsaved
+    /// buffer, or a desktop checkout that is ahead of the server's. Each is
+    /// analysed as given, under its `path`, which the run echoes back; one
+    /// whose path is also a named binding's replaces that binding's copy
+    /// rather than being judged beside it. Bounded — see
+    /// `quality::MAX_INLINE_DOCUMENTS` and the byte caps next to it.
+    #[serde(default)]
+    pub documents: Vec<InlineDocumentDto>,
+}
+
+/// One text to analyse as it stands on the caller's screen.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct InlineDocumentDto {
+    /// Repo-relative path, or `studio-doc/<id>.md` for a document written in
+    /// Studio. The id the run reports this document's verdict under.
+    pub path: String,
+    /// The text itself, verbatim.
+    pub text: String,
+    /// The type it is judged against, for the detector that needs one
+    /// (`leak`). Omitted, it takes the type of the binding at the same path,
+    /// when the request names one.
+    pub type_key: Option<String>,
 }
 
 /// The run doing the work.
@@ -1737,11 +1762,33 @@ async fn analyze_project_documents(
             .create()
     })?;
 
-    let reader = quality.reader()?;
-    let mut docs = if body.binding_ids.is_empty() {
-        Vec::new()
+    // Refused before anything is read: an oversized body is the caller's
+    // mistake, and walking a checkout to find that out would be ours.
+    let inline = crate::documents::quality::inline_docs(
+        body.documents
+            .into_iter()
+            .map(|d| crate::documents::quality::InlineDoc {
+                path: d.path,
+                text: d.text,
+                doc_type: d.type_key,
+            })
+            .collect(),
+    )
+    .map_err(|why| {
+        DocumentsError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    })?;
+
+    // Inline texts alone need no checkout, so a deployment without one can
+    // still analyse what an editor sends it.
+    let reader = if body.binding_ids.is_empty() {
+        None
     } else {
-        service
+        Some(quality.reader()?)
+    };
+    let mut docs = match reader {
+        Some(reader) => service
             .quality_docs(
                 &ctx,
                 workspace_id,
@@ -1750,7 +1797,8 @@ async fn analyze_project_documents(
                 reader.as_ref(),
             )
             .await
-            .map_err(internal)?
+            .map_err(internal)?,
+        None => Vec::new(),
     };
     docs.extend(
         service
@@ -1758,6 +1806,7 @@ async fn analyze_project_documents(
             .await
             .map_err(internal)?,
     );
+    let docs = crate::documents::quality::with_inline(docs, inline);
     if docs.is_empty() {
         return Err(DocumentsError::invalid_argument()
             .with_constraint(
@@ -2672,7 +2721,7 @@ pub fn register_routes(
     .operation_id("studio_documents.analyze_project_documents")
     .summary("Run a Spec Quality detector over a project's documents")
     .description(
-        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.",
+        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.",
     )
     .tag("StudioDocuments")
     .authenticated()
@@ -3523,4 +3572,48 @@ pub fn register_routes(
     router
         .layer(Extension(Quality { hub }))
         .layer(Extension(service))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_analysis_request_may_carry_inline_texts_alone() {
+        // The IDE's Analyze panel sends the text on screen and nothing else;
+        // `binding_ids` being required would make it send an empty list to
+        // say so.
+        let body: AnalyzeBindingsRequest = serde_json::from_value(serde_json::json!({
+            "documents": [{ "path": "docs/prd.md", "text": "# PRD" }]
+        }))
+        .expect("inline texts alone are a request");
+        assert!(body.binding_ids.is_empty());
+        assert!(body.document_ids.is_empty());
+        assert_eq!(body.documents.len(), 1);
+        assert_eq!(body.documents[0].path, "docs/prd.md");
+        assert_eq!(body.documents[0].type_key, None);
+    }
+
+    #[test]
+    fn an_analysis_request_mixes_ids_and_inline_texts() {
+        let binding = Uuid::from_u128(1);
+        let document = Uuid::from_u128(2);
+        let body: AnalyzeBindingsRequest = serde_json::from_value(serde_json::json!({
+            "binding_ids": [binding],
+            "document_ids": [document],
+            "documents": [{ "path": "docs/prd.md", "text": "# PRD", "type_key": "prd" }]
+        }))
+        .expect("all three together");
+        assert_eq!(body.binding_ids, vec![binding]);
+        assert_eq!(body.document_ids, vec![document]);
+        assert_eq!(body.documents[0].type_key.as_deref(), Some("prd"));
+    }
+
+    #[test]
+    fn the_portals_request_without_inline_texts_still_parses() {
+        let body: AnalyzeBindingsRequest =
+            serde_json::from_value(serde_json::json!({ "binding_ids": [] }))
+                .expect("the portal's request");
+        assert!(body.documents.is_empty());
+    }
 }

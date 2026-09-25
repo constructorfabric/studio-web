@@ -48,6 +48,46 @@ export interface DesktopSettings {
     /** Which updates the app takes: `beta` adds pre-releases. Read by the
      *  electron main process (electron-app/desktop-updater.js), not here. */
     readonly updates?: 'stable' | 'beta';
+    /** Which Studio tenant each folder was opened for, keyed by the folder.
+     *  The folder is named after the workspace, not its id, and a session's
+     *  handshake is not there to say it — so without this a window in the
+     *  folder cannot tell Studio which project it is looking at. */
+    readonly opened?: Readonly<Record<string, OpenedFolder>>;
+}
+
+/** What a folder opened from the Studio view was cloned for. */
+export interface OpenedFolder {
+    /** The Studio it came from: a tenant id means nothing on another one. */
+    readonly studioUrl: string;
+    readonly tenantId: string;
+}
+
+/** Folders compared the way the file system does: case matters nowhere on Windows. */
+function folderKey(folder: string): string {
+    const resolved = path.resolve(folder);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/** The settings with one more folder remembered against its tenant. */
+export function rememberOpened(settings: DesktopSettings, folder: string, studioUrl: string, tenantId: string): DesktopSettings {
+    return { ...settings, opened: { ...settings.opened, [folderKey(folder)]: { studioUrl, tenantId } } };
+}
+
+/**
+ * The tenant a folder is a checkout of, on the Studio this app is connected
+ * to: the one it was opened for from the Studio view, else the workspace a
+ * deployment pinned with STUDIO_DESKTOP_WORKSPACE_ID at its root.
+ */
+export function openedTenant(settings: DesktopSettings, config: DesktopStudioConfig, folder: string): string | undefined {
+    const key = folderKey(folder);
+    const opened = settings.opened?.[key];
+    if (opened && opened.studioUrl === config.studioUrl) {
+        return opened.tenantId;
+    }
+    if (config.workspaceId && folderKey(config.workspaceRoot) === key) {
+        return config.workspaceId;
+    }
+    return undefined;
 }
 
 /** The Studios on offer, and the one a developer pinned, from the environment. */
@@ -239,7 +279,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             }
             await this.signOut();
             // The update channel is the member's too, and outlives a change of Studio.
-            this.saveSettings({ ...settings, updates: this.settings.updates });
+            // So is what each folder was opened for: it says which Studio too.
+            this.saveSettings({ ...settings, updates: this.settings.updates, opened: this.settings.opened });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
             res.json(this.status);
@@ -271,10 +312,23 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             try {
                 const dir = path.join(config.workspacesDir, folderFor(name, workspaceId));
                 const cloned = await this.cloneSources(config, workspaceId, dir);
+                this.saveSettings(rememberOpened(this.settings, dir, config.studioUrl, workspaceId));
                 res.json({ path: dir, cloned });
             } catch (error) {
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
             }
+        });
+        // Which tenant a folder is a checkout of — what the Analyze panel asks
+        // before it can name a project to Studio. 404 is an answer: a folder
+        // somebody opened by hand is not one Studio knows.
+        app.get('/studio-desktop/opened', (req, res) => {
+            const root = typeof req.query.root === 'string' ? req.query.root : '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            if (!tenantId) {
+                res.status(404).json({ error: 'this folder was not opened from Studio' });
+                return;
+            }
+            res.json({ tenantId });
         });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {

@@ -1,49 +1,90 @@
-import { inject, injectable } from '@theia/core/shared/inversify';
+// The Analyze panel's state: what Studio knows about the document in front of
+// the person, and the run that asks Spec Quality about it again.
+//
+// Opening a document spends nothing. The panel reads what is already recorded
+// — the type's template check, and the `spec_finding` nodes the last detector
+// runs left in the artifact graph — and says "not analysed yet" for whatever
+// nobody has measured. Only the Analyze button starts a detector.
+//
+// That run analyses the text ON SCREEN. The server has a checkout of its own,
+// but it is the last sync's: an editor's unsaved changes, and everything a
+// desktop app has changed locally, are not in it. So the panel sends the text
+// with the request (`documents` on the quality route) under the path Studio
+// knows the file by, and the verdicts are recorded against that file's node —
+// exactly where the portal's Specs tab reads them.
+
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { Navigatable } from '@theia/core/lib/browser/navigatable-types';
 import { Saveable } from '@theia/core/lib/browser/saveable';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { DisposableCollection, Emitter, Event } from '@theia/core/lib/common';
+import URI from '@theia/core/lib/common/uri';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextDocumentChangeEvent, TextEditor } from '@theia/editor/lib/browser/editor';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { parseStudioDocumentUri, StudioDocumentRef } from '../common/studio-document-uri';
+import { AnalyzeMetric, ConformanceReport, buildMetrics } from './analyze-metrics';
+import {
+    AnalyzeStudioClient, DocumentBinding, FindingToSave, InlineDocument, SpecDetector, SpecVerdict, TaskRun,
+    matchBindingByPath, pathCandidates,
+} from './analyze-studio-client';
 
-export type AnalyzeMetricKey = 'readiness' | 'gap' | 'contradiction' | 'bloat' | 'checklist';
-export type AnalyzeMetricDirection = 'higher-better' | 'lower-better';
-export type AnalyzeStatus = 'empty' | 'loading' | 'stale' | 'current';
-export type AnalyzeMetricLevel = 'Good' | 'Attention' | 'Risk';
+export type { AnalyzeMetric, AnalyzeMetricKey, AnalyzeMetricLevel } from './analyze-metrics';
 
-export interface AnalyzeTrendPoint {
-    readonly date: string;
-    readonly value: number;
-}
-
-export interface AnalyzeMetric {
-    readonly key: AnalyzeMetricKey;
-    readonly label: string;
-    readonly score: number;
-    readonly unit: '%';
-    readonly direction: AnalyzeMetricDirection;
-    readonly level: AnalyzeMetricLevel;
-    readonly definition: string;
-    readonly interpretation: string;
-    readonly ariaText: string;
-    readonly trend: readonly AnalyzeTrendPoint[];
-}
+/**
+ * - `empty`: no document in front of the person.
+ * - `loading`: reading what Studio knows about it.
+ * - `unknown`: Studio does not know it, or the window cannot tell which
+ *   project it is in; `message` says which, plainly.
+ * - `ready`: the recorded metrics, about the text as it was when recorded.
+ * - `stale`: the same, but the text has changed since the panel read them.
+ * - `running`: Spec Quality is analysing the text on screen.
+ * - `error`: Studio could not be reached; `message` says what it answered.
+ */
+export type AnalyzeStatus = 'empty' | 'loading' | 'unknown' | 'ready' | 'stale' | 'running' | 'error';
 
 export interface AnalyzeViewModel {
     readonly status: AnalyzeStatus;
-    readonly analysisLabel: 'Mock analysis';
     readonly documentUri?: string;
     readonly documentLabel?: string;
-    readonly analyzedAt?: string;
+    /** Which record the metrics are about: `docs/prd.md`, or the document's title. */
+    readonly knownAs?: string;
+    readonly typeKey?: string;
     readonly emptyStateTitle?: string;
     readonly emptyStateDescription?: string;
-    readonly tokenUsage: number;
+    /** Why there is nothing to show, or what went wrong. */
+    readonly message?: string;
+    /** What the last run did, once it is over. */
+    readonly note?: string;
+    /** What the run is doing, while it runs. */
+    readonly progress?: string;
+    readonly canAnalyze: boolean;
     readonly metrics: readonly AnalyzeMetric[];
 }
 
+/** What a document resolved to in Studio: where its findings live and what
+ *  its run is called. */
+export interface AnalyzeTarget {
+    readonly kind: 'repository' | 'studio-document';
+    readonly workspaceId: string;
+    readonly projectId: string;
+    /** The node its findings hang off: a file node id, or `studio-doc:<id>`. */
+    readonly subject: string;
+    /** The id the detector run reports it under. */
+    readonly runPath: string;
+    /** How the panel names it. */
+    readonly knownAs: string;
+    readonly typeKey?: string;
+    readonly bindingId?: string;
+    readonly conformance?: ConformanceReport;
+    readonly conformanceMissing?: string;
+}
+
+type Resolved = { readonly ok: true; readonly target: AnalyzeTarget } | { readonly ok: false; readonly reason: string };
+
 type EditorLike = {
     readonly uri?: { toString(): string };
-    readonly document?: { uri?: { toString(): string } };
+    readonly document?: { uri?: { toString(): string }; getText?(): string };
     readonly onDocumentContentChanged?: (listener: (event: TextDocumentChangeEvent) => void) => { dispose(): void };
 };
 
@@ -55,6 +96,8 @@ type DocumentLike = {
     readonly widget: unknown;
     readonly uri: string;
     readonly label: string;
+    /** The text as it stands in the editor, saved or not. */
+    readText(): string | undefined;
     onContentChanged(listener: () => void): { dispose(): void };
 };
 
@@ -66,34 +109,27 @@ export interface AnalyzeApplicationShellLike {
 export const AnalyzeApplicationShellProvider = Symbol('AnalyzeApplicationShellProvider');
 export type AnalyzeApplicationShellProvider = () => AnalyzeApplicationShellLike;
 
-type PersistedAnalyzeState = {
-    status: Exclude<AnalyzeStatus, 'empty' | 'loading'>;
-    analyzedAt: string;
-};
-
-type PendingAnalyzeRequest = {
-    readonly generation: number;
-    readonly documentUri: string;
-    readonly resolve: () => void;
-    readonly timer: ReturnType<typeof setTimeout>;
-};
-
-const ANALYZE_DELAY_MS = 120;
 export const ANALYZE_WIDGET_ID = 'studio:analyze';
-const METRIC_DEFINITIONS: ReadonlyArray<{
-    key: AnalyzeMetricKey;
-    label: string;
-    direction: AnalyzeMetricDirection;
-    min: number;
-    max: number;
-    definition: string;
-}> = [
-    { key: 'readiness', label: 'Readiness', direction: 'higher-better', min: 61, max: 96, definition: 'Actionability of the current document.' },
-    { key: 'gap', label: 'Gap', direction: 'lower-better', min: 9, max: 38, definition: 'Distance between the current draft and expected coverage.' },
-    { key: 'contradiction', label: 'Contradiction', direction: 'lower-better', min: 6, max: 24, definition: 'Conflict pressure between claims in the document.' },
-    { key: 'bloat', label: 'Bloat', direction: 'lower-better', min: 12, max: 44, definition: 'Amount of excess material relative to the stated scope.' },
-    { key: 'checklist', label: 'Checklist', direction: 'higher-better', min: 68, max: 99, definition: 'Completion of explicit review and delivery criteria.' }
-];
+
+/** How often a run is asked how it is doing. A detector takes seconds to
+ *  minutes per document; this is a person watching a panel, not a scheduler. */
+export const RUN_POLL_MS = 1500;
+/** When the panel stops watching. The run carries on server-side and its
+ *  findings still land; the panel just says it stopped waiting. */
+export const RUN_WATCH_BUDGET_MS = 20 * 60_000;
+
+const NOT_A_SPEC = 'This file is not a spec Studio knows yet — give it a type on the portal\'s Specs tab.';
+const NO_PROJECT = 'This window is not connected to a Studio project, so there is nothing recorded to show. ' +
+    'Open the project from the portal, or from the Studio view in the desktop app.';
+
+const DETECTOR_LABEL: Record<SpecDetector, string> = {
+    purpose: 'Purpose',
+    leak: 'Leak',
+    bloat: 'Bloat',
+    traceability: 'Traceability',
+};
+
+const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
 @injectable()
 export class AnalyzeFrontendController implements FrontendApplicationContribution {
@@ -103,14 +139,29 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
     @inject(AnalyzeApplicationShellProvider)
     protected readonly applicationShellProvider!: AnalyzeApplicationShellProvider;
 
+    @inject(AnalyzeStudioClient)
+    protected readonly studio!: AnalyzeStudioClient;
+
+    // Optional: the panel still reads Studio documents in an application
+    // without a workspace; it only cannot place repository files.
+    @inject(WorkspaceService) @optional()
+    protected readonly workspaceService: WorkspaceService | undefined;
+
     protected readonly onDidChangeEmitter = new Emitter<void>();
     protected readonly toDispose = new DisposableCollection(this.onDidChangeEmitter);
     protected readonly editorListener = new DisposableCollection();
     protected documentListener = new DisposableCollection();
-    protected readonly persistedStateByUri = new Map<string, PersistedAnalyzeState>();
     protected currentDocument: DocumentLike | undefined;
+    protected currentTarget: AnalyzeTarget | undefined;
+    /** Bumped whenever the document in front changes; a read that finishes
+     *  for an older one must not paint over the newer. */
     protected currentGeneration = 0;
-    protected pendingRequest: PendingAnalyzeRequest | undefined;
+    /** Documents edited since the panel last read or ran them. */
+    protected readonly edited = new Set<string>();
+    /** Runs in flight, by document, with what each last reported. */
+    protected readonly running = new Map<string, { progress: string }>();
+    /** What the last run said, by document, until it is next opened fresh. */
+    protected readonly notes = new Map<string, string>();
     protected started = false;
     protected stopped = false;
     protected viewModel: AnalyzeViewModel = this.createEmptyViewModel();
@@ -138,7 +189,6 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         }
         this.stopped = true;
         this.currentGeneration += 1;
-        this.clearPendingRequest();
         this.toDispose.dispose();
     }
 
@@ -146,46 +196,192 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         return this.viewModel;
     }
 
-    async analyze(): Promise<void> {
+    /** Read again what Studio knows about the document in front. */
+    async refresh(): Promise<void> {
         const document = this.currentDocument;
         if (!document) {
-            this.setViewModel(this.createEmptyViewModel());
             return;
         }
-        const documentUri = document.uri;
-        const persistedState = this.getOrCreatePersistedState(documentUri);
         const generation = ++this.currentGeneration;
-        this.clearPendingRequest();
-        this.setViewModel({
-            ...this.createDocumentViewModel(document, persistedState),
-            status: 'loading',
-            analyzedAt: persistedState.analyzedAt
-        });
+        await this.load(document, generation);
+    }
 
-        await new Promise<void>(resolve => {
-            const request: PendingAnalyzeRequest = {
-                generation,
-                documentUri,
-                resolve,
-                timer: setTimeout(() => {
-                    if (this.pendingRequest !== request) {
-                        return;
-                    }
-                    this.pendingRequest = undefined;
-                    const nextPersistedState = this.getOrCreatePersistedState(documentUri);
-                    nextPersistedState.status = 'current';
-                    nextPersistedState.analyzedAt = new Date().toISOString();
-                    if (!this.stopped
-                        && generation === this.currentGeneration
-                        && this.currentDocument
-                        && this.currentDocument.uri === documentUri) {
-                        this.setViewModel(this.createDocumentViewModel(this.currentDocument, nextPersistedState));
-                    }
-                    resolve();
-                }, ANALYZE_DELAY_MS)
-            };
-            this.pendingRequest = request;
-        });
+    /**
+     * Send the text on screen to Spec Quality, record what it says, and read
+     * the metrics again.
+     *
+     * `purpose` always; `leak` when the document has a type, because "foreign
+     * content" means nothing until its native content is named. `bloat` and
+     * `traceability` judge a set, so they run over the project's other typed
+     * documents — read by the server — with this one's text in place of its
+     * copy; only this document's findings are recorded, since the others were
+     * judged on whatever the server held.
+     */
+    async analyze(): Promise<void> {
+        const document = this.currentDocument;
+        const target = this.currentTarget;
+        if (!document || !target || this.running.has(document.uri)) {
+            return;
+        }
+        const text = document.readText();
+        if (text === undefined || !text.trim()) {
+            this.notes.set(document.uri, 'There is no text to analyse yet.');
+            this.publishTarget(document, target, this.viewModel.metrics);
+            return;
+        }
+        const uri = document.uri;
+        this.edited.delete(uri);
+        this.notes.delete(uri);
+        const state = { progress: 'Sending the text on screen to Spec Quality…' };
+        this.running.set(uri, state);
+        this.publishIfCurrent(uri);
+        let note: string;
+        try {
+            note = await this.runDetectors(target, text, progress => {
+                state.progress = progress;
+                this.publishIfCurrent(uri);
+            });
+        } catch (error) {
+            note = `Spec Quality could not analyse it: ${messageOf(error)}`;
+        } finally {
+            this.running.delete(uri);
+        }
+        this.notes.set(uri, note);
+        this.studio.invalidate(target.workspaceId, target.projectId);
+        if (!this.stopped && this.currentDocument?.uri === uri) {
+            await this.refresh();
+        }
+    }
+
+    protected async runDetectors(target: AnalyzeTarget, text: string, report: (progress: string) => void): Promise<string> {
+        const inline: InlineDocument = {
+            path: target.runPath,
+            text,
+            ...(target.typeKey ? { type_key: target.typeKey } : {}),
+        };
+        const skipped: string[] = [];
+        const detectors: SpecDetector[] = ['purpose'];
+        if (target.typeKey) {
+            detectors.push('leak');
+        } else {
+            skipped.push('Leak needs a type to judge against — give it one on the portal\'s Specs tab.');
+        }
+        // The set: every other typed document of the project that the server
+        // can read. A document written in Studio is not a binding, so it is
+        // judged against the repository's specs.
+        const others = (await this.studio.bindings(target.workspaceId, target.projectId))
+            .filter(binding => binding.type_key && binding.id !== target.bindingId && binding.path !== target.runPath);
+        if (others.length > 0) {
+            detectors.push('bloat', 'traceability');
+        } else {
+            skipped.push('Bloat and traceability compare documents, and the project has no other typed one.');
+        }
+
+        const runs = new Map<SpecDetector, string>();
+        const problems: string[] = [];
+        for (const detector of detectors) {
+            const set = detector === 'bloat' || detector === 'traceability';
+            try {
+                const started = await this.studio.startRun(target.workspaceId, target.projectId, detector, {
+                    binding_ids: set ? others.map(binding => binding.id) : [],
+                    documents: [inline],
+                });
+                runs.set(detector, started.run_id);
+            } catch (error) {
+                problems.push(`${DETECTOR_LABEL[detector]}: ${messageOf(error)}`);
+            }
+        }
+
+        const finished = await this.watch(runs, report);
+        const findings: FindingToSave[] = [];
+        const gates: { detector: SpecDetector; state: 'pending' | 'passed' | 'failed'; taskId: string; summary: string }[] = [];
+        const setPaths = [target.runPath, ...others.map(binding => binding.path)];
+        for (const [detector, run] of finished) {
+            if (!run) {
+                problems.push(`${DETECTOR_LABEL[detector]}: still running when the panel stopped waiting; its result will be on the Specs tab.`);
+                continue;
+            }
+            if (run.state !== 'succeeded') {
+                problems.push(`${DETECTOR_LABEL[detector]}: ${run.last_error || run.state}`);
+                continue;
+            }
+            const items = run.result?.items ?? [];
+            const item = detector === 'bloat' || detector === 'traceability'
+                ? items[0]
+                : items.find(candidate => candidate.id === target.runPath);
+            if (!item || item.status !== 'succeeded' || !item.task_id) {
+                problems.push(`${DETECTOR_LABEL[detector]}: ${item?.error || 'the run reported nothing for this document'}`);
+                continue;
+            }
+            const set = detector === 'bloat' || detector === 'traceability';
+            const verdict = await this.studio.verdict(item.task_id, detector, set ? setPaths : []);
+            const finding = findingFor(detector, target, verdict);
+            if (!finding) {
+                problems.push(`${DETECTOR_LABEL[detector]}: the result carried nothing this panel can read.`);
+                continue;
+            }
+            findings.push(finding.finding);
+            gates.push({ detector, state: finding.gate, taskId: item.task_id, summary: finding.finding.summary });
+        }
+
+        if (findings.length > 0) {
+            report('Recording the results…');
+            await this.studio.saveFindings(findings, target.workspaceId, target.projectId);
+            // The pass/fail a stage gate reads. A document written in Studio
+            // has no binding to keep one on, and losing the index is not worth
+            // failing a run whose findings are already recorded.
+            if (target.bindingId) {
+                await Promise.all(gates.map(gate => this.studio.recordBindingAnalysis(
+                    target.workspaceId, target.bindingId!, gate.detector,
+                    { state: gate.state, task_id: gate.taskId, summary: gate.summary },
+                ).catch(() => undefined)));
+            }
+        }
+        const done = findings.map(finding => DETECTOR_LABEL[finding.detector]);
+        const parts: string[] = [];
+        parts.push(done.length > 0
+            ? `Analysed the text on screen: ${done.join(', ')}.`
+            : 'Nothing was recorded.');
+        parts.push(...problems, ...skipped);
+        return parts.join(' ');
+    }
+
+    /** Follow every run to its end, or to the budget. */
+    protected async watch(
+        runs: ReadonlyMap<SpecDetector, string>, report: (progress: string) => void,
+    ): Promise<Map<SpecDetector, TaskRun | undefined>> {
+        const out = new Map<SpecDetector, TaskRun | undefined>();
+        const pending = new Map(runs);
+        const phases = new Map<SpecDetector, string>();
+        const deadline = Date.now() + RUN_WATCH_BUDGET_MS;
+        while (pending.size > 0 && !this.stopped) {
+            for (const [detector, runId] of [...pending]) {
+                let run: TaskRun;
+                try {
+                    run = await this.studio.run(runId);
+                } catch (error) {
+                    out.set(detector, { id: runId, state: 'failed', last_error: messageOf(error) });
+                    pending.delete(detector);
+                    continue;
+                }
+                if (TERMINAL.has(run.state)) {
+                    out.set(detector, run);
+                    pending.delete(detector);
+                    phases.set(detector, run.state === 'succeeded' ? 'done' : run.state);
+                } else {
+                    phases.set(detector, run.progress || run.state);
+                }
+            }
+            report([...runs.keys()].map(detector => `${DETECTOR_LABEL[detector]}: ${phases.get(detector) ?? 'queued'}`).join(' · '));
+            if (pending.size === 0 || Date.now() >= deadline) {
+                break;
+            }
+            await delay(RUN_POLL_MS);
+        }
+        for (const detector of pending.keys()) {
+            out.set(detector, undefined);
+        }
+        return out;
     }
 
     protected syncActiveEditor(): void {
@@ -211,28 +407,242 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         if (this.currentDocument?.widget === document?.widget) {
             return;
         }
-        this.currentGeneration += 1;
-        this.clearPendingRequest();
+        const generation = ++this.currentGeneration;
         this.resetDocumentListener();
         this.currentDocument = document;
+        this.currentTarget = undefined;
         if (!document) {
             this.setViewModel(this.createEmptyViewModel());
             return;
         }
-        const persistedState = this.getOrCreatePersistedState(document.uri);
         this.documentListener.push(document.onContentChanged(() => this.handleTrackedDocumentChanged(document)));
-        this.setViewModel(this.createDocumentViewModel(document, persistedState));
+        this.setViewModel({
+            status: 'loading',
+            documentUri: document.uri,
+            documentLabel: document.label,
+            canAnalyze: false,
+            metrics: [],
+        });
+        void this.load(document, generation);
     }
 
     protected handleTrackedDocumentChanged(document: DocumentLike): void {
-        if (this.stopped || this.currentDocument?.widget !== document.widget || this.viewModel.status === 'empty') {
+        if (this.stopped || this.currentDocument?.widget !== document.widget) {
             return;
         }
-        const persistedState = this.getOrCreatePersistedState(document.uri);
-        persistedState.status = 'stale';
-        this.currentGeneration += 1;
-        this.clearPendingRequest();
-        this.setViewModel(this.createDocumentViewModel(document, persistedState));
+        this.edited.add(document.uri);
+        if (this.viewModel.status === 'ready' && this.currentTarget) {
+            this.publishTarget(document, this.currentTarget, this.viewModel.metrics);
+        }
+    }
+
+    /** Resolve the document to Studio's record of it, then read its metrics. */
+    protected async load(document: DocumentLike, generation: number): Promise<void> {
+        try {
+            const resolved = await this.resolve(document);
+            if (!this.isCurrent(document, generation)) {
+                return;
+            }
+            if (!resolved.ok) {
+                this.setViewModel({
+                    status: 'unknown',
+                    documentUri: document.uri,
+                    documentLabel: document.label,
+                    message: resolved.reason,
+                    canAnalyze: false,
+                    metrics: [],
+                });
+                return;
+            }
+            const target = resolved.target;
+            const findings = await this.studio.findings(target.projectId, target.subject);
+            if (!this.isCurrent(document, generation)) {
+                return;
+            }
+            this.currentTarget = target;
+            this.publishTarget(document, target, buildMetrics({
+                conformance: target.conformance,
+                conformanceMissing: target.conformanceMissing,
+                findings,
+                typeKey: target.typeKey,
+            }));
+        } catch (error) {
+            if (!this.isCurrent(document, generation)) {
+                return;
+            }
+            this.setViewModel({
+                status: 'error',
+                documentUri: document.uri,
+                documentLabel: document.label,
+                message: `Studio could not be asked about this document: ${messageOf(error)}`,
+                canAnalyze: false,
+                metrics: [],
+            });
+        }
+    }
+
+    protected async resolve(document: DocumentLike): Promise<Resolved> {
+        const uri = new URI(document.uri);
+        const ref = parseStudioDocumentUri(uri);
+        return ref ? this.resolveStudioDocument(ref) : this.resolveRepositoryFile(uri);
+    }
+
+    /**
+     * A document written in Studio: its findings are kept under
+     * `studio-doc:<id>` (the subject the portal's Specs tab reads), and a run
+     * names it `studio-doc/<id>.md`. Its project is its own when it has one;
+     * a workspace-level document is analysed in the project this window is.
+     */
+    protected async resolveStudioDocument(ref: StudioDocumentRef): Promise<Resolved> {
+        const doc = await this.studio.studioDocument(ref.workspaceId, ref.documentId);
+        if (!doc) {
+            return { ok: false, reason: 'Studio has no such document any more.' };
+        }
+        let projectId = doc.project_id ?? undefined;
+        if (!projectId) {
+            const scope = await this.studio.scope(await this.rootFsPaths());
+            if (scope?.kind === 'project' && scope.workspaceId === ref.workspaceId) {
+                projectId = scope.projectId;
+            }
+        }
+        if (!projectId) {
+            return {
+                ok: false,
+                reason: 'This document belongs to the workspace rather than one project, and findings are kept per project — ' +
+                    'open it from a project to analyse it.',
+            };
+        }
+        let conformance: ConformanceReport | undefined;
+        let conformanceMissing: string | undefined;
+        try {
+            const report = await this.studio.validateStudioDocument(ref.workspaceId, ref.documentId);
+            conformance = { ...report, checkedAt: new Date().toISOString() };
+        } catch (error) {
+            conformanceMissing = `The template check could not be run: ${messageOf(error)}`;
+        }
+        return {
+            ok: true,
+            target: {
+                kind: 'studio-document',
+                workspaceId: ref.workspaceId,
+                projectId,
+                subject: `studio-doc:${doc.id}`,
+                runPath: `studio-doc/${doc.id}.md`,
+                knownAs: doc.title,
+                typeKey: doc.type_key,
+                conformance,
+                conformanceMissing,
+            },
+        };
+    }
+
+    /** A repository file: the binding the project keeps for it, found by path. */
+    protected async resolveRepositoryFile(uri: URI): Promise<Resolved> {
+        if (uri.scheme !== 'file') {
+            return { ok: false, reason: 'Only files in this workspace and documents written in Studio can be analysed.' };
+        }
+        const relative = await this.relativePath(uri);
+        if (!relative) {
+            return { ok: false, reason: 'This file is outside the workspace, so Studio has no record of it.' };
+        }
+        const scope = await this.studio.scope(await this.rootFsPaths());
+        if (!scope) {
+            return { ok: false, reason: NO_PROJECT };
+        }
+        const candidates = pathCandidates(relative);
+        const projects = scope.kind === 'project' ? [scope.projectId] : scope.projectIds;
+        for (const projectId of projects) {
+            const match = matchBindingByPath(await this.studio.bindings(scope.workspaceId, projectId), candidates);
+            if (match.kind === 'ambiguous') {
+                return {
+                    ok: false,
+                    reason: `Studio knows ${match.count} files at ${match.path}, in different repositories, and cannot tell which this is.`,
+                };
+            }
+            if (match.kind === 'found') {
+                return this.bindingTarget(match.binding, scope.workspaceId, projectId);
+            }
+        }
+        return { ok: false, reason: NOT_A_SPEC };
+    }
+
+    protected bindingTarget(binding: DocumentBinding, workspaceId: string, projectId: string): Resolved {
+        if (binding.state === 'not_a_document') {
+            return {
+                ok: false,
+                reason: 'Studio was told this file is not a document. If it is one, give it a type on the portal\'s Specs tab.',
+            };
+        }
+        const typeKey = binding.type_key ?? undefined;
+        return {
+            ok: true,
+            target: {
+                kind: 'repository',
+                workspaceId,
+                projectId,
+                subject: binding.node_id,
+                runPath: binding.path,
+                knownAs: binding.path,
+                typeKey,
+                bindingId: binding.id,
+                conformance: binding.validation ? { ...binding.validation, checkedAt: binding.updated_at } : undefined,
+                conformanceMissing: typeKey
+                    ? 'The next sync checks it against its template.'
+                    : 'No type yet, so there is no template to check it against — give it one on the portal\'s Specs tab.',
+            },
+        };
+    }
+
+    /**
+     * The workspace roots, once the workspace has them. Awaited rather than
+     * read with `tryGetRoots`: a restored editor becomes current before the
+     * roots are known, and asking then would call every file outside the
+     * workspace.
+     */
+    protected async roots(): Promise<URI[]> {
+        const roots = this.workspaceService ? await this.workspaceService.roots : [];
+        return roots.map(root => root.resource);
+    }
+
+    protected async relativePath(uri: URI): Promise<string | undefined> {
+        for (const root of await this.roots()) {
+            const relative = root.relative(uri);
+            if (relative) {
+                return relative.toString();
+            }
+        }
+        return undefined;
+    }
+
+    protected async rootFsPaths(): Promise<string[]> {
+        return (await this.roots()).map(root => root.path.fsPath());
+    }
+
+    /** Repaint for a run's progress, if its document is still the one in front
+     *  — possibly re-read since the run started, so matched by address. */
+    protected publishIfCurrent(uri: string): void {
+        if (!this.stopped && this.currentDocument?.uri === uri && this.currentTarget) {
+            this.publishTarget(this.currentDocument, this.currentTarget, this.viewModel.metrics);
+        }
+    }
+
+    protected publishTarget(document: DocumentLike, target: AnalyzeTarget, metrics: readonly AnalyzeMetric[]): void {
+        const run = this.running.get(document.uri);
+        this.setViewModel({
+            status: run ? 'running' : this.edited.has(document.uri) ? 'stale' : 'ready',
+            documentUri: document.uri,
+            documentLabel: document.label,
+            knownAs: target.knownAs,
+            typeKey: target.typeKey,
+            progress: run?.progress,
+            note: run ? undefined : this.notes.get(document.uri),
+            canAnalyze: !run,
+            metrics,
+        });
+    }
+
+    protected isCurrent(document: DocumentLike, generation: number): boolean {
+        return !this.stopped && generation === this.currentGeneration && this.currentDocument === document;
     }
 
     protected setViewModel(next: AnalyzeViewModel): void {
@@ -243,165 +653,11 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
     protected createEmptyViewModel(): AnalyzeViewModel {
         return {
             status: 'empty',
-            analysisLabel: 'Mock analysis',
-            emptyStateTitle: 'No active text document',
-            emptyStateDescription: 'Open a text editor to inspect mock analysis.',
+            emptyStateTitle: 'No active document',
+            emptyStateDescription: 'Open a specification to see what Studio knows about it.',
+            canAnalyze: false,
             metrics: [],
-            tokenUsage: 0
         };
-    }
-
-    protected createDocumentViewModel(document: DocumentLike, persistedState: PersistedAnalyzeState): AnalyzeViewModel {
-        const seed = this.hashString(document.uri);
-        return {
-            status: persistedState.status,
-            analysisLabel: 'Mock analysis',
-            documentUri: document.uri,
-            documentLabel: document.label,
-            analyzedAt: persistedState.analyzedAt,
-            tokenUsage: 700 + seed % 1800,
-            metrics: METRIC_DEFINITIONS.map((definition, index) => {
-                const metricSeed = this.rotateSeed(seed, index + 1);
-                const score = this.scale(metricSeed, definition.min, definition.max);
-                const level = this.getMetricLevel(score, definition.direction);
-                const interpretation = this.buildInterpretation(definition.key, score, level, definition.direction);
-                return {
-                    key: definition.key,
-                    label: definition.label,
-                    unit: '%',
-                    direction: definition.direction,
-                    score,
-                    level,
-                    definition: definition.definition,
-                    interpretation,
-                    ariaText: this.buildMetricAriaText(definition.label, score, level, definition.direction, definition.definition, interpretation),
-                    trend: this.buildTrend(score, definition.direction, metricSeed)
-                };
-            })
-        };
-    }
-
-    protected buildTrend(score: number, direction: AnalyzeMetricDirection, seed: number): readonly AnalyzeTrendPoint[] {
-        const dates = this.buildWeeklyDates();
-        const volatility = 18 + seed % 12;
-        return dates.map((date, index) => {
-            if (index === dates.length - 1) {
-                return { date, value: score };
-            }
-            const distance = dates.length - 1 - index;
-            const baseline = direction === 'higher-better'
-                ? score - distance * 3
-                : score + distance * 3;
-            const wave = ((seed >>> (index % 16)) & 0b111) - 3;
-            const adjustment = Math.round((distance / dates.length) * volatility * 0.35) + wave;
-            const rawValue = direction === 'higher-better'
-                ? baseline - adjustment
-                : baseline + adjustment;
-            return {
-                date,
-                value: Math.max(0, Math.min(100, rawValue))
-            };
-        });
-    }
-
-    protected buildWeeklyDates(): readonly string[] {
-        const current = new Date();
-        const end = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate()));
-        return Array.from({ length: 12 }, (_, index) => {
-            const pointDate = new Date(end);
-            pointDate.setUTCDate(end.getUTCDate() - (11 - index) * 7);
-            return pointDate.toISOString().slice(0, 10);
-        });
-    }
-
-    protected getMetricLevel(score: number, direction: AnalyzeMetricDirection): AnalyzeMetricLevel {
-        if (direction === 'higher-better') {
-            if (score <= 49) {
-                return 'Risk';
-            }
-            if (score <= 74) {
-                return 'Attention';
-            }
-            return 'Good';
-        }
-        if (score <= 24) {
-            return 'Good';
-        }
-        if (score <= 49) {
-            return 'Attention';
-        }
-        return 'Risk';
-    }
-
-    protected buildInterpretation(
-        key: AnalyzeMetricKey,
-        score: number,
-        level: AnalyzeMetricLevel,
-        direction: AnalyzeMetricDirection
-    ): string {
-        switch (key) {
-            case 'readiness':
-                return level === 'Good'
-                    ? 'Strong readiness across the last 12 weekly checkpoints.'
-                    : level === 'Attention'
-                        ? 'Readiness is improving but still needs reinforcement before delivery.'
-                        : 'Readiness remains too low for a confident handoff.';
-            case 'gap':
-                return level === 'Good'
-                    ? 'Coverage gaps are limited and still trending down.'
-                    : level === 'Attention'
-                        ? 'Coverage gaps remain visible and should be closed soon.'
-                        : 'Coverage gaps are still materially above the target range.';
-            case 'contradiction':
-                return level === 'Good'
-                    ? 'Contradictions are low and continue to fall.'
-                    : level === 'Attention'
-                        ? 'Contradictions are manageable but still need cleanup.'
-                        : 'Contradictions are high enough to threaten document trust.';
-            case 'bloat':
-                return level === 'Good'
-                    ? 'Scope remains controlled with little excess material.'
-                    : level === 'Attention'
-                        ? 'Bloat is improving but still above the good threshold.'
-                        : 'Bloat is high enough to obscure the core message.';
-            case 'checklist':
-                return level === 'Good'
-                    ? 'Checklist completion is consistently strong.'
-                    : level === 'Attention'
-                        ? 'Checklist completion is uneven and should be tightened.'
-                        : 'Checklist completion is too low to support release confidence.';
-            default:
-                return direction === 'higher-better'
-                    ? `This score is ${score}% and still below the desired range.`
-                    : `This score is ${score}% and still above the desired range.`;
-        }
-    }
-
-    protected buildMetricAriaText(
-        label: string,
-        score: number,
-        level: AnalyzeMetricLevel,
-        direction: AnalyzeMetricDirection,
-        definition: string,
-        interpretation: string
-    ): string {
-        return `${label}: ${score}% (${level}). ${direction === 'higher-better' ? 'Higher is better.' : 'Lower is better.'} ${definition} ${interpretation}`;
-    }
-
-    protected scale(seed: number, min: number, max: number): number {
-        return min + seed % (max - min + 1);
-    }
-
-    protected hashString(value: string): number {
-        let hash = 0;
-        for (let index = 0; index < value.length; index += 1) {
-            hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-        }
-        return hash;
-    }
-
-    protected rotateSeed(seed: number, offset: number): number {
-        return ((seed >>> offset) ^ (seed << (32 - offset))) >>> 0;
     }
 
     protected getDocumentLabel(uri: string): string {
@@ -409,31 +665,8 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         return decodeURIComponent(segments[segments.length - 1] || uri);
     }
 
-    protected getOrCreatePersistedState(documentUri: string): PersistedAnalyzeState {
-        const existing = this.persistedStateByUri.get(documentUri);
-        if (existing) {
-            return existing;
-        }
-        const created: PersistedAnalyzeState = {
-            status: 'current',
-            analyzedAt: new Date().toISOString()
-        };
-        this.persistedStateByUri.set(documentUri, created);
-        return created;
-    }
-
     protected isAnalyzeWidget(candidate: unknown): boolean {
         return Boolean(candidate && typeof candidate === 'object' && (candidate as WidgetLike).id === ANALYZE_WIDGET_ID);
-    }
-
-    protected clearPendingRequest(): void {
-        const pendingRequest = this.pendingRequest;
-        if (!pendingRequest) {
-            return;
-        }
-        this.pendingRequest = undefined;
-        clearTimeout(pendingRequest.timer);
-        pendingRequest.resolve();
     }
 
     protected resetDocumentListener(): void {
@@ -450,6 +683,7 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
                 widget: textEditor,
                 uri,
                 label: this.getDocumentLabel(uri),
+                readText: () => textEditor.document.getText(),
                 onContentChanged: listener => textEditor.onDocumentContentChanged(() => listener())
             };
         }
@@ -463,6 +697,10 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
                     widget: candidate,
                     uri,
                     label: this.getDocumentLabel(uri),
+                    // The Markdown editor keeps its text in a model, not a
+                    // text document; its snapshot is the text a save would
+                    // write, unsaved edits included.
+                    readText: () => saveable.createSnapshot ? Saveable.Snapshot.read(saveable.createSnapshot()) : undefined,
                     onContentChanged: listener => saveable.onContentChanged(() => listener())
                 };
             }
@@ -510,4 +748,101 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
             ? (candidate as TextEditor)
             : undefined;
     }
+}
+
+/**
+ * The finding a verdict makes, in the words the portal's Specs tab writes —
+ * `severity` and `summary` are read there — plus the structured reading in
+ * `details`, which the portal does not keep and this panel's metrics prefer.
+ */
+export function findingFor(
+    detector: SpecDetector, target: AnalyzeTarget, verdict: SpecVerdict,
+): { finding: FindingToSave; gate: 'pending' | 'passed' | 'failed' } | undefined {
+    const base = { detector, subject: target.subject, path: target.runPath };
+    switch (detector) {
+        case 'purpose': {
+            const share = verdict.spec_share ?? 0;
+            const gatePassed = verdict.gate_passed ?? null;
+            const docType = verdict.doc_type ?? null;
+            return {
+                finding: {
+                    ...base,
+                    severity: gatePassed === true ? 'gate-passed' : gatePassed === false ? 'gate-failed' : share >= 0.5 ? 'analyzed' : 'unrecognised',
+                    summary: docType ? `purpose: ${docType} (${Math.round(share * 100)}% specification)` : 'purpose: no type named',
+                    score: share,
+                    details: { doc_type: docType, spec_share: share, gate_passed: gatePassed },
+                },
+                gate: gatePassed === true ? 'passed' : gatePassed === false ? 'failed' : 'pending',
+            };
+        }
+        case 'leak': {
+            const passed = verdict.passed ?? null;
+            const share = verdict.leak_share ?? null;
+            const roles = verdict.foreign_roles ?? [];
+            const foreign = share === null ? '' : ` (${Math.round(share * 100)}% foreign)`;
+            return {
+                finding: {
+                    ...base,
+                    severity: passed === true ? 'clean' : passed === false ? 'high' : 'analyzed',
+                    summary: passed === true
+                        ? `leak: clean${foreign}`
+                        : passed === false ? `leak: reads partly as ${roles.join(', ') || 'another kind'}${foreign}` : 'leak: no verdict',
+                    ...(share === null ? {} : { score: share }),
+                    details: { passed, leak_share: share, foreign_roles: roles },
+                },
+                gate: passed === true ? 'passed' : passed === false ? 'failed' : 'pending',
+            };
+        }
+        case 'bloat': {
+            const byPath = verdict.by_path ?? {};
+            const repeats = byPath[target.runPath] ?? [];
+            return {
+                finding: {
+                    ...base,
+                    severity: repeats.length === 0 ? 'clean' : 'high',
+                    summary: repeats.length === 0 ? 'bloat: nothing repeated elsewhere' : `bloat: repeats ${repeats.map(basename).join(', ')}`,
+                    score: repeats.length,
+                    details: { repeats },
+                },
+                gate: repeats.length === 0 ? 'passed' : 'failed',
+            };
+        }
+        case 'traceability':
+        default: {
+            // An unreadable answer must not be recorded as "references
+            // nothing": that reads as a fact about the document.
+            if (!verdict.recognised) {
+                return undefined;
+            }
+            const byPath = verdict.by_path ?? {};
+            const references = byPath[target.runPath] ?? [];
+            const referencedBy = Object.entries(byPath)
+                .filter(([path, refs]) => path !== target.runPath && refs.includes(target.runPath))
+                .map(([path]) => path);
+            return {
+                finding: {
+                    ...base,
+                    severity: references.length === 0 ? 'some' : 'clean',
+                    summary: references.length === 0
+                        ? 'traceability: references no other document in this set'
+                        : `traceability: references ${references.map(basename).join(', ')}`,
+                    score: references.length,
+                    details: { references, referenced_by: referencedBy },
+                },
+                gate: 'passed',
+            };
+        }
+    }
+}
+
+function basename(path: string): string {
+    return path.split('/').pop() || path;
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }

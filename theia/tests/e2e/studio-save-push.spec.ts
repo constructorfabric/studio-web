@@ -35,26 +35,15 @@ test.describe('Studio save and push', () => {
 
             await waitForGraphReady(page);
             await openGuideFromGraph(page);
+            // A standalone IDE has no portal handshake and no desktop sign-in,
+            // so it knows no Studio project: the panel says so rather than
+            // inventing numbers, and offers no run.
             await openStudioView(page, 'Analyze', 'analyze-widget');
-            await expect(page.getByTestId('analyze-gauge-readiness')).toBeVisible();
-            await expect(page.getByTestId('analyze-gauge-gap')).toBeVisible();
-            await expect(page.getByTestId('analyze-gauge-contradiction')).toBeVisible();
-            await expect(page.getByTestId('analyze-gauge-bloat')).toBeVisible();
-            await expect(page.getByTestId('analyze-gauge-checklist')).toBeVisible();
-            await expect(page.getByTestId('analyze-trend-chart')).toBeVisible();
-            await expect(page.getByText('Readiness trend')).toBeVisible();
-            await expect(page.getByText('Date')).toBeVisible();
-            await expect(page.getByText('Score (%)')).toBeVisible();
-            await expect(page.getByText('2026-05-12', { exact: true })).toBeVisible();
-            await expect(page.getByText('2026-07-21', { exact: true })).toBeVisible();
-            await expect(page.getByTestId('analyze-trend-point-readiness-2026-07-28')).toHaveAttribute('aria-label', /Readiness on 2026-07-28: .*%/);
+            await expect(page.getByTestId('analyze-message')).toContainText('not connected to a Studio project');
+            await expect(page.getByTestId('analyze-run')).toBeDisabled();
 
             const editor = page.getByLabel('editable markdown');
             await appendPlainParagraph(page, 'Saved from Playwright.');
-            await openStudioView(page, 'Analyze', 'analyze-widget');
-            await expect(page.getByText('Stale')).toBeVisible();
-            await page.getByTestId('analyze-gauge-checklist').click();
-            await expect(page.getByText('Checklist trend')).toBeVisible();
             await editor.click();
             await page.keyboard.press(process.platform === 'darwin' ? 'Meta+S' : 'Control+S');
 

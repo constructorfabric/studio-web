@@ -1,7 +1,9 @@
 /**
  * @jest-environment node
  */
-import { chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand } from './desktop-studio-contribution';
+import {
+    chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand, openedTenant, rememberOpened
+} from './desktop-studio-contribution';
 import { customEnvironment, parseEnvironments } from '../common/desktop-environments';
 
 const OFFERED = JSON.stringify([
@@ -73,6 +75,27 @@ describe('desktop studio contribution', () => {
         expect(folderFor('a/b: c?', 'id-1')).toBe('a-b- c');
         expect(folderFor('  ..  ', 'id-1')).toBe('id-1');
         expect(folderFor(undefined, 'id-1')).toBe('id-1');
+    });
+
+    it('remembers which tenant a folder was opened for, on the Studio it came from', () => {
+        const config = desktopConfigFrom({ STUDIO_DESKTOP_URL: 'https://studio.example.com' }, '/here')!;
+        const settings = rememberOpened({ updates: 'beta' }, '/home/me/ConstructorStudio/workspaces/Web', config.studioUrl, 'project-1');
+        expect(settings.updates).toBe('beta');
+        expect(openedTenant(settings, config, '/home/me/ConstructorStudio/workspaces/Web/')).toBe('project-1');
+        expect(openedTenant(settings, config, '/home/me/elsewhere')).toBeUndefined();
+        // The same folder means nothing to another Studio: its ids are not ours.
+        const other = desktopConfigFrom({ STUDIO_DESKTOP_URL: 'https://other.example.com' }, '/here')!;
+        expect(openedTenant(settings, other, '/home/me/ConstructorStudio/workspaces/Web')).toBeUndefined();
+    });
+
+    it('answers for the workspace a deployment pinned at its root', () => {
+        const config = desktopConfigFrom({
+            STUDIO_DESKTOP_URL: 'https://studio.example.com',
+            STUDIO_DESKTOP_WORKSPACE_ID: 'ws-1',
+            STUDIO_WORKSPACE_ROOT: '/srv/checkout',
+        }, '/here')!;
+        expect(openedTenant({}, config, '/srv/checkout')).toBe('ws-1');
+        expect(openedTenant({}, config, '/srv')).toBeUndefined();
     });
 
     it('runs the credential helper with the app itself, not a Node on PATH', () => {

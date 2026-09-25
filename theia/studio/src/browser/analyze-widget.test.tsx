@@ -2,38 +2,16 @@ import 'reflect-metadata';
 jest.mock('@theia/editor/lib/browser/editor-manager', () => ({
     EditorManager: class EditorManager {}
 }));
+jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
+    WorkspaceService: class WorkspaceService {}
+}));
 import * as React from '@theia/core/shared/react';
 import { Container } from '@theia/core/shared/inversify';
 import { MessageLoop } from '@theia/core/shared/@lumino/messaging';
 import { Emitter } from '@theia/core/lib/common';
-import { Widget } from '@theia/core/lib/browser/widgets/widget';
-import type { AnalyzeMetricKey, AnalyzeViewModel } from './analyze-controller';
+import type { AnalyzeFrontendController, AnalyzeViewModel } from './analyze-controller';
 import { AnalyzeWidget } from './analyze-widget';
-import type { AnalyzeFrontendController } from './analyze-controller';
-
-type GaugeLevel = 'Good' | 'Attention' | 'Risk';
-
-type GaugeTrendPoint = {
-    readonly date: string;
-    readonly value: number;
-};
-
-type GaugeMetric = {
-    readonly key: AnalyzeMetricKey;
-    readonly label: string;
-    readonly score: number;
-    readonly unit: '%';
-    readonly direction: 'higher-better' | 'lower-better';
-    readonly level: GaugeLevel;
-    readonly definition: string;
-    readonly interpretation: string;
-    readonly ariaText: string;
-    readonly trend: readonly GaugeTrendPoint[];
-};
-
-type GaugeAnalyzeViewModel = Omit<AnalyzeViewModel, 'metrics'> & {
-    readonly metrics: readonly GaugeMetric[];
-};
+import { buildMetrics } from './analyze-metrics';
 
 describe('AnalyzeWidget', () => {
     const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -48,188 +26,165 @@ describe('AnalyzeWidget', () => {
         reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = previousReactActEnvironment;
     });
 
-    it('renders five selectable gauges, readiness trend by default, and removes old sparkline/full-chart ids', () => {
-        const controller = createController(createCurrentViewModel());
-        const widget = mountWidget(controller, 1100);
+    it('shows each recorded metric with its score, level, meaning and when it was recorded', () => {
+        const controller = createController(readyModel());
+        const widget = mountWidget(controller);
 
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-widget"');
-        expect(widget.node.textContent).toContain('Mock analysis');
-        expect(widget.node.textContent).toContain('overview.md');
-        expect(widget.node.textContent).toContain('1234');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-gauge-readiness"');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-gauge-gap"');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-gauge-contradiction"');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-gauge-bloat"');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-gauge-checklist"');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-trend-chart"');
-        expect(widget.node.innerHTML).not.toContain('data-testid="analyze-chart-full"');
-        expect(widget.node.innerHTML).not.toContain('data-testid="analyze-chart-sparkline"');
-        expect(widget.node.textContent).toContain('Readiness trend');
-        expect(widget.node.textContent).toContain('Date');
-        expect(widget.node.textContent).toContain('Score (%)');
-        expect(widget.node.textContent).toContain('Higher is better');
-        expect(widget.node.textContent).toContain('Lower is better');
+        const purpose = widget.node.querySelector('[data-testid="analyze-metric-purpose"]');
+        expect(purpose?.textContent).toContain('Purpose');
+        expect(purpose?.textContent).toContain('86%');
+        expect(purpose?.textContent).toContain('Good');
+        expect(purpose?.textContent).toContain('how much of it reads as specification');
+        expect(widget.node.querySelector('[data-testid="analyze-recorded-purpose"]')?.textContent).toContain('Recorded');
+        expect(purpose?.getAttribute('aria-label')).toContain('Purpose: 86% (Good)');
 
-        const readinessGauge = widget.node.querySelector('[data-testid="analyze-gauge-readiness"]');
-        expect(readinessGauge?.getAttribute('aria-pressed')).toBe('true');
-        expect(readinessGauge?.getAttribute('aria-label')).toContain('Readiness');
-        expect(readinessGauge?.getAttribute('aria-label')).toContain('82%');
-        expect(readinessGauge?.getAttribute('aria-label')).toContain('Higher is better');
-        expect(readinessGauge?.getAttribute('aria-label')).toContain('Good');
+        const leak = widget.node.querySelector('[data-testid="analyze-metric-leak"]');
+        expect(leak?.textContent).toContain('30%');
+        expect(leak?.textContent).toContain('Risk');
+        expect(leak?.textContent).toContain('Lower is better');
+        expect(widget.node.textContent).toContain('docs/prd.md');
+        expect(widget.node.textContent).toContain('Type: prd');
 
         disposeWidget(widget);
     });
 
-    it('renders dated axis labels, score ticks, and exact accessible point values for the selected trend', () => {
-        const controller = createController(createCurrentViewModel());
-        const widget = mountWidget(controller, 1100);
+    it('says "not analysed yet" and shows no number for a metric nobody has measured', () => {
+        const controller = createController(readyModel());
+        const widget = mountWidget(controller);
 
-        expect(widget.node.textContent).toContain('0');
-        expect(widget.node.textContent).toContain('25');
-        expect(widget.node.textContent).toContain('50');
-        expect(widget.node.textContent).toContain('75');
-        expect(widget.node.textContent).toContain('100');
-        expect(widget.node.textContent).toContain('2026-05-12');
-        expect(widget.node.textContent).toContain('2026-05-26');
-        expect(widget.node.textContent).toContain('2026-06-09');
-        expect(widget.node.textContent).toContain('2026-06-23');
-        expect(widget.node.textContent).toContain('2026-07-07');
-        expect(widget.node.textContent).toContain('2026-07-21');
-        expect(widget.node.innerHTML).toContain('data-testid="analyze-trend-point-readiness-2026-07-28"');
-
-        const exactPoint = widget.node.querySelector('[data-testid="analyze-trend-point-readiness-2026-07-28"]');
-        expect(exactPoint?.getAttribute('aria-label')).toBe('Readiness on 2026-07-28: 82%');
+        const bloat = widget.node.querySelector('[data-testid="analyze-metric-bloat"]');
+        expect(bloat?.textContent).toContain('Not analysed yet.');
+        expect(bloat?.className).toContain('studio-analyze__metric--pending');
+        expect(widget.node.querySelector('[data-testid="analyze-score-bloat"]')).toBeNull();
+        expect(bloat?.textContent).not.toMatch(/\d+%/);
+        expect(bloat?.querySelector('.studio-analyze__metric-level')).toBeNull();
 
         disposeWidget(widget);
     });
 
-    it('switches from wide vertical gauges to narrow horizontal gauges while keeping metric text visible', () => {
-        const controller = createController(createCurrentViewModel());
-        const widget = mountWidget(controller, 1100);
+    it('has no trend chart and no token counter: there is no history, and no run reports its spend', () => {
+        const controller = createController(readyModel());
+        const widget = mountWidget(controller);
 
-        expect(widget.node.querySelector('[data-testid="analyze-gauge-readiness"]')?.getAttribute('data-orientation')).toBe('vertical');
-        expect(widget.node.textContent).toContain('Actionability of the current document.');
-        expect(widget.node.textContent).toContain('Strong readiness across the last 12 weekly checkpoints.');
+        expect(widget.node.innerHTML).not.toContain('analyze-trend-chart');
+        expect(widget.node.innerHTML).not.toContain('analyze-token-usage');
+        expect(widget.node.querySelector('svg')).toBeNull();
+        expect(widget.node.textContent).not.toContain('Mock');
 
-        setWidgetWidth(widget, 360);
+        disposeWidget(widget);
+    });
+
+    it('runs the analysis from the button, and disables it while a run is in flight', () => {
+        const controller = createController(readyModel());
+        const widget = mountWidget(controller);
+
+        const button = widget.node.querySelector('[data-testid="analyze-run"]') as HTMLButtonElement;
+        expect(button.disabled).toBe(false);
         React.act(() => {
-            MessageLoop.sendMessage(widget, new Widget.ResizeMessage(360, 700));
+            button.click();
             MessageLoop.flush();
-        });
-
-        expect(widget.node.querySelector('[data-testid="analyze-gauge-readiness"]')?.getAttribute('data-orientation')).toBe('horizontal');
-        expect(widget.node.textContent).toContain('Actionability of the current document.');
-        expect(widget.node.textContent).toContain('Strong readiness across the last 12 weekly checkpoints.');
-
-        disposeWidget(widget);
-    });
-
-    it('changes the trend panel when a different gauge is selected', async () => {
-        const controller = createController(createCurrentViewModel());
-        const widget = mountWidget(controller, 1100);
-
-        expect(widget.node.textContent).toContain('Readiness trend');
-
-        const checklistGauge = widget.node.querySelector('[data-testid="analyze-gauge-checklist"]') as HTMLButtonElement | null;
-        expect(checklistGauge).not.toBeNull();
-
-        await React.act(async () => {
-            checklistGauge?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-
-        expect(widget.node.textContent).toContain('Checklist trend');
-        expect(widget.node.querySelector('[data-testid="analyze-gauge-checklist"]')?.getAttribute('aria-pressed')).toBe('true');
-        expect(widget.node.querySelector('[data-testid="analyze-trend-point-checklist-2026-07-28"]')?.getAttribute('aria-label')).toBe('Checklist on 2026-07-28: 91%');
-
-        disposeWidget(widget);
-    });
-
-    it('reflects stale and loading states and invokes analyze from the action button', async () => {
-        const controller = createController(createStaleViewModel());
-        const widget = mountWidget(controller, 960);
-
-        expect(widget.node.textContent).toContain('Stale');
-
-        const analyzeButton = widget.node.querySelector('[data-testid="analyze-run"]') as HTMLButtonElement | null;
-        expect(analyzeButton).not.toBeNull();
-
-        await React.act(async () => {
-            analyzeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
         expect(controller.analyze).toHaveBeenCalledTimes(1);
 
         React.act(() => {
-            controller.setViewModel(createLoadingViewModel());
+            controller.setViewModel({ ...readyModel(), status: 'running', canAnalyze: false, progress: 'Purpose: 1/1 · prd.md · Leak: queued' });
             MessageLoop.flush();
         });
-        expect(widget.node.textContent).toContain('Loading mock analysis');
+        expect(button.disabled).toBe(true);
+        expect(button.textContent).toBe('Analyzing…');
+        expect(widget.node.querySelector('[data-testid="analyze-progress"]')?.textContent).toBe('Purpose: 1/1 · prd.md · Leak: queued');
 
         React.act(() => {
-            controller.setViewModel(createCurrentViewModel());
+            controller.setViewModel({ ...readyModel(), note: 'Analysed the text on screen: Purpose, Leak.' });
             MessageLoop.flush();
         });
-        expect(widget.node.textContent).toContain('Current');
+        expect(widget.node.querySelector('[data-testid="analyze-note"]')?.textContent).toBe('Analysed the text on screen: Purpose, Leak.');
 
         disposeWidget(widget);
     });
 
-    it('is focusable and takes focus on activate request', () => {
-        const controller = createController(createCurrentViewModel());
-        const widget = mountWidget(controller, 960);
+    it('marks results the editor has moved past', () => {
+        const controller = createController({ ...readyModel(), status: 'stale' });
+        const widget = mountWidget(controller);
 
-        expect(widget.node.tabIndex).toBe(0);
-        expect(document.activeElement).not.toBe(widget.node);
-
-        React.act(() => {
-            MessageLoop.sendMessage(widget, Widget.Msg.ActivateRequest);
-            MessageLoop.flush();
-        });
-
-        expect(document.activeElement).toBe(widget.node);
+        expect(widget.node.querySelector('[data-testid="analyze-status"]')?.textContent).toBe('Edited');
+        expect(widget.node.textContent).toContain('Analyze checks the text on screen');
 
         disposeWidget(widget);
     });
 
-    it('renders an honest empty state when no active document is available', () => {
+    it('says plainly when Studio does not know the file, with nothing to run', () => {
+        const controller = createController({
+            status: 'unknown',
+            documentUri: 'file:///workspace/notes.md',
+            documentLabel: 'notes.md',
+            message: 'This file is not a spec Studio knows yet — give it a type on the portal\'s Specs tab.',
+            canAnalyze: false,
+            metrics: [],
+        });
+        const widget = mountWidget(controller);
+
+        expect(widget.node.querySelector('[data-testid="analyze-message"]')?.textContent).toContain('not a spec Studio knows yet');
+        expect((widget.node.querySelector('[data-testid="analyze-run"]') as HTMLButtonElement).disabled).toBe(true);
+        expect(widget.node.querySelector('[data-testid^="analyze-metric-"]')).toBeNull();
+
+        disposeWidget(widget);
+    });
+
+    it('renders an honest empty state without an active document', () => {
         const controller = createController({
             status: 'empty',
-            analysisLabel: 'Mock analysis',
-            emptyStateTitle: 'No active text document',
-            emptyStateDescription: 'Open a text editor to inspect mock analysis.',
+            emptyStateTitle: 'No active document',
+            emptyStateDescription: 'Open a specification to see what Studio knows about it.',
+            canAnalyze: false,
             metrics: [],
-            tokenUsage: 0
-        } as GaugeAnalyzeViewModel);
-        const widget = mountWidget(controller, 960);
+        });
+        const widget = mountWidget(controller);
 
         expect(widget.node.innerHTML).toContain('data-testid="analyze-empty-state"');
-        expect(widget.node.textContent).toContain('No active text document');
-        expect(widget.node.textContent).toContain('Open a text editor to inspect mock analysis.');
+        expect(widget.node.textContent).toContain('No active document');
+        expect(widget.node.querySelector('[data-testid="analyze-status"]')).toBeNull();
 
         disposeWidget(widget);
     });
 });
 
-function mountWidget(controller: ReturnType<typeof createController>, width: number): AnalyzeWidget {
+function readyModel(): AnalyzeViewModel {
+    return {
+        status: 'ready',
+        documentUri: 'file:///workspace/api/docs/prd.md',
+        documentLabel: 'prd.md',
+        knownAs: 'docs/prd.md',
+        typeKey: 'prd',
+        canAnalyze: true,
+        metrics: buildMetrics({
+            typeKey: 'prd',
+            conformance: {
+                conforms: true,
+                sections: [{ key: 'goals', title: 'Goals', present: true, required: true, ok: true }],
+                issues: [],
+                checkedAt: '2026-09-20T10:00:00Z',
+            },
+            findings: [
+                { detector: 'purpose', subject: 'node-1', score: 0.86, summary: 'purpose: prd (86% specification)', recordedAt: '2026-09-24T08:00:00Z' },
+                { detector: 'leak', subject: 'node-1', score: 0.3, severity: 'high', recordedAt: '2026-09-24T08:00:00Z' },
+            ],
+        }),
+    };
+}
+
+function mountWidget(controller: ReturnType<typeof createController>): AnalyzeWidget {
     const container = new Container();
     container.bind(AnalyzeWidget).toSelf();
-    container.bind<AnalyzeFrontendController>(Symbol.for('AnalyzeFrontendController')).toConstantValue(controller as never);
     container.bind(require('./analyze-controller').AnalyzeFrontendController).toConstantValue(controller as never);
     let widget: AnalyzeWidget;
     React.act(() => {
         widget = container.resolve(AnalyzeWidget);
         document.body.appendChild(widget!.node);
-        setWidgetWidth(widget!, width);
         widget!.update();
         MessageLoop.flush();
     });
     return widget!;
-}
-
-function setWidgetWidth(widget: AnalyzeWidget, width: number): void {
-    Object.defineProperty(widget.node, 'getBoundingClientRect', {
-        configurable: true,
-        value: () => ({ width, height: 480, top: 0, left: 0, bottom: 480, right: width, x: 0, y: 0, toJSON: () => undefined })
-    });
 }
 
 function disposeWidget(widget: AnalyzeWidget): void {
@@ -240,94 +195,16 @@ function disposeWidget(widget: AnalyzeWidget): void {
     });
 }
 
-function createController(initialViewModel: GaugeAnalyzeViewModel) {
+function createController(initialViewModel: AnalyzeViewModel) {
     const onDidChangeEmitter = new Emitter<void>();
     let viewModel = initialViewModel;
     return {
         analyze: jest.fn().mockResolvedValue(undefined),
         onDidChange: onDidChangeEmitter.event,
-        getViewModel: () => viewModel as unknown as AnalyzeViewModel,
-        setViewModel: (next: GaugeAnalyzeViewModel) => {
+        getViewModel: () => viewModel,
+        setViewModel: (next: AnalyzeViewModel) => {
             viewModel = next;
             onDidChangeEmitter.fire();
         }
-    };
-}
-
-function createCurrentViewModel(): GaugeAnalyzeViewModel {
-    return {
-        status: 'current',
-        analysisLabel: 'Mock analysis',
-        documentLabel: 'overview.md',
-        documentUri: 'file:///workspace/overview.md',
-        analyzedAt: '2026-07-28T09:05:00.000Z',
-        tokenUsage: 1234,
-        metrics: [
-            createGaugeMetric('readiness', 'Readiness', 82, 'higher-better', 'Good', 'Actionability of the current document.', 'Strong readiness across the last 12 weekly checkpoints.', [46, 52, 58, 61, 66, 69, 72, 74, 76, 79, 81, 82]),
-            createGaugeMetric('gap', 'Gap', 24, 'lower-better', 'Good', 'Distance between the current draft and expected coverage.', 'Coverage gaps are limited and still trending down.', [51, 49, 46, 43, 40, 37, 34, 31, 29, 27, 25, 24]),
-            createGaugeMetric('contradiction', 'Contradiction', 18, 'lower-better', 'Good', 'Conflict pressure between claims in the document.', 'Contradictions are low and continue to fall.', [39, 36, 34, 31, 29, 27, 25, 23, 22, 20, 19, 18]),
-            createGaugeMetric('bloat', 'Bloat', 27, 'lower-better', 'Attention', 'Amount of excess material relative to the stated scope.', 'Bloat is improving but still above the good threshold.', [47, 44, 41, 39, 37, 35, 33, 32, 31, 30, 28, 27]),
-            createGaugeMetric('checklist', 'Checklist', 91, 'higher-better', 'Good', 'Completion of explicit review and delivery criteria.', 'Checklist completion is consistently strong.', [62, 66, 69, 72, 75, 78, 81, 84, 86, 88, 90, 91])
-        ]
-    };
-}
-
-function createStaleViewModel(): GaugeAnalyzeViewModel {
-    return {
-        ...createCurrentViewModel(),
-        status: 'stale'
-    };
-}
-
-function createLoadingViewModel(): GaugeAnalyzeViewModel {
-    return {
-        ...createCurrentViewModel(),
-        status: 'loading'
-    };
-}
-
-function createGaugeMetric(
-    key: AnalyzeMetricKey,
-    label: string,
-    score: number,
-    direction: 'higher-better' | 'lower-better',
-    level: GaugeLevel,
-    definition: string,
-    interpretation: string,
-    values: readonly number[]
-): GaugeMetric {
-    const trend = values.map((value, index) => ({
-        date: buildWeeklyDate(index),
-        value
-    }));
-    return {
-        key,
-        label,
-        score,
-        unit: '%',
-        direction,
-        level,
-        definition,
-        interpretation,
-        ariaText: `${label}: ${score}% (${level}). ${direction === 'higher-better' ? 'Higher is better.' : 'Lower is better.'} ${definition} ${interpretation}`,
-        trend
-    };
-}
-
-function buildWeeklyDate(index: number): string {
-    const dates = [
-        '2026-05-12',
-        '2026-05-19',
-        '2026-05-26',
-        '2026-06-02',
-        '2026-06-09',
-        '2026-06-16',
-        '2026-06-23',
-        '2026-06-30',
-        '2026-07-07',
-        '2026-07-14',
-        '2026-07-21',
-        '2026-07-28'
-    ] as const;
-    return dates[index] ?? dates[dates.length - 1];
+    } as unknown as AnalyzeFrontendController & { analyze: jest.Mock; setViewModel(next: AnalyzeViewModel): void };
 }

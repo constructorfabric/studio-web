@@ -34,6 +34,7 @@ import { WorkspaceGraphFrontendController, WorkspaceGraphWidget } from './worksp
 import { WorkspaceGraphService, workspaceGraphServicePath } from '../common/graph-model';
 import { AnalyzeApplicationShellProvider, AnalyzeFrontendController } from './analyze-controller';
 import { AnalyzeContribution } from './analyze-contribution';
+import { AnalyzeStudioClient } from './analyze-studio-client';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditFrontendController } from './audit-controller';
 import { OperationsWidget } from './operations-widget';
@@ -145,6 +146,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WorkspaceGraphFrontendController).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(WorkspaceGraphFrontendController);
     bind(AnalyzeApplicationShellProvider).toFactory(ctx => () => ctx.container.get(ApplicationShell));
+    bind(AnalyzeStudioClient).toSelf().inSingletonScope();
     bind(AnalyzeFrontendController).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(AnalyzeFrontendController);
     bind(WorkspaceGraphService).toDynamicValue(ctx => {

@@ -2,6 +2,11 @@ import 'reflect-metadata';
 jest.mock('@theia/editor/lib/browser/editor-manager', () => ({
     EditorManager: class EditorManager {}
 }));
+// The controller places files through the workspace, whose service reads the
+// application config at import; none of that is under test here.
+jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
+    WorkspaceService: class WorkspaceService {}
+}));
 
 class MockAbstractViewContribution<T> {
     protected readonly singletonWidget: T;
