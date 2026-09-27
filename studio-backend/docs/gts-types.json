@@ -18,10 +18,6 @@
     },
     {
       "gear": "account-management",
-      "type_id": "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
-    },
-    {
-      "gear": "account-management",
       "type_id": "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
     },
     {

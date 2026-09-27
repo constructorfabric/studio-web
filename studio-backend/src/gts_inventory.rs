@@ -277,15 +277,14 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
             crate::kit_registry::service::INSTALLATIONS_METADATA_TYPE,
         ),
         // Declared by the profile and consumed by account-management and the
-        // portal rather than by a constant in this crate: the four tenant types
-        // that shape the org / workspace / project hierarchy, and the two
-        // metadata envelopes the portal writes. Listed so the per-profile guard
-        // covers the whole set a deployment needs, not only the part the code
-        // happens to name.
-        (
-            "account-management",
-            "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~",
-        ),
+        // portal rather than by a constant in this crate: the three tenant types
+        // below the platform root that shape the org / workspace / project
+        // hierarchy, and the two metadata envelopes the portal writes. Listed so
+        // the per-profile guard covers the whole set a deployment needs, not
+        // only the part the code happens to name. The platform-root type is not
+        // here: account-management 0.10 registers it itself from
+        // `bootstrap.root_tenant_type`, and a profile declaring it too stops the
+        // boot.
         (
             "account-management",
             "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~",
