@@ -19,7 +19,7 @@ use sea_orm::{ActiveValue, ColumnTrait, Condition, EntityTrait, Order};
 use serde_json::Value;
 use time::OffsetDateTime;
 use toolkit_db::Db;
-use toolkit_db::outbox::Outbox;
+use toolkit_db::outbox::{Outbox, Record};
 use toolkit_db::secure::{SecureEntityExt, SecureInsertExt, SecureUpdateExt};
 use toolkit_security::{AccessScope, SecurityContext};
 use uuid::Uuid;
@@ -156,9 +156,10 @@ impl TaskService {
                         .scope_unchecked(&AccessScope::for_tenant(tenant))?
                         .exec(tx)
                         .await?;
-                    outbox
-                        .enqueue(tx, QUEUE, partition, payload, PAYLOAD_TYPE)
-                        .await?;
+                    let record = Record::to(QUEUE, partition)
+                        .payload(payload, PAYLOAD_TYPE)
+                        .build()?;
+                    outbox.enqueue(tx, record).await?;
                     Ok(())
                 })
             })
@@ -272,9 +273,10 @@ impl TaskService {
                         )
                         .exec(tx)
                         .await?;
-                    outbox
-                        .enqueue(tx, QUEUE, partition, payload, PAYLOAD_TYPE)
-                        .await?;
+                    let record = Record::to(QUEUE, partition)
+                        .payload(payload, PAYLOAD_TYPE)
+                        .build()?;
+                    outbox.enqueue(tx, record).await?;
                     Ok(())
                 })
             })
