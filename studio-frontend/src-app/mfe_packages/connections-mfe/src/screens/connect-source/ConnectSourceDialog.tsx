@@ -27,7 +27,7 @@ import {
   SelectValue,
   Skeleton,
 } from '@gears-frontx/ui-kit';
-import { ConnectorsApiService, OrganizationProvider, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
+import { ConnectorsApiService, OrganizationProvider, useEverLoaded, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
 import { useConnectSourceScreenTranslations, useConnectSourceText } from '../../i18n';
 import { isDraftUsable } from '../../model/connectionDraft';
 import { CONNECT_SLICE_KEY, editDraft, resetForm } from '../../slices/connectSlice';
@@ -83,8 +83,7 @@ const DialogBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const [everLoaded, setEverLoaded] = useState(isLoaded);
-  if (isLoaded && !everLoaded) setEverLoaded(true);
+  const everLoaded = useEverLoaded(isLoaded);
   const showSkeleton = !everLoaded && !translationsFailed;
 
   const blocked = submitting || orgLoading || !orgId || !isDraftUsable(draft);

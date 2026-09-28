@@ -8,6 +8,8 @@
  * has no file at all.
  */
 
+import { useState } from 'react';
+
 export type TranslationModule = { default: Record<string, string> };
 export type TranslationModules = Record<string, () => Promise<TranslationModule>>;
 
@@ -26,4 +28,15 @@ export function loadScreenTranslations(modules: TranslationModules, directory: s
     ]);
     return { ...base?.default, ...local?.default };
   };
+}
+
+/**
+ * Whether the screen's dictionary has loaded at least once. A language change
+ * loads it again and `isLoaded` is false meanwhile; this stays true, so a
+ * first-load skeleton does not come back.
+ */
+export function useEverLoaded(isLoaded: boolean): boolean {
+  const [everLoaded, setEverLoaded] = useState(isLoaded);
+  if (isLoaded && !everLoaded) setEverLoaded(true);
+  return everLoaded;
 }

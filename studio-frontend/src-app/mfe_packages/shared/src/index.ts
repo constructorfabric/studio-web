@@ -108,6 +108,7 @@ export {
 export { isNotFound, orNullOnNotFound, responseStatus } from './errors/notFound';
 export {
   loadScreenTranslations,
+  useEverLoaded,
   type TranslationModule,
   type TranslationModules,
 } from './i18n/screenTranslations';

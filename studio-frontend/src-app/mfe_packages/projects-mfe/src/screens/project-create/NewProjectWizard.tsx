@@ -4,13 +4,14 @@
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-steps:p1
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { eventBus, useMfeBridge } from '@gears-frontx/react';
 import { useAppDispatch, useAppSelector } from '@gears-frontx/react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   OrganizationProvider,
   WorkspaceProvider,
+  useEverLoaded,
   useHostChrome,
   useOrganization,
   useWorkspace,
@@ -65,8 +66,7 @@ const WizardBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const [everLoaded, setEverLoaded] = useState(isLoaded);
-  if (isLoaded && !everLoaded) setEverLoaded(true);
+  const everLoaded = useEverLoaded(isLoaded);
   const showSkeleton = !everLoaded && !translationsFailed;
 
   const step = stepFor(draft, stepKey);

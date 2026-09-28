@@ -62,6 +62,15 @@ describe('artifacts table while rows are on the way', () => {
     expect(within(body).getAllByRole('row')).toHaveLength(3);
   });
 
+  it('draws as many skeleton rows as the page it replaces', () => {
+    const page = Array.from({ length: 5 }, (_, index) => ({ ...ROW, id: `n-${index}` }));
+    const { rerender } = render(table({ rows: [], loading: true }));
+    rerender(table({ rows: page }));
+    rerender(table({ rows: [], loading: true }));
+
+    expect(within(screen.getAllByRole('rowgroup')[1]).getAllByRole('row')).toHaveLength(5);
+  });
+
   it('shows the rows and drops the busy mark once they arrive', () => {
     const { rerender } = render(table({ rows: [], loading: true }));
     rerender(table({ rows: [ROW] }));
