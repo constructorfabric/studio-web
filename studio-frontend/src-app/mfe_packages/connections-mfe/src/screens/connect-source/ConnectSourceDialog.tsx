@@ -83,8 +83,7 @@ const DialogBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const everLoaded = useEverLoaded(isLoaded);
-  const showSkeleton = !everLoaded && !translationsFailed;
+  const showSkeleton = !useEverLoaded(isLoaded) && !translationsFailed;
 
   const blocked = submitting || orgLoading || !orgId || !isDraftUsable(draft);
 

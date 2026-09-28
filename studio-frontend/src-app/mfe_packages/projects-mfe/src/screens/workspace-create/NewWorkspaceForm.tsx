@@ -72,8 +72,7 @@ const FormBody: React.FC = () => {
   }, [announceToShell]);
 
   /** The skeleton is for the first load and nothing else. */
-  const everLoaded = useEverLoaded(isLoaded);
-  const showSkeleton = !everLoaded && !translationsFailed;
+  const showSkeleton = !useEverLoaded(isLoaded) && !translationsFailed;
 
   const blocked = submitting || (!created && (orgLoading || !orgId || !name.trim()));
 

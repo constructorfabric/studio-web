@@ -32,7 +32,7 @@ vi.mock('./useArtifactImport', () => ({
   useProjectImport: () => ({ phase: 'idle', repos: [] }),
 }));
 
-import { clampOffset, useArtifacts } from './useArtifacts';
+import { useArtifacts } from './useArtifacts';
 
 const ok = (total: number): Answer => ({ data: { nodes: [], total }, isLoading: false, isError: false });
 const isRepositoryTotal = (params: NodesParams) =>
@@ -108,15 +108,6 @@ describe('a page on the way', () => {
 
     rerender({ projectId: 'p2', search: 'other' });
     expect(result.current).toMatchObject({ total: 0, refreshing: false, loading: true });
-  });
-});
-
-describe('clampOffset', () => {
-  it('moves an offset past the last row back to the last page, and leaves any other alone', () => {
-    expect(clampOffset(72, 20)).toBe(18);
-    expect(clampOffset(18, 18)).toBe(0);
-    expect(clampOffset(36, 96)).toBe(36);
-    expect(clampOffset(36, 0)).toBe(36);
   });
 });
 

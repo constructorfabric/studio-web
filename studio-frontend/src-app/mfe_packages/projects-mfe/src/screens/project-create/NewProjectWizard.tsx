@@ -66,8 +66,7 @@ const WizardBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const everLoaded = useEverLoaded(isLoaded);
-  const showSkeleton = !everLoaded && !translationsFailed;
+  const showSkeleton = !useEverLoaded(isLoaded) && !translationsFailed;
 
   const step = stepFor(draft, stepKey);
   const back = prevStep(draft, step.key);

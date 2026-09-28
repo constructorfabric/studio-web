@@ -14,11 +14,11 @@ import { useFormatters, useMfeBridge } from '@gears-frontx/react';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { Search } from 'lucide-react';
 import { useProjectText } from '../../../i18n';
-import { ARTIFACTS_PAGE_SIZE, clampOffset, useArtifacts } from '../../../shared/useArtifacts';
+import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
 import { useThemedRoot } from '../../../shared/useThemedRoot';
 import { requestOpenArtifact } from '../../../actions/artifactActions';
-import type { ArtifactRow } from '../../../model/artifact';
+import { clampOffset, type ArtifactRow } from '../../../model/artifact';
 import type { ArtifactKind } from '../../../api/artifactTypes';
 import { artifactColumns } from './artifactColumns';
 import { ArtifactsTable } from './ArtifactsTable';
@@ -110,7 +110,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     refetch,
   } = useArtifacts(projectId, { repo: repository, kind, search, offset });
 
-  const clamped = clampOffset(offset, total);
+  const clamped = clampOffset(offset, total, ARTIFACTS_PAGE_SIZE);
   if (clamped !== offset) setOffset(clamped);
 
   const chosen = React.useMemo(

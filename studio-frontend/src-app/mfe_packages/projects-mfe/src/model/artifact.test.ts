@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
-import { buildArtifactRows, buildRepositories, opensInEditor } from './artifact';
+import { buildArtifactRows, buildRepositories, clampOffset, opensInEditor } from './artifact';
 
 const REPOS = new Map([['repo-1', 'group/repo']]);
 
@@ -125,5 +125,14 @@ describe('buildRepositories', () => {
       { id: 'r-1', name: 'group/alpha' },
       { id: 'r-2', name: 'group/zeta' },
     ]);
+  });
+});
+
+describe('clampOffset', () => {
+  it('moves an offset past the last row back to the last page, and leaves any other alone', () => {
+    expect(clampOffset(72, 20, 18)).toBe(18);
+    expect(clampOffset(18, 18, 18)).toBe(0);
+    expect(clampOffset(36, 96, 18)).toBe(36);
+    expect(clampOffset(36, 0, 18)).toBe(36);
   });
 });

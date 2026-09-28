@@ -14,13 +14,6 @@ import { useProjectImport } from './useArtifactImport';
 
 export const ARTIFACTS_PAGE_SIZE = 18;
 
-/** An offset at or past the last row moves back to the start of the last page. */
-export function clampOffset(offset: number, total: number): number {
-  return total > 0 && offset >= total
-    ? (Math.ceil(total / ARTIFACTS_PAGE_SIZE) - 1) * ARTIFACTS_PAGE_SIZE
-    : offset;
-}
-
 const REPOSITORY_CEILING = 200;
 
 export interface ArtifactCountView {
