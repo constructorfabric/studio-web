@@ -108,14 +108,21 @@ pub(crate) fn graph_type_id(leaf: &str, family: &str) -> String {
 /// One producer type: a schema deriving from its family, with the searchable
 /// payload paths declared as a trait so the gear composes the search text
 /// itself rather than taking a producer-supplied string.
+///
+/// An edge type carries no traits at all: the edge base declares no
+/// `full_text_search`, and the gear validates a type's resolved traits against
+/// what its base declares, so even an empty list refuses the whole batch.
 fn schema_of(leaf: &str, family: &str, search_paths: &[&str]) -> serde_json::Value {
-    serde_json::json!({
+    let mut schema = serde_json::json!({
         "$id": format!("gts://{}", graph_type_id(leaf, family)),
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "x-gts-traits": { "full_text_search": search_paths },
         "type": "object",
         "allOf": [{ "$ref": format!("gts://{family}") }],
-    })
+    });
+    if family != STATIC_EDGE {
+        schema["x-gts-traits"] = serde_json::json!({ "full_text_search": search_paths });
+    }
+    schema
 }
 
 /// The same types as **platform types-registry** catalog entries.
