@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
@@ -27,6 +27,22 @@ const providers = [
     credential_hint: 'ghp_…',
   },
 ];
+
+/** What the dictionary hook reports, when a case overrules the real one. */
+const { translations } = vi.hoisted(() => ({
+  translations: { override: null as { isLoaded: boolean; error: Error | null } | null },
+}));
+
+vi.mock('../../i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../i18n')>();
+  return {
+    ...actual,
+    useConnectSourceScreenTranslations: () => {
+      const reported = actual.useConnectSourceScreenTranslations();
+      return translations.override ?? reported;
+    },
+  };
+});
 
 vi.mock('@gears-frontx/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@gears-frontx/react')>();
@@ -61,13 +77,14 @@ async function renderDialog(organization: unknown = { id: 'org-1', name: 'Acme' 
   });
   i18nRegistry.register(CONNECT_SOURCE_NAMESPACE, 'en' as never, en);
 
-  render(
+  const tree = () => (
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
       <ConnectSourceDialog />
     </FrontXProvider>
   );
+  const view = render(tree());
 
-  return mfeApp;
+  return { mfeApp, rerender: () => view.rerender(tree()) };
 }
 
 /**
@@ -77,12 +94,16 @@ async function renderDialog(organization: unknown = { id: 'org-1', name: 'Acme' 
  * tick later.
  */
 async function mount(organization: unknown = { id: 'org-1', name: 'Acme' }) {
-  const mfeApp = await renderDialog(organization);
+  const { mfeApp } = await renderDialog(organization);
   await screen.findByLabelText(en.field_provider);
   return mfeApp;
 }
 
 describe('ConnectSourceDialog', () => {
+  beforeEach(() => {
+    translations.override = null;
+  });
+
   it('asks for exactly the four fields the gear needs', async () => {
     await mount();
 
@@ -126,13 +147,26 @@ describe('ConnectSourceDialog', () => {
     // swap itself — nothing of the form on the first paint, all of it after —
     // and the card's stated height in the stylesheet is what makes the swap
     // free of movement.
-    await renderDialog();
+    const { rerender } = await renderDialog();
 
     expect(screen.queryByLabelText(en.field_provider)).toBeNull();
     expect(screen.queryByLabelText(en.field_token)).toBeNull();
     expect(screen.queryByRole('heading')).toBeNull();
 
     expect(await screen.findByLabelText(en.field_provider)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
+
+    // A language change loads the dictionary again; the fields stay.
+    translations.override = { isLoaded: false, error: null };
+    rerender();
+    expect(screen.getByLabelText(en.field_provider)).toBeTruthy();
+  });
+
+  it('shows the failure, not the placeholder, when the dictionary does not load', async () => {
+    translations.override = { isLoaded: false, error: new Error('no dictionary') };
+    await renderDialog();
+
+    expect(screen.getByRole('alert').textContent).toBe('Could not load this screen.');
     expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
   });
 
