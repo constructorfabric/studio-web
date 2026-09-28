@@ -95,12 +95,12 @@ async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
 }
 
 beforeEach(() => {
+  org.current = { id: 'org-1', name: 'Fabric' };
   translations.current = { isLoaded: true, error: null };
 });
 
 describe('the organization a new workspace is announced under', () => {
   beforeEach(() => {
-    org.current = { id: 'org-1', name: 'Fabric' };
     createWorkspace.mockReset();
     createWorkspace.mockResolvedValue(CREATED);
   });
