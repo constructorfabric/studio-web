@@ -281,7 +281,9 @@ async def functional(api: Api, run: str) -> list[dict]:
     m.record("F03", "compatibility dry-run for an added optional field", code == 200, {"status": code, "change": short(verdict, 500)})
     code, body, _ = await api.call("POST", "/types", json={"types": [{"type_id": ns.node("item"), "schema": changed}], "options": {"on_existing": "update"}})
     got = [(i.get("outcome"), i.get("revision")) for i in type_items(body)] if code == 200 else short(body)
-    m.record("F04", "on_existing=update accepts an added optional field (README: 'compatible drift')", code == 200, {"status": code, "outcome/revision": got})
+    # Under an open payload an added property is backward-incompatible by GTS's
+    # rule (the gear's README says so since 0.1.1); F04b is the compatible form.
+    m.record("F04", "on_existing=update on an added property under an OPEN payload (documented: refused)", None, {"status": code, "outcome/revision": got})
     closed_t = ns.node("closed")
     await api.call("POST", "/types", json={"types": [{"type_id": closed_t, "schema": item_schema(closed_t, closed=True)}]})
     code, body, _ = await api.call("POST", "/types", json={"types": [{"type_id": closed_t, "schema": item_schema(closed_t, extra_props={"note": {"type": "string"}}, closed=True)}],
