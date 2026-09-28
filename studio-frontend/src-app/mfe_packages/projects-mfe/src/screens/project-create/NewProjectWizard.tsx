@@ -4,7 +4,7 @@
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-steps:p1
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { eventBus, useMfeBridge } from '@gears-frontx/react';
 import { useAppDispatch, useAppSelector } from '@gears-frontx/react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
@@ -65,9 +65,9 @@ const WizardBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const everLoaded = useRef(false);
-  everLoaded.current ||= isLoaded;
-  const showSkeleton = !everLoaded.current && !translationsFailed;
+  const [everLoaded, setEverLoaded] = useState(isLoaded);
+  if (isLoaded && !everLoaded) setEverLoaded(true);
+  const showSkeleton = !everLoaded && !translationsFailed;
 
   const step = stepFor(draft, stepKey);
   const back = prevStep(draft, step.key);

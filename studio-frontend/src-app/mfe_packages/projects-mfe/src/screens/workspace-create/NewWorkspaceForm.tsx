@@ -2,7 +2,7 @@
 
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-overlay:p1
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-announce:p1
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { eventBus, useAppDispatch, useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import { Button, Input, Label, Skeleton } from '@gears-frontx/ui-kit';
 import {
@@ -71,9 +71,9 @@ const FormBody: React.FC = () => {
   }, [announceToShell]);
 
   /** The skeleton is for the first load and nothing else. */
-  const everLoaded = useRef(false);
-  everLoaded.current ||= isLoaded;
-  const showSkeleton = !everLoaded.current && !translationsFailed;
+  const [everLoaded, setEverLoaded] = useState(isLoaded);
+  if (isLoaded && !everLoaded) setEverLoaded(true);
+  const showSkeleton = !everLoaded && !translationsFailed;
 
   const blocked = submitting || (!created && (orgLoading || !orgId || !name.trim()));
 

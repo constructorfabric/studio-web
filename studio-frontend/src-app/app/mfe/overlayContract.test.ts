@@ -27,6 +27,7 @@ import {
 } from '@gears-frontx/react';
 // Not re-exported by @gears-frontx/react — this is the contract check
 // `registerExtension` runs after the type-system register succeeds.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { SHELL_SCHEMAS } from './schemas';
 import {

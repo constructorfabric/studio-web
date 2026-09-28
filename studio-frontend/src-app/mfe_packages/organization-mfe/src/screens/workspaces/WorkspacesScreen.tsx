@@ -55,7 +55,7 @@ const WorkspaceList: React.FC<{
     void refetch();
   }, [scopedWorkspace, refetch]);
 
-  const all = data?.items ?? [];
+  const all = useMemo(() => data?.items ?? [], [data]);
 
   const projectTotal = useMemo(
     () => all.reduce((sum, row) => sum + (row.child_count ?? 0), 0),

@@ -110,12 +110,10 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     refetch,
   } = useArtifacts(projectId, { repo: repository, kind, search, offset });
 
-  React.useEffect(() => {
-    if (total > 0 && offset >= total) {
-      const lastPage = Math.ceil(total / ARTIFACTS_PAGE_SIZE) - 1;
-      setOffset(lastPage * ARTIFACTS_PAGE_SIZE);
-    }
-  }, [total, offset]);
+  if (total > 0 && offset >= total) {
+    const lastPage = Math.ceil(total / ARTIFACTS_PAGE_SIZE) - 1;
+    setOffset(lastPage * ARTIFACTS_PAGE_SIZE);
+  }
 
   const chosen = React.useMemo(
     () => repositories.find((entry) => entry.id === repository) ?? null,
