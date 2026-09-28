@@ -9322,9 +9322,9 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "weftgraph"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7e361a5a0d5cc9441872631163f1fe6e513e90ab0fb556b95611c55b9b5f5f0"
+checksum = "8a89dec34c613b5f8d73572dfcf21295dcbb60cef35f9b4228b7de18db1ee47c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9364,9 +9364,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-onnx-embedding-plugin"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d7d6c845bf5b1972e2dbb7c4db53b6f17dea0bf51120cdda7ee3f0594b56a47"
+checksum = "06d6f6ac06935fb6678bff97c62250c03c0138dc4e58b07b7916d4d828216ff1"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -9383,9 +9383,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-remote-embedding-plugin"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "759c685137468797b3ead09b44694dc5b2780e4953a545378adee2a4a899d696"
+checksum = "b486663dda774e415db4c17c2de92d3853b7f0de608c0dd3f6933dc16a484011"
 dependencies = [
  "async-trait",
  "reqwest 0.13.5",
@@ -9402,9 +9402,9 @@ dependencies = [
 
 [[package]]
 name = "weftgraph-sdk"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde9a73bac42e5c1894d70b761025935610e3736155de615dea9b6ae67910fba"
+checksum = "388d119caa002d980b5eb5fd9b3d4d581b78d3ea70b8421b0c932a696fb1773b"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
