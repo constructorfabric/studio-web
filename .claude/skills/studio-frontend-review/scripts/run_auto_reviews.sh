@@ -22,6 +22,7 @@ claude_bin="${CLAUDE_BIN:-claude}"
 case "$runs" in "$HOME/.claude"*) echo "REVIEW_RUNS must not be under ~/.claude: Claude Code blocks writes there" >&2; exit 2;; esac
 mkdir -p "$runs"
 export REVIEW_RUNS="$runs"   # review_state.py keeps its record of reviewed heads under $REVIEW_RUNS/state
+export REVIEW_AUTO=1         # publish_review.py labels every review and reply as automated, --auto or not
 
 # One run at a time: a cron tick that lands while the previous review is still going just exits.
 exec 9>"$runs/.lock"

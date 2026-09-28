@@ -17,10 +17,12 @@ of the same file ("Line N:" prefix); one whose file is not in the diff is refuse
 --replies: [{"thread_id", "comment_id", "action": "reply"|"resolve", "body"}] — a reply is posted in
 the thread of `comment_id`; resolve marks `thread_id` resolved (with an optional reply first).
 --quiet-if-empty: no findings → post no review (replies still go out). The head is recorded locally as
-reviewed (review_state.py) either way, so it is not picked up again. --auto labels the review as automated.
+reviewed (review_state.py) either way, so it is not picked up again. --auto labels the review as automated;
+REVIEW_AUTO=1 (set by run_auto_reviews.sh) does the same, so an unattended run never depends on the flag.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -104,6 +106,7 @@ def main():
     ap.add_argument("--quiet-if-empty", action="store_true")
     ap.add_argument("--auto", action="store_true")
     a = ap.parse_args()
+    a.auto = a.auto or os.environ.get("REVIEW_AUTO") == "1"
 
     repo_args = ["--repo", a.repo] if a.repo else []
     plan = json.load(open(a.plan)) if a.plan else None
