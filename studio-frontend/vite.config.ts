@@ -1,54 +1,52 @@
-import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from 'vite';
+import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { federation } from '@module-federation/vite';
 import path from 'path';
-import { renderRuntimeEnv, resolveStand, type Stand } from './scripts/lib/stands';
+import { renderRuntimeEnv, resolveStand, standProxy, type Stand } from './scripts/lib/stands';
 
 /**
  * The dev server stands in for the container (ADR-0031): what nginx and
  * `docker/10-runtime-env.sh` do for a deployed portal — carry the backend
  * paths to a backend, and tell the bundle which IdP to sign in against — Vite
- * does here for the stand `STUDIO_STAND` names (`scripts/lib/stands.ts`).
+ * does here for the stand `STUDIO_STAND` names (`scripts/lib/stands.ts`). The
+ * proxy is `standProxy`; this plugin is the `/env.js`, served ahead of the
+ * placeholder in `public/env.js` — which stays, for `vite build`.
+ *
+ * `vite preview` gets both as well: Vite resolves it as `serve` and hands it
+ * `server.proxy`, so a built bundle previewed here faces the same stand the
+ * dev server would, with the issuer to match rather than the placeholder's
+ * none.
  */
-function standProxy(stand: Stand): Record<string, ProxyOptions> {
-  return {
-    // The gateway. nginx.conf.template mirrors this as `location /cf/`.
-    '/cf': { target: stand.url, changeOrigin: true },
-    // An IDE session: the portal frames `/studio/{id}/` and Theia opens its
-    // WebSocket under it (ADR-0021). The session pod admits only its own
-    // origin — `Origin` against `Host`, which is what nginx sends on a stand —
-    // so the proxy presents the stand's origin, not this dev server's.
-    '/studio': { target: stand.url, changeOrigin: true, ws: true, headers: { origin: stand.url } },
+function standRuntimeEnv(stand: Stand, shadowed: string[]): Plugin {
+  const serve = (server: ViteDevServer | PreviewServer) => {
+    server.middlewares.use('/env.js', (_req, res) => {
+      res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(renderRuntimeEnv(stand));
+    });
+    const printUrls = server.printUrls.bind(server);
+    server.printUrls = () => {
+      printUrls();
+      server.config.logger.info(`  ➜  Stand:   ${stand.name} → ${stand.url} (issuer ${stand.issuer})`);
+      if (shadowed.length) {
+        server.config.logger.warn(
+          `  ➜  ${shadowed.join(', ')} set but not read: /env.js carries the stand's issuer and client id`,
+        );
+      }
+    };
   };
-}
-
-function standRuntimeEnv(stand: Stand): Plugin {
-  return {
-    name: 'studio-stand-runtime-env',
-    apply: 'serve',
-    configureServer(server) {
-      // Registered ahead of Vite's own middlewares, so this answers before the
-      // placeholder in public/env.js — which stays, for `vite build`.
-      server.middlewares.use('/env.js', (_req, res) => {
-        res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-store');
-        res.end(renderRuntimeEnv(stand));
-      });
-      const printUrls = server.printUrls.bind(server);
-      server.printUrls = () => {
-        printUrls();
-        server.config.logger.info(`  ➜  Stand:   ${stand.name} → ${stand.url} (issuer ${stand.issuer})`);
-      };
-    },
-  };
+  return { name: 'studio-stand-runtime-env', apply: 'serve', configureServer: serve, configurePreviewServer: serve };
 }
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
   // STUDIO_* from the shell and from .env / .env.local; `envPrefix` stays
-  // VITE_, so none of it reaches the bundle. Only the dev server has a stand:
-  // a build is pointed at one by the container it ends up in.
+  // VITE_, so none of it reaches the bundle. A server has a stand — the dev
+  // server, and preview; a build is pointed at one by the container it ends
+  // up in. A VITE_OIDC_* value would reach the bundle only to be shadowed by
+  // /env.js, so the server says when it sees one.
   const stand = command === 'serve' ? resolveStand(loadEnv(mode, __dirname, 'STUDIO_')) : null;
+  const shadowed = stand ? Object.keys(loadEnv(mode, __dirname, 'VITE_OIDC_')) : [];
 
   return {
     server: {
@@ -57,7 +55,7 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [
       react(),
-      ...(stand ? [standRuntimeEnv(stand)] : []),
+      ...(stand ? [standRuntimeEnv(stand, shadowed)] : []),
       federation({
         name: 'host',
         shared: {

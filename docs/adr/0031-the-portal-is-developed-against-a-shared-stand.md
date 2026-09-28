@@ -8,7 +8,7 @@ date: 2026-09-25
 
 **ID**: `cpt-studio-adr-the-portal-is-developed-against-a-shared-stand`
 
-Status: accepted · 2026-09-25 · Builds on ADR-0021 and ADR-0029 · Branch `feature/dev-stand-switch`
+Status: accepted · 2026-09-25 · Builds on ADR-0021 · Amends ADR-0029 (the end-to-end suite's defaults) · Branch `feature/dev-stand-switch`
 
 ## Table of Contents
 
@@ -99,6 +99,10 @@ The address the portal frames is relative, `/studio/{id}/?token=…` (the
 session gear writes it, `nginx.conf.template` and the backend's own proxy
 carry it), so the frame loads from the dev server and Theia opens its
 WebSocket there too. The proxy carries both to the stand with `ws: true`.
+nginx does not forward `/studio/` as it is — it rewrites the path to the
+backend's `/cf/studio-session/v1/ide/{id}/` (`nginx.conf.template`), and so
+does the proxy: on a stand the Ingress sends `/cf` straight to the backend,
+and `local` is a bare backend with no nginx in front of it.
 
 A session pod admits only its own origin: `isOriginAllowed` in
 `theia/studio/src/node/studio-runtime-config.ts` compares the request's
@@ -139,10 +143,14 @@ backend. That day is this one. The defaults now belong to the compose stack's
 own portal on `localhost:8080` and to nothing else; a portal on `localhost:5173`
 is the dev server facing whatever `STUDIO_STAND` chose, and it comes with no
 defaults — `E2E_USER` and `E2E_PASSWORD` are named, `demo/studio` when the
-stand is `local`. `ignoreHTTPSErrors` stays keyed off `localhost`: it exists
-for the compose stack's self-signed Keycloak and does nothing against a valid
-certificate. The suite against a stand's realm still waits for the `e2e`
-account ADR-0029 deferred.
+stand is `local`. ADR-0029 wrote that the defaults and `ignoreHTTPSErrors`
+would both follow the issuer; this record amends that. The suite cannot see
+the issuer behind a dev server — the stand switch is the dev server's, not the
+suite's — so the defaults follow the port, and `ignoreHTTPSErrors` stays keyed
+off `localhost`: it exists for the compose stack's self-signed Keycloak, and
+tolerating a bad certificate where a valid one answers costs the suite
+nothing. The suite against a stand's realm still waits for the `e2e` account
+ADR-0029 deferred.
 
 ### The data is real
 
@@ -200,8 +208,14 @@ rule: nothing destructive is tried out on `dev` for the sake of a screen;
 - **A dev server's `Origin` is rewritten on one path.** Only `/studio`, only
   to the stand's origin, and only because the session pod checks it. `/cf`
   carries the browser's own headers, and the backend does not look.
-- The switch has its own unit test (`__tests__/stands.test.ts`) and rides the
-  `type-check:package:test` project; `vite.config.ts` resolves a stand only
+- **`npm run preview` faces the stand too.** Vite resolves preview as `serve`
+  and gives it the dev server's proxy, so the plugin serves preview the same
+  `/env.js`: a built bundle on `:4173` talks to the chosen stand with the
+  issuer to match. Signing in from `:4173` still needs a realm that lists it,
+  and none does.
+- The switch has its own unit test (`__tests__/stands.test.ts`), and so does
+  the suite's `env.ts` (`__tests__/e2e-env.test.ts`); both ride the
+  `type-check:package:test` project. `vite.config.ts` resolves a stand only
   when serving, so `vite build` in the image build reads no `STUDIO_*`.
 - `studio-frontend/docs/stands.md` is the operating note; `README.md`,
   `QUICK_START.md` and `e2e/README.md` point at it.

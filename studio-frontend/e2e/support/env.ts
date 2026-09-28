@@ -15,7 +15,8 @@
  * whichever stand `STUDIO_STAND` chose (ADR-0031), and a stand's realm has no
  * seeded users, so a portal there comes with no defaults: name the account.
  * A missing credential is a configuration error, and it fails here, at
- * config load, rather than as a timed-out login form.
+ * config load, rather than as a timed-out login form. The suite reads
+ * `e2eEnv`; `readEnv` takes the environment as a parameter for its unit test.
  */
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
@@ -47,8 +48,8 @@ export interface E2EEnv {
  * is the one exception: its portal is `http://localhost:8080`, and its IdP is
  * still HTTPS (see `signInThroughKeycloak`).
  */
-function readEnv(): E2EEnv {
-  const baseUrl = process.env.E2E_BASE_URL ?? 'http://localhost:8080';
+export function readEnv(env: Readonly<Record<string, string | undefined>> = process.env): E2EEnv {
+  const baseUrl = env.E2E_BASE_URL ?? 'http://localhost:8080';
   const url = new URL(baseUrl);
   const isLocal = LOCAL_HOSTS.has(url.hostname);
 
@@ -62,8 +63,8 @@ function readEnv(): E2EEnv {
   // Seeded users exist behind the compose portal and nowhere else — not
   // behind the dev server, whose backend and realm are a stand's.
   const isComposePortal = isLocal && url.port === COMPOSE_PORTAL_PORT;
-  const username = process.env.E2E_USER ?? (isComposePortal ? 'demo' : undefined);
-  const password = process.env.E2E_PASSWORD ?? (isComposePortal ? 'studio' : undefined);
+  const username = env.E2E_USER ?? (isComposePortal ? 'demo' : undefined);
+  const password = env.E2E_PASSWORD ?? (isComposePortal ? 'studio' : undefined);
   if (!username || !password) {
     throw new Error(
       `E2E_USER and E2E_PASSWORD must be set to run against ${baseUrl}; ` +

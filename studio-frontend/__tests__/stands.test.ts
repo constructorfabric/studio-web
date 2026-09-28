@@ -6,8 +6,13 @@
  * replace any single value of it.
  */
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STAND, STANDS, renderRuntimeEnv, resolveStand } from '../scripts/lib/stands';
+import { DEFAULT_STAND, STANDS, renderRuntimeEnv, resolveStand, standProxy } from '../scripts/lib/stands';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 describe('resolveStand', () => {
   it('is the dev stand when nothing is set', () => {
@@ -48,13 +53,45 @@ describe('resolveStand', () => {
 
     expect(resolveStand({ STUDIO_OIDC_CLIENT_ID: 'other' }).clientId).toBe('other');
   });
+
+  it('names dev and test as the desktop does', () => {
+    // theia/electron-app/environments.json is the desktop's copy of the table;
+    // `local` differs there on purpose (see the comment on STANDS).
+    const desktop: { id: string; studioUrl: string; issuer: string }[] = JSON.parse(
+      readFileSync(path.resolve(HERE, '../../theia/electron-app/environments.json'), 'utf-8'),
+    );
+    for (const name of ['dev', 'test']) {
+      const entry = desktop.find((e) => e.id === name);
+      expect(entry, name).toBeDefined();
+      expect(entry?.studioUrl).toBe(STANDS[name].url);
+      expect(entry?.issuer).toBe(STANDS[name].issuer);
+    }
+  });
+});
+
+describe('standProxy', () => {
+  it('rewrites /studio to the session route with the stand as origin, and leaves /cf alone', () => {
+    const proxy = standProxy(resolveStand({ STUDIO_STAND: 'local' }));
+    expect(proxy['/cf']).toEqual({ target: 'http://127.0.0.1:8090', changeOrigin: true });
+
+    const studio = proxy['/studio'];
+    expect(studio.target).toBe('http://127.0.0.1:8090');
+    expect(studio.ws).toBe(true);
+    expect(studio.headers).toEqual({ origin: 'http://127.0.0.1:8090' });
+    expect(studio.rewrite?.('/studio/abc123/services?id=1')).toBe('/cf/studio-session/v1/ide/abc123/services?id=1');
+  });
 });
 
 describe('renderRuntimeEnv', () => {
-  it('writes what docker/10-runtime-env.sh writes', () => {
+  it("serves the stand's issuer and client id as window.__STUDIO_ENV__", () => {
     const script = renderRuntimeEnv(resolveStand({ STUDIO_STAND: 'local' }));
     expect(script).toBe(
       'window.__STUDIO_ENV__ = {"OIDC_ISSUER":"https://localhost:8443/realms/studio","OIDC_CLIENT_ID":"studio-portal"};\n',
     );
+  });
+
+  it('carries the Discord invite when STUDIO_DISCORD_URL names one', () => {
+    const script = renderRuntimeEnv(resolveStand({ STUDIO_DISCORD_URL: 'https://discord.gg/x' }));
+    expect(script).toContain('"DISCORD_URL":"https://discord.gg/x"');
   });
 });

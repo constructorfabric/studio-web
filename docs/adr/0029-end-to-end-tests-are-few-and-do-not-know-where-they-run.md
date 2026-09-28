@@ -10,6 +10,10 @@ date: 2026-09-25
 
 Status: accepted · 2026-09-25 · Builds on ADR-0021 · Relates to ADR-0011 and ADR-0028 · Branch `feature/e2e-playwright-suite`
 
+Amended by ADR-0031 (2026-09-25): the suite's seeded defaults follow the
+compose portal's port, not the issuer, and `ignoreHTTPSErrors` stays keyed off
+`localhost` — see [What this does to the end-to-end suite](0031-the-portal-is-developed-against-a-shared-stand.md#what-this-does-to-the-end-to-end-suite).
+
 ## Table of Contents
 
 <!-- toc -->

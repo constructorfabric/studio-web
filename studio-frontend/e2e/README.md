@@ -34,8 +34,8 @@ If the backend never turns healthy and its log says *ONNX Runtime did not
 load*, bring the stack up with `STUDIO_EMBEDDING_PROVIDER=fake` — the sign-in
 scenario needs no embeddings.
 
-Against the dev server (`STUDIO_STAND=local npm run dev:all` in another
-terminal, so the seeded account exists behind it):
+Against the dev server (the compose stack up as above, and `STUDIO_STAND=local
+npm run dev:all` in another terminal, so the seeded account exists behind it):
 
 ```sh
 E2E_BASE_URL=http://localhost:5173 E2E_USER=demo E2E_PASSWORD=studio npm run e2e

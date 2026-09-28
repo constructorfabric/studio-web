@@ -51,6 +51,7 @@ it by — in the shell or in `.env.local`, on top of whichever stand is chosen:
 | `STUDIO_BACKEND_URL`     | where `/cf` and `/studio` go      |
 | `STUDIO_OIDC_ISSUER`     | the realm                         |
 | `STUDIO_OIDC_CLIENT_ID`  | the client (`studio-portal`)      |
+| `STUDIO_DISCORD_URL`     | the invite the header links (none by default) |
 
 None of these reach the bundle; `VITE_*` is still the only prefix that does.
 
@@ -61,12 +62,15 @@ to `BACKEND_HOST`; Vite proxies them to the stand. The container entrypoint
 writes `window.__STUDIO_ENV__` into `/env.js`; a plugin in `vite.config.ts`
 serves the same file with the stand's issuer. The app reads it through
 `src-app/app/config/env.ts` either way. The table lives in
-`scripts/lib/stands.ts`.
+`scripts/lib/stands.ts`. `npm run preview` faces the same stand: Vite gives
+preview the dev server's proxy, and the plugin serves it the same `/env.js`.
 
-One path is treated specially. `/studio/{id}/` is an IDE session, and the
-session pod admits only its own origin — `Origin` against `Host`. The proxy
-presents the stand's origin on that path, as nginx would; on `/cf` the
-browser's headers pass as they are.
+One path is treated specially. `/studio/{id}/` is an IDE session. nginx
+rewrites it to the backend's `/cf/studio-session/v1/ide/{id}/`, and so does
+the proxy — on a stand `/cf` goes straight to the backend, and `local` is a
+bare backend with no nginx in front. The session pod admits only its own
+origin — `Origin` against `Host` — so the proxy presents the stand's origin on
+that path, as nginx would; on `/cf` the browser's headers pass as they are.
 
 ## What a stand needs from its side
 

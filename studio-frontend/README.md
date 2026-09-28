@@ -139,12 +139,12 @@ The dev server talks to a *stand*, not to a stack on this machine: by default
 Keycloak (sign in with GitHub) — and needs nothing here but Node.
 `STUDIO_STAND=local npm run dev:all` turns it to the compose stack instead.
 
-- **[`docs/stands.md`](docs/stands.md)** — the stand switch: `dev`, `test`,
-  `local`, the overrides, what a stand must allow, and how the end-to-end
-  suite is pointed at each.
 - **[`docs/studio-events.md`](docs/studio-events.md)** — the backend's push
   channel: how a screen is told that background work finished instead of
   polling for it, with worked examples and the traps.
+- **[`docs/stands.md`](docs/stands.md)** — the stand switch: `dev`, `test`,
+  `local`, the overrides, what a stand must allow, and how the end-to-end
+  suite is pointed at each.
 - [`../docs/feature/`](../docs/feature) — per-feature specs (moved from `docs/sdlc/FEATURE/`).
 
 The short version of the first one: `StudioEventsApiService` is already
