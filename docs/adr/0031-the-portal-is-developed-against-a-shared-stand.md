@@ -116,6 +116,12 @@ refused. The `/studio` proxy therefore presents the stand's origin in
 `Origin`, on every request it carries. It is the dev server telling the pod
 what nginx would have told it, wherever the pod asks.
 
+Presenting it also hides the browser's own `Origin` from the pod, and the
+session cookies belong to every port of `localhost`: a page on any of them
+would reach the session as the stand. So the proxy makes the pod's comparison
+first, against its own host, and refuses (404) a request whose `Origin` is
+neither absent nor the dev server's own (`bypass` in `standProxy`, #501).
+
 ### The sign-in is the stand's
 
 The browser signs in against the stand's realm, through GitHub as everybody

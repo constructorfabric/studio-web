@@ -7,6 +7,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -79,6 +80,18 @@ describe('standProxy', () => {
     expect(studio.ws).toBe(true);
     expect(studio.headers).toEqual({ origin: 'http://127.0.0.1:8090' });
     expect(studio.rewrite?.('/studio/abc123/services?id=1')).toBe('/cf/studio-session/v1/ide/abc123/services?id=1');
+  });
+
+  it('refuses a /studio request from another origin before it presents the stand’s (#501)', () => {
+    const studio = standProxy(resolveStand({ STUDIO_STAND: 'local' }))['/studio'];
+    const bypass = (origin?: string) =>
+      studio.bypass?.({ headers: { host: 'localhost:5173', origin } } as IncomingMessage, undefined, studio);
+
+    expect(bypass(undefined)).toBeUndefined(); // a navigation carries none
+    expect(bypass('http://localhost:5173')).toBeUndefined();
+    expect(bypass('http://localhost:3000')).toBe(false); // same site, another port: the cookies go along
+    expect(bypass('http://a1b2.webview.localhost:5173')).toBe(false);
+    expect(bypass('null')).toBe(false);
   });
 });
 

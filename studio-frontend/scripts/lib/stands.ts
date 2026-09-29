@@ -107,6 +107,12 @@ export function resolveStand(env: StandEnv): Stand {
  * only its own origin (`Origin` against `Host`, which is what nginx sends on
  * a stand), so that one path presents the stand's origin; `/cf` carries the
  * browser's headers as they are.
+ *
+ * Presenting it hides the browser's own `Origin` from the pod, so the proxy
+ * makes the pod's comparison first, against the dev server's own host. The
+ * session cookies are the browser's for every port of `localhost`, and
+ * without this a page on any of them would reach the session as the stand
+ * (#501).
  */
 export function standProxy(stand: Stand): Record<string, ProxyOptions> {
   return {
@@ -116,9 +122,20 @@ export function standProxy(stand: Stand): Record<string, ProxyOptions> {
       changeOrigin: true,
       ws: true,
       headers: { origin: stand.url },
+      bypass: (req) => (isOwnOrigin(req.headers.origin, req.headers.host) ? undefined : false),
       rewrite: (path) => path.replace(/^\/studio\//, '/cf/studio-session/v1/ide/'),
     },
   };
+}
+
+/** Absent (a navigation) or the dev server's own, as Theia's `WsOriginValidator` has it. */
+function isOwnOrigin(origin: string | undefined, host: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 /**
