@@ -7,6 +7,7 @@ Run from inside a local clone of the PR's repository.
 Writes:
   <workdir>/tree/                 git worktree at the PR head
   <workdir>/pr-body.md            full PR description
+  <workdir>/issues.md             the issues the description references (#N), title and text
   <workdir>/existing-comments.md  what people, CodeRabbit and earlier runs already said
   <workdir>/open-threads.json     unresolved threads this skill opened in earlier rounds (re-checked, replied to)
   <workdir>/cfs-validate.md       `cfs validate --local-only` at the head, split into new vs already on the base
@@ -42,6 +43,28 @@ def sh(*args, check=True, cwd=None):
     if check and res.returncode != 0:
         sys.exit(f"{' '.join(args)} failed:\n{res.stderr}")
     return res.stdout
+
+
+def write_issues(workdir, repo, refs):
+    """The issues the PR body references, fetched here so no agent has to decide whether to look them up.
+    A reference to a pull request gets its title only; its code is not the spec."""
+    parts = []
+    for i in refs[:10]:
+        raw = sh("gh", "api", f"repos/{repo}/issues/{i}", check=False)
+        if not raw:
+            parts.append(f"# #{i}\n\n(could not be read)")
+            continue
+        it = json.loads(raw)
+        if it.get("pull_request"):
+            parts.append(f"# #{i} (pull request, {it['state']}): {it['title']}")
+            continue
+        body = (it.get("body") or "(no description)").strip()
+        if len(body) > 8000:
+            body = body[:8000] + "\n\n… (cut at 8000 characters)"
+        parts.append(f"# #{i} ({it['state']}): {it['title']}\n\n{body}")
+    if len(refs) > 10:
+        parts.append(f"({len(refs) - 10} more references not fetched: {' '.join('#' + r for r in refs[10:])})")
+    open(f"{workdir}/issues.md", "w").write("\n\n".join(parts) + "\n" if parts else "No issue references in the PR body.\n")
 
 
 def fmt_file(f):
@@ -249,8 +272,9 @@ Rules for every reviewer:
 ARCH_BODY = """
 Your scope is the PR as a whole, at the structural level — slice reviewers are handling line-level bugs,
 so do not do a line-by-line pass. Focus on checklist section 1 (architecture and spec conformance),
-PR-wide test coverage (does a new major flow have an e2e test?), duplication across the PR or with
-existing code in the repo, file structure (checklist section 4: do the new files land where files of
+PR-wide test coverage (does a new major flow have an e2e test, where the repo writes e2e for such flows —
+checklist section 6?), duplication across the PR or with existing code in the repo (only when it costs
+something — checklist section 3), file structure (checklist section 4: do the new files land where files of
 that kind already live?) and traceability (`cfs-validate.md`, FEATURE docs, `@cpt` markers).
 Code-pattern conventions inside files are the slice reviewers' job.
 
@@ -319,6 +343,7 @@ def main():
     os.makedirs(f"{workdir}/findings", exist_ok=True)
     os.makedirs(f"{workdir}/briefs", exist_ok=True)
     open(f"{workdir}/pr-body.md", "w").write(plan.get("body") or "")
+    write_issues(workdir, repo, plan["issue_refs"])
     write_diffs(workdir, tree, base, plan)
 
     blind = plan.get("blind")
@@ -392,8 +417,8 @@ Don't re-report a point that is already raised there unless you have new evidenc
 {threads_note}
 
 ## Linked issues
-References in the body: {refs}
-<!-- ORCHESTRATOR: acceptance criteria of linked issues (gh issue view), or "none" -->
+References in the body: {refs}. Their text is in `{workdir}/issues.md` — read it.
+<!-- ORCHESTRATOR: acceptance criteria from issues.md, or "none" -->
 
 ## Specs to read (paths relative to the worktree)
 <!-- ORCHESTRATOR: pick from plan.spec_candidates the ADR/PRD/contract docs this PR touches; one line of why each -->

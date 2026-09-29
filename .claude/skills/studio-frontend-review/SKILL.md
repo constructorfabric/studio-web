@@ -89,13 +89,13 @@ python3 .claude/skills/studio-frontend-review/scripts/prepare_review.py <workdir
 ```
 
 Clears anything left in the workdir from another head, creates a detached worktree at the PR head
-(`<workdir>/tree`, the user's checkout is untouched), `pr-body.md`, `existing-comments.md` (what people,
+(`<workdir>/tree`, the user's checkout is untouched), `pr-body.md`, `issues.md` (the issues it references), `existing-comments.md` (what people,
 CodeRabbit and earlier runs already said), `open-threads.json` (our unresolved threads), `cfs-validate.md`
 (`cfs validate --local-only` from `studio-frontend/` at the head and the base, new vs pre-existing), the
 context pack `context.md` and one brief per agent in `briefs/`. Fill the `ORCHESTRATOR` sections of
 `context.md` before launching anyone:
 - 3–6 line summary of what the PR claims, its stated rules, declared breaking changes;
-- acceptance criteria of linked issues (`gh issue view`), or "none";
+- acceptance criteria of linked issues from `issues.md` (already fetched), or "none";
 - relevant specs from `plan.spec_candidates`, one line of why each. Always consider
   `studio-frontend/docs/sdlc/FEATURE/*.md` for the touched feature and `studio-frontend/AGENTS.md`.
 

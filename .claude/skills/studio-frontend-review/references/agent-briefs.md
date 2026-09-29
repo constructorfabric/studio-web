@@ -40,7 +40,8 @@ A JSON array to the given path:
   file in the diff; use `side: "LEFT"` with the old line number only for removed code. `start_line` is optional,
   for multi-line ranges. If the root cause is in unchanged code, anchor on the changed line that exposes it and
   name the other location in the body. PR-wide points (no e2e for the new flow, missing ADR) anchor on the most
-  relevant changed line. Nothing lives only in the review summary.
+  relevant changed line. Nothing lives only in the review summary — except a missing e2e where the repo writes
+  no e2e for flows of that kind (checklist §6): that is one summary line, not a finding.
 - `verify` ends every comment as "**How to verify:** …". Prefer a runnable command or the name of the test that
   fails; for a UI bug, the click sequence.
 - `preexisting: true` only in a follow-up round, for a behaviour bug in code that already existed at the last

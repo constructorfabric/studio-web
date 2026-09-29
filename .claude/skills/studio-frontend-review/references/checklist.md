@@ -43,6 +43,12 @@ Not a bug: a hypothetical that requires the code to be called in a way it never 
 - Copy-paste inside the PR (same block in two files/slices).
 - Duplicated knowledge: the same constant, mapping or validation rule defined in two places that must stay in sync.
 
+**Report only when it costs something.** A duplication finding needs one of: the copies must change together
+(shared knowledge — a constant, a mapping, a validation rule, an error shape), three or more copies, or a
+re-implementation of an existing helper you can name. Not a finding: two short blocks (≈5 lines or fewer) that
+happen to look alike but answer different questions, and mocks, fixtures or setup repeated in one or two test
+files — each suite may own its harness (a helper copied into three or more test files is a finding).
+
 ## 4. Repo conventions: file structure and code patterns
 
 Agents write code that is correct in general but foreign to this repo. A codebase stays navigable only if new code looks like the code next to it. The rule: **the repo's existing majority is the standard**, not the reviewer's taste and not general best practice.
@@ -80,8 +86,8 @@ The team's testing philosophy. Apply it; don't ask for tests it considers pointl
 
 **Ask for tests when:**
 - the PR adds or changes **logic** (domain rules, state transitions, data transforms, parsing, validation, permission checks, custom hooks' behaviour) and it has no unit test;
-- the PR adds a **new major user flow** (a new end-to-end scenario a user can go through) and there is no e2e test for it — always say this explicitly;
-- a flow's **error handling is critical** and there's no e2e for the intentionally-failing path (e.g. backend error shows the right message and the UI recovers).
+- the PR adds a **new major user flow** (a new end-to-end scenario a user can go through) and there is no e2e test for it — **only if the repo writes e2e for flows of that kind**. Look in the e2e suite (`studio-frontend/e2e/`) first: if it holds no spec for a comparable flow (today it has only the sign-in smoke, and ADR-0028 tests routing with unit tests on an in-memory history), a missing e2e is the team's choice, not a finding — say it in one line of the review summary, never as a thread;
+- a flow's **error handling is critical** and there's no e2e for the intentionally-failing path (e.g. backend error shows the right message and the UI recovers) — same condition.
 
 **Don't ask for tests of:**
 - layout/markup/styling, snapshot or visual baselines — UI changes too often, such tests live a week or two and then get rubber-stamped;
@@ -102,7 +108,7 @@ broken behaviour only**, each with a concrete failure (input or state → wrong 
 - **major** — broken behaviour on a secondary path, or an ADR/spec violation that produces wrong behaviour
   (name the behaviour).
 - **minor** (posted as **Should fix**) — everything worth changing that isn't broken behaviour: missing tests for
-  new logic, missing e2e for a new flow, traceability (`@cpt` markers, FEATURE docs, `cfs` errors), duplication,
+  new logic, missing e2e for a new flow (where the repo has e2e for such flows), traceability (`@cpt` markers, FEATURE docs, `cfs` errors), duplication,
   boundary violations without a behaviour failure, convention deviations, smells.
 - **nit** — optional polish.
 
