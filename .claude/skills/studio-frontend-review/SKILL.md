@@ -29,6 +29,8 @@ reproduction tests and verdict files; you run the scripts on them.
 - `<N> --full` — PR mode, but review every changed line even if an earlier head was already reviewed.
 - `<N> --auto` — **auto mode**: unattended (headless `claude -p`, cron, CI). No questions, no approval step;
   publishes a `COMMENT` review itself. Rules in "Auto mode" below.
+- `<N> --auto --threads-only` — **threads pass** (runner only): no review, only re-check our open threads. See
+  "Threads between rounds" below.
 - no argument, or a branch name — **local mode**: review `git diff` + `git diff --cached` + untracked files
   (or `git diff origin/main...<branch>`) restricted to `studio-frontend/`, one pass by you with both
   checklists, report in chat using the draft format. Nothing is posted.
@@ -236,6 +238,27 @@ differences:
   part; checked: …" + verdict).
 - Finish with one line: `PR #<N> round <k>: <n> findings posted, <m> threads resolved, <r> replies — <review URL or "no review">`
   or `PR #<N>: skipped — <reason>`.
+
+## Threads between rounds
+
+A round re-checks threads only on a new head with new lines under the scope. So that an answered thread is still
+closed when the author answers without pushing, pushes nothing new under the scope, or the PR is merged first,
+the runner calls `threads_pass.py find` after the rounds and, per PR, `threads_pass.py prepare` and
+`/studio-frontend-review <N> --auto --threads-only`. The workdir then holds `tree/` (the PR head),
+`open-threads.json` (only the threads to re-check: answered after our last word, or outdated with no answer),
+`plan.json`, an empty `approved.json` and `summary.md`. Do only this:
+1. For each thread, read it and the code at `tree/` (the thread's path and line; the author's reply names the
+   commit — `git -C <workdir>/tree log` / `show` to check it). Apply the rules of step 4 "Threads from earlier
+   rounds" exactly: fixed → resolve, no reply; disagrees and right → resolve with "Agreed — withdrawn."; not
+   fixed → one "Still at `<sha7>`: …" reply; disagrees and wrong → one reply with the evidence, unless we
+   already argued in that thread — then leave it. A merged PR is the author's final word on scope: a
+   "not taken in this PR" / "follow-up" answer there → resolve with "Noted as a follow-up." No agents.
+2. Write `<workdir>/replies.json` and publish — no review is posted, only the thread actions:
+   `publish_review.py <N> --repo constructorfabric/studio-web --findings <workdir>/approved.json --summary <workdir>/summary.md --plan <workdir>/plan.json --replies <workdir>/replies.json --quiet-if-empty --auto`
+3. Finish with one line: `PR #<N> threads: <m> resolved, <r> replies, <k> left open`.
+
+The runner records every re-checked thread at its last comment, so a thread left open costs no further run
+until someone writes in it again.
 
 ## What "good" looks like
 

@@ -199,9 +199,11 @@ def own_threads(repo, n, me):
             "replies": len(comments) - 1,
             "last_author": (last["author"] or {}).get("login"),
             "last_body": last["body"].strip()[:600] if last is not first else "",
-            # Someone answered after our last word ("fixed in …", a disagreement): re-check it this round.
-            # Otherwise our word is the last one and the thread waits for the author — leave it alone.
-            "needs_recheck": (last["author"] or {}).get("login") != me,
+            "last_comment_id": last["databaseId"],
+            # Someone answered after our last word ("fixed in …", a disagreement), or nobody answered but the
+            # commented lines changed (a silent fix): re-check it. Otherwise our word is the last one and the
+            # thread waits for the author — leave it alone.
+            "needs_recheck": (last["author"] or {}).get("login") != me or (t["isOutdated"] and len(comments) == 1),
         })
     return out
 

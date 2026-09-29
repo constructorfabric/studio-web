@@ -41,7 +41,7 @@ max_attempts="${MAX_ATTEMPTS_PER_HEAD:-2}"
 
 cd "$root"
 if [ "$#" -gt 0 ]; then prs=("$@"); else mapfile -t prs < <(python3 "$here/find_prs.py" --repo "$repo"); fi
-[ "${#prs[@]}" -gt 0 ] || { echo "$(date -Is) nothing to review"; exit 0; }
+[ "${#prs[@]}" -gt 0 ] || echo "$(date -Is) nothing to review"
 
 dry=""
 [ "${DRY_RUN:-}" = "1" ] && dry=" DRY RUN: run publish_review.py only with --dry-run and report what would be posted."
@@ -58,6 +58,18 @@ allowed=(
   "Bash(sed -n *)" "Bash(jq *)" "Bash(mkdir -p *)"
 )
 denied=("Bash(gh pr merge *)" "Bash(gh pr review *)" "Bash(gh api *)" "Bash(git push *)" "Bash(git commit *)")
+
+# The last lines of the orchestrator's answer, and what the run cost.
+summarize() {
+  python3 -c 'import json,sys
+try:
+    r = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("(no result: %s)" % e); sys.exit()
+print("\n".join((r.get("result") or "").strip().splitlines()[-5:]))
+print("cost $%.2f, %d min, %s" % (r.get("total_cost_usd") or 0, (r.get("duration_ms") or 0) // 60000, r.get("subtype")))' "$1"
+}
+succeeded() { python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("subtype") != "success")' "$1" 2>/dev/null; }
 
 for pr in "${prs[@]}"; do
   wd="$runs/pr-$pr"
@@ -105,12 +117,33 @@ for pr in "${prs[@]}"; do
     --max-budget-usd "$budget" \
     --output-format json > "$wd/result.json" 2> "$wd/claude-stderr.log" \
     || echo "$(date -Is) PR #$pr: claude exited with $?"
-  # The last lines of the orchestrator's answer, and what the run cost.
-  python3 -c 'import json,sys
-try:
-    r = json.load(open(sys.argv[1]))
-except Exception as e:
-    print("(no result: %s)" % e); sys.exit()
-print("\n".join((r.get("result") or "").strip().splitlines()[-5:]))
-print("cost $%.2f, %d min, %s" % (r.get("total_cost_usd") or 0, (r.get("duration_ms") or 0) // 60000, r.get("subtype")))' "$wd/result.json"
+  summarize "$wd/result.json"
+  # Threads this round re-checked are not re-checked again between rounds unless someone writes in them.
+  succeeded "$wd/result.json" && python3 "$here/threads_pass.py" record "$wd" > /dev/null
+done
+
+# Between rounds: our open threads that someone answered (or whose lines changed) on a PR with no round pending —
+# an answer without a push, a push with nothing new under the scope, a PR merged before the next round.
+[ "$#" -gt 0 ] && exit 0
+mapfile -t tprs < <(python3 "$here/threads_pass.py" find --repo "$repo")
+for pr in "${tprs[@]}"; do
+  wd="$runs/threads-pr-$pr"
+  if [ -d "$wd/tree" ]; then git worktree remove --force "$wd/tree" 2>/dev/null || true; fi
+  rm -rf "$wd"; git worktree prune; mkdir -p "$wd"
+  if ! python3 "$here/threads_pass.py" prepare "$pr" "$wd" --repo "$repo" > "$wd/prepare.log" 2>&1; then
+    echo "$(date -Is) PR #$pr: threads prepare failed"; tail -n 5 "$wd/prepare.log"; continue
+  fi
+  echo "$(date -Is) $(cat "$wd/prepare.log")"
+  "$claude_bin" -p "/studio-frontend-review $pr --auto --threads-only. Workdir: $wd/. threads_pass.py prepare is done.$dry" \
+    --model "${REVIEW_MODEL:-sonnet}" \
+    --add-dir "$runs" \
+    --permission-mode acceptEdits \
+    --allowedTools "${allowed[@]}" \
+    --disallowedTools "${denied[@]}" \
+    --max-budget-usd "${MAX_BUDGET_USD_THREADS:-5}" \
+    --output-format json > "$wd/result.json" 2> "$wd/claude-stderr.log" \
+    || echo "$(date -Is) PR #$pr: claude exited with $?"
+  summarize "$wd/result.json"
+  succeeded "$wd/result.json" && [ "${DRY_RUN:-}" != "1" ] && python3 "$here/threads_pass.py" record "$wd" > /dev/null
+  git worktree remove --force "$wd/tree" 2>/dev/null || true
 done
