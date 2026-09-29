@@ -42,7 +42,7 @@ impl InsightDelivery {
             .iter()
             .map(|(key, segment)| ComponentSpec {
                 key: key.clone(),
-                matcher: ComponentMatch::Segment(segment.clone()),
+                matcher: matcher_for(segment),
             })
             .collect();
         ComponentQuery::new(ComponentQueryInput {
@@ -131,5 +131,46 @@ impl ComponentDelivery for InsightDelivery {
             });
         }
         Ok(out)
+    }
+}
+
+/// How one catalogue entry is matched against file paths.
+///
+/// A bare directory name (`api-gateway`) matches wherever it appears, which is
+/// what the catalogue has when all it knows is a crate name. A path
+/// (`gears/bss/ledger`, `packages/ui-kit`) is what a repository scan read, and
+/// it is matched as the prefix it is: a directory name that happens to recur
+/// elsewhere in the repository then cannot borrow another tree's churn, and a
+/// FrontX package, whose npm name (`@gears-frontx/ui-kit`) is not a directory
+/// at all, can be measured.
+fn matcher_for(segment: &str) -> ComponentMatch {
+    if segment.contains('/') {
+        let path = segment.trim_start_matches('/');
+        let path = if path.ends_with('/') {
+            path.to_string()
+        } else {
+            format!("{path}/")
+        };
+        ComponentMatch::Prefix(path)
+    } else {
+        ComponentMatch::Segment(segment.to_string())
+    }
+}
+
+#[cfg(test)]
+mod matcher_tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_name_is_a_segment_and_a_path_is_a_prefix() {
+        assert!(
+            matches!(matcher_for("api-gateway"), ComponentMatch::Segment(s) if s == "api-gateway")
+        );
+        assert!(
+            matches!(matcher_for("gears/bss/ledger"), ComponentMatch::Prefix(p) if p == "gears/bss/ledger/")
+        );
+        assert!(
+            matches!(matcher_for("packages/ui-kit/"), ComponentMatch::Prefix(p) if p == "packages/ui-kit/")
+        );
     }
 }

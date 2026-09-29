@@ -3,6 +3,7 @@ import * as express from '@theia/core/shared/express';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { mountStudioControlApi } from './studio-control-api';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
+import { DesktopAssistantsContribution } from './desktop-assistants';
 import { StudioEventForwarder, resolveForwarderConfig } from './studio-event-forwarder';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { ConnectionHandler, Disposable, DisposableCollection, RpcConnectionHandler } from '@theia/core/lib/common';
@@ -383,7 +384,18 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
         request: DetectContainingWorkspaceRepositoryRequest
     ): Promise<WorkspaceRepositorySuggestion | undefined> {
         this.assertWorkspaceRequest(request.workspaceId, request.configPath);
-        this.assertPathWithinWorkspace(request.openedPath, 'openedPath');
+        // A folder outside the workspace root is not a question about this
+        // workspace: nothing to suggest, rather than an error. A desktop opens a
+        // project from the Studio view under ~/ConstructorStudio/workspaces/,
+        // outside the fixed root, and the refusal used to stop the whole
+        // sources contribution from starting. A session's folder is always
+        // inside the root, so nothing changes there.
+        const openedPath = path.isAbsolute(request.openedPath)
+            ? path.resolve(request.openedPath)
+            : path.resolve(this.workspaceRoot, request.openedPath);
+        if (!isWithin(this.workspaceRoot, openedPath)) {
+            return undefined;
+        }
         const snapshot = (await this.workspaceSyncOrchestrator.getSnapshotResponse()).snapshot;
         return this.workspaceDiscoveryService.detectContainingRepository(
             request.openedPath,
@@ -733,6 +745,9 @@ export default new ContainerModule(bind => {
     // ADR-0027: dormant unless STUDIO_DESKTOP_URL names a Studio.
     bind(DesktopStudioContribution).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(DesktopStudioContribution);
+    // #480: the assistant extensions a desktop fetches; dormant without its manifest.
+    bind(DesktopAssistantsContribution).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(DesktopAssistantsContribution);
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioRuntimeClient>(studioRuntimeServicePath, client => {
             const endpoint = ctx.container.get(StudioRuntimeEndpoint);

@@ -263,16 +263,24 @@ describe('AnalyzeFrontendController', () => {
         expect(studio.startRun.mock.calls[0][3].documents[0].text).toBe('# PRD\n\nTyped in the Markdown editor.');
     });
 
-    it('shows empty for unrelated widgets but keeps the document while the Analyze panel itself is active', async () => {
+    it('keeps the document in front while another panel has focus, and while the Analyze panel itself is active', async () => {
         const studio = createStudio();
         const editor = createEditor('file:///workspace/docs/prd.md');
         const { controller, shell, activeWidgetEvents } = await start(studio, editor);
+        shell.mainWidget = editor.editor;
 
         shell.activeWidget = { id: ANALYZE_WIDGET_ID };
         activeWidgetEvents.fire();
         expect(controller.getViewModel().documentUri).toBe(editor.uri.toString());
 
+        // A file picked in the Explorer: the Explorer has focus, the file is open beside it.
+        shell.activeWidget = { id: 'files' };
+        activeWidgetEvents.fire();
+        await settle();
+        expect(controller.getViewModel()).toMatchObject({ documentUri: editor.uri.toString(), canAnalyze: true });
+
         shell.activeWidget = { id: 'terminal' };
+        shell.mainWidget = undefined;
         activeWidgetEvents.fire();
         expect(controller.getViewModel()).toMatchObject({ status: 'empty', emptyStateTitle: 'No active document' });
     });
@@ -428,8 +436,12 @@ async function settle(): Promise<void> {
 
 function createShell(activeWidgetEvents: Emitter<void>, activeWidget: unknown) {
     const listenerDisposable = { dispose: jest.fn() };
-    return {
+    const shell = {
         activeWidget,
+        mainWidget: undefined as unknown,
+        getCurrentWidget(_area: 'main'): unknown {
+            return this.mainWidget;
+        },
         listenerDisposable,
         onDidChangeActiveWidget: jest.fn(listener => {
             const disposable = activeWidgetEvents.event(listener);
@@ -441,6 +453,7 @@ function createShell(activeWidgetEvents: Emitter<void>, activeWidget: unknown) {
             };
         })
     };
+    return shell;
 }
 
 function createEditorManager(editorEvents: Emitter<TextEditor | undefined>, currentEditor: TextEditor | undefined) {

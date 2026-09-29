@@ -29,6 +29,7 @@ feature it falls back to an in-memory store, so the catalogue still works.
 |---|---|
 | `POST /sync` → `GET /tasks/{id}` | refresh the catalogue from crates.io, then poll |
 | `GET /components`, `GET /versions` | the catalogue itself |
+| `GET /reference` | the catalogue joined with the Gearbox engine's gears, one entry per component — the IDE's Components view ([`reference.rs`](reference.rs)) |
 | `GET /types`, `GET /types/counts` | graph types and how many objects each holds |
 | `GET`/`PUT`/`DELETE /field-schemas[/{describes}]` | the shapes describing catalogue fields |
 | `GET`/`POST /projects/{id}/gear-repo` | which repository a project's gears live in |

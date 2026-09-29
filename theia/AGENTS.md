@@ -8,6 +8,10 @@ ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE app
 
 You are implementing a custom Eclipse Theia application.
 
+The same application runs in the portal's session (`browser-app`) and on the
+desktop (`electron-app`). Any desktop change follows
+`../docs/desktop-contributing.md`: it must leave the web session unchanged.
+
 Before making changes:
 
 1. Inspect package.json and identify the pinned Theia version.

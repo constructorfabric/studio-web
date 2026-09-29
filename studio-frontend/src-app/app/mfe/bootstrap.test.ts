@@ -224,6 +224,34 @@ describe('bootstrapMFE (host-app)', () => {
     );
   });
 
+  it("seeds space-mfe's address even when another frame package comes first", async () => {
+    const frame = (id: string, publicPath: string) => ({
+      entries: [
+        {
+          id,
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~',
+          publicPath,
+        },
+      ],
+    });
+    const fixture = frame(
+      'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.fixture.mfe.main.v1',
+      'http://localhost:3080/'
+    );
+    const space = frame(
+      'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1',
+      'http://localhost:3090/'
+    );
+
+    const { seedFrameUrl } = await import('./bootstrap');
+
+    expect(seedFrameUrl([fixture as never, space as never])).toBe('http://localhost:3090/');
+    expect(seedFrameUrl([fixture as never])).toBe('http://localhost:3080/');
+  });
+
   it('answers null when the catalogue has only federated packages', async () => {
     const federatedConfig = {
       manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },

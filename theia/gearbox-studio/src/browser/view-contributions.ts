@@ -35,10 +35,20 @@ import { ProductSessionService } from "./shell/product-session-service";
 import {
   ADD_GEAR,
   BROWSE_CATALOGUE,
+  NEW_PRODUCT,
   SHOW_CONFLICTS,
   SHOW_GENERATE,
   SHOW_PRODUCT,
 } from "./shell/session-command-ids";
+import {
+  ENGINE_DOWN,
+  NO_PRODUCT,
+  addGearEntrance,
+  explained,
+  productCommandRefusal,
+  type ProductCommandState,
+} from "./shell/command-availability";
+import { PendingCreate } from "./create/pending-create";
 import { SelectionService } from "./shell/selection-service";
 import {
   availableIn,
@@ -516,6 +526,7 @@ export class AddGearViewContribution extends ScopedViewContribution<Widget> {
   private dialog?: AddGearDialog;
   @inject(ProductStore) protected readonly products!: ProductStore;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+  @inject(PendingCreate) protected readonly pendingCreate!: PendingCreate;
 
   /**
    * **A contribution with no widget of its own, deliberately.**
@@ -549,12 +560,34 @@ export class AddGearViewContribution extends ScopedViewContribution<Widget> {
 
   protected override async revealView(): Promise<unknown> { return this.openAdd(); }
 
+  /** Whether a product is open, being opened, and the engine up -- what Add gear decides by. */
+  protected productState(): ProductCommandState {
+    return {
+      productOpen: this.products.current.open !== undefined,
+      opening: this.addSession.opening !== undefined,
+      engineConnected: this.engine.isConnected,
+    };
+  }
+
   override registerCommands(commands: CommandRegistry): void {
     super.registerCommands(commands);
-    commands.registerCommand(ADD_GEAR, {
-      execute: (state?: AddGearChoice) => void this.openAdd(state),
-      isEnabled: () => this.products.current.open !== undefined && this.engine.isConnected,
-    });
+    // With no product open this creates one instead -- see `addGearEntrance`.
+    // The menu entry below stays gated on a product; the palette and Studio's
+    // ribbon reach this with none, and New Product is the useful answer there.
+    commands.registerCommand(ADD_GEAR, explained({
+      execute: (state?: AddGearChoice) => {
+        if (addGearEntrance(this.productState()).kind === "create-product") {
+          this.pendingCreate.state = { note: "No product is open. Create one here, then add gears to it." };
+          return void commands.executeCommand(NEW_PRODUCT.id);
+        }
+        return void this.openAdd(state);
+      },
+      isEnabled: () => addGearEntrance(this.productState()).kind !== "unavailable",
+      disabledReason: () => {
+        const entrance = addGearEntrance(this.productState());
+        return entrance.kind === "unavailable" ? entrance.reason : undefined;
+      },
+    }));
   }
 
   override registerMenus(menus: MenuModelRegistry): void {
@@ -839,10 +872,15 @@ export class ProductViewContribution
     // command rather than by injection keeps the wizards free of a dependency on
     // this contribution -- and `mayTakeTheFront` deliberately refuses to steal
     // the front from a Gearbox surface, so a wizard has to *ask*.
-    commands.registerCommand(SHOW_PRODUCT, {
+    commands.registerCommand(SHOW_PRODUCT, explained({
       execute: async (section?: import("./product/product-widget").ProductSection) => { const widget = await this.openView({ activate: true, reveal: true }); if (section) widget.showSection(section); },
       isEnabled: () => this.store.current.open !== undefined,
-    });
+      disabledReason: () => productCommandRefusal({
+        productOpen: this.store.current.open !== undefined,
+        opening: this.session.opening !== undefined,
+        engineConnected: this.engine.isConnected,
+      }),
+    }));
     commands.registerCommand(RESOLVE_PRODUCT, {
       // Re-resolves whatever is open for whatever profile is selected, which is
       // what "resolve" means once a product is on screen. Opening one is the
@@ -899,10 +937,11 @@ export class ConflictsViewContribution extends ScopedViewContribution<ConflictsW
     // Opens rather than toggles -- see `SHOW_CONFLICTS`. Gated like the toggle
     // beside it: leaving the *show* command ungated is the same hole the
     // `View: Toggle New Product` twin was, one command along.
-    commands.registerCommand(SHOW_CONFLICTS, {
+    commands.registerCommand(SHOW_CONFLICTS, explained({
       execute: () => this.openView({ activate: true, reveal: true }),
       isEnabled: () => this.availableHere(),
-    });
+      disabledReason: () => (this.availableHere() ? undefined : NO_PRODUCT),
+    }));
   }
 
   /**
@@ -983,10 +1022,11 @@ export class GenerateViewContribution extends ScopedViewContribution<GenerateWid
     this.registerScopedToggle(commands, { shortTitle: "Generate" });
     // Opens rather than toggles -- see `SHOW_GENERATE`. Gated on the product as
     // well as the engine: a plan is a product's plan.
-    commands.registerCommand(SHOW_GENERATE, {
+    commands.registerCommand(SHOW_GENERATE, explained({
       execute: () => this.openView({ activate: true, reveal: true }),
       isEnabled: () => this.availableHere() && this.engine.isConnected,
-    });
+      disabledReason: () => (!this.availableHere() ? NO_PRODUCT : this.engine.isConnected ? undefined : ENGINE_DOWN),
+    }));
   }
 
   override registerMenus(menus: MenuModelRegistry): void {

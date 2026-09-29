@@ -240,6 +240,89 @@ pub fn activity_feed(
     out
 }
 
+// ── one project's row ────────────────────────────────────────────────────────
+
+/// The severities a detector writes for something still wrong. The rest —
+/// `gate-passed`, `clean`, `analyzed` — are verdicts too, but nothing is left
+/// to do about them, and a row counting them would call a checked project
+/// busy.
+const OPEN_SEVERITIES: [&str; 3] = ["high", "gate-failed", "some"];
+
+/// What a project's row in the projects table says about its review and its
+/// sources, folded from the nodes those columns are about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSignals {
+    /// Findings whose verdict is still something to fix.
+    pub open_findings: u32,
+    /// Unresolved threads the project's repositories report: on documents and
+    /// on pull requests under review. `None` when no repository could say —
+    /// a GitLab source, or one never synced from a checkout.
+    pub open_comments: Option<u32>,
+    /// Pull requests, folded across every repository of the project, over the
+    /// same window and by the same rules as the Sources table.
+    pub pulls: RepoActivity,
+    /// Whether any pull request was ever synced. A project whose sources were
+    /// never read has no activity to show, which is a different sentence from
+    /// a quiet week.
+    pub pulls_known: bool,
+    /// The newest thing the feed would list first, if anything.
+    pub last_event: Option<ActivityEvent>,
+}
+
+/// Fold one project's nodes into its row.
+///
+/// `now` is a parameter for the reason [`repo_activity`] gives: every row of
+/// one table is measured against the same instant.
+#[must_use]
+pub fn project_signals(
+    findings: &[(String, Value)],
+    comments: &[(String, Value)],
+    pulls: &[Value],
+    repos: &[Value],
+    now: i64,
+    days: usize,
+) -> ProjectSignals {
+    let open_findings = findings
+        .iter()
+        .filter(|(_, f)| field_str(f, "severity").is_some_and(|s| OPEN_SEVERITIES.contains(&s)))
+        .count();
+
+    let mut open_comments: Option<u32> = None;
+    for repo in repos {
+        for key in ["open_document_threads", "open_review_threads"] {
+            if let Some(n) = repo.get(key).and_then(Value::as_u64) {
+                let n = u32::try_from(n).unwrap_or(u32::MAX);
+                open_comments = Some(open_comments.unwrap_or(0).saturating_add(n));
+            }
+        }
+    }
+
+    // Every repository on one axis: the project's row is one sparkline, not
+    // one per repository. Folded from the per-repository answer so the two
+    // screens cannot disagree about what counts as merged.
+    let mut total = RepoActivity::empty(days);
+    for a in repo_activity(pulls, &[], now, days).into_values() {
+        total.open += a.open;
+        total.merged += a.merged;
+        for (day, n) in total.days.iter_mut().zip(a.days) {
+            *day += n;
+        }
+    }
+
+    ProjectSignals {
+        open_findings: u32::try_from(open_findings).unwrap_or(u32::MAX),
+        open_comments,
+        pulls: total,
+        pulls_known: !pulls.is_empty(),
+        // Names only matter for reading the feed; the row shows what happened
+        // and when, and falls back to the path exactly as the feed does.
+        last_event: activity_feed(findings, comments, &|_| None)
+            .into_iter()
+            .next()
+            .filter(|e| e.recorded.is_some()),
+    }
+}
+
 // ── reading the nodes ────────────────────────────────────────────────────────
 
 fn field_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -621,5 +704,76 @@ mod tests {
         );
         assert_eq!(out[0].id, "c");
         assert_eq!(out[1].id, "f");
+    }
+
+    // ---- one project's row -------------------------------------------------
+
+    fn verdict(id: &str, severity: &str, days_ago: i64) -> (String, Value) {
+        (
+            id.to_owned(),
+            json!({ "subject": id, "path": format!("docs/{id}.md"), "severity": severity, "recorded_at": ago(days_ago) }),
+        )
+    }
+
+    #[test]
+    fn only_verdicts_left_to_fix_are_open() {
+        let findings = [
+            verdict("a", "high", 1),
+            verdict("b", "gate-failed", 1),
+            verdict("c", "some", 1),
+            verdict("d", "gate-passed", 1),
+            verdict("e", "clean", 1),
+            verdict("f", "analyzed", 1),
+        ];
+        let s = project_signals(&findings, &[], &[], &[], NOW, 7);
+        assert_eq!(s.open_findings, 3);
+    }
+
+    #[test]
+    fn open_comments_are_unknown_until_a_repository_says() {
+        let s = project_signals(&[], &[], &[], &[json!({ "repo": "a" })], NOW, 7);
+        assert_eq!(s.open_comments, None);
+        let repos = [
+            json!({ "open_document_threads": 2 }),
+            json!({ "open_review_threads": 1, "open_document_threads": 0 }),
+        ];
+        let s = project_signals(&[], &[], &[], &repos, NOW, 7);
+        assert_eq!(s.open_comments, Some(3));
+    }
+
+    #[test]
+    fn pull_requests_of_every_repository_share_one_axis() {
+        let pulls = [
+            pull("open", &ago(0), "a"),
+            pull("merged", &ago(1), "a"),
+            pull("merged", &ago(1), "b"),
+            pull("merged", &ago(30), "b"),
+        ];
+        let s = project_signals(&[], &[], &pulls, &[], NOW, 7);
+        assert!(s.pulls_known);
+        assert_eq!(s.pulls.open, 1);
+        assert_eq!(s.pulls.merged, 2);
+        assert_eq!(s.pulls.days.len(), 7);
+        assert_eq!(s.pulls.days[5], 2);
+        assert_eq!(s.pulls.days[6], 1);
+        // Never synced is not the same as a quiet week.
+        assert!(!project_signals(&[], &[], &[], &[], NOW, 7).pulls_known);
+    }
+
+    #[test]
+    fn the_last_event_is_the_newest_dated_one() {
+        let findings = [verdict("old", "clean", 3), verdict("new", "high", 1)];
+        let s = project_signals(&findings, &[], &[], &[], NOW, 7);
+        let last = s.last_event.expect("an event");
+        assert_eq!(last.id, "new");
+        assert_eq!(last.subject, "new.md");
+        let undated = [(
+            "x".to_owned(),
+            json!({ "subject": "x", "severity": "high" }),
+        )];
+        assert_eq!(
+            project_signals(&undated, &[], &[], &[], NOW, 7).last_event,
+            None
+        );
     }
 }

@@ -3,6 +3,7 @@
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-no-address:p1
 import { createSlice, type FrontXApp, type ReducerPayload } from '@gears-frontx/react';
+import type { StudioArtifact } from '@constructor-studio/mfe-shared';
 
 export interface ContextEntity {
   id: string;
@@ -37,6 +38,7 @@ export interface AppContextState {
   projects: ContextEntity[];
   projectsStatus: CatalogStatus;
   section: string | null;
+  artifact: StudioArtifact | null;
   loading: boolean;
   access: AccessState;
 }
@@ -53,6 +55,7 @@ const initialState: AppContextState = {
   projects: [],
   projectsStatus: 'pending',
   section: null,
+  artifact: null,
   loading: false,
   access: 'loading',
 };
@@ -92,6 +95,7 @@ const {
   openContextProject,
   closeContextProject,
   setContextSection,
+  setContextArtifact,
 } = createSlice({
   name: SLICE_KEY,
   initialState,
@@ -218,6 +222,10 @@ const {
     setContextSection: (state: AppContextState, action: ReducerPayload<string | null>) => {
       state.section = action.payload;
     },
+
+    setContextArtifact: (state: AppContextState, action: ReducerPayload<StudioArtifact | null>) => {
+      state.artifact = action.payload;
+    },
   },
 });
 
@@ -242,6 +250,7 @@ export {
   openContextProject,
   closeContextProject,
   setContextSection,
+  setContextArtifact,
 };
 export const APP_CONTEXT_SLICE_KEY = SLICE_KEY;
 

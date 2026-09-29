@@ -209,6 +209,18 @@ export interface GearboxService {
   initialize(session?: StudioSession): Promise<InitializeResult>;
 
   /**
+   * The folder this window has open, as Theia names it: a `file://` URI of a
+   * folder, or of a workspace file (whose folder is the one beside it).
+   *
+   * Where the environment names no workspace — no `GEARBOX_WORKSPACE`, no
+   * `/workspace`, which is a desktop IDE — this is the workspace the catalogue
+   * scans for sources. The window says it before its first `initialize`: the
+   * backend cannot tell which of its windows asked, and the most recently used
+   * workspace it keeps is the command line's when one was given.
+   */
+  useOpenedWorkspace(uri: string | undefined): Promise<void>;
+
+  /**
    * Begin a staged load. Resolves at the boundary between the two passes: the
    * whole tree by name, none of it projected. Projections arrive on the client
    * callback.
@@ -253,14 +265,43 @@ export interface GearboxService {
 
   /**
    * Constructor Studio: a directory named `id` holding the git source `url` at
-   * `ref`, brought into the workspace when no checkout already is that commit.
-   * For a description that names its corpus as `git(url, rev)`. `undefined`
-   * when it cannot be had.
+   * `ref`. A workspace checkout that already is that commit, else the commit in
+   * the per-machine cache `useSharedCorpus` fills (`~/ConstructorStudio/corpus`),
+   * brought there when missing. For a description that names its corpus as
+   * `git(url, rev)`. `clonePath` is the Studio relay's path when `url` is the
+   * corpus the backend relays (a private one). `undefined` when the input is not
+   * something to hand to git or the ref names no commit; rejects with git's
+   * reason when the repository cannot be reached.
    */
   materializeGitSource(
     id: string,
     url: string,
     ref: { rev?: string | null; tag?: string | null; branch?: string | null },
+    clonePath?: string,
+  ): Promise<string | undefined>;
+
+  /**
+   * Constructor Studio: the corpus copy on this machine, with the source id the
+   * engine names it by -- the one `useSharedCorpus` adopted, else the newest
+   * finished copy in the per-machine cache, which needs no backend (signed
+   * out). `undefined` when there is none.
+   */
+  corpusCopy(): Promise<{ id: string; path: string } | undefined>;
+
+  /**
+   * Constructor Studio: make the gear corpus `url` at commit `rev` a source
+   * root of every engine this backend starts, from the one copy kept per
+   * machine (`~/ConstructorStudio/corpus`). With `fetch` false it only adopts a
+   * copy already there and never touches the network; with `fetch` true it
+   * clones one, and rejects with git's reason when that fails. The directory,
+   * or `undefined` when there is none to adopt.
+   */
+  useSharedCorpus(
+    id: string,
+    url: string,
+    rev: string,
+    fetch: boolean,
+    clonePath?: string,
   ): Promise<string | undefined>;
 
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
@@ -614,4 +655,52 @@ export interface CatalogueState {
   readonly error: string | undefined;
   readonly total: number;
   readonly completed: number;
+  /**
+   * Constructor Studio: set when the rows were listed by the Studio backend
+   * from its own corpus checkout, because this workspace holds none. Names
+   * that corpus (`owner/repo@ref`). Such rows have no file on this machine.
+   */
+  readonly remote?: string;
+}
+
+/**
+ * Constructor Studio: where the catalogue comes from when the workspace holds
+ * no gear corpus. The backend keeps one checkout for every project, so the
+ * gears are listed without cloning it here. Bound by the Studio extension,
+ * which holds the member's API token; absent in Gearbox Studio proper.
+ *
+ * A `Symbol.for` key, because the extension that binds it does not import
+ * this one.
+ */
+export const RemoteCatalogueSource = Symbol.for("gearbox-studio.RemoteCatalogueSource");
+export interface RemoteCatalogueSource {
+  /** Undefined when the backend has no corpus to offer. */
+  load(): Promise<RemoteCatalogue | undefined>;
+  /**
+   * Fires when the answer may have changed: a desktop starts signed out, so
+   * its first load finds nothing, and signing in is what makes the corpus
+   * reachable.
+   */
+  onDidChange?(listener: () => void): { dispose(): void };
+}
+export interface RemoteCatalogue {
+  /** `owner/repo@ref`, as a person reads it. */
+  readonly corpus: string;
+  readonly gears: readonly GearDescriptor[];
+  /** Where the corpus can be had from, when the backend says. */
+  readonly origin?: CorpusOrigin;
+}
+export interface CorpusOrigin {
+  /** The source id its gears name, and the directory a copy is kept under. */
+  readonly sourceId: string;
+  readonly url: string;
+  /** The commit the listed gears were read at. */
+  readonly rev: string;
+  /** Cloning it takes a token the backend does not hand out. */
+  readonly needsToken: boolean;
+  /**
+   * For such a corpus, the gateway-rooted path the Studio backend relays it
+   * from, signed with the member's own token. `url` still names the copy.
+   */
+  readonly clonePath?: string;
 }

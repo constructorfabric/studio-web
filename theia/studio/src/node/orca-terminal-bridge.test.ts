@@ -4,8 +4,11 @@ import {
     SEND_CHUNK,
     chunkText,
     clampViewport,
+    noPairingMessage,
     orcaClientDir,
     pairingOffer,
+    pairsByHand,
+    savedPairingFile,
     streamEvent,
     type OrcaRemoteClient,
     type OrcaRpcResponse,
@@ -46,6 +49,10 @@ class TestBridge extends OrcaTerminalBridge {
     }
     protected override pairingOffer(): string | undefined {
         return this.offer;
+    }
+    saved: string[] = [];
+    protected override savePairing(link: string): void {
+        this.saved.push(link);
     }
 }
 
@@ -221,6 +228,65 @@ describe('where the bridge finds Orca and its pairing', () => {
         expect(pairingOffer({ STUDIO_ORCA_PAIRING_FILE: '/data/orca-pairing' }, read)).toBe('orca://pair?code=file');
         expect(pairingOffer({ STUDIO_ORCA_PAIRING_FILE: '/elsewhere' }, read)).toBeUndefined();
         expect(pairingOffer({}, read)).toBeUndefined();
+    });
+
+    it('off a session, falls back to the pairing kept by hand; a session never reads it', () => {
+        const saved = savedPairingFile(path.join('/home', 'dev'));
+        const read = (file: string) => {
+            if (file !== saved) {
+                throw new Error('ENOENT');
+            }
+            return 'orca://pair?code=kept\n';
+        };
+        expect(pairingOffer({}, read, saved)).toBe('orca://pair?code=kept');
+        expect(pairingOffer({ STUDIO_SESSION_TOKEN: 'gate' }, read, saved)).toBeUndefined();
+        expect(pairingOffer({ STUDIO_ORCA_PAIRING_FILE: '/data/orca-pairing' }, read, saved)).toBeUndefined();
+    });
+});
+
+describe('pairing by hand', () => {
+    const env = { ...process.env };
+    afterEach(() => {
+        process.env = { ...env };
+    });
+    const withEnv = (vars: Record<string, string>) => {
+        for (const name of ['STUDIO_SESSION_TOKEN', 'STUDIO_ORCA_PAIRING_URL', 'STUDIO_ORCA_PAIRING_FILE']) {
+            delete process.env[name];
+        }
+        Object.assign(process.env, vars);
+    };
+
+    it('is for an IDE on the person\'s own machine, never for a session or a pairing the environment names', () => {
+        expect(pairsByHand({})).toBe(true);
+        expect(pairsByHand({ STUDIO_SESSION_TOKEN: 'gate' })).toBe(false);
+        expect(pairsByHand({ STUDIO_ORCA_PAIRING_FILE: '/data/orca-pairing' })).toBe(false);
+        expect(pairsByHand({ STUDIO_ORCA_PAIRING_URL: 'orca://pair?code=env' })).toBe(false);
+    });
+
+    it('tells a session to restart, as before, and a desktop where Orca makes the link', () => {
+        expect(noPairingMessage({ STUDIO_SESSION_TOKEN: 'gate' })).toBe(
+            'This IDE has no pairing with the Orca runtime, so it cannot stream a terminal. ' +
+                'A session gets one when Orca starts (STUDIO_ORCA_PAIRING_FILE); restart the session if Orca was still starting.'
+        );
+        expect(noPairingMessage({})).toMatch(/^This IDE has no pairing with the Orca runtime on this computer yet/);
+        expect(noPairingMessage({})).toMatch(/Settings → Pair another Orca client, choose This computer/);
+    });
+
+    it('keeps a link Orca accepts, and nothing else', async () => {
+        withEnv({});
+        const bridge = new TestBridge(fakeRuntime().remote);
+        expect(await bridge.canPair()).toBe(true);
+        await expect(bridge.pair('https://example.com')).rejects.toThrow(/not an Orca pairing link/);
+        await bridge.pair('  orca://pair?code=ok \n');
+        expect(bridge.saved).toEqual(['orca://pair?code=ok']);
+    });
+
+    it('refuses in a session, which pairs itself', async () => {
+        withEnv({ STUDIO_SESSION_TOKEN: 'gate' });
+        const bridge = new TestBridge(fakeRuntime().remote);
+        expect(await bridge.canPair()).toBe(false);
+        await expect(bridge.pair('orca://pair?code=ok')).rejects.toThrow(/paired where it was started/);
+        expect(bridge.saved).toEqual([]);
     });
 });
 

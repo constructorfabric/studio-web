@@ -43,6 +43,7 @@ import { RevealService } from "../reveal-service";
 import { ADD_GEAR, SHOW_PRODUCT } from "../shell/session-command-ids";
 import { gearIdOf, Selection, SelectionService } from "../shell/selection-service";
 import { inPortal, OPEN_COMPONENT_IN_PORTAL } from "../shell/portal-link";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /** One rendered step: an edge, with both of its nodes resolved. */
 interface Step {
@@ -136,6 +137,20 @@ export class InspectorWidget extends ReactWidget {
     // No draft subscription: nothing here is edited any more, so a draft
     // changing changes nothing this panel says.
     this.update();
+  }
+
+  /**
+   * Take the focus when the shell activates this view. Theia waits up to two
+   * seconds for an activated widget to accept focus, and a mode switch
+   * activates its views one after another: without this, entering Building
+   * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
+   */
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (!this.node.hasAttribute("tabindex")) {
+      this.node.tabIndex = -1;
+    }
+    this.node.focus();
   }
 
   protected render(): React.ReactNode {

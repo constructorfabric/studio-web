@@ -1173,6 +1173,61 @@ impl IdentityService {
         self.store.memberships_in_org(org_id).await
     }
 
+    /// Everybody in one organization with who they are, for a members screen:
+    /// the membership, and the person's profile when it can be read.
+    pub async fn members_with_profiles(
+        &self,
+        org_id: &str,
+    ) -> Result<Vec<(MembershipView, Option<UserProfile>)>> {
+        let mut out = Vec::new();
+        for membership in self.members_of(org_id).await? {
+            let profile = self.store.get_user(&membership.user_id).await?;
+            out.push((membership, profile));
+        }
+        Ok(out)
+    }
+
+    /// Make the organization's owner grant agree with one person's membership.
+    ///
+    /// Two records say "owner" and they must not disagree. The membership's
+    /// role is what the last-owner rule counts; the org-scoped `owner` grant in
+    /// the access config is what `may_administer` reads (ADR-0019). Creation
+    /// and the identity directory's assignment write both; a membership written
+    /// here must too, or an "owner" in the member list could administer
+    /// nothing — and a demoted one still could.
+    ///
+    /// The grant is written for every sign-in of the person, since authority
+    /// is asked about all of them (`subjects_of`), and removed from every one.
+    pub async fn sync_owner_grant(
+        &self,
+        ctx: &SecurityContext,
+        user_id: &str,
+        org_id: Uuid,
+        owner: bool,
+    ) -> Result<()> {
+        let tenant = self
+            .am
+            .get_tenant(ctx, org_id)
+            .await
+            .map_err(|error| anyhow!("cannot read organization {org_id}: {error}"))?;
+        let logins = self.list_logins(user_id).await?;
+        for login in logins
+            .iter()
+            .filter(|login| !owner || login.provider == PROVIDER_KEYCLOAK)
+        {
+            crate::access_config::set_owner_grant(
+                self.am.as_ref(),
+                ctx,
+                org_id,
+                &tenant.name,
+                &login.subject,
+                owner,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// May this membership end, or become `after`?
     ///
     /// One gate for leaving, for being removed, for being demoted and for being

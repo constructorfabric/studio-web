@@ -15,7 +15,9 @@ npm run build:package && npm run build:packages   # build the lib + solution pac
 npm run dev:all                                    # host + all MFE dev servers
 ```
 
-Open **http://localhost:5173**. The host shell boots, fetches the MFE manifest,
+Open **http://localhost:5173**. The host faces the shared `dev` stand — sign in
+with GitHub; `STUDIO_STAND=local npm run dev:all` faces the compose stack
+instead (see [`docs/stands.md`](docs/stands.md)). The host shell boots, fetches the MFE manifest,
 and the left menu fills in with screens contributed by whatever MFE packages
 are present under `src-app/mfe_packages/`. This guide assumes the
 [`frontx-template-mfe`](../template-mfe/README.md) packages have been added —

@@ -18,10 +18,12 @@
 // arrives with — or before — the session's first paint is still delivered:
 // that is what lets "open the IDE" and "edit this thing" be one click.
 //
-// Security: messages are only exchanged with the embedding window. We do
-// not know the portal's origin at build time (dev :5173, prod domains), so
-// inbound messages are accepted only from `window.parent` and replies go
-// to the sender's origin — never `*` broadcasts with data beyond status.
+// Security (#324): messages are only exchanged with the embedding window, and
+// only when its origin is one the session allows — its own origin, or the
+// list in `STUDIO_ALLOWED_ORIGINS`, which the server also puts into the
+// page's `frame-ancestors`. The bridge does not listen until it has that
+// list. The first accepted message pins the portal's origin for the life of
+// the frame; everything is posted to it and nothing to `*`.
 // Standalone (non-embedded) sessions skip all of this.
 
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
@@ -37,6 +39,7 @@ import { OpenInEditorFrontendController } from './open-in-editor-controller';
 import { StudioApi } from './studio-api';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
+import { StudioRuntimeService, type StudioRuntimeSession } from '../common/studio-protocol';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
@@ -130,6 +133,23 @@ interface PortalMessage {
  * portal renews it silently and re-posts `studio.token`; gears calls go
  * same-origin through the session gate at `/studio-api/<gear path>`.
  */
+/**
+ * Whether a portal on `origin` may talk to this session: the session's own
+ * origin, or one on its list. `null` (a sandboxed or opaque sender) never.
+ */
+function isAllowedPortalOrigin(
+    origin: string,
+    session: Pick<StudioRuntimeSession, 'allowedOriginsMode' | 'allowedOrigins'>,
+    ownOrigin: string,
+): boolean {
+    if (origin === 'null') {
+        return false;
+    }
+    return session.allowedOriginsMode === 'allowlist'
+        ? session.allowedOrigins.includes(origin)
+        : origin === ownOrigin;
+}
+
 /** The two spellings the document surfaces arbitrate over. */
 function isMarkdownPath(relativePath: string): boolean {
     const path = relativePath.toLowerCase();
@@ -171,6 +191,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     @inject(StudioWorkspaceName)
     protected readonly workspaceName: StudioWorkspaceName;
 
+    @inject(StudioRuntimeService)
+    protected readonly runtime: StudioRuntimeService;
+
     protected readonly toDispose = new DisposableCollection();
     /** See [`openWhenLayoutReady`]. */
     protected layoutReady = false;
@@ -203,6 +226,23 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         if (window.parent === window) {
             return; // standalone tab — no portal to talk to
         }
+        void this.listenToPortal();
+    }
+
+    /**
+     * Not before the session's origin list has arrived, and not at all if it
+     * never does. The portal repeats its opening messages until one is
+     * answered, so what it posted before is not lost.
+     */
+    protected async listenToPortal(): Promise<void> {
+        let session: StudioRuntimeSession;
+        try {
+            session = await this.runtime.getSession();
+        } catch (e) {
+            console.warn('[studio] portal bridge disabled: session unavailable', e);
+            return;
+        }
+        const ownOrigin = window.location.origin;
 
         // Tell the portal about every document this session writes back, so its
         // list, status and conformance checklist re-read the row instead of
@@ -221,6 +261,11 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         const onMessage = (event: MessageEvent): void => {
             if (event.source !== window.parent) {
                 return; // only the embedding portal window is trusted
+            }
+            if (this.portalOrigin
+                ? event.origin !== this.portalOrigin
+                : !isAllowedPortalOrigin(event.origin, session, ownOrigin)) {
+                return;
             }
             const msg = event.data as PortalMessage;
             if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('studio.')) {

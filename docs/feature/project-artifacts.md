@@ -713,29 +713,28 @@ both cells, so the name and the menu cannot disagree.
 The action is its own, `context.artifact.open`, not a fourth `kind` of the
 projects publish: workspaces got their own action for the same reason, and an
 artifact is a different entity from the project it sits in. Its answer is the
-shell's — once the editor navigation (#320) lands on the router ADR-0028
-brought in, the request becomes a navigation: the shell mounts the editor and
-writes the artifact into the address, and
-`context.artifact.selected` is what it echoes back, `null` outside the editor.
+shell's, and it is a navigation on the router ADR-0028 brought in (#320): the
+shell writes the artifact into the address, mounts the editor screen, and
+echoes the artifact back as `context.artifact.selected` — `null` outside the
+editor (`cpt-studiofrontend-dod-shell-levels-artifact-address`).
 Nothing here writes that property; `ChildMfeBridge` has no `updateSharedProperty`,
 and a local write beside the publish would fork the answer across the realm
 boundary, as it once did for the open project.
 
-Until then — there is no editor screen to navigate to yet, and the address
-does not carry an artifact — the shell's handler checks the request and does
-nothing with it. The handler cannot wait for #320: the registry refuses a domain that
-declares an action without a handler, and the action has to be declared,
-because the contract check rejects an entry whose domain action the domain does
-not list. Either refusal is no screen slot at all — which is why a test
-registers the shell's domains on a real registry. A chain the shell does refuse
-is logged by `sendAndForget`, and the row stays on screen.
+The shell's handler checks the request before it becomes a navigation; a
+payload it refuses is logged and goes nowhere. The action and its handler are
+declared together: the registry refuses a domain that declares an action
+without a handler, and the contract check rejects an entry whose domain action
+the domain does not list. Either refusal is no screen slot at all — which is
+why a test registers the shell's domains on a real registry. A chain the shell
+does refuse is logged by `sendAndForget`, and the row stays on screen.
 
 **Implements**:
 - `cpt-studiofrontend-flow-project-artifacts-browse`
 
 **Touches**:
 - Action: `constructor_studio.context.artifact.open.v1~`
-- Property: `constructor_studio.context.artifact.selected.v1~` (read by nobody yet; published by #320)
+- Property: `constructor_studio.context.artifact.selected.v1~` (published by the shell from the address)
 - Entities: `artifactActions`, `opensInEditor`, `artifactColumns`, `ArtifactsSection`, `createArtifactOpenHandler`
 
 ### Nothing is invented where the gear is silent

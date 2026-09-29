@@ -38,6 +38,7 @@ owner: studio-team
   - [The entry point is the first item of the level](#the-entry-point-is-the-first-item-of-the-level)
   - [Counts arrive with the list that shows them](#counts-arrive-with-the-list-that-shows-them)
   - [The address decides, and only the shell writes it](#the-address-decides-and-only-the-shell-writes-it)
+  - [An open artifact is a place in the address](#an-open-artifact-is-a-place-in-the-address)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -562,6 +563,40 @@ shared properties would no longer be the only answer.
 **Touches**:
 - Entities: `appContextSlice`, `sharedContext`, `contextActions`
 
+### An open artifact is a place in the address
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-artifact-address`
+
+The system **MUST** answer a request to open an artifact with a navigation to
+the editor screen — the `space` token, a project-level screen with
+`placement: hidden` — writing the artifact (`artifact`, `repository`, `path`,
+`kind`) into the address after the level context, and **MUST** publish
+`context.artifact.selected` from that address: the artifact while the editor is
+on screen in a project, `null` everywhere else.
+
+Opening is a `push`, so Back is the way out: the router reports the entry the
+person left, the artifact list of the same project, and the shell mounts that
+screen again with the project still open. The path is the other way out: a
+project or workspace picked in it opens at that level's entry point, never at
+the editor. A hidden screen is never the one a level opens on, and the editor
+means nothing without its artifact. Forward and reload
+remount the editor cold (ADR-0021); the address is what survives. An artifact on another
+screen is dropped from the address with a warning rather than published. An
+editor address with nothing the editor can open (a kind it does not know, no
+artifact, no project, or a project the lookup refuses) lands on the level's
+entry point instead, with a warning, the way a failed mount falls back. The
+editor screen is `space-mfe`, a frame
+package; while there is no session its frame shows the package's own static
+page (#321), and the artifact reaches the frame in #323.
+
+**Implements**:
+- `cpt-studiofrontend-algo-shell-levels-click`
+
+**Touches**:
+- Action: `constructor_studio.context.artifact.open.v1~`
+- Property: `constructor_studio.context.artifact.selected.v1~`
+- Entities: `createArtifactOpenHandler`, `appContextEffects`, `materialize`, `route`, `appContextSlice`, `space-mfe`
+
 ## 6. Acceptance Criteria
 
 - [ ] At the organization level the rail shows the organization's items only; Findings, Artifacts and the other project sections are absent from it.
@@ -585,3 +620,6 @@ shared properties would no longer be the only answer.
 - [ ] No MFE reads `location` or pushes browser history; Back and Forward move between screens, projects and sections without a reload, and the rail follows.
 - [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.
 - [ ] A screen declared `placement: hidden` appears in no level's rail and is never the screen a level opens on, yet the shell still mounts it when asked by id.
+- [ ] Opening a file from a project's artifacts replaces the project area with the editor while the rail, the path and the top bar stay put, and the address carries `screen=space` and the artifact.
+- [ ] Back from the editor shows the artifact list of the same project, with the project still open; Forward and reload show the editor again on the same artifact.
+- [ ] Picking another project or workspace in the path while the editor is open leaves the editor for that level's entry point; only when the level has none does the editor stay, with no artifact and a warning.

@@ -212,7 +212,7 @@ path-literal	GET <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_theia/rest.rs>
 
-# --- scope-in-path (67) ---------------------------------------------------
+# --- scope-in-path (68) ---------------------------------------------------
 # Rule C. The scope is a path segment, so the same thought needs one
 # operation per scope. Fixing this is the expensive migration: the tenant moves
 # into the security context and a project becomes `?project_id=`, which collapses
@@ -257,6 +257,7 @@ scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
 scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/session
 scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/status
 scope-in-path	GET /studio-user/v1/organizations/{org_id}/invitations
+scope-in-path	GET /studio-user/v1/organizations/{org_id}/members
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/create-repo
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/product/preview
@@ -294,12 +295,14 @@ scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 # invisible to /cf/docs and to client generation. studio-theia, spec-quality and
 # studio-llm proxy an upstream body through verbatim; each needs a DTO of ours.
 # studio-git (ADR-0027): the body is Git's own wire protocol (pkt-lines and
-# packs), streamed through; there is no JSON shape to give a schema.
+# packs), streamed through; there is no JSON shape to give a schema. The same
+# holds for the gear corpus relay in studio-components-catalog (read-only).
 # studio-llm providers (ADR-0030): the body is the model provider's own answer,
 # JSON or an SSE stream, passed through for the agent CLIs; there is no shape of ours.
 typed-response	GET /spec-quality/v1/health
 typed-response	GET /spec-quality/v1/tasks
 typed-response	GET /spec-quality/v1/tasks/{task_id}
+typed-response	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 typed-response	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
 typed-response	GET /studio-llm/v1/models
 typed-response	GET /studio-llm/v1/providers/{provider}/{*rest}
@@ -312,6 +315,7 @@ typed-response	POST /spec-quality/v1/analyze/bloat
 typed-response	POST /spec-quality/v1/analyze/leak
 typed-response	POST /spec-quality/v1/analyze/purpose
 typed-response	POST /spec-quality/v1/analyze/traceability
+typed-response	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
 typed-response	POST /studio-llm/v1/chat/completions

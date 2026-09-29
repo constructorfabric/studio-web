@@ -275,11 +275,14 @@ describe('StudioRuntimeEndpoint', () => {
             maxDepth: 1,
             maxEntries: 10
         })).rejects.toThrow('within the explicit workspace root');
+        // Outside the root is no suggestion, not an error: a desktop opens its
+        // projects outside the session's fixed root, and a refusal here stopped
+        // the sources contribution from starting at all.
         await expect(harness.endpoint.detectContainingWorkspaceRepository({
             workspaceId: 'workspace-1',
             configPath,
             openedPath: '/tmp/outside'
-        })).rejects.toThrow('within the explicit workspace root');
+        })).resolves.toBeUndefined();
     });
 
     it('maps applied mutations to snapshot responses and delegates save-and-sync through the orchestrator', async () => {

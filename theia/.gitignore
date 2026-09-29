@@ -21,10 +21,14 @@ browser-app/scripts/*
 # dist-resources/ are its output and stay ignored by `*-app/*`.
 !electron-app/desktop-main.js
 !electron-app/desktop-updater.js
+!electron-app/desktop-update-channel.js
+!electron-app/desktop-update-channel.test.mjs
 !electron-app/environments.json
 !electron-app/scripts/
 electron-app/scripts/*
 !electron-app/scripts/package.mjs
+!electron-app/scripts/assistants-manifest.mjs
+!electron-app/scripts/assistants-manifest.test.mjs
 
 # Generated plugin download and test output.
 /plugins/openai.chatgpt/
@@ -463,3 +467,5 @@ electron-app/scripts/*
 # A capture left behind by a debugging session, and a file created by a shell
 # expansion that never ran. Neither belongs in the tree.
 *.har
+studio-cli/dist/
+studio-cli/__pycache__/

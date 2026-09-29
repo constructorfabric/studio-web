@@ -131,14 +131,33 @@ in it.
 
 ### 4. A desktop session is a lease, not a container
 
-`studio-session` gains a second kind of session, `runtime: desktop`. The desktop
-registers one when it opens a workspace (`POST /sessions` with that runtime) and
-renews it with a heartbeat. The runtime cannot be the registry here — no daemon
-knows about the member's laptop — so a desktop session is a row with an expiry
-and it is gone when the heartbeats stop. A desktop session has no container, no
-gate token, no control port and no S2S token; it is keyed by
-`(workspace, member, device)`, and it does not count against the one live
-container session per workspace.
+`studio-session` gains a second kind of session, a desktop session. The desktop
+registers one when it opens a workspace and renews it with a heartbeat. The
+runtime cannot be the registry here — no daemon knows about the member's laptop
+— so a desktop session is a lease with an expiry, and it is gone when the
+heartbeats stop. A desktop session has no container, no gate token, no control
+port and no S2S token; it is keyed by `(workspace, member, device)`, and it does
+not count against the one live container session per workspace.
+
+**Nothing is limited.** A member may have a workspace open on any number of
+devices, any number of members may have it open at once, and a container session
+may run beside them all. A lease records where a workspace is open; it reserves
+nothing. Git already reconciles the copies, so a policy that forbade any of this
+would only refuse work that can proceed.
+
+*As built (phase 3):* the lease is its own resource,
+`/studio-session/v1/desktop-sessions`, not a `runtime` field on `/sessions`.
+`POST` opens or renews it (201, then 200), `GET ?project_id=` lists a workspace's
+live leases, and `DELETE /{id}` ends the caller's own. A desktop session has none
+of what a `SessionDto` describes (a URL, a gate token, the `starting`/`running`
+states), and `create_session` exists to launch a container, so sharing the route
+would have meant a request half of whose fields mean nothing for one runtime. The
+id is a UUIDv5 over the key. A lease lives three heartbeats (30 s each, 90 s in
+all), and the window renews it, since only the window knows whether it is still
+showing the workspace. State is per process, as in `studio-presence`: after a
+restart, each desktop's next heartbeat writes its own lease back under the same
+id. That is one interval of a desktop missing from the portal, instead of a
+stored row that outlives the laptop it describes.
 
 ### 5. The bridge runs outward only
 
@@ -253,7 +272,7 @@ in the manner of a remote development extension.
    `studio-llm-proxy`.
 2. **The server's checkout follows pushes.** The proxy queues an
    `artifact-ingest` refresh on each push.
-3. **Desktop leases.** `runtime: desktop` in `studio-session`, heartbeat and
+3. **Desktop leases.** Desktop sessions in `studio-session`, heartbeat and
    expiry, and the portal showing that a workspace is open on a desktop.
 4. **Events.** The desktop's forwarding `StudioRuntimeClient` and the ingress's
    desktop authentication path.
@@ -266,9 +285,8 @@ in the manner of a remote development extension.
 * Access to `studio-desktop`. Its packaging is the one part of this record that
   depends on a repository this account cannot read (`gh` answers 404); phase 6
   needs it or needs to be written again.
-* Whether a desktop and a container session may be open on the same workspace at
-  once. This record allows it, since Git already reconciles them, and the portal
-  shows both; a policy that forbids it would be a check in `studio-session`.
+* ~~Whether a desktop and a container session may be open on the same workspace
+  at once.~~ Settled on 2026-09-28: yes, and nothing else is limited either (§4).
 * How long a desktop may stay signed in offline before its refresh token expires,
   and whether the realm's offline token is the right tool for that.
 * Git LFS and very large repositories through the proxy.

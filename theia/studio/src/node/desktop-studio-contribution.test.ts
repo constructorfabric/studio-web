@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import {
-    chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand, openedTenant, rememberOpened
+    chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand, missingSourcesMessage, openedTenant, rememberOpened
 } from './desktop-studio-contribution';
 import { customEnvironment, parseEnvironments } from '../common/desktop-environments';
 
@@ -101,5 +101,21 @@ describe('desktop studio contribution', () => {
     it('runs the credential helper with the app itself, not a Node on PATH', () => {
         expect(helperCommand('C:\\Program Files\\Studio\\Studio.exe', 'C:\\app\\helper.mjs'))
             .toBe('!ELECTRON_RUN_AS_NODE=1 "C:/Program Files/Studio/Studio.exe" "C:/app/helper.mjs"');
+    });
+});
+
+describe('why a project cannot be opened', () => {
+    const studio = 'https://studio.example.com';
+
+    it('says a project the member can see has no sources yet, rather than blaming access', () => {
+        expect(missingSourcesMessage(studio, true, true)).toMatch(/no sources yet/);
+    });
+
+    it('says the settings are not visible when the project itself is not', () => {
+        expect(missingSourcesMessage(studio, true, false)).toBe('you cannot see this project\'s settings');
+    });
+
+    it('names a Studio without studio-git when the gateway, not the gear, answered', () => {
+        expect(missingSourcesMessage(studio, false, false)).toBe(`${studio} cannot clone for a desktop yet (it runs no studio-git)`);
     });
 });

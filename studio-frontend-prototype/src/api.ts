@@ -37,6 +37,33 @@ export interface PlatformIdentity {
   organization_role?: "owner" | "member";
 }
 
+/** The roles a membership may carry (studio-user `MEMBERSHIP_ROLES`). Only an
+ *  active `owner` administers: the backend keeps its access-config grant in
+ *  step with the membership. */
+export type MembershipRole = "owner" | "admin" | "member";
+
+/** One member of an organization, from `GET /studio-user/v1/organizations/{id}/members`. */
+export interface OrgMember {
+  user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  role: MembershipRole | string;
+  status: "active" | "suspended";
+  /** creation | assignment | invitation | bootstrap | first_login | manual */
+  source: string;
+  created_at_epoch_ms: number;
+  updated_at_epoch_ms: number;
+}
+
+export interface OrgInvitation {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  expires_at_epoch_ms: number;
+  accepted_at_epoch_ms?: number | null;
+}
+
 /* ── studio-tasks / studio-scheduler ── */
 
 /** One unit of background work. `GET /studio-tasks/v1/runs`. */
@@ -1052,6 +1079,20 @@ export interface Conversion {
   expires_at?: string;
 }
 
+/** A project open in somebody's desktop Studio: a lease the app renews. */
+export interface DesktopSession {
+  id: string;
+  workspace_id: string;
+  /** Token subject of whoever has it open. */
+  member_id: string;
+  device_id: string;
+  device_name?: string | null;
+  started_at_epoch_secs: number;
+  last_seen_epoch_secs: number;
+  expires_at_epoch_secs: number;
+  heartbeat_secs: number;
+}
+
 export interface StudioSession {
   id: string;
   workspace_id: string;
@@ -1747,6 +1788,33 @@ export interface RollupRow {
   documents?: number | null;
   findings?: number | null;
   repos?: number | null;
+  /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
+  project_kind?: string | null;
+  brief?: string | null;
+  /** Findings still to fix (`high`, `gate-failed`, `some`); `findings` counts every verdict. */
+  open_findings?: number | null;
+  /** Unresolved threads the repositories report. */
+  open_comments?: number | null;
+  /** Bound repository files plus documents written in Studio. */
+  specs?: number | null;
+  specs_authored?: number | null;
+  specs_checked?: number | null;
+  specs_failing?: number | null;
+  /** Null when no pull request was ever synced. */
+  pulls_open?: number | null;
+  pulls_merged?: number | null;
+  pull_days?: number[] | null;
+  activity_days?: number | null;
+  /**
+   * People who may work in the project, from Studio memberships: every active
+   * organization member under tenant access, the members granted a role on it
+   * under role-based access. Null when that could not be read.
+   */
+  team?: number | null;
+  /** The newest event the Activity feed lists. */
+  last_event?: string | null;
+  last_subject?: string | null;
+  last_at?: string | null;
 }
 
 /** A verdict as the server read it. Fields follow the detector, so most are
@@ -1793,9 +1861,14 @@ export const api = {
    *
    *  The portal used to compose this itself — three requests per row, one of
    *  them a listing that walks the whole artifact graph. The composition is on
-   *  the server now; this asks for it. `projectId` narrows it to one project. */
-  rollups: (token: string, projectId?: string) => {
-    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+   *  the server now; this asks for it. `projectId` narrows it to one project,
+   *  `workspaceId` to one workspace and its projects. */
+  rollups: (token: string, projectId?: string, workspaceId?: string) => {
+    const q = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : workspaceId
+        ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+        : "";
     return request<{ items: RollupRow[]; total: number }>(
       `/studio-organizations/v1/rollups${q}`,
       token,
@@ -2153,6 +2226,69 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  /** An organization's members, from studio-user — the authority for who
+   *  belongs to it (ADR-0011 §2). `people.view`: an owner or a platform admin. */
+  orgMembers: (token: string, orgId: string) =>
+    requestAllPages<OrgMember>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members`,
+      token,
+      "items",
+    ),
+
+  /** Add somebody, change their role, or suspend/resume them — one write. An
+   *  active `owner` also gets the organization's owner grant; anyone else loses it. */
+  putMembership: (
+    token: string,
+    userId: string,
+    orgId: string,
+    input: { role: MembershipRole; status?: "active" | "suspended"; source?: "assignment" | "manual" },
+  ) =>
+    request<OrgMember>(
+      `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(input) },
+    ),
+
+  removeMembership: (token: string, userId: string, orgId: string) =>
+    request<{ connections_removed: number }>(
+      `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  /** The canonical Studio person behind a sign-in, created on first sight
+   *  (platform admin). The membership routes take this id, not the IdP's. */
+  resolvePerson: (
+    token: string,
+    input: { provider: "keycloak"; subject: string; display_name?: string; email?: string },
+  ) =>
+    request<{ user_id: string }>("/studio-user/v1/resolve", token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  orgInvitations: (token: string, orgId: string) =>
+    request<{ items: OrgInvitation[] }>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations`,
+      token,
+    ),
+
+  /** The person sees it when they sign in with this address proven, and
+   *  accepts it themselves (ADR-0018 §2) — no token to hand over. */
+  inviteToOrg: (token: string, orgId: string, input: { email: string; role: "member" | "admin" }) =>
+    request<{ invitation: OrgInvitation }>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations`,
+      token,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+
+  revokeInvitation: (token: string, orgId: string, invitationId: string) =>
+    request<void>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations/${encodeURIComponent(invitationId)}`,
+      token,
+      { method: "DELETE" },
+    ),
 
   inviteUser: (
     token: string,
@@ -3344,6 +3480,13 @@ export const api = {
     })),
   deleteStudioSession: (token: string, id: string) =>
     request<void>(`/studio-session/v1/sessions/${id}`, token, { method: "DELETE" }),
+  /** The desktops this project is open on right now (ADR-0027 §4). */
+  desktopSessions: (token: string, projectId: string) =>
+    requestAllPages<DesktopSession>(
+      `/studio-session/v1/desktop-sessions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      "items",
+    ),
 
   /**
    * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.

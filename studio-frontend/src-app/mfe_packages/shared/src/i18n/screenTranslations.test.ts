@@ -1,5 +1,6 @@
+import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { loadScreenTranslations, type TranslationModules } from './screenTranslations';
+import { loadScreenTranslations, useEverLoaded, type TranslationModules } from './screenTranslations';
 
 const DIR = './screens/list/i18n';
 
@@ -59,5 +60,18 @@ describe('loadScreenTranslations', () => {
     });
     const load = loadScreenTranslations(files, DIR);
     await expect(load('ru')).rejects.toThrow('chunk load failed');
+  });
+});
+
+describe('useEverLoaded', () => {
+  it('turns true with the first load and stays true while a language change loads again', () => {
+    const { result, rerender } = renderHook(({ isLoaded }) => useEverLoaded(isLoaded), {
+      initialProps: { isLoaded: false },
+    });
+    expect(result.current).toBe(false);
+    rerender({ isLoaded: true });
+    expect(result.current).toBe(true);
+    rerender({ isLoaded: false });
+    expect(result.current).toBe(true);
   });
 });

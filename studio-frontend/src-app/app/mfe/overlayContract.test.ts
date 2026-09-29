@@ -27,6 +27,7 @@ import {
 } from '@gears-frontx/react';
 // Not re-exported by @gears-frontx/react — this is the contract check
 // `registerExtension` runs after the type-system register succeeds.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { SHELL_SCHEMAS } from './schemas';
 import {
@@ -290,7 +291,10 @@ describe('generated MFE manifest', () => {
     });
 
     it('declares the project sections on the entry they are sections of', () => {
-      const project = screens.filter((ext) => ext.presentation?.level === 'project');
+      // The editor is a project-level screen too, but hidden: no rail item.
+      const project = screens.filter(
+        (ext) => ext.presentation?.level === 'project' && ext.presentation?.placement !== 'hidden'
+      );
       const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
 
       // One entry for the whole rail: that is what lets the shell relay a

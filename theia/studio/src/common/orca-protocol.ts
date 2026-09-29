@@ -15,6 +15,8 @@
 // The backend holds that conversation (see `src/node/orca-service.ts`); the
 // frontend only sees the handful of operations below.
 
+import type { OrcaProjectSync } from './desktop-orca-projects';
+
 export const orcaServicePath = '/services/studio-orca';
 /** DI key for the proxy on the frontend and the impl on the backend. */
 export const OrcaService = Symbol('OrcaService');
@@ -51,6 +53,29 @@ export interface OrcaRuntimeStatus {
      * rebuilding the image, the other by starting a runtime.
      */
     readonly cliMissing?: boolean;
+    /**
+     * Where this IDE runs, as the backend knows it: `session` in a portal
+     * session container (Orca starts with the container, the image carries
+     * it), `local` anywhere else — the desktop app, a developer's
+     * `theia start` — where Orca is the member's own install. The advice for
+     * every failure differs between the two. Absent from an older backend,
+     * which only ever ran in a session.
+     */
+    readonly host?: 'session' | 'local';
+    /** The `orca` executable Studio found and runs, when it found one. */
+    readonly binary?: string;
+    /**
+     * Whether a pairing for the terminal stream is in place. Only the
+     * terminal tabs need it; the panel itself works without one.
+     */
+    readonly paired?: boolean;
+}
+
+/** One repository Orca knows, as `orca repo list` names it. */
+export interface OrcaRepository {
+    readonly id: string;
+    readonly path: string;
+    readonly displayName: string;
 }
 
 /** One Orca-managed checkout: a branch, a path, and its agent activity. */
@@ -64,6 +89,12 @@ export interface OrcaWorktree {
     /** Orca's own lifecycle label, e.g. `in-progress`. */
     readonly status: string;
     readonly isMain: boolean;
+    /**
+     * The Orca repository this checkout belongs to. Every repository has a
+     * worktree on `main`, so without it two repositories read as two
+     * identical rows.
+     */
+    readonly repoId?: string;
     /** Epoch millis of the last agent output, when Orca reports one. */
     readonly lastActivityAt?: number;
 }
@@ -114,6 +145,12 @@ export interface OrcaCreateTaskRequest {
     readonly prompt: string;
     /** Optional issue to link the worktree to (`--issue`). */
     readonly issue?: number;
+    /**
+     * The repository to branch from (`--repo`), as an Orca selector:
+     * `id:<id>` or `path:<path>`. Without it Orca infers the repository from
+     * the directory the CLI runs in, which on a desktop is no checkout at all.
+     */
+    readonly repo?: string;
 }
 
 /** Start another agent in a checkout that already exists. */
@@ -131,6 +168,14 @@ export type OrcaWaitOutcome = 'idle' | 'exit' | 'timeout';
 export interface OrcaService {
     status(): Promise<OrcaRuntimeStatus>;
     listWorktrees(): Promise<OrcaWorktree[]>;
+    /** The repositories Orca knows, to group the worktrees by. */
+    listRepositories(): Promise<OrcaRepository[]>;
+    /**
+     * Start Orca on this computer (`orca open`: launches the app and waits
+     * for its runtime) and answer with the status after. Off a session only:
+     * a session's runtime starts with the container, and this refuses there.
+     */
+    start(): Promise<OrcaRuntimeStatus>;
     /**
      * Register a checkout with the runtime, so its worktree appears.
      *
@@ -145,6 +190,15 @@ export interface OrcaService {
      * it registered.
      */
     registerWorkspace(path: string): Promise<string[]>;
+    /**
+     * A window reports the project it has open (undefined: none), on start
+     * and whenever it changes. On a member's machine this releases from Orca
+     * the repositories Studio added for projects no window has open any more,
+     * and answers which of this project's repositories Orca does not know
+     * (see ./desktop-orca-projects.ts). In a session it does nothing and
+     * answers `enabled: false`.
+     */
+    trackProject(windowId: string, root: string | undefined): Promise<OrcaProjectSync>;
     currentWorktree(): Promise<OrcaWorktree | undefined>;
     listTerminals(worktree: string): Promise<OrcaTerminal[]>;
     /** Uncommitted changes in one worktree, by absolute path. */

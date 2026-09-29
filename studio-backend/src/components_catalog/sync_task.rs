@@ -50,7 +50,7 @@ impl TaskHandler for CatalogSyncTask {
                 ));
             }
         };
-        if sources.crates_io.is_none() && sources.repos.is_empty() {
+        if sources.crates_io.is_none() && sources.repos.is_empty() && sources.roadmaps.is_empty() {
             return TaskOutcome::Failed(
                 "studio-components-catalog: this run names no source to read".to_owned(),
             );
@@ -110,6 +110,7 @@ mod tests {
                 git_ref: "main".to_owned(),
                 mode: "gears".to_owned(),
             }],
+            roadmaps: Vec::new(),
         };
         let back: SyncSources =
             serde_json::from_value(serde_json::to_value(&sources).unwrap()).unwrap();

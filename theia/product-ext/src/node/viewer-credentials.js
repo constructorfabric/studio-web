@@ -39,7 +39,7 @@ const { ContainerModule } = require('inversify');
 const { ConnectionContainerModule } = require('@theia/core/lib/node/messaging/connection-container-module');
 const { PluginHostEnvironmentVariable } = require('@theia/plugin-ext/lib/common/plugin-protocol');
 const {
-    assistantEnvironment, gitIdentityConfig, writeGitConfig, redirectHome
+    assistantEnvironment, ensureAssistantHomes, gitIdentityConfig, writeGitConfig, redirectHome
 } = require('./viewer-credentials-env');
 const { AssistantAuth } = require('./assistant-auth');
 
@@ -209,6 +209,14 @@ class ViewerCredentialsEnvironment {
         // cannot isolate different things. See assistantEnvironment above for
         // why HOME does not move on every platform.
         const prepared = assistantEnvironment(home, env);
+        // The assistants' own directories must exist before the fork: the Codex
+        // extension starts its CLI at activation, and the CLI will not run
+        // against a CODEX_HOME that is missing (see ensureAssistantHomes).
+        try {
+            ensureAssistantHomes(prepared);
+        } catch (error) {
+            console.error('[studio] could not create the assistant directories in ' + home, error);
+        }
         Object.assign(env, prepared);
         // Assign cannot express a deletion: a key the container was launched
         // with must not survive into a viewer who has none of their own.

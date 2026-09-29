@@ -14,7 +14,8 @@
 // instead of leaving `loading` set forever.
 
 import { Emitter, Event } from "@theia/core/lib/common/event";
-import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
+import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
 
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { gearIdOf, SelectionService } from "./shell/selection-service";
@@ -25,12 +26,16 @@ import type { InitializeResult } from "../common/generated/InitializeResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import {
   CatalogueState,
+  type CorpusOrigin,
   GearboxClient,
   GearboxService,
+  RemoteCatalogueSource,
   Row,
   type StudioSession,
   keyFor,
 } from "../common/protocol";
+import { remoteKey } from "../common/git-remote";
+import { announceOpenedWorkspace } from "./shell/opened-workspace";
 
 /**
  * How many engine log lines are kept.
@@ -62,7 +67,10 @@ const EMPTY: CatalogueState = {
 @injectable()
 export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostics"> {
   @inject(GearboxService) protected readonly service!: GearboxService;
+  /** What this window has open; the backend scans it where there is no `/workspace`. */
+  @inject(WorkspaceService) @optional() protected readonly workspaceService?: WorkspaceService;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+  @inject(RemoteCatalogueSource) @optional() protected readonly remote?: RemoteCatalogueSource;
 
   protected readonly onChangedEmitter = new Emitter<void>();
   readonly onChanged: Event<void> = this.onChangedEmitter.event;
@@ -133,6 +141,14 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   @postConstruct()
   protected init(): void {
     this.watchSelection();
+    // A catalogue listed from the backend -- or not listed, because the member
+    // was not signed in yet -- is read again when that source says it moved.
+    // A workspace with its own source roots never asked it, so it is left alone.
+    this.remote?.onDidChange?.(() => {
+      if (this.rootsById.size === 0) {
+        void this.load();
+      }
+    });
   }
 
   get current(): CatalogueState {
@@ -406,6 +422,53 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     }
   }
 
+  /**
+   * Constructor Studio: start an engine on `session` without reading the
+   * catalogue. Undefined when it started, else why it did not.
+   *
+   * For the first step of opening a product, which only needs the product's
+   * description evaluated with the right write boundary. `load` would also
+   * start a catalogue load, and the engine answers one request at a time: the
+   * `product/load` sent next waits behind the whole projection pass (measured
+   * 7 s warm on the 44-gear corpus against 17 ms without it; a cold desktop
+   * took longer than the 60 s allowance), and the open then scans the same
+   * roots again in step 3. Queued with the loads, so it never respawns an
+   * engine one of them is still using. The rows are cleared: they belonged to
+   * the engine this replaces.
+   */
+  async prepare(session: StudioSession): Promise<string | undefined> {
+    let failure: string | undefined;
+    // Not remembered as `this.session`, unlike `load`: this engine is a step,
+    // and a `load()` after an open that stops here -- the recovery below it --
+    // has to go back to the session there was, not to this one.
+    await this.queued(async () => {
+      const epoch = ++this.epoch;
+      this.streaming = undefined;
+      this.rowsByKey.clear();
+      this.state = { ...EMPTY, status: "loading" };
+      this.onChangedEmitter.fire();
+      try {
+        await this.announceOpenedWorkspace();
+        const init = await this.service.initialize(session);
+        if (epoch !== this.epoch) return;
+        this.engine.markConnected();
+        this.capabilities = init.capabilities;
+        this.rootsById = new Map((init.roots ?? []).map((r) => [r.id, r.path]));
+      } catch (error) {
+        if (epoch !== this.epoch) return;
+        failure = describe(error);
+        this.engine.markDisconnected(failure);
+        this.state = { ...this.state, status: "error", error: failure };
+        this.onChangedEmitter.fire();
+      }
+    });
+    return failure;
+  }
+
+  protected async announceOpenedWorkspace(): Promise<void> {
+    await announceOpenedWorkspace(this.service, this.workspaceService);
+  }
+
   /** One load, against the session decided when it was asked for. */
   protected async doLoad(session: StudioSession | undefined): Promise<void> {
     const epoch = ++this.epoch;
@@ -418,6 +481,9 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       // The session, when a product session drives the load. `initialize`
       // disposes and respawns the engine, so this is also what makes the roots
       // and the write boundary change wholesale rather than drift.
+      // Said first, every time: the folder is this window's, and a desktop
+      // member opening another project reloads the window onto it.
+      await this.announceOpenedWorkspace();
       const init = await this.service.initialize(session);
       if (epoch !== this.epoch) {
         return;
@@ -435,6 +501,17 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       }
       this.streaming = undefined;
       this.engine.markDisconnected(describe(error));
+      // Constructor Studio: an engine that would not start -- none installed,
+      // or one that refused `initialize` -- still leaves the corpus the Studio
+      // backend reads. Listing it beats an error with nothing under it.
+      if (this.remote !== undefined && (await this.installRemote(epoch, [])) === true) {
+        this.onLog(`the engine did not start (${describe(error)}); listing the Studio backend's corpus`);
+        this.onChangedEmitter.fire();
+        return;
+      }
+      if (epoch !== this.epoch) {
+        return;
+      }
       this.state = {
         ...this.state,
         status: "error",
@@ -459,6 +536,15 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     failedRoots: CatalogueState["failedRoots"],
     keepProjected = false,
   ): Promise<boolean> {
+    // Constructor Studio: an engine with no source root has no gears to find.
+    // The Studio backend reads its own corpus checkout, so ask it instead of
+    // having every project clone the corpus.
+    if (this.rootsById.size === 0 && this.remote !== undefined) {
+      const installed = await this.installRemote(epoch, failedRoots);
+      if (installed !== undefined) {
+        return installed;
+      }
+    }
     // Resolves at the S1/S2 boundary: the whole tree, none of it projected.
     const loaded = await this.service.loadCatalogue();
     if (epoch !== this.epoch) {
@@ -492,8 +578,12 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
         carried?.kind === "projected" ? carried : { kind: "pending", gear },
       );
     }
+    // Nothing discovered is nothing to project, and no `$/progress done` will
+    // come to say so: an engine with no source root answers an empty tree and
+    // stops. Waiting for it left the panel on "projecting 0/0" for good.
+    const empty = loaded.total === 0 && loaded.pending.length === 0;
     this.state = {
-      status: "loading",
+      status: empty ? "ready" : "loading",
       rows: this.sorted(),
       diagnostics: loaded.diagnostics,
       failedRoots,
@@ -502,8 +592,137 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       completed: 0,
     };
     // The boundary is passed: projections for *this* load are now welcome.
-    this.streaming = epoch;
+    this.streaming = empty ? undefined : epoch;
     return true;
+  }
+
+  /**
+   * The corpus's gears as the Studio backend lists them, installed projected
+   * and complete: there is nothing for a local engine to stream. Undefined
+   * when the backend offers none, so the caller reads the (empty) engine.
+   */
+  protected async installRemote(
+    epoch: number,
+    failedRoots: CatalogueState["failedRoots"],
+  ): Promise<boolean | undefined> {
+    let remote;
+    try {
+      remote = await this.remote?.load();
+    } catch (error) {
+      this.onLog(`the Studio backend could not list the gear corpus: ${describe(error)}`);
+      return undefined;
+    }
+    if (epoch !== this.epoch) {
+      return false;
+    }
+    if (remote === undefined) {
+      return undefined;
+    }
+    this.rowsByKey = new Map(
+      remote.gears.map((gear) => [keyFor(gear.source, gear.gdl_path), { kind: "projected", gear }]),
+    );
+    this.streaming = undefined;
+    this.state = {
+      status: "ready",
+      rows: this.sorted(),
+      diagnostics: [],
+      failedRoots,
+      error: undefined,
+      total: remote.gears.length,
+      completed: remote.gears.length,
+      remote: remote.corpus,
+    };
+    this.remoteOrigin = remote.origin;
+    this.knownOrigin = remote.origin ?? this.knownOrigin;
+    // A copy of this very commit may already be on this machine, brought by
+    // another project. Then there is no reason to stay read-only: adopt it and
+    // reload onto it. Only a copy already there -- nothing is fetched unasked.
+    if (remote.origin !== undefined && (!remote.origin.needsToken || remote.origin.clonePath !== undefined)) {
+      void this.adoptSharedCorpus(remote.origin, false);
+    }
+    return true;
+  }
+
+  /** Where the listed corpus comes from, while the rows are the backend's. */
+  protected remoteOrigin: CorpusOrigin | undefined;
+  /** The last corpus origin the backend named, kept after a copy is adopted. */
+  protected knownOrigin: CorpusOrigin | undefined;
+
+  /**
+   * Where the listed corpus can be brought from, while the rows are the
+   * backend's and no copy is here yet. What New Product offers inline.
+   */
+  get corpusToBring(): CorpusOrigin | undefined {
+    return this.state.remote === undefined ? undefined : this.remoteOrigin;
+  }
+
+  /**
+   * The corpus the Studio backend relays, when `url` is that repository: how a
+   * product's `git(url, rev)` source reaches a private corpus. Asks the backend
+   * when nothing has been listed from it yet (a workspace with its own roots
+   * never did); undefined when there is no backend or it names another corpus.
+   */
+  async corpusOriginFor(url: string): Promise<CorpusOrigin | undefined> {
+    if (this.knownOrigin === undefined && this.remote !== undefined) {
+      try {
+        this.knownOrigin = (await this.remote.load())?.origin;
+      } catch {
+        // No Studio backend to ask: the source is fetched as its URL says.
+      }
+    }
+    const origin = this.knownOrigin;
+    return origin !== undefined && remoteKey(origin.url) === remoteKey(url) ? origin : undefined;
+  }
+  protected bringingState: { readonly busy: boolean; readonly error?: string } = { busy: false };
+
+  /**
+   * Whether the listed corpus can be brought here: `undefined` when there is
+   * nothing to bring, otherwise the reason it cannot be, or `true`.
+   */
+  get corpusBringable(): true | string | undefined {
+    if (this.state.remote === undefined || this.remoteOrigin === undefined) return undefined;
+    if (this.remoteOrigin.needsToken && this.remoteOrigin.clonePath === undefined) {
+      return "This corpus is private, and this Studio does not relay it.";
+    }
+    return true;
+  }
+
+  get corpusBringing(): { readonly busy: boolean; readonly error?: string } {
+    return this.bringingState;
+  }
+
+  /**
+   * Clone the listed corpus into the machine's shared copy (once per commit,
+   * for every project) and reload the catalogue onto it, so gears open and a
+   * product resolves and generates.
+   */
+  async bringCorpusHere(): Promise<void> {
+    const origin = this.remoteOrigin;
+    if (origin === undefined || this.corpusBringable !== true || this.bringingState.busy) return;
+    this.bringingState = { busy: true };
+    this.onChangedEmitter.fire();
+    await this.adoptSharedCorpus(origin, true);
+  }
+
+  protected async adoptSharedCorpus(origin: CorpusOrigin, fetch: boolean): Promise<void> {
+    let dir: string | undefined;
+    try {
+      dir = await this.service.useSharedCorpus(origin.sourceId, origin.url, origin.rev, fetch, origin.clonePath);
+    } catch (error) {
+      this.bringingState = { busy: false, error: describe(error) };
+      this.onChangedEmitter.fire();
+      return;
+    }
+    this.bringingState = { busy: false };
+    if (dir === undefined) {
+      if (fetch) {
+        this.bringingState = { busy: false, error: "the corpus could not be brought here" };
+      }
+      this.onChangedEmitter.fire();
+      return;
+    }
+    this.remoteOrigin = undefined;
+    await this.load();
   }
 
   /**

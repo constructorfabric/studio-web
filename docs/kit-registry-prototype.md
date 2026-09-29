@@ -66,8 +66,8 @@ The trusted runner inside the project IDE session:
 6. reports `installed` or a bounded failure reason to project metadata.
 
 The Theia image contains the official `cfs` CLI in an isolated Python virtual
-environment. Release builds can pin `STUDIO_CFS_REF` to a reviewed tag or
-commit. The runner does not accept arbitrary repository URLs or shell
+environment, pinned to a reviewed tag or commit in `theia/cfs.json` (a build
+can still override it with `STUDIO_CFS_REF`). The runner does not accept arbitrary repository URLs or shell
 fragments. Private registries should later use Studio Connections/Secrets and
 short-lived credentials, never return credentials to the UI.
 

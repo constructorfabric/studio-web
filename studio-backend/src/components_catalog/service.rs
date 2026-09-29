@@ -21,6 +21,7 @@ use super::cratesio::{CrateDetail, CratesIoClient};
 use super::field_schema::{self, TypeFieldSchema};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
+use super::roadmap::{self, RoadmapSource};
 use crate::connectors::service::ConnectorService;
 use crate::tasks::registry::SyncReporter;
 
@@ -774,6 +775,10 @@ pub struct SyncSources {
     /// Repository sources (gears repo, FrontX repo, …).
     #[serde(default)]
     pub repos: Vec<RepoSource>,
+    /// Roadmap boards whose items say what stage each gear is at, when it is
+    /// due and who is waiting for it.
+    #[serde(default)]
+    pub roadmaps: Vec<RoadmapSource>,
 }
 
 /// What a catalog sync has counted.
@@ -810,6 +815,60 @@ impl CatalogCounts {
     }
 }
 
+/// A workspace's (or project's) repositories, as sessions clone them.
+const WORKSPACE_SETTINGS_TYPE: &str =
+    "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
+
+/// Project attributes, including the repositories it was seeded from.
+const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
+
+/// `(connection_id, full_path)` of each source in a project config, as the
+/// portal writes them. An entry missing either is not one the portal could
+/// read either.
+fn project_sources(config: &Value) -> Vec<(Uuid, String)> {
+    config
+        .get("sources")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| {
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            };
+            Some((
+                Uuid::parse_str(text("connection_id")?).ok()?,
+                text("full_path")?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod project_source_tests {
+    use super::*;
+
+    #[test]
+    fn a_source_names_its_connection_and_repository() {
+        let id = Uuid::new_v4();
+        let config = json!({
+            "mode": "modernize",
+            "sources": [
+                { "connection_id": id.to_string(), "full_path": "acme/api", "clone_url": "https://github.com/acme/api.git" },
+                { "connection_id": "not-a-uuid", "full_path": "acme/x" },
+                { "connection_id": id.to_string(), "full_path": "  " },
+                { "full_path": "acme/y" }
+            ]
+        });
+        assert_eq!(project_sources(&config), [(id, "acme/api".to_owned())]);
+        assert!(project_sources(&json!({ "mode": "greenfield" })).is_empty());
+    }
+}
+
 pub struct CatalogService {
     crates: CratesIoClient,
     sink: Arc<dyn CatalogSink>,
@@ -819,6 +878,9 @@ pub struct CatalogService {
     /// knows about each gear into the gear's profile. Set once, after
     /// construction, because the engine is configured separately.
     gearbox: std::sync::OnceLock<Arc<super::gearbox::Gearbox>>,
+    /// Reads a project's own sources, for a project with no gear repository.
+    account_management:
+        std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,
 }
 
 impl CatalogService {
@@ -833,11 +895,19 @@ impl CatalogService {
             keyword,
             connectors,
             gearbox: std::sync::OnceLock::new(),
+            account_management: std::sync::OnceLock::new(),
         }
     }
 
     pub fn set_gearbox(&self, gearbox: Arc<super::gearbox::Gearbox>) {
         let _ = self.gearbox.set(gearbox);
+    }
+
+    pub fn set_account_management(
+        &self,
+        client: Arc<dyn account_management_sdk::AccountManagementClient>,
+    ) {
+        let _ = self.account_management.set(client);
     }
 
     /// The default crates.io keyword, used when a sync request omits one.
@@ -934,6 +1004,87 @@ impl CatalogService {
         }
     }
 
+    /// Write what each roadmap board says about a gear into its profile.
+    ///
+    /// Best-effort, like the Gearbox facts: a board this connection cannot see
+    /// costs the profiles their plan fields, never the sync. Every plan field is
+    /// cleared first, so a gear that stopped matching an item stops showing a
+    /// plan it no longer has.
+    async fn apply_roadmaps(
+        &self,
+        ctx: &SecurityContext,
+        roadmaps: &[RoadmapSource],
+        profiles: &mut [GtsNode],
+        progress: &SyncReporter,
+    ) {
+        let Some(connectors) = self.connectors.clone() else {
+            tracing::warn!("components-catalog: no connector service; roadmap boards skipped");
+            return;
+        };
+        let today = time::OffsetDateTime::now_utc().date().to_string();
+        for node in profiles.iter_mut() {
+            if let Some(Value::Object(auto)) = node.value.get_mut("auto") {
+                for key in roadmap::ROADMAP_KEYS {
+                    auto.remove(key);
+                }
+            }
+        }
+        for source in roadmaps {
+            progress.set(format!(
+                "reading roadmap {}/{}",
+                source.owner, source.number
+            ));
+            let board = match roadmap::fetch(connectors.clone(), ctx, source).await {
+                Ok(board) => board,
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), owner = %source.owner, number = source.number, "components-catalog: roadmap board unreadable");
+                    continue;
+                }
+            };
+            let gears: Vec<(String, Vec<String>, Option<u64>)> = profiles
+                .iter()
+                .filter_map(|n| {
+                    let name = n.value.get("gear_name")?.as_str()?.to_string();
+                    let pinned = n
+                        .value
+                        .pointer("/values/roadmap_item/v")
+                        .and_then(Value::as_str)
+                        .and_then(roadmap::pinned_number);
+                    let words = roadmap::gear_words(&name);
+                    Some((name, words, pinned))
+                })
+                .collect();
+            let matches = roadmap::match_items(&gears, &board.items);
+            tracing::info!(board = %board.title, items = board.items.len(), gears = gears.len(), matched = matches.len(), "components-catalog: roadmap board read");
+            for node in profiles.iter_mut() {
+                let Some(name) = node
+                    .value
+                    .get("gear_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let Some((ix, how)) = matches.get(&name) else {
+                    continue;
+                };
+                let mut add = roadmap::item_fields(&board, &board.items[*ix], *how, source, &today);
+                let lifecycle = node
+                    .value
+                    .pointer("/auto/lifecycle/b")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                roadmap::check_release(&mut add, lifecycle.as_deref());
+                let Some(prof) = node.value.as_object_mut() else {
+                    continue;
+                };
+                if let Value::Object(auto) = prof.entry("auto").or_insert_with(|| json!({})) {
+                    auto.extend(add);
+                }
+            }
+        }
+    }
+
     /// Discover gears from a repository source (best-effort at the call site).
     async fn repo_gears(
         &self,
@@ -944,15 +1095,31 @@ impl CatalogService {
             .connectors
             .clone()
             .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
-        let enricher = RepoEnricher::new(
+        let mode = RepoMode::parse(&source.mode);
+        let mut enricher = RepoEnricher::new(
             connectors,
             source.tenant,
             source.connection_id,
             source.repo.clone(),
             source.git_ref.clone(),
-            RepoMode::parse(&source.mode),
+            mode,
         )
         .ok_or_else(|| anyhow!("invalid repository source"))?;
+        // A gears repository is read from the engine's checkout of it when
+        // there is an engine: one download, shared with the previews, and
+        // every file readable -- the source-code fields need all of them.
+        // Without one, the scan reads through the API as it always has.
+        if mode == RepoMode::Gears
+            && let Some(gearbox) = self.gearbox.get()
+            && let Some(corpus) = self.corpus_source(ctx, source).await
+        {
+            match gearbox.checkout(&corpus).await {
+                Ok(dir) => enricher = enricher.with_checkout(dir),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), repo = %source.repo, "components-catalog: no checkout of the gears repository; reading it through the API")
+                }
+            }
+        }
         enricher.enrich(ctx).await
     }
 
@@ -1082,6 +1249,20 @@ impl CatalogService {
                                     "synced_from".to_string(),
                                     Value::String(rg.source_repo.clone()),
                                 );
+                                // Where in that repository, and which crates
+                                // the directory declares: read, not derived
+                                // from the name (see `RepoGear::dir`).
+                                if let Some(dir) = &rg.dir {
+                                    obj.insert("repo_path".to_string(), Value::String(dir.clone()));
+                                }
+                                if !rg.crates.is_empty() {
+                                    obj.insert(
+                                        "crate_names".to_string(),
+                                        Value::Array(
+                                            rg.crates.iter().cloned().map(Value::String).collect(),
+                                        ),
+                                    );
+                                }
                                 if let Some(status) = status {
                                     obj.insert(
                                         "status".to_string(),
@@ -1163,6 +1344,25 @@ impl CatalogService {
             }
         }
 
+        // ── what the roadmap boards plan ─────────────────────────────────────
+        // A run that rebuilt no profile from a repository updates the profiles
+        // the graph already holds: the plan moves weekly, the tree less often,
+        // and refreshing one should not cost a full scan of the other.
+        if !sources.roadmaps.is_empty() {
+            if profile_nodes.is_empty() {
+                profile_nodes = self
+                    .sink
+                    .list(ctx, Some("gear_profile"))
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|n| n.value.get("gear_name").is_some())
+                    .collect();
+            }
+            self.apply_roadmaps(ctx, &sources.roadmaps, &mut profile_nodes, progress)
+                .await;
+        }
+
         // ── upsert ───────────────────────────────────────────────────────────
         let mut all_nodes: Vec<GtsNode> = gear_values
             .into_iter()
@@ -1239,7 +1439,15 @@ impl CatalogService {
                         continue;
                     }
                 };
-                for node in stale(&existing, &produced, &read_repos, scan_only) {
+                let mut condemned = stale(&existing, &produced, &read_repos, scan_only);
+                if type_id == gts::GEAR_TYPE && read_modes.contains("frontx") {
+                    for node in misfiled_frontx(&existing, &produced) {
+                        if !condemned.iter().any(|n| n.instance_id == node.instance_id) {
+                            condemned.push(node);
+                        }
+                    }
+                }
+                for node in condemned {
                     let from = node
                         .value
                         .get("synced_from")
@@ -1661,15 +1869,16 @@ impl CatalogService {
         Ok(nodes.into_iter().find(|n| n.instance_id == want))
     }
 
-    /// The project's gear repository and every crate its Cargo manifests
-    /// depend on. `None` when the project has no gear repository connected.
+    /// The project's code and every crate its Cargo manifests depend on:
+    /// the gear repository when one is connected, the project's own sources
+    /// otherwise. `None` when there is neither.
     pub async fn project_dependencies(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
         let Some(node) = self.get_project_repo(ctx, project_id).await? else {
-            return Ok(None);
+            return self.source_dependencies(ctx, project_id).await;
         };
         let v = &node.value;
         let text = |k: &str| {
@@ -1699,6 +1908,99 @@ impl CatalogService {
         )
         .ok_or_else(|| anyhow!("invalid gear repository for the project"))?;
         Ok(Some((repo, enricher.cargo_dependencies(ctx).await?)))
+    }
+
+    /// A gear repository is what a `new_gears` project writes into; every
+    /// other project's code is the repositories it was seeded from, and those
+    /// are in its workspace settings (and, from the wizard, its config). Read the same way, through the connection each one
+    /// names. A source that cannot be read is skipped and logged, so one
+    /// private repository does not hide what the others depend on.
+    async fn source_dependencies(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
+        let (Some(am), Some(connectors)) = (self.account_management.get(), &self.connectors) else {
+            return Ok(None);
+        };
+        let Ok(project) = Uuid::parse_str(project_id) else {
+            return Ok(None);
+        };
+        // What to read: `(tenant of the connection, connection, repository,
+        // branch)`. The workspace's settings first -- both portals write them and
+        // every session clones from them, naming the connection by its token --
+        // then the config's `sources`, which only the portal's wizard writes.
+        let mut targets: Vec<(Uuid, Uuid, String, String)> = Vec::new();
+        if let Ok(settings) = am
+            .get_metadata(ctx, project, ::gts::GtsTypeId::new(WORKSPACE_SETTINGS_TYPE))
+            .await
+        {
+            for source in crate::git_proxy::sources::sources_in(&settings.value) {
+                let (Some(token_ref), Some(repo)) = (
+                    source.token_ref.as_deref(),
+                    crate::connectors::repo_path_of(&source.url),
+                ) else {
+                    continue;
+                };
+                match connectors.by_secret_ref(ctx, project, token_ref).await {
+                    Some((tenant, c)) => {
+                        targets.push((tenant, c.id, repo, source.branch.unwrap_or_default()))
+                    }
+                    None => tracing::info!(
+                        project_id,
+                        repo,
+                        "studio-components-catalog: a project source's connection is not visible"
+                    ),
+                }
+            }
+        }
+        if let Ok(config) = am
+            .get_metadata(ctx, project, ::gts::GtsTypeId::new(PROJECT_CONFIG_TYPE))
+            .await
+        {
+            for (connection_id, repo) in project_sources(&config.value) {
+                match connectors.locate(ctx, project, connection_id).await {
+                    Some(tenant) => targets.push((tenant, connection_id, repo, String::new())),
+                    None => tracing::info!(
+                        project_id,
+                        repo,
+                        "studio-components-catalog: a project source's connection is not visible"
+                    ),
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        targets.retain(|(_, connection_id, repo, _)| {
+            seen.insert((*connection_id, repo.to_ascii_lowercase()))
+        });
+
+        let mut read = Vec::new();
+        let mut deps = BTreeSet::new();
+        for (tenant, connection_id, repo, branch) in targets {
+            let Some(enricher) = RepoEnricher::new(
+                Arc::clone(connectors),
+                tenant,
+                Some(connection_id),
+                repo.clone(),
+                branch,
+                RepoMode::parse("gears"),
+            ) else {
+                continue;
+            };
+            match enricher.cargo_dependencies(ctx).await {
+                Ok(found) => {
+                    deps.extend(found);
+                    read.push(repo);
+                }
+                Err(e) => {
+                    tracing::warn!(project_id, repo, error = %format!("{e:#}"), "studio-components-catalog: a project source could not be read");
+                }
+            }
+        }
+        if read.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((read.join(", "), deps)))
     }
 
     /// Connect (or update) the gear repository for a project. `repo` is an open
@@ -2049,6 +2351,32 @@ fn stale<'a>(
         .collect()
 }
 
+/// Micro-frontends still filed as GEARS by a scan that predates their own
+/// node type, and that this run did not produce.
+///
+/// Before `catalog.frontx.v1~` existed a FrontX package was written as a gear
+/// node with `kind: "frontx"` and no `synced_from`, and [`stale`] must leave a
+/// gear with no recorded source alone (that is the crates.io half). So those
+/// nodes outlived every later scan: the catalogue showed each FrontX package
+/// twice, once per type, plus the template placeholder
+/// `@gears-frontx/{{mfeName}}-mfe` the old scan took for a package. crates.io
+/// never produces `kind: "frontx"` (see [`classify_kind`]), so such a node can
+/// only have come from a FrontX scan, and the run that reads FrontX is the one
+/// that clears it.
+fn misfiled_frontx<'a>(existing: &'a [GtsNode], produced: &BTreeSet<&str>) -> Vec<&'a GtsNode> {
+    existing
+        .iter()
+        .filter(|node| !produced.contains(node.instance_id.as_str()))
+        .filter(|node| node.value.get("kind").and_then(Value::as_str) == Some("frontx"))
+        .filter(|node| {
+            node.value
+                .get("synced_from")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+        })
+        .collect()
+}
+
 /// Whether a scanned component is a gear or a request for one.
 ///
 /// `draft` means a directory of documents: a `gear.toml`, maybe a PRD and a
@@ -2096,7 +2424,7 @@ fn gear_status(fields: &Value) -> Option<&'static str> {
 
 /// Classify a crate by name so the UI can group them: gear / sdk / plugin /
 /// toolkit. Purely cosmetic — the graph keeps the full name.
-fn classify_kind(name: &str) -> &'static str {
+pub(crate) fn classify_kind(name: &str) -> &'static str {
     if name.contains("toolkit") {
         "toolkit"
     } else if name.ends_with("-sdk") {
@@ -2226,6 +2554,34 @@ mod prune_tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_frontx_package_left_filed_as_a_gear_is_misfiled() {
+        let mut old = node("@gears-frontx/ui-kit", None);
+        old.value["kind"] = json!("frontx");
+        let mut placeholder = node("@gears-frontx/{{mfeName}}-mfe", None);
+        placeholder.value["kind"] = json!("frontx");
+        let crate_row = node("cf-gears-api-gateway", None);
+        let mut scanned = node("@gears-frontx/api", Some("constructorfabric/gears-frontx"));
+        scanned.value["kind"] = json!("frontx");
+        let existing = vec![old, placeholder, crate_row, scanned];
+        let out: Vec<&str> = misfiled_frontx(&existing, &BTreeSet::new())
+            .into_iter()
+            .map(|n| n.instance_id.as_str())
+            .collect();
+        assert_eq!(
+            out,
+            ["@gears-frontx/ui-kit", "@gears-frontx/{{mfeName}}-mfe"]
+        );
+    }
+
+    #[test]
+    fn a_frontx_node_this_run_produced_is_not_misfiled() {
+        let mut n = node("@gears-frontx/ui-kit", None);
+        n.value["kind"] = json!("frontx");
+        let existing = vec![n];
+        assert!(misfiled_frontx(&existing, &BTreeSet::from(["@gears-frontx/ui-kit"])).is_empty());
     }
 
     #[test]
@@ -2477,7 +2833,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 73);
+        assert_eq!(gear.fields().count(), 81);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

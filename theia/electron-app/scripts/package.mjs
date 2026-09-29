@@ -10,6 +10,17 @@
 // default) and lets the member switch between them in the Studio view; the
 // build starts on --default. The second ships exactly one Studio.
 //
+// Either form takes `--assistants <manifest>`: the pinned Claude Code and Codex
+// builds (scripts/assistants-manifest.mjs), shipped as resources/assistants.json
+// for the app to fetch on first need instead of the extensions themselves.
+//
+// Either form takes `--gearbox <path to a gearbox executable>`: the engine
+// behind the gear catalogue, products and `.gdl`, shipped as
+// resources/bin/gearbox[.exe], where desktop-main.js points GEARBOX_ENGINE.
+// Without it the app still builds, and its catalogue says no engine is
+// installed. The desktop workflow builds one at the revision theia/Dockerfile
+// pins for the session image.
+//
 // Run it after `theia build`. The Theia bundle in lib/ is self-contained — its
 // only external is `electron` — so the app is staged without node_modules:
 // the bundle, the entry point that fills in what `theia start` would get from
@@ -41,8 +52,32 @@ const { values } = parseArgs({
         issuer: { type: 'string' },
         version: { type: 'string', default: ownVersion },
         out: { type: 'string', default: join(app, 'dist') },
+        gearbox: { type: 'string' },
+        assistants: { type: 'string' },
     },
 });
+if (values.gearbox && !existsSync(values.gearbox)) {
+    console.error(`--gearbox ${values.gearbox}: no such file`);
+    process.exit(2);
+}
+if (!values.gearbox) {
+    console.warn('no --gearbox: this build ships no engine, so its gear catalogue will not load');
+}
+// Claude Code and Codex are fetched by the app on first need (#480); the
+// installer carries only their manifest (scripts/assistants-manifest.mjs).
+let assistantIds = [];
+if (values.assistants) {
+    try {
+        assistantIds = JSON.parse(readFileSync(values.assistants, 'utf8')).assistants.map(a => a.id);
+    } catch (error) {
+        console.error(`--assistants ${values.assistants}: not a manifest (${error.message})`);
+        process.exit(2);
+    }
+} else {
+    console.warn('no --assistants: this build ships no assistant manifest, so Claude Code and Codex never arrive');
+}
+// The name desktop-main.js looks for: the engine is built for the platform it is packaged on.
+const engineName = process.platform === 'win32' ? 'gearbox.exe' : 'gearbox';
 const studioUrl = values['studio-url']?.replace(/\/+$/, '');
 const environments = studioUrl
     ? [{ id: 'default', label: studioUrl.replace(/^https?:\/\//, ''), studioUrl, issuer: values.issuer ?? `${studioUrl}/auth/realms/studio` }]
@@ -98,6 +133,9 @@ const resources = join(app, 'dist-resources');
 rmSync(resources, { recursive: true, force: true });
 mkdirSync(resources, { recursive: true });
 writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ environments, defaultEnvironment }, null, 2));
+if (values.assistants) {
+    cpSync(values.assistants, join(resources, 'assistants.json'));
+}
 
 const electronPackage = require.resolve('electron/package.json');
 const { build } = require('electron-builder');
@@ -116,12 +154,16 @@ await build({
         nodeGypRebuild: false,
         files: ['**/*'],
         extraResources: [
-            { from: join(app, '..', 'plugins'), to: 'plugins' },
+            // Without the assistants, should a checkout's plugins/ still hold
+            // them from an older build: the app fetches its own.
+            { from: join(app, '..', 'plugins'), to: 'plugins', filter: ['**/*', ...assistantIds.map(id => `!${id}{,/**}`)] },
             { from: join(resources, 'studio-desktop.json'), to: 'studio-desktop.json' },
+            ...(values.assistants ? [{ from: join(resources, 'assistants.json'), to: 'assistants.json' }] : []),
             // cfs-map-adapter requires `__dirname/../../../.cf-studio/…` at
             // runtime; from resources/app/lib/backend that is resources/. The
             // session image ships the same file for the same reason.
             { from: join(app, '..', 'docker', 'cfs-map.schema.json'), to: '.cf-studio/.core/schemas/map.schema.json' },
+            ...(values.gearbox ? [{ from: values.gearbox, to: `bin/${engineName}` }] : []),
         ],
         // No asar: the bundle spawns executables by paths relative to its own
         // directory (rg.exe, windows-trash.exe, the node-pty agents, and the

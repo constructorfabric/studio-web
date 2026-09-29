@@ -706,10 +706,10 @@ export function ProjectOverview({
         </div>
 
         <div className="dash-col">
-          {/* ── Studio: the IDE session for this project. ── */}
+          {/* ── IDE: this project in the browser (a session) or in the desktop app. ── */}
           <div className="card launcher">
             <div className="card-head">
-              <h2>Studio</h2>
+              <h2>IDE</h2>
               {liveSession && <span className={`badge ${liveSession.state === "running" ? "ok" : "info"}`}>{liveSession.state}</span>}
             </div>
             {/* The one line on this screen that is about the reader. Above the
@@ -739,26 +739,26 @@ export function ProjectOverview({
                   where you stop it.
                 </p>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio}>
-                    Open in IDE
+                  <button className="primary" onClick={onOpenStudio} title="Open the running session in this window">
+                    Web IDE
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             ) : (
               <>
                 <p className="hint">
-                  Start a Studio for this project: a dedicated IDE that clones{" "}
+                  Open this project in an IDE. The Web IDE is a session in your browser that clones{" "}
                   {repos.length === 0
                     ? "an empty workspace — attach a repository first to have it check something out"
                     : `${repos.length} attached repositor${repos.length === 1 ? "y" : "ies"} and opens them together`}
-                  .
+                  ; the Desktop IDE does the same in the Constructor Studio app on your machine.
                 </p>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <button className="primary" onClick={onOpenStudio}>
-                    Launch Studio
+                  <button className="primary" onClick={onOpenStudio} title="Start a session for this project and open it in this window">
+                    Web IDE
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             )}

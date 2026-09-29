@@ -10,11 +10,11 @@
  * data, fetched in `contextCatalogs.ts` and stored before any navigation.
  */
 import { eventBus, screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
-import { levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
+import { levelOf, placementOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
-import type { ShellRoute } from '@/app/routing/route';
+import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
 import {
   addContextWorkspace,
   readAppContext,
@@ -62,7 +62,20 @@ export function registerAppContextEffects(app: FrontXApp): void {
       if (project) route.project = project;
     }
     if (overrides.section) route.section = overrides.section;
+    if (overrides.artifact) {
+      route.artifact = overrides.artifact;
+      route.repository = overrides.repository;
+      route.path = overrides.path;
+      route.kind = overrides.kind;
+    }
     return route;
+  };
+
+  /** The token a context switch carries forward: the current screen's, unless it is hidden  */
+
+  const tokenToKeep = (current: ShellRoute, level: ScreenLevel): string | undefined => {
+    const owner = routing && groupOfToken(routing.groups(), current.token)?.owner;
+    return owner && placementOf(owner) === 'hidden' ? entryTokenOf(screens(), level) : current.token;
   };
 
   const currentGroupLevel = (): ScreenLevel | undefined => {
@@ -117,10 +130,10 @@ export function registerAppContextEffects(app: FrontXApp): void {
     }
     const current = routing.navigation.currentRoute();
     const stays = current !== null && currentGroupLevel() === 'organization';
-    const token = stays ? current.token : entryTokenOf(screens(), 'organization');
+    const token = stays ? tokenToKeep(current, 'organization') : entryTokenOf(screens(), 'organization');
     if (!token) return;
     const route: ShellRoute = { token, org: orgId };
-    if (stays && current.section) route.section = current.section;
+    if (stays && token === current.token && current.section) route.section = current.section;
     routing.navigation.navigate(route, 'push');
   });
 
@@ -135,7 +148,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
       routing.materialize();
       return;
     }
-    const token = enter ? entryTokenOf(screens(), 'workspace') : routing.navigation.currentRoute()?.token;
+    const current = routing.navigation.currentRoute();
+    const token = enter || !current ? entryTokenOf(screens(), 'workspace') : tokenToKeep(current, 'workspace');
     if (!token) return;
     routing.navigation.navigate(routeFor(token, 'workspace', { workspace: workspaceId }), 'push');
   });
@@ -165,6 +179,23 @@ export function registerAppContextEffects(app: FrontXApp): void {
     }, WORKSPACE_RETRY_DELAY_MS);
   });
 
+  // @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
+  eventBus.on('app/context/artifact/requested', ({ projectId, artifactId, repository, path, kind }) => {
+    if (!routing) return;
+    if (!groupOfToken(routing.groups(), EDITOR_SCREEN_TOKEN)) {
+      console.warn(`[shell] artifact open: no screen answers to "${EDITOR_SCREEN_TOKEN}"`);
+      return;
+    }
+    const route = routeFor(EDITOR_SCREEN_TOKEN, 'project', {
+      project: projectId,
+      artifact: artifactId,
+      repository,
+      path,
+      kind,
+    });
+    routing.navigation.navigate(route, 'push');
+  });
+
   //  Published by whoever owns projects (projects-mfe)
 
   eventBus.on('app/context/projects', ({ items, workspaceId }) => {
@@ -185,14 +216,17 @@ export function registerAppContextEffects(app: FrontXApp): void {
     if (!routing) return;
     const current = routing.navigation.currentRoute();
     if (!current || (current.project ?? context().project?.id) === projectId) return;
-    routing.navigation.navigate(routeFor(current.token, 'project', { project: projectId }), 'push');
+    const token = tokenToKeep(current, 'project');
+    if (!token) return;
+    routing.navigation.navigate(routeFor(token, 'project', { project: projectId }), 'push');
   });
 
   eventBus.on('app/context/project/closed', () => {
     if (!routing) return;
     const current = routing.navigation.currentRoute();
-    if (!current) return;
-    routing.navigation.navigate(routeFor(current.token, 'workspace'), 'push');
+    const token = current ? tokenToKeep(current, 'workspace') : undefined;
+    if (!token) return;
+    routing.navigation.navigate(routeFor(token, 'workspace'), 'push');
   });
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4

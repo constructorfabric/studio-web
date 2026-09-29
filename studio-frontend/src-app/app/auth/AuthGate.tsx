@@ -14,7 +14,7 @@
  * concrete provider — swapping the provider in main.tsx swaps it here too.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import { useFrontX } from '@gears-frontx/react';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 import { LoginScreen } from './LoginScreen';
@@ -42,8 +42,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [phase, setPhase] = useState<Phase>('restoring');
   const [expired, setExpired] = useState(false);
   const [callbackError, setCallbackError] = useState<string | undefined>();
-  const phaseRef = useRef<Phase>('restoring');
-  phaseRef.current = phase;
+  const wasAuthenticated = useEffectEvent(() => phase === 'authenticated');
 
   useEffect(() => {
     if (!auth) {
@@ -99,7 +98,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         // Losing an established session (failed renewal, sign-out elsewhere)
         // is "expired"; an explicit sign-out and never being signed in are not.
         const signedOut = (event as StudioAuthStateEvent).reason === 'signed-out';
-        if (phaseRef.current === 'authenticated' && !signedOut) setExpired(true);
+        if (wasAuthenticated() && !signedOut) setExpired(true);
         setPhase('unauthenticated');
       }
     });

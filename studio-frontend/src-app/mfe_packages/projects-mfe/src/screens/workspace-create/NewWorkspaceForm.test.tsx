@@ -7,9 +7,10 @@ import {
 } from '@frontx-test-utils/createMfeBridgeFixture.ts';
 import '../../events/workspaceEvents';
 
-const { createWorkspace, org } = vi.hoisted(() => ({
+const { createWorkspace, org, translations } = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   org: { current: { id: 'org-1', name: 'Fabric' } as { id: string; name: string } | null },
+  translations: { current: { isLoaded: true, error: null as Error | null } },
 }));
 
 /** Every gear this MFE registers refuses in jsdom, except the one write. */
@@ -37,7 +38,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 
 vi.mock('../../i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../i18n')>()),
-  useWorkspaceCreateScreenTranslations: () => ({ isLoaded: true, error: null }),
+  useWorkspaceCreateScreenTranslations: () => translations.current,
   useWorkspaceCreateText: () => (key: string) => key,
 }));
 
@@ -62,14 +63,16 @@ async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
     ...(executeActionsChain ? { executeActionsChain: executeActionsChain as never } : {}),
   });
 
-  render(
+  const tree = () => (
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(fixture.bridge)}>
       <NewWorkspaceForm />
     </FrontXProvider>
   );
+  const view = render(tree());
 
   return {
     mfeApp,
+    rerender: () => view.rerender(tree()),
     executeActionsChain: executeActionsChain ?? fixture.executeActionsChain,
     name: async (value: string): Promise<void> => {
       await act(async () => {
@@ -91,9 +94,13 @@ async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
   };
 }
 
+beforeEach(() => {
+  org.current = { id: 'org-1', name: 'Fabric' };
+  translations.current = { isLoaded: true, error: null };
+});
+
 describe('the organization a new workspace is announced under', () => {
   beforeEach(() => {
-    org.current = { id: 'org-1', name: 'Fabric' };
     createWorkspace.mockReset();
     createWorkspace.mockResolvedValue(CREATED);
   });
@@ -159,5 +166,29 @@ describe('the organization a new workspace is announced under', () => {
     expect(screen.getByRole('alert').textContent).toBe('error_no_org');
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(announcements(executeActionsChain.mock.calls as never)).toEqual([]);
+  });
+});
+
+describe('the form behind its first-load skeleton', () => {
+  it('waits for the dictionary once, not again while a language change loads it', async () => {
+    translations.current = { isLoaded: false, error: null };
+    const { rerender } = await mountForm();
+    expect(screen.queryByRole('heading')).toBeNull();
+
+    translations.current = { isLoaded: true, error: null };
+    rerender();
+    expect(screen.getByRole('heading', { name: 'title' })).toBeTruthy();
+
+    translations.current = { isLoaded: false, error: null };
+    rerender();
+    expect(screen.getByRole('heading', { name: 'title' })).toBeTruthy();
+  });
+
+  it('shows the failure, not the skeleton, when the dictionary does not load', async () => {
+    translations.current = { isLoaded: false, error: new Error('no dictionary') };
+    await mountForm();
+
+    expect(screen.getByRole('alert').textContent).toBe('Could not load this screen.');
+    expect(screen.getByRole('heading', { name: 'title' })).toBeTruthy();
   });
 });

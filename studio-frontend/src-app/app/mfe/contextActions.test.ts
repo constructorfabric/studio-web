@@ -151,10 +151,16 @@ describe('artifact open request', () => {
     expect(artifactRequestOf(undefined)).toBeNull();
   });
 
-  it('is accepted and changes nothing on the bus until the editor navigation answers it (#320)', async () => {
-    vi.spyOn(console, 'info').mockImplementation(() => {});
+  it('becomes the request the shell navigates on', async () => {
     mockEmit.mockClear();
-    await expect(createArtifactOpenHandler().handleAction('action', REQUEST)).resolves.toBeUndefined();
+    await createArtifactOpenHandler().handleAction('action', REQUEST);
+    expect(emitted('app/context/artifact/requested')).toEqual([REQUEST]);
+  });
+
+  it('puts nothing on the bus for a payload it refuses', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockEmit.mockClear();
+    await createArtifactOpenHandler().handleAction('action', { ...REQUEST, kind: 'spec_finding' });
     expect(mockEmit).not.toHaveBeenCalled();
   });
 

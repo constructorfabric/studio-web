@@ -477,27 +477,19 @@ async fn sync(
     };
     let workspace_id = trimmed(req.workspace_id.as_deref());
     let project_id = trimmed(req.project_id.as_deref());
-    let payload = serde_json::to_value(IngestPayload {
-        provider: provider.clone(),
+    let run = IngestPayload {
+        provider,
         base_url: trimmed(req.base_url.as_deref()),
-        secret_ref: secret_ref.clone(),
-        repo_full_path: repo_full_path.clone(),
+        secret_ref,
+        repo_full_path,
         since: trimmed(req.since.as_deref()),
-        workspace_id: workspace_id.clone(),
+        workspace_id,
         project_id: project_id.clone(),
         repo_dir: trimmed(req.repo_dir.as_deref()),
-    })
-    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-
-    // Two syncs that would write the same graph keys must not run at once.
-    // Those keys are built from exactly these four things (see `gts::*_node`),
-    // so the same four make the partition key: the same repository under a
-    // different project is a different set of nodes and may run in parallel.
-    let scope = project_id
-        .as_deref()
-        .or(workspace_id.as_deref())
-        .unwrap_or("unscoped");
-    let partition_key = format!("{provider}:{secret_ref}:{scope}:{repo_full_path}");
+    };
+    let partition_key = run.partition_key();
+    let payload = serde_json::to_value(run)
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
     let run_id = queue
         .enqueue(

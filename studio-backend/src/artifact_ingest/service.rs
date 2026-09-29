@@ -1585,6 +1585,42 @@ impl super::port::ArtifactCounter for IngestService {
     }
 }
 
+/// A project's row, folded from the same scoped reads the Sources table and
+/// the Activity feed make — one indexed query each.
+#[async_trait::async_trait]
+impl super::port::ProjectSignalSource for IngestService {
+    async fn project_signals(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        days: usize,
+    ) -> anyhow::Result<super::port::ProjectSignals> {
+        let entries = |nodes: Vec<GtsNode>| -> Vec<(String, serde_json::Value)> {
+            nodes
+                .into_iter()
+                .map(|n| (n.instance_id, n.value))
+                .collect()
+        };
+        let values = |nodes: Vec<GtsNode>| -> Vec<serde_json::Value> {
+            nodes.into_iter().map(|n| n.value).collect()
+        };
+        let findings = entries(self.list_in_scope(ctx, Some("spec_finding"), scope).await?);
+        let comments = entries(self.list_in_scope(ctx, Some("comment"), scope).await?);
+        let pulls = values(self.list_in_scope(ctx, Some("pull_request"), scope).await?);
+        let repos = values(self.list_in_scope(ctx, Some("repo"), scope).await?);
+        let now = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+        )
+        .unwrap_or(0);
+        Ok(super::activity::project_signals(
+            &findings, &comments, &pulls, &repos, now, days,
+        ))
+    }
+}
+
 /// The files, offered to the gear that decides what each one is.
 ///
 /// The same store read and the same scope rule as the count beside it — the

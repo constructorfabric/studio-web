@@ -47,6 +47,14 @@ describe("portfolioRollups", () => {
     expect(projects.get("p2")?.parentId).toBe("ws");
   });
 
+  it("asks for one workspace when the table shows one", async () => {
+    const spy = vi.spyOn(api, "rollups").mockResolvedValue({ total: 0, items: [] });
+
+    await portfolioRollups("t", "ws");
+
+    expect(spy).toHaveBeenCalledWith("t", undefined, "ws");
+  });
+
   it("keeps a missing count as null and a real zero as zero", async () => {
     vi.spyOn(api, "rollups").mockResolvedValue({
       total: 1,

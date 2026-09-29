@@ -4,7 +4,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-verify:p1
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-announce:p1
 // @cpt-dod:cpt-studiofrontend-dod-connection-create-refusal:p1
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useState } from 'react';
 import {
   apiRegistry,
   eventBus,
@@ -27,7 +27,7 @@ import {
   SelectValue,
   Skeleton,
 } from '@gears-frontx/ui-kit';
-import { ConnectorsApiService, OrganizationProvider, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
+import { ConnectorsApiService, OrganizationProvider, useEverLoaded, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
 import { useConnectSourceScreenTranslations, useConnectSourceText } from '../../i18n';
 import { isDraftUsable } from '../../model/connectionDraft';
 import { CONNECT_SLICE_KEY, editDraft, resetForm } from '../../slices/connectSlice';
@@ -83,9 +83,7 @@ const DialogBody: React.FC = () => {
   /**
    * The skeleton is for the first load and nothing else.
    */
-  const everLoaded = useRef(false);
-  everLoaded.current ||= isLoaded;
-  const showSkeleton = !everLoaded.current && !translationsFailed;
+  const showSkeleton = !useEverLoaded(isLoaded) && !translationsFailed;
 
   const blocked = submitting || orgLoading || !orgId || !isDraftUsable(draft);
 

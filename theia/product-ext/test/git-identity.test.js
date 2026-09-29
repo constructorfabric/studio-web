@@ -23,7 +23,7 @@
 
 const assert = require('node:assert');
 const {
-    gitIdentityConfig, writeGitConfig, redirectHome
+    assistantEnvironment, ensureAssistantHomes, gitIdentityConfig, writeGitConfig, redirectHome, HOME_LINK_TYPE
 } = require('../src/node/viewer-credentials-env');
 
 const CONTAINER = '/home/node/.gitconfig';
@@ -142,14 +142,14 @@ const pathx = require('node:path');
 
 function root() { return fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'studio-redirect-')); }
 
-/* The session runs on Linux; a developer's checkout may be on Windows, where
- * creating a symlink needs a privilege an ordinary account does not have. The
- * behaviour under test IS the symlink, so there is nothing to fall back to:
- * these say so and skip rather than passing without checking anything. */
+/* The session runs on Linux and the desktop on Windows, where the link is a
+ * junction (HOME_LINK_TYPE) because a symlink needs a privilege an ordinary
+ * account does not have. A platform that makes neither skips these rather than
+ * passing without checking anything. */
 const symlinksWork = (() => {
     const dir = root();
     try {
-        fsx.symlinkSync(dir, pathx.join(dir, 'probe'), 'dir');
+        fsx.symlinkSync(dir, pathx.join(dir, 'probe'), HOME_LINK_TYPE);
         return true;
     } catch (error) {
         return false;
@@ -178,7 +178,7 @@ testRedirect('the anonymous home becomes a link to the home the viewer owns', ()
         redirectHome(anonymous, stable);
 
         assert.ok(fsx.lstatSync(anonymous).isSymbolicLink());
-        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+        assert.strictEqual(pathx.resolve(fsx.readlinkSync(anonymous)), pathx.resolve(stable));
         // What the plugin host wrote while anonymous belongs to this viewer.
         assert.ok(fsx.existsSync(pathx.join(stable, 'token')));
     } finally {
@@ -205,7 +205,7 @@ testRedirect('a second adoption repoints the link instead of leaving the first o
         redirectHome(anonymous, first);
         redirectHome(anonymous, second);
 
-        assert.strictEqual(fsx.readlinkSync(anonymous), second);
+        assert.strictEqual(pathx.resolve(fsx.readlinkSync(anonymous)), pathx.resolve(second));
     } finally {
         fsx.rmSync(dir, { recursive: true, force: true });
     }
@@ -217,11 +217,11 @@ testRedirect('redirecting to where it already points changes nothing', () => {
         const anonymous = pathx.join(dir, 'session-1');
         const stable = pathx.join(dir, 'oidc-a');
         fsx.mkdirSync(stable);
-        fsx.symlinkSync(stable, anonymous, 'dir');
+        fsx.symlinkSync(stable, anonymous, HOME_LINK_TYPE);
 
         redirectHome(anonymous, stable);
 
-        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+        assert.strictEqual(pathx.resolve(fsx.readlinkSync(anonymous)), pathx.resolve(stable));
     } finally {
         fsx.rmSync(dir, { recursive: true, force: true });
     }
@@ -236,7 +236,43 @@ testRedirect('a home that was never created anonymously still gets its link', ()
 
         redirectHome(anonymous, stable);
 
-        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+        assert.strictEqual(pathx.resolve(fsx.readlinkSync(anonymous)), pathx.resolve(stable));
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+console.log('assistant homes');
+
+test('the directories the assistants are pointed at exist before they start', () => {
+    // The Codex CLI exits 1 on a CODEX_HOME that does not exist, and the Codex
+    // extension starts it at activation: a fresh credential home showed
+    // "Codex couldn't load its resources." in every first session.
+    const dir = root();
+    try {
+        const env = assistantEnvironment(pathx.join(dir, 'session-1'), {});
+        ensureAssistantHomes(env);
+        assert.ok(fsx.statSync(env.CODEX_HOME).isDirectory(), env.CODEX_HOME);
+        assert.ok(fsx.statSync(env.CLAUDE_CONFIG_DIR).isDirectory(), env.CLAUDE_CONFIG_DIR);
+        // Twice is harmless: it runs on every plugin-host fork.
+        ensureAssistantHomes(env);
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+testRedirect('a Codex home made before identity arrives moves with the home', () => {
+    const dir = root();
+    try {
+        const anonymous = pathx.join(dir, 'session-1');
+        const stable = pathx.join(dir, 'oidc-a');
+        ensureAssistantHomes(assistantEnvironment(anonymous, {}));
+        fsx.mkdirSync(stable);
+
+        redirectHome(anonymous, stable);
+
+        assert.ok(fsx.statSync(pathx.join(stable, '.codex')).isDirectory());
+        assert.ok(fsx.statSync(pathx.join(anonymous, '.codex')).isDirectory());
     } finally {
         fsx.rmSync(dir, { recursive: true, force: true });
     }

@@ -102,7 +102,19 @@ pub trait DocumentCounter: Send + Sync + 'static {
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> anyhow::Result<u32>;
+
+    /// How this project's specs stand: how many, how many written in Studio,
+    /// how many checked and how many of those fail. Same pairing of
+    /// `workspace_id` and `project_id` as [`Self::count_bindings`].
+    async fn spec_summary(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> anyhow::Result<SpecSummary>;
 }
+
+pub use super::spec_rows::SpecSummary;
 
 /// Whether a path could hold a specification document at all.
 ///

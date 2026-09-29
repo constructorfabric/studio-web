@@ -6,11 +6,11 @@
  * reached says something other than the address — a default filled, an id
  * refused — it writes the normalized route with `replace`. A converged state
  * writes nothing, which is what makes the library's echo of the shell's own
- * write harmless. This is the only writer of `org`, `workspace`, `project`
- * and `section`, and the only caller of `mountScreen`.
+ * write harmless. This is the only writer of `org`, `workspace`, `project`,
+ * `section` and `artifact`, and the only caller of `mountScreen`.
  */
 import { screenDomain, type FrontXApp, type MfeRegistry, type ScreenExtension } from '@gears-frontx/react';
-import { TENANT_TYPES, errorMessage } from '@constructor-studio/mfe-shared';
+import { TENANT_TYPES, errorMessage, isStudioArtifactKind, type StudioArtifact } from '@constructor-studio/mfe-shared';
 import { entryPointOf, levelOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { isMountingScreen, mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
@@ -19,14 +19,36 @@ import {
   openContextProject,
   readAppContext,
   rememberProject,
+  setContextArtifact,
   setContextOrg,
   setContextSection,
   setContextWorkspace,
 } from '@/app/slices/appContextSlice';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
-import { routesEqual, type ShellRoute } from './route';
+import { EDITOR_SCREEN_TOKEN, routesEqual, type ShellRoute } from './route';
 import { groupOfExtension, groupOfToken, type ScreenGroup } from './screenTokens';
 import type { ShellNavigation } from './navigation';
+
+// @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
+function artifactOf(route: ShellRoute): StudioArtifact | null {
+  if (!route.artifact || !isStudioArtifactKind(route.kind)) return null;
+  return {
+    artifactId: route.artifact,
+    repository: route.repository ?? '',
+    path: route.path ?? '',
+    kind: route.kind,
+  };
+}
+
+function sameArtifact(held: StudioArtifact | null, wanted: StudioArtifact | null): boolean {
+  if (!held || !wanted) return held === wanted;
+  return (
+    held.artifactId === wanted.artifactId &&
+    held.repository === wanted.repository &&
+    held.path === wanted.path &&
+    held.kind === wanted.kind
+  );
+}
 
 export interface MaterializerDeps {
   app: FrontXApp;
@@ -64,6 +86,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   let stuckIn: number | null = null;
   /** The entry point a failed mount fell back to, so its own failure is not fallen back from — once (ADR-0028). */
   let fallbackTo: string | null = null;
+  /** The visit whose editor had nothing to open and nowhere to go, so that is said once per address. */
+  let editorStrandedIn: number | null = null;
 
   const screensOf = (registry: MfeRegistry): ScreenExtension[] =>
     registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[];
@@ -314,6 +338,37 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     } else if (readAppContext(app).section !== null) {
       dispatch(setContextSection(null));
     }
+
+    // Artifact: only the editor, and only inside a project, carries one.
+    const artifact = next.project && group.token === EDITOR_SCREEN_TOKEN ? artifactOf(wanted) : null;
+    if (artifact) {
+      next.artifact = artifact.artifactId;
+      next.repository = artifact.repository;
+      next.path = artifact.path;
+      next.kind = artifact.kind;
+    } else if (group.token === EDITOR_SCREEN_TOKEN) {
+      const level: ScreenLevel = next.project ? 'project' : 'workspace';
+      const reason = !next.project
+        ? 'The editor needs a project'
+        : wanted.artifact && !artifactOf(wanted)
+          ? `Artifact ${wanted.artifact} is not one the editor can open`
+          : 'The editor has nothing to open';
+      const fallback = entryRoute(registry, level, next);
+      if (fallback && fallback.token !== group.token) {
+        warn(`${reason}; opening the ${level} entry point instead`);
+        if (next.project) fallback.project = next.project;
+        navigation.navigate(fallback, 'replace');
+        materialize();
+        return;
+      }
+      if (editorStrandedIn !== visit) {
+        warn(`${reason}, and the ${level} level has no entry point to fall back to`);
+        editorStrandedIn = visit;
+      }
+    } else if (wanted.artifact) {
+      warn(`Artifact ${wanted.artifact} belongs on the editor, not on ${group.token}; dropping it`);
+    }
+    if (!sameArtifact(readAppContext(app).artifact, artifact)) dispatch(setContextArtifact(artifact));
 
     publishStudioContext(app);
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2

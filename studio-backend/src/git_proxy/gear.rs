@@ -43,12 +43,20 @@ impl Gear for GitProxyGear {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .build()?;
+        // Only the catalogue is read, never a provider, so no driver is linked.
+        let connectors = crate::connectors::service::ConnectorService::new(
+            Arc::clone(&account_management),
+            Arc::clone(&credstore),
+            Vec::new(),
+        );
         self.proxy
             .set(Arc::new(GitProxy {
                 client,
                 authn,
                 account_management,
                 credstore,
+                connectors,
+                hub: ctx.client_hub(),
             }))
             .map_err(|_| anyhow::anyhow!("studio-git gear already initialized"))?;
         Ok(())

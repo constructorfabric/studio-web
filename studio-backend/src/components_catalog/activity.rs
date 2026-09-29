@@ -95,6 +95,38 @@ pub fn gear_segment(crate_name: &str) -> String {
         .to_owned()
 }
 
+/// Which repository a component lives in, and — when a repository scan read
+/// it — the directory, as a path (always containing a `/`, so the query treats
+/// it as a prefix rather than a directory name).
+///
+/// A scanned component carries `synced_from` (`owner/name`) and `repo_path`,
+/// and they are used together: the path is relative to the repository the
+/// scan read, whatever crates.io says the repository is. Without them the
+/// component's published `repository` is all there is, and the directory is
+/// derived from the crate name as before. A FrontX package has no crates.io
+/// half and no `repository` at all, which is why every one of them used to
+/// read "Not measured".
+fn locate(component: &Value) -> Option<(String, Option<String>)> {
+    let text = |key: &str| {
+        component
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let scanned_repo = text("synced_from")
+        .and_then(|from| normalize_repo(Some(&format!("https://github.com/{from}"))));
+    if let (Some(repo), Some(path)) = (scanned_repo.clone(), text("repo_path")) {
+        let path = path.trim_matches('/');
+        if !path.is_empty() {
+            return Some((repo, Some(format!("{path}/"))));
+        }
+    }
+    normalize_repo(text("repository"))
+        .or(scanned_repo)
+        .map(|repo| (repo, None))
+}
+
 /// Group the catalogue by repository and name each gear's directory.
 ///
 /// Two crates that strip to the same directory name would both match the same
@@ -115,7 +147,7 @@ pub fn plan_requests(components: &[Value]) -> Vec<RepoPlan> {
             .map(str::trim)
             .filter(|n| !n.is_empty());
         let Some(name) = name else { continue };
-        let Some(repo) = normalize_repo(component.get("repository").and_then(Value::as_str)) else {
+        let Some((repo, scanned)) = locate(component) else {
             continue;
         };
 
@@ -126,7 +158,7 @@ pub fn plan_requests(components: &[Value]) -> Vec<RepoPlan> {
                 &mut taken.last_mut().expect("just pushed").1
             }
         };
-        let stripped = gear_segment(name);
+        let stripped = scanned.unwrap_or_else(|| gear_segment(name));
         let segment = if used.contains(&stripped) {
             name.to_owned()
         } else {
@@ -427,6 +459,43 @@ mod tests {
                 ("cf-gears-c".to_owned(), "c".to_owned())
             ]
         );
+    }
+
+    #[test]
+    fn a_scanned_component_is_measured_by_its_directory_in_the_repository_the_scan_read() {
+        // A FrontX package: no crates.io half, no `repository`, and a name
+        // that is not a directory. It used to be left out of every plan.
+        let frontx = json!({
+            "name": "@gears-frontx/ui-kit",
+            "synced_from": "constructorfabric/gears-frontx",
+            "repo_path": "packages/ui-kit",
+        });
+        // A gear whose directory the crate name does not spell.
+        let ledger = json!({
+            "name": "cf-gears-bss-ledger",
+            "repository": "https://github.com/constructorfabric/gears-rust",
+            "synced_from": "constructorfabric/gears-rust",
+            "repo_path": "gears/bss/ledger",
+        });
+        let plan = plan_requests(&[frontx, ledger]);
+        let all: Vec<(String, String, String)> = plan
+            .iter()
+            .flat_map(|p| {
+                p.components
+                    .iter()
+                    .map(|(n, s)| (p.repository.clone(), n.clone(), s.clone()))
+            })
+            .collect();
+        assert!(all.contains(&(
+            "constructorfabric/gears-frontx".into(),
+            "@gears-frontx/ui-kit".into(),
+            "packages/ui-kit/".into()
+        )));
+        assert!(all.contains(&(
+            "constructorfabric/gears-rust".into(),
+            "cf-gears-bss-ledger".into(),
+            "gears/bss/ledger/".into()
+        )));
     }
 
     #[test]

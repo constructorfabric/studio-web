@@ -1462,6 +1462,9 @@ struct Corpus {
     commit: Option<String>,
     refreshed: Instant,
     catalogue: Option<Arc<EngineCatalogue>>,
+    /// The engine's answer verbatim, for a client that reads more of it than
+    /// composing does: the IDE's catalogue renders every `GearDescriptor`.
+    raw: Option<Arc<Value>>,
 }
 
 /// Where the corpus is checked out from. The configured one to begin with;
@@ -1529,14 +1532,32 @@ impl Gearbox {
         self.current_source().label
     }
 
-    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
-    /// Returns whether it did. A source with no descriptors — a gears
-    /// repository before it adopted Gearbox — leaves the current corpus alone:
-    /// switching to it would empty every preview.
-    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
+    /// Where a client can clone the corpus itself: its URL and ref, and
+    /// whether reaching it takes the token this backend holds (which is never
+    /// handed out, so such a corpus cannot be cloned from a laptop directly).
+    pub fn corpus_origin(&self) -> (String, String, bool) {
+        let s = self.current_source();
+        (s.url, s.git_ref, !s.token.is_empty())
+    }
+
+    /// What the corpus Git relay sends upstream: the repository URL and the
+    /// token it is read with (empty for a public corpus). Server-side only.
+    pub(crate) fn corpus_fetch(&self) -> (String, String) {
+        let s = self.current_source();
+        (s.url, s.token)
+    }
+
+    /// Check `source` out (or bring its checkout up to date) under the engine's
+    /// working directory, and say where.
+    ///
+    /// The component catalogue reads its gears' files from here too, so one
+    /// clone serves the catalogue, the previews and the IDE: the key namespaces
+    /// the directory by source, and a second call for the same source is a
+    /// fetch, not a download.
+    pub async fn checkout(&self, source: &CorpusSource) -> anyhow::Result<PathBuf> {
         let workdir = self.cfg.workdir.clone();
         let s = source.clone();
-        let dir = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             crate::artifact_ingest::clone::clone_or_update(
                 &workdir,
                 &s.key,
@@ -1549,7 +1570,15 @@ impl Gearbox {
             .map(|c| c.dir)
         })
         .await
-        .context("catalogue source checkout task")??;
+        .context("catalogue source checkout task")?
+    }
+
+    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
+    /// Returns whether it did. A source with no descriptors — a gears
+    /// repository before it adopted Gearbox — leaves the current corpus alone:
+    /// switching to it would empty every preview.
+    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
+        let dir = self.checkout(&source).await?;
         let described = tokio::task::spawn_blocking(move || holds_description(&dir, 0))
             .await
             .unwrap_or(false);
@@ -1633,16 +1662,20 @@ impl Gearbox {
             match cloned {
                 Ok(c) => {
                     let same = guard.as_ref().is_some_and(|old| old.commit == c.commit);
-                    let catalogue = if same {
-                        guard.as_ref().and_then(|old| old.catalogue.clone())
+                    let (catalogue, raw) = if same {
+                        guard
+                            .as_ref()
+                            .map(|old| (old.catalogue.clone(), old.raw.clone()))
+                            .unwrap_or_default()
                     } else {
-                        None
+                        (None, None)
                     };
                     *guard = Some(Corpus {
                         dir: c.dir,
                         commit: c.commit,
                         refreshed: Instant::now(),
                         catalogue,
+                        raw,
                     });
                 }
                 // Keep serving the checkout we have; a flaky fetch should not
@@ -1679,16 +1712,30 @@ impl Gearbox {
             })
             .await
             .context("catalogue task")??;
-            let parsed: EngineCatalogue = serde_json::from_str(&out.stdout).with_context(|| {
+            let raw: Value = serde_json::from_str(&out.stdout).with_context(|| {
                 format!("the engine's catalogue is not JSON: {}", out.stderr_tail())
             })?;
+            let parsed: EngineCatalogue = serde_json::from_value(raw.clone())
+                .context("the engine's catalogue does not have the expected shape")?;
             corpus.catalogue = Some(Arc::new(parsed));
+            corpus.raw = Some(Arc::new(raw));
         }
         Ok((
             corpus.dir.clone(),
             corpus.commit.clone(),
             corpus.catalogue.clone().expect("catalogue is set above"),
         ))
+    }
+
+    /// The corpus's catalogue as the engine printed it (`gearbox catalogue
+    /// --format json`), and the commit it was read at. One checkout serves
+    /// every project, so an IDE lists the gears without cloning the corpus.
+    pub async fn catalogue_json(&self) -> anyhow::Result<(Arc<Value>, Option<String>)> {
+        self.ensure_corpus().await?;
+        let guard = self.corpus.lock().await;
+        let corpus = guard.as_ref().context("the corpus is not checked out")?;
+        let raw = corpus.raw.clone().context("the corpus has no catalogue")?;
+        Ok((raw, corpus.commit.clone()))
     }
 
     /// [`complete`] against the current corpus.

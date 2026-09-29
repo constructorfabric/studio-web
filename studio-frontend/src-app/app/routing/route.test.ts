@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseGrammar, validateName } from '@gears-frontx/routing';
+import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
+import { createShellNavigation } from './navigation';
 import { SCREEN_DOMAIN_KEY, routeFromEntry, routeToParams, routesEqual } from './route';
 
 describe('the screen route codec', () => {
@@ -20,6 +22,38 @@ describe('the screen route codec', () => {
     expect(routeToParams({ token: 'people', org: '' })).toEqual([]);
   });
 
+  it('writes the artifact after the level context, in its own fixed order', () => {
+    expect(
+      routeToParams({
+        token: 'space',
+        kind: 'file',
+        path: 'docs/a.md',
+        repository: 'group/repo',
+        artifact: 'n-1',
+        project: 'p1',
+        workspace: 'w1',
+        org: 'o1',
+      }).map((param) => param.name)
+    ).toEqual(['org', 'workspace', 'project', 'artifact', 'repository', 'path', 'kind']);
+  });
+
+  it('carries a path through the address unchanged, whatever it contains', () => {
+    const { history } = freshNavigationHistory('/');
+    const navigation = createShellNavigation(history);
+    const route = {
+      token: 'space',
+      org: 'o1',
+      workspace: 'w1',
+      project: 'p1',
+      artifact: 'n-1',
+      repository: 'group/repo',
+      path: 'docs/a b;c=d&e%f#g.md',
+      kind: 'file',
+    };
+    navigation.navigate(route, 'push');
+    expect(navigation.currentRoute()).toEqual(route);
+  });
+
   it('reads a route back from an entry', () => {
     expect(
       routeFromEntry({
@@ -38,7 +72,7 @@ describe('the screen route codec', () => {
   // library keeps the LAST value of a duplicated parameter, and a malformed
   // escape drops the whole entry (it survives only as a foreign segment).
   it('reads what the library parses: last value of a duplicate wins, unknown names are ignored', () => {
-    const { entries } = parseGrammar({ shellSubroute: '/', search: 'screen=projects;org=o1;org=o2;artifact=a1;section=' });
+    const { entries } = parseGrammar({ shellSubroute: '/', search: 'screen=projects;org=o1;org=o2;colour=a1;section=' });
     expect(entries).toHaveLength(1);
     expect(routeFromEntry(entries[0])).toEqual({ token: 'projects', org: 'o2' });
   });

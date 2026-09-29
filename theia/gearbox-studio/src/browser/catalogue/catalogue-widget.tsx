@@ -27,6 +27,7 @@ import { ProductStore } from "../product-store";
 import { RevealService } from "../reveal-service";
 import { ADD_GEAR, SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GEARBOX_DRAG_MIME } from "../ai/gearbox-context";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 @injectable()
 export class CatalogueWidget extends ReactWidget {
@@ -77,6 +78,20 @@ export class CatalogueWidget extends ReactWidget {
     // catalogue change, which is how they failed to appear at all the first time.
     this.toDispose.push(this.product.onChanged(() => this.update()));
     this.update();
+  }
+
+  /**
+   * Take the focus when the shell activates this view. Theia waits up to two
+   * seconds for an activated widget to accept focus, and a mode switch
+   * activates its views one after another: without this, entering Building
+   * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
+   */
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (!this.node.hasAttribute("tabindex")) {
+      this.node.tabIndex = -1;
+    }
+    this.node.focus();
   }
 
   protected render(): React.ReactNode {
@@ -135,8 +150,10 @@ export class CatalogueWidget extends ReactWidget {
 
         {state.failedRoots.map((root) => this.renderFailedRoot(root))}
 
+        {state.remote !== undefined && this.renderRemote(state.remote)}
+
         {state.rows.length === 0 && state.status === "ready" && (
-          <div className="gbx-empty">No gear.gdl found under the source root.</div>
+          <div className="gbx-empty">No gear.gdl in this workspace's repositories.</div>
         )}
 
         {matching.length === 0 && state.rows.length > 0 && (
@@ -146,6 +163,41 @@ export class CatalogueWidget extends ReactWidget {
         {groups.map(([category, rows]) => this.renderGroup(category, rows, state.status))}
 
         {state.diagnostics.length > 0 && this.renderDiagnostics(state.diagnostics)}
+      </div>
+    );
+  }
+
+  /**
+   * Constructor Studio: rows the Studio backend listed, because this workspace
+   * holds no corpus. They open nothing until a copy is here; the button brings
+   * one -- once per machine and commit, shared by every project.
+   */
+  protected renderRemote(corpus: string): React.ReactNode {
+    const bringable = this.store.corpusBringable;
+    const { busy, error } = this.store.corpusBringing;
+    return (
+      <div className="gbx-empty">
+        <div>Listed by Studio from {corpus}, read-only.</div>
+        {bringable === true ? (
+          <>
+            <div>To open a gear, resolve or generate, bring a copy here. One copy serves every project on this machine.</div>
+            <button
+              type="button"
+              className="theia-button secondary"
+              disabled={busy}
+              onClick={() => void this.store.bringCorpusHere()}
+            >
+              {busy ? "Bringing the gears here…" : "Bring the gears here"}
+            </button>
+          </>
+        ) : (
+          bringable !== undefined && <div>{bringable} Add its repository to the workspace to open or edit a gear.</div>
+        )}
+        {error !== undefined && (
+          <div className="gbx-error" role="alert">
+            {error}
+          </div>
+        )}
       </div>
     );
   }

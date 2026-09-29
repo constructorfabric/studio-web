@@ -436,8 +436,8 @@ mod tests {
     fn the_committed_gear_schema_parses() {
         let gear = gear_schema();
         assert_eq!(gear.describes, GEAR_TYPE);
-        assert_eq!(gear.groups.len(), 10);
-        assert_eq!(gear.fields().count(), 73);
+        assert_eq!(gear.groups.len(), 11);
+        assert_eq!(gear.fields().count(), 81);
         assert!(gear.source_classes.contains_key("repo"));
         assert!(gear.status_legend.contains_key("good"));
     }
@@ -536,7 +536,7 @@ mod tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear survives");
-        assert_eq!(gear.fields().count(), 73, "the mark blanked the layout");
+        assert_eq!(gear.fields().count(), 81, "the mark blanked the layout");
         assert!(!gear.component, "the mark was not taken");
         assert_eq!(gear.owner, "builtin", "nobody authored a layout here");
     }

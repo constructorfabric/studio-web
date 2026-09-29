@@ -392,6 +392,67 @@ impl ConnectorService {
         Ok(self.load(ctx, tenant).await?.items)
     }
 
+    /// The tenant, `from` or one of its ancestors, whose catalogue lists
+    /// connection `id`: where a project's record of "this connection" can be
+    /// resolved. Each level is read, because [`Self::list`] stops at the nearest
+    /// tenant that has a catalogue at all, and a project's source is usually
+    /// connected on its organization, above a workspace with catalogue of its own.
+    pub async fn locate(&self, ctx: &SecurityContext, from: Uuid, id: Uuid) -> Option<Uuid> {
+        self.nearest_by_id(ctx, from, id)
+            .await
+            .map(|(tenant, _)| tenant)
+    }
+
+    /// Connection `id` itself, with the tenant [`Self::locate`] finds it on.
+    pub async fn nearest_by_id(
+        &self,
+        ctx: &SecurityContext,
+        from: Uuid,
+        id: Uuid,
+    ) -> Option<(Uuid, Connection)> {
+        self.nearest(ctx, from, |c| c.id == id).await
+    }
+
+    /// The connection whose token is `secret_ref`, with the tenant whose
+    /// catalogue lists it — looked up the way [`Self::locate`] looks. A
+    /// workspace's settings name a repository's connection only this way:
+    /// their `token_ref` is the connection's `secret_ref`.
+    pub async fn by_secret_ref(
+        &self,
+        ctx: &SecurityContext,
+        from: Uuid,
+        secret_ref: &str,
+    ) -> Option<(Uuid, Connection)> {
+        self.nearest(ctx, from, |c| c.secret_ref == secret_ref)
+            .await
+    }
+
+    async fn nearest(
+        &self,
+        ctx: &SecurityContext,
+        from: Uuid,
+        wanted: impl Fn(&Connection) -> bool,
+    ) -> Option<(Uuid, Connection)> {
+        let mut tenant = Some(from);
+        // Project → workspace → organization; nothing Studio keeps is deeper.
+        for _ in 0..3 {
+            let current = tenant?;
+            if let Ok(catalogue) = self.load(ctx, current).await
+                && let Some(found) = catalogue.items.into_iter().find(|c| wanted(c))
+            {
+                return Some((current, found));
+            }
+            tenant = self
+                .am
+                .get_tenant(ctx, current)
+                .await
+                .ok()
+                .and_then(|t| t.parent_id)
+                .map(|p| p.0);
+        }
+        None
+    }
+
     async fn find(
         &self,
         ctx: &SecurityContext,

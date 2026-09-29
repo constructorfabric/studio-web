@@ -20,7 +20,22 @@ import {
 import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
+import {
+  PROJECT_SORTS,
+  REVIEW_FILTERS,
+  inReviewFilter,
+  kindLine,
+  lastUpdate,
+  pullsCell,
+  reviewOf,
+  sortProjects,
+  specsCell,
+  teamText,
+  type ProjectSort,
+  type ReviewFilter,
+} from "./project-rows";
 import { PeopleView } from "./people";
+import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
@@ -1769,7 +1784,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           positioned inside it. */}
       <div
         className="shell-body"
-        data-sidebar={menuOpen ? "open" : "rail"}
+        /* The admin area is a settings sidebar, not transient navigation: it keeps
+           its full 240px track, or its open panel would lie over the page it
+           manages (and stay open over it while a nav button holds the focus). */
+        data-sidebar={menuOpen || adminOpen ? "open" : "rail"}
         /* "none" while a space is showing: the IDE is a whole application, and
            the product does not dock its own assistant beside somebody else's
            editor — that column belongs to Theia. */
@@ -1782,7 +1800,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               open so it survives the pointer leaving. */}
           <aside
             className="drawer"
-            data-expanded={menuOpen ? "true" : "false"}
+            data-expanded={menuOpen || adminOpen ? "true" : "false"}
             aria-label="Global navigation"
             onKeyDown={(e) => {
               if (e.key === "Escape") setMenuOpen(false);
@@ -2226,6 +2244,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             {adminView === "identities" && (
               <IdentityDirectory token={token} query={filters.query} />
             )}
+            {adminView === "tenants" && (showPlatform || orgs.length > 1) && adminOrgId !== "__new__" && (
+              <OrganizationsTable
+                token={token}
+                orgs={orgs}
+                workspaces={workspaces}
+                selectedId={adminOrg?.id ?? null}
+                onSelect={(id) => setAdminOrgId(id)}
+                onMembers={(id) => openAdmin("people", id)}
+                query={filters.query}
+              />
+            )}
             {adminView === "tenants" && (
               <OrganizationsView
                 token={token}
@@ -2240,19 +2269,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               />
             )}
             {adminView === "people" && (
-              <PeopleView
+              <OrgMembersView
                 token={token}
-                mode="org"
                 org={adminOrg ? { id: adminOrg.id, name: adminOrg.name } : activeOrg}
-                roots={workspaces.filter((w) =>
-                  adminOrg ? w.orgId === adminOrg.id : w.orgId === activeOrgResolvedId,
-                )}
+                isPlatformAdmin={showPlatform}
                 query={filters.query}
-                onOpenProject={(id) => {
-                  setAdminOpen(false);
-                  setCrumb({ projectId: id });
-                  setView("projects");
-                }}
               />
             )}
             {adminView === "access" && (
@@ -3277,7 +3298,23 @@ function WorkspaceProjects({
   const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
   /** Documents, findings and repositories per project. Absent until counted —
    *  see rollups.ts on why an uncounted project must not render as 0. */
-  const [rollups, setRollups] = useState<Record<string, ProjectRollup>>({});
+  const [rollups, setRollups] = useState<
+    Record<string, ProjectRollup & { row?: import("./api").RollupRow }>
+  >({});
+  // The toolbar above the table: which reviews, in what order, matching what.
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [projectSort, setProjectSort] = useState<ProjectSort>("priority");
+  const [projectQuery, setProjectQuery] = useState("");
+  // Which row's "…" menu is open.
+  const [rowMenu, setRowMenu] = useState<string | null>(null);
+  // Any click elsewhere closes it. Registered after the click that opened it
+  // has already been handled, so that click does not close it again.
+  useEffect(() => {
+    if (!rowMenu) return;
+    const close = () => setRowMenu(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [rowMenu]);
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -3391,11 +3428,16 @@ function WorkspaceProjects({
     void (async () => {
       // One request for the whole table. It used to be three per project, and
       // one of those three walked the tenant's entire artifact graph.
-      const { projects } = await portfolioRollups(token);
+      const { projects } = await portfolioRollups(token, workspace.id).catch(() => ({
+        projects: new Map<string, import("./rollups").PortfolioProject>(),
+      }));
       const wanted = new Set(projectIds.split(","));
       const entries = [...projects.entries()]
         .filter(([id]) => wanted.has(id))
-        .map(([id, p]) => [id, { documents: p.documents, findings: p.findings, repos: p.repos }] as const);
+        .map(
+          ([id, p]) =>
+            [id, { documents: p.documents, findings: p.findings, repos: p.repos, row: p.row }] as const,
+        );
       if (alive) setRollups(Object.fromEntries(entries));
     })();
     return () => {
@@ -3886,16 +3928,17 @@ function WorkspaceProjects({
     }
   };
 
+  const shown = sortProjects(
+    (projects ?? [])
+      .map((p) => ({ ...p, row: rollups[p.id]?.row }))
+      .filter((p) => matches(projectQuery, p.name, p.row?.brief))
+      .filter((p) => reviewFilter === "all" || (!!p.row && inReviewFilter(reviewOf(p.row), reviewFilter))),
+    projectSort,
+  );
+
   return (
     <>
-      <WorkspaceHeader
-        workspace={workspace}
-        actions={
-          <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
-            New project
-          </button>
-        }
-      />
+      <WorkspaceHeader workspace={workspace} />
       {err && <div className="error">{err}</div>}
       {creating && (
         <div className="card">
@@ -4475,10 +4518,49 @@ function WorkspaceProjects({
         </div>
       )}
       <div className="card">
-        <div className="card-head">
-          <h2>Projects{projects ? ` · ${projects.length}` : ""}</h2>
-          <ViewToggle mode={projectView} onChange={setProjectView} />
+        <div className="card-head ptoolbar">
+          <div className="ptoolbar-title">
+            <ViewToggle mode={projectView} onChange={setProjectView} />
+            <h2>Projects{projects ? ` · ${projects.length}` : ""}</h2>
+          </div>
+          <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
+            + New project
+          </button>
         </div>
+        {projects && projects.length > 0 && (
+          <div className="pfilters">
+            <select
+              aria-label="Review"
+              value={reviewFilter}
+              onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)}
+            >
+              {REVIEW_FILTERS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Sort"
+              value={projectSort}
+              onChange={(e) => setProjectSort(e.target.value as ProjectSort)}
+            >
+              {PROJECT_SORTS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="search"
+              className="pfilters-search"
+              placeholder="Search"
+              aria-label="Search projects"
+              value={projectQuery}
+              onChange={(e) => setProjectQuery(e.target.value)}
+            />
+          </div>
+        )}
         {projects === null ? (
           <p className="empty">Loading…</p>
         ) : projects.length === 0 ? (
@@ -4491,12 +4573,14 @@ function WorkspaceProjects({
               New project
             </button>
           </div>
+        ) : shown.length === 0 ? (
+          <p className="empty">No project matches these filters.</p>
         ) : projectView === "tiles" ? (
           /* The same three rollups the columns carry. Renaming stays a table
              affordance: an inline edit inside a card is a form pretending to
              be a tile. */
           <TileGrid>
-            {projects.map((p) => (
+            {shown.map((p) => (
               <VTile
                 key={p.id}
                 icon={<span aria-hidden>▦</span>}
@@ -4520,30 +4604,38 @@ function WorkspaceProjects({
             ))}
           </TileGrid>
         ) : (
-          <table className="ptable">
+          <table className="ptable pprojects">
             <thead>
-              {/* What each project CONTAINS, beside what it is called. The
-                  table used to say a name and a truncated id, which answered
-                  nothing anybody opens this screen to find out. */}
+              {/* What each project needs from somebody, beside what it is
+                  called: its review first, because that is the column people
+                  open this screen to read. */}
               <tr>
                 <th>Project</th>
-                <th className="pnum">Documents</th>
-                <th className="pnum">Findings</th>
-                <th className="pnum">Repos</th>
-                <th>ID</th>
+                <th>Review</th>
+                <th>Specs</th>
+                <th>Pull requests</th>
+                <th>Team</th>
+                <th>Last update</th>
                 <th aria-label="actions" />
               </tr>
             </thead>
             <tbody>
-              {projects.map((p) => {
+              {shown.map((p) => {
                 const editing = editingId === p.id;
                 const busyRow = rowBusy === p.id;
+                const row = rollups[p.id]?.row;
+                const review = row ? reviewOf(row) : null;
+                const specs = specsCell(row);
+                const pulls = pullsCell(row);
+                const last = lastUpdate(row);
                 return (
                   <tr key={p.id} className="prow root">
                     <td>
                       <div className="pcell">
-                        <span className="pico" aria-hidden>▦</span>
-                        <div>
+                        <span className={`pkind pkind-${row?.project_kind ?? "none"}`} aria-hidden>
+                          {row?.project_kind === "product" ? "◈" : row?.project_kind === "existing" ? "⌘" : "▦"}
+                        </span>
+                        <div style={{ minWidth: 0 }}>
                           {editing ? (
                             <input
                               value={editName}
@@ -4560,24 +4652,53 @@ function WorkspaceProjects({
                               {p.name}
                             </button>
                           )}
-                          <div className="sub">project</div>
+                          <div className="sub pclip" title={row?.brief ?? undefined}>
+                            {kindLine(row)}
+                          </div>
                         </div>
                       </div>
                     </td>
-                    <td className="pnum">{rollupText(rollups[p.id]?.documents ?? null)}</td>
-                    {/* Findings read as a state, not a quantity: any open
-                        finding is the reason to look at this project, and the
-                        number only says how much of it there is. */}
-                    <td className="pnum">
-                      {rollups[p.id]?.findings ? (
-                        <span className="pnum-attn">{rollups[p.id]!.findings}</span>
+                    <td>
+                      {review ? (
+                        <div className={`preview preview-${review.tone}`}>
+                          <div className="preview-label">
+                            <span className="preview-dot" aria-hidden />
+                            {review.label}
+                          </div>
+                          {review.detail && <div className="sub">{review.detail}</div>}
+                        </div>
                       ) : (
-                        rollupText(rollups[p.id]?.findings ?? null)
+                        <span className="sub">—</span>
                       )}
                     </td>
-                    <td className="pnum">{rollupText(rollups[p.id]?.repos ?? null)}</td>
                     <td>
-                      <code>{p.id.slice(0, 8)}…</code>
+                      <div>{specs.label}</div>
+                      {specs.detail && <div className="sub">{specs.detail}</div>}
+                    </td>
+                    <td>
+                      {pulls ? (
+                        <div className="ppulls">
+                          <div>
+                            <div>{pulls.label}</div>
+                            <div className="sub">{pulls.detail}</div>
+                          </div>
+                          {pulls.days.length > 0 && (
+                            <div className="ppulls-spark">
+                              <Spark days={pulls.days} />
+                              <div className="sub">Last {pulls.days.length} days</div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="sub">Pull request activity unavailable</span>
+                      )}
+                    </td>
+                    <td>{teamText(row)}</td>
+                    <td>
+                      <div className={row?.last_at ? undefined : "sub"}>{last.when}</div>
+                      <div className="sub pclip" title={last.what}>
+                        {last.what}
+                      </div>
                     </td>
                     <td className="pactions">
                       {editing ? (
@@ -4590,15 +4711,31 @@ function WorkspaceProjects({
                           </button>
                         </>
                       ) : (
-                        <>
-                          <button onClick={() => onOpenProject(p)}>Open</button>
-                          <button className="ghost" disabled={busyRow} onClick={() => startEdit(p)}>
-                            Edit
+                        <div className="prowmenu">
+                          <button
+                            className="ghost"
+                            aria-label={`Actions for ${p.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenu === p.id}
+                            disabled={busyRow}
+                            onClick={() => setRowMenu(rowMenu === p.id ? null : p.id)}
+                          >
+                            …
                           </button>
-                          <button className="ghost" disabled={busyRow} title="Delete project" onClick={() => void remove(p)}>
-                            ✕
-                          </button>
-                        </>
+                          {rowMenu === p.id && (
+                            <div className="prowmenu-list" role="menu" onMouseLeave={() => setRowMenu(null)}>
+                              <button role="menuitem" onClick={() => { setRowMenu(null); onOpenProject(p); }}>
+                                Open
+                              </button>
+                              <button role="menuitem" onClick={() => { setRowMenu(null); startEdit(p); }}>
+                                Rename
+                              </button>
+                              <button role="menuitem" className="danger" onClick={() => { setRowMenu(null); void remove(p); }}>
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>

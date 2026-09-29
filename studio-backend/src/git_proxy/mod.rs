@@ -13,7 +13,12 @@
 //! authenticates them itself through the AuthN resolver — the same resolver the
 //! gateway uses, so a token that the portal accepts is accepted here and one it
 //! refuses is refused here.
+//!
+//! A push that goes through also moves the server's copy (ADR-0027 phase 2):
+//! each project source it went to gets the `artifact.ingest` run the portal's
+//! Re-sync would queue. See [`refresh`].
 
 pub mod gear;
+pub mod refresh;
 pub mod rest;
 pub mod sources;

@@ -200,9 +200,25 @@ class RailNav {
      */
     watchTabs() {
         const content = this.container && this.container.querySelector('.lm-TabBar-content');
-        if (!content || typeof MutationObserver !== 'function') { return; }
-        this.observer = new MutationObserver(() => this.place());
-        this.observer.observe(content, { childList: true });
+        if (!content) { return; }
+        if (typeof MutationObserver === 'function') {
+            this.observer = new MutationObserver(() => this.place());
+            this.observer.observe(content, { childList: true });
+        }
+        /*
+         * A tab can also come and go WITHOUT a DOM change: a mode (studio-modes)
+         * hides the views it has no use for with a stylesheet, so switching from
+         * Doc editing to FULL SUPER POWER brought Source Control back while the
+         * column stayed where Doc editing had left it -- and Search was drawn on
+         * top of the Source Control icon. The bar's content changes height
+         * whenever a tab is shown or hidden, however that happens, so its size is
+         * the thing to follow. place() moves this column, which is outside the
+         * content, so observing cannot loop.
+         */
+        if (typeof ResizeObserver === 'function') {
+            this.resizeObserver = new ResizeObserver(() => this.place());
+            this.resizeObserver.observe(content);
+        }
     }
 
     /** Under the last visible rail tab, with a 6px gap. */

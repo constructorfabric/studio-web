@@ -1,0 +1,95 @@
+name: Studio CLI extension
+
+# The Constructor Studio CLI as an extension (theia/studio-cli): `cfs` with its
+# own Python, home and skill engine at the versions theia/cfs.json pins, built
+# by theia/studio-cli/build_vsix.py. A desktop installer carries only its pin
+# (electron-app/scripts/assistants-manifest.mjs --studio-cli); the app fetches
+# the VSIX on first need, as it does Claude Code and Codex (#480).
+#
+# Each version is published once, into its own release `studio-cli-v<version>`,
+# and never replaced: installed apps pin its SHA-256. The version follows the
+# pins, so a change to cfs.json is a new release; a change to the extension
+# alone needs `extension.build` in cfs.json raised.
+#
+# A pull request builds it and keeps the VSIX as an artifact. A push publishes
+# the version when its release is missing -- on the upstream that is main; a
+# fork publishes into its own releases, which is how a fork's desktop build
+# gets a CLI to fetch.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - theia/cfs.json
+      - theia/studio-cli/**
+      - .github/workflows/studio-cli.yml
+  push:
+    paths:
+      - theia/cfs.json
+      - theia/studio-cli/**
+      - .github/workflows/studio-cli.yml
+
+concurrency:
+  group: studio-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # The engine download: anonymous api.github.com is 60 requests an hour
+      # per IP, which shared runners exhaust.
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python -c "import json, sys; sys.path.insert(0, 'theia/studio-cli'); import build_vsix; print(build_vsix.extension_version(json.load(open('theia/cfs.json'))))")
+          echo "CLI_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CLI_TAG=studio-cli-v$version" >> "$GITHUB_ENV"
+      # The desktop ships for Windows only (desktop-windows.yml). cfs.json
+      # pins a Python for more; add a target here once its desktop exists.
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in win32-x64; do
+            python theia/studio-cli/build_vsix.py --target "$target" --out dist
+          done
+          ls -la dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: studio-cli-${{ env.CLI_VERSION }}
+          path: dist/*.vsix
+          if-no-files-found: error
+      - name: Publish
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$CLI_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Published once: an app's manifest pins what is there.
+            existing=$(gh release view "$CLI_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for vsix in dist/*.vsix; do
+              if ! grep -qx "$(basename "$vsix")" <<< "$existing"; then
+                gh release upload "$CLI_TAG" --repo "$GITHUB_REPOSITORY" "$vsix"
+              fi
+            done
+            echo "$CLI_TAG is already published; nothing replaced"
+            exit 0
+          fi
+          gh release create "$CLI_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "Constructor Studio CLI $CLI_VERSION" \
+            --notes "cfs, the Constructor Studio CLI, as the extension a desktop Studio fetches: theia/cfs.json at $GITHUB_SHA. Not an installer to download by hand." \
+            dist/*.vsix

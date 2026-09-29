@@ -4,6 +4,7 @@
  */
 
 import '@gears-frontx/react';
+import type { StudioArtifactRequest } from '@constructor-studio/mfe-shared';
 
 /**
  * Module augmentation for type-safe event payloads
@@ -37,6 +38,8 @@ declare module '@gears-frontx/react' {
     'app/context/level/requested': { level: 'organization' | 'workspace' | 'project' };
     /** Go to one screen of the level in scope, named in the rail. The shell decides what it means: another section of the mounted entry, or a mount. */
     'app/context/screen/requested': { extensionId: string };
+    /** A member asked to open one artifact of a project (#319's action); the shell navigates to the editor (#320). */
+    'app/context/artifact/requested': StudioArtifactRequest;
     /** A section of the level in scope is now on screen — chosen in the rail, or moved by the MFE itself. */
     'app/context/project/section': { section: string | null };
     /** A workspace was picked — in its slot, or on a screen that read it itself (then with its name). `organizationId` is set only by the latter, and says which organization the screen was listing. `enter` asks for the workspace level as part of the same announcement, so the move cannot outlive a selection dropped as stale. */

@@ -49,11 +49,12 @@ import {
   ProductSessionService,
   type OpeningState,
 } from "../shell/product-session-service";
-import { ADD_GEAR, NEW_GEAR, SHOW_CONFLICTS, SHOW_GENERATE } from "../shell/session-command-ids";
+import { ADD_GEAR, NEW_GEAR, NEW_PRODUCT, SHOW_CONFLICTS, SHOW_GENERATE } from "../shell/session-command-ids";
 import { RevealPathLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { SelectionService, type Selection } from "../shell/selection-service";
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /**
  * The stages of a product, in the order they are worked through.
@@ -343,6 +344,38 @@ export class ProductWidget extends ReactWidget {
     void this.session.open(previous);
   }
 
+  /**
+   * Take the focus when the shell activates this view. Theia waits up to two
+   * seconds for an activated widget to accept focus, and a mode switch
+   * activates its views one after another: without this, entering Building
+   * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
+   */
+  /**
+   * Constructor Studio: ask what products there are whenever the panel is on
+   * screen. Discovery used to be started only by the Start screen, the Open
+   * Product command and product creation; the desktop shows product-ext's
+   * start page instead of Gearbox's, so nothing asked and this panel drew
+   * "no product yet" for a workspace that has one. `ensureDiscovered` returns
+   * at once when a list is in hand or a load is in flight.
+   */
+  protected override onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    void this.store.ensureDiscovered();
+  }
+
+  protected override onAfterShow(msg: Message): void {
+    super.onAfterShow(msg);
+    void this.store.ensureDiscovered();
+  }
+
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (!this.node.hasAttribute("tabindex")) {
+      this.node.tabIndex = -1;
+    }
+    this.node.focus();
+  }
+
   protected render(): React.ReactNode {
     const state = this.store.current;
 
@@ -394,8 +427,22 @@ export class ProductWidget extends ReactWidget {
         <div className="gbx-product">
           {state.products.length === 0 ? (
             <div className="gbx-empty">
-              No <code>products/*/product.gdl</code> under the repository root. Open a product
-              description in the editor to resolve it.
+              <p>
+                This workspace has no product yet: no <code>product.gdl</code> at{" "}
+                <code>product.gdl</code> or <code>products/&lt;name&gt;/product.gdl</code>, in the
+                opened folder or in any checkout directly under it. The gears in it are in the
+                catalogue either way.
+              </p>
+              <p>Create one from gears, or open a product description in the editor to resolve it.</p>
+              <div className="gbx-product-actions">
+                <button
+                  type="button"
+                  className="gbx-start-primary"
+                  onClick={() => void this.commands.executeCommand(NEW_PRODUCT.id)}
+                >
+                  New Product…
+                </button>
+              </div>
             </div>
           ) : (
             <div className="gbx-kv">

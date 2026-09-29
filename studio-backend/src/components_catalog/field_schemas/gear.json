@@ -23,6 +23,10 @@
   "engine": {
    "label": "Gearbox engine",
    "hint": "Projected by the Gearbox engine from the gear.gdl and the #[toolkit::gear] attribute, at the corpus named on the page."
+  },
+  "project": {
+   "label": "Roadmap board",
+   "hint": "Read from the GitHub Project the gears are planned on: the item matched to this gear by title, or the one pinned in its roadmap item field."
   }
  },
  "groups": [
@@ -136,6 +140,137 @@
       "format": "one value",
       "wouldComeFrom": "a lifecycle field in gear.toml; until then, a rule over spec presence, release tags and test depth",
       "derivable": "by rule"
+     }
+    }
+   ]
+  },
+  {
+   "id": "roadmap",
+   "title": "Roadmap",
+   "icon": "R",
+   "fields": [
+    {
+     "key": "stage",
+     "label": "Stage",
+     "source": {
+      "class": "project",
+      "ref": "Status column"
+     },
+     "example": "In Dev (6 of 10)",
+     "kind": "label",
+     "lamp": false,
+     "domain": {
+      "type": "enum",
+      "ordered": true,
+      "format": "one of the board's Status options, in board order",
+      "wouldComeFrom": "the Status column of the board item planned for this gear",
+      "derivable": "yes, from the roadmap board"
+     }
+    },
+    {
+     "key": "milestone",
+     "label": "Milestone / ETA",
+     "source": {
+      "class": "project",
+      "ref": "item milestone and its due date"
+     },
+     "example": "26.10 \u2014 due 2026-10-31",
+     "kind": "status",
+     "lamp": true,
+     "domain": {
+      "type": "date",
+      "format": "<milestone> \u2014 due YYYY-MM-DD",
+      "wouldComeFrom": "the milestone of the board item planned for this gear",
+      "derivable": "yes, from the roadmap board"
+     }
+    },
+    {
+     "key": "commitment",
+     "label": "Commitment",
+     "source": {
+      "class": "project",
+      "ref": "Commitment column"
+     },
+     "example": "committed",
+     "kind": "label",
+     "lamp": false
+    },
+    {
+     "key": "roadmap_progress",
+     "label": "Progress by axis",
+     "source": {
+      "class": "project",
+      "ref": "percentage columns"
+     },
+     "example": "Design Done \u00b7 SDK 80% \u00b7 Implementation 20%",
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "demand",
+     "label": "Who needs it",
+     "source": {
+      "class": "project",
+      "ref": "per-consumer priority column"
+     },
+     "example": "Acronis P1 \u00b7 Constructor P3 \u00b7 Virtuozzo P3",
+     "kind": "text",
+     "lamp": false,
+     "domain": {
+      "type": "list",
+      "format": "<consumer> P<n>, one per consumer",
+      "wouldComeFrom": "a priority column named after its consumers, e.g. Prio (A.C.V)",
+      "derivable": "yes, from the roadmap board"
+     }
+    },
+    {
+     "key": "convergence",
+     "label": "Plan meets demand",
+     "source": {
+      "class": "project",
+      "ref": "stage, ETA, commitment and demand together"
+     },
+     "example": "at risk: P1 for Acronis, but no dated milestone",
+     "kind": "status",
+     "lamp": true
+    },
+    {
+     "key": "roadmap_owner",
+     "label": "Assignees",
+     "source": {
+      "class": "project",
+      "ref": "item assignees"
+     },
+     "example": "@handle",
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "effort",
+     "label": "Estimated effort",
+     "source": {
+      "class": "project",
+      "ref": "effort column"
+     },
+     "example": "40 man-days",
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "roadmap_item",
+     "label": "Roadmap item",
+     "source": {
+      "class": "project",
+      "ref": "matched by title, or pinned by hand"
+     },
+     "example": "#2542 CORE - Credentials Store (p1)",
+     "kind": "text",
+     "lamp": false,
+     "domain": {
+      "type": "link",
+      "format": "an issue URL, #number or number",
+      "wouldComeFrom": "set it by hand to pin this gear to a board item when the title does not name it",
+      "derivable": "by rule, or by hand"
      }
     }
    ]
@@ -786,29 +921,6 @@
      },
      "kind": "text",
      "lamp": false
-    },
-    {
-     "key": "milestone",
-     "label": "Milestone / progress",
-     "source": {
-      "class": "api",
-      "ref": "GitHub milestones"
-     },
-     "example": "P2 complete, P3 at 40%",
-     "kind": "label",
-     "lamp": false,
-     "domain": {
-      "type": "enum+progress",
-      "values": [
-       "P1",
-       "P2",
-       "P3",
-       "P4"
-      ],
-      "format": "<phase> complete, <phase> at NN%",
-      "wouldComeFrom": "a GitHub milestone on the Gear's issues, or a milestone field in gear.toml; today the phase lives in prose inside the specs",
-      "derivable": "partly, from the specs"
-     }
     },
     {
      "key": "progress",

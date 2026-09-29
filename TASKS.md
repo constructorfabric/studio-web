@@ -1,3 +1,32 @@
+# 2026-09-29 — agent development (Orca) on the desktop
+
+What #496 left open when it made Orca discovery, states and worktree scoping
+right on the desktop:
+
+- [x] Decide whether the open project's repositories go into Orca automatically @andrejk666
+
+  Decided (#497), built in #499: Studio asks once — always / not now / never
+  (`studio.orca.addOpenedProjects`, changeable from the Agents panel) — and
+  when a project closes it removes from Orca only the repositories Studio
+  added itself, never while an agent is running or changes are uncommitted.
+
+- [ ] Pair with the local Orca without pasting a link @andrejk666
+
+  Orca has no CLI for handing out a pairing, so the member copies a link from
+  Orca into Studio. Needs an upstream change in Orca. #493.
+
+- [ ] Check Orca discovery on real macOS and Linux machines @andrejk666
+
+  The install locations for macOS (`/Applications/Orca.app`, `/usr/local/bin`,
+  `/opt/homebrew/bin`, `~/.local/bin`) and Linux (the .deb and the AppImage's
+  `~/.local/bin/orca-ide`) come from Orca's code and are tested only on
+  Windows; there is no macOS or Linux desktop build yet. #494.
+
+- [ ] Ask Orca which agents it can start @andrejk666
+
+  The desktop lists claude, codex and opencode by what is on the PATH the IDE
+  sees, which is not the PATH Orca starts agents with. #495.
+
 # 2026-09-24 — the desktop Studio (ADR-0027)
 
 Phase 1 is #391 and the installer is its follow-up (`docs/desktop-studio.md`).

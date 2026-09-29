@@ -1,0 +1,27 @@
+{
+  "name": "studio-cli",
+  "displayName": "Constructor Studio CLI",
+  "description": "cfs, the Constructor Studio CLI, with its own Python and skill engine: the version Studio pins",
+  "publisher": "constructorfabric",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "studio-cli.version",
+        "title": "Constructor Studio CLI: Show Version"
+      }
+    ]
+  }
+}

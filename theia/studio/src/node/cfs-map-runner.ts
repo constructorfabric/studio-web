@@ -3,6 +3,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { injectable } from '@theia/core/shared/inversify';
+import { CfsCommand, cfsCommandCandidates, cfsEnvironment } from './cfs-command';
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MIN_CONFIGURED_TIMEOUT_MS = 1_000;
@@ -29,12 +30,6 @@ export interface CfsMapRunResult {
     readonly payload: unknown;
     readonly engine: CfsMapEngine;
     readonly stderr: string;
-}
-
-interface CommandCandidate {
-    readonly executable: string;
-    readonly prefixArguments: readonly string[];
-    readonly identity: string;
 }
 
 interface CommandResult {
@@ -110,53 +105,12 @@ export class CfsMapRunnerImpl {
         throw new Error(`No cfs map capability is available (${failures.join('; ')})`);
     }
 
-    protected async commandCandidates(workspaceRoot: string): Promise<readonly CommandCandidate[]> {
-        const candidates: CommandCandidate[] = [];
-        const configured = process.env.STUDIO_CFS_COMMAND?.trim();
-        if (configured) {
-            if (configured.includes('\0')) {
-                throw new Error('STUDIO_CFS_COMMAND contains an invalid NUL byte');
-            }
-            candidates.push({
-                executable: configured,
-                prefixArguments: [],
-                identity: configured
-            });
-        }
-        if (configured !== 'cfs') {
-            candidates.push({
-                executable: 'cfs',
-                prefixArguments: [],
-                identity: 'cfs'
-            });
-        }
-
-        const localScript = path.join(
-            workspaceRoot,
-            '.cf-studio',
-            '.core',
-            'skills',
-            'studio',
-            'scripts',
-            'studio.py'
-        );
-        try {
-            const canonicalScript = await fs.realpath(localScript);
-            candidates.push({
-                executable: 'python3',
-                prefixArguments: [canonicalScript],
-                identity: canonicalScript
-            });
-        } catch (error) {
-            if (!isMissingFileError(error)) {
-                throw error;
-            }
-        }
-        return candidates;
+    protected commandCandidates(workspaceRoot: string): Promise<readonly CfsCommand[]> {
+        return cfsCommandCandidates(workspaceRoot);
     }
 
     protected async probeCapability(
-        candidate: CommandCandidate,
+        candidate: CfsCommand,
         cwd: string
     ): Promise<{ readonly available: true; readonly version: string } | { readonly available: false; readonly reason: string }> {
         try {
@@ -204,7 +158,7 @@ function configuredMapTimeoutMs(): number {
 }
 
 function runCommand(
-    candidate: CommandCandidate,
+    candidate: CfsCommand,
     arguments_: readonly string[],
     cwd: string,
     timeoutMs: number
@@ -215,6 +169,7 @@ function runCommand(
             [...candidate.prefixArguments, ...arguments_],
             {
                 cwd,
+                env: cfsEnvironment(candidate),
                 timeout: timeoutMs,
                 maxBuffer: MAX_OUTPUT_BYTES,
                 windowsHide: true,
@@ -245,9 +200,4 @@ function firstNonEmptyLine(value: string): string | undefined {
 
 function isCommandMissing(error: unknown): boolean {
     return error instanceof CommandExecutionError && error.code === 'ENOENT';
-}
-
-function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as NodeJS.ErrnoException).code === 'ENOENT';
 }

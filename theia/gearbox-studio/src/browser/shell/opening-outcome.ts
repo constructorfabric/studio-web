@@ -46,9 +46,9 @@ export const GO: Outcome = { ok: true };
 /**
  * The source roots a description declares, and the ones that cannot be reached.
  *
- * `refused` is `git(...)`, which is not built. Refused rather than skipped: a
- * catalogue quietly missing a source is indistinguishable from a product whose
- * gears do not exist.
+ * `refused` is a `git(...)` source that could not be brought here (absent from
+ * `gitRoots`). Refused rather than skipped: a catalogue quietly missing a
+ * source is indistinguishable from a product whose gears do not exist.
  */
 export function sourceRootsOf(
   intent: Pick<ProductIntent, "sources">,
@@ -84,14 +84,20 @@ export function sourceRootsOf(
 export function sourcesUsable(
   label: string,
   sources: { readonly roots: readonly string[]; readonly refused: readonly string[] },
+  /** Why each refused git source could not be fetched, by source id, when git said. */
+  failures: Readonly<Record<string, string>> = {},
 ): Outcome {
   if (sources.refused.length > 0) {
     // Named, not counted: which source cannot be reached is the actionable part.
+    const why = sources.refused
+      .map((id) => failures[id])
+      .filter((reason): reason is string => reason !== undefined && reason !== "");
     return {
       ok: false,
       reason:
-        `${label} declares ${sources.refused.join(", ")} as a git source, and fetching one is ` +
-        `not built yet. Point it at a local path, or open a product that does.`,
+        `${label} declares ${sources.refused.join(", ")} as a git source that could not be fetched` +
+        (why.length > 0 ? `: ${why.join("; ")}` : ". Check its URL and revision.") +
+        ` Or point it at a local path.`,
     };
   }
   if (sources.roots.length === 0) {

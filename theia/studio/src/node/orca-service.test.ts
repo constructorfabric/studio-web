@@ -45,6 +45,9 @@ describe('orca payload mapping', () => {
             comment: '',
             status: 'in-progress',
             isMain: true,
+            // Kept: the panel groups worktrees by it, since every repository
+            // has a `main` worktree of its own.
+            repoId: '6e2af3f5',
             lastActivityAt: 1788429527540
         });
     });

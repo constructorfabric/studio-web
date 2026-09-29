@@ -1,5 +1,5 @@
 import { ProjectSource } from '../api/types';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import { ArtifactIngestApiService, type NodesParams } from '../api/ArtifactIngestApiService';
 import { ARTIFACT_NODE_TYPES, ARTIFACT_REPO_TYPE, type ArtifactKind } from '../api/artifactTypes';
@@ -112,9 +112,11 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
   const page = useApiQuery(ingest.nodes(pageParams));
   // The last answer for this project, so a new filter keeps the strip and the
   // paginator on screen instead of dropping back to the first-load skeleton.
-  const settled = useRef<{ projectId: string; total: number } | null>(null);
-  if (page.data) settled.current = { projectId, total: page.data.total };
-  const held = settled.current?.projectId === projectId ? settled.current : null;
+  const [settled, setSettled] = useState<{ projectId: string; total: number } | null>(null);
+  if (page.data && (settled?.projectId !== projectId || settled.total !== page.data.total)) {
+    setSettled({ projectId, total: page.data.total });
+  }
+  const held = settled?.projectId === projectId ? settled : null;
   const repositoryNodes = useApiQuery(ingest.nodes(repositoryParams));
   const scope = useArtifactCount(projectId);
 

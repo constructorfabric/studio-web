@@ -2,8 +2,9 @@
  * The shell's route: what the one screen-domain entry says (ADR-0028).
  *
  * `token` names the screen group (`screenTokens.ts` derives it from the
- * manifests); the four parameters are the level context, written in this
- * order and only as far down as the level in scope goes. The codec is
+ * manifests); the four level parameters are the level context, written in this
+ * order and only as far down as the level in scope goes, and the artifact
+ * parameters follow them on the editor's route (#320). The codec is
  * deliberately dumb: it neither validates ids nor knows levels —
  * `materialize` does both.
  */
@@ -12,15 +13,22 @@ import type { DomainKey, Param } from '@gears-frontx/routing';
 /** The root domain key the shell projects. A valid `name`; `route.test.ts` proves it. */
 export const SCREEN_DOMAIN_KEY = 'screen' as DomainKey;
 
+/** The editor's token: the project-level screen an artifact opens on */
+export const EDITOR_SCREEN_TOKEN = 'space';
+
 export interface ShellRoute {
   token: string;
   org?: string;
   workspace?: string;
   project?: string;
   section?: string;
+  artifact?: string;
+  repository?: string;
+  path?: string;
+  kind?: string;
 }
 
-const PARAM_ORDER = ['org', 'workspace', 'project', 'section'] as const;
+const PARAM_ORDER = ['org', 'workspace', 'project', 'section', 'artifact', 'repository', 'path', 'kind'] as const;
 type RouteParam = (typeof PARAM_ORDER)[number];
 
 export function routeToParams(route: ShellRoute): Param[] {

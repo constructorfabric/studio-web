@@ -1190,6 +1190,28 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
             .await?;
         Ok(total)
     }
+
+    async fn spec_summary(
+        &self,
+        _ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> anyhow::Result<crate::documents::port::SpecSummary> {
+        // The whole set, as the Specs rows read it: a page would summarise
+        // the first 200 and call that the project.
+        let bindings = self.all_bindings(workspace_id, Some(project_id)).await?;
+        let documents = self.all_documents(workspace_id, Some(project_id)).await?;
+        Ok(super::spec_rows::summary(
+            bindings.into_iter().map(|b| {
+                (
+                    super::spec_rows::BindingState::parse(b.state.as_str())
+                        .unwrap_or(super::spec_rows::BindingState::Unknown),
+                    b.conforms,
+                )
+            }),
+            documents.into_iter().map(|d| d.conforms),
+        ))
+    }
 }
 
 #[async_trait::async_trait]

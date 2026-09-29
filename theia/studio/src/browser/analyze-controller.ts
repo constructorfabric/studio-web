@@ -103,6 +103,8 @@ type DocumentLike = {
 
 export interface AnalyzeApplicationShellLike {
     readonly activeWidget: unknown;
+    /** The tab in front of the editor area, focused or not. */
+    getCurrentWidget(area: 'main'): unknown;
     onDidChangeActiveWidget(listener: () => void): { dispose(): void };
 }
 
@@ -396,6 +398,14 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         const activeDocument = this.normalizeDocument(activeWidget);
         if (activeDocument) {
             return activeDocument;
+        }
+        // Focus on the Explorer, a terminal or a chat does not close the
+        // document: it is still the tab in front of the editor area. Reading
+        // only the focused widget said "No active document" the moment a file
+        // was picked in the Explorer, with that file open beside it.
+        const inFront = this.normalizeDocument(this.applicationShellProvider().getCurrentWidget('main'));
+        if (inFront) {
+            return inFront;
         }
         if (!activeWidget) {
             return this.normalizeDocument(this.editorManager.currentEditor);

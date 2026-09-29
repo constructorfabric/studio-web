@@ -43,6 +43,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0028](0028-the-address-decides-where-the-shell-is.md) | The address decides where the shell is, and the shell alone writes it | accepted | 2026-09-24 |
 | [0029](0029-end-to-end-tests-are-few-and-do-not-know-where-they-run.md) | End-to-end tests are few, and they do not know where they run | accepted | 2026-09-25 |
 | [0030](0030-a-shared-session-is-many-people-each-as-themselves.md) | A shared IDE session is many people, each acting as themselves | proposed | 2026-09-25 |
+| [0031](0031-the-portal-is-developed-against-a-shared-stand.md) | The portal is developed against a shared stand, and the stack on the machine is one switch away | accepted | 2026-09-25 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

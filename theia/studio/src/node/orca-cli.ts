@@ -43,11 +43,12 @@ export class OrcaCliError extends Error {
 
 /** Thrown when no `orca` binary can be found — the panel turns it into advice. */
 export class OrcaCliMissingError extends OrcaCliError {
-    constructor(searched: readonly string[]) {
+    constructor(readonly searched: readonly string[]) {
         super(
-            'the orca CLI is not installed. A session image carries it only when built ' +
-                'with --build-arg STUDIO_ORCA_DEB_URL=…; elsewhere set ORCA_CLI to the ' +
-                `binary, or install Orca (github.com/stablyai/orca). Looked at: ${searched.join(', ')}`,
+            'Orca is not installed where Studio looks for it. On your own computer, install Orca ' +
+                '(github.com/stablyai/orca/releases) and open it once, or set ORCA_CLI to its orca ' +
+                'executable; a session image carries it only when built with ' +
+                `--build-arg STUDIO_ORCA_DEB_URL=…. Looked at: ${searched.join(', ')}`,
             [],
             ''
         );
@@ -55,14 +56,6 @@ export class OrcaCliMissingError extends OrcaCliError {
     }
 }
 
-/**
- * Where the CLI might be, in order of authority.
- *
- * `ORCA_CLI` first so a session container can point at whatever it ships;
- * then the per-platform install location of the desktop app, which is what a
- * developer's machine has; `orca` on PATH last, since that is the case we can
- * neither verify nor blame precisely.
- */
 /** The shape Node's failed `execFile` hands back. */
 export interface InvocationFailure {
     readonly stdout?: string;
@@ -91,7 +84,7 @@ export interface InvocationFailure {
  */
 export function invocationError(failure: InvocationFailure, args: readonly string[]): OrcaCliError {
     if (failure.code === 'ENOENT') {
-        return new OrcaCliMissingError(candidateBinaries());
+        return new OrcaCliMissingError(findOrcaBinary().searched);
     }
     // A refused command still carries the envelope on stdout, and its message
     // beats "exit code 1".
@@ -162,22 +155,50 @@ export function commandCwd(
     return undefined;
 }
 
+/**
+ * Where the CLI might be, in order of authority.
+ *
+ * `ORCA_CLI` first so a session container can point at whatever it ships;
+ * then where Orca's own installers put it on each platform; then the shell
+ * command Orca's *Install CLI* action links (`/usr/local/bin/orca`, or
+ * `~/.local/bin/orca` when that directory is missing, on macOS;
+ * `~/.local/bin/orca-ide` on Linux — read off Orca 1.4.211's
+ * `resolveCommandPath`); and the bare names last, looked up on PATH by
+ * [[findOrcaBinary]].
+ *
+ * The explicit locations matter more than they look: an app started from the
+ * Dock, the Start menu or a desktop launcher does not get the PATH a login
+ * shell builds, so `~/.local/bin` and Homebrew's prefix are often not on it.
+ */
 export function candidateBinaries(env: NodeJS.ProcessEnv = process.env, platform: string = os.platform()): string[] {
     const out: string[] = [];
     const configured = env.ORCA_CLI?.trim();
     if (configured) {
         out.push(configured);
     }
+    // The platform's own path module, so a test on one OS builds another's paths.
+    const p = platform === 'win32' ? path.win32 : path.posix;
     const home = env.HOME ?? env.USERPROFILE ?? '';
     if (platform === 'win32') {
-        const local = env.LOCALAPPDATA ?? (home ? path.join(home, 'AppData', 'Local') : '');
+        // The installer is per-user by default (%LOCALAPPDATA%\Programs\orca);
+        // a per-machine install goes under Program Files.
+        const local = env.LOCALAPPDATA ?? (home ? p.join(home, 'AppData', 'Local') : '');
         if (local) {
-            out.push(path.join(local, 'Programs', 'orca', 'resources', 'bin', 'orca.exe'));
+            out.push(p.join(local, 'Programs', 'orca', 'resources', 'bin', 'orca.exe'));
+        }
+        const programFiles = env.ProgramFiles ?? env.PROGRAMFILES;
+        if (programFiles) {
+            out.push(p.join(programFiles, 'Orca', 'resources', 'bin', 'orca.exe'));
         }
     } else if (platform === 'darwin') {
         out.push('/Applications/Orca.app/Contents/Resources/bin/orca');
         if (home) {
-            out.push(path.join(home, 'Applications', 'Orca.app', 'Contents', 'Resources', 'bin', 'orca'));
+            out.push(p.join(home, 'Applications', 'Orca.app', 'Contents', 'Resources', 'bin', 'orca'));
+        }
+        out.push('/usr/local/bin/orca');
+        out.push('/opt/homebrew/bin/orca');
+        if (home) {
+            out.push(p.join(home, '.local', 'bin', 'orca'));
         }
     } else {
         // The Linux package (orca-ide_*.deb / .rpm) names the CLI `orca-ide`,
@@ -187,6 +208,11 @@ export function candidateBinaries(env: NodeJS.ProcessEnv = process.env, platform
         out.push('/usr/bin/orca-ide');
         out.push('/opt/orca/resources/bin/orca');
         out.push('/usr/local/bin/orca');
+        // The AppImage installs nothing; its Install CLI action links this.
+        if (home) {
+            out.push(p.join(home, '.local', 'bin', 'orca-ide'));
+            out.push(p.join(home, '.local', 'bin', 'orca'));
+        }
     }
     // Both names, because the executable is `orca` on macOS/Windows and
     // `orca-ide` in the Linux packages.
@@ -195,35 +221,128 @@ export function candidateBinaries(env: NodeJS.ProcessEnv = process.env, platform
     return out;
 }
 
+/** What [[findOrcaBinary]] found, and everything it looked at to find it. */
+export interface OrcaBinaryLookup {
+    /** An absolute path to an executable Node can spawn without a shell. */
+    readonly found?: string;
+    readonly searched: readonly string[];
+}
+
+/** A bare command name, as opposed to a path. */
+function isBareName(candidate: string): boolean {
+    return !candidate.includes('/') && !candidate.includes('\\');
+}
+
+/**
+ * The `orca` executable to run, resolved to an absolute path.
+ *
+ * Resolving the bare names here rather than leaving them to the loader does
+ * three things the loader cannot:
+ *
+ * - the terminal bridge loads Orca's client from next to the CLI, which needs
+ *   a real path — a bare `orca` was resolved against the backend's working
+ *   directory, and the stream failed while the panel said "ready";
+ * - on Windows only `.exe` and `.com` can be spawned without a shell (Node
+ *   refuses a `.cmd` since the CVE-2024-27980 fix), so a `.cmd` shim on PATH
+ *   is followed to the `orca.exe` beside it, which is where Orca's own shim
+ *   points;
+ * - "not installed" becomes an answer, instead of a loader ENOENT two calls
+ *   later.
+ *
+ * `ORCA_CLI` is authoritative when set: pointing it at nothing is reported as
+ * nothing, not papered over by another install.
+ */
+export function findOrcaBinary(
+    env: NodeJS.ProcessEnv = process.env,
+    platform: string = os.platform(),
+    exists: (file: string) => boolean = existsSync
+): OrcaBinaryLookup {
+    const windows = platform === 'win32';
+    const p = windows ? path.win32 : path.posix;
+    const dirs = (env.PATH ?? env.Path ?? '').split(windows ? ';' : ':').filter(Boolean);
+    // What runs without a shell, in the order PATHEXT names it.
+    const spawnable = ['.com', '.exe'];
+    const pathext = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+        .split(';')
+        .map(ext => ext.trim().toLowerCase())
+        .filter(Boolean);
+    const direct = pathext.filter(ext => spawnable.includes(ext));
+    const suffixes = windows ? (direct.length ? direct : spawnable) : [''];
+    const shims = windows ? pathext.filter(ext => ext === '.cmd' || ext === '.bat') : [];
+
+    const onPath = (name: string): string | undefined => {
+        for (const dir of dirs) {
+            for (const suffix of suffixes) {
+                const file = p.join(dir, name + suffix);
+                if (exists(file)) {
+                    return file;
+                }
+            }
+            for (const shim of shims) {
+                const beside = p.join(dir, name + '.exe');
+                if (exists(p.join(dir, name + shim)) && exists(beside)) {
+                    return beside;
+                }
+            }
+        }
+        return undefined;
+    };
+
+    const configured = env.ORCA_CLI?.trim();
+    const searched: string[] = [];
+    for (const candidate of configured ? [configured] : candidateBinaries(env, platform)) {
+        if (isBareName(candidate)) {
+            searched.push(`${candidate} on PATH`);
+            const found = onPath(candidate);
+            if (found) {
+                return { found, searched };
+            }
+        } else {
+            searched.push(candidate);
+            if (exists(candidate)) {
+                return { found: candidate, searched };
+            }
+        }
+    }
+    return { searched };
+}
+
+/**
+ * Where this IDE runs, for the advice the panel gives: a portal session
+ * (the session gate hands it STUDIO_SESSION_TOKEN, and the container starts
+ * Orca), or a person's own machine, where Orca is their own install.
+ */
+export function orcaHost(env: NodeJS.ProcessEnv = process.env): 'session' | 'local' {
+    return env.STUDIO_SESSION_TOKEN?.trim() ? 'session' : 'local';
+}
+
 @injectable()
 export class OrcaCli {
 
-    /** Resolved lazily and remembered: the answer cannot change under us. */
+    /**
+     * The executable found last time. Only a found one is remembered, and only
+     * while it is still there: Orca installed, updated or removed while the IDE
+     * runs is picked up on the next Refresh, not after a restart.
+     */
     protected resolved: string | undefined;
 
     /**
-     * The binary to run.
+     * The binary to run, as an absolute path.
      *
-     * The bare names at the end of the candidate list are always accepted
-     * here — resolving a name against PATH (and PATHEXT, on Windows) is the
-     * loader's job, not ours. Which means this cannot report a missing CLI:
-     * the failure surfaces when the spawn fails, and [[OrcaCliMissingError]]
-     * is raised there instead.
+     * @throws OrcaCliMissingError when there is none; the status turns that
+     * into install advice rather than an error.
      */
     binary(): string {
-        if (this.resolved) {
+        if (this.resolved && existsSync(this.resolved)) {
             return this.resolved;
         }
-        const candidates = candidateBinaries();
-        for (const candidate of candidates) {
-            // The bare names are not paths — let execFile resolve them
-            // against PATH and report the failure if they are not there.
-            if (candidate === 'orca' || candidate === 'orca-ide' || existsSync(candidate)) {
-                this.resolved = candidate;
-                return candidate;
-            }
+        this.resolved = undefined;
+        const lookup = findOrcaBinary();
+        if (!lookup.found) {
+            throw new OrcaCliMissingError(lookup.searched);
         }
-        throw new OrcaCliMissingError(candidates);
+        this.resolved = lookup.found;
+        return lookup.found;
     }
 
     /**

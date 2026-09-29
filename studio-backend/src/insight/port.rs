@@ -20,7 +20,9 @@ use async_trait::async_trait;
 /// One repository's worth of question: which components, over which window.
 ///
 /// `segment` is the directory a component's files live under — `api-gateway`
-/// for the crate `cf-gears-api-gateway`. Naming it is the caller's job because
+/// for the crate `cf-gears-api-gateway`, matched wherever that name appears —
+/// or, when it contains a `/`, a path from the repository root
+/// (`gears/bss/ledger/`), matched as a prefix. Naming it is the caller's job because
 /// the caller is the one holding the catalogue; matching it is Insight's,
 /// because the warehouse holds the paths.
 #[derive(Debug, Clone)]

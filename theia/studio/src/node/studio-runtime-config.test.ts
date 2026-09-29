@@ -1,4 +1,4 @@
-import { createBrowserSession, isOriginAllowed, loadStudioRuntimeConfig } from './studio-runtime-config';
+import { createBrowserSession, isOriginAllowed, loadStudioRuntimeConfig, StudioRuntimeConfigService } from './studio-runtime-config';
 
 describe('studio runtime config', () => {
     const validEnv = {
@@ -150,5 +150,51 @@ describe('studio runtime config', () => {
             ...validEnv,
             STUDIO_GIT_MODE: 'force'
         })).toThrow('STUDIO_GIT_MODE');
+    });
+});
+
+/**
+ * Who may frame the IDE (#324): the application page names the portal origins
+ * the bridge talks to, so a site outside the list cannot show the editor.
+ */
+describe('frame-ancestors on the application page', () => {
+    const env = {
+        STUDIO_ACTOR_ID: 'actor-1',
+        STUDIO_WORKSPACE_ID: 'workspace-1',
+        STUDIO_WORKSPACE_ROOT: '/tmp/repo/workspace',
+        STUDIO_REPOSITORY_ROOT: '/tmp/repo',
+        STUDIO_DATA_DIR: '/tmp/studio-data'
+    };
+    type Handler = (req: { path: string }, res: { setHeader: jest.Mock }, next: () => void) => void;
+
+    const headerFor = (path: string, config: (() => ReturnType<typeof loadStudioRuntimeConfig>) | undefined): string | undefined => {
+        const service = new StudioRuntimeConfigService();
+        const handlers: Handler[] = [];
+        Object.assign(service, { earlyMiddleware: { handlers } });
+        jest.spyOn(service, 'getConfig').mockImplementation(config ?? (() => { throw new Error('no config'); }));
+        service.initialize();
+        const res = { setHeader: jest.fn() };
+        const next = jest.fn();
+        handlers[0]({ path }, res, next);
+        expect(next).toHaveBeenCalled();
+        return res.setHeader.mock.calls.find(([name]) => name === 'Content-Security-Policy')?.[1];
+    };
+
+    it('is the page’s own origin when no list is set', () => {
+        expect(headerFor('/', () => loadStudioRuntimeConfig(env))).toBe("frame-ancestors 'self'");
+    });
+
+    it('is exactly the listed origins when a list is set', () => {
+        const listed = () => loadStudioRuntimeConfig({ ...env, STUDIO_ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:8080' });
+        expect(headerFor('/index.html', listed)).toBe('frame-ancestors http://localhost:5173 http://localhost:8080');
+    });
+
+    it('narrows to the own origin when the configuration does not load', () => {
+        expect(headerFor('/', undefined)).toBe("frame-ancestors 'self'");
+    });
+
+    it('leaves every other response alone — webviews and drawio have their own policies', () => {
+        expect(headerFor('/webview/index.html', () => loadStudioRuntimeConfig(env))).toBeUndefined();
+        expect(headerFor('/bundle.js', () => loadStudioRuntimeConfig(env))).toBeUndefined();
     });
 });

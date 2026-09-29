@@ -1,7 +1,7 @@
 {
   "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.context.artifact.open.v1~",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Shell-owned action an MFE executes against the screen domain when a member asks to open one artifact. The MFE publishes, the shell owns the answer: once the editor navigation (#320) lands, the answer is a navigation on the router (ADR-0028), and the shell echoes the artifact back as ...context.artifact.selected.v1~. Nothing in the MFE writes the selection locally — see projects-mfe/src/actions/artifactActions.ts.",
+  "$comment": "Shell-owned action an MFE executes against the screen domain when a member asks to open one artifact. The MFE publishes, the shell owns the answer: a navigation on the router to the editor screen, with the artifact in the address (ADR-0028, #320), echoed back as ...context.artifact.selected.v1~. Nothing in the MFE writes the selection locally — see projects-mfe/src/actions/artifactActions.ts.",
   "allOf": [
     {
       "$ref": "gts://gts.frontx.mfes.comm.action.v1~"

@@ -47,6 +47,20 @@ collab strip, Orca and the Explorer stay as they are.
   gear, found in its checkout (the `gears-rust` corpus beside it is skipped),
   opens in the Gear view of the Gearbox perspective. New Gear defaults its
   destination to the project's repository, beside the gears already there.
+- **A repository with no gears and no product** (a desktop member who opened
+  one repository, studio-web say). Products are found under
+  `<repository>/products/<name>/product.gdl` as well as in each checkout, and
+  that is where New Product suggests one. New Product offers the gear corpus
+  as a source: the per-machine copy under `~/ConstructorStudio/corpus` when it
+  is there (checked when the workspace has no gears of its own), else
+  "Bring the gears here" inline. It is declared as an absolute `path(...)`,
+  because `gearbox/product/create` writes path sources only; such a product
+  resolves on this machine. A product that names its corpus as
+  `git(url, rev)` opens anywhere: the commit is brought into the same
+  per-machine cache (through the Studio relay for a private corpus), never
+  into the project. Add gear with no product open opens New Product.
+- **Tests:** `npm test` in this package runs the unit tests of the rules
+  (`src/**/*.test.ts`, jest, Node).
 - **Not ported:** everything under Gearbox Studio's `browser/theia/` except
   the read-only `product.lock` editor, its layout migration, the Anthropic key
   settings and `@theia/ai-anthropic`.

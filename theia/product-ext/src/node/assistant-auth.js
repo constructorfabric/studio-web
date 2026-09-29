@@ -27,7 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
-const { assistantEnvironment, CREDENTIAL_STORE } = require('./viewer-credentials-env');
+const { assistantEnvironment, ensureAssistantHomes, CREDENTIAL_STORE } = require('./viewer-credentials-env');
 
 /** How long a device-code flow may stay open before it is abandoned. */
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
@@ -92,8 +92,7 @@ class AssistantAuth {
         if (!assistant) { return Promise.reject(new Error(`unknown assistant: ${kind}`)); }
         const env = this.environment();
         // The tools refuse to run against a home that does not exist yet.
-        fs.mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
-        fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+        ensureAssistantHomes(env);
         return new Promise(resolve => {
             const child = execFile(assistant.command, args, { env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT },
                 (error, stdout, stderr) => resolve({
@@ -179,8 +178,7 @@ class AssistantAuth {
         const assistant = ASSISTANTS[kind];
         if (!assistant) { throw new Error(`unknown assistant: ${kind}`); }
         const env = this.environment();
-        fs.mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
-        fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+        ensureAssistantHomes(env);
 
         const id = `${kind}-${Date.now().toString(36)}`;
         const flow = { id, kind, output: '', running: true, exitCode: undefined, startedAt: Date.now() };

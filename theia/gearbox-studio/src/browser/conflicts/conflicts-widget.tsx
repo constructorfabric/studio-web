@@ -36,6 +36,7 @@ import { ProductStore } from "../product-store";
 import { RevealService } from "../reveal-service";
 import { SelectionService } from "../shell/selection-service";
 import { RESOLVE_PRODUCT } from "../view-contributions";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 @injectable()
 export class ConflictsWidget extends ReactWidget {
@@ -57,6 +58,20 @@ export class ConflictsWidget extends ReactWidget {
     this.addClass("gbx-widget-conflicts");
     this.toDispose.push(this.products.onChanged(() => this.update()));
     this.update();
+  }
+
+  /**
+   * Take the focus when the shell activates this view. Theia waits up to two
+   * seconds for an activated widget to accept focus, and a mode switch
+   * activates its views one after another: without this, entering Building
+   * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
+   */
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (!this.node.hasAttribute("tabindex")) {
+      this.node.tabIndex = -1;
+    }
+    this.node.focus();
   }
 
   protected render(): React.ReactNode {

@@ -249,6 +249,55 @@ pub fn counts(rows: &[SpecRow]) -> Vec<(Filter, u32)> {
     out
 }
 
+/// How a project's specs stand, for its one cell in the projects table.
+///
+/// A spec is what the Bound queue lists: a repository file somebody confirmed
+/// or chose a type for, or a document written in Studio. A file a detector only
+/// proposed is not one yet — it is waiting in Needs review.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpecSummary {
+    pub specs: u32,
+    /// Of those, written in Studio rather than found in a repository.
+    pub authored: u32,
+    /// Of those, with a validation verdict of either kind.
+    pub checked: u32,
+    /// Of the checked, the ones that do not conform.
+    pub failing: u32,
+}
+
+/// Fold `(state, verdict)` per binding and the verdict per authored document.
+///
+/// An authored document always carries a verdict (its column is a `bool`), so
+/// it always counts as checked — the same reading [`rows`] gives it.
+#[must_use]
+pub fn summary(
+    bindings: impl IntoIterator<Item = (BindingState, Option<bool>)>,
+    authored: impl IntoIterator<Item = bool>,
+) -> SpecSummary {
+    let mut out = SpecSummary::default();
+    let mut count = |conforms: Option<bool>| {
+        out.specs += 1;
+        if let Some(ok) = conforms {
+            out.checked += 1;
+            if !ok {
+                out.failing += 1;
+            }
+        }
+    };
+    for (state, conforms) in bindings {
+        if matches!(state, BindingState::Confirmed | BindingState::Manual) {
+            count(conforms);
+        }
+    }
+    let mut written = 0;
+    for conforms in authored {
+        count(Some(conforms));
+        written += 1;
+    }
+    out.authored = written;
+    out
+}
+
 /// The last path segment — what a reader recognises.
 fn leaf(path: &str) -> String {
     path.rsplit(['/', '\\'])
@@ -901,5 +950,29 @@ mod tests {
         let out = pipeline(&types(), &[], &[]);
         assert!(out[1].untouched);
         assert_eq!(out[1].total, 0);
+    }
+
+    #[test]
+    fn a_summary_counts_only_decided_specs() {
+        let s = summary(
+            [
+                (BindingState::Confirmed, Some(true)),
+                (BindingState::Manual, Some(false)),
+                (BindingState::Confirmed, None),
+                // Proposed, not decided: waiting in Needs review, not a spec.
+                (BindingState::Detected, Some(true)),
+                (BindingState::NotADocument, None),
+            ],
+            [true, false],
+        );
+        assert_eq!(
+            s,
+            SpecSummary {
+                specs: 5,
+                authored: 2,
+                checked: 4,
+                failing: 2,
+            }
+        );
     }
 }

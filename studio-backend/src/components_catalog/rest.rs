@@ -10,7 +10,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, Request};
+use axum::response::Response;
 use axum::{Extension, Router};
 use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
@@ -21,6 +22,8 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
 use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
+use super::reference::ComponentReferenceListDto;
+use super::roadmap::{RoadmapFields, RoadmapSource};
 use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -296,6 +299,30 @@ pub struct ScaffoldRequest {
 /// Whether product previews can run here, and against which gear corpus.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
+pub struct GearboxCatalogueDto {
+    /// The source id the corpus's gears are joined on; every descriptor's
+    /// `source` names it.
+    pub source_id: String,
+    /// `owner/repo@ref` of the checkout, as a person reads it.
+    pub corpus: String,
+    /// The repository the corpus is checked out from, without credentials.
+    pub corpus_url: String,
+    pub corpus_ref: String,
+    pub corpus_commit: Option<String>,
+    /// Whether cloning it takes a token. This backend never hands one out, so
+    /// an IDE cannot clone such a corpus itself.
+    pub corpus_needs_token: bool,
+    /// Set when it does: the gateway-rooted path to clone the corpus through
+    /// this backend with the member's Studio token, the corpus's own token
+    /// attached upstream. Read-only.
+    pub corpus_clone_path: Option<String>,
+    /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
+    /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
+    pub catalogue: Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
 pub struct GearboxStatusDto {
     /// False when `STUDIO_GEARBOX_WORKDIR` is unset; nothing else is filled.
     pub enabled: bool,
@@ -551,6 +578,50 @@ pub struct RepoSourceDto {
     pub mode: Option<String>,
 }
 
+/// A roadmap board: a GitHub Project whose items plan the gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RoadmapSourceDto {
+    /// Tenant that owns the GitHub connection.
+    pub tenant: Uuid,
+    /// Connection to use; when omitted the first GitHub connection is taken.
+    /// It needs to read organization projects (`read:project`).
+    pub connection_id: Option<Uuid>,
+    /// Organization or user that owns the board.
+    pub owner: String,
+    /// The board's number, as in `/orgs/<owner>/projects/<number>`.
+    pub number: u32,
+    /// What each letter of the priority field stands for, e.g. `{"A": "Acronis"}`.
+    pub consumers: Option<std::collections::BTreeMap<String, String>>,
+    /// The single-select holding the stage (default `Status`).
+    pub stage_field: Option<String>,
+    /// The single-select saying whether the date is committed (default `Commitment`).
+    pub commitment_field: Option<String>,
+    /// The per-consumer priority (default: the field named like `Prio (A.C.V)`).
+    pub priority_field: Option<String>,
+    /// The effort estimate (default: a field with `effort` in its name).
+    pub effort_field: Option<String>,
+}
+
+impl RoadmapSourceDto {
+    fn into_source(self) -> RoadmapSource {
+        let named = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        RoadmapSource {
+            tenant: self.tenant,
+            connection_id: self.connection_id,
+            owner: self.owner.trim().to_string(),
+            number: self.number,
+            consumers: self.consumers.unwrap_or_default(),
+            fields: RoadmapFields {
+                stage: named(self.stage_field),
+                commitment: named(self.commitment_field),
+                priority: named(self.priority_field),
+                effort: named(self.effort_field),
+            },
+        }
+    }
+}
+
 /// Which sources one sync should read. Omit the body to sync crates.io with the
 /// default keyword (back-compatible).
 #[derive(Debug)]
@@ -560,6 +631,8 @@ pub struct SyncRequestDto {
     pub crates_io: Option<String>,
     /// Repository sources (gears repo, FrontX repo, …).
     pub repositories: Option<Vec<RepoSourceDto>>,
+    /// Roadmap boards to read each gear's stage, due date and demand from.
+    pub roadmaps: Option<Vec<RoadmapSourceDto>>,
 }
 
 impl SyncRequestDto {
@@ -577,18 +650,29 @@ impl SyncRequestDto {
                 mode: r.mode.unwrap_or_else(|| "gears".to_string()),
             })
             .collect();
+        let roadmaps: Vec<RoadmapSource> = self
+            .roadmaps
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| !r.owner.trim().is_empty())
+            .map(RoadmapSourceDto::into_source)
+            .collect();
         let crates_io = match self.crates_io {
             Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
             Some(_) => None,
             None => {
-                if repos.is_empty() {
+                if repos.is_empty() && roadmaps.is_empty() {
                     Some(default_keyword.to_string())
                 } else {
                     None
                 }
             }
         };
-        SyncSources { crates_io, repos }
+        SyncSources {
+            crates_io,
+            repos,
+            roadmaps,
+        }
     }
 }
 
@@ -609,7 +693,7 @@ async fn sync(
         Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
         None => SyncSources {
             crates_io: Some(catalog.service.default_keyword().to_string()),
-            repos: Vec::new(),
+            ..SyncSources::default()
         },
     };
     let payload = serde_json::to_value(&sources)
@@ -905,7 +989,9 @@ async fn conformance(
         .map_err(internal)?
     else {
         return Err(invalid(
-            "the project has no gear repository connected, so there is no code to compare".into(),
+            "the project has no gear repository and no GitHub source whose Cargo manifests \
+             could be read, so there is no code to compare"
+                .into(),
         ));
     };
 
@@ -1208,7 +1294,22 @@ async fn gear_activity(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
-    let plan = super::activity::plan_requests(&components);
+    let answer = activity_of(delivery.as_ref(), &components, days)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(answer))
+}
+
+/// What moved in each of `components` over the last `days`, from the
+/// warehouse: one round trip per repository in the plan, never per component.
+/// Shared by `/activity` and `/reference`, so the two cannot disagree on a
+/// number.
+async fn activity_of(
+    delivery: &dyn crate::insight::port::ComponentDelivery,
+    components: &[Value],
+    days: u32,
+) -> anyhow::Result<GearActivityListDto> {
+    let plan = super::activity::plan_requests(components);
 
     let from = super::activity::days_ago(days);
     let mut pages = Vec::with_capacity(plan.len());
@@ -1223,12 +1324,7 @@ async fn gear_activity(
             limit: u32::try_from(repo.components.len()).ok(),
         };
         repositories.push(repo.repository.clone());
-        pages.push(
-            delivery
-                .metrics(&query)
-                .await
-                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?,
-        );
+        pages.push(delivery.metrics(&query).await?);
         // Pull requests are a second question with its own coverage, so they
         // get their own failure: a warehouse without them is not a reason to
         // lose the commit activity as well.
@@ -1267,7 +1363,7 @@ async fn gear_activity(
                 .collect(),
         })
         .collect();
-    Ok(Json(GearActivityListDto {
+    Ok(GearActivityListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         sources: ActivitySourcesDto {
@@ -1276,7 +1372,7 @@ async fn gear_activity(
             truncated,
             repositories,
         },
-    }))
+    })
 }
 
 // ── what a component's fields actually say ───────────────────────────────────
@@ -1354,6 +1450,163 @@ async fn component_values(
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         truncated,
+    }))
+}
+
+// ── the components reference ─────────────────────────────────────────────────
+
+/// The window the reference measures activity over when the caller does not
+/// say: the portal's Components page defaults to ninety days, and the two
+/// should show the same number for the same component.
+const DEFAULT_REFERENCE_DAYS: u32 = 90;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ReferenceQuery {
+    /// Activity window in days; `0` skips the warehouse. Defaults to 90.
+    pub days: Option<u32>,
+}
+
+/// GET /studio-components-catalog/v1/reference — the catalogue and the
+/// Gearbox engine's catalogue as one list (see [`super::reference`]).
+///
+/// Every half is read once for the whole list: the component nodes, their
+/// profiles and the field schemas from the graph, the engine's catalogue from
+/// the one corpus checkout, the activity from the warehouse (one round trip
+/// per repository). The engine and the warehouse are best-effort — a
+/// deployment without Gearbox or Insight still gets the catalogue, with the
+/// reason in `sources` instead of an error.
+async fn component_reference(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<ReferenceQuery>,
+) -> ApiResult<JsonBody<ComponentReferenceListDto>> {
+    use super::reference::{
+        EngineIndex, ReferenceActivityDto, ReferenceInputs, ReferenceSourcesDto,
+    };
+
+    let days = query.days.unwrap_or(DEFAULT_REFERENCE_DAYS);
+    if days > MAX_ACTIVITY_DAYS {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "days",
+                format!("must be between 0 and {MAX_ACTIVITY_DAYS}, got {days}"),
+                "INVALID",
+            )
+            .create());
+    }
+
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let (nodes, truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(internal)?;
+    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for node in catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(internal)?
+    {
+        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+    let schemas = catalog
+        .service
+        .list_field_schemas(&ctx)
+        .await
+        .map_err(internal)?;
+
+    let (engine, gearbox_corpus, gearbox_problem) = match &catalog.gearbox {
+        None => (
+            None,
+            None,
+            Some(
+                "Gearbox is not configured in this deployment (STUDIO_GEARBOX_WORKDIR is not set)"
+                    .to_string(),
+            ),
+        ),
+        Some(gearbox) => match gearbox.catalogue_json().await {
+            Ok((raw, commit)) => {
+                let mut label = gearbox.corpus_label();
+                if let Some(c) = commit {
+                    label = format!("{label} ({})", &c[..c.len().min(7)]);
+                }
+                (Some(EngineIndex::from_catalogue(&raw)), Some(label), None)
+            }
+            Err(e) => (
+                None,
+                None,
+                Some(format!("the Gearbox catalogue could not be read: {e:#}")),
+            ),
+        },
+    };
+
+    let mut activity: Option<std::collections::HashMap<String, ReferenceActivityDto>> = None;
+    let (mut activity_from, mut activity_to, mut activity_problem) = (None, None, None);
+    if days == 0 {
+        activity_problem = Some("activity was not asked for (days=0)".to_string());
+    } else {
+        match catalog.delivery() {
+            Err(_) => {
+                activity_problem =
+                    Some("studio-insight is not configured in this deployment".to_string());
+            }
+            Ok(delivery) => {
+                let components: Vec<Value> = nodes.iter().map(|n| n.value.clone()).collect();
+                match activity_of(delivery.as_ref(), &components, days).await {
+                    Ok(answer) => {
+                        activity_from = answer.sources.from;
+                        activity_to = answer.sources.to;
+                        activity = Some(
+                            answer
+                                .items
+                                .into_iter()
+                                .map(|row| {
+                                    (
+                                        row.gear,
+                                        ReferenceActivityDto {
+                                            commits: row.commits,
+                                            files_changed: row.files_changed,
+                                            lines_added: row.lines_added,
+                                            lines_removed: row.lines_removed,
+                                            authors: row.authors,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %format!("{e:#}"), "components-catalog: reference activity unavailable");
+                        activity_problem =
+                            Some(format!("the delivery warehouse did not answer: {e:#}"));
+                    }
+                }
+            }
+        }
+    }
+
+    let items = super::reference::build(&ReferenceInputs {
+        nodes: &nodes,
+        profiles: &profiles,
+        schemas: &schemas,
+        engine: engine.as_ref(),
+        activity: activity.as_ref(),
+    });
+    Ok(Json(ComponentReferenceListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        truncated,
+        sources: ReferenceSourcesDto {
+            gearbox_corpus,
+            gearbox_problem,
+            activity_days: activity.is_some().then_some(days),
+            activity_from,
+            activity_to,
+            activity_problem,
+        },
     }))
 }
 
@@ -1912,6 +2165,135 @@ async fn complete_product(
     }))
 }
 
+async fn gearbox_catalogue(
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<GearboxCatalogueDto>> {
+    let gearbox = catalog.gearbox()?;
+    let (raw, commit) = gearbox
+        .catalogue_json()
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin();
+    Ok(Json(GearboxCatalogueDto {
+        source_id: CORPUS_SOURCE_ID.to_string(),
+        corpus: gearbox.corpus_label(),
+        corpus_url,
+        corpus_ref,
+        corpus_commit: commit,
+        corpus_clone_path: corpus_needs_token.then(|| CORPUS_GIT_PATH.to_string()),
+        corpus_needs_token,
+        catalogue: Value::clone(&raw),
+    }))
+}
+
+/// Where the corpus is cloned from through this backend; `git` appends the
+/// protocol paths (`/info/refs`, `/git-upload-pack`).
+const CORPUS_GIT_PATH: &str = "/studio-components-catalog/v1/gearbox/corpus";
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CorpusRefsQuery {
+    pub service: Option<String>,
+}
+
+/// The client that relays corpus packs. No overall timeout, because a clone
+/// streams for as long as it takes; the connect timeout keeps a dead host from
+/// hanging one.
+fn corpus_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// One smart-HTTP request for the gear corpus, relayed with the corpus's own
+/// token so a laptop can clone a private corpus without ever holding it
+/// (ADR-0027). Any signed-in member may read it: the catalogue it describes is
+/// already listed to them. Fetch only -- a push is refused here, whatever the
+/// token upstream would allow.
+async fn corpus_git(
+    catalog: &Catalog,
+    protocol_path: &str,
+    service: crate::git_proxy::sources::Service,
+    request: Request,
+) -> Response {
+    use crate::git_proxy::rest::{authenticate_member, refuse, send_upstream, stream_back};
+    use crate::git_proxy::sources::{Service, upstream_url};
+
+    let Ok(authn) = catalog
+        .hub
+        .get::<dyn authn_resolver_sdk::AuthNResolverClient>()
+    else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Studio cannot check sign-ins right now; try again.",
+        );
+    };
+    if let Err(refused) = authenticate_member(authn.as_ref(), request.headers()).await {
+        return refused;
+    }
+    let Some(gearbox) = catalog.gearbox.as_ref() else {
+        return refuse(StatusCode::NOT_FOUND, "This Studio keeps no gear corpus.");
+    };
+    if service != Service::UploadPack {
+        return refuse(
+            StatusCode::FORBIDDEN,
+            "The gear corpus is read-only through Studio.",
+        );
+    }
+    let (url, token) = gearbox.corpus_fetch();
+    let Some(url) = upstream_url(&url, protocol_path) else {
+        return refuse(
+            StatusCode::NOT_FOUND,
+            "The gear corpus is not an http(s) repository, so it cannot be cloned through Studio.",
+        );
+    };
+    let token = (!token.is_empty()).then_some(token.as_str());
+    match send_upstream(
+        corpus_client(),
+        &url,
+        protocol_path,
+        service,
+        token,
+        request,
+        "The corpus's host refused its token; ask an administrator to update the gears connection.",
+    )
+    .await
+    {
+        Ok((_, response, answer)) => stream_back(response, answer),
+        Err(refused) => refused,
+    }
+}
+
+/// GET …/gearbox/corpus/info/refs?service= — the first request of a clone.
+async fn corpus_refs(
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<CorpusRefsQuery>,
+    request: Request,
+) -> Response {
+    use crate::git_proxy::sources::Service;
+    let Some(service) = query.service.as_deref().and_then(Service::parse) else {
+        return crate::git_proxy::rest::refuse(
+            StatusCode::BAD_REQUEST,
+            "Only the smart HTTP protocol is served (service=git-upload-pack).",
+        );
+    };
+    corpus_git(&catalog, "info/refs", service, request).await
+}
+
+/// POST …/gearbox/corpus/git-upload-pack — the pack a clone downloads.
+async fn corpus_pack(Extension(catalog): Extension<Catalog>, request: Request) -> Response {
+    corpus_git(
+        &catalog,
+        "git-upload-pack",
+        crate::git_proxy::sources::Service::UploadPack,
+        request,
+    )
+    .await
+}
+
 async fn gearbox_status(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<GearboxStatusDto>> {
@@ -2375,6 +2757,45 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-components-catalog/v1/reference")
+        .operation_id("studio_components_catalog.list_component_reference")
+        .summary("The components reference: the catalogue joined with the Gearbox engine's gears")
+        .description(
+            "One entry per component, for a screen that lists them all and lets a person \
+             take a gear into a product. It joins what the Components page shows (crates.io \
+             release and downloads, the repository scan, the profile ratio, delivery activity) \
+             with what the Gearbox engine reads from each `gear.gdl` (engine id, service or \
+             plugin, extension points, hosts, plugins).\n\n\
+             THE JOIN IS THE CRATE NAME: the engine's `package.crate_name` is the catalogue's \
+             component name. A component catalogued before the scan read crate names is joined \
+             by the directory it was read from instead. One crate can be several engine gears \
+             (`engine` is a list); an engine gear no component matches is listed on its own \
+             with `type_id: null` and every portal fact null.\n\n\
+             UNKNOWN IS NULL, NEVER ZERO. `related` names a gear's SDK and plugin crates from \
+             its manifests and its descriptor, not from a naming convention.\n\n\
+             Gearbox and Insight are best-effort: without them the catalogue is still served \
+             and `sources.gearbox_problem` / `sources.activity_problem` say why a half is \
+             missing. `days` (default 90, `0` to skip) is the activity window.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "days",
+            false,
+            "Activity window in days, ending today (default 90; 0 skips the warehouse)",
+        )
+        .handler(component_reference)
+        .json_response_with_schema::<ComponentReferenceListDto>(
+            openapi,
+            StatusCode::OK,
+            "The reference",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-components-catalog/v1/components")
         .operation_id("studio_components_catalog.list_gears")
         .summary("List every node of every type this organization marks as a component")
@@ -2761,6 +3182,70 @@ pub fn register_routes(
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/catalogue")
+        .operation_id("studio_components_catalog.get_gearbox_catalogue")
+        .summary("The gear corpus's catalogue, as the Gearbox engine reads it")
+        .description(
+            "Every gear the corpus describes, read by the engine from the one              checkout this backend keeps. An IDE whose workspace holds no gear              corpus lists the gears from here instead of cloning it.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(gearbox_catalogue)
+        .json_response_with_schema::<GearboxCatalogueDto>(openapi, StatusCode::OK, "Catalogue")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    // The corpus Git relay. `.anonymous().exposed()` for the reason studio-git
+    // gives: `git` sends Basic credentials, which the gateway's Bearer-only
+    // layer would refuse before they arrive; `authenticate_member` is the check.
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/corpus/info/refs")
+        .operation_id("studio_components_catalog.get_corpus_refs")
+        .summary("Git smart-HTTP ref advertisement for the gear corpus")
+        .description(
+            "The first request of a clone of the gear corpus through this backend. \
+             Authenticated with the member's Studio token as the Basic password (or a \
+             Bearer token); the corpus's own token is attached upstream and never \
+             returned. Fetch only.",
+        )
+        .tag("StudioComponentsCatalog")
+        .anonymous()
+        .exposed()
+        .handler(corpus_refs)
+        .text_response(
+            StatusCode::OK,
+            "Ref advertisement",
+            "application/x-git-upload-pack-advertisement",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router =
+        OperationBuilder::post("/studio-components-catalog/v1/gearbox/corpus/git-upload-pack")
+            .operation_id("studio_components_catalog.pull_corpus_pack")
+            .summary("Git smart-HTTP upload-pack (clone and fetch) for the gear corpus")
+            .description(
+                "Streams the negotiation to the corpus's host with its token attached, \
+                 and streams the pack back.",
+            )
+            .tag("StudioComponentsCatalog")
+            .anonymous()
+            .exposed()
+            .handler(corpus_pack)
+            .text_response(
+                StatusCode::OK,
+                "Pack",
+                "application/x-git-upload-pack-result",
+            )
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox")
         .operation_id("studio_components_catalog.get_gearbox_status")

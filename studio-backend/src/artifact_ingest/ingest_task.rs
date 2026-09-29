@@ -59,6 +59,28 @@ pub struct IngestPayload {
     pub repo_dir: Option<String>,
 }
 
+impl IngestPayload {
+    /// Two syncs that would write the same graph keys must not run at once.
+    /// Those keys are built from exactly these four things (see `gts::*_node`),
+    /// so the same four make the partition key: the same repository under a
+    /// different project is a different set of nodes and may run in parallel.
+    ///
+    /// Both enqueues of this task — the portal's sync and a push through
+    /// `studio-git` — take the key from here, so the two queue behind each
+    /// other instead of racing on one checkout.
+    pub fn partition_key(&self) -> String {
+        let scope = self
+            .project_id
+            .as_deref()
+            .or(self.workspace_id.as_deref())
+            .unwrap_or("unscoped");
+        format!(
+            "{}:{}:{scope}:{}",
+            self.provider, self.secret_ref, self.repo_full_path
+        )
+    }
+}
+
 pub struct IngestTask {
     service: Arc<IngestService>,
 }

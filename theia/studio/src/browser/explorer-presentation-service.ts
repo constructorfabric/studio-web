@@ -1,4 +1,5 @@
-import { inject, injectable, named, postConstruct } from '@theia/core/shared/inversify';
+import { inject, injectable, named, optional, postConstruct } from '@theia/core/shared/inversify';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import URI from '@theia/core/lib/common/uri';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { Emitter, Event } from '@theia/core/lib/common/event';
@@ -15,6 +16,23 @@ export type ExplorerMode = 'markdown' | 'all';
 const EXPLORER_MODE_STORAGE_KEY = 'studio.explorer.mode';
 const MARKDOWN_HEADING_READ_LIMIT = 64 * 1024;
 
+/**
+ * The document types shown in the documents mode, where a project chose none:
+ * the types this product edits. The same list as product-ext's
+ * `file-type-settings.js` (DEFAULT_ON), whose Project page sets the project's
+ * own list in `<root>/.studio/settings.json` (`visibleExtensions`).
+ */
+export const DEFAULT_SHOWN_EXTENSIONS: readonly string[] = ['md', 'html', 'txt', 'json', 'csv', 'tsv'];
+const SETTINGS_PATH = '.studio/settings.json';
+
+/** The extensions a settings document names, lower case and without the dot; the defaults when it names none. */
+export function shownExtensionsFrom(settings: unknown): Set<string> {
+    const listed = (settings as { visibleExtensions?: unknown } | undefined)?.visibleExtensions;
+    return new Set((Array.isArray(listed) ? listed : DEFAULT_SHOWN_EXTENSIONS)
+        .filter((e): e is string => typeof e === 'string')
+        .map(e => e.toLowerCase().replace(/^\./, '')));
+}
+
 @injectable()
 export class ExplorerPresentationService implements FrontendApplicationContribution {
     protected readonly toDispose = new DisposableCollection();
@@ -27,6 +45,13 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
     protected modeUpdate = Promise.resolve();
     protected modeWasSet = false;
     protected stopped = false;
+
+    /** The workspace roots, to know whose settings a file answers to. */
+    @inject(WorkspaceService) @optional()
+    protected readonly workspaceService: WorkspaceService | undefined;
+
+    /** Each root's shown extensions, read from its settings once and kept until they change. */
+    protected readonly shownByRoot = new Map<string, Promise<Set<string>>>();
 
     constructor(
         @inject(FileService) protected readonly fileService: FileService,
@@ -68,6 +93,38 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
     isMarkdownUri(uri: URI): boolean {
         const extension = uri.path.ext.toLowerCase();
         return extension === '.md' || extension === '.markdown';
+    }
+
+    /**
+     * Is this file one of the document types its project shows (Project
+     * settings → Files shown)? Markdown is always a document. A file outside
+     * every root answers by the defaults.
+     */
+    async isShownUri(uri: URI): Promise<boolean> {
+        if (this.isMarkdownUri(uri)) {
+            return true;
+        }
+        const extension = uri.path.ext.toLowerCase().replace(/^\./, '');
+        if (!extension) {
+            return false;
+        }
+        return (await this.shownExtensions(uri)).has(extension);
+    }
+
+    protected shownExtensions(uri: URI): Promise<Set<string>> {
+        const root = this.workspaceService?.tryGetRoots().map(r => r.resource).find(r => r.isEqualOrParent(uri));
+        if (!root) {
+            return Promise.resolve(new Set(DEFAULT_SHOWN_EXTENSIONS));
+        }
+        const key = root.toString();
+        let shown = this.shownByRoot.get(key);
+        if (!shown) {
+            shown = this.fileService.read(root.resolve(SETTINGS_PATH))
+                .then(content => shownExtensionsFrom(JSON.parse(content.value)))
+                .catch(() => shownExtensionsFrom(undefined));
+            this.shownByRoot.set(key, shown);
+        }
+        return shown;
     }
 
     async toggleMode(): Promise<void> {
@@ -119,6 +176,11 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
     }
 
     protected handleFilesChanged(event: FileChangesEvent): void {
+        // A project's Files shown changed: its whole tree is filtered anew.
+        if (event.changes.some(change => change.resource.path.toString().endsWith('/' + SETTINGS_PATH))) {
+            this.shownByRoot.clear();
+            this.firePresentationChanged();
+        }
         this.invalidateUris(event.changes.map(change => change.resource));
     }
 

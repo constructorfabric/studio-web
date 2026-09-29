@@ -89,9 +89,11 @@ The proxy must:
 
 Set `STUDIO_TRUST_PROXY=true` only when requests can arrive solely through that
 trusted proxy. `STUDIO_ALLOWED_ORIGINS` is a comma-separated list of bare
-`http://` or `https://` origins. The PoC validates this Studio configuration
-but does not replace Theia's global origin validator, so the proxy must also
-enforce the public origin and host policy. These settings do not implement user
+`http://` or `https://` origins: the portals that may frame the IDE (the
+application page's `frame-ancestors`) and talk to it through the portal bridge.
+Unset, only the IDE's own origin may. It does not yet gate HTTP or WebSocket
+requests (#489), so the proxy must also enforce the public origin and host
+policy. These settings do not implement user
 authentication. `STUDIO_SESSION_TOKEN` is currently configuration-only and
 must not be treated as an authentication mechanism.
 
@@ -107,7 +109,7 @@ They can be set explicitly when deploying:
 | `STUDIO_WORKSPACE_ROOT` | Absolute fixed Workspace root |
 | `STUDIO_REPOSITORY_ROOT` | Absolute root repository path |
 | `STUDIO_DATA_DIR` | Durable operation journal/cache directory |
-| `STUDIO_ALLOWED_ORIGINS` | Optional comma-separated browser origin allowlist |
+| `STUDIO_ALLOWED_ORIGINS` | Optional comma-separated portal origins that may frame the IDE; unset = its own origin |
 | `STUDIO_TRUST_PROXY` | Trust forwarded host information (`true`/`false`) |
 | `STUDIO_GIT_MODE` | `disabled`, `commit`, or `push` |
 | `STUDIO_GIT_BRANCH` | Required branch for mutation modes |
@@ -147,12 +149,19 @@ dangling CPT uses while adding only the repository locations and freshness
 metadata needed by Theia. Missing canonical positions remain absent so the
 frontend can apply its own deterministic layout.
 
-The backend resolves the map command in this order:
+The backend resolves the map command in this order (`studio/src/node/cfs-command.ts`,
+shared with the kit installer, which runs the first of them):
 
 1. the exact executable set in `STUDIO_CFS_COMMAND`, when provided;
-2. `cfs` from the backend process `PATH`;
-3. the Workspace-local `.cf-studio/.core/skills/studio/scripts/studio.py`
-   through `python3`, when present.
+2. on a desktop, the Constructor Studio CLI extension (`studio-cli/`) in
+   `STUDIO_CFS_RUNTIME`, once it has been fetched: its own Python, home and
+   pinned engine;
+3. `cfs` from the backend process `PATH`;
+4. the Workspace-local `.cf-studio/.core/skills/studio/scripts/studio.py`
+   through `python3`, or `python` then `py -3` on Windows, when present.
+
+The `cfs` version and its skill engine are pinned in `theia/cfs.json`; the
+session image installs exactly those, and so does the desktop's CLI extension.
 
 Each candidate must support `map --help`; its `--version` output is recorded
 with the cached snapshot. Studio launches the selected executable directly,
@@ -222,7 +231,10 @@ finished; it does not say what it touched, and the alternative was a terminal
 and `git status` in a panel that exists so you do not need one.
 
 Requirements: an `orca` binary and a reachable runtime. The binary is looked up
-as `$ORCA_CLI`, then the desktop install for the platform, then `orca` on PATH.
+as `$ORCA_CLI`, then Orca's install locations and shell-command links for the
+platform, then `orca`/`orca-ide` on PATH, and resolved to an absolute path
+(the full order, and what the panel says in each failure state, is in
+[docs/desktop-studio.md › Agent development](../docs/desktop-studio.md#agent-development-orca)).
 A session container should set `ORCA_CLI` and run `orca serve --json
 --project-root <workspace>` beside the IDE; on a developer machine the desktop
 app already provides one.
@@ -235,7 +247,10 @@ so the backend subscribes to the terminal on the runtime's WebSocket
 (`resources/app.asar.unpacked/out/shared`). That socket takes a paired device:
 the entrypoint lifts the pairing offer `serve --json` prints into
 `$STUDIO_ORCA_PAIRING_FILE`. Elsewhere, `STUDIO_ORCA_PAIRING_URL` takes an
-`orca://pair?code=…` offer directly.
+`orca://pair?code=…` offer directly. With neither, off a session (a desktop
+IDE beside the Orca app), the first **Open** asks for the link Orca
+generates under *Settings → Pair another Orca client → This computer*, and
+keeps it in `~/ConstructorStudio/orca-pairing`.
 
 ### Running the Orca runtime in a container (cluster notes)
 
@@ -325,7 +340,10 @@ against 3.7 GB) and an Electron process per session. `STUDIO_ORCA_VERSION=`
 at build time, or `STUDIO_ORCA_ENABLED=false` at deploy time, opts out of
 either half.
 
-Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
+Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca src/common/orca src/browser/orca`.
+`orca-discovery.test.ts` covers finding the executable on each platform,
+`orca-availability.test.ts` what the panel says in each state, and
+`orca-worktree-groups.test.ts` the grouping by repository.
 `orca-service.test.ts` is offline (fixtures are trimmed real payloads);
 `orca-live.acceptance.test.ts` drives a real runtime when one is available and
 stands down otherwise.

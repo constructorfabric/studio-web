@@ -1,0 +1,241 @@
+/* The desktop Studio view (desktop-studio-widget.tsx). Every rule is scoped to
+   `.studio-desktop`, which only the desktop renders: a browser session loads
+   this file and matches nothing. The product's variables (`--studio-*`) are
+   used where product-ext defines them, the IDE theme's otherwise. */
+
+.studio-desktop {
+    --sd-muted: var(--studio-muted, var(--theia-descriptionForeground));
+    --sd-line: var(--studio-line, var(--theia-sideBarSectionHeader-border, var(--theia-panel-border)));
+    --sd-accent: var(--studio-accent, var(--theia-textLink-foreground));
+    --sd-hover: var(--theia-list-hoverBackground);
+    --sd-surface: color-mix(in srgb, var(--theia-sideBar-background) 94%, var(--theia-foreground) 6%);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 12px 12px 16px;
+    line-height: 1.45;
+    font-size: var(--theia-ui-font-size1, 13px);
+    color: var(--theia-sideBar-foreground, var(--theia-foreground));
+}
+
+.studio-desktop p { margin: 0; }
+.studio-desktop__muted { color: var(--sd-muted); }
+.studio-desktop__error { color: var(--theia-errorForeground); overflow-wrap: anywhere; }
+.studio-desktop__title { margin: 0; font-size: 1.1em; font-weight: 600; }
+.studio-desktop .codicon { vertical-align: text-bottom; }
+
+/* --- account ------------------------------------------------------------- */
+.studio-desktop__account {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--sd-line);
+}
+.studio-desktop__studio,
+.studio-desktop__who {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.studio-desktop__studio .codicon,
+.studio-desktop__who .codicon { color: var(--sd-muted); flex: none; }
+.studio-desktop__host {
+    color: var(--sd-muted);
+    font-size: 0.92em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.studio-desktop__name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.studio-desktop__links {
+    display: flex;
+    gap: 14px;
+    padding-left: 22px;
+    font-size: 0.92em;
+}
+.studio-desktop__link {
+    all: unset;
+    cursor: pointer;
+    color: var(--sd-accent);
+}
+.studio-desktop__link:hover { text-decoration: underline; }
+.studio-desktop__link:focus-visible,
+.studio-desktop__icon-button:focus-visible {
+    outline: 1px solid var(--theia-focusBorder);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.studio-desktop__picker { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.studio-desktop__picker .theia-select { width: 100%; }
+.studio-desktop__picker-custom { display: flex; gap: 4px; }
+.studio-desktop__picker-custom .theia-input { flex: 1; min-width: 0; }
+.studio-desktop__label { color: var(--sd-muted); font-size: 0.92em; }
+
+/* --- the open project ---------------------------------------------------- */
+.studio-desktop__card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border: 1px solid var(--sd-line);
+    border-left: 2px solid var(--sd-accent);
+    border-radius: 4px;
+    background: var(--sd-surface);
+}
+.studio-desktop__card--empty { border-left-color: var(--sd-line); }
+.studio-desktop__eyebrow {
+    color: var(--sd-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.studio-desktop__card-title {
+    font-size: 1.08em;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.studio-desktop__card-title .codicon { color: var(--sd-muted); }
+.studio-desktop__card-path,
+.studio-desktop__card-meta {
+    color: var(--sd-muted);
+    font-size: 0.92em;
+    overflow-wrap: anywhere;
+}
+.studio-desktop__card-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.studio-desktop__sep { opacity: 0.7; }
+.studio-desktop__hint {
+    color: var(--sd-muted);
+    font-size: 0.85em;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+/* On a row the name wins the space: the hint gives way first. */
+.studio-desktop__row .studio-desktop__hint {
+    flex: 0 1000 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.studio-desktop__small-button.theia-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: 2px 10px;
+    align-self: flex-start;
+}
+.studio-desktop__wide-button.theia-button { width: 100%; margin: 4px 0 0; }
+
+.studio-desktop__progress { margin-top: 6px; font-size: 0.9em; color: var(--sd-muted); }
+.studio-desktop__progress-source { margin-top: 4px; }
+.studio-desktop__progress-line { display: flex; justify-content: space-between; gap: 8px; }
+.studio-desktop__bar {
+    height: 3px;
+    margin-top: 2px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+}
+.studio-desktop__bar > div {
+    height: 100%;
+    background: var(--theia-progressBar-background, var(--theia-focusBorder));
+    transition: width 0.3s;
+}
+
+/* --- the tree ------------------------------------------------------------ */
+.studio-desktop__projects { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.studio-desktop__projects-head { display: flex; align-items: center; justify-content: space-between; }
+.studio-desktop__section-head {
+    margin: 0;
+    color: var(--sd-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.studio-desktop__icon-button {
+    all: unset;
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 3px;
+    color: var(--sd-muted);
+}
+.studio-desktop__icon-button:hover { background: var(--sd-hover); color: var(--theia-foreground); }
+.studio-desktop__icon-button[disabled] { opacity: 0.4; cursor: default; }
+
+.studio-desktop__filter { position: relative; }
+.studio-desktop__filter > .codicon {
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--sd-muted);
+    pointer-events: none;
+}
+.studio-desktop__filter .theia-input { width: 100%; box-sizing: border-box; padding-left: 24px; }
+
+.studio-desktop__tree { display: flex; flex-direction: column; margin: 0 -6px; }
+.studio-desktop__row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 22px;
+    padding-right: 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+}
+.studio-desktop__row:hover { background: var(--sd-hover); }
+.studio-desktop__row:focus-visible,
+.studio-desktop__row:focus {
+    outline: 1px solid var(--theia-focusBorder);
+    outline-offset: -1px;
+}
+.studio-desktop__twisty { flex: none; width: 16px; color: var(--sd-muted); }
+.studio-desktop__icon { flex: none; color: var(--sd-muted); }
+.studio-desktop__row--organization .studio-desktop__icon,
+.studio-desktop__row--here .studio-desktop__icon { color: var(--theia-foreground); }
+.studio-desktop__row-name {
+    flex: 0 1 auto;
+    min-width: 3em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.studio-desktop__row--organization .studio-desktop__row-name { font-weight: 600; }
+.studio-desktop__row--here .studio-desktop__row-name { font-weight: 600; }
+.studio-desktop__row--empty .studio-desktop__row-name,
+.studio-desktop__row--empty .studio-desktop__icon { color: var(--sd-muted); }
+.studio-desktop__row-meta {
+    flex: none;
+    margin-left: auto;
+    padding-left: 8px;
+    color: var(--sd-muted);
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+.studio-desktop__row-meta .codicon { font-size: 12px; margin-right: 2px; }
+.studio-desktop__row--here .studio-desktop__row-meta { color: var(--sd-accent); }
+.studio-desktop__row-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 0 6px 4px;
+    color: var(--sd-muted);
+    font-size: 0.88em;
+}
+.studio-desktop__row-note--error { color: var(--theia-errorForeground); }
+.studio-desktop__row-note--error > span { flex: 1; overflow-wrap: anywhere; }

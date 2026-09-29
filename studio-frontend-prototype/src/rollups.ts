@@ -27,7 +27,7 @@
  *   * one failure costs one number, not the row;
  *   * counts come from the store's `total`, never from `length`.
  */
-import { api } from "./api";
+import { api, type RollupRow } from "./api";
 
 /** What one workspace contains. */
 export interface WorkspaceRollup {
@@ -45,19 +45,31 @@ export interface ProjectRollup {
   repos: number | null;
 }
 
+/** A project as the portfolio answer carries it: the three counts every screen
+ *  reads, and the whole row for the projects table, which reads the rest. */
+export type PortfolioProject = ProjectRollup & {
+  name: string;
+  parentId: string | null;
+  row: RollupRow;
+};
+
 /** Every workspace and project the caller can see, counted, in ONE request.
  *
  *  Returns the rows as the server groups them: workspaces carry `projects`,
  *  projects carry the rest and name their parent. A caller that wants a tree
  *  builds it from `parentId` rather than asking again for parentage this call
  *  already walked. */
-export async function portfolioRollups(token: string): Promise<{
+export async function portfolioRollups(
+  token: string,
+  /** Only this workspace and its projects — what one workspace's table needs. */
+  workspaceId?: string,
+): Promise<{
   workspaces: Map<string, WorkspaceRollup & { name: string }>;
-  projects: Map<string, ProjectRollup & { name: string; parentId: string | null }>;
+  projects: Map<string, PortfolioProject>;
 }> {
   const workspaces = new Map<string, WorkspaceRollup & { name: string }>();
-  const projects = new Map<string, ProjectRollup & { name: string; parentId: string | null }>();
-  const page = await api.rollups(token);
+  const projects = new Map<string, PortfolioProject>();
+  const page = await api.rollups(token, undefined, workspaceId);
   for (const row of page.items ?? []) {
     if (row.kind === "workspace") {
       workspaces.set(row.id, { name: row.name, projects: row.projects ?? null });
@@ -68,6 +80,7 @@ export async function portfolioRollups(token: string): Promise<{
         documents: row.documents ?? null,
         findings: row.findings ?? null,
         repos: row.repos ?? null,
+        row,
       });
     }
   }

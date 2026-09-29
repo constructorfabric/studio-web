@@ -8,14 +8,18 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use axum::{Extension, Router};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
+use futures_util::StreamExt;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::refresh::{self, Upstream};
 use super::sources::{self, Service, Source};
+use crate::connectors::service::ConnectorService;
 use crate::pagination::{PageQuery, page_of};
 
 struct License;
@@ -57,6 +61,12 @@ pub struct GitProxy {
     pub authn: Arc<dyn AuthNResolverClient>,
     pub account_management: Arc<dyn AccountManagementClient>,
     pub credstore: Arc<dyn CredStoreClientV1>,
+    /// The connection catalogue, read (never written) to find what a pushed
+    /// repository syncs through.
+    pub connectors: Arc<ConnectorService>,
+    /// Where the task queue is found when a push has a sync to queue — per
+    /// push, so this gear does not care whether `studio-tasks` booted first.
+    pub hub: Arc<ClientHub>,
 }
 
 impl GitProxy {
@@ -82,6 +92,134 @@ impl GitProxy {
             .ok_or_else(|| format!("the token '{token_ref}' is not readable"))?;
         String::from_utf8(secret.value.as_bytes().to_vec())
             .map_err(|_| format!("the token '{token_ref}' is not UTF-8"))
+    }
+}
+
+impl GitProxy {
+    /// Queue a sync of every project source the push went to (ADR-0027 phase
+    /// 2). Best effort and after the fact: the push has already succeeded, so
+    /// a sync that cannot be queued is logged, never answered.
+    async fn refresh_after_push(&self, ctx: &SecurityContext, project_id: Uuid, pushed: &Source) {
+        let workspace_id = self
+            .account_management
+            .get_tenant(ctx, project_id)
+            .await
+            .ok()
+            .and_then(|t| t.parent_id)
+            .map(|p| p.0);
+        let mut runs = Vec::new();
+
+        // The source that was pushed to is in the workspace's settings, which
+        // both portals write and every session clones from: its URL names the
+        // repository and its `token_ref` names the connection.
+        if let (Some(token_ref), Some(repo_path)) = (
+            pushed.token_ref.as_deref(),
+            crate::connectors::repo_path_of(&pushed.url),
+        ) && let Some((_, c)) = self
+            .connectors
+            .by_secret_ref(ctx, project_id, token_ref)
+            .await
+        {
+            runs.push(refresh::run_for(
+                project_id,
+                workspace_id,
+                &repo_path,
+                &Upstream {
+                    provider: c.provider,
+                    base_url: c.base_url,
+                    secret_ref: c.secret_ref,
+                },
+            ));
+        }
+
+        // A project the portal created also records its sources in its config,
+        // with the connection by id. Read too, for a source whose settings entry
+        // carries no token reference.
+        if let Ok(entry) = self
+            .account_management
+            .get_metadata(
+                ctx,
+                project_id,
+                gts::GtsTypeId::new(refresh::PROJECT_CONFIG_TYPE),
+            )
+            .await
+        {
+            let sources = refresh::project_sources(&entry.value);
+            let mut connections = std::collections::HashMap::new();
+            for source in sources
+                .iter()
+                .filter(|s| refresh::same_repository(&s.clone_url, &pushed.url))
+            {
+                if let Some((_, c)) = self
+                    .connectors
+                    .nearest_by_id(ctx, project_id, source.connection_id)
+                    .await
+                {
+                    connections.insert(
+                        c.id,
+                        Upstream {
+                            provider: c.provider,
+                            base_url: c.base_url,
+                            secret_ref: c.secret_ref,
+                        },
+                    );
+                }
+            }
+            runs.extend(refresh::runs_for_push(
+                project_id,
+                workspace_id,
+                &sources,
+                &connections,
+                &pushed.url,
+            ));
+        }
+
+        // The same sync found both ways is one sync.
+        let mut seen = std::collections::HashSet::new();
+        runs.retain(|run| seen.insert(run.partition_key()));
+        if runs.is_empty() {
+            tracing::info!(%project_id, source = %pushed.name, "studio-git: the pushed source names no connection this member can see; nothing re-synced");
+            return;
+        }
+        let Ok(queue) = self
+            .hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+        else {
+            tracing::warn!(%project_id, "studio-git: no task queue, so a push cannot re-sync the server's checkout");
+            return;
+        };
+        for run in runs {
+            let partition_key = run.partition_key();
+            let repo = run.repo_full_path.clone();
+            let Ok(payload) = serde_json::to_value(run) else {
+                continue;
+            };
+            let queued = queue
+                .enqueue(
+                    ctx,
+                    crate::tasks::service::NewRun {
+                        tenant: ctx.subject_tenant_id(),
+                        task_type: crate::artifact_ingest::INGEST_TASK_TYPE,
+                        payload,
+                        partition_key: Some(&partition_key),
+                        idempotency_key: None,
+                        // The project's IDE session, if one is open, hears that
+                        // its sources moved — as after a Re-sync in the portal.
+                        notify_workspace_id: Some(project_id),
+                    },
+                )
+                .await;
+            match queued {
+                Ok(run_id) => {
+                    tracing::info!(%project_id, repo, %run_id, "studio-git: a push re-syncs the server's checkout");
+                }
+                Err(error) => {
+                    tracing::warn!(%project_id, repo, error = %format!("{error:#}"), "studio-git: a push could not queue its re-sync");
+                }
+            }
+        }
     }
 }
 
@@ -160,7 +298,7 @@ async fn list_sources(
 
 /// A plain-text protocol failure. `git` prints the body to the user, so it says
 /// what to do rather than what went wrong inside.
-fn refuse(status: StatusCode, message: &str) -> Response {
+pub(crate) fn refuse(status: StatusCode, message: &str) -> Response {
     let mut response = Response::new(Body::from(format!("{message}\n")));
     *response.status_mut() = status;
     response.headers_mut().insert(
@@ -178,6 +316,16 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 }
 
 async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityContext, Response> {
+    authenticate_member(proxy.authn.as_ref(), headers).await
+}
+
+/// The member a Git request comes from: the Studio token it carries (see
+/// [`sources::presented_token`]), resolved like any API token. A refusal is
+/// already the answer `git` needs, 401 with the Basic challenge.
+pub(crate) async fn authenticate_member(
+    authn: &dyn AuthNResolverClient,
+    headers: &HeaderMap,
+) -> Result<SecurityContext, Response> {
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -187,7 +335,7 @@ async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityC
             "Sign in to Constructor Studio: this remote takes your Studio token.",
         ));
     };
-    match proxy.authn.authenticate(&token).await {
+    match authn.authenticate(&token).await {
         Ok(result) => Ok(result.security_context),
         Err(error) => {
             tracing::debug!(%error, "studio-git: token refused");
@@ -201,7 +349,7 @@ async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityC
 
 /// Authenticate, find the source, and send one protocol request upstream.
 async fn forward(
-    proxy: &GitProxy,
+    proxy: &Arc<GitProxy>,
     workspace_id: Uuid,
     source: &str,
     protocol_path: &str,
@@ -244,6 +392,65 @@ async fn forward(
         },
     };
 
+    let (status, response, answer) = match send_upstream(
+        &proxy.client,
+        &url,
+        protocol_path,
+        service,
+        token.as_deref(),
+        request,
+        "The source host refused the workspace's token; ask an owner to update the connection.",
+    )
+    .await
+    {
+        Ok(sent) => sent,
+        Err(refused) => {
+            tracing::warn!(%workspace_id, source, "studio-git: the source host did not serve the request");
+            return refused;
+        }
+    };
+    let stream = answer.bytes_stream();
+    let body = if refresh::reports_a_push(protocol_path, status) {
+        // The push report is the last thing the source host sends, after its
+        // refs have moved, so the sync is queued once `git` has read it all:
+        // a sync queued any earlier could fetch the tree from before the push.
+        let proxy = Arc::clone(proxy);
+        let pushed = found.clone();
+        let reported = futures_util::stream::once(async move {
+            tokio::spawn(async move {
+                proxy.refresh_after_push(&ctx, workspace_id, &pushed).await;
+            });
+        })
+        .filter_map(|()| {
+            futures_util::future::ready(None::<Result<axum::body::Bytes, reqwest::Error>>)
+        });
+        Body::from_stream(stream.chain(reported))
+    } else {
+        Body::from_stream(stream)
+    };
+    response.body(body).unwrap_or_else(|_| {
+        refuse(
+            StatusCode::BAD_GATEWAY,
+            "The source host sent an unreadable answer.",
+        )
+    })
+}
+
+/// Send one smart-HTTP request to `url` (the source's `…/info/refs` or
+/// `…/git-*-pack`), with `token` as the upstream credential, and hand back the
+/// answer's status, a response carrying its protocol headers, and the answer
+/// to stream. A source host that refuses the token is answered 403 with
+/// `refused`: passing its 401 through would make `git` ask for credentials to
+/// *this* host again, which cannot help.
+pub(crate) async fn send_upstream(
+    client: &reqwest::Client,
+    url: &str,
+    protocol_path: &str,
+    service: Service,
+    token: Option<&str>,
+    request: Request,
+    refused: &str,
+) -> Result<(u16, axum::http::response::Builder, reqwest::Response), Response> {
     let (parts, body) = request.into_parts();
     let method = if parts.method == axum::http::Method::POST {
         reqwest::Method::POST
@@ -255,13 +462,13 @@ async fn forward(
     } else {
         String::new()
     };
-    let mut upstream = proxy.client.request(method, format!("{url}{query}"));
+    let mut upstream = client.request(method, format!("{url}{query}"));
     for name in &FORWARD_REQUEST {
         if let Some(value) = parts.headers.get(name) {
             upstream = upstream.header(name.as_str(), value.as_bytes());
         }
     }
-    if let Some(token) = &token {
+    if let Some(token) = token {
         upstream = upstream.header(
             reqwest::header::AUTHORIZATION,
             sources::upstream_authorization(token),
@@ -275,22 +482,20 @@ async fn forward(
         Ok(answer) => answer,
         Err(error) => {
             // The URL is not logged: a source URL may embed credentials of its own.
-            tracing::warn!(%workspace_id, source, error = %error.without_url(), "studio-git: upstream unreachable");
-            return refuse(
+            tracing::warn!(error = %error.without_url(), "studio-git: upstream unreachable");
+            return Err(refuse(
                 StatusCode::BAD_GATEWAY,
                 "The source host could not be reached.",
-            );
+            ));
         }
     };
     let status = answer.status().as_u16();
     if status == 401 || status == 403 {
-        // Passing a 401 through would make `git` ask for credentials to THIS
-        // host again, which cannot help: it is the stored token that failed.
-        tracing::warn!(%workspace_id, source, status, "studio-git: the source host refused the stored token");
-        return refuse(
-            StatusCode::FORBIDDEN,
-            "The source host refused the workspace's token; ask an owner to update the connection.",
+        tracing::warn!(
+            status,
+            "studio-git: the source host refused the stored token"
         );
+        return Err(refuse(StatusCode::FORBIDDEN, refused));
     }
     let mut response =
         Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
@@ -299,6 +504,14 @@ async fn forward(
             response = response.header(name, value.as_bytes());
         }
     }
+    Ok((status, response, answer))
+}
+
+/// The upstream answer streamed back as it arrives, nothing buffered.
+pub(crate) fn stream_back(
+    response: axum::http::response::Builder,
+    answer: reqwest::Response,
+) -> Response {
     response
         .body(Body::from_stream(answer.bytes_stream()))
         .unwrap_or_else(|_| {

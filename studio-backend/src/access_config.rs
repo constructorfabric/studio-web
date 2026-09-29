@@ -34,6 +34,8 @@ pub const ACCESS_METADATA_TYPE: &str =
 const SUBJECT_MEMBER: &str = "member";
 /// `scopeType` for a grant covering a whole organization.
 const SCOPE_ORG: &str = "org";
+/// `scopeType` for a grant covering one project of the organization.
+const SCOPE_PROJECT: &str = "project";
 /// The role key that makes somebody an owner.
 pub const ROLE_OWNER: &str = "owner";
 
@@ -118,6 +120,10 @@ struct GrantDef {
     role_key: String,
     #[serde(rename = "scopeType")]
     scope_type: String,
+    /// The project a `project`-scoped grant covers. Unread for `org` grants,
+    /// whose scope is the document's own organization.
+    #[serde(rename = "scopeId", default)]
+    scope_id: Option<String>,
 }
 
 impl AccessConfig {
@@ -168,6 +174,28 @@ impl AccessConfig {
         })
     }
 
+    /// The subjects a member grant places on `project_id`: every
+    /// organization-wide grant, and every grant scoped to that project.
+    ///
+    /// The same set the prototype's project Team screen lists
+    /// (`grantsForProject` in `people.tsx`): under the roles model a project's
+    /// team is exactly who holds a role there. Team grants are left out, as
+    /// they are there — a team is not a person.
+    pub fn subjects_granted_on_project<'a>(
+        &'a self,
+        project_id: &'a str,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        self.grants
+            .iter()
+            .filter(move |g| {
+                g.subject_type == SUBJECT_MEMBER
+                    && (g.scope_type == SCOPE_ORG
+                        || (g.scope_type == SCOPE_PROJECT
+                            && g.scope_id.as_deref() == Some(project_id)))
+            })
+            .map(|g| g.subject_id.as_str())
+    }
+
     /// Does the named role carry `privilege`?
     ///
     /// An owner's authority is definitional rather than looked up (ADR-0019 §7):
@@ -201,6 +229,28 @@ pub async fn read(
     {
         Ok(Some(entry)) => serde_json::from_value(entry.value).unwrap_or_default(),
         _ => AccessConfig::default(),
+    }
+}
+
+/// Read an organization's access config, or `None` when it could not be read.
+///
+/// [`read`] folds a failed read into "no grants", which is right for a
+/// decision: it denies. It is wrong for a count, where "nobody holds a grant"
+/// and "nobody could tell me" must stay two answers. An organization with no
+/// document at all is on the `tenant` model, which is a known answer, so it
+/// reads as the default document rather than as `None`.
+pub async fn try_read(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    tenant_id: Uuid,
+) -> Option<AccessConfig> {
+    match am
+        .resolve_metadata(ctx, tenant_id, GtsTypeId::new(ACCESS_METADATA_TYPE))
+        .await
+    {
+        Ok(Some(entry)) => serde_json::from_value(entry.value).ok(),
+        Ok(None) => Some(AccessConfig::default()),
+        Err(_) => None,
     }
 }
 
@@ -390,6 +440,30 @@ mod tests {
                 "an owner was denied {privilege} because the document omits the role"
             );
         }
+    }
+
+    #[test]
+    fn a_project_is_granted_to_org_wide_grants_and_its_own_only() {
+        let cfg = roles_doc(serde_json::json!([
+            grant("ada", "owner", "org"),
+            { "subjectType": "member", "subjectId": "bob", "roleKey": "editor",
+              "scopeType": "project", "scopeId": "p1" },
+            { "subjectType": "member", "subjectId": "cy", "roleKey": "editor",
+              "scopeType": "project", "scopeId": "p2" },
+            { "subjectType": "team", "subjectId": "t", "roleKey": "editor",
+              "scopeType": "project", "scopeId": "p1" },
+        ]));
+        let on = |p: &'static str| cfg.subjects_granted_on_project(p).collect::<Vec<_>>();
+        assert_eq!(on("p1"), vec!["ada", "bob"]);
+        assert_eq!(on("p2"), vec!["ada", "cy"]);
+        assert_eq!(on("p3"), vec!["ada"]);
+    }
+
+    /// A project grant with no `scopeId` names no project, so it covers none.
+    #[test]
+    fn a_project_grant_without_a_scope_id_covers_no_project() {
+        let cfg = roles_doc(serde_json::json!([grant("bob", "editor", "project")]));
+        assert_eq!(cfg.subjects_granted_on_project("p1").count(), 0);
     }
 
     /// A grant about one project is not authority over the organization.

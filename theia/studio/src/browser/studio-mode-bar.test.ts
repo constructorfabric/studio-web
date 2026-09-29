@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
-import { ARCHITECT_PERSPECTIVE_ID, MODES, roleOf } from './studio-mode-bar';
+import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, ribbonAction, roleOf } from './studio-mode-bar';
 
 describe('Studio modes', () => {
     it('names the modes by the work, one perspective each', () => {
@@ -51,5 +51,53 @@ describe('Studio modes', () => {
                 }
             }
         }
+    });
+});
+
+describe('ribbonAction', () => {
+    const action = { command: 'gearbox.product.show', title: 'The product: composition, topology, validation' };
+
+    function registry(opts: { registered: boolean; enabled: boolean; handlers?: object[] }): RibbonCommands {
+        return {
+            getCommand: id => (opts.registered ? { id } : undefined),
+            isEnabled: () => opts.enabled,
+            getAllHandlers: () => opts.handlers ?? [],
+        };
+    }
+
+    it('leaves out an action whose command this build does not have', () => {
+        expect(ribbonAction(registry({ registered: false, enabled: false }), action)).toBeUndefined();
+    });
+
+    it('draws an enabled action with its own title', () => {
+        expect(ribbonAction(registry({ registered: true, enabled: true }), action)).toEqual({ enabled: true, title: action.title });
+    });
+
+    it('draws a registered but disabled action disabled, saying why when a handler can', () => {
+        const handlers = [
+            { execute: () => undefined },
+            { execute: () => undefined, disabledReason: () => 'Open or create a product first' },
+        ];
+        const state = ribbonAction(registry({ registered: true, enabled: false, handlers }), action);
+        expect(state?.enabled).toBe(false);
+        expect(state?.title).toBe(`${action.title} — Open or create a product first`);
+    });
+
+    it('still says it is unavailable when no handler explains', () => {
+        const handlers = [{ execute: () => undefined, disabledReason: () => undefined }];
+        const state = ribbonAction(registry({ registered: true, enabled: false, handlers }), action);
+        expect(state).toEqual({ enabled: false, title: `${action.title} — not available right now` });
+    });
+
+    it('asks the enablement and the reason with the action\'s own arguments', () => {
+        const isEnabled = jest.fn((_id: string, ..._args: unknown[]) => false);
+        const disabledReason = jest.fn((section: string) => `no ${section}`);
+        const state = ribbonAction(
+            { getCommand: () => ({}), isEnabled, getAllHandlers: () => [{ disabledReason }] },
+            { ...action, args: ['composition'] },
+        );
+        expect(isEnabled).toHaveBeenCalledWith(action.command, 'composition');
+        expect(disabledReason).toHaveBeenCalledWith('composition');
+        expect(state?.title).toContain('no composition');
     });
 });

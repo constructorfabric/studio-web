@@ -1,4 +1,5 @@
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,6 +7,8 @@ import * as express from '@theia/core/shared/express';
 import { injectable } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
+import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
+import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
@@ -45,14 +48,18 @@ export interface DesktopStudioConfig {
 export interface DesktopSettings {
     readonly environment?: string;
     readonly custom?: { readonly studioUrl: string; readonly issuer?: string };
-    /** Which updates the app takes: `beta` adds pre-releases. Read by the
-     *  electron main process (electron-app/desktop-updater.js), not here. */
+    /** Which updates the app took before the choice moved to Settings
+     *  (`studio.desktop.updateChannel`). Read once by the desktop frontend,
+     *  which copies it into the preference and then removes it from here. */
     readonly updates?: 'stable' | 'beta';
     /** Which Studio tenant each folder was opened for, keyed by the folder.
      *  The folder is named after the workspace, not its id, and a session's
      *  handshake is not there to say it — so without this a window in the
      *  folder cannot tell Studio which project it is looking at. */
     readonly opened?: Readonly<Record<string, OpenedFolder>>;
+    /** This installation's id, which keys its desktop sessions in Studio.
+     *  Drawn once and kept, so a restart renews the leases it had. */
+    readonly deviceId?: string;
 }
 
 /** What a folder opened from the Studio view was cloned for. */
@@ -151,6 +158,11 @@ function openInBrowser(url: string, command?: string): void {
     spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
+/** The gateway a Studio Git remote is rooted at, while signed in (`https://studio.example/cf`). */
+export const GIT_BASE_ENV = 'STUDIO_DESKTOP_GIT_BASE';
+/** The `credential.helper` value that signs a request to it with the member's token. */
+export const GIT_HELPER_ENV = 'STUDIO_DESKTOP_GIT_HELPER';
+
 /**
  * The credential helper script. Resolved through the package, because in a
  * bundled app `__dirname` is the bundle's directory, not this package's.
@@ -178,15 +190,28 @@ export function folderFor(name: string | undefined, id: string): string {
     return safe || id;
 }
 
+/**
+ * Why a project's sources could not be listed, from a 404 of `studio-git`:
+ * `named` when the gear itself answered (its problem names the project),
+ * `visible` when the member can read the project tenant nonetheless.
+ */
+export function missingSourcesMessage(studioUrl: string, named: boolean, visible: boolean): string {
+    if (!named) {
+        // Any other 404 is the gateway's: this Studio runs no studio-git.
+        return `${studioUrl} cannot clone for a desktop yet (it runs no studio-git)`;
+    }
+    return visible
+        ? 'it has no sources yet: add a repository to it in the portal (Sources), then open it again'
+        : 'you cannot see this project\'s settings';
+}
+
 /** What the IDE's Studio view shows; never a token. */
 export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly enabled: boolean;
     readonly studioUrl?: string;
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     readonly error?: string;
-    readonly user?: { readonly sub: string; readonly name?: string; readonly tenantId?: string };
-    /** The update channel the member chose. */
-    readonly updates: 'stable' | 'beta';
+    readonly user?: { readonly sub: string; readonly name?: string; readonly email?: string; readonly tenantId?: string };
 }
 
 function claimsOf(accessToken: string): Record<string, unknown> {
@@ -223,6 +248,30 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected broker: TokenBroker | undefined;
     protected ready: Promise<void> | undefined;
     protected status: DesktopStatus = this.describe('signed-out');
+    protected readonly leases = new DesktopLeases();
+
+    /** The open in progress, or the last one, for the Studio view to draw. */
+    protected openProgress: OpenProgress | undefined;
+
+    /** Where this desktop's leases go, while it is signed in. */
+    protected leaseTarget(): LeaseTarget | undefined {
+        const session = this.session;
+        if (!this.config || !session) {
+            return undefined;
+        }
+        let deviceId = this.settings.deviceId;
+        if (!deviceId) {
+            deviceId = randomUUID();
+            this.saveSettings({ ...this.settings, deviceId });
+        }
+        return {
+            studioUrl: this.config.studioUrl,
+            gatewayPrefix: this.config.gatewayPrefix,
+            accessToken: () => session.accessToken(),
+            deviceId,
+            deviceName: os.hostname(),
+        };
+    }
 
     /** The status for the current Studio, in the given state and signed out of any other. */
     protected describe(state: DesktopStatus['state'], extra: Partial<DesktopStatus> = {}): DesktopStatus {
@@ -234,9 +283,6 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             current,
             switchable: !this.offered.pinned,
             state,
-            // The same default as electron-app/desktop-updater.js: a pre-release
-            // follows betas until the member chooses.
-            updates: this.settings.updates ?? ((process.env.STUDIO_DESKTOP_VERSION ?? '').includes('-') ? 'beta' : 'stable'),
             ...extra,
         };
     }
@@ -250,6 +296,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         } catch (error) {
             console.warn(`[studio-desktop] the settings could not be saved: ${error}`);
         }
+    }
+
+    /** Whether this backend is connected to a Studio: a desktop, never a session. */
+    isEnabled(): boolean {
+        return !!this.config;
     }
 
     configure(app: express.Application): void {
@@ -280,26 +331,36 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             await this.signOut();
             // The update channel is the member's too, and outlives a change of Studio.
             // So is what each folder was opened for: it says which Studio too.
-            this.saveSettings({ ...settings, updates: this.settings.updates, opened: this.settings.opened });
+            // And the device is the same machine whichever Studio it talks to.
+            this.saveSettings({
+                ...settings, updates: this.settings.updates, opened: this.settings.opened, deviceId: this.settings.deviceId,
+            });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
             res.json(this.status);
         });
-        // Which updates the app takes. The electron main process reads the
-        // file before every check, so this needs no restart.
-        app.post('/studio-desktop/updates', express.json(), (req, res) => {
-            const { channel } = (req.body ?? {}) as { channel?: string };
-            if (channel !== 'stable' && channel !== 'beta') {
-                res.status(400).json({ error: 'the channel is stable or beta' });
-                return;
+        // The update channel as the Studio view kept it before the choice
+        // moved to Settings: the desktop frontend copies it into the
+        // preference, then removes it here, so the preference is the only
+        // place it lives (electron-browser/desktop-update-channel.ts).
+        app.get('/studio-desktop/updates', (_req, res) => {
+            const channel = this.settings.updates;
+            res.json({ channel: channel === 'stable' || channel === 'beta' ? channel : null });
+        });
+        app.delete('/studio-desktop/updates', (_req, res) => {
+            if (this.settings.updates !== undefined) {
+                const { updates: _moved, ...rest } = this.settings;
+                this.saveSettings(rest);
             }
-            this.saveSettings({ ...this.settings, updates: channel });
-            this.status = { ...this.status, updates: channel };
-            res.json(this.status);
+            res.status(204).end();
         });
         app.post('/studio-desktop/sign-out', async (_req, res) => {
             await this.signOut();
             res.json(this.status);
+        });
+        // How far the open is: listing the sources, then each one's clone.
+        app.get('/studio-desktop/open-progress', (_req, res) => {
+            res.json(this.openProgress ?? null);
         });
         // Open a workspace: clone what is not on disk yet, answer with the folder.
         app.post('/studio-desktop/open', express.json(), async (req, res) => {
@@ -309,13 +370,17 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 res.status(400).json({ error: this.session ? 'which workspace?' : 'not signed in' });
                 return;
             }
+            this.openProgress = { workspaceId, name: name ?? workspaceId, phase: 'listing', sources: [] };
             try {
                 const dir = path.join(config.workspacesDir, folderFor(name, workspaceId));
                 const cloned = await this.cloneSources(config, workspaceId, dir);
                 this.saveSettings(rememberOpened(this.settings, dir, config.studioUrl, workspaceId));
+                this.openProgress = { ...this.openProgress, phase: 'done' };
                 res.json({ path: dir, cloned });
             } catch (error) {
-                res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+                const message = error instanceof Error ? error.message : String(error);
+                this.openProgress = { ...this.openProgress, phase: 'failed', error: message };
+                res.status(502).json({ error: message });
             }
         });
         // Which tenant a folder is a checkout of — what the Analyze panel asks
@@ -329,6 +394,47 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 return;
             }
             res.json({ tenantId });
+        });
+        // A window showing a folder Studio opened says so every heartbeat, and
+        // this renews the workspace's desktop session. 404 is an answer, as for
+        // `opened`: a folder somebody opened by hand has no workspace to hold.
+        app.post('/studio-desktop/heartbeat', express.json(), async (req, res) => {
+            const root = (req.body as { root?: string } | undefined)?.root ?? '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            if (!tenantId) {
+                res.status(404).json({ error: 'this folder was not opened from Studio' });
+                return;
+            }
+            const target = this.leaseTarget();
+            if (!target) {
+                res.status(503).json({ error: 'not signed in to Constructor Studio' });
+                return;
+            }
+            try {
+                const had = this.leases.open.includes(tenantId);
+                const held = await this.leases.renew(target, tenantId);
+                // Only a change is worth a line; a renewal every 30 s is not.
+                if (held && !had) {
+                    console.info(`[studio-desktop] ${target.studioUrl} sees workspace ${tenantId} open on this device`);
+                } else if (!held && had) {
+                    console.warn(`[studio-desktop] ${target.studioUrl} no longer holds workspace ${tenantId} open for this device`);
+                }
+                res.status(held ? 204 : 409).end();
+            } catch (error) {
+                res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+            }
+        });
+        // The window closed. Another window on the same workspace renews the
+        // lease again on its next heartbeat, so ending it here is never wrong
+        // for longer than one interval.
+        app.post('/studio-desktop/closed', express.json({ type: () => true }), async (req, res) => {
+            const root = (req.body as { root?: string } | undefined)?.root ?? '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            const target = this.leaseTarget();
+            if (tenantId && target) {
+                await this.leases.end(target, tenantId);
+            }
+            res.status(204).end();
         });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {
@@ -380,15 +486,28 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     }
 
     onStop(): void {
+        // Best effort: the process may be gone before Studio answers, and a
+        // lease nobody renews ends on its own there.
+        const target = this.leaseTarget();
+        if (target) {
+            void this.leases.endAll(target);
+        }
         this.broker?.close();
     }
 
     /** Forget the token and stop handing it to git. */
     protected async signOut(): Promise<void> {
+        const target = this.leaseTarget();
+        if (target) {
+            await this.leases.endAll(target);
+        }
+        this.leases.forget();
         this.session = undefined;
         await this.broker?.close();
         this.broker = undefined;
         delete process.env[CREDENTIALS_ENV];
+        delete process.env[GIT_BASE_ENV];
+        delete process.env[GIT_HELPER_ENV];
         this.status = this.describe('signed-out');
     }
 
@@ -423,12 +542,18 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         this.broker = await startTokenBroker(new URL(config.studioUrl).host, () => session.accessToken());
         // Inherited by the plugin host, vscode.git, terminals and agents.
         process.env[CREDENTIALS_ENV] = this.broker.address;
+        // And where Studio's own Git remotes are, with the helper that signs
+        // them: for a clone this contribution does not start itself -- the gear
+        // corpus, which gearbox-studio brings once per machine.
+        process.env[GIT_BASE_ENV] = `${config.studioUrl}${config.gatewayPrefix}`;
+        process.env[GIT_HELPER_ENV] = helperCommand(process.execPath, desktopGitHelper());
         const claims = claimsOf(tokens.accessToken);
         this.status = this.describe('signed-in', {
             user: {
                 sub: String(claims.sub ?? ''),
                 name: typeof claims.name === 'string' ? claims.name
                     : typeof claims.preferred_username === 'string' ? claims.preferred_username : undefined,
+                email: typeof claims.email === 'string' ? claims.email : undefined,
                 tenantId: typeof claims.tenant_id === 'string' ? claims.tenant_id : undefined,
             },
         });
@@ -445,12 +570,15 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             { headers: { Authorization: `Bearer ${await this.session!.accessToken()}` } }
         );
         if (answer.status === 404) {
-            // Our own gear answers 404 as a problem that names the workspace; any
-            // other 404 is the gateway's, meaning this Studio has no studio-git.
             const problem = await answer.json().catch(() => undefined) as { context?: { resource_name?: string } } | undefined;
-            throw new Error(problem?.context?.resource_name
-                ? 'you cannot see this workspace\'s settings'
-                : `${config.studioUrl} cannot clone for a desktop yet (it runs no studio-git)`);
+            const named = !!problem?.context?.resource_name;
+            // studio-git answers the same 404 for "no settings" and "not yours";
+            // whether the project tenant itself can be read tells the two apart.
+            const visible = named && (await fetch(
+                `${config.studioUrl}${config.gatewayPrefix}/account-management/v1/tenants/${encodeURIComponent(workspaceId)}`,
+                { headers: { Authorization: `Bearer ${await this.session!.accessToken()}` } }
+            ).catch(() => undefined))?.ok === true;
+            throw new Error(missingSourcesMessage(config.studioUrl, named, visible));
         }
         if (!answer.ok) {
             throw new Error(`the workspace's sources could not be listed (HTTP ${answer.status})`);
@@ -458,26 +586,76 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         const { items } = await answer.json() as { items: SourceDto[] };
         fs.mkdirSync(root, { recursive: true });
         const cloned: string[] = [];
-        for (const source of items) {
-            const dir = path.resolve(root, source.target ?? source.name);
-            if (fs.existsSync(path.join(dir, '.git'))) {
+        const dirOf = (source: SourceDto) => path.resolve(root, source.target ?? source.name);
+        const states: SourceProgress[] = items.map(source => ({
+            name: source.name,
+            state: fs.existsSync(path.join(dirOf(source), '.git')) ? 'present' : 'waiting',
+        }));
+        const report = (index: number, change: Partial<SourceProgress>) => {
+            states[index] = { ...states[index], ...change };
+            if (this.openProgress?.workspaceId === workspaceId) {
+                this.openProgress = { ...this.openProgress, phase: 'cloning', sources: [...states] };
+            }
+        };
+        if (this.openProgress?.workspaceId === workspaceId) {
+            this.openProgress = { ...this.openProgress, phase: 'cloning', sources: [...states] };
+        }
+        for (const [index, source] of items.entries()) {
+            const dir = dirOf(source);
+            if (states[index].state === 'present') {
                 continue;
             }
+            report(index, { state: 'cloning', percent: 0 });
             const url = `${config.studioUrl}${config.gatewayPrefix}${source.clone_path}`;
             // `-c` on clone is written into the new repository's config: what
             // lands there is the helper's path, never a token.
             const helper = helperCommand(process.execPath, desktopGitHelper());
-            const args = ['clone', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
+            // --progress: git reports only to a terminal otherwise, and this is a pipe.
+            const args = ['clone', '--progress', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
             if (source.branch) {
                 args.push('--branch', source.branch);
             }
             args.push(url, dir);
-            await new Promise<void>((resolve, reject) =>
-                execFile('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, _out, stderr) =>
-                    error ? reject(new Error(`cloning ${source.name} failed: ${stderr.trim()}`)) : resolve()));
+            try {
+                await this.gitClone(args, (stage, percent) => report(index, { stage, percent }));
+            } catch (error) {
+                report(index, { state: 'failed' });
+                throw new Error(`cloning ${source.name} failed: ${error instanceof Error ? error.message : error}`);
+            }
+            report(index, { state: 'done', percent: 100, stage: undefined });
             console.info(`[studio-desktop] cloned ${source.name} into ${dir}`);
             cloned.push(source.name);
         }
         return cloned;
+    }
+
+    /**
+     * Run one `git clone`, handing each progress line on as the stage and the
+     * whole clone's percentage. Rejects with what git said last that was not
+     * progress — the reason, not a bar at 43%.
+     */
+    protected gitClone(args: string[], onProgress: (stage: string, percent: number) => void): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const child = spawn('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, windowsHide: true });
+            let said = '';
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk: string) => {
+                // Progress redraws one line with a carriage return; a chunk may
+                // end mid-line, which only costs one reading of the bar.
+                for (const line of chunk.split(/[\r\n]+/)) {
+                    const progress = parseGitProgress(line);
+                    const percent = progress && clonePercent(progress.stage, progress.percent);
+                    if (progress && percent !== undefined) {
+                        onProgress(progress.stage, percent);
+                    } else if (line.trim()) {
+                        said = `${said}\n${line.trim()}`.slice(-2000);
+                    }
+                }
+            });
+            child.on('error', reject);
+            child.on('close', code => code === 0
+                ? resolve()
+                : reject(new Error(said.trim().split('\n').slice(-3).join(' ') || `git exited with ${code}`)));
+        });
     }
 }

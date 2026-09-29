@@ -66,7 +66,7 @@ export class StudioExplorerFilter extends FileNavigatorFilter implements Fronten
         if (DirNode.is(item)) {
             return this.directoryContainsMarkdown(item.uri);
         }
-        return this.presentation.isMarkdownUri(item.uri);
+        return this.presentation.isShownUri(item.uri);
     }
 
     protected async directoryContainsMarkdown(uri: URI): Promise<boolean> {
@@ -101,7 +101,7 @@ export class StudioExplorerFilter extends FileNavigatorFilter implements Fronten
                 }
                 continue;
             }
-            if (this.presentation.isMarkdownUri(child.resource)) {
+            if (await this.presentation.isShownUri(child.resource)) {
                 return true;
             }
         }
@@ -183,7 +183,7 @@ export class ExplorerModeContribution implements CommandContribution, TabBarTool
         this.toDispose.push(toolbarRegistry.registerItem({
             id: ToggleExplorerModeCommand.id,
             command: ToggleExplorerModeCommand.id,
-            tooltip: nls.localizeByDefault('Toggle Markdown-only Explorer mode'),
+            tooltip: nls.localizeByDefault('Show only documents (the types in Project settings → Files shown), or every file'),
             onDidChange: Event.map(this.presentation.onDidChange, () => undefined),
             priority: 4
         }));

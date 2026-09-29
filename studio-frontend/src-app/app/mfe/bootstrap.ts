@@ -47,6 +47,7 @@ import {
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
+  STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
@@ -147,6 +148,22 @@ export function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string |
     }
   }
   return null;
+}
+
+/** The editor's frame entry (#321). The fixture reads the same property, so the editor's address wins over catalogue order. */
+// TODO(#322): the session gate's address replaces this seed, and the shell stops naming space-mfe.
+const SPACE_FRAME_ENTRY =
+  'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
+
+/** The frame address to seed: `space-mfe`'s when it is in the catalogue, else the first frame entry's. */
+export function seedFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
+  for (const config of manifests) {
+    const space = config.entries.find((entry) => entry.id === SPACE_FRAME_ENTRY) as
+      | { publicPath?: string }
+      | undefined;
+    if (space?.publicPath) return space.publicPath;
+  }
+  return firstFrameUrl(manifests);
 }
 
 export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
@@ -444,6 +461,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
       STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
       STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
     ],
@@ -521,7 +539,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   // Seeded unconditionally, like publishStudioContext above: an MFE requiring
   // this property should read `null`, never `undefined`, even when the
   // catalogue turns out to have no frame entry (or no manifests at all).
-  publishFrameUrl(app, firstFrameUrl(manifests));
+  publishFrameUrl(app, seedFrameUrl(manifests));
 
   if (manifests.length === 0) {
     console.warn(

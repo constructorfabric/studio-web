@@ -1,6 +1,6 @@
 import * as path from 'path';
-import { injectable } from '@theia/core/shared/inversify';
-import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { BackendApplicationContribution, EarlyExpressMiddleware } from '@theia/core/lib/node/backend-application';
 import { StudioRuntimeSession } from '../common/studio-protocol';
 
 export interface StudioOriginCheckRequest {
@@ -204,6 +204,35 @@ function parseGitConfig(env: StudioRuntimeConfigSource): StudioGitConfig {
 @injectable()
 export class StudioRuntimeConfigService implements BackendApplicationContribution {
     protected cachedConfig: StudioRuntimeConfig | undefined;
+
+    @inject(EarlyExpressMiddleware) @optional()
+    protected readonly earlyMiddleware: EarlyExpressMiddleware | undefined;
+
+    /**
+     * `frame-ancestors` on the application page (#324) — the portal origins
+     * the portal bridge talks to, its own origin unless a list is set — early
+     * so it runs before `express.static()` answers. Only that page: webviews
+     * and the drawio runtime keep their own policies. A configuration that
+     * does not load narrows the list to the page's own origin rather than
+     * dropping it.
+     */
+    initialize(): void {
+        this.earlyMiddleware?.handlers.push((req, res, next) => {
+            if (req.path === '/' || req.path === '/index.html') {
+                let ancestors = "'self'";
+                try {
+                    const config = this.getConfig();
+                    if (config.allowedOriginsMode === 'allowlist') {
+                        ancestors = config.allowedOrigins.join(' ');
+                    }
+                } catch {
+                    // keep 'self'
+                }
+                res.setHeader('Content-Security-Policy', `frame-ancestors ${ancestors}`);
+            }
+            next();
+        });
+    }
 
     onStart(): void {
         this.cachedConfig = loadStudioRuntimeConfig();

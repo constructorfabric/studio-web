@@ -69,6 +69,7 @@ const { AI_MENU_CSS, seedClaude } = require('./ai-context');
 const { slotStrip, SLOT_STRIP_CSS } = require('./slot-strip');
 const { railNav, RAIL_NAV_CSS } = require('./rail-nav');
 const { welcomeView, WELCOME_CSS } = require('./welcome-view');
+const welcomeScan = require('./welcome-scan');
 const { statusLine, STATUS_LINE_CSS } = require('./status-line');
 const { ProjectPageWidget, PROJECT_PAGE_CSS } = require('./project-page');
 const { SearchWidget, SEARCH_CSS, SEARCH_WIDGET_ID } = require('./search-view');
@@ -136,6 +137,23 @@ const SEARCH_COMMAND = {
     label: 'Search…',
     category: 'Studio',
     iconClass: 'codicon codicon-search'
+};
+
+/*
+ * A new document in the project that is open. The start page's primary action,
+ * and a command for Connect project's reason: the palette and a key reach it
+ * too.
+ *
+ * Not Theia's `file.newFile`, which offers "Untitled.txt" in whichever folder
+ * the file tree last selected: this product's document is Markdown, and it is
+ * created in the active project with its name as its first heading, so the
+ * page that opens is already a document rather than an empty buffer.
+ */
+const NEW_DOCUMENT_COMMAND = {
+    id: 'studio.document.new',
+    label: 'New document…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-new-file'
 };
 
 // The rail button's DOM id, dot-free for the same reason as the one below.
@@ -1709,7 +1727,10 @@ class ProductChromeContribution {
         // dock rather than a Welcome document, for the reason in welcome-view.js.
         welcomeView.init({
             shell: app.shell,
-            commandRegistry: this.container.get(CommandRegistry)
+            commandRegistry: this.container.get(CommandRegistry),
+            workspaceService: this.container.get(WorkspaceService),
+            fileService: this.container.get(FileService),
+            openerService: this.container.get(OpenerService)
         });
 
         // The bottom line: the product's ambient surface, in the 22px Lumino was
@@ -2231,6 +2252,62 @@ const DESTINATION_HELP = {
     'internal-tool': 'The prototype questions, plus a success signal and roughly how many people will use it.',
     'production': 'Everything, including where it runs, which region, and any certification it must meet.'
 };
+
+/*
+ * New document: a name, then the file, then the editor.
+ *
+ * The name is checked by welcome-scan.newDocumentPath (tested there): inside
+ * the project, not hidden, `.md` added when no document extension was typed.
+ * An existing file is never overwritten — it is opened instead, which is what
+ * somebody who typed the name of a document that exists wanted anyway.
+ */
+function newDocumentHandler(container) {
+    return {
+        isEnabled: () => connectedRootCount(container) > 0,
+        execute: async () => {
+            const workspaceService = container.get(WorkspaceService);
+            const fileService = container.get(FileService);
+            const quickInput = container.get(QuickInputService);
+            const messageService = container.get(MessageService);
+            const openerService = container.get(OpenerService);
+            let roots = [];
+            try { roots = await workspaceService.roots; } catch (e) { roots = []; }
+            const root = activeProject.resolve(roots);
+            if (!root) { messageService.info('No project is open, so there is nowhere to put a document.'); return; }
+
+            const name = await quickInput.input({
+                title: 'New document',
+                prompt: 'Created in ' + root.resource.path.base + '. A folder path such as docs/plan works too.',
+                placeHolder: 'Untitled',
+                validateInput: async value => {
+                    if (!value || !value.trim()) { return undefined; }
+                    const result = welcomeScan.newDocumentPath(value);
+                    return result.ok ? undefined : result.reason;
+                }
+            });
+            if (name === undefined || !name.trim()) { return; }
+            const result = welcomeScan.newDocumentPath(name);
+            if (!result.ok) { messageService.error(result.reason); return; }
+
+            const uri = new URI(root.resource.toString() + '/' + result.path);
+            try {
+                if (!(await fileService.exists(uri))) {
+                    await fileService.create(uri, '# ' + welcomeScan.titleFromPath(result.path) + '\n\n');
+                }
+            } catch (e) {
+                console.error('[studio] could not create the document', uri.toString(), e);
+                messageService.error('That document could not be created. Nothing was written.');
+                return;
+            }
+            try {
+                const opener = await openerService.getOpener(uri);
+                await opener.open(uri);
+            } catch (e) {
+                console.warn('[studio] the document was created but would not open', e);
+            }
+        }
+    };
+}
 
 /*
  * New project from an idea.
@@ -2769,6 +2846,7 @@ const mod = new ContainerModule(bind => {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
             commands.registerCommand(SWITCH_PROJECT_COMMAND, switchProjectHandler(ctx.container));
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
+            commands.registerCommand(NEW_DOCUMENT_COMMAND, newDocumentHandler(ctx.container));
             commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
             /* Unconditional: the portal's handshake can arrive before anything
              * else this frontend does, and a command that is not there yet is
@@ -2820,7 +2898,16 @@ const mod = new ContainerModule(bind => {
     bind(KeybindingContribution).toDynamicValue(() => ({
         registerKeybindings(keybindings) {
             keybindings.unregisterKeybinding('ctrlcmd+shift+f');
-            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f' });
+            /*
+             * Per mode. The code modes (studio's Development, `default`, and
+             * FULL, `studio.full`) search code with Theia's search across files,
+             * and show its rail tab; every other mode searches the project's
+             * documents with this one. Keyed on Theia's own context key for the
+             * active perspective.
+             */
+            const CODE_MODES = "(activePerspectiveId == 'default' || activePerspectiveId == 'studio.full')";
+            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f', when: '!' + CODE_MODES });
+            keybindings.registerKeybinding({ command: 'search-in-workspace.open', keybinding: 'ctrlcmd+shift+f', when: CODE_MODES });
         }
     })).inSingletonScope();
     bind(TabBarToolbarContribution).toDynamicValue(ctx => ({

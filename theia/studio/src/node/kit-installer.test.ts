@@ -71,6 +71,86 @@ describe('kit installer', () => {
         ]);
     });
 
+    it('runs the configured cfs, the one a desktop build ships', async () => {
+        const previous = process.env.STUDIO_CFS_COMMAND;
+        process.env.STUDIO_CFS_COMMAND = '/app/resources/cfs/bin/cfs';
+        const executables: string[] = [];
+        jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+        jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
+            executables.push(String(executable));
+            (callback as ExecFileCallback)(null, 'ok', '');
+            return {} as childProcess.ChildProcess;
+        }) as typeof childProcess.execFile);
+
+        try {
+            await new KitInstallerImpl().install(
+                { kitSlug: 'sdlc', version: 'main' },
+                registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }])
+            );
+        } finally {
+            if (previous === undefined) {
+                delete process.env.STUDIO_CFS_COMMAND;
+            } else {
+                process.env.STUDIO_CFS_COMMAND = previous;
+            }
+        }
+
+        expect(executables).toEqual(['/app/resources/cfs/bin/cfs', '/app/resources/cfs/bin/cfs']);
+    });
+
+    it('pins init to the CLI extension\'s engine and runs every step with its home', async () => {
+        const os = await import('os');
+        const path = await import('path');
+        const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-cli-runtime-'));
+        const python = process.platform === 'win32'
+            ? path.join(runtime, 'python', 'python.exe')
+            : path.join(runtime, 'python', 'bin', 'python3');
+        await fs.mkdir(path.dirname(python), { recursive: true });
+        await fs.writeFile(python, '');
+        await fs.writeFile(path.join(runtime, 'cfs.json'), JSON.stringify({ engine: 'v1.6.2' }));
+        const previous = process.env.STUDIO_CFS_RUNTIME;
+        process.env.STUDIO_CFS_RUNTIME = runtime;
+        const calls: Array<{ executable: string; args: string[]; home: string | undefined }> = [];
+        jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
+            calls.push({
+                executable: String(executable),
+                args: [...(args ?? [])].map(String),
+                home: (options as childProcess.ExecFileOptions | undefined)?.env?.HOME
+            });
+            (callback as ExecFileCallback)(null, 'ok', '');
+            return {} as childProcess.ChildProcess;
+        }) as typeof childProcess.execFile);
+
+        try {
+            await new KitInstallerImpl().install(
+                { kitSlug: 'sdlc', version: 'v1.2.3' },
+                registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }])
+            );
+        } finally {
+            if (previous === undefined) {
+                delete process.env.STUDIO_CFS_RUNTIME;
+            } else {
+                process.env.STUDIO_CFS_RUNTIME = previous;
+            }
+            await fs.rm(runtime, { recursive: true, force: true });
+        }
+
+        const home = path.join(runtime, 'home');
+        expect(calls).toEqual([
+            {
+                executable: python,
+                args: ['-m', 'studio_proxy', 'init', '--yes', '--migrate-from-cypilot=no', '--update-legacy-studio=no', '--version', 'v1.6.2'],
+                home
+            },
+            {
+                executable: python,
+                args: ['-m', 'studio_proxy', 'kit', 'install', 'constructorfabric/studio-kit-sdlc', '--version', 'v1.2.3', '--force'],
+                home
+            },
+            { executable: python, args: ['-m', 'studio_proxy', 'generate-agents'], home }
+        ]);
+    });
+
     it('names the kit when its repository holds more than one', async () => {
         // `studio-kits-pm` carries a `[[kits]]` entry per kit in one root
         // manifest, so `cfs` offers a selector and installing without `--kit`

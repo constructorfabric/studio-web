@@ -27,6 +27,7 @@ import { type Row } from "../../common/protocol";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
+import { repaintNow } from "../widgets/repaint";
 import { ProductStore } from "../product-store";
 import { GearLocator } from "../shell/gear-locator";
 import { GearSessionService } from "../shell/gear-session-service";
@@ -255,7 +256,10 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
    * so it is certainly worth showing.
    */
   protected schedulePreview(): void {
-    this.update();
+    // Sent, not posted -- see `repaintNow`. `update()` posted the repaint, and
+    // React put each controlled field back before it landed, so real typing
+    // lost its keystrokes.
+    repaintNow(this);
     if (this.previewTimer !== undefined) clearTimeout(this.previewTimer);
     this.previewTimer = setTimeout(() => void this.refreshPreview(), 200);
   }

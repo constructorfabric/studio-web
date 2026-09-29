@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type FrontXApp } from '@gears-frontx/react';
 import {
+  STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
@@ -8,7 +9,8 @@ import {
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
-import { publishFrameUrl, publishStudioContext } from './sharedContext';
+import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
+import { publishFrameUrl, publishSelectedArtifact, publishStudioContext } from './sharedContext';
 
 describe('publishStudioContext', () => {
   it('seeds every context property the MFEs may declare as required', () => {
@@ -30,6 +32,7 @@ describe('publishStudioContext', () => {
         STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
         STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
         STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+        STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
         STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       ])
     );
@@ -37,6 +40,25 @@ describe('publishStudioContext', () => {
       STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
       null
     );
+    expect(updateSharedProperty).toHaveBeenCalledWith(
+      STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
+      null
+    );
+  });
+});
+
+describe('publishSelectedArtifact', () => {
+  it('publishes the artifact the slice holds, field for field', () => {
+    const artifact = { artifactId: 'n-1', repository: 'group/repo', path: 'docs/a.md', kind: 'file' };
+    const updateSharedProperty = vi.fn();
+    const app = {
+      store: { getState: () => ({ [APP_CONTEXT_SLICE_KEY]: { artifact } }) },
+      mfeRegistry: { updateSharedProperty },
+    } as unknown as FrontXApp;
+
+    publishSelectedArtifact(app);
+
+    expect(updateSharedProperty).toHaveBeenCalledWith(STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT, artifact);
   });
 });
 

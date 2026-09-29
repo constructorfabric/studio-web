@@ -127,6 +127,10 @@ spec:
             - name: artifact-clones
               mountPath: {{ .Values.backend.artifactClone.mountPath }}
             {{- end }}
+            {{- if .Values.backend.gearbox.enabled }}
+            - name: gearbox
+              mountPath: {{ .Values.backend.gearbox.mountPath }}
+            {{- end }}
             {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
             # The same volume the session Pods mount. Not `readOnly`: the
             # importer writes its clone here for the IDE to open.
@@ -152,15 +156,39 @@ spec:
             # this installation names no administrator.
             - name: STUDIO_PLATFORM_ADMINS
               value: {{ .Values.backend.platformAdmins | quote }}
-            # Empty keeps the subject fixed in the realm files (ADR-0030).
+            # Unset keeps the subject fixed in the realm files (ADR-0030). Set
+            # only when given: the config keeps an empty variable as a value,
+            # and an empty subject left shared sessions without an actor.
+            {{- with .Values.backend.serviceSubject }}
             - name: STUDIO_SERVICE_SUBJECT
-              value: {{ .Values.backend.serviceSubject | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.backend.artifactClone.enabled }}
             # Turns on artifact-ingest's own shallow clones. Unset, the gear
             # reads whatever checkout it can find and otherwise falls back to
             # the connector's tree API — metadata with no file content.
             - name: STUDIO_ARTIFACT_WORKDIR
               value: {{ .Values.backend.artifactClone.mountPath | quote }}
+            {{- end }}
+            {{- with .Values.backend.gearbox }}
+            {{- if .enabled }}
+            # Turns on the Gearbox engine (components_catalog/gearbox.rs): the
+            # gear catalogue, product previews and the corpus relay.
+            - name: STUDIO_GEARBOX_WORKDIR
+              value: {{ .mountPath | quote }}
+            {{- with .corpusUrl }}
+            - name: STUDIO_GEARBOX_CORPUS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .corpusRef }}
+            - name: STUDIO_GEARBOX_CORPUS_REF
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .refreshSecs }}
+            - name: STUDIO_GEARBOX_REFRESH_SECS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
             # Where ingest looks FIRST: the checkout the IDE shares. It reads
@@ -360,6 +388,12 @@ spec:
         - name: artifact-clones
           emptyDir:
             sizeLimit: {{ .Values.backend.artifactClone.sizeLimit }}
+        {{- end }}
+        {{- if .Values.backend.gearbox.enabled }}
+        # The gear corpus checkout. Disposable, like artifact-clones.
+        - name: gearbox
+          emptyDir:
+            sizeLimit: {{ .Values.backend.gearbox.sizeLimit }}
         {{- end }}
         {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
         - name: workspaces

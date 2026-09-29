@@ -8,6 +8,8 @@
 
 pub mod access;
 pub mod config;
+pub mod desktop;
+pub mod desktop_rest;
 pub mod docker;
 pub mod driver;
 pub mod gear;

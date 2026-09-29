@@ -1,0 +1,332 @@
+/* Components reference. Theme-agnostic: every colour is a Theia variable, so
+   the view follows the IDE and the portal theme the bridge pushes in. */
+
+.studio-components-reference {
+    height: 100%;
+    font-size: var(--theia-ui-font-size1);
+}
+
+.scr-root {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+}
+
+.scr-list {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 44%;
+    min-width: 280px;
+    max-width: 560px;
+    border-right: 1px solid var(--theia-editorGroup-border);
+    min-height: 0;
+}
+
+.scr-detail {
+    flex: 1 1 auto;
+    overflow: auto;
+    min-width: 0;
+}
+
+.scr-toolbar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 10px 4px;
+}
+
+.scr-search {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.scr-reload {
+    min-width: 0;
+    padding: 0 8px;
+}
+
+.scr-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+}
+
+.scr-chip {
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--theia-foreground);
+    padding: 1px 8px;
+    cursor: pointer;
+    font-size: var(--theia-ui-font-size0);
+}
+
+.scr-chip.on {
+    background: var(--theia-button-background);
+    color: var(--theia-button-foreground);
+    border-color: var(--theia-button-background);
+}
+
+.scr-count {
+    opacity: 0.7;
+}
+
+.scr-addable {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 10px 6px;
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-warn {
+    color: var(--theia-editorWarning-foreground);
+}
+
+.scr-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    border-top: 1px solid var(--theia-editorGroup-border);
+}
+
+.scr-row {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--theia-editorGroup-border);
+    cursor: pointer;
+}
+
+.scr-row:hover {
+    background: var(--theia-list-hoverBackground);
+}
+
+.scr-row.selected {
+    background: var(--theia-list-activeSelectionBackground);
+    color: var(--theia-list-activeSelectionForeground);
+}
+
+.scr-row-head,
+.scr-gear-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.scr-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scr-kind,
+.scr-engine {
+    font-size: var(--theia-ui-font-size0);
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 8px;
+    padding: 0 6px;
+    white-space: nowrap;
+}
+
+.scr-engine {
+    color: var(--theia-textLink-foreground);
+    border-color: var(--theia-textLink-foreground);
+}
+
+.scr-sub,
+.scr-muted {
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+}
+
+.scr-purpose {
+    margin: 2px 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.scr-page .scr-purpose {
+    display: block;
+}
+
+.scr-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+}
+
+.scr-foot {
+    padding: 4px 10px;
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+    border-top: 1px solid var(--theia-editorGroup-border);
+}
+
+.scr-state {
+    padding: 16px;
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-error {
+    color: var(--theia-errorForeground);
+}
+
+.scr-page {
+    padding: 12px 16px;
+}
+
+.scr-title {
+    margin: 0;
+    font-size: calc(var(--theia-ui-font-size1) * 1.4);
+}
+
+.scr-page h3 {
+    margin: 16px 0 6px;
+    font-size: var(--theia-ui-font-size1);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 3px 12px;
+    margin: 6px 0;
+}
+
+.scr-facts dt {
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.scr-gear {
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+}
+
+.scr-add {
+    margin-left: auto;
+}
+
+.scr-note {
+    margin-top: 4px;
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-related {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.scr-related li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+
+/* Readiness: stage, plan and demand. Lamps are Theia's own status colours. */
+.scr-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+.scr-stage {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-descriptionForeground);
+    margin-left: auto;
+}
+
+.scr-stage.done { color: var(--theia-charts-green); }
+.scr-stage.late { color: var(--theia-charts-orange); }
+.scr-stage.early { color: var(--theia-charts-blue); }
+
+.scr-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 4px 0 2px;
+    font-size: var(--theia-ui-font-size0);
+}
+
+.scr-plan-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.scr-pill {
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 8px;
+    padding: 0 6px;
+}
+
+.scr-sched.good { color: var(--theia-charts-green); }
+.scr-sched.watch { color: var(--theia-charts-orange); }
+.scr-sched.bad { color: var(--theia-errorForeground); }
+.scr-sched.none { color: var(--theia-descriptionForeground); }
+
+.scr-due,
+.scr-demand {
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-warning.watch { color: var(--theia-charts-orange); }
+.scr-warning.bad { color: var(--theia-errorForeground); }
+
+.scr-readiness {
+    margin-bottom: 12px;
+}
+
+.scr-reasons {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+}
+
+.scr-reasons.watch { color: var(--theia-charts-orange); }
+.scr-reasons.bad { color: var(--theia-errorForeground); }
+
+.scr-axes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.scr-axis.full .scr-dot { color: var(--theia-charts-green); }
+.scr-axis.part .scr-dot { color: var(--theia-charts-blue); }
+.scr-axis.na .scr-dot { color: var(--theia-descriptionForeground); }

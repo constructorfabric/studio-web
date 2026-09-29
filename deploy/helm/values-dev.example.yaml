@@ -8,6 +8,14 @@ backend:
   # A subject id is per-installation, so this value cannot be shared with
   # another environment — this is `admin` in the studio realm of studio-dev.cfabric.org.
   platformAdmins: "46ac15da-3618-4fd2-9a8e-67699228c132"
+  # The gear catalogue in the IDE's Building mode. The corpus is the fork
+  # branch that carries gear.gdl descriptors until
+  # constructorfabric/gears-rust#4793 merges; named here so dev does not
+  # silently follow a change of the code's default.
+  gearbox:
+    enabled: true
+    corpusUrl: "https://github.com/MikeFalcon77/gears-rust.git"
+    corpusRef: "feature/gearbox"
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1

@@ -17,7 +17,7 @@ reconciled through GitHub afterward.
 | Stage in **Studio Delivery** | Responsibility | Trigger |
 | --- | --- | --- |
 | **1. Test changed components** | Test and validate changed source and deployment definitions | Every pull request, branch push, and manual **Build and publish** run |
-| **2. Build & Publish** | Build and publish either service or infrastructure images | After tests on every push, or manual **Build and publish** |
+| **2. Build & Publish** | Build and publish either service or infrastructure images | After tests on an upstream push, or manual **Build and publish**; fork pushes do not publish automatically |
 | **3. Deploy Infrastructure** | Reconcile PostgreSQL and Keycloak for one environment | Manual **Deploy existing images** with **Infrastructure**, using an `infra-v*` release only |
 | **3. Deploy Services** | Deploy backend, frontend, or both | Manual **Deploy existing images** with **Services**, using a branch snapshot or service release |
 
@@ -205,6 +205,11 @@ Migration order:
 the changed service components and rebuilds only those; the other components
 are copied from the last known-good `edge` snapshot so every commit still gets
 a complete immutable `sha-<full-commit>` image set.
+
+A push in a fork runs tests but does not automatically publish images. For a
+deployable dev snapshot from a feature branch, run **Build and publish**
+manually in the upstream repository with `source_ref` naming a ref available
+there; the published image prefix remains `ghcr.io/constructorfabric/studio-web`.
 
 - A branch snapshot may be deployed to `dev` or `test`. In **Studio
   Delivery**, set the operation to **Deploy existing images**, select

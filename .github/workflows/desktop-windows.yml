@@ -10,7 +10,8 @@ name: Desktop — Windows build
 #
 # Not on every pull request: a Windows runner costs several times a Linux one,
 # and the browser session image does not depend on this. It runs when the
-# desktop packaging itself changes, and on demand.
+# desktop packaging itself changes in a PR, on main, for a release tag, and
+# on demand. Fork feature pushes rely on the upstream PR check instead.
 #
 # A tag `desktop-v<version>` makes it a RELEASE: the tag must match
 # theia/electron-app/package.json's version, and the installer, its blockmap
@@ -37,17 +38,22 @@ on:
   pull_request:
     paths:
       - theia/electron-app/**
+      - theia/cfs.json
       - .github/workflows/desktop-windows.yml
-  # A branch that changes the packaging builds it too — which is also the only
-  # way to run this before it exists on the default branch, since
-  # workflow_dispatch needs it there.
   push:
-    branches: ['**']
+    branches: [main]
     # Path filters do not apply to tag pushes, so a release tag always builds.
     tags: ['desktop-v*']
     paths:
       - theia/electron-app/**
+      - theia/cfs.json
       - .github/workflows/desktop-windows.yml
+
+concurrency:
+  # A newer PR or main push supersedes the earlier installer build. Tags and
+  # manual builds each get their own group so neither can be discarded.
+  group: desktop-windows-${{ (github.event_name == 'workflow_dispatch' || github.ref_type == 'tag') && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch') }}
 
 permissions:
   contents: read
@@ -101,17 +107,78 @@ jobs:
       - name: Download the built-in plugins
         working-directory: theia/electron-app
         run: npx theia download:plugins
+      # Claude Code and Codex, as the VS Code extensions product-ext drives
+      # (`claude-vscode.sidebar.open`, `chatgpt.openSidebar`, …). The installer
+      # does not carry them (#480): it carries their manifest, and the app
+      # fetches each one on first need, checks it against the SHA-256 recorded
+      # here, and deploys it live (studio/src/node/desktop-assistants.ts).
+      # theia/Dockerfile's `fetch_vsix` lines are the one pin; a pinned version
+      # with no win32 build takes the newest win32 build there is instead, and
+      # the run warns about it. The script downloads each VSIX once to check
+      # open-vsx's digest. The Constructor Studio CLI (`cfs`) comes the same
+      # way, from the release studio-cli.yml publishes for the version
+      # theia/cfs.json pins; until that release exists the build warns and
+      # ships without it.
+      - name: Assistant extensions manifest (Claude Code, Codex)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile --target win32-x64 \
+            --studio-cli "https://github.com/$GITHUB_REPOSITORY/releases/download" \
+            --out "$RUNNER_TEMP/assistants.json"
+          echo "STUDIO_ASSISTANTS=$(cygpath -w "$RUNNER_TEMP/assistants.json")" >> "$GITHUB_ENV"
       - name: Rebuild native modules for Electron
         working-directory: theia/electron-app
         run: npx theia rebuild:electron --cacheRoot ..
       - name: Build the app
         working-directory: theia/electron-app
         run: npx theia build --mode production
+      # The gearbox engine behind the gear catalogue, products and `.gdl`
+      # (gearbox-studio), built at the revision and with the Rust the session
+      # image uses: theia/Dockerfile's `gearbox` stage is the one pin. The
+      # repository publishes no release, so it is built from source here too.
+      - name: Gearbox engine revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
+          pin() { tr -d '\r' < Dockerfile | sed -n "$1"; }
+          repo=$(pin 's/^ARG STUDIO_GEARBOX_REPO=//p')
+          ref=$(pin 's/^ARG STUDIO_GEARBOX_REF=//p')
+          rust=$(pin 's/^FROM rust:\([0-9.]*\)-.* AS gearbox$/\1/p')
+          if [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$rust" ]; then
+            echo "::error::theia/Dockerfile no longer pins the gearbox engine the way this step reads it"
+            exit 1
+          fi
+          echo "GEARBOX_REPO=$repo" >> "$GITHUB_ENV"
+          echo "GEARBOX_REF=$ref" >> "$GITHUB_ENV"
+          echo "GEARBOX_RUST=$rust" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            gearbox-src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: gearbox-windows-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
+      - name: Build the gearbox engine
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gearbox-src && cd gearbox-src
+          [ -d .git ] || git init -q .
+          git fetch -q --depth 1 "$GEARBOX_REPO" "$GEARBOX_REF"
+          git checkout -q --force FETCH_HEAD
+          rustup toolchain install "$GEARBOX_RUST" --profile minimal
+          CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
+            cargo "+$GEARBOX_RUST" build --release --locked -p gearbox-cli
+          ./target/release/gearbox.exe --version
+          echo "GEARBOX_ENGINE_BUILT=$(cygpath -w "$PWD/target/release/gearbox.exe")" >> "$GITHUB_ENV"
       - name: Package
         working-directory: theia/electron-app
         shell: pwsh
         run: |
-          $packArgs = @('--version', $env:STUDIO_VERSION)
+          $packArgs = @('--version', $env:STUDIO_VERSION, '--gearbox', $env:GEARBOX_ENGINE_BUILT, '--assistants', $env:STUDIO_ASSISTANTS)
           if ($env:STUDIO_URL) {
             $packArgs += @('--studio-url', $env:STUDIO_URL)
             if ($env:STUDIO_ISSUER) { $packArgs += @('--issuer', $env:STUDIO_ISSUER) }

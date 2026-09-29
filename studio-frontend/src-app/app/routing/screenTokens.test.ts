@@ -1,5 +1,10 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import type { ScreenExtension } from '@gears-frontx/react';
 import { screen } from '@frontx-test-utils/screenFixture';
+import { EDITOR_SCREEN_TOKEN } from './route';
 import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } from './screenTokens';
 
 const projectsList = screen('projects.main', '/projects', 'workspace', { order: 20 });
@@ -64,5 +69,21 @@ describe('entryTokenOf', () => {
     expect(entryTokenOf(all, 'organization')).toBe('organization');
     expect(entryTokenOf(all, 'workspace')).toBe('projects');
     expect(entryTokenOf(all, 'project')).toBe('projects');
+  });
+});
+
+describe('the real manifests', () => {
+  const packagesDir = join(dirname(fileURLToPath(import.meta.url)), '../../mfe_packages');
+  const extensions = readdirSync(packagesDir)
+    .filter((dir) => existsSync(join(packagesDir, dir, 'mfe.json')))
+    .flatMap((dir) => (JSON.parse(readFileSync(join(packagesDir, dir, 'mfe.json'), 'utf-8')).extensions ?? []) as ScreenExtension[])
+    .filter((extension) => extension.domain === 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1');
+
+  it('register space-mfe as the one owner of the editor token', () => {
+    const space = groupOfToken(groupScreens(extensions), EDITOR_SCREEN_TOKEN);
+    expect(space?.members.map((member) => member.id)).toEqual([
+      'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.space.screens.main.v1',
+    ]);
+    expect(space?.owner.presentation).toMatchObject({ level: 'project', placement: 'hidden' });
   });
 });

@@ -161,14 +161,16 @@ down as that level goes:
 |---|---|
 | organization | `org`, then `section` when the group has sections |
 | workspace | `org`, `workspace` |
-| project | `org`, `workspace`, `project`, `section` |
+| project | `org`, `workspace`, `project`, `section`; on the editor (`space`), `artifact`, `repository`, `path`, `kind` |
 
 A workspace is not written for an organization-level screen even though the
 slice holds one: the address says what the screen is scoped to, not what the
 slice happens to remember. Parameters this shell does not know are ignored on
-read and dropped on write. #320 extends the project row with the artifact
-(`artifact`, `repository`, `path`, `kind`) under the `space` token; nothing
-here forecloses that.
+read and dropped on write. The artifact parameters follow the level ones
+(#320) and are kept only under the `space` token with a project open: another
+screen, or an artifact of a kind the editor does not know, has them dropped by
+`materialize`. The editor group has no sections, so a project row carries
+either a section or an artifact, never both.
 
 ### The URL is where navigation is decided
 

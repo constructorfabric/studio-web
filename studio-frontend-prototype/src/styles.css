@@ -1982,3 +1982,46 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
    louder than its neighbours. */
 .hint.waiting { color: var(--foreground); }
 .hint.waiting b { color: var(--primary); }
+
+/* ── Workspace projects table ───────────────────────────────────────────────
+   Toolbar (view toggle, title, New project), the review filter / sort /
+   search row, and the columns that say what each project needs. */
+.ptoolbar { align-items: center; }
+.ptoolbar-title { display: flex; align-items: center; gap: 12px; }
+.ptoolbar-title h2 { margin: 0; }
+.pfilters { display: flex; gap: 8px; align-items: center; margin: 4px 0 12px; flex-wrap: wrap; }
+.pfilters select { min-width: 150px; }
+.pfilters-search { flex: 1; min-width: 180px; }
+.pprojects td { vertical-align: top; }
+.pprojects .sub { color: var(--muted-foreground); font-size: 12px; margin-top: 2px; }
+.pclip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkind {
+  flex: 0 0 auto; width: 28px; height: 28px; border-radius: var(--radius-md, 8px);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
+  background: var(--muted); color: var(--muted-foreground);
+}
+.pkind-new_gears { background: var(--info-soft); color: var(--info); }
+.pkind-product { background: var(--success-soft); color: var(--success); }
+.pkind-existing { background: var(--warning-soft); color: var(--warning); }
+.preview-label { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.preview-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); flex: 0 0 auto; }
+.preview-findings .preview-label { color: var(--destructive); }
+.preview-findings .preview-dot { background: var(--destructive); }
+.preview-check .preview-label { color: var(--warning); }
+.preview-check .preview-dot { background: var(--warning); }
+.preview-clear .preview-label { color: var(--success); }
+.preview-clear .preview-dot { background: var(--success); }
+.preview-empty .preview-label, .preview-unknown .preview-label { color: var(--muted-foreground); font-weight: 400; }
+.ppulls { display: flex; gap: 12px; align-items: flex-start; }
+.ppulls-spark { display: flex; flex-direction: column; min-width: 96px; }
+.ppulls-spark .spark { flex: 0 0 auto; }
+.prowmenu { position: relative; display: inline-block; }
+.prowmenu-list {
+  position: absolute; right: 0; top: 100%; z-index: 20; min-width: 140px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-md, 8px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+.prowmenu-list button { justify-content: flex-start; text-align: left; background: none; border: none; padding: 6px 10px; }
+.prowmenu-list button:hover { background: var(--accent); }
+.prowmenu-list button.danger { color: var(--destructive); }

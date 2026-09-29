@@ -135,3 +135,8 @@ export function buildArtifactRows(
 
   return rows;
 }
+
+/** An offset at or past the last row moves back to the start of the last page. */
+export function clampOffset(offset: number, total: number, pageSize: number): number {
+  return total > 0 && offset >= total ? (Math.ceil(total / pageSize) - 1) * pageSize : offset;
+}

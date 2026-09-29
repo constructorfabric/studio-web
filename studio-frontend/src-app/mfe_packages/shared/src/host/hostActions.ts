@@ -29,6 +29,22 @@ export const STUDIO_ARTIFACT_KINDS = [
 
 export type StudioArtifactKind = (typeof STUDIO_ARTIFACT_KINDS)[number];
 
+const ARTIFACT_KINDS: ReadonlySet<string> = new Set(STUDIO_ARTIFACT_KINDS);
+
+export function isStudioArtifactKind(value: unknown): value is StudioArtifactKind {
+  return typeof value === 'string' && ARTIFACT_KINDS.has(value);
+}
+
+export interface StudioArtifact {
+  artifactId: string;
+  repository: string;
+  path: string;
+  kind: StudioArtifactKind;
+}
+
+/** A request to open an artifact: the artifact and the project it sits in. */
+export type StudioArtifactRequest = StudioArtifact & { projectId: string };
+
 /** projects-mfe's New workspace overlay, opened from organization-mfe as well. */
 export const STUDIO_EXTENSION_WORKSPACE_CREATE =
   'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.workspace_create.main.v1';

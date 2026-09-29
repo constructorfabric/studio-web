@@ -1,10 +1,12 @@
 /**
  * Runtime environment for the portal.
  *
- * Resolution order: `window.__STUDIO_ENV__` (written at container start by
- * docker/10-runtime-env.sh into /env.js — the same image runs in every
- * environment without a rebuild) wins over the build-time `VITE_*` variables,
- * which serve as the dev fallback. Both may be absent — callers own defaults.
+ * Resolution order: `window.__STUDIO_ENV__` (`/env.js`, written at container
+ * start by docker/10-runtime-env.sh — the same image runs in every environment
+ * without a rebuild — and served by the dev server for the stand it faces,
+ * scripts/lib/stands.ts) wins over the build-time `VITE_*` variables, the
+ * fallback for a build served without either. Both may be absent — callers
+ * own defaults.
  */
 
 export interface StudioRuntimeEnv {

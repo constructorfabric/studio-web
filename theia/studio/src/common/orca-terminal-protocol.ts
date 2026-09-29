@@ -14,6 +14,19 @@
 import type { RpcServer } from '@theia/core/lib/common/messaging/proxy-factory';
 
 export const orcaTerminalServicePath = '/services/studio-orca-terminal';
+
+/** How an `attach` refused for want of a pairing begins; the frontend offers to pair on it. */
+export const NO_ORCA_PAIRING = 'This IDE has no pairing with the Orca runtime';
+/**
+ * How an `attach` refused for a pairing Orca no longer accepts begins: the
+ * device was revoked in Orca, or Orca was reinstalled and has a new key. The
+ * frontend offers to pair again on it, as it does for a missing one.
+ */
+export const STALE_ORCA_PAIRING = 'Orca no longer accepts the pairing this IDE keeps';
+/** Whether an `attach` failure is one a new pairing fixes. */
+export function needsPairing(message: string): boolean {
+    return message.includes(NO_ORCA_PAIRING) || message.includes(STALE_ORCA_PAIRING);
+}
 /** DI key for the proxy on the frontend. */
 export const OrcaTerminalService = Symbol('OrcaTerminalService');
 
@@ -48,4 +61,18 @@ export interface OrcaTerminalService extends RpcServer<OrcaTerminalClient> {
     resize(stream: string, cols: number, rows: number): Promise<void>;
     /** Stop streaming. The terminal and its agent keep running in Orca. */
     detach(stream: string): Promise<void>;
+    /**
+     * Whether this IDE is paired by hand. A session is not: its entrypoint
+     * pairs it when Orca starts. An IDE on a developer's machine is, with the
+     * Orca desktop app already running there.
+     */
+    canPair(): Promise<boolean>;
+    /**
+     * Pair with the Orca runtime on this computer, from the `orca://pair?code=…`
+     * link Orca generates (Settings → Pair another Orca client → This computer).
+     * Kept, readable by this user only, for the IDE's next starts.
+     *
+     * @throws when the link is not an Orca pairing, or this IDE pairs itself.
+     */
+    pair(offer: string): Promise<void>;
 }

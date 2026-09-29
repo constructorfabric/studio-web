@@ -57,6 +57,30 @@ const CLAUDE_SEED_COMMAND = 'claude-vscode.editor.open';
  * refusal — the registry can throw for commands whose enablement expression
  * expects arguments, and refusing on that would silently disable the good path.
  */
+/*
+ * Why an assistant cannot open, when the host knows better than "not available".
+ *
+ * A desktop Studio fetches Claude Code and Codex on first need (#480), so for a
+ * while after the first start the extension is downloading, not missing. The
+ * studio extension answers `studio.desktop.assistantMessage` with that state;
+ * a web session answers nothing (its backend has no such route), and a build
+ * without the studio extension has no such command. Either way the old
+ * sentence stands.
+ */
+const DESKTOP_ASSISTANT_MESSAGE_COMMAND = 'studio.desktop.assistantMessage';
+
+async function unavailableMessage(commandRegistry, key, label) {
+    const fallback = label + ' is not available here — install or sign in, then try again.';
+    const assistant = assistantForKey(key);
+    if (!assistant || !commandAvailable(commandRegistry, DESKTOP_ASSISTANT_MESSAGE_COMMAND)) { return fallback; }
+    try {
+        const answer = await commandRegistry.executeCommand(DESKTOP_ASSISTANT_MESSAGE_COMMAND, assistant.extensionId, label);
+        return typeof answer === 'string' && answer ? answer : fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
 function commandAvailable(commandRegistry, id) {
     try {
         if (!commandRegistry || typeof commandRegistry.getCommand !== 'function') { return false; }
@@ -141,7 +165,7 @@ async function askClaude({ commandRegistry, messageService, uri, label, excerpt,
         messageService.info(copied ? 'Comment copied — paste into Claude with ⌘V.' : 'Opened Claude.');
     } catch (e) {
         console.error('[studio] could not open Claude Code', e);
-        messageService.error('Claude Code is not available here — install or sign in, then try again.');
+        messageService.error(await unavailableMessage(commandRegistry, 'claude', 'Claude Code'));
     }
 }
 
@@ -159,7 +183,7 @@ async function askCodex({ commandRegistry, messageService, uri, label, excerpt, 
         messageService.info('Added ' + label + ' to a Codex thread' + (copied ? ' — paste the comment with ⌘V.' : '.'));
     } catch (e) {
         console.error('[studio] could not open Codex', e);
-        messageService.error('Codex is not available here — install or sign in, then try again.');
+        messageService.error(await unavailableMessage(commandRegistry, 'codex', 'Codex'));
     }
 }
 
@@ -232,7 +256,7 @@ async function requestChange({ commandRegistry, messageService, uri, kind, path,
         return true;
     } catch (e) {
         console.error('[studio] could not open the assistant', e);
-        messageService.error((kind === 'claude' ? 'Claude Code' : 'Codex') + ' is not available here — install or sign in, then try again.');
+        messageService.error(await unavailableMessage(commandRegistry, kind, kind === 'claude' ? 'Claude Code' : 'Codex'));
         return false;
     }
 }
@@ -418,11 +442,13 @@ const ASSISTANTS = [
     {
         key: 'claude', label: 'Claude',
         containerId: 'workbench.view.extension.claude-sidebar-secondary',
+        extensionId: 'anthropic.claude-code',
         openCommand: 'claude-vscode.sidebar.open'
     },
     {
         key: 'codex', label: 'Codex',
         containerId: 'workbench.view.extension.codexSecondaryViewContainer',
+        extensionId: 'openai.chatgpt',
         openCommand: 'chatgpt.openSidebar'
     }
 ];
@@ -527,7 +553,7 @@ async function revealAssistant({ shell, commandRegistry, messageService, key }) 
     } catch (e) {
         console.error('[studio] could not reveal ' + assistant.label, e);
         if (messageService) {
-            messageService.error(assistant.label + ' is not available here — install or sign in, then try again.');
+            messageService.error(await unavailableMessage(commandRegistry, key, assistant.label));
         }
         return false;
     }
@@ -603,7 +629,7 @@ module.exports = {
     seedClaude, commandAvailable, CLAUDE_SEED_COMMAND,
     openAiMenu, openAiPrompt, closeAiMenu, AI_MENU_CSS,
     ASSISTANTS, ASSISTANT_WIDGET_PREFIX, SLOT_PANEL_WIDTH, SLOT_GRACE_MS,
-    assistantForKey, assistantWidgetId,
+    assistantForKey, assistantWidgetId, unavailableMessage, DESKTOP_ASSISTANT_MESSAGE_COMMAND,
     revealAssistant, collapseRightPanel, assistantFromTabTitle,
     resizeSlotPanel, currentAssistant
 };

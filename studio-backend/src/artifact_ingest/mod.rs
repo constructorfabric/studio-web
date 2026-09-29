@@ -21,6 +21,7 @@ pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
 mod ingest_task;
+pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
 pub mod port;
 mod rest;
@@ -283,6 +284,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The portfolio's finding count, for whoever composes the rollup.
             ctx.client_hub()
                 .register::<dyn port::ArtifactCounter>(service.clone());
+            // The projects table's review and source columns, likewise.
+            ctx.client_hub()
+                .register::<dyn port::ProjectSignalSource>(service.clone());
             // The ingested files, for the gear that decides what each one is.
             ctx.client_hub()
                 .register::<dyn port::ArtifactFiles>(service.clone());

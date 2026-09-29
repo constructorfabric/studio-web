@@ -4,6 +4,7 @@
 
 import type { FrontXApp } from '@gears-frontx/react';
 import {
+  STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
@@ -38,6 +39,10 @@ export function publishSelectedSection(app: FrontXApp): void {
   publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_SECTION, readAppContext(app).section ?? null);
 }
 
+export function publishSelectedArtifact(app: FrontXApp): void {
+  publish(app, STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT, readAppContext(app).artifact ?? null);
+}
+
 export function publishSelectedOrganization(app: FrontXApp): void {
   const org = readAppContext(app).org ?? null;
   publish(
@@ -66,9 +71,9 @@ export function publishSessionProfile(app: FrontXApp): void {
  * because it reads its own slice of the store; this one takes `url` as a
  * parameter instead because there is no store slice to read — the source of
  * truth is the generated manifest catalogue (see bootstrap.ts's
- * `firstFrameUrl`), which this module has no business knowing the shape of.
- * Seeded at start-up with the fixture's static page — the step #321
- * describes. #322 is where the session gate's per-session address replaces
+ * `seedFrameUrl`), which this module has no business knowing the shape of.
+ * Seeded at start-up with space-mfe's static page (#321), or the fixture's
+ * when space-mfe is absent. #322 is where the session gate's per-session address replaces
  * that seed; either way, the value changes, not this channel.
  */
 export function publishFrameUrl(app: FrontXApp, url: string | null): void {
@@ -80,5 +85,6 @@ export function publishStudioContext(app: FrontXApp): void {
   publishSelectedWorkspace(app);
   publishSelectedProject(app);
   publishSelectedSection(app);
+  publishSelectedArtifact(app);
   publishSessionProfile(app);
 }

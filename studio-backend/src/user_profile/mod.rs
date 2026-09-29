@@ -79,10 +79,31 @@ pub struct StudioUserConfig {
 /// knows it without asking Keycloak.
 pub const STUDIO_SERVICE_SUBJECT: &str = "00000000-0000-4000-8000-00000000057d";
 
+/// A configured service subject, where blank means the fixed one.
+///
+/// The config's `${STUDIO_SERVICE_SUBJECT:-…}` does not cover it: expansion
+/// treats a variable that is set but empty as a value (see `load_config`), and
+/// the Helm chart sets it empty by default. On studio-dev (2026-09-28) that
+/// handed every shared session `STUDIO_ACTOR_ID=`, and Theia refused to start
+/// (the IDE answered "Cannot GET /").
+pub fn service_subject_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let value = value.trim();
+    Ok(if value.is_empty() {
+        STUDIO_SERVICE_SUBJECT.to_owned()
+    } else {
+        value.to_owned()
+    })
+}
+
 /// Who Studio's service identity is, as the directory shows it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ServiceAccount {
+    #[serde(deserialize_with = "service_subject_or_default")]
     pub subject: String,
     pub display_name: String,
     /// The neutral git author's address too — one name for both.
@@ -359,6 +380,61 @@ impl OrganizationReader for IdentityService {
     }
 }
 
+/// One active member of an organization: the person, and every sign-in
+/// subject that is theirs.
+///
+/// The subjects are carried because an access-config grant names a token
+/// subject, not a person (`set_owner_grant`). Matching a grant against the
+/// person's whole set is what makes a person with two logins one head, not
+/// two, and a grant written through either login still theirs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterMember {
+    pub person: String,
+    pub subjects: Vec<String>,
+}
+
+/// Who is in an organization, for a gear that has to count them.
+///
+/// Membership is the authority for who belongs (ADR-0011 §2), and this is the
+/// read of it that crosses a gear boundary. It hands out **active** members
+/// only: a suspended membership grants nothing while it stands, so a headcount
+/// that included it would count somebody who cannot open the project.
+///
+/// Deliberately not the members screen. That one returns names and emails and
+/// is gated on `people.view`; this one exists for a count, and the consumer is
+/// expected to reach `org_id` through its caller's tenant scope before asking
+/// (the rollup does, by reading the workspace's parent as that caller).
+#[async_trait]
+pub trait OrganizationRoster: Send + Sync + 'static {
+    /// The active members of `org_id`. An organization nobody belongs to
+    /// answers with an empty list, which is a real answer; a failed read is an
+    /// error, which is not.
+    async fn active_members(&self, org_id: uuid::Uuid) -> anyhow::Result<Vec<RosterMember>>;
+}
+
+#[async_trait]
+impl OrganizationRoster for IdentityService {
+    async fn active_members(&self, org_id: uuid::Uuid) -> anyhow::Result<Vec<RosterMember>> {
+        let mut out = Vec::new();
+        for membership in self.members_of(&org_id.to_string()).await? {
+            if membership.status != leaving::STATUS_ACTIVE {
+                continue;
+            }
+            let subjects = self
+                .list_logins(&membership.user_id)
+                .await?
+                .into_iter()
+                .map(|login| login.subject)
+                .collect();
+            out.push(RosterMember {
+                person: membership.user_id,
+                subjects,
+            });
+        }
+        Ok(out)
+    }
+}
+
 #[toolkit::gear(
     name = "studio-user",
     deps = [account_management],
@@ -418,10 +494,15 @@ impl Gear for StudioUserGear {
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 evictor,
             );
-            let organizations: Arc<dyn OrganizationReader> = svc;
+            let organizations: Arc<dyn OrganizationReader> = svc.clone();
             ctx.client_hub().register_scoped::<dyn OrganizationReader>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 organizations,
+            );
+            let roster: Arc<dyn OrganizationRoster> = svc;
+            ctx.client_hub().register_scoped::<dyn OrganizationRoster>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                roster,
             );
         }
 

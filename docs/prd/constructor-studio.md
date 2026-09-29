@@ -887,7 +887,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | Requirement | Implemented in |
 |---|---|
 | `cpt-studio-fr-org-create` | `studio-backend/src/organizations/`; `POST /studio-organizations/v1/organizations`; prototype admin `tenants` |
-| `cpt-studio-fr-org-administration` | `studio-backend/src/organizations/`, `studio-backend/src/access_config.rs`, `studio-backend/src/user_profile/`; `/studio-organizations/v1/{access-catalogue,capabilities,rollups}`, `/studio-user/v1/organizations/{org_id}/invitations`; prototype admin `access` and `people` |
+| `cpt-studio-fr-org-administration` | `studio-backend/src/organizations/`, `studio-backend/src/access_config.rs`, `studio-backend/src/user_profile/`; `/studio-organizations/v1/{access-catalogue,capabilities,rollups}`, `/studio-user/v1/organizations/{org_id}/invitations`; prototype admin `access` and `people`; official portal: `people-mfe`, specified in [feature/organization-people.md](../feature/organization-people.md) |
 | `cpt-studio-fr-workspace-project-tenants` | platform `account_management`; `/cf/account-management/v1`; `projects-mfe` (Projects, New project, New workspace), `organization-mfe` (Workspaces); prototype `projects`, workspace tab `projects`, platform `workspaces`, project tab `automation` |
 | `cpt-studio-fr-portal-levels` | `studio-frontend/src-app/app/`, `studio-frontend/src-app/mfe_packages/_iframe-fixture/`; `organization-mfe` (Overview) |
 | `cpt-studio-fr-portal-reserved-areas` | `people-mfe`, `kits-mfe`, `search-mfe`, `organization-mfe` (Organization settings), `projects-mfe` placeholder sections (Overview, Findings, Activity, Timeline, Team, Project settings); prototype project tab `timeline` |

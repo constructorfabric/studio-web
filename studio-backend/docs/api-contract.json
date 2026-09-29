@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 247,
+  "open_violations": 250,
   "operations": [
     {
       "method": "DELETE",
@@ -201,6 +201,19 @@
       "operation_id": "studio_scheduler.delete",
       "tag": "StudioScheduler",
       "summary": "Remove a schedule",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-session/v1/desktop-sessions/{id}",
+      "operation_id": "studio_session.delete_desktop_session",
+      "tag": "StudioSessions",
+      "summary": "End one of the caller's desktop sessions",
       "authenticated": true,
       "errors": [
         "401",
@@ -507,6 +520,35 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/gearbox/catalogue",
+      "operation_id": "studio_components_catalog.get_gearbox_catalogue",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The gear corpus's catalogue, as the Gearbox engine reads it",
+      "authenticated": true,
+      "responses": [
+        "GearboxCatalogueDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/gearbox/corpus/info/refs",
+      "operation_id": "studio_components_catalog.get_corpus_refs",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Git smart-HTTP ref advertisement for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/gearbox/extension-points",
       "operation_id": "studio_components_catalog.list_extension_points",
       "tag": "StudioComponentsCatalog",
@@ -563,6 +605,22 @@
       "errors": [
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/reference",
+      "operation_id": "studio_components_catalog.list_component_reference",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The components reference: the catalogue joined with the Gearbox engine's gears",
+      "authenticated": true,
+      "responses": [
+        "ComponentReferenceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },
@@ -1394,6 +1452,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-session/v1/desktop-sessions",
+      "operation_id": "studio_session.list_desktop_sessions",
+      "tag": "StudioSessions",
+      "summary": "List the desktops a workspace is open on",
+      "authenticated": true,
+      "responses": [
+        "DesktopSessionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-session/v1/sessions",
       "operation_id": "studio_session.list_sessions",
       "tag": "StudioSessions",
@@ -1641,6 +1716,24 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/organizations/{org_id}/members",
+      "operation_id": "studio_user.list_organization_members",
+      "tag": "StudioUser",
+      "summary": "List an organization's members",
+      "authenticated": true,
+      "responses": [
+        "OrganizationMemberListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -1932,6 +2025,19 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/gearbox/corpus/git-upload-pack",
+      "operation_id": "studio_components_catalog.pull_corpus_pack",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Git smart-HTTP upload-pack (clone and fetch) for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
@@ -2752,6 +2858,24 @@
       "authenticated": true,
       "responses": [
         "FiredDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-session/v1/desktop-sessions",
+      "operation_id": "studio_session.upsert_desktop_session",
+      "tag": "StudioSessions",
+      "summary": "Open or renew a desktop session for a workspace",
+      "authenticated": true,
+      "request": "UpsertDesktopSessionRequest",
+      "responses": [
+        "DesktopSessionDto"
       ],
       "errors": [
         "400",

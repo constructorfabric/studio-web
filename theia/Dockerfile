@@ -114,12 +114,17 @@ RUN set -eu; \
 # Debian Bookworm ships (3.11.2). Build its isolated environment with the
 # official Python 3.12 image, then copy that runtime and venv into Theia.
 FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS cfs
-ARG STUDIO_CFS_REF=ca55c6687474a53151a0956de03eb22f8da56ef4
+# The pins live in cfs.json, which the desktop build reads too, so a session
+# and a desktop run the same validators over the same kit. A build ARG still
+# overrides either one.
+ARG STUDIO_CFS_REF=
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/cfs \
+COPY cfs.json /opt/cfs-pin.json
+RUN ref="${STUDIO_CFS_REF:-$(python3 -c 'import json; print(json.load(open("/opt/cfs-pin.json"))["ref"])')}" \
+    && python3 -m venv /opt/cfs \
     && /opt/cfs/bin/pip install --no-cache-dir \
-      "git+https://github.com/constructorfabric/studio.git@${STUDIO_CFS_REF}" \
+      "git+https://github.com/constructorfabric/studio.git@${ref}" \
     && /opt/cfs/bin/cfs --version
 
 # The pip install above is only HALF of Constructor Studio. `cfs` is a proxy;
@@ -144,7 +149,7 @@ RUN python3 -m venv /opt/cfs \
 # The proxy and the bundled skill engine must resolve the same cache. The
 # current engine resolves it from `$HOME/.cf-studio/cache`, so do not relocate
 # it under `/opt`: `cfs init` would otherwise see an empty cache.
-ARG STUDIO_CFS_ENGINE=v1.6.2
+ARG STUDIO_CFS_ENGINE=
 ENV CFS_CACHE_DIR=/home/node/.cf-studio/cache
 # The second command is the one that matters: it asserts the extracted layout
 # is the one find_cached_skill() looks for (<cache>/skills/studio/scripts/
@@ -156,8 +161,9 @@ ENV CFS_CACHE_DIR=/home/node/.cf-studio/cache
 # exhaust -- measured: `HTTP Error 403: Forbidden` from a cloud IP. Missing
 # secret degrades to exactly that anonymous behaviour rather than failing.
 RUN --mount=type=secret,id=github_token \
-    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    /opt/cfs/bin/python -c "import sys; from studio_proxy.cache import download_and_cache; ok, message = download_and_cache(version='${STUDIO_CFS_ENGINE}'); print(message); sys.exit(0 if ok else 1)" \
+    engine="${STUDIO_CFS_ENGINE:-$(python3 -c 'import json; print(json.load(open("/opt/cfs-pin.json"))["engine"])')}" \
+    && GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    /opt/cfs/bin/python -c "import sys; from studio_proxy.cache import download_and_cache; ok, message = download_and_cache(version='${engine}'); print(message); sys.exit(0 if ok else 1)" \
     && /opt/cfs/bin/python -c "import sys; from studio_proxy.resolve import find_cached_skill; entry = find_cached_skill(); print('skill engine entry point:', entry); sys.exit(0 if entry else 1)"
 
 # ── Gearbox engine ──

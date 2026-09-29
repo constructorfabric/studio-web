@@ -13,8 +13,11 @@ mod cratesio;
 pub(crate) mod field_schema;
 mod gearbox;
 pub(crate) mod gts;
+mod reference;
 mod repo_enrich;
+mod repo_facts;
 mod rest;
+mod roadmap;
 mod scaffold;
 mod service;
 mod skeleton;
@@ -156,6 +159,14 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         });
         if let Some(g) = &gearbox {
             service.set_gearbox(Arc::clone(g));
+        }
+        // A project without a gear repository is compared against its own
+        // sources, which only its config names.
+        if let Ok(am) = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            service.set_account_management(am);
         }
 
         let _ = self.service.set(service.clone());

@@ -65,9 +65,9 @@ export const ArtifactsTable: React.FC<ArtifactsTableProps> = ({
   const current = Math.min(Math.floor(offset / pageSize), pageCount - 1);
   // As many skeleton rows as the page that is being replaced, so the table
   // keeps its height.
-  const shown = React.useRef(rows.length);
-  if (!loading) shown.current = rows.length;
-  const skeletonRows = Math.min(pageSize, Math.max(shown.current, MIN_SKELETON_ROWS));
+  const [shown, setShown] = React.useState(rows.length);
+  if (!loading && shown !== rows.length) setShown(rows.length);
+  const skeletonRows = Math.min(pageSize, Math.max(shown, MIN_SKELETON_ROWS));
 
   return (
     <>

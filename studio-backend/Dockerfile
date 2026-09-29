@@ -24,6 +24,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
  && rm /tmp/onnxruntime.tgz
 
+# The Gearbox engine behind the gear catalogue and product previews
+# (components_catalog/gearbox.rs). The same repository and commit as
+# Dockerfile.src and the session image's `gearbox` stage (theia/Dockerfile),
+# which the desktop build reads too: the portal, the IDE and the desktop must
+# say the same thing about the same product.gdl, so move all three together.
+# Built on bookworm (glibc 2.36); it runs on the trixie runtime below.
+FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS gearbox
+ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
+ARG STUDIO_GEARBOX_REF=3b64969f4ed01558d6e0697edc5cd5477e041cef
+WORKDIR /src
+RUN git init -q . \
+    && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \
+    && git checkout -q FETCH_HEAD
+RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
+    cargo build --release --locked -p gearbox-cli \
+    && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
+    && gearbox --version
+
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # git: the artifact-ingest gear shells out to it to clone repositories into
@@ -41,6 +59,8 @@ WORKDIR /app
 COPY .release/studio-backend /app/studio-backend
 COPY config/ /app/config/
 COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime/lib/
+# Inert until STUDIO_GEARBOX_WORKDIR is set (the chart's backend.gearbox).
+COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app
 

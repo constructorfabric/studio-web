@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
+    WorkspaceService: class WorkspaceService {}
+}));
 jest.mock('@theia/filesystem/lib/browser/file-tree/file-tree', () => ({
     DirNode: {
         is: (element: { fileStat?: { isDirectory?: boolean } } | undefined) => !!element?.fileStat?.isDirectory
@@ -48,7 +51,8 @@ describe('StudioExplorerFilter', () => {
         const presentation = {
             onDidChange: () => ({ dispose: jest.fn() }),
             isMarkdownMode: () => true,
-            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md'
+            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md',
+            isShownUri: async (uri: URI) => uri.path.ext.toLowerCase() === '.md'
         };
         const fileService = {
             resolve: jest.fn().mockImplementation((uri: URI) => {
@@ -93,7 +97,8 @@ describe('StudioExplorerFilter', () => {
         const presentation = {
             onDidChange: () => ({ dispose: jest.fn() }),
             isMarkdownMode: () => true,
-            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md'
+            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md',
+            isShownUri: async (uri: URI) => uri.path.ext.toLowerCase() === '.md'
         };
         const fileService = {
             resolve: jest.fn().mockResolvedValue({
@@ -128,7 +133,8 @@ describe('StudioExplorerFilter', () => {
         const presentation = {
             onDidChange: () => ({ dispose: jest.fn() }),
             isMarkdownMode: () => true,
-            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md'
+            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md',
+            isShownUri: async (uri: URI) => uri.path.ext.toLowerCase() === '.md'
         };
         const fileService = {
             resolve: jest.fn()
@@ -159,7 +165,8 @@ describe('StudioExplorerFilter', () => {
         const presentation = {
             onDidChange: presentationChanges.event,
             isMarkdownMode: () => true,
-            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md'
+            isMarkdownUri: (uri: URI) => uri.path.ext.toLowerCase() === '.md',
+            isShownUri: async (uri: URI) => uri.path.ext.toLowerCase() === '.md'
         };
         const fileService = {
             resolve: jest.fn().mockResolvedValue({
@@ -197,7 +204,8 @@ describe('StudioExplorerFilter', () => {
         const presentation = {
             onDidChange: () => listenerDisposable,
             isMarkdownMode: () => true,
-            isMarkdownUri: () => true
+            isMarkdownUri: () => true,
+            isShownUri: async () => true
         };
         const filter = new TestStudioExplorerFilter(
             {} as never,

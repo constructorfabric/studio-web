@@ -112,3 +112,26 @@ pub trait ArtifactFiles: Send + Sync + 'static {
         scope: &str,
     ) -> anyhow::Result<Vec<IngestedFile>>;
 }
+
+pub use super::activity::ProjectSignals;
+
+/// What a project's row in the projects table says about its review and its
+/// sources: open findings, open comments, pull requests over a window and the
+/// last thing that happened.
+///
+/// WHY THIS EXISTS, like [`ArtifactCounter`]: each of these is a screen of its
+/// own (`/nodes?type=spec_finding`, `/source-activity`, `/activity`), and a
+/// table that asked each of them for every row was the browser fan-out the
+/// rollup replaced. Here it is four indexed reads in this process per project.
+#[async_trait]
+pub trait ProjectSignalSource: Send + Sync + 'static {
+    /// The row for `scope` (a project's tenant id), over the last `days` days.
+    ///
+    /// An `Err` means every signal is UNKNOWN; a caller renders it as such.
+    async fn project_signals(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+        days: usize,
+    ) -> anyhow::Result<ProjectSignals>;
+}

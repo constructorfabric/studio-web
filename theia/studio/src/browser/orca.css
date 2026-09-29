@@ -137,3 +137,36 @@
     direction: rtl;
     text-align: left;
 }
+
+/* Worktrees grouped by repository: the open project's first, the rest behind
+   a toggle. Every repository has a main worktree, so the heading is what tells
+   two `main` rows apart. */
+.studio-orca-group + .studio-orca-group {
+    margin-top: 8px;
+}
+
+.studio-orca-group-name {
+    margin: 0 0 4px;
+    font-size: var(--theia-ui-font-size1);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.studio-orca-others {
+    margin-top: 8px;
+}
+
+.studio-orca-project-sync {
+    margin-top: 8px;
+}
+
+.studio-orca-kept {
+    color: var(--theia-editorWarning-foreground);
+    opacity: 1;
+}
+
+.studio-orca-link {
+    color: var(--theia-textLink-foreground);
+}

@@ -188,7 +188,8 @@ rule itself, in the same section, so this is a slip in the contract rather than 
 disagreement with it. The `mfe` namespace token restores the count and matches
 the entry id two lines above it in the same contract,
 `constructor_studio.space.mfe.main.v1`. Whoever implements the other half of
-#310 takes this spelling, not the issue's. At start-up the shell puts the fixture's page address into it,
+#310 takes this spelling, not the issue's. At start-up the shell puts `space-mfe`'s page address into it
+(`seedFrameUrl`; the fixture's when `space-mfe` is absent, #321),
 read from the generated manifest so the value is correct in development and in
 a production image alike.
 

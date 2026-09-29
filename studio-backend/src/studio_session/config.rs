@@ -129,10 +129,22 @@ pub struct StudioSessionConfig {
     /// uses the host gateway; Kubernetes injects the backend Service DNS.
     #[serde(default = "default_gateway_url")]
     pub gateway_url: String,
+    /// Portal origins a session lets frame it and talk to it (#324), handed
+    /// to the container as `STUDIO_ALLOWED_ORIGINS`: comma-separated bare
+    /// origins, which Theia validates at start. Empty = the session's own
+    /// origin only, which is right wherever the portal reaches the IDE through
+    /// its own domain (Kubernetes, the Vite stand proxy). The Docker driver
+    /// publishes the IDE on a loopback port of its own, so a local portal has
+    /// to be listed.
+    #[serde(default)]
+    pub allowed_origins: String,
     /// What a shared session acts as (`STUDIO_ACTOR_ID`): Studio's service
     /// identity, not the person who happened to launch it (ADR-0030). The same
     /// subject `studio-user` seeds as "Constructor Studio (service)".
-    #[serde(default = "default_service_actor")]
+    #[serde(
+        default = "default_service_actor",
+        deserialize_with = "crate::user_profile::service_subject_or_default"
+    )]
     pub service_actor: String,
     /// Inclusive host port range for sessions.
     #[serde(default = "default_port_start")]
@@ -224,6 +236,7 @@ impl Default for StudioSessionConfig {
             bind_host: default_bind_host(),
             public_host: default_public_host(),
             gateway_url: default_gateway_url(),
+            allowed_origins: String::new(),
             service_actor: default_service_actor(),
             port_range_start: default_port_start(),
             port_range_end: default_port_end(),
@@ -384,5 +397,28 @@ mod tests {
         assert_eq!(cfg.k8s_session_cpu_limit, "2");
         assert_eq!(cfg.k8s_session_memory_request, "512Mi");
         assert_eq!(cfg.k8s_session_memory_limit, "2Gi");
+    }
+
+    /// The chart sets `STUDIO_SERVICE_SUBJECT` empty by default, and expansion
+    /// keeps an empty value, so an empty actor must mean the fixed subject.
+    /// Passed through, it gave every shared session `STUDIO_ACTOR_ID=` and an
+    /// IDE that would not start.
+    #[test]
+    fn a_blank_service_actor_is_the_fixed_subject() {
+        let fixed = crate::user_profile::STUDIO_SERVICE_SUBJECT;
+        for blank in ["", "  "] {
+            let cfg: StudioSessionConfig =
+                serde_json::from_value(serde_json::json!({ "service_actor": blank })).unwrap();
+            assert_eq!(cfg.service_actor, fixed);
+        }
+        let cfg: StudioSessionConfig =
+            serde_json::from_value(serde_json::json!({ "service_actor": " sa-42 " })).unwrap();
+        assert_eq!(cfg.service_actor, "sa-42");
+        let cfg: StudioSessionConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(cfg.service_actor, fixed);
+
+        let account: crate::user_profile::ServiceAccount =
+            serde_json::from_value(serde_json::json!({ "subject": "" })).unwrap();
+        assert_eq!(account.subject, fixed);
     }
 }

@@ -255,7 +255,7 @@ query($owner:String!,$name:String!,$pulls:Int!,$after:String){
 /// Enterprise Server puts REST under `/api/v3` and GraphQL *beside* it at
 /// `/api/graphql` — not under it — so the version segment is dropped rather
 /// than appended to.
-fn graphql_url(root: &str) -> String {
+pub(crate) fn graphql_url(root: &str) -> String {
     match root.strip_suffix("/api/v3") {
         Some(host) => format!("{host}/api/graphql"),
         None => format!("{root}/graphql"),

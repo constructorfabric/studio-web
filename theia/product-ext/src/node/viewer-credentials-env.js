@@ -77,6 +77,31 @@ function assistantEnvironment(home, base = process.env) {
     return env;
 }
 
+/*
+ * The directories `assistantEnvironment` names, created.
+ *
+ * Naming a directory is not enough: the Codex CLI refuses to start against a
+ * CODEX_HOME that does not exist ("CODEX_HOME points to …, but that path does
+ * not exist", exit 1). The Codex extension spawns `codex app-server` as soon as
+ * it activates, with the plugin host's environment, so a fresh credential home
+ * — every first session of a viewer, every anonymous connection — left the
+ * app-server dead, the extension's webview waiting for it, and after 30 s the
+ * extension's only message: "Codex couldn't load its resources." Measured in a
+ * session and in the desktop app: the Codex output channel carries the CLI's
+ * error, the webview's own assets all load.
+ *
+ * The sign-in commands (assistant-auth.js) already created these, which is why
+ * signing in from the product's surface worked and opening the extension
+ * first did not.
+ */
+function ensureAssistantHomes(env) {
+    for (const directory of [env.CODEX_HOME, env.CLAUDE_CONFIG_DIR]) {
+        if (directory) {
+            fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+        }
+    }
+}
+
 
 
 /*
@@ -160,6 +185,19 @@ function writeGitConfig(directory, person) {
 }
 
 /*
+ * How the anonymous home is linked to the viewer's own.
+ *
+ * On Windows — the desktop Studio — a directory symlink needs a privilege an
+ * ordinary account does not have, so `symlinkSync(…, 'dir')` failed there
+ * AFTER the anonymous home had been emptied and removed: the running plugin
+ * host was left with a HOME, CODEX_HOME and CLAUDE_CONFIG_DIR that no longer
+ * existed, and the Codex CLI refuses to start against a missing CODEX_HOME. A
+ * junction is the Windows directory link any account may create; elsewhere
+ * the type is ignored.
+ */
+const HOME_LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir';
+
+/*
  * Point this connection's anonymous home at the home its viewer actually owns.
  *
  * The plugin host is forked with `HOME=<anonymous>` before anybody has said who
@@ -192,7 +230,7 @@ function redirectHome(anonymous, stable) {
         if (existing && existing.isSymbolicLink()) {
             // Already redirected, possibly somewhere else. Repointing is the
             // whole of "the person changed under a live page".
-            if (fs.readlinkSync(anonymous) === stable) { return; }
+            if (path.resolve(fs.readlinkSync(anonymous)) === path.resolve(stable)) { return; }
             fs.unlinkSync(anonymous);
         } else if (existing && existing.isDirectory()) {
             // Anything the plugin host wrote before identity arrived belongs
@@ -207,7 +245,7 @@ function redirectHome(anonymous, stable) {
             fs.rmSync(anonymous, { recursive: true, force: true });
         }
         if (!fs.lstatSync(anonymous, { throwIfNoEntry: false })) {
-            fs.symlinkSync(stable, anonymous, 'dir');
+            fs.symlinkSync(stable, anonymous, HOME_LINK_TYPE);
         }
     } catch (error) {
         console.warn('[studio] could not redirect the anonymous credential home', error);
@@ -216,9 +254,11 @@ function redirectHome(anonymous, stable) {
 
 module.exports = {
     assistantEnvironment,
+    ensureAssistantHomes,
     gitIdentityConfig,
     writeGitConfig,
     redirectHome,
+    HOME_LINK_TYPE,
     readStoredKey,
     CREDENTIAL_STORE,
     HOME_IS_MOVABLE

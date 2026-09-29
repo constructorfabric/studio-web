@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { AuthStateListener } from '@gears-frontx/auth';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 
@@ -143,6 +143,14 @@ describe('AuthGate', () => {
     notify({ state: 'unauthenticated', reason: 'signed-out' });
     const login = await screen.findByTestId('login');
     expect(login.getAttribute('data-expired')).toBe('false');
+  });
+
+  it('does not call a session that never began "expired"', async () => {
+    render(<AuthGate>app-content</AuthGate>);
+    await screen.findByTestId('login');
+
+    act(() => notify({ state: 'unauthenticated' }));
+    expect(screen.getByTestId('login').getAttribute('data-expired')).toBe('false');
   });
 
   it('renders ungated with a warning when no auth runtime is configured', () => {

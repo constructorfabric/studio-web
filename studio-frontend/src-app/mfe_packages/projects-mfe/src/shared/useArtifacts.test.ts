@@ -89,6 +89,28 @@ describe('the repository total in the header', () => {
   });
 });
 
+describe('a page on the way', () => {
+  it('keeps the last total of the same project, and only of the same project', () => {
+    const { result, rerender } = renderHook(
+      ({ projectId, search }) => useArtifacts(projectId, { repo: null, kind: null, search, offset: 0 }),
+      { initialProps: { projectId: 'p1', search: '' } }
+    );
+    // The first page answered 96; the search narrows it to 3.
+    rerender({ projectId: 'p1', search: 'broken' });
+    expect(result.current.total).toBe(3);
+
+    answer.mockImplementation((params) => {
+      if (params.sort === 'updated') return { isLoading: true, isError: false };
+      return params.limit === 1 ? ok(1286) : ok(96);
+    });
+    rerender({ projectId: 'p1', search: 'other' });
+    expect(result.current).toMatchObject({ total: 3, refreshing: true, loading: false });
+
+    rerender({ projectId: 'p2', search: 'other' });
+    expect(result.current).toMatchObject({ total: 0, refreshing: false, loading: true });
+  });
+});
+
 describe('the type filter', () => {
   const pageRequest = () =>
     answer.mock.calls.map(([params]) => params).find((params) => params.sort === 'updated');

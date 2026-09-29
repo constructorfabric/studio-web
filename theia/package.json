@@ -16,7 +16,7 @@
     "test:e2e:studio-save-push": "playwright test tests/e2e/studio-save-push.spec.ts",
     "watch:browser": "lerna run --parallel watch --ignore electron-app",
     "watch:electron": "lerna run --parallel watch --ignore browser-app",
-    "test": "cd studio && npm test",
+    "test": "cd studio && npm test && cd ../gearbox-studio && npm test",
     "validate:browser-e2e": "npm run build:browser && npm run test:e2e:studio-save-push",
     "validate:electron-build": "npm run build:electron"
   },

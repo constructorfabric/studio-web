@@ -231,6 +231,32 @@ interface Sources {
   frontx: RepoSel;
   kits: RepoSel;
   kitsPm: RepoSel;
+  roadmap: RoadmapSel;
+}
+
+/** A GitHub Project the gears are planned on. Its items give each gear a
+ *  stage, a due date and the consumers waiting for it; the server reads the
+ *  columns' meaning off the board, so all it needs is where the board is and
+ *  what its priority letters stand for. */
+interface RoadmapSel {
+  enabled: boolean;
+  connectionId: string;
+  owner: string;
+  number: string;
+  /** `A=Acronis, C=Constructor` -- one entry per priority letter. */
+  consumers: string;
+}
+
+/** `A=Acronis, C=Constructor` -> `{ A: "Acronis", C: "Constructor" }`. */
+function parseConsumers(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of text.split(/[,;\n]/)) {
+    const [letter, ...name] = part.split("=");
+    const k = letter?.trim();
+    const v = name.join("=").trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
 }
 
 /** The branches worth one click. `HEAD` is the repository's default branch —
@@ -278,6 +304,15 @@ const DEFAULT_SOURCES: Sources = {
     repo: "constructorfabric/studio-kits-pm",
     gitRef: "HEAD",
   },
+  // The platform's backend roadmap. Reading it needs a connection whose token
+  // may read organization projects (`read:project`).
+  roadmap: {
+    enabled: false,
+    connectionId: "",
+    owner: "constructorfabric",
+    number: "48",
+    consumers: "A=Acronis, C=Constructor, V=Virtuozzo",
+  },
 };
 
 const SOURCES_KEY = "cf.components.sources";
@@ -308,11 +343,19 @@ interface RepoBody {
   mode: string;
 }
 
+interface RoadmapBody {
+  tenant: string;
+  connection_id: string | null;
+  owner: string;
+  number: number;
+  consumers: Record<string, string>;
+}
+
 /** The POST body for /sync derived from the selection, or an error string. */
 function syncBody(
   s: Sources,
   tenantId: string | undefined,
-): { crates_io: string | null; repositories: RepoBody[] } | string {
+): { crates_io: string | null; repositories: RepoBody[]; roadmaps: RoadmapBody[] } | string {
   const crates_io = s.cratesIo ? s.keyword.trim() || "constructorfabric" : null;
   const repositories: RepoBody[] = [];
   const pairs: [string, RepoSel][] = [
@@ -333,8 +376,23 @@ function syncBody(
       mode,
     });
   }
-  if (!crates_io && repositories.length === 0) return "Enable at least one source.";
-  return { crates_io, repositories };
+  const roadmaps: RoadmapBody[] = [];
+  if (s.roadmap.enabled) {
+    if (!tenantId) return "No workspace/organization in context to read connections from.";
+    const number = Number.parseInt(s.roadmap.number, 10);
+    if (!s.roadmap.owner.trim() || !Number.isFinite(number) || number <= 0)
+      return "Enter the roadmap board's owner and number.";
+    roadmaps.push({
+      tenant: tenantId,
+      connection_id: s.roadmap.connectionId || null,
+      owner: s.roadmap.owner.trim(),
+      number,
+      consumers: parseConsumers(s.roadmap.consumers),
+    });
+  }
+  if (!crates_io && repositories.length === 0 && roadmaps.length === 0)
+    return "Enable at least one source.";
+  return { crates_io, repositories, roadmaps };
 }
 
 
@@ -719,6 +777,7 @@ export function ComponentsCatalog({
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
     (sources.kits.enabled || sources.kitsPm.enabled) && "kits",
+    sources.roadmap.enabled && "roadmap",
     sources.cratesIo && "crates.io",
   ]
     .filter(Boolean)
@@ -858,18 +917,26 @@ export function ComponentsCatalog({
               </div>
             </div>
           ) : (
-            <div className="gcat-cards">
-              {visible.map((g) => (
-                <GearListCard
-                  key={g.instance_id}
-                  gear={g}
-                  values={resolved[nameOf(g)]?.values ?? {}}
-                  schema={schemaFor(schemas, g.type_id)}
-                  activity={activity.byGear.get(nameOf(g))}
-                  onOpen={() => setSelected(nameOf(g))}
-                />
-              ))}
-            </div>
+            <>
+              <CardsSummary
+                shown={visible.length}
+                total={gears?.length ?? 0}
+                resolved={resolved}
+                nodes={visible}
+              />
+              <div className="gcat-cards">
+                {visible.map((g) => (
+                  <GearListCard
+                    key={g.instance_id}
+                    gear={g}
+                    values={resolved[nameOf(g)]?.values ?? {}}
+                    schema={schemaFor(schemas, g.type_id)}
+                    usedBy={resolved[nameOf(g)]?.values?.consumers?.n ?? null}
+                    onOpen={() => setSelected(nameOf(g))}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </>
       )}
@@ -963,6 +1030,84 @@ function RepoSourceEditor({
         )}
         <p className="src-note">
           {note}
+          {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RoadmapSourceEditor({
+  sel,
+  onChange,
+  connections,
+  tenantId,
+}: {
+  sel: RoadmapSel;
+  onChange: (patch: Partial<RoadmapSel>) => void;
+  connections: Connection[];
+  tenantId: string | undefined;
+}) {
+  return (
+    <div className="src-col">
+      <label className="src-head">
+        <input
+          type="checkbox"
+          checked={sel.enabled}
+          onChange={(e) => onChange({ enabled: e.target.checked })}
+        />
+        <span>Roadmap (GitHub Project)</span>
+      </label>
+      <div className="src-body">
+        <label className="src-row">
+          <span>Connection</span>
+          <select
+            value={sel.connectionId}
+            disabled={!sel.enabled}
+            onChange={(e) => onChange({ connectionId: e.target.value })}
+          >
+            <option value="">
+              {connections.length ? "First GitHub connection" : "No GitHub connection"}
+            </option>
+            {connections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label || c.account || c.id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="src-row">
+          <span>Owner</span>
+          <input
+            placeholder="organization or user"
+            value={sel.owner}
+            disabled={!sel.enabled}
+            onChange={(e) => onChange({ owner: e.target.value })}
+          />
+        </label>
+        <label className="src-row">
+          <span>Project #</span>
+          <input
+            inputMode="numeric"
+            placeholder="48"
+            value={sel.number}
+            disabled={!sel.enabled}
+            onChange={(e) => onChange({ number: e.target.value })}
+          />
+        </label>
+        <label className="src-row">
+          <span>Consumers</span>
+          <input
+            placeholder="A=Acronis, C=Constructor"
+            value={sel.consumers}
+            disabled={!sel.enabled}
+            onChange={(e) => onChange({ consumers: e.target.value })}
+          />
+        </label>
+        <p className="src-note">
+          Each gear's stage, milestone and who needs it, from the board item whose title names the
+          gear, or the one pinned in its Roadmap item field. Consumers name the letters of the
+          priority column. The connection needs <code>read:project</code>.
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
         </p>
       </div>
@@ -1076,6 +1221,12 @@ function SourcesPanel({
         connections={connections}
         tenantId={tenantId}
       />
+      <RoadmapSourceEditor
+        sel={sources.roadmap}
+        onChange={(p) => setSrc({ roadmap: { ...sources.roadmap, ...p } })}
+        connections={connections}
+        tenantId={tenantId}
+      />
       <div className="src-col">
         <label className="src-head">
           <input
@@ -1161,12 +1312,33 @@ function GearListRow({
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
-  const category = values.category?.b ?? "gear";
-  const version = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
+  /* The Type column says what the component IS (gear, plugin, sdk, toolkit,
+     frontx, kit). It used to show `category`, which is a crates.io category
+     ("Web programming"), a gear.toml domain ("bss") or, for a FrontX package,
+     its first npm keyword ("hai3", "eslint") -- three vocabularies in one
+     column that claimed to be a fourth. The category stays, under the type. */
+  const kind = String(gear.value.kind ?? (gear.type_id === KIT_TYPE ? "kit" : "gear"));
+  const category = values.category?.b ?? null;
+  const released = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
+  /* A FrontX package is not on crates.io, so "Not published" was true and
+     useless: the version its package.json declares is the one people use. */
+  const declared = released ? null : values.version?.b ?? null;
+  const version = released ?? declared;
   const lamps = fields.map((f) => lampOf(f, values)).filter((l): l is Lamp => !!l);
   const bad = lamps.filter((l) => l === "bad").length;
   const watch = lamps.filter((l) => l === "watch").length;
-  const repository = typeof gear.value.repository === "string" ? gear.value.repository : null;
+  /* A component only a repository scan produced (a draft gear, a FrontX
+     package) has no crates.io `repository`, but the scan recorded where it
+     read it: `synced_from` and, since the scan keeps it, `repo_path`. "Not
+     recorded" was wrong for every one of them. */
+  const scannedFrom = typeof gear.value.synced_from === "string" && gear.value.synced_from ? gear.value.synced_from : null;
+  const repoPath = typeof gear.value.repo_path === "string" && gear.value.repo_path ? gear.value.repo_path : null;
+  const repository =
+    typeof gear.value.repository === "string" && gear.value.repository
+      ? gear.value.repository
+      : scannedFrom
+        ? `https://github.com/${scannedFrom}${repoPath ? `/tree/HEAD/${repoPath}` : ""}`
+        : null;
   const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
 
   return (
@@ -1178,7 +1350,8 @@ function GearListRow({
         )}
       </td>
       <td>
-        <span className="pill">{category}</span>
+        <span className="pill">{kind}</span>
+        {category && category !== kind && <div className="gcat-sub">{category}</div>}
       </td>
       <td>
         {/* No version at all is not "0" and not a blank: crates.io has no
@@ -1186,13 +1359,13 @@ function GearListRow({
         {version ? (
           <>
             <code className="gcat-version">{String(version)}</code>
-            <div className="gcat-sub">{numText(gear.value.num_versions)} versions</div>
+            <div className="gcat-sub">
+              {declared ? "declared, not on crates.io" : `${numText(gear.value.num_versions)} versions`}
+            </div>
           </>
-        ) : (
-          <span className="gcat-absent">Not published</span>
-        )}
+        ) : null}
       </td>
-      <td className="gcat-num">{numText(gear.value.downloads)}</td>
+      <td className="gcat-num">{gear.value.downloads != null ? numText(gear.value.downloads) : null}</td>
       <td>
         {moved ? (
           <div className="act-card">
@@ -1208,9 +1381,7 @@ function GearListRow({
           /* Nothing moved in the window, or Insight has no directory for this
              component — two different facts, and the one we can tell apart is
              whether we measured at all. */
-          <span className="gcat-absent">
-            {activity ? `No commits in ${activityDays} days` : "Not measured"}
-          </span>
+          activity ? <span className="gcat-absent">No commits in {activityDays} days</span> : null
         )}
       </td>
       <td>
@@ -1249,11 +1420,143 @@ function GearListRow({
           >
             {repository.replace(/^https?:\/\/(www\.)?/, "")}
           </a>
-        ) : (
-          <span className="gcat-absent">Not recorded</span>
-        )}
+        ) : null}
       </td>
     </tr>
+  );
+}
+
+// ── the component card ───────────────────────────────────────────────────────
+//
+// One card answers, top to bottom, the questions somebody deciding whether to
+// wait for a component asks: what is it and where is it (stage), how far along
+// is each part and will the date hold (plan), what can I use today (release),
+// how big is its world (documents, dependencies, who uses it), and what is
+// wrong with it (the worst finding, then how many more).
+
+/** Words a component name spells in capitals rather than in title case. */
+const ACRONYMS = new Set(["api", "llm", "sdk", "oagw", "grpc", "bss", "oss", "http", "json", "ecb", "fx", "ai", "ui", "mfe", "id", "db"]);
+
+/** `cf-gears-account-management` → `Account Management`. */
+function displayName(name: string): string {
+  const bare = name.replace(/^cf-gears-/, "").replace(/^@[^/]+\//, "");
+  return bare
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
+/** `core-platform-integration` → `Core platform integration`; `gen-ai` → `Gen AI`. */
+function categoryLabel(raw: string): string {
+  const words = raw.split(/[-_\s]+/).filter(Boolean);
+  return words
+    .map((w, i) => {
+      if (ACRONYMS.has(w.toLowerCase())) return w.toUpperCase();
+      return i === 0 ? w[0].toUpperCase() + w.slice(1) : w.toLowerCase();
+    })
+    .join(" ");
+}
+
+/** `In Dev (3 of 6)` → where in the pipeline, as a colour. */
+function stageTone(values: Values): "done" | "late" | "early" | "idle" {
+  const m = /\((\d+) of (\d+)\)/.exec(values.stage?.v ?? "");
+  if (!m) return "idle";
+  const at = Number(m[1]);
+  const of = Number(m[2]);
+  if (at >= of) return "done";
+  if (at <= 1) return "idle";
+  return at / of >= 0.7 ? "late" : "early";
+}
+
+interface Axis {
+  label: string;
+  value: string;
+  pct: number | null;
+}
+
+/** The roadmap's progress axes, labelled short enough to sit in a row. */
+function axesOf(values: Values): Axis[] {
+  const parts = (values.roadmap_progress as unknown as { parts?: { label: string; value: string; pct: number | null }[] } | null)
+    ?.parts;
+  return (parts ?? []).map((p) => {
+    const label = p.label.trim();
+    const short = label.length > 6 ? label.slice(0, 4) : label;
+    return { label: short.toUpperCase(), value: p.value, pct: p.pct };
+  });
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** `2026-10-31` → `Oct 2026`. */
+function monthOf(date: string | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})/.exec(date ?? "");
+  return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : null;
+}
+
+/** Whole months from `due` to today, when today is past it. */
+function monthsLate(due: string): number {
+  const d = new Date(`${due}T00:00:00Z`);
+  const now = new Date();
+  const months = (now.getUTCFullYear() - d.getUTCFullYear()) * 12 + (now.getUTCMonth() - d.getUTCMonth());
+  return Math.max(1, months);
+}
+
+/** What the plan says about the date, as one short phrase and a tone. */
+function scheduleOf(values: Values): { text: string; tone: Lamp } | null {
+  const conv = values.convergence;
+  const due = values.milestone?.u;
+  if (!values.milestone && !conv) return null;
+  if (conv?.b === "delivered") return { text: "Delivered", tone: "good" };
+  if (values.milestone?.s === "bad" && due) {
+    const n = monthsLate(due);
+    return { text: `${n} month${n === 1 ? "" : "s"} late`, tone: "bad" };
+  }
+  if (!due) return { text: "No date", tone: "grey" };
+  if (conv?.s === "watch") return { text: "Check", tone: "watch" };
+  return { text: "On target", tone: "good" };
+}
+
+/** What can be used today: the newest release, or why there is none. */
+function releaseOf(gear: CatalogNode, values: Values): { label: string; version: string | null; tone: Lamp } {
+  // Only a version is shown; "unknown" is not something to put on a card.
+  const version =
+    (gear.value.max_stable_version as string | undefined) ??
+    (gear.value.newest_version as string | undefined) ??
+    values.lastrelease?.b ??
+    null;
+  const published = values.published?.b;
+  if (published === "sdk only") return { label: "SDK only", version, tone: "watch" };
+  if (version) return { label: "Released", version, tone: "good" };
+  return { label: "Release unknown", version: null, tone: "grey" };
+}
+
+/** `Service · REST API · SDK`: what shape the component comes in. */
+function shapeOf(values: Values): string {
+  const parts: string[] = [];
+  const runtime = values.runtime?.b;
+  if (runtime) parts.push(runtime[0].toUpperCase() + runtime.slice(1));
+  if (values.openapi?.b === "yes") parts.push("REST API");
+  if ((values.sdk?.b ?? "").startsWith("SDK")) parts.push("SDK");
+  if (parts.length === 0 && values.prd?.b && values.prd.b !== "N/A") return "Specification only";
+  return parts.join(" · ");
+}
+
+/** The specification documents present, counted the way the Specification group lists them. */
+function documentsOf(values: Values): number {
+  const docs = ["prd", "design", "decomp", "upstream"].filter((k) => {
+    const b = values[k]?.b;
+    return b && b !== "N/A";
+  }).length;
+  return docs + (values.adr?.n ?? 0);
+}
+
+function Count({ n, unit }: { n: number; unit?: string }) {
+  return (
+    <span className="ccard-count">
+      {n}
+      {unit ? <span className="ccard-unit"> {n === 1 ? unit : `${unit}s`}</span> : null}
+    </span>
   );
 }
 
@@ -1261,84 +1564,181 @@ function GearListCard({
   gear,
   values,
   schema,
-  activity,
+  usedBy,
   onOpen,
 }: {
   gear: CatalogNode;
   /** Reconciled by the gear that owns the precedence, not merged here. */
   values: Values;
-  /** This component's own type's schema — the card counts against it, so
-   *  "8 of 11" on a micro-frontend rather than "8 of 62". */
+  /** This component's own type's schema: findings are counted against it. */
   schema: Schema;
-  activity: GearActivity | undefined;
+  /** How many catalogued components depend on this one; `null` when unknown. */
+  usedBy: number | null;
+  activity?: GearActivity | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
-  const filled = fields.filter((f) => values[f.key]).length;
-  const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
   const category = values.category?.b ?? "gear";
-  const latest = String(gear.value.max_stable_version ?? gear.value.newest_version ?? "—");
+  const stage = values.stage?.b ?? null;
+  const tone = stageTone(values);
+  const axes = axesOf(values);
+  const schedule = scheduleOf(values);
+  const release = releaseOf(gear, values);
+  const shape = shapeOf(values);
+  const due = monthOf(values.milestone?.u);
+  const committed = values.commitment?.b;
 
-  // one summary lamp: worst known across judged fields
-  const lamps = fields.map((f) => lampOf(f, values)).filter((l): l is Lamp => !!l);
-  const bad = lamps.filter((l) => l === "bad").length;
-  const watch = lamps.filter((l) => l === "watch").length;
-  const good = lamps.filter((l) => l === "good").length;
+  // Findings: the worst one named, the rest counted.
+  const judged = fields
+    .map((f) => ({ f, lamp: lampOf(f, values) }))
+    .filter((x): x is { f: Field; lamp: Lamp } => !!x.lamp);
+  // The plan speaks first: the card is about readiness, and a missed date
+  // outranks a missing sign-off. Then the rest, red before amber.
+  const plan = judged.find((x) => x.f.key === "convergence" && (x.lamp === "bad" || x.lamp === "watch"));
+  const worst =
+    plan ?? judged.find((x) => x.lamp === "bad") ?? judged.find((x) => x.lamp === "watch") ?? null;
+  const toReview = judged.filter((x) => x.lamp === "bad" || x.lamp === "watch").length;
+  const docs = documentsOf(values);
+  const stats: { label: string; n: number; unit?: string }[] = [];
+  if (docs > 0) stats.push({ label: "Documents", n: docs });
+  if (values.deps?.n) stats.push({ label: "Dependencies", n: values.deps.n });
+  // Zero users is a finding, so a known zero is shown; an unknown is not.
+  if (usedBy !== null) stats.push({ label: "Used by", n: usedBy, unit: "component" });
+  const worstText = worst
+    ? worst.f.key === "convergence"
+      ? String(values.convergence?.v ?? "Plan at risk")
+      : `${worst.f.label}: ${values[worst.f.key]?.b ?? "none"}`
+    : null;
 
   return (
-    <button className="gcard" onClick={onOpen} title={`Open ${name}`}>
-      <div className="gcard-head">
-        <span className="gcard-name">{name}</span>
-        <span className="pill">{category}</span>
-      </div>
-      {gear.value.description && <p className="gcard-desc">{String(gear.value.description)}</p>}
-      <div className="gcard-meta">
-        <span>
-          <b>{latest}</b> latest
-        </span>
-        <span>
-          <b>{numText(gear.value.num_versions)}</b> versions
-        </span>
-        <span>
-          <b>{numText(gear.value.downloads)}</b> downloads
+    <button className="ccard" onClick={onOpen} title={`Open ${name}`}>
+      <div className="ccard-top">
+        <span className="ccard-cat">{categoryLabel(String(category))}</span>
+        <span className={`ccard-stage ${tone}`}>
+          {stage && <span className="dot" />}
+          {stage}
+          <span className="ccard-chev" aria-hidden="true">›</span>
         </span>
       </div>
-      {activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0) && (
-        <div className="act-card">
-          <MiniChurn points={activity.points} />
-          <span>
-            <b>{compact(activity.commits)}</b> commits ·{" "}
-            <b className="ink-added">+{compact(activity.lines_added)}</b>{" "}
-            <b className="ink-removed">−{compact(activity.lines_removed)}</b> ·{" "}
-            <b>{compact(activity.authors)}</b> authors
-          </span>
+      <div className="ccard-title">{displayName(name)}</div>
+      {gear.value.description ? <p className="ccard-desc">{String(gear.value.description)}</p> : <div className="ccard-gap" />}
+
+      {(axes.length > 0 || schedule) && (
+      <div className="ccard-sec ccard-plan">
+        {axes.length > 0 && (
+          <div className="ccard-axes">
+            {axes.map((a) => (
+              <div key={a.label} className="ccard-axis" title={`${a.label}: ${a.value}`}>
+                <span className="ccard-k">{a.label}</span>
+                <span className={`ccard-v ${a.pct === 100 ? "full" : a.pct === null ? "na" : "part"}`}>
+                  <span className="dot" />
+                  {a.pct === null ? "—" : `${a.pct}%`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {schedule && (
+          <div className="ccard-when" title={values.convergence?.v ?? undefined}>
+            <div className="ccard-when-top">
+              {committed && (
+                <span className="ccard-pill">{committed === "committed" ? "Committed" : "Planned"}</span>
+              )}
+              <span className={`ccard-sched ${schedule.tone}`}>
+                <span className="dot" />
+                {schedule.text}
+              </span>
+            </div>
+            {(due || values.milestone?.b) && (
+              <div className="ccard-due">{due ? `due ${due}` : String(values.milestone?.b)}</div>
+            )}
+          </div>
+        )}
+      </div>
+      )}
+
+      {(release.version || shape) && (
+        <div className="ccard-sec ccard-release">
+          {release.version && (
+            <span className={`ccard-rel ${release.tone}`}>
+              <span className="dot" />
+              {release.label}
+            </span>
+          )}
+          {release.version && <code className="ccard-ver">v{release.version.replace(/^v/, "")}</code>}
+          {shape && <span className="ccard-shape">{shape}</span>}
         </div>
       )}
-      <div className="gcard-foot">
-        <span className="lampline">
-          {bad > 0 && (
-            <span className="lchip">
-              <span className="tl bad" />
-              {bad}
+
+      {stats.length > 0 && (
+        <div className="ccard-sec ccard-stats">
+          {stats.map((st) => (
+            <div key={st.label}>
+              <span className="ccard-k2">{st.label}</span>
+              <Count n={st.n} unit={st.unit} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {values.demand?.b && (
+        <div className="ccard-demand" title={values.demand.v ?? undefined}>
+          {String(values.demand.b)}
+        </div>
+      )}
+
+      {(worstText || toReview > 0) && (
+        <div className="ccard-foot">
+          {worstText && (
+            <span className={`ccard-warn ${worst?.lamp === "bad" ? "bad" : ""}`}>
+              <span aria-hidden="true">⚠</span> {worstText}
             </span>
           )}
-          {watch > 0 && (
-            <span className="lchip">
-              <span className="tl watch" />
-              {watch}
-            </span>
-          )}
-          {good > 0 && (
-            <span className="lchip">
-              <span className="tl good" />
-              {good}
-            </span>
-          )}
-        </span>
-        <span className="gcard-pct">{pct}% filled</span>
-      </div>
+          {toReview > 0 && <span className="ccard-review">{toReview} to review ›</span>}
+        </div>
+      )}
     </button>
+  );
+}
+
+/** One line over the cards: how many, and how many of them want attention. */
+function CardsSummary({
+  shown,
+  total,
+  resolved,
+  nodes,
+}: {
+  shown: number;
+  total: number;
+  resolved: Record<string, ComponentValues>;
+  nodes: CatalogNode[];
+}) {
+  let released = 0;
+  let planned = 0;
+  let review = 0;
+  for (const g of nodes) {
+    const v = resolved[String(g.value.name ?? g.instance_id)]?.values ?? {};
+    if (g.value.max_stable_version || g.value.newest_version || v.lastrelease) released++;
+    if (v.stage && stageTone(v) !== "done") planned++;
+    const lamp = v.convergence?.s;
+    if (lamp === "bad" || lamp === "watch") review++;
+  }
+  return (
+    <div className="ccards-summary">
+      <span>
+        <b>{shown}</b> of {total} components
+      </span>
+      <span>
+        <b>{released}</b> released
+      </span>
+      <span>
+        <b>{planned}</b> planned or in progress
+      </span>
+      <span>
+        <b>{review}</b> need review
+      </span>
+    </div>
   );
 }
 
@@ -1494,7 +1894,7 @@ function GearDetail({
             ← Gears
           </button>
           <span className="sep">/</span>
-          <h1>{name}</h1>
+          <h1 title={name}>{displayName(name)}</h1>
         </div>
         <div className="seg" role="tablist" aria-label="View">
           {(["empty", "filled", "sources"] as View[]).map((v) => (
@@ -1533,7 +1933,7 @@ function GearDetail({
       )}
 
       <div className="grid">
-        {schema.groups.map((group) => (
+        {(view === "filled" ? answeredGroups(schema, values) : schema.groups).map((group) => (
           <Panel key={group.id} group={group} values={values} view={view} />
         ))}
       </div>
@@ -1563,6 +1963,16 @@ function GearDetail({
 }
 
 // ── panel + rows ─────────────────────────────────────────────────────────────
+
+/** The groups with at least one answered field, each cut down to those fields.
+ *
+ *  A page of "no data" rows buries the handful of real values; the Empty and
+ *  Sources views still show every field, because there the gaps are the point. */
+function answeredGroups(schema: Schema, values: Values): Group[] {
+  return schema.groups
+    .map((g) => ({ ...g, fields: g.fields.filter((f) => values[f.key]) }))
+    .filter((g) => g.fields.length > 0);
+}
 
 function Panel({ group, values, view }: { group: Group; values: Values; view: View }) {
   const health = groupHealth(group, values);
@@ -1695,7 +2105,7 @@ function HealthStrip({ values, schema }: { values: Values; schema: Schema }) {
   };
   return (
     <div className="health">
-      {schema.groups.map((group) => {
+      {answeredGroups(schema, values).filter((group) => groupHealth(group, values).n > 0).map((group) => {
         const h = groupHealth(group, values);
         const order: Lamp[] = ["bad", "watch", "good", "grey"];
         const pips = h.n
@@ -1725,9 +2135,13 @@ function Kpis({ values, schema }: { values: Values; schema: Schema }) {
   const total = parts.reduce((a, p) => a + p.n, 0);
   const ratio = values.ratio?.b ?? values.ratio?.v ?? "—";
   const adr = values.adr?.n;
+  const hasRatio = Boolean(values.ratio?.b ?? values.ratio?.v);
+  // ADRs alone are already in the Specification group; the block is for size.
+  if (total === 0 && !hasRatio) return null;
 
   return (
     <div className="kpis">
+      {total > 0 && (
       <div className="compo">
         <div className="cbar">
           {total > 0 ? (
@@ -1755,10 +2169,11 @@ function Kpis({ values, schema }: { values: Values; schema: Schema }) {
           <span className="ck tot">{total.toLocaleString("en-US")} lines total</span>
         </div>
       </div>
+      )}
       <div className="facts">
-        <Fact label="Total lines" value={total ? total.toLocaleString("en-US") : "—"} note="spec, code and tests" />
-        <Fact label="Spec to code" value={ratio} note="lines of code per line of spec" />
-        <Fact label="ADRs" value={adr === undefined ? "—" : String(adr)} note="recorded decisions" />
+        {total > 0 && <Fact label="Total lines" value={total.toLocaleString("en-US")} note="spec, code and tests" />}
+        {hasRatio && <Fact label="Spec to code" value={ratio} note="lines of code per line of spec" />}
+        {adr !== undefined && <Fact label="ADRs" value={String(adr)} note="recorded decisions" />}
       </div>
     </div>
   );
@@ -2562,7 +2977,62 @@ const GCAT_CSS = `
 .gcat code { font-family:var(--studio-mono); font-size:.92em; }
 
 /* list cards */
-.gcat .gcat-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+.gcat .gcat-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:14px; }
+.gcat .ccards-summary { display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12.5px; color:var(--studio-muted); margin:2px 2px 10px; }
+.gcat .ccards-summary b { color:var(--studio-text); font-weight:600; }
+.gcat .ccard {
+  text-align:left; font:inherit; color:inherit; cursor:pointer;
+  background:var(--studio-surface); border:1px solid var(--studio-line);
+  border-radius:12px; padding:16px 18px 14px; display:flex; flex-direction:column; gap:0;
+  box-shadow:0 1px 2px var(--studio-shadow); transition:border-color .15s, box-shadow .15s;
+}
+.gcat .ccard:hover { border-color:var(--studio-accent); box-shadow:0 4px 14px var(--studio-shadow); }
+.gcat .ccard .dot { width:6px; height:6px; border-radius:50%; background:currentColor; display:inline-block; flex:none; }
+.gcat .ccard-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.gcat .ccard-cat { font-size:12px; padding:2px 9px; border-radius:999px; color:var(--studio-accent); background:color-mix(in srgb, var(--studio-accent) 12%, transparent); border:1px solid color-mix(in srgb, var(--studio-accent) 25%, transparent); }
+.gcat .ccard-stage { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--studio-muted); }
+.gcat .ccard-stage.done { color:var(--studio-verified); }
+.gcat .ccard-stage.late { color:var(--studio-warning); }
+.gcat .ccard-stage.early { color:var(--studio-accent); }
+.gcat .ccard-chev { color:var(--studio-muted); font-size:16px; line-height:1; margin-left:6px; }
+.gcat .ccard-title { font-size:18px; font-weight:600; letter-spacing:-.01em; margin-top:12px; color:var(--studio-text); }
+.gcat .ccard-desc { font-size:13.5px; color:var(--studio-muted); margin:4px 0 14px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:2.6em; }
+.gcat .ccard-sec { border-top:1px solid var(--studio-line); padding:10px 0; }
+.gcat .ccard-plan { display:flex; align-items:flex-start; gap:18px; flex-wrap:wrap; }
+.gcat .ccard-axes { display:flex; gap:16px; }
+.gcat .ccard-axis { display:flex; flex-direction:column; gap:3px; }
+.gcat .ccard-k { font-size:10px; letter-spacing:.04em; color:var(--studio-muted); font-weight:600; }
+.gcat .ccard-v { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--studio-text); }
+.gcat .ccard-v.full .dot { color:var(--studio-verified); }
+.gcat .ccard-v.part .dot { color:var(--studio-accent); }
+.gcat .ccard-v.na .dot { color:var(--studio-edge); }
+.gcat .ccard-when { display:flex; flex-direction:column; gap:3px; }
+.gcat .ccard-when-top { display:flex; align-items:center; gap:8px; }
+.gcat .ccard-pill { font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:999px; border:1px solid var(--studio-line); color:var(--studio-text); }
+.gcat .ccard-sched { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; }
+.gcat .ccard-sched.good { color:var(--studio-verified); }
+.gcat .ccard-sched.watch { color:var(--studio-warning); }
+.gcat .ccard-sched.bad { color:var(--studio-danger); }
+.gcat .ccard-sched.grey { color:var(--studio-muted); }
+.gcat .ccard-due { font-size:12.5px; color:var(--studio-text); }
+.gcat .ccard-release { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; }
+.gcat .ccard-rel { display:inline-flex; align-items:center; gap:6px; font-weight:500; }
+.gcat .ccard-rel.good { color:var(--studio-verified); }
+.gcat .ccard-rel.watch { color:var(--studio-warning); }
+.gcat .ccard-rel.grey { color:var(--studio-muted); }
+.gcat .ccard-ver { font-family:var(--studio-mono); font-size:12px; color:var(--studio-accent); }
+.gcat .ccard-shape { color:var(--studio-text); }
+.gcat .ccard-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.gcat .ccard-stats > div { display:flex; flex-direction:column; gap:3px; }
+.gcat .ccard-k2 { font-size:11px; color:var(--studio-muted); }
+.gcat .ccard-count { font-size:14px; color:var(--studio-text); font-variant-numeric:tabular-nums; }
+.gcat .ccard-unit { font-size:12.5px; }
+.gcat .ccard-gap { height:12px; }
+.gcat .ccard-demand { font-size:12px; color:var(--studio-muted); padding:0 0 6px; }
+.gcat .ccard-foot { display:flex; flex-direction:column; gap:4px; margin-top:auto; padding-top:6px; font-size:12.5px; }
+.gcat .ccard-warn.bad { color:var(--studio-danger); }
+.gcat .ccard-warn { color:var(--studio-warning); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.gcat .ccard-review { color:var(--studio-accent); }
 
 /* The table beside the cards. Same rows, same click target, laid out for
    scanning one question down a column instead of one component at a time.
@@ -2606,6 +3076,9 @@ const GCAT_CSS = `
 .gcat .gcard-meta b { font-family:var(--studio-mono); color:var(--studio-text); font-weight:600; }
 .gcat .gcard-foot { display:flex; align-items:center; justify-content:space-between; margin-top:auto; padding-top:4px; border-top:1px solid var(--studio-line); }
 .gcat .lampline { display:inline-flex; gap:8px; }
+.gcat .gcard-plan { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; font-size:12px; color:var(--studio-muted); }
+.gcat .gcard-plan b { color:var(--foreground); font-weight:600; }
+.gcat .gcard-plan-demand { flex-basis:100%; }
 .gcat .lchip { display:inline-flex; align-items:center; gap:4px; font-family:var(--studio-mono); font-size:10.5px; color:var(--studio-muted); }
 .gcat .gcard-pct { font-family:var(--studio-mono); font-size:10.5px; color:var(--studio-muted); }
 
@@ -2670,7 +3143,8 @@ const GCAT_CSS = `
 .gcat .row a::after { content:"\\2197"; font-size:.75em; opacity:.5; margin-left:2px; vertical-align:super; }
 
 /* pills */
-.gcat .pill { font-size:10.5px; padding:1px 8px; border-radius:var(--radius-full); background:var(--studio-surface-sunken); border:1px solid var(--studio-line); color:var(--studio-text); white-space:nowrap; }
+/* A global \`.pill\` elsewhere is a 36px round icon button; this one is a label. */
+.gcat .pill { width:auto; height:auto; display:inline-block; font-size:10.5px; padding:1px 8px; border-radius:var(--radius-full); background:var(--studio-surface-sunken); border:1px solid var(--studio-line); color:var(--studio-text); white-space:nowrap; }
 .gcat .pill.unset { border-style:dashed; color:var(--studio-muted); background:none; font-style:italic; }
 .gcat .pill.ds-done { background:color-mix(in srgb,var(--studio-verified) 14%,var(--studio-bg)); border-color:color-mix(in srgb,var(--studio-verified) 40%,transparent); color:var(--studio-verified); }
 .gcat .pill.ds-wip { background:color-mix(in srgb,var(--studio-warning) 16%,var(--studio-bg)); border-color:color-mix(in srgb,var(--studio-warning) 42%,transparent); color:var(--studio-warning); }

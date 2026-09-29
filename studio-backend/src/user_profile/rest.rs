@@ -9,7 +9,10 @@
 
 use std::sync::Arc;
 
-use axum::{Extension, Router, extract::Path};
+use axum::{
+    Extension, Router,
+    extract::{Path, Query},
+};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
@@ -120,6 +123,38 @@ pub struct OrgMembershipDto {
 pub struct MembershipListDto {
     pub items: Vec<OrgMembershipDto>,
 }
+
+/// One member of an organization, with who they are: what a members screen
+/// shows. The profile fields are absent when the person's profile cannot be
+/// read (a person merged away, a row older than profiles).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationMemberDto {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub role: String,
+    /// `active` or `suspended`.
+    pub status: String,
+    /// How the membership arose: `creation`, `assignment`, `invitation`,
+    /// `bootstrap`, `first_login`, `manual`.
+    pub source: String,
+    pub created_at_epoch_ms: i64,
+    pub updated_at_epoch_ms: i64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationMemberListDto {
+    pub items: Vec<OrganizationMemberDto>,
+    /// Members across every page.
+    pub total: u32,
+}
+
+/// The roles a membership may carry. `owner` is the one that administers
+/// (its access-config grant is kept in step with it); `admin` and `member`
+/// are what an invitation may offer.
+pub const MEMBERSHIP_ROLES: &[&str] = &[crate::access_config::ROLE_OWNER, "admin", "member"];
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -290,6 +325,13 @@ pub struct MergeResultDto {
 pub struct ResolveRequest {
     pub provider: String,
     pub subject: String,
+    /// What to call the person when this is the first time they are seen —
+    /// an administrator adding somebody who has not signed in yet knows their
+    /// name from the identity provider. Ignored for a person who exists.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug)]
@@ -598,6 +640,35 @@ async fn get_user_memberships(
     Ok(Json(MembershipListDto { items }))
 }
 
+async fn list_organization_members(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path(org_id): Path<String>,
+    Query(page): Query<crate::pagination::PageQuery>,
+) -> ApiResult<JsonBody<OrganizationMemberListDto>> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    require_org_authority(&ctx, &service, org, "people.view").await?;
+    let items = service
+        .members_with_profiles(&org.to_string())
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|(m, profile)| OrganizationMemberDto {
+            user_id: m.user_id,
+            display_name: profile.as_ref().and_then(|p| p.display_name.clone()),
+            email: profile.and_then(|p| p.email),
+            role: m.role,
+            status: m.status,
+            source: m.source,
+            created_at_epoch_ms: m.created_at_epoch_ms,
+            updated_at_epoch_ms: m.updated_at_epoch_ms,
+        })
+        .collect();
+    let (items, total) = crate::pagination::page_of(items, page);
+    Ok(Json(OrganizationMemberListDto { items, total }))
+}
+
 async fn put_membership(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -607,6 +678,14 @@ async fn put_membership(
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org, "people.manage").await?;
+    if !MEMBERSHIP_ROLES.contains(&req.role.as_str()) {
+        return Err(UserProfileError::invalid_argument()
+            .with_constraint(format!(
+                "role must be one of {}",
+                MEMBERSHIP_ROLES.join(", ")
+            ))
+            .create());
+    }
     let status = req.status.as_deref().unwrap_or(leaving::STATUS_ACTIVE);
     if !leaving::STATUSES.contains(&status) {
         return Err(UserProfileError::invalid_argument()
@@ -628,7 +707,17 @@ async fn put_membership(
         .await
         .map_err(internal)?
     {
-        Ok(membership) => Ok(Json(membership_to_dto(membership))),
+        Ok(membership) => {
+            // The grant follows the row: an active owner administers, anyone
+            // else — demoted, suspended — does not.
+            let owner = membership.role == crate::access_config::ROLE_OWNER
+                && membership.status == leaving::STATUS_ACTIVE;
+            service
+                .sync_owner_grant(&ctx, &membership.user_id, org, owner)
+                .await
+                .map_err(internal)?;
+            Ok(Json(membership_to_dto(membership)))
+        }
         Err(refusal) => Err(refused(refusal, &user_id, &org_id)),
     }
 }
@@ -671,9 +760,18 @@ async fn leave(
         .await
         .map_err(internal)?
     {
-        Ok(connections_removed) => Ok(Json(LeaveResultDto {
-            connections_removed: connections_removed as u32,
-        })),
+        Ok(connections_removed) => {
+            // Gone from the room, gone from its administration: an owner grant
+            // left behind would let somebody who is not a member any more
+            // still administer the organization.
+            service
+                .sync_owner_grant(ctx, user_id, org, false)
+                .await
+                .map_err(internal)?;
+            Ok(Json(LeaveResultDto {
+                connections_removed: connections_removed as u32,
+            }))
+        }
         Err(refusal) => Err(refused(refusal, user_id, &org.to_string())),
     }
 }
@@ -958,7 +1056,13 @@ async fn resolve_identity(
     let service = configured(service)?;
     require_platform_admin(&ctx, &service).await?;
     let user_id = service
-        .resolve_or_provision(&req.provider, &req.subject, None, None, true)
+        .resolve_or_provision(
+            &req.provider,
+            &req.subject,
+            req.display_name.as_deref(),
+            req.email.as_deref(),
+            true,
+        )
         .await
         .map_err(internal)?;
     Ok(Json(ResolveResultDto { user_id }))
@@ -1412,6 +1516,33 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-user/v1/organizations/{org_id}/members")
+        .operation_id("studio_user.list_organization_members")
+        .summary("List an organization's members")
+        .description(
+            "Everybody with a membership in this organization — active or suspended — with \
+             their role, how the membership arose, and the person's name and e-mail when their \
+             profile can be read. The room a members screen shows before anyone is added, \
+             removed, promoted or suspended. Gated on `people.view` (an owner, or a platform \
+             administrator).",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("org_id", "Organization tenant id")
+        .handler(list_organization_members)
+        .json_response_with_schema::<OrganizationMemberListDto>(
+            openapi,
+            StatusCode::OK,
+            "The organization's members",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

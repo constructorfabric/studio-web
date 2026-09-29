@@ -16,7 +16,10 @@
 //     one wins -- so the panel would show a profile the switch does not say.
 
 import { Emitter, Event } from "@theia/core/lib/common/event";
-import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
+import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
+
+import { announceOpenedWorkspace } from "./shell/opened-workspace";
 
 import type { Diagnostic } from "../common/generated/Diagnostic";
 import type { LockResult } from "../common/generated/LockResult";
@@ -129,6 +132,7 @@ export type Focus = ProductSelection;
 @injectable()
 export class ProductStore {
   @inject(GearboxService) protected readonly service!: GearboxService;
+  @inject(WorkspaceService) @optional() protected readonly workspaceService?: WorkspaceService;
 
   protected readonly onChangedEmitter = new Emitter<void>();
   readonly onChanged: Event<void> = this.onChangedEmitter.event;
@@ -298,6 +302,10 @@ export class ProductStore {
     this.update({ status: "loading" });
     let products: ProductRef[];
     try {
+      // Constructor Studio: said first -- see `announceOpenedWorkspace`. The
+      // Start screen discovers before the catalogue's first load has named
+      // the folder, and a desktop backend then lists the application's own.
+      await announceOpenedWorkspace(this.service, this.workspaceService);
       products = await this.service.listProducts();
     } catch (error) {
       this.fail(epoch, error);

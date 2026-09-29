@@ -39,6 +39,7 @@ owner: studio-team
   - [2.22 Files](#222-files)
   - [2.23 Contract, registries and bootstrap](#223-contract-registries-and-bootstrap)
   - [2.24 Deployment and delivery](#224-deployment-and-delivery)
+  - [2.25 The organization's people](#225-the-organizations-people)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
@@ -1230,6 +1231,54 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 ---
 
+### 2.25 [The organization's people](../feature/organization-people.md)
+
+- [ ] `p1` - **ID**: `cpt-studio-feature-organization-people`
+
+- **Purpose**: The organization level's People screen in the official portal: an owner sees who belongs, changes roles and standing, removes, invites and withdraws; a platform administrator also adds from the identity directory. The backend is in place (#455) and the prototype has a reference implementation (#456); `people-mfe` still holds the placeholder.
+
+- **Depends On**: `cpt-studio-feature-organizations-access`, `cpt-studio-feature-reserved-areas`
+
+- **Scope**:
+  - `people-mfe`'s entry: the members list, role and standing controls, removal, invitations
+
+- **Out of scope**:
+  - organization create/delete (`studio-organizations`), project teams, the identity directory screen itself
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-studio-fr-org-administration`
+  - [ ] `p1` - `cpt-studio-fr-invitations-membership`
+  - [ ] `p2` - `cpt-studio-fr-identity-directory`
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-studio-principle-reserved-not-empty`
+
+- **Design Constraints Covered**:
+
+  - None
+
+- **Domain Model Entities**:
+  - Membership, Invitation, Tenant
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-studio-component-reserved-mfes`
+  - [ ] `p1` - `cpt-studio-component-user`
+  - [ ] `p2` - `cpt-studio-component-identity-directory`
+
+- **API**:
+  - `/studio-user/v1/organizations/{org_id}/{members,invitations}`, `/studio-user/v1/users/{user_id}/memberships/{org_id}`, `/studio-user/v1/resolve`, `/studio-identity/v1/users`
+
+- **Sequences**:
+
+  - None
+
+- **Data**:
+
+  - [ ] `p1` - `cpt-studio-db-users`
+
 ## 3. Feature Dependencies
 
 ```text
@@ -1237,6 +1286,7 @@ cpt-studio-feature-contract-registries      cpt-studio-feature-deployment
 cpt-studio-feature-identity
     ↓
 cpt-studio-feature-organizations-access
+    ├─→ cpt-studio-feature-organization-people
     ↓
 cpt-studio-feature-tenancy
     ├─→ cpt-studio-feature-shell-levels

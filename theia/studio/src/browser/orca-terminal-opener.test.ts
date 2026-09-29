@@ -9,6 +9,7 @@ jest.mock('@theia/terminal/lib/browser/base/terminal-widget', () => ({ TerminalL
 import { Container } from '@theia/core/shared/inversify';
 import { Emitter } from '@theia/core/lib/common/event';
 import { TerminalService } from '@theia/terminal/lib/browser/base/terminal-service';
+import { QuickInputService } from '@theia/core/lib/common/quick-pick-service';
 import { OrcaTerminalService } from '../common/orca-terminal-protocol';
 import type { OrcaTerminal } from '../common/orca-protocol';
 import { OrcaTerminalFrontendClient, OrcaTerminalOpener, orcaTabTitle } from './orca-terminal-opener';
@@ -37,7 +38,10 @@ function fakeWidget() {
     return widget;
 }
 
-function setup(attach: (stream: string) => Promise<void> = async () => undefined) {
+function setup(
+    attach: (stream: string) => Promise<void> = async () => undefined,
+    { canPair = false, answers = [] as Array<string | undefined> } = {}
+) {
     const widgets: Array<ReturnType<typeof fakeWidget>> = [];
     const terminals = {
         newTerminal: jest.fn(async () => {
@@ -51,11 +55,19 @@ function setup(attach: (stream: string) => Promise<void> = async () => undefined
         attach: jest.fn((stream: string) => attach(stream)),
         write: jest.fn(async () => undefined),
         resize: jest.fn(async () => undefined),
-        detach: jest.fn(async () => undefined)
+        detach: jest.fn(async () => undefined),
+        canPair: jest.fn(async () => canPair),
+        pair: jest.fn(async (link: string) => {
+            if (!link.startsWith('orca://pair')) {
+                throw new Error('That is not an Orca pairing link');
+            }
+        })
     };
+    const quickInput = { input: jest.fn(async () => answers.shift()) };
     const container = new Container();
     container.bind(TerminalService).toConstantValue(terminals as never);
     container.bind(OrcaTerminalService).toConstantValue(bridge as never);
+    container.bind(QuickInputService).toConstantValue(quickInput as never);
     container.bind(OrcaTerminalFrontendClient).toSelf().inSingletonScope();
     container.bind(OrcaTerminalOpener).toSelf().inSingletonScope();
     return {
@@ -63,6 +75,7 @@ function setup(attach: (stream: string) => Promise<void> = async () => undefined
         client: container.get(OrcaTerminalFrontendClient),
         terminals,
         bridge,
+        quickInput,
         widgets
     };
 }
@@ -163,5 +176,37 @@ describe('the title of an agent tab', () => {
         expect(orcaTabTitle({ agent: 'codex', title: 'Fix login' })).toBe('codex · Fix login');
         expect(orcaTabTitle({ agent: 'claude', title: 'claude' })).toBe('claude');
         expect(orcaTabTitle({ title: '  ' })).toBe('terminal');
+    });
+});
+
+describe('Open on an Orca agent, with no pairing yet', () => {
+    const unpaired = () => Promise.reject(new Error('This IDE has no pairing with the Orca runtime on this computer yet, …'));
+
+    it('asks for the link Orca generates, pairs, and attaches after all', async () => {
+        let first = true;
+        const { opener, bridge, quickInput, widgets } = setup(
+            () => (first ? ((first = false), unpaired()) : Promise.resolve()),
+            { canPair: true, answers: ['not a link', 'orca://pair?code=ok'] }
+        );
+        await opener.open(agent);
+        expect(quickInput.input).toHaveBeenCalledTimes(2);
+        expect(quickInput.input.mock.calls[1]).toEqual([expect.objectContaining({ prompt: 'That is not an Orca pairing link', password: true })]);
+        expect(bridge.pair).toHaveBeenLastCalledWith('orca://pair?code=ok');
+        expect(bridge.attach).toHaveBeenCalledTimes(2);
+        expect(widgets[0].written).toEqual([]);
+    });
+
+    it('says why in the tab when the person does not pair', async () => {
+        const { opener, bridge, widgets } = setup(unpaired, { canPair: true, answers: [undefined] });
+        await opener.open(agent);
+        expect(bridge.pair).not.toHaveBeenCalled();
+        expect(widgets[0].written.join('')).toMatch(/no pairing with the Orca runtime/);
+    });
+
+    it('never asks in a session, which pairs itself', async () => {
+        const { opener, quickInput, widgets } = setup(unpaired, { canPair: false });
+        await opener.open(agent);
+        expect(quickInput.input).not.toHaveBeenCalled();
+        expect(widgets[0].written.join('')).toMatch(/no pairing with the Orca runtime/);
     });
 });

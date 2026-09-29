@@ -1,246 +1,161 @@
 /*
- * The empty main dock — what the product says when it has nothing to show.
+ * The empty main dock — the start page of the project that is open.
  *
- * WHY THIS EXISTS: with no project connected, the largest region of the window
- * was a blank white rectangle. Everything the product actually is — documents
- * that carry their own review conversation, AI edits that arrive as proposals
- * rather than as saved text, two assistants docked beside the page — was
- * invisible until the user had already connected a project, opened a file and
- * selected some words. The first screen taught nothing and asked for nothing.
+ * WHAT CHANGED, AND WHY. This layer used to be a board that explained the
+ * product: "Write. Talk. Decide.", three illustrated columns and three corner
+ * labels pointing at the shell. It taught what the product is and offered
+ * nothing to do, on the screen a person sees every time they close their last
+ * tab. It is now a start page: the documents touched lately, the threads waiting
+ * for this person, the proposals waiting for a decision, and the two actions
+ * that start work — a new document, and Search. The explanation stays, in three
+ * lines, for an empty project and for the first time the page is seen.
  *
- * WHY IT IS NOT A WIDGET. A Welcome tab would put a closable document in the
- * dock that is not a document, give it a tab button, and then have to decide
- * what happens when the user closes it. This is a state of the empty dock, so
- * it is a layer inside the dock's own node, shown exactly when the dock holds
- * no widgets. Same pattern, and the same reason, as the assistant cluster and
- * bottom line: a raw node appended into a shell container, outside Lumino's
+ * WHY IT IS STILL NOT A WIDGET. A Welcome tab would put a closable document in
+ * the dock that is not a document, give it a tab button, and then have to decide
+ * what happens when the user closes it. This is a state of the empty dock, so it
+ * is a layer inside the dock's own node, shown exactly when the dock holds no
+ * widgets — a raw node appended into a shell container, outside Lumino's
  * layout, driven by signals the shell already publishes.
  *
- * ONE ANSWER, not two. This had a second, quieter tier for "a project is
- * connected and nothing is open" — one line and a way back to the file list —
- * on the reasoning that an introduction repeated on every tab close is a
- * lecture. Measured against the running app, that reasoning had the frequencies
- * backwards: `start-local.sh` passes a workspace path, Theia restores the last
- * workspace even without one, so `activeProject` is set before this layer first
- * paints. The quiet tier was every session and the board was reachable only by
- * wiping THEIA_CONFIG_DIR. The tier meant to be the rare case was the only case
- * anybody saw, and the screen that explains the product was dead code.
+ * WHAT IT READS, AND WHEN. Everything on the page comes from the project's own
+ * files, read when the page is shown (and again, debounced, if a file changes
+ * while it is on screen): the tree's mtimes, the per-author comment logs folded
+ * by comment-log.js, and `.studio/changes/`. No indexer and no background walk —
+ * with a document open, this layer is hidden and reads nothing. The walk is
+ * bounded, and the foot line says when a bound bit. The one fact the files
+ * cannot hold — which documents this browser opened — is kept per project in
+ * local storage and labelled "opened", never "edited".
  *
- * So the board is what an empty dock shows, always. Only the call to action
- * follows the state, because that genuinely differs: with no project the next
- * step is to connect one, and with a project connected it is to pick a file.
- *
- * THE SPECIMENS ARE NOT SCREENSHOTS AND NOT MOCKS. They are the product's own
- * markup and its own classes — .studio-avatar, .studio-bubble, .studio-hunk,
- * .studio-diff-line — so they cannot drift away from the real components the
- * way a picture would. They are inert on purpose: static markup, no handlers,
- * `pointer-events: none`, spans rather than buttons, `aria-hidden`. A control
- * that looks live and does nothing is worse than a drawing.
- *
- * They also read left to right as ONE example, not three unrelated ones: a
- * sentence says Q3, a reviewer asks which quarter, the assistant is asked to
- * fix it, and the resulting edit waits for a yes or a no. That is the whole
- * loop, and it fits on one line of the screen.
+ * The decisions — what counts as recent, what is waiting for you, what a row
+ * says — are in welcome-scan.js, tested in node. This file reads and paints.
  */
 
-const { ICONS } = require('./icons');
+const { URI } = require('@theia/core/lib/common/uri');
+const { open } = require('@theia/core/lib/browser/opener-service');
+const { isOSX } = require('@theia/core/lib/common/os');
 const { activeProject } = require('./active-project');
+const { identity } = require('./identity');
+const { esc } = require('./comment-ui');
+const { CommentLog, foldOps } = require('./comment-log');
+const { ChangesStore } = require('./changes-store');
+const sidecarScan = require('./sidecar-scan');
+const collabScan = require('./collab-scan');
+const scan = require('./welcome-scan');
 
-/*
- * No call to action. Studio picks the project, not this window: the portal
- * opens a session on one, and the desktop opens one from its Constructor
- * Studio view, which is already on screen beside this board.
- */
+/* The commands the page runs. Ids, not imports: the handlers live in
+ * product-frontend-module.js, and a button that names a command is a button the
+ * palette and a keybinding can reach the same way. */
+const NEW_DOCUMENT_COMMAND_ID = 'studio.document.new';
+const SEARCH_COMMAND_ID = 'studio.search.open';
+const COLLAB_COMMAND_ID = 'studio.collaboration';
 
-/*
- * The leader lines. Drawn rather than composed out of borders, because the
- * turn is the whole point: a straight rule beside a label is a divider, and a
- * line that ends in an arrowhead aimed off the edge is a pointer. One vector
- * language with the rest of the product (viewBox units, round caps, 1px).
- *
- * The direction is not decoration either, and the first version had it wrong.
- * The Projects panel is a full-height column beside the dock, so its leader runs
- * straight out sideways. The settings gear and the terminal are single fields at
- * the two ends of the 22px bottom line, so those two turn down. An arrow that
- * points where the thing is not is worse than no arrow.
- *
- * Which is why there are three leaders now and not four. `tr` named "Comments &
- * AI" and pointed right, at the 48px slot strip -- and that column is gone: the
- * three document views moved into the document's own topbar (which does not
- * exist while the dock is empty, so there is nothing here to point at) and the
- * two assistants moved to the FOOT of the left rail, which is the one direction
- * this leader could not mean. `tr` is kept below rather than deleted, because a
- * fourth region on that side is a plausible thing to want back and rediscovering
- * the geometry is the expensive part.
- */
-const LEADERS = {
-    tl: '<path d="M47 17H6"/><path d="m11 12-5 5 5 5"/>',
-    tr: '<path d="M1 17h41"/><path d="m37 12 5 5-5 5"/>',
-    bl: '<path d="M47 17H13a6 6 0 0 0-6 6v3"/><path d="m3 23 4 5 4-5"/>',
-    br: '<path d="M1 17h34a6 6 0 0 1 6 6v3"/><path d="m37 23 4 5 4-5"/>'
-};
+/* How many documents' comment logs one read folds, and how many per-document
+ * proposal files it opens for their titles. The Collaboration page folds up to
+ * 400; a start page lists five threads and can stop sooner. */
+const MAX_COMMENT_DOCUMENTS = 200;
+const MAX_PROPOSAL_FILES = 20;
 
-function leaderSvg(corner) {
-    return '<svg viewBox="0 0 48 34" fill="none" aria-hidden="true">' + LEADERS[corner] + '</svg>';
+/* A save while the page is on screen is a burst of change events. */
+const RELOAD_DEBOUNCE_MS = 600;
+
+const OPENED_KEY = 'studio-welcome-opened:';
+const EXPLAINED_KEY = 'studio-welcome-explained';
+
+function readStorage(key) {
+    try { return globalThis.localStorage ? globalThis.localStorage.getItem(key) : null; } catch (e) { return null; }
+}
+function writeStorage(key, value) {
+    try { if (globalThis.localStorage) { globalThis.localStorage.setItem(key, value); } } catch (e) { /* storage refused */ }
 }
 
 /*
- * A named region of the shell. The label sits on the inboard side and the
- * leader on the outboard side, so the pair reads as one gesture pointing off
- * the edge of the dock at the thing it names.
- */
-function hintHtml(corner, label) {
-    const svg = leaderSvg(corner);
-    const text = '<span class="studio-welcome-hint-label">' + label + '</span>';
-    const leaderFirst = corner === 'tl' || corner === 'bl';
-    return '<div class="studio-welcome-hint studio-welcome-hint-' + corner + '">' +
-        (leaderFirst ? svg + text : text + svg) + '</div>';
-}
-
-/*
- * Specimen 1 — a review thread, exactly as the rail draws it: the quoted anchor
- * underlined in the accent, then the speaker column. The two discs are doing
- * real work here. Outlined is another person and dashed is an agent, and that
- * distinction is never explained anywhere in words, so this is where a new user
- * meets it.
- */
-const SPECIMEN_THREAD =
-    '<div class="studio-welcome-quote"><span class="studio-quote-text">Ships in Q3.</span></div>' +
-    '<div class="studio-msg-row">' +
-    '  <span class="studio-avatar">AN</span>' +
-    '  <div class="studio-msg-main">' +
-    '    <div class="studio-msg-meta"><b>Ana</b> · <time>2h</time></div>' +
-    '    <div class="studio-msg-body">Q3 or Q4? Pick one.</div>' +
-    '  </div>' +
-    '</div>' +
-    '<div class="studio-msg-row">' +
-    '  <span class="studio-avatar agent">CL</span>' +
-    '  <div class="studio-msg-main">' +
-    '    <div class="studio-msg-meta"><b>Claude</b> · <time>1h</time></div>' +
-    '    <div class="studio-msg-body">Q4 in the plan. Fixed it.</div>' +
-    '  </div>' +
-    '</div>';
-
-/*
- * Specimen 2 — the selection toolbar over a marked span. This is the product's
- * one gesture for reaching an assistant about a specific piece of text, and it
- * is otherwise undiscoverable: it only appears once you have already selected
- * something.
- */
-const SPECIMEN_ASK =
-    '<div class="studio-welcome-stage">' +
-    '  <p class="studio-welcome-line">The rollout <span class="studio-comment-mark">ships in Q3</span>.</p>' +
-    '  <div class="studio-bubble studio-welcome-bubble">' +
-    '    <span class="studio-bubble-btn">B</span>' +
-    '    <span class="studio-bubble-btn">I</span>' +
-    '    <span class="studio-bubble-sep"></span>' +
-    '    <span class="studio-bubble-btn comment">Comment</span>' +
-    '    <span class="studio-bubble-btn ai">' + ICONS.spark + ' Ask AI</span>' +
-    '  </div>' +
-    '</div>';
-
-/*
- * Specimen 3 — one reviewable hunk with its two decisions. Same markup as
- * diff-view.js builds, down to the gutter and the word-level marks, because the
- * point being made is that an AI edit arrives HERE and not in the file.
- */
-const SPECIMEN_DECIDE =
-    '<div class="studio-hunk">' +
-    '  <div class="studio-hunk-head">' +
-    '    <span class="studio-hunk-index">1 of 1</span>' +
-    '    <span class="studio-hunk-summary">1 → 1 lines</span>' +
-    '    <span class="studio-hunk-spacer"></span>' +
-    '    <span class="studio-icon-btn accept">' + ICONS.check + '</span>' +
-    '    <span class="studio-icon-btn danger">' + ICONS.close + '</span>' +
-    '  </div>' +
-    '  <div class="studio-diff">' +
-    '    <div class="studio-diff-line del"><span class="studio-diff-gutter">12</span>' +
-    '<span class="studio-diff-sign">-</span>' +
-    '<span class="studio-diff-text">Ships in <mark class="studio-diff-word">Q3</mark>.</span></div>' +
-    '    <div class="studio-diff-line ins"><span class="studio-diff-gutter"></span>' +
-    '<span class="studio-diff-sign">+</span>' +
-    '<span class="studio-diff-text">Ships in <mark class="studio-diff-word">Q4</mark>.</span></div>' +
-    '  </div>' +
-    '</div>';
-
-/*
- * Heading, specimen, consequence. The heading is what you do, the specimen is
- * what it looks like, the line underneath is the part that is not visible in
- * the picture and is the actual reason to care.
+ * The three columns, compact. What you do, and the part a picture would not
+ * show: where it lives and what it costs.
  */
 const COLUMNS = [
-    { head: 'Talk in the doc.', body: SPECIMEN_THREAD, note: 'Comments are files in your repo. They commit with the document.' },
-    { head: 'Ask for edits.', body: SPECIMEN_ASK, note: 'Select words, ask Claude or Codex. They read the thread too.' },
-    { head: 'Decide what lands.', body: SPECIMEN_DECIDE, note: 'Nothing is written until you accept it. Reject costs one click.' }
+    { head: 'Talk in the doc.', note: 'Comments are files in your repo. They commit with the document.' },
+    { head: 'Ask for edits.', note: 'Select words, ask Claude or Codex. They read the thread too.' },
+    { head: 'Decide what lands.', note: 'Nothing is written until you accept it. Reject costs one click.' }
 ];
+
+const EMPTY_STATE = {
+    loading: true,
+    hasProject: false,
+    projectName: '',
+    rootString: '',
+    recent: [],
+    documents: 0,
+    waiting: { mode: 'mine', title: 'Waiting for you', items: [], more: 0, open: 0, others: 0, note: '' },
+    pending: { available: false, rows: [], more: 0, total: 0 },
+    stats: {}
+};
 
 class WelcomeView {
 
     init(ctx) {
         this.shell = ctx.shell;
         this.commandRegistry = ctx.commandRegistry;
+        this.workspaceService = ctx.workspaceService;
+        this.fileService = ctx.fileService;
+        this.openerService = ctx.openerService;
+        this.commentLog = ctx.fileService ? new CommentLog(ctx.fileService, ctx.workspaceService) : undefined;
+        this.changesStore = ctx.fileService ? new ChangesStore(ctx.fileService, ctx.workspaceService) : undefined;
+        this.state = Object.assign({}, EMPTY_STATE);
+        this.token = undefined;
     }
 
     mount(attempt = 0) {
         const panel = this.shell && this.shell.mainPanel;
         const container = panel && panel.node;
         if (!container) {
-            // Same retry as the slot strip's: the shell's DOM is built by
-            // Lumino on its own schedule and there is no event for "the dock
-            // node exists".
+            // Lumino builds the shell's DOM on its own schedule and there is no
+            // event for "the dock node exists".
             if (attempt < 20) { setTimeout(() => this.mount(attempt + 1), 100); }
-            else { console.error('[studio] the welcome layer could not find the main dock'); }
+            else { console.error('[studio] the start page could not find the main dock'); }
             return;
         }
         this.node = document.createElement('div');
         this.node.className = 'studio-welcome';
         this.node.setAttribute('role', 'region');
-        this.node.setAttribute('aria-label', 'Getting started');
-        this.node.innerHTML = this.html();
+        this.node.setAttribute('aria-label', 'Start');
         container.appendChild(this.node);
 
+        this.node.addEventListener('click', event => this.onActivate(event));
+        this.node.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') { return; }
+            if (!event.target.closest('[data-open],[data-run]')) { return; }
+            if (event.target.tagName === 'BUTTON') { return; } // a button already clicks on both
+            event.preventDefault();
+            this.onActivate(event);
+        });
+
         /*
-         * The dock's own membership signals, not the shell's focus events: this
-         * layer is answering "is anything open", which changes only when a
-         * widget is added to or removed from the dock.
+         * The dock's own membership signals: this layer answers "is anything
+         * open", which changes only when a widget is added or removed. The
+         * added widget is also the one fact the files cannot hold — that this
+         * browser opened a document — so it is remembered here.
          */
-        if (panel.widgetAdded) { panel.widgetAdded.connect(() => this.scheduleRefresh()); }
-        if (panel.widgetRemoved) { panel.widgetRemoved.connect(() => this.scheduleRefresh()); }
-        // Connecting or disconnecting a project changes which tier is right,
-        // and the Projects panel is the one surface that knows.
-        activeProject.onChanged(() => this.refresh());
-        /*
-         * The dock is resized by things this layer never hears about: the
-         * Projects panel collapsing, an assistant panel opening, the window
-         * itself. Whether the leaders can stay in the corners depends on the
-         * size it lands on, so it is re-measured rather than assumed.
-         */
-        if (typeof ResizeObserver === 'function') {
-            new ResizeObserver(() => this.fitHints()).observe(this.node);
+        if (panel.widgetAdded) {
+            panel.widgetAdded.connect((sender, widget) => { this.rememberOpened(widget); this.scheduleRefresh(); });
         }
+        if (panel.widgetRemoved) { panel.widgetRemoved.connect(() => this.scheduleRefresh()); }
+        activeProject.onChanged(() => { if (this.visible()) { void this.load(); } });
+        /* A singleton for the life of the page, so identity's listener list —
+         * which cannot unsubscribe — holds one closure, not one per tab. */
+        identity.onChanged(() => { if (this.visible()) { void this.load(); } });
+        if (this.fileService && this.fileService.onDidFilesChange) {
+            this.fileService.onDidFilesChange(() => {
+                if (!this.visible()) { return; }
+                clearTimeout(this.reloadTimer);
+                this.reloadTimer = setTimeout(() => void this.load(), RELOAD_DEBOUNCE_MS);
+            });
+        }
+        this.render();
         this.refresh();
     }
 
-    html() {
-        const columns = COLUMNS.map(column =>
-            '<section class="studio-welcome-col">' +
-            '  <h3 class="studio-welcome-col-head">' + column.head + '</h3>' +
-            '  <div class="studio-welcome-spec" aria-hidden="true">' + column.body + '</div>' +
-            '  <p class="studio-welcome-col-note">' + column.note + '</p>' +
-            '</section>').join('');
-
-        return hintHtml('tl', 'Your files') +
-            hintHtml('bl', 'Project settings') +
-            hintHtml('br', 'Terminal &amp; theme') +
-            '<div class="studio-welcome-body">' +
-            '  <header class="studio-welcome-head">' +
-            '    <h2 class="studio-welcome-title" data-welcome-title>' +
-            '<span>Write<i>.</i></span> <span>Talk<i>.</i></span> <span>Decide<i>.</i></span></h2>' +
-            '    <p class="studio-welcome-lede" data-welcome-lede>' +
-            'Documents live in your repository. So does everything said about them.</p>' +
-            '  </header>' +
-            '  <div class="studio-welcome-cols">' + columns + '</div>' +
-            '</div>';
+    visible() {
+        return !!this.node && this.node.classList.contains('on');
     }
 
     /** Coalesced: adding a widget also removes one when a tab is replaced. */
@@ -257,55 +172,367 @@ class WelcomeView {
 
     refresh() {
         if (!this.node) { return; }
-        const show = this.dockIsEmpty();
-        if (!show) {
+        if (!this.dockIsEmpty()) {
             this.node.classList.remove('on', 'in');
+            if (this.token) { this.token.cancelled = true; }
             return;
         }
-
-        if (this.node.classList.contains('on')) { this.fitHints(); return; }
+        if (this.visible()) { return; }
         this.node.classList.add('on');
-        this.fitHints();
+        // Shown again: read again. What the page lists is what changed while
+        // somebody was looking at a document.
+        void this.load();
         // One frame between "displayed" and "animating", or the transition has
         // no start value to run from.
         requestAnimationFrame(() => {
-            if (this.node && this.node.classList.contains('on')) { this.node.classList.add('in'); }
+            if (this.visible()) { this.node.classList.add('in'); }
         });
     }
 
-    /*
-     * The leaders are absolutely positioned inside a scrolling layer, so the
-     * moment the board is taller than the dock they scroll with it and come to
-     * rest across the middle of the content — measured at 980 x 820, where the
-     * two bottom labels had landed on the third column's heading. A corner
-     * label that is not in a corner is not quiet, it is debris.
-     *
-     * This is measured rather than set at a breakpoint because whether the
-     * board fits depends on how the three notes wrap, which depends on the
-     * dock's width AND its height AND the user's font size. A width breakpoint
-     * guessed at both ends: an earlier one hid the leaders at 1040px, which,
-     * with the Projects panel open on a 1440px window, is every ordinary
-     * session — they would never have appeared at all.
+    // -- the reads -----------------------------------------------------------
+
+    async activeRoot() {
+        let roots = [];
+        try { roots = this.workspaceService ? await this.workspaceService.roots : []; } catch (e) { roots = []; }
+        const active = activeProject.resolve(roots);
+        return active ? active.resource : undefined;
+    }
+
+    /**
+     * Everything the page shows, read once. A newer read cancels an older one:
+     * two interleaved reads writing `this.state` is how a page ends up showing
+     * half of one project.
      */
-    fitHints() {
-        if (!this.node || !this.node.classList.contains('on')) { return; }
-        const fits = this.node.scrollHeight <= this.node.clientHeight;
-        this.node.classList.toggle('no-hints', !fits);
+    async load() {
+        if (this.token) { this.token.cancelled = true; }
+        const token = { cancelled: false };
+        this.token = token;
+
+        const root = await this.activeRoot();
+        if (token.cancelled) { return; }
+        if (!root || !this.fileService) {
+            this.state = Object.assign({}, EMPTY_STATE, { loading: false });
+            this.render();
+            return;
+        }
+        const rootString = root.toString();
+        if (this.state.rootString !== rootString) {
+            // A different project: nothing from the last one may linger while
+            // this one is read.
+            this.state = Object.assign({}, EMPTY_STATE, { hasProject: true, projectName: root.path.base, rootString });
+            this.render();
+        }
+
+        const walk = await scan.walkDocuments(this.fileService, root, token);
+        if (token.cancelled) { return; }
+        const recent = scan.recentDocuments(walk, this.readOpened(rootString), { rootString });
+
+        const threads = await this.readThreads(root, token);
+        if (token.cancelled) { return; }
+        const me = identity.current();
+        const waiting = scan.waitingSection(collabScan.inbox(threads.files, me), me);
+
+        const pending = await this.readPending(root, token);
+        if (token.cancelled) { return; }
+
+        const firstRun = !readStorage(EXPLAINED_KEY);
+        if (firstRun) { writeStorage(EXPLAINED_KEY, String(Date.now())); }
+
+        this.state = {
+            loading: false,
+            hasProject: true,
+            projectName: root.path.base,
+            rootString,
+            recent,
+            documents: walk.files.length,
+            waiting,
+            pending,
+            firstRun: firstRun || this.state.firstRun === true && this.state.rootString === rootString,
+            stats: {
+                walkTruncated: walk.truncated,
+                walked: walk.entries,
+                unreadable: threads.unreadable,
+                cappedDocuments: threads.capped,
+                commentDocuments: MAX_COMMENT_DOCUMENTS
+            }
+        };
+        this.render();
+    }
+
+    /*
+     * Threads come from the FOLD, never from the bytes — the way search-view.js
+     * reads them: a retracted message and a deleted thread are still in the log
+     * files, and only foldOps honours the tombstones.
+     */
+    async readThreads(root, token) {
+        const out = { files: [], unreadable: 0, capped: 0 };
+        let documents = [];
+        try {
+            const sidecars = await sidecarScan.collectSidecars(this.fileService, root, token);
+            documents = [...sidecars.comments].sort();
+        } catch (e) {
+            return out;
+        }
+        if (documents.length > MAX_COMMENT_DOCUMENTS) { out.capped = documents.length - MAX_COMMENT_DOCUMENTS; }
+        const rootString = root.toString();
+        for (const rel of documents.slice(0, MAX_COMMENT_DOCUMENTS)) {
+            if (token.cancelled) { return out; }
+            const docUri = new URI(rootString + '/' + rel);
+            try {
+                const base = await this.commentLog.readLegacy(root, docUri);
+                const ops = await this.commentLog.readOps(root, docUri);
+                out.files.push({ path: rel, uri: docUri.toString(), threads: foldOps(base, ops) });
+            } catch (e) {
+                out.unreadable++;
+            }
+        }
+        return out;
+    }
+
+    async readPending(root, token) {
+        let status;
+        try {
+            status = await this.changesStore.pendingFilesStatus(root);
+        } catch (e) {
+            status = { available: false, files: [] };
+        }
+        const details = {};
+        for (const file of (status.files || []).slice(0, MAX_PROPOSAL_FILES)) {
+            if (token.cancelled) { break; }
+            try {
+                details[file.path] = (await this.changesStore.load(file.uri)).proposals;
+            } catch (e) { /* the index's count still stands */ }
+        }
+        return scan.pendingSection(status, details);
+    }
+
+    // -- opened documents, per project, in this browser -------------------------
+
+    readOpened(rootString) {
+        try {
+            const parsed = JSON.parse(readStorage(OPENED_KEY + rootString) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    rememberOpened(widget) {
+        let uri;
+        try {
+            uri = widget && (widget.uri || (typeof widget.getResourceUri === 'function' ? widget.getResourceUri() : undefined));
+        } catch (e) { uri = undefined; }
+        if (!uri) { return; }
+        const uriString = uri.toString();
+        const roots = (this.workspaceService && this.workspaceService.tryGetRoots) ? this.workspaceService.tryGetRoots() : [];
+        const root = roots
+            .map(r => r.resource.toString())
+            .filter(r => uriString.startsWith(r + '/'))
+            .sort((a, b) => b.length - a.length)[0];
+        if (!root) { return; }
+        const path = scan.relativeTo(root, uriString);
+        if (!path || !scan.isDocument(path)) { return; }
+        writeStorage(OPENED_KEY + root, JSON.stringify(scan.rememberOpened(this.readOpened(root), path, Date.now())));
+    }
+
+    // -- actions ---------------------------------------------------------------
+
+    onActivate(event) {
+        const target = event.target.closest('[data-open],[data-run]');
+        if (!target || !this.node.contains(target)) { return; }
+        if (target.dataset.run) {
+            this.run(target.dataset.run);
+            return;
+        }
+        const uri = target.dataset.open;
+        if (!uri || !this.openerService) { return; }
+        open(this.openerService, new URI(uri)).catch(e =>
+            console.warn('[studio] the start page could not open', uri, e));
+    }
+
+    run(commandId) {
+        if (!this.commandRegistry) { return; }
+        this.commandRegistry.executeCommand(commandId).catch(e =>
+            console.warn('[studio] the start page could not run', commandId, e));
+    }
+
+    // -- paint -----------------------------------------------------------------
+
+    render() {
+        if (!this.node) { return; }
+        this.node.innerHTML = this.html();
+    }
+
+    html() {
+        const s = this.state;
+        const explain = !s.loading && scan.showExplainer({
+            hasProject: s.hasProject,
+            firstRun: s.firstRun,
+            documents: s.documents,
+            threads: s.waiting.open,
+            pending: s.pending.rows.length
+        });
+
+        if (!s.loading && !s.hasProject) {
+            return '<div class="studio-welcome-body">' +
+                '<header class="studio-start-head">' +
+                '<div class="studio-start-title-wrap"><h2 class="studio-start-title" data-welcome-title>No project is open</h2>' +
+                '<p class="studio-start-sub">Studio opens a project for you — from the portal, or from the Constructor Studio view on the desktop.</p></div>' +
+                '</header>' +
+                this.explainerHtml() +
+                '</div>';
+        }
+
+        return '<div class="studio-welcome-body">' +
+            this.headHtml() +
+            '<div class="studio-start-grid">' +
+            '<div class="studio-start-col">' + this.recentHtml() + '</div>' +
+            '<div class="studio-start-col">' + this.waitingHtml() + this.pendingHtml() + '</div>' +
+            '</div>' +
+            (explain ? this.explainerHtml() : '') +
+            (s.loading ? '' : '<p class="studio-start-honesty" data-start-honesty>' + esc(scan.honestyLine(s.stats)) + '</p>') +
+            '</div>';
+    }
+
+    headHtml() {
+        const s = this.state;
+        const key = isOSX ? '⇧⌘F' : 'Ctrl+Shift+F';
+        return '<header class="studio-start-head">' +
+            '<div class="studio-start-title-wrap">' +
+            '<span class="studio-start-eyebrow">Project</span>' +
+            '<h2 class="studio-start-title" data-welcome-title>' + esc(s.projectName || ' ') + '</h2>' +
+            '</div>' +
+            '<div class="studio-start-actions">' +
+            '<button type="button" class="studio-btn primary" data-run="' + NEW_DOCUMENT_COMMAND_ID + '" data-start-action="new">New document</button>' +
+            '<button type="button" class="studio-btn" data-run="' + SEARCH_COMMAND_ID + '" data-start-action="search">Search <kbd>' + key + '</kbd></button>' +
+            '</div>' +
+            '</header>';
+    }
+
+    sectionHtml(id, title, count, body) {
+        return '<section class="studio-start-section" data-start-section="' + id + '">' +
+            '<h3 class="studio-start-section-head"><span>' + esc(title) + '</span>' +
+            (count ? '<span class="studio-start-count">' + esc(count) + '</span>' : '') + '</h3>' +
+            body + '</section>';
+    }
+
+    emptyHtml(text) {
+        return '<p class="studio-start-empty">' + text + '</p>';
+    }
+
+    loadingHtml() {
+        return '<p class="studio-start-empty">Reading…</p>';
+    }
+
+    recentHtml() {
+        const s = this.state;
+        if (s.loading) { return this.sectionHtml('recent', 'Recent documents', '', this.loadingHtml()); }
+        if (!s.recent.length) {
+            return this.sectionHtml('recent', 'Recent documents', '',
+                this.emptyHtml('No documents in this project yet. <b>New document</b> starts one.'));
+        }
+        const rows = s.recent.map(row =>
+            '<li><button type="button" class="studio-start-row" data-open="' + esc(row.uri) + '" title="' + esc(row.path) + '">' +
+            '<span class="studio-start-main"><span class="studio-start-name">' + esc(row.name) + '</span>' +
+            (row.folder ? '<span class="studio-start-folder">' + esc(row.folder) + '</span>' : '') + '</span>' +
+            '<span class="studio-start-meta">' + esc(row.reason) + ' ' + esc(scan.agoText(new Date(row.at).toISOString())) + '</span>' +
+            '</button></li>').join('');
+        return this.sectionHtml('recent', 'Recent documents', '', '<ul class="studio-start-list">' + rows + '</ul>');
+    }
+
+    waitingHtml() {
+        const s = this.state;
+        const w = s.waiting;
+        if (s.loading) { return this.sectionHtml('waiting', 'Waiting for you', '', this.loadingHtml()); }
+        let body = '';
+        if (!w.items.length) {
+            if (w.open === 0) {
+                body = this.emptyHtml('No open comment threads in this project.');
+            } else {
+                body = this.emptyHtml('Nothing is waiting for you. ' +
+                    '<button type="button" class="studio-start-link" data-run="' + COLLAB_COMMAND_ID + '">' +
+                    esc(collabScan.plural(w.others || w.open, 'other open thread', 'other open threads')) + '</button>');
+            }
+        } else {
+            const rows = w.items.map(item => {
+                const reason = scan.waitingReason(item);
+                return '<li><button type="button" class="studio-start-row thread" data-open="' + esc(item.uri) + '" title="' + esc(scan.decodePath(item.path)) + '">' +
+                    '<span class="studio-start-main">' +
+                    (item.quote ? '<span class="studio-start-quote">' + esc(item.quote) + '</span>' : '<span class="studio-start-quote doc">Whole document</span>') +
+                    '<span class="studio-start-preview"><b>' + esc(item.lastBy || 'Someone') + '</b> ' + esc(item.preview) + '</span>' +
+                    '<span class="studio-start-folder">' + esc(scan.decodePath(item.path)) + '</span>' +
+                    '</span>' +
+                    '<span class="studio-start-meta">' +
+                    (reason ? '<span class="studio-start-tag">' + esc(reason) + '</span>' : '') +
+                    esc(scan.ageText(item.lastAt)) + '</span>' +
+                    '</button></li>';
+            }).join('');
+            body = '<ul class="studio-start-list">' + rows + '</ul>';
+            const extra = [];
+            if (w.more) { extra.push(w.more + ' more'); }
+            if (w.mode === 'mine' && w.others) { extra.push(collabScan.plural(w.others, 'other open thread', 'other open threads')); }
+            if (extra.length) {
+                body += '<p class="studio-start-more"><button type="button" class="studio-start-link" data-run="' + COLLAB_COMMAND_ID + '">' +
+                    esc(extra.join(' · ')) + '</button></p>';
+            }
+        }
+        if (w.note) { body += '<p class="studio-start-note" data-start-note>' + esc(w.note) + '</p>'; }
+        return this.sectionHtml('waiting', w.title, '', body);
+    }
+
+    pendingHtml() {
+        const s = this.state;
+        const p = s.pending;
+        const title = 'Proposed changes';
+        if (s.loading) { return this.sectionHtml('pending', title, '', this.loadingHtml()); }
+        if (!p.rows.length) {
+            return this.sectionHtml('pending', title, '', this.emptyHtml(p.available
+                ? 'Nothing is waiting for a decision.'
+                : 'No proposed changes yet. An assistant’s edit waits here for a yes or a no.'));
+        }
+        const rows = p.rows.map(row =>
+            '<li><button type="button" class="studio-start-row" data-open="' + esc(row.uri) + '" title="' + esc(row.path) + '">' +
+            '<span class="studio-start-main"><span class="studio-start-name">' + esc(row.name) + '</span>' +
+            (row.title ? '<span class="studio-start-preview">' + esc(row.title) +
+                (row.author ? ' · ' + esc(row.author) : '') + '</span>' : '') +
+            (row.folder ? '<span class="studio-start-folder">' + esc(row.folder) + '</span>' : '') + '</span>' +
+            '<span class="studio-start-meta"><span class="studio-start-pending">' +
+            esc(collabScan.plural(row.pending, 'change', 'changes')) + '</span>' +
+            (row.at ? esc(scan.ageText(row.at)) : '') + '</span>' +
+            '</button></li>').join('');
+        let body = '<ul class="studio-start-list">' + rows + '</ul>';
+        if (p.more) {
+            body += '<p class="studio-start-more"><button type="button" class="studio-start-link" data-run="' + COLLAB_COMMAND_ID + '">' +
+                esc(collabScan.plural(p.more, 'more document', 'more documents')) + '</button></p>';
+        }
+        return this.sectionHtml('pending', title, scan.pendingCountText(p), body);
+    }
+
+    explainerHtml() {
+        const columns = COLUMNS.map(column =>
+            '<section class="studio-welcome-col">' +
+            '<h3 class="studio-welcome-col-head">' + column.head + '</h3>' +
+            '<p class="studio-welcome-col-note">' + column.note + '</p>' +
+            '</section>').join('');
+        return '<div class="studio-welcome-explain" data-start-explainer>' +
+            '<p class="studio-welcome-lede"><span class="studio-welcome-title">' +
+            '<span>Write<i>.</i></span> <span>Talk<i>.</i></span> <span>Decide<i>.</i></span></span> ' +
+            'Documents live in your repository. So does everything said about them.</p>' +
+            '<div class="studio-welcome-cols">' + columns + '</div>' +
+            '</div>';
     }
 }
 
 const welcomeView = new WelcomeView();
 
 /*
- * Tokens only, and the two house rules this sheet obeys deliberately:
+ * Tokens only, and the house rules the old board obeyed:
  *
- *   - --studio-line for every divider here. The columns are separated by a
- *     hairline and by space, NOT by boxes, for the same reason the Project page
- *     stopped boxing its sections: three boxed panels read as three unrelated
- *     apps, and this surface has to read as one product.
- *   - No new hues. The specimens carry the accent only where the real
- *     components already do — the quote underline, the identity disc, the
- *     inserted line, the Ask AI control.
+ *   - --studio-line for every divider. Sections are separated by a hairline and
+ *     by space, NOT by boxes: boxed panels read as unrelated apps, and this
+ *     surface has to read as one product.
+ *   - No new hues. The accent marks what can be acted on — the primary action,
+ *     the reason a thread is listed, a pending count — and nothing else.
  */
 const WELCOME_CSS = `
 /* --- the empty main dock -------------------------------------------------- */
@@ -327,126 +554,107 @@ const WELCOME_CSS = `
 }
 .studio-welcome.in .studio-welcome-body { opacity: 1; transform: none; }
 
-/* --- the head ------------------------------------------------------------- */
-.studio-welcome-head { text-align: center; }
-.studio-welcome-title {
-  margin: 0; font-weight: 600; letter-spacing: -.035em; line-height: 1.04;
-  font-size: clamp(27px, 4.4cqi, 46px); text-wrap: balance;
+/* --- the head: which project, and the two ways to start ------------------- */
+.studio-start-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+  padding-bottom: 22px; border-bottom: 1px solid var(--studio-line);
 }
-/* The stops carry the cadence the words are written in, so they are drawn as
-   punctuation rather than as part of the word. */
-.studio-welcome-title i { font-style: normal; color: var(--studio-muted); }
-.studio-welcome-lede {
-  margin: 13px auto 0; max-width: 48ch; text-wrap: balance;
-  color: var(--studio-muted); font: 400 13.5px/1.6 inherit;
+.studio-start-title-wrap { min-width: 0; }
+.studio-start-eyebrow {
+  display: block; margin-bottom: 6px;
+  color: var(--studio-muted); font: 600 10.5px/1 inherit; letter-spacing: .08em; text-transform: uppercase;
+}
+.studio-start-title {
+  margin: 0; font-weight: 600; letter-spacing: -.03em; line-height: 1.08;
+  font-size: clamp(24px, 3.4cqi, 34px); overflow-wrap: anywhere;
+}
+.studio-start-sub { margin: 10px 0 0; max-width: 56ch; color: var(--studio-muted); font: 400 13px/1.6 inherit; }
+.studio-start-actions { display: flex; gap: 8px; flex: none; }
+.studio-start-actions .studio-btn { padding: 8px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
+.studio-start-actions kbd {
+  font: 500 10.5px/1 var(--studio-mono, inherit); color: var(--studio-muted);
+  border: 1px solid var(--studio-line); border-radius: 4px; padding: 2px 4px;
 }
 
-/* --- the three columns ---------------------------------------------------- */
-.studio-welcome-cols {
-  margin-top: 46px; padding-top: 30px; border-top: 1px solid var(--studio-line);
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+/* --- the sections ---------------------------------------------------------- */
+.studio-start-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  margin-top: 26px;
 }
-.studio-welcome-col { padding: 0 26px; border-left: 1px solid var(--studio-line); min-width: 0; }
+.studio-start-col { min-width: 0; padding: 0 26px; border-left: 1px solid var(--studio-line); }
+.studio-start-col:first-child { padding-left: 0; border-left: none; }
+.studio-start-col:last-child { padding-right: 0; }
+.studio-start-section + .studio-start-section { margin-top: 26px; }
+.studio-start-section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin: 0 0 8px; font: 600 13px/1.35 inherit; letter-spacing: -.005em;
+}
+.studio-start-count { color: var(--studio-muted); font-weight: 500; font-size: 11.5px; }
+.studio-start-list { list-style: none; margin: 0 -8px; padding: 0; }
+.studio-start-row {
+  all: unset; box-sizing: border-box; width: 100%;
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 7px 8px; border-radius: 6px; cursor: pointer;
+}
+.studio-start-row:hover { background: var(--studio-surface-sunken); }
+.studio-start-row:focus-visible { outline: 2px solid var(--studio-focus, var(--studio-accent)); outline-offset: -2px; }
+.studio-start-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.studio-start-name { font: 500 13px/1.4 inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-start-folder, .studio-start-preview {
+  color: var(--studio-muted); font: 400 11.5px/1.45 inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-start-preview b { color: var(--studio-text); font-weight: 600; }
+.studio-start-quote {
+  font: 400 12.5px/1.45 inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-decoration: underline; text-decoration-color: var(--studio-accent); text-underline-offset: 3px;
+}
+.studio-start-quote.doc { text-decoration: none; color: var(--studio-muted); font-style: italic; }
+.studio-start-meta {
+  flex: none; display: inline-flex; align-items: baseline; gap: 8px;
+  color: var(--studio-muted); font: 400 11px/1.4 inherit; white-space: nowrap;
+}
+.studio-start-tag, .studio-start-pending { color: var(--studio-accent); font-weight: 600; }
+.studio-start-empty, .studio-start-note, .studio-start-more {
+  margin: 4px 0 0; color: var(--studio-muted); font: 400 12px/1.6 inherit; max-width: 52ch;
+}
+.studio-start-empty b { color: var(--studio-text); font-weight: 600; }
+.studio-start-note { margin-top: 8px; font-size: 11.5px; }
+.studio-start-link {
+  all: unset; cursor: pointer; color: var(--studio-accent); font-weight: 500;
+}
+.studio-start-link:hover { text-decoration: underline; }
+.studio-start-link:focus-visible { outline: 2px solid var(--studio-focus, var(--studio-accent)); outline-offset: 2px; border-radius: 2px; }
+.studio-start-honesty {
+  margin: 30px 0 0; color: var(--studio-muted); font: 400 11px/1.6 inherit; max-width: 80ch;
+}
+
+/* --- the explanation, compact --------------------------------------------- */
+.studio-welcome-explain { margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--studio-line); }
+.studio-welcome-lede { margin: 0; color: var(--studio-muted); font: 400 12.5px/1.6 inherit; }
+.studio-welcome-title { color: var(--studio-text); font-weight: 600; letter-spacing: -.01em; margin-right: 4px; }
+/* The stops carry the cadence the words are written in. */
+.studio-welcome-title i { font-style: normal; color: var(--studio-muted); }
+.studio-welcome-cols { margin-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.studio-welcome-col { padding: 0 22px; border-left: 1px solid var(--studio-line); min-width: 0; }
 .studio-welcome-col:first-child { border-left: none; padding-left: 0; }
 .studio-welcome-col:last-child { padding-right: 0; }
-.studio-welcome-col-head { margin: 0; font: 600 13.5px/1.35 inherit; letter-spacing: -.008em; }
-.studio-welcome-col-note {
-  margin: 16px 0 0; max-width: 46ch; text-wrap: pretty;
-  color: var(--studio-muted); font: 400 12px/1.6 inherit;
-}
-
-/* The specimens are inert markup. Nothing here is focusable, hoverable or
-   clickable.
-
-   flex-start, not centre: the three drawings are different heights by nature,
-   and centring each inside the shared min-height started all three at a
-   different y. They hang from one line, and the min-height is what brings the
-   three notes back onto one baseline underneath — without boxing the drawings
-   to a common size, which is what a card would have done. */
-.studio-welcome-spec {
-  margin-top: 15px; min-height: 118px;
-  display: flex; flex-direction: column; justify-content: flex-start;
-  pointer-events: none; user-select: none;
-}
-.studio-welcome-quote { margin-bottom: 11px; }
-.studio-welcome-spec .studio-msg-row:last-of-type { margin-bottom: 0; }
-.studio-welcome-spec .studio-hunk { margin-bottom: 0; }
-
-/* The selection toolbar is only ever seen floating just under the words it
-   acts on, so the specimen keeps that relationship rather than stacking the two
-   as separate blocks. The stage is exactly as tall as the line it wraps. */
-.studio-welcome-stage { position: relative; padding-bottom: 42px; }
-.studio-welcome-line { margin: 0 0 0 2px; font: 400 14px/1.55 inherit; }
-/* A real selection toolbar is one row that never wraps — it floats, so it is
-   never made to fit anything. Held to that here, and shrunk instead when the
-   column gets narrow: at a 248px column the stock size wrapped "Ask AI" onto a
-   second line, which is a shape this control cannot have. */
-.studio-welcome-bubble { position: absolute; left: 0; top: calc(100% - 34px); white-space: nowrap; }
-@container (max-width: 1060px) {
-  .studio-welcome-bubble .studio-bubble-btn { height: 24px; padding: 0 6px; font-size: 11.5px; }
-  .studio-welcome-bubble .studio-bubble-sep { margin: 0 2px; }
-}
-
-/* --- the leaders ---------------------------------------------------------- */
-/* Four labels naming the regions on the other side of the dock's edges. They
-   are visible exactly while this layer is, which is only ever when the dock
-   holds nothing — so they annotate an empty window and never a working one. */
-.studio-welcome-hint {
-  position: absolute; display: flex; align-items: center; gap: 7px;
-  color: var(--studio-muted); font: 500 10.5px/1 inherit; letter-spacing: .012em;
-  pointer-events: none; opacity: 0; transition: opacity 320ms ease 200ms;
-}
-.studio-welcome.in .studio-welcome-hint { opacity: 1; }
-.studio-welcome.in .studio-welcome-hint-tr { transition-delay: 260ms; }
-.studio-welcome.in .studio-welcome-hint-bl { transition-delay: 320ms; }
-.studio-welcome.in .studio-welcome-hint-br { transition-delay: 380ms; }
-.studio-welcome-hint svg {
-  width: 48px; height: 34px; flex: none; fill: none;
-  stroke: color-mix(in srgb, var(--studio-muted) 44%, transparent);
-  stroke-width: 1; stroke-linecap: round; stroke-linejoin: round;
-}
-.studio-welcome-hint-tl { top: 16px; left: 10px; }
-.studio-welcome-hint-tr { top: 16px; right: 10px; }
-.studio-welcome-hint-bl { bottom: 16px; left: 10px; }
-.studio-welcome-hint-br { bottom: 16px; right: 10px; }
+.studio-welcome-col-head { margin: 0; font: 600 12.5px/1.35 inherit; }
+.studio-welcome-col-note { margin: 5px 0 0; color: var(--studio-muted); font: 400 11.5px/1.55 inherit; text-wrap: pretty; }
 
 /* --- narrow docks --------------------------------------------------------- */
 /* The dock is not the viewport — an assistant panel can halve it — so the
    breakpoints are on the container, not the window. */
-/*
- * 720, not 880. The three columns are one sentence read left to right — talk,
- * ask, decide — and stacking them turns it into three unrelated sections. With
- * the Projects panel open on a 1440px window the dock is 890px and this layer's
- * content box is 822, which is the ordinary case, not an edge case; an 880px
- * breakpoint stacked the board for almost every real session. At 822 the
- * columns are ~248px, which the three specimens and their notes still fit.
- */
 @container (max-width: 720px) {
-  .studio-welcome-cols { grid-template-columns: 1fr; padding-top: 26px; }
-  .studio-welcome-col { max-width: 620px; padding: 26px 0 0; margin-top: 26px; border-left: none; border-top: 1px solid var(--studio-line); }
-  .studio-welcome-col:first-child { padding-top: 0; margin-top: 0; border-top: none; }
-  /* The floor exists to line three notes up across a row. Stacked, there is no
-     row, and it becomes a hole under the two shorter drawings. */
-  .studio-welcome-spec { min-height: 0; }
+  .studio-start-grid { grid-template-columns: 1fr; }
+  .studio-start-col { padding: 0; border-left: none; }
+  .studio-start-col + .studio-start-col { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--studio-line); }
+  .studio-welcome-cols { grid-template-columns: 1fr; gap: 12px; }
+  .studio-welcome-col { padding: 0; border-left: none; }
 }
-/*
- * The leaders, hidden by whichever of two conditions bites first.
- *
- * Stacked, the board runs the full width of the dock all the way to the
- * bottom, so the two lower labels sit on top of the last column whether or not
- * anything scrolls — that one is a layout fact and belongs in the query.
- * Whether an unstacked board is short enough to leave the corners free is not,
- * so .no-hints is set by fitHints() from a measurement. See its comment.
- */
-@container (max-width: 720px) { .studio-welcome-hint { display: none; } }
-.studio-welcome.no-hints .studio-welcome-hint { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .studio-welcome-body { transform: none; transition-duration: 1ms; }
-  .studio-welcome-hint { transition-duration: 1ms; transition-delay: 0ms; }
-  .studio-welcome.in .studio-welcome-hint-tr,
-  .studio-welcome.in .studio-welcome-hint-bl,
-  .studio-welcome.in .studio-welcome-hint-br { transition-delay: 0ms; }
 }
 `;
 

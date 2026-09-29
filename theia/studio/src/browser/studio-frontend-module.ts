@@ -26,13 +26,17 @@ import { ObjectDetailsWidget } from './object-details-widget';
 import { bindAgentCredentials } from './agent-credentials';
 import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-widget';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
+import { DesktopAssistantsContribution } from './desktop-assistants-contribution';
 import { DesktopLinkHandler } from './desktop-link-handler';
+import { DesktopOrcaProjectSync, ORCA_PROJECTS_PREFERENCE_SCHEMA } from './desktop-orca-project-sync';
+import { PreferenceContribution } from '@theia/core/lib/common/preferences/preference-schema';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
 import { ArtifactGraphContribution } from './artifact-graph-contribution';
 import { ArtifactGraphWidget } from './artifact-graph-widget';
 import { WorkspaceGraphFrontendController, WorkspaceGraphWidget } from './workspace-graph-widget';
 import { WorkspaceGraphService, workspaceGraphServicePath } from '../common/graph-model';
 import { AnalyzeApplicationShellProvider, AnalyzeFrontendController } from './analyze-controller';
+import { GEARBOX_REMOTE_CATALOGUE, loadRemoteGearCatalogue, remoteGearCatalogueChanged } from './gearbox-remote-catalogue';
 import { AnalyzeContribution } from './analyze-contribution';
 import { AnalyzeStudioClient } from './analyze-studio-client';
 import { AnalyzeWidget } from './analyze-widget';
@@ -52,7 +56,7 @@ import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { OrcaTerminalService, orcaTerminalServicePath } from '../common/orca-terminal-protocol';
-import { OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
+import { OrcaPairingCommands, OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
 import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
@@ -60,11 +64,15 @@ import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
+import { ComponentsReferenceContribution } from './components-reference-contribution';
+import { ComponentsReferenceWidget } from './components-reference-widget';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
 import '../../src/browser/workspace-sources.css';
 import '../../src/browser/orca.css';
+import '../../src/browser/desktop-studio.css';
+import '../../src/browser/components-reference.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // ADR-0030: each window's agents run on that window's person.
@@ -151,6 +159,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(AnalyzeStudioClient).toSelf().inSingletonScope();
     bind(AnalyzeFrontendController).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(AnalyzeFrontendController);
+    // The Gearbox catalogue lists the backend's gear corpus when the workspace holds none.
+    bind(GEARBOX_REMOTE_CATALOGUE).toConstantValue({
+        load: () => loadRemoteGearCatalogue(),
+        onDidChange: (listener: () => void) => remoteGearCatalogueChanged.event(listener),
+    });
     bind(WorkspaceGraphService).toDynamicValue(ctx => {
         const provider = ctx.container.get(WebSocketConnectionProvider);
         return provider.createProxy<WorkspaceGraphService>(
@@ -203,7 +216,14 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         )
     ).inSingletonScope();
     bind(OrcaTerminalOpener).toSelf().inSingletonScope();
+    bind(OrcaPairingCommands).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(OrcaPairingCommands);
     bindViewContribution(bind, OrcaContribution);
+    // Projects opened on the desktop, in the member's own Orca (#497). Inert
+    // in a session: the backend answers `enabled: false` there.
+    bind(DesktopOrcaProjectSync).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(DesktopOrcaProjectSync);
+    bind(PreferenceContribution).toConstantValue({ schema: ORCA_PROJECTS_PREFERENCE_SCHEMA });
     bind(OperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();
     bind(AnalyzeWidget).toSelf();
@@ -217,6 +237,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     })).inSingletonScope();
     bindViewContribution(bind, DesktopStudioContribution);
     bind(FrontendApplicationContribution).toService(DesktopStudioContribution);
+    // #480: the assistants a desktop fetches on first need; inert in a session.
+    bind(DesktopAssistantsContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(DesktopAssistantsContribution);
+    bind(CommandContribution).toService(DesktopAssistantsContribution);
     // ADR-0027 §6: the portal's "Open in desktop" link, `cfstudio://open?...`,
     // which Theia delivers here from the operating system (`electron.uriScheme`).
     bind(DesktopLinkHandler).toSelf().inSingletonScope();
@@ -230,6 +254,14 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: WorkspaceGraphWidget.ID,
         createWidget: () => ctx.container.get<WorkspaceGraphWidget>(WorkspaceGraphWidget)
+    })).inSingletonScope();
+    // The components reference: the portal's catalogue joined with the Gearbox
+    // engine's gears, from one backend read. Host-agnostic (StudioApi.fetch).
+    bindViewContribution(bind, ComponentsReferenceContribution);
+    bind(ComponentsReferenceWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: ComponentsReferenceWidget.ID,
+        createWidget: () => ctx.container.get<ComponentsReferenceWidget>(ComponentsReferenceWidget)
     })).inSingletonScope();
     bindViewContribution(bind, ArtifactGraphContribution);
     bind(ArtifactGraphWidget).toSelf();

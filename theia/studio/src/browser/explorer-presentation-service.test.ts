@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
+    WorkspaceService: class WorkspaceService {}
+}));
 jest.mock('@theia/filesystem/lib/browser/file-tree/file-tree', () => ({
     FileStatNode: {
         is: (element: { fileStat?: object } | undefined) => !!element?.fileStat
@@ -392,3 +395,17 @@ function deferred<T>() {
     });
     return { promise, resolve, reject };
 }
+
+describe('the document types the documents mode shows', () => {
+    // Imported here so the suite above keeps its own imports as they were.
+    const { shownExtensionsFrom, DEFAULT_SHOWN_EXTENSIONS } = require('./explorer-presentation-service');
+
+    it('takes the project Files shown, lower case and without the dot', () => {
+        expect([...shownExtensionsFrom({ visibleExtensions: ['MD', '.yaml', 'csv'] })]).toEqual(['md', 'yaml', 'csv']);
+    });
+
+    it('falls back to the types the product edits when the project chose none', () => {
+        expect([...shownExtensionsFrom(undefined)]).toEqual([...DEFAULT_SHOWN_EXTENSIONS]);
+        expect([...shownExtensionsFrom({ autosave: true })]).toEqual([...DEFAULT_SHOWN_EXTENSIONS]);
+    });
+});

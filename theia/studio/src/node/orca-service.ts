@@ -13,6 +13,7 @@ import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import {
     type OrcaCreateTaskRequest,
+    type OrcaRepository,
     type OrcaRuntimeStatus,
     type OrcaService,
     type OrcaStartAgentRequest,
@@ -22,13 +23,18 @@ import {
     type OrcaWorktreeChange,
     ORCA_AGENTS
 } from '../common/orca-protocol';
-import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents } from './orca-cli';
+import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents, orcaHost } from './orca-cli';
+import { NO_PROJECT_SYNC, type OrcaProjectSync } from '../common/desktop-orca-projects';
+import { DesktopOrcaProjects, fileStore, type OrcaProjectsPort } from './desktop-orca-projects';
+import { pairingOffer } from './orca-terminal-bridge';
 import { GitExecutor } from './git-executor';
 
 /** `terminal wait --for tui-idle` blocks until the agent stops producing. */
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 /** Creating a checkout runs setup hooks; it is the slowest thing we call. */
 const CREATE_TIMEOUT_MS = 180_000;
+/** `orca open` launches the app and waits until its runtime answers. */
+const OPEN_TIMEOUT_MS = 90_000;
 
 /**
  * The git repositories a workspace root holds: the root itself when it is one,
@@ -72,6 +78,11 @@ export class OrcaServiceImpl implements OrcaService {
     protected readonly git!: GitExecutor;
 
     async status(): Promise<OrcaRuntimeStatus> {
+        // Where the IDE runs and whether the terminal stream is paired are
+        // known without asking Orca, and the panel needs both to say what to
+        // do when Orca does not answer.
+        const host = orcaHost();
+        const paired = pairingOffer() !== undefined;
         try {
             const result = await this.cli.json<Record<string, unknown>>(['status']);
             const runtime = asRecord(result.runtime);
@@ -88,7 +99,10 @@ export class OrcaServiceImpl implements OrcaService {
                 desktopRunning: asString(app.desktopWindowStatus)
                     ? asString(app.desktopWindowStatus) === 'available'
                     : app.running === true,
-                agents: availableAgents(ORCA_AGENTS)
+                agents: availableAgents(ORCA_AGENTS),
+                host,
+                binary: this.binaryPath(),
+                paired
             };
         } catch (error) {
             // Not reachable is a normal state, not a failure of the IDE: the
@@ -99,6 +113,9 @@ export class OrcaServiceImpl implements OrcaService {
                 desktopRunning: false,
                 error: message(error),
                 cliMissing: error instanceof OrcaCliMissingError,
+                host,
+                binary: error instanceof OrcaCliMissingError ? undefined : this.binaryPath(),
+                paired,
                 // Reported even here: the panel's agent list does not depend
                 // on a runtime answering, and an image missing its agents is
                 // worth seeing next to a runtime that is missing too.
@@ -113,7 +130,90 @@ export class OrcaServiceImpl implements OrcaService {
         return rows.map(row => toWorktree(asRecord(row))).filter(w => w.path.length > 0);
     }
 
+    async listRepositories(): Promise<OrcaRepository[]> {
+        const result = await this.cli.json<Record<string, unknown>>(['repo', 'list']);
+        const rows = Array.isArray(result.repos) ? result.repos : [];
+        return rows
+            .map(row => toRepository(asRecord(row)))
+            .filter(repo => repo.id.length > 0);
+    }
+
+    async start(): Promise<OrcaRuntimeStatus> {
+        if (orcaHost() === 'session') {
+            // The container starts Orca, and `open` would try to bring up a
+            // desktop window in a container that has no desktop.
+            throw new Error('Orca starts with the session. If it is not running, restart the session.');
+        }
+        await this.cli.json(['open'], OPEN_TIMEOUT_MS);
+        return this.status();
+    }
+
+    /** The executable in use, for the status line; undefined when there is none. */
+    protected binaryPath(): string | undefined {
+        try {
+            return this.cli.binary?.();
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** The member's projects in their own Orca; made on first use, off a session only. */
+    protected projects: DesktopOrcaProjects | undefined;
+
+    protected desktopProjects(): DesktopOrcaProjects {
+        if (!this.projects) {
+            const port: OrcaProjectsPort = {
+                listRepositories: () => this.listRepositories(),
+                listWorktrees: () => this.listWorktrees(),
+                listTerminals: selector => this.listTerminals(selector),
+                uncommitted: async checkout => {
+                    if (!fs.existsSync(checkout)) {
+                        return 0;
+                    }
+                    return parseStatusRecords(await this.git.statusPorcelain(checkout)).length;
+                },
+                repositoriesAt: root => gitRepositoriesAt(root),
+                addRepository: async repository => {
+                    await this.cli.json(['repo', 'add', '--path', repository], CREATE_TIMEOUT_MS);
+                },
+                removeRepository: repoId => this.removeRepository(repoId)
+            };
+            this.projects = new DesktopOrcaProjects(port, fileStore());
+        }
+        return this.projects;
+    }
+
+    /**
+     * Forget a repository in Orca, leaving every file where it is. The CLI
+     * has no `repo rm`; a repository Orca knows is a project host setup, and
+     * deleting a repo-backed setup is Orca's own "remove project"
+     * (`removeProjectForHost`: state only, read off Orca 1.4.211).
+     */
+    protected async removeRepository(repoId: string): Promise<void> {
+        const result = await this.cli.json<Record<string, unknown>>(['project', 'setups']);
+        const setups = Array.isArray(result.setups) ? result.setups.map(asRecord) : [];
+        const setup = setups.find(s => asString(s.repoId) === repoId && (asString(s.hostId) || 'local') === 'local');
+        await this.cli.json(['project', 'setup-delete', '--setup', asString(setup?.id) || repoId]);
+    }
+
+    async trackProject(windowId: string, root: string | undefined): Promise<OrcaProjectSync> {
+        if (orcaHost() !== 'local') {
+            return NO_PROJECT_SYNC;
+        }
+        try {
+            return await this.desktopProjects().track(windowId, root);
+        } catch (error) {
+            // Orca not installed or not running: nothing to add to or remove from.
+            console.warn(`[orca] cannot sync the open project with Orca: ${message(error)}`);
+            return NO_PROJECT_SYNC;
+        }
+    }
+
     async registerWorkspace(root: string): Promise<string[]> {
+        if (orcaHost() === 'local') {
+            // Recorded, so that Studio removes again what it added.
+            return this.desktopProjects().add(root);
+        }
         const repositories = await gitRepositoriesAt(root);
         for (const repository of repositories) {
             await this.cli.json(['repo', 'add', '--path', repository], CREATE_TIMEOUT_MS);
@@ -177,6 +277,12 @@ export class OrcaServiceImpl implements OrcaService {
         ];
         if (request.issue !== undefined) {
             args.push('--issue', String(request.issue));
+        }
+        // Without --repo Orca infers the repository from the directory the CLI
+        // runs in: a session's workspace, but on a desktop a folder that is no
+        // checkout, where every task failed with "Missing repo selector".
+        if (request.repo?.trim()) {
+            args.push('--repo', request.repo.trim());
         }
         const result = await this.cli.json<Record<string, unknown>>(args, CREATE_TIMEOUT_MS);
         const row = asRecord(result.worktree ?? result);
@@ -289,7 +395,27 @@ export function toWorktree(row: Record<string, unknown>): OrcaWorktree {
         comment: asString(row.comment),
         status: asString(row.workspaceStatus) || 'unknown',
         isMain: row.isMainWorktree === true,
+        repoId: asString(row.repoId) || repoIdOf(id) || undefined,
         lastActivityAt: asNumber(row.lastActivityAt)
+    };
+}
+
+/**
+ * The repository half of a worktree id: Orca spells them `<repo-id>::<path>`
+ * (`orca worktree create --help`), which is all an older payload without a
+ * `repoId` field carries.
+ */
+function repoIdOf(worktreeId: string): string {
+    const at = worktreeId.indexOf('::');
+    return at > 0 ? worktreeId.slice(0, at) : '';
+}
+
+export function toRepository(row: Record<string, unknown>): OrcaRepository {
+    const repoPath = asString(row.path);
+    return {
+        id: asString(row.id),
+        path: repoPath,
+        displayName: asString(row.displayName) || path.basename(repoPath) || asString(row.id)
     };
 }
 

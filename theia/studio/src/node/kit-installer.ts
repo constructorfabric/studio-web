@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { injectable } from '@theia/core/shared/inversify';
 
+import { CfsCommand, cfsCommand, cfsEnvironment } from './cfs-command';
 import { RepositoryRegistry } from './repository-registry';
 import type { StudioKitInstallRequest, StudioKitInstallResult } from '../common/studio-protocol';
 
@@ -62,7 +63,10 @@ export class KitInstallerImpl {
 
         this.activeRepositories.add(repository.descriptor.repositoryId);
         try {
-            const initialized = await this.initializeRepository(repository.canonicalRoot);
+            // One command for the whole operation, so init, install and
+            // generation run the same cfs.
+            const command = cfsCommand();
+            const initialized = await this.initializeRepository(repository.canonicalRoot, command);
             const installed = await this.run(
                 // `cfs init` installs the default SDLC kit. The registry request
                 // is authoritative for its version, so materialization must
@@ -76,9 +80,10 @@ export class KitInstallerImpl {
                     version,
                     '--force'
                 ],
-                repository.canonicalRoot
+                repository.canonicalRoot,
+                command
             );
-            const generated = await this.run(['generate-agents'], repository.canonicalRoot);
+            const generated = await this.run(['generate-agents'], repository.canonicalRoot, command);
             return {
                 kitSlug: request.kitSlug,
                 version,
@@ -97,8 +102,11 @@ export class KitInstallerImpl {
      * existing Git repository, though, so its first kit request is also the
      * first time anyone has prepared that checkout. Bootstrap exactly once;
      * subsequent kit updates must not rewrite an existing Studio setup.
+     *
+     * A command pinned to an engine names it: without `--version`, `cfs init`
+     * first updates its cache to the latest engine on GitHub.
      */
-    protected async initializeRepository(cwd: string): Promise<CommandResult | undefined> {
+    protected async initializeRepository(cwd: string, command: CfsCommand = cfsCommand()): Promise<CommandResult | undefined> {
         try {
             await fs.access(path.join(cwd, '.cf-studio'));
             return undefined;
@@ -112,14 +120,16 @@ export class KitInstallerImpl {
             'init',
             '--yes',
             '--migrate-from-cypilot=no',
-            '--update-legacy-studio=no'
-        ], cwd);
+            '--update-legacy-studio=no',
+            ...(command.engine ? ['--version', command.engine] : [])
+        ], cwd, command);
     }
 
-    protected run(arguments_: readonly string[], cwd: string): Promise<CommandResult> {
+    protected run(arguments_: readonly string[], cwd: string, command: CfsCommand = cfsCommand()): Promise<CommandResult> {
         return new Promise((resolve, reject) => {
-            execFile('cfs', [...arguments_], {
+            execFile(command.executable, [...command.prefixArguments, ...arguments_], {
                 cwd,
+                env: cfsEnvironment(command),
                 timeout: INSTALL_TIMEOUT_MS,
                 maxBuffer: MAX_OUTPUT_BYTES,
                 windowsHide: true,

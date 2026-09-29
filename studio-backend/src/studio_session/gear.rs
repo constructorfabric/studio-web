@@ -7,8 +7,10 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
-use super::access::TenantMembership;
+use super::access::{TenantMembership, WorkspaceAccess};
 use super::config::StudioSessionConfig;
+use super::desktop::DesktopLeases;
+use super::desktop_rest;
 use super::docker::DockerDriver;
 use super::driver::SessionDriver;
 use super::k8s::KubernetesDriver;
@@ -29,12 +31,18 @@ use super::service::SessionService;
 )]
 pub struct StudioSessionGear {
     service: OnceLock<Arc<SessionService>>,
+    /// Desktop leases need no driver, so they live beside the service rather
+    /// than in it, and answer when container sessions are disabled.
+    desktops: Arc<DesktopLeases>,
+    desktop_access: OnceLock<Arc<dyn WorkspaceAccess>>,
 }
 
 impl Default for StudioSessionGear {
     fn default() -> Self {
         Self {
             service: OnceLock::new(),
+            desktops: Arc::default(),
+            desktop_access: OnceLock::new(),
         }
     }
 }
@@ -43,6 +51,17 @@ impl Default for StudioSessionGear {
 impl Gear for StudioSessionGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: StudioSessionConfig = ctx.config_or_default()?;
+        // A desktop session is a lease, not a container: it is authorized the
+        // same way and needs nothing else, so it is set up before anything
+        // that can turn container sessions off.
+        if let Ok(client) = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            let _ = self
+                .desktop_access
+                .set(Arc::new(TenantMembership::new(client)));
+        }
         if !cfg.enabled {
             info!("studio-session: disabled by config — session APIs will answer 503");
             return Ok(()); // service stays unset; REST mounts the disabled stub
@@ -171,11 +190,14 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
         // None = sessions disabled (config flag or no Docker): the routes
         // still mount and answer 503 with a clear message.
         let service = self.service.get().cloned();
-        Ok(rest::register_routes(
+        let router = rest::register_routes(router, openapi, service, _ctx.client_hub());
+        Ok(desktop_rest::register_routes(
             router,
             openapi,
-            service,
-            _ctx.client_hub(),
+            desktop_rest::Desktops {
+                leases: Arc::clone(&self.desktops),
+                access: self.desktop_access.get().cloned(),
+            },
         ))
     }
 }

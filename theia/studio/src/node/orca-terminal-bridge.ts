@@ -29,14 +29,23 @@
 // device token, public key) in its readiness line. The session entrypoint
 // lifts it into a file only this user can read and names it in
 // STUDIO_ORCA_PAIRING_FILE; STUDIO_ORCA_PAIRING_URL takes the offer itself,
-// for a developer pointing the IDE at their own runtime. The offer never
-// leaves the backend.
+// for a developer pointing the IDE at their own runtime. With neither, an IDE
+// on a developer's machine pairs by hand: the person pastes the link the Orca
+// desktop app generates for this computer, and it is kept in
+// ~/ConstructorStudio/orca-pairing, readable by them only, like the session's
+// file. The offer never leaves the backend.
 
 import * as fs from 'fs';
 import { createRequire } from 'module';
+import * as os from 'os';
 import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
-import type { OrcaTerminalClient, OrcaTerminalService } from '../common/orca-terminal-protocol';
+import {
+    NO_ORCA_PAIRING,
+    STALE_ORCA_PAIRING,
+    type OrcaTerminalClient,
+    type OrcaTerminalService
+} from '../common/orca-terminal-protocol';
 import { OrcaCli } from './orca-cli';
 
 /** Long enough for a cold runtime to authenticate a first socket. */
@@ -116,16 +125,72 @@ export function loadOrcaRemoteClient(cli: string): OrcaRemoteClient {
     };
 }
 
+/** Where a pairing made by hand is kept: ~/ConstructorStudio, beside the desktop's other state. */
+export function savedPairingFile(home: string = os.homedir()): string {
+    return path.join(home, 'ConstructorStudio', 'orca-pairing');
+}
+
+/**
+ * Whether the pairing is made by hand: an IDE on a person's own machine. Never
+ * a session (the session gate hands it STUDIO_SESSION_TOKEN; its entrypoint
+ * pairs it, or Orca is off there), nor where the environment names a pairing.
+ */
+export function pairsByHand(env: NodeJS.ProcessEnv = process.env): boolean {
+    return !env.STUDIO_SESSION_TOKEN?.trim()
+        && !env.STUDIO_ORCA_PAIRING_URL?.trim()
+        && !env.STUDIO_ORCA_PAIRING_FILE?.trim();
+}
+
+/** Why there is no stream, in words that say what to do where this IDE runs. */
+export function noPairingMessage(env: NodeJS.ProcessEnv = process.env): string {
+    return pairsByHand(env)
+        ? `${NO_ORCA_PAIRING} on this computer yet, so it cannot stream a terminal. ` +
+              'In Orca, open Settings → Pair another Orca client, choose This computer, ' +
+              'generate an access link, and paste it when asked (or run "Orca: Pair with Orca on This Computer").'
+        : `${NO_ORCA_PAIRING}, so it cannot stream a terminal. ` +
+              'A session gets one when Orca starts (STUDIO_ORCA_PAIRING_FILE); ' +
+              'restart the session if Orca was still starting.';
+}
+
+/**
+ * What a failed `terminal.subscribe` means, in words that say what to do.
+ *
+ * Orca's client throws a `RemoteRuntimeClientError` whose `code` is
+ * `unauthorized` when the runtime refuses the device token (revoked in Orca)
+ * and `invalid_runtime_response` when the runtime is not the one the pairing
+ * names (a reinstall draws a new key) — read off Orca 1.4.211's
+ * `remote-runtime-subscription-frame-router.js`. A refused connection means
+ * nothing listens where the pairing says: Orca is closed.
+ */
+export function attachFailure(error: unknown, env: NodeJS.ProcessEnv = process.env): string {
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    const text = error instanceof Error ? error.message : String(error);
+    if (code === 'unauthorized' || code === 'invalid_runtime_response') {
+        return pairsByHand(env)
+            ? `${STALE_ORCA_PAIRING}: it was revoked in Orca, or Orca was reinstalled. Pair again ` +
+                  '(In Orca: Settings → Pair another Orca client → This computer).'
+            : `${STALE_ORCA_PAIRING}. Restart the session: it pairs again when Orca starts.`;
+    }
+    if (code === 'ECONNREFUSED' || /ECONNREFUSED|connection refused/i.test(text)) {
+        return pairsByHand(env)
+            ? 'Orca is not answering on this computer. Open the Orca app (or press Start Orca in the Agents panel) and try again.'
+            : "The session's Orca runtime is not answering. Restart the session if it does not come back.";
+    }
+    return `Could not attach to the Orca terminal: ${text}`;
+}
+
 /** The pairing offer this backend may use, or undefined when there is none. */
 export function pairingOffer(
     env: NodeJS.ProcessEnv = process.env,
-    read: (file: string) => string = file => fs.readFileSync(file, 'utf8')
+    read: (file: string) => string = file => fs.readFileSync(file, 'utf8'),
+    saved: string = savedPairingFile()
 ): string | undefined {
     const inline = env.STUDIO_ORCA_PAIRING_URL?.trim();
     if (inline) {
         return inline;
     }
-    const file = env.STUDIO_ORCA_PAIRING_FILE?.trim();
+    // The session's file when it names one; the one kept by hand, off a session.
+    const file = env.STUDIO_ORCA_PAIRING_FILE?.trim() || (pairsByHand(env) ? saved : undefined);
     if (!file) {
         return undefined;
     }
@@ -224,11 +289,7 @@ export class OrcaTerminalBridge implements OrcaTerminalService {
         const offer = this.pairingOffer();
         const pairing = offer ? remote.parsePairing(offer) : null;
         if (!pairing) {
-            throw new Error(
-                'This IDE has no pairing with the Orca runtime, so it cannot stream a terminal. ' +
-                    'A session gets one when Orca starts (STUDIO_ORCA_PAIRING_FILE); ' +
-                    'restart the session if Orca was still starting.'
-            );
+            throw new Error(noPairingMessage());
         }
         // Input and resizes made while the socket opens wait for it, in order:
         // the tab fits itself to its size right after it opens, which is
@@ -264,7 +325,7 @@ export class OrcaTerminalBridge implements OrcaTerminalService {
             }
             entry.done = true;
             ready();
-            throw new Error(`Could not attach to the Orca terminal: ${messageOf(error)}`);
+            throw new Error(attachFailure(error));
         }
         entry.subscription = subscription;
         ready();
@@ -292,6 +353,31 @@ export class OrcaTerminalBridge implements OrcaTerminalService {
 
     async detach(stream: string): Promise<void> {
         this.close(stream);
+    }
+
+    async canPair(): Promise<boolean> {
+        return pairsByHand();
+    }
+
+    async pair(offer: string): Promise<void> {
+        if (!pairsByHand()) {
+            throw new Error('This IDE is paired where it was started (STUDIO_ORCA_PAIRING_FILE or STUDIO_ORCA_PAIRING_URL).');
+        }
+        const link = offer.trim();
+        // Orca's own parser decides what a pairing is, as it does for attach.
+        if (!link || !this.remoteClient().parsePairing(link)) {
+            throw new Error('That is not an Orca pairing link: it starts with orca://pair?code=');
+        }
+        this.savePairing(link);
+    }
+
+    /** Keep the link for later starts, readable by this user only; a seam for tests. */
+    protected savePairing(link: string): void {
+        const file = savedPairingFile();
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${link}\n`, { mode: 0o600 });
+        // writeFile keeps the mode of a file that already exists.
+        fs.chmodSync(file, 0o600);
     }
 
     /** Answers with the pairing offer; a seam for tests. */
