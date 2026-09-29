@@ -40,3 +40,7 @@ local-run/
 .superpowers/
 
 .prs/
+
+# Python bytecode (e.g. studio-backend/scripts/graph-storage-bench)
+__pycache__/
+*.py[cod]
