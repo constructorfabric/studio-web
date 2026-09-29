@@ -93,7 +93,10 @@ IDE's own origin may. Requests are a different matter (#489): a WebSocket
 upgrade, and an HTTP request other than GET/HEAD/OPTIONS, is refused when its
 `Origin` is not the IDE's own — Theia's `WsOriginValidator` compares it with
 `Host`, or with `THEIA_HOSTS` when that is set. So the proxy must pass the
-browser's `Host` through unchanged, or list the public host in `THEIA_HOSTS`.
+browser's `Host` through unchanged, and that comparison trusts `Host`: set
+`THEIA_HOSTS` to the public host, or have the proxy refuse `Host` values it
+does not serve. Otherwise a rebound hostname agrees with itself, and Theia
+hands it a connection-token cookie on its first GET.
 These settings do not implement user authentication. `STUDIO_SESSION_TOKEN` is
 currently configuration-only and must not be treated as an authentication
 mechanism.

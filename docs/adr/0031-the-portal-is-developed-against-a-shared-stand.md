@@ -104,15 +104,17 @@ backend's `/cf/studio-session/v1/ide/{id}/` (`nginx.conf.template`), and so
 does the proxy: on a stand the Ingress sends `/cf` straight to the backend,
 and `local` is a bare backend with no nginx in front of it.
 
-A session pod admits only its own origin: `isOriginAllowed` in
-`theia/studio/src/node/studio-runtime-config.ts` compares the request's
-`Origin` with its `Host`, and the backend proxy forwards both as they came.
-On a stand they agree because nginx sends them from the same hostname; from a
-dev server they would not — `Host` is rewritten to the stand's by
-`changeOrigin`, `Origin` would still say `http://localhost:5173` — and the
-socket would be refused. The `/studio` proxy therefore presents the stand's
-origin in `Origin`. It is the dev server telling the pod what nginx would
-have told it, on the one path where the pod asks.
+A session pod admits only its own origin: Theia's `WsOriginValidator`
+compares the request's `Origin` with its `Host` on every WebSocket upgrade,
+and since #489 on every HTTP request other than GET/HEAD/OPTIONS as well (the
+early middleware in `theia/studio/src/node/studio-runtime-config.ts`). The
+backend proxy forwards both headers as they came. On a stand they agree
+because nginx sends them from the same hostname; from a dev server they would
+not — `Host` is rewritten to the stand's by `changeOrigin`, `Origin` would
+still say `http://localhost:5173` — and the socket and every write would be
+refused. The `/studio` proxy therefore presents the stand's origin in
+`Origin`, on every request it carries. It is the dev server telling the pod
+what nginx would have told it, wherever the pod asks.
 
 ### The sign-in is the stand's
 
