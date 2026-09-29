@@ -394,3 +394,111 @@ describe('PortalBridgeContribution component link', () => {
         expect(caller).toContain(`"${OPEN_COMPONENT_IN_PORTAL_COMMAND_ID}"`);
     });
 });
+
+/**
+ * The editor trusts only the portal the session names (#324): its own origin,
+ * or the listed ones. The first portal it talks to is the only one for the
+ * life of the frame, and it listens to nobody before it knows the list.
+ */
+describe('PortalBridgeContribution portal origins', () => {
+    const OWN = window.location.origin;
+    const PORTAL = 'http://localhost:5173';
+    const listed = { allowedOriginsMode: 'allowlist' as const, allowedOrigins: [PORTAL, 'http://localhost:8080'] };
+    const sameOrigin = { allowedOriginsMode: 'same-origin' as const, allowedOrigins: [] };
+
+    let post: jest.Mock;
+    let parent: { postMessage: jest.Mock };
+    let listener: ((event: Partial<MessageEvent>) => void) | undefined;
+    let shown: string[];
+
+    beforeEach(() => {
+        post = jest.fn();
+        parent = { postMessage: post };
+        Object.defineProperty(window, 'parent', { value: parent, configurable: true });
+        listener = undefined;
+        jest.spyOn(window, 'addEventListener').mockImplementation(((type: string, handler: EventListener) => {
+            if (type === 'message') {
+                listener = handler as unknown as typeof listener;
+            }
+        }) as typeof window.addEventListener);
+        jest.spyOn(global, 'setInterval').mockReturnValue(0 as unknown as ReturnType<typeof setInterval>);
+        shown = [];
+    });
+    afterEach(() => {
+        Object.defineProperty(window, 'parent', { value: window, configurable: true });
+        jest.restoreAllMocks();
+    });
+
+    const start = async (getSession: () => Promise<unknown>): Promise<TestBridge> => {
+        const bridge = new TestBridge();
+        Object.assign(bridge, {
+            runtime: { getSession },
+            documentResources: { onDidSaveDocument: () => ({ dispose: () => undefined }) },
+            shell: { widgets: [] },
+            notifier: { onNotifyEditor: (request: { message: string }) => void shown.push(request.message) },
+        });
+        bridge.onStart();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return bridge;
+    };
+    const send = (origin: string, data: unknown, source: unknown = parent): void =>
+        listener?.({ source: source as MessageEventSource, origin, data });
+    const notify = (message: string) => ({ type: 'studio.notify', message });
+
+    it('accepts a listed portal and answers it at its own origin, never `*`', async () => {
+        await start(async () => listed);
+        send(PORTAL, { type: 'studio.init' });
+
+        expect(post).toHaveBeenCalledWith({ type: 'studio.status', dirty: 0 }, PORTAL);
+        expect(post.mock.calls.every(([, target]) => target === PORTAL)).toBe(true);
+    });
+
+    it('drops a message from an origin outside the list, and from `null`', async () => {
+        await start(async () => listed);
+        send('https://evil.example', notify('evil'));
+        send('null', notify('opaque'));
+        send(OWN, notify('own origin is not on the list'));
+
+        expect(shown).toEqual([]);
+        expect(post).not.toHaveBeenCalled();
+    });
+
+    it('pins the first portal: a second origin is dropped even when listed', async () => {
+        await start(async () => listed);
+        send(PORTAL, notify('first'));
+        send('http://localhost:8080', notify('second'));
+
+        expect(shown).toEqual(['first']);
+    });
+
+    it('drops a message from any window but the embedding one', async () => {
+        await start(async () => listed);
+        send(PORTAL, notify('another window'), {});
+
+        expect(shown).toEqual([]);
+    });
+
+    it('in same-origin mode accepts only the session’s own origin', async () => {
+        await start(async () => sameOrigin);
+        send(PORTAL, notify('cross-origin'));
+        send(OWN, notify('own'));
+
+        expect(shown).toEqual(['own']);
+    });
+
+    it('does not listen before the list has arrived', async () => {
+        let arrive: (session: unknown) => void = () => undefined;
+        await start(() => new Promise(resolve => { arrive = resolve; }));
+        expect(listener).toBeUndefined();
+
+        arrive(listed);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(listener).toBeDefined();
+    });
+
+    it('does not listen at all when the list never arrives', async () => {
+        await start(async () => { throw new Error('runtime unreachable'); });
+
+        expect(listener).toBeUndefined();
+    });
+});

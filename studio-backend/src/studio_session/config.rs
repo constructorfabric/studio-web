@@ -129,6 +129,15 @@ pub struct StudioSessionConfig {
     /// uses the host gateway; Kubernetes injects the backend Service DNS.
     #[serde(default = "default_gateway_url")]
     pub gateway_url: String,
+    /// Portal origins a session lets frame it and talk to it (#324), handed
+    /// to the container as `STUDIO_ALLOWED_ORIGINS`: comma-separated bare
+    /// origins, which Theia validates at start. Empty = the session's own
+    /// origin only, which is right wherever the portal reaches the IDE through
+    /// its own domain (Kubernetes, the Vite stand proxy). The Docker driver
+    /// publishes the IDE on a loopback port of its own, so a local portal has
+    /// to be listed.
+    #[serde(default)]
+    pub allowed_origins: String,
     /// What a shared session acts as (`STUDIO_ACTOR_ID`): Studio's service
     /// identity, not the person who happened to launch it (ADR-0030). The same
     /// subject `studio-user` seeds as "Constructor Studio (service)".
@@ -227,6 +236,7 @@ impl Default for StudioSessionConfig {
             bind_host: default_bind_host(),
             public_host: default_public_host(),
             gateway_url: default_gateway_url(),
+            allowed_origins: String::new(),
             service_actor: default_service_actor(),
             port_range_start: default_port_start(),
             port_range_end: default_port_end(),

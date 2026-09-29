@@ -752,6 +752,11 @@ impl SessionService {
             // manifest from STUDIO_SOURCES inside that runtime filesystem.
             env.push("STUDIO_MANAGED_WORKSPACE=1".to_string());
         }
+        // Who may frame the IDE and talk to it (#324). Unset = its own origin.
+        let allowed_origins = self.cfg.allowed_origins.trim();
+        if !allowed_origins.is_empty() {
+            env.push(format!("STUDIO_ALLOWED_ORIGINS={allowed_origins}"));
+        }
         // Hand the container its S2S control token so the Theia node can
         // authenticate studio-backend's control calls (ADR-0010).
         if self.cfg.theia_control_enabled {
@@ -1781,6 +1786,47 @@ mod tests {
             actor_of_the_colleagues_ide,
             crate::user_profile::STUDIO_SERVICE_SUBJECT,
             "a shared container acts as Studio's service identity, not as a person"
+        );
+    }
+
+    /// WHO MAY FRAME THE IDE (#324). The list reaches the container as it is
+    /// configured, and an unset one sets nothing, so the IDE falls back to its
+    /// own origin rather than to an empty list.
+    #[tokio::test]
+    async fn the_portal_origins_reach_the_container_only_when_configured() {
+        async fn launch(allowed_origins: &str) -> Vec<String> {
+            let root =
+                std::env::temp_dir().join(format!("studio-session-origins-{}", Uuid::new_v4()));
+            let runtime = Arc::new(LaunchingRuntime::default());
+            let service = SessionService::new(
+                StudioSessionConfig {
+                    workspaces_root: root.to_string_lossy().into_owned(),
+                    allowed_origins: allowed_origins.to_owned(),
+                    ..config()
+                },
+                runtime.clone(),
+            );
+            service
+                .set_workspace_access(Arc::new(Reachable(true)))
+                .await;
+            service
+                .create(&person(0x7A5), Uuid::from_u128(0xD3), None, None, vec![])
+                .await
+                .expect("the workspace opens");
+            let env = runtime.launched.lock().unwrap()[0].1.clone();
+            let _ = std::fs::remove_dir_all(&root);
+            env
+        }
+
+        let listed = launch(" http://localhost:5173,http://localhost:8080 ").await;
+        let wanted = "STUDIO_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8080";
+        assert!(listed.iter().any(|v| v == wanted), "{listed:?}");
+
+        let unset = launch("").await;
+        assert!(
+            !unset
+                .iter()
+                .any(|v| v.starts_with("STUDIO_ALLOWED_ORIGINS="))
         );
     }
 

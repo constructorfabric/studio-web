@@ -89,9 +89,11 @@ The proxy must:
 
 Set `STUDIO_TRUST_PROXY=true` only when requests can arrive solely through that
 trusted proxy. `STUDIO_ALLOWED_ORIGINS` is a comma-separated list of bare
-`http://` or `https://` origins. The PoC validates this Studio configuration
-but does not replace Theia's global origin validator, so the proxy must also
-enforce the public origin and host policy. These settings do not implement user
+`http://` or `https://` origins: the portals that may frame the IDE (the
+application page's `frame-ancestors`) and talk to it through the portal bridge.
+Unset, only the IDE's own origin may. It does not yet gate HTTP or WebSocket
+requests (#489), so the proxy must also enforce the public origin and host
+policy. These settings do not implement user
 authentication. `STUDIO_SESSION_TOKEN` is currently configuration-only and
 must not be treated as an authentication mechanism.
 
@@ -107,7 +109,7 @@ They can be set explicitly when deploying:
 | `STUDIO_WORKSPACE_ROOT` | Absolute fixed Workspace root |
 | `STUDIO_REPOSITORY_ROOT` | Absolute root repository path |
 | `STUDIO_DATA_DIR` | Durable operation journal/cache directory |
-| `STUDIO_ALLOWED_ORIGINS` | Optional comma-separated browser origin allowlist |
+| `STUDIO_ALLOWED_ORIGINS` | Optional comma-separated portal origins that may frame the IDE; unset = its own origin |
 | `STUDIO_TRUST_PROXY` | Trust forwarded host information (`true`/`false`) |
 | `STUDIO_GIT_MODE` | `disabled`, `commit`, or `push` |
 | `STUDIO_GIT_BRANCH` | Required branch for mutation modes |

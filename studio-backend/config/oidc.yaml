@@ -652,6 +652,10 @@ gears:
       workspaces_root: "~/.cf-studio-workspaces"
       bind_host: "127.0.0.1"      # loopback only — the Theia PoC has no auth
       public_host: "localhost"
+      # The IDE is on its own loopback port, so the local portals must be
+      # listed to frame it and talk to it (#324): Vite, compose's portal and
+      # its prototype.
+      allowed_origins: "http://localhost:5173,http://localhost:8080,http://localhost:8081"
       port_range_start: 41000
       port_range_end: 41099
       max_session_secs: 14400     # 4h, then the reaper stops the container
