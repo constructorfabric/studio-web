@@ -238,7 +238,8 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         let session: StudioRuntimeSession;
         try {
             session = await this.runtime.getSession();
-        } catch {
+        } catch (e) {
+            console.warn('[studio] portal bridge disabled: session unavailable', e);
             return;
         }
         const ownOrigin = window.location.origin;

@@ -496,9 +496,11 @@ describe('PortalBridgeContribution portal origins', () => {
         expect(listener).toBeDefined();
     });
 
-    it('does not listen at all when the list never arrives', async () => {
+    it('does not listen at all when the list never arrives, and says so', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
         await start(async () => { throw new Error('runtime unreachable'); });
 
         expect(listener).toBeUndefined();
+        expect(warn).toHaveBeenCalledWith('[studio] portal bridge disabled: session unavailable', expect.any(Error));
     });
 });
