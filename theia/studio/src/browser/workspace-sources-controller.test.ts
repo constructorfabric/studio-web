@@ -250,7 +250,6 @@ function createRuntime(initialSnapshot: WorkspaceSnapshot) {
             workspaceRootName: 'workspace',
             allowedOriginsMode: 'same-origin',
             allowedOrigins: [],
-            trustProxy: false,
             git: { mode: 'disabled' as const },
             features: {
                 fixedWorkspace: true as const,

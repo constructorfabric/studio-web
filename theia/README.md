@@ -70,7 +70,6 @@ TLS-terminating reverse proxy in front of it:
 
 ```bash
 STUDIO_ALLOWED_ORIGINS=https://studio.example.com \
-STUDIO_TRUST_PROXY=true \
 STUDIO_GIT_MODE=push \
 npm run start:browser -- \
   --hostname=127.0.0.1 \
@@ -87,15 +86,17 @@ The proxy must:
 - apply request-size, timeout, and connection limits;
 - prevent direct access to the backend port.
 
-Set `STUDIO_TRUST_PROXY=true` only when requests can arrive solely through that
-trusted proxy. `STUDIO_ALLOWED_ORIGINS` is a comma-separated list of bare
-`http://` or `https://` origins: the portals that may frame the IDE (the
-application page's `frame-ancestors`) and talk to it through the portal bridge.
-Unset, only the IDE's own origin may. It does not yet gate HTTP or WebSocket
-requests (#489), so the proxy must also enforce the public origin and host
-policy. These settings do not implement user
-authentication. `STUDIO_SESSION_TOKEN` is currently configuration-only and
-must not be treated as an authentication mechanism.
+`STUDIO_ALLOWED_ORIGINS` is a comma-separated list of bare `http://` or
+`https://` origins: the portals that may frame the IDE (the application page's
+`frame-ancestors`) and talk to it through the portal bridge. Unset, only the
+IDE's own origin may. Requests are a different matter (#489): a WebSocket
+upgrade, and an HTTP request other than GET/HEAD/OPTIONS, is refused when its
+`Origin` is not the IDE's own — Theia's `WsOriginValidator` compares it with
+`Host`, or with `THEIA_HOSTS` when that is set. So the proxy must pass the
+browser's `Host` through unchanged, or list the public host in `THEIA_HOSTS`.
+These settings do not implement user authentication. `STUDIO_SESSION_TOKEN` is
+currently configuration-only and must not be treated as an authentication
+mechanism.
 
 ## Runtime configuration
 
@@ -110,7 +111,6 @@ They can be set explicitly when deploying:
 | `STUDIO_REPOSITORY_ROOT` | Absolute root repository path |
 | `STUDIO_DATA_DIR` | Durable operation journal/cache directory |
 | `STUDIO_ALLOWED_ORIGINS` | Optional comma-separated portal origins that may frame the IDE; unset = its own origin |
-| `STUDIO_TRUST_PROXY` | Trust forwarded host information (`true`/`false`) |
 | `STUDIO_GIT_MODE` | `disabled`, `commit`, or `push` |
 | `STUDIO_GIT_BRANCH` | Required branch for mutation modes |
 | `STUDIO_GIT_REMOTE` | Remote name, normally `origin` |

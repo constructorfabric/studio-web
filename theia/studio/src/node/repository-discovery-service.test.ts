@@ -450,7 +450,6 @@ function runtimeConfig(workspaceRoot: string, repositoryRoot = workspaceRoot): S
         dataDir: path.join(path.dirname(workspaceRoot), 'data'),
         allowedOriginsMode: 'same-origin',
         allowedOrigins: [],
-        trustProxy: false,
         git: {
             mode: 'push',
             branch: 'main',

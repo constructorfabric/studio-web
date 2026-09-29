@@ -570,7 +570,6 @@ function createRuntime() {
             workspaceRootName: 'repo',
             allowedOriginsMode: 'same-origin',
             allowedOrigins: [],
-            trustProxy: false,
             git: { mode: 'push', branch: 'main' },
             features: {
                 fixedWorkspace: true,

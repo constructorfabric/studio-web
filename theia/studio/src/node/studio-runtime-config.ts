@@ -1,13 +1,8 @@
 import * as path from 'path';
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution, EarlyExpressMiddleware } from '@theia/core/lib/node/backend-application';
+import { WsOriginValidator } from '@theia/core/lib/node/hosting/ws-origin-validator';
 import { StudioRuntimeSession } from '../common/studio-protocol';
-
-export interface StudioOriginCheckRequest {
-    readonly origin?: string;
-    readonly host?: string;
-    readonly forwardedHost?: string;
-}
 
 export type StudioGitConfig =
     | { readonly mode: 'disabled' }
@@ -31,7 +26,6 @@ export interface StudioRuntimeConfig {
     readonly dataDir: string;
     readonly allowedOriginsMode: 'same-origin' | 'allowlist';
     readonly allowedOrigins: readonly string[];
-    readonly trustProxy: boolean;
     readonly git: StudioGitConfig;
     readonly secrets: {
         readonly sessionToken?: string;
@@ -45,7 +39,6 @@ export interface StudioRuntimeConfigSource {
     readonly STUDIO_REPOSITORY_ROOT?: string;
     readonly STUDIO_DATA_DIR?: string;
     readonly STUDIO_ALLOWED_ORIGINS?: string;
-    readonly STUDIO_TRUST_PROXY?: string;
     readonly STUDIO_SESSION_TOKEN?: string;
     readonly STUDIO_GIT_MODE?: string;
     readonly STUDIO_GIT_BRANCH?: string;
@@ -67,7 +60,6 @@ export function loadStudioRuntimeConfig(env: StudioRuntimeConfigSource = process
     const repositoryRoot = path.resolve(repositoryRootInput);
     const dataDir = path.resolve(readRequiredValue(env.STUDIO_DATA_DIR, 'STUDIO_DATA_DIR'));
     const allowedOrigins = parseAllowedOrigins(env.STUDIO_ALLOWED_ORIGINS);
-    const trustProxy = parseTrustProxy(env.STUDIO_TRUST_PROXY);
     const git = parseGitConfig(env);
 
     return {
@@ -78,7 +70,6 @@ export function loadStudioRuntimeConfig(env: StudioRuntimeConfigSource = process
         dataDir,
         allowedOriginsMode: allowedOrigins.length > 0 ? 'allowlist' : 'same-origin',
         allowedOrigins,
-        trustProxy,
         git,
         secrets: {
             sessionToken: readOptionalValue(env.STUDIO_SESSION_TOKEN)
@@ -93,7 +84,6 @@ export function createBrowserSession(config: StudioRuntimeConfig): StudioRuntime
         workspaceRootName: path.basename(config.workspaceRoot),
         allowedOriginsMode: config.allowedOriginsMode,
         allowedOrigins: [...config.allowedOrigins],
-        trustProxy: config.trustProxy,
         git: config.git.mode === 'disabled'
             ? { mode: 'disabled' }
             : { mode: config.git.mode, branch: config.git.branch },
@@ -103,31 +93,6 @@ export function createBrowserSession(config: StudioRuntimeConfig): StudioRuntime
             allowGitMutations: config.git.mode !== 'disabled'
         }
     };
-}
-
-export function isOriginAllowed(config: StudioRuntimeConfig, request: StudioOriginCheckRequest): boolean {
-    if (!request.origin) {
-        // Match Theia's WsOriginValidator: browsers omit Origin for same-origin
-        // polling, while cross-origin browser requests include it.
-        return true;
-    }
-
-    let originUrl: URL;
-    try {
-        originUrl = new URL(request.origin);
-    } catch {
-        return false;
-    }
-
-    if (config.allowedOriginsMode === 'allowlist') {
-        return config.allowedOrigins.includes(originUrl.origin);
-    }
-
-    const host = config.trustProxy && request.forwardedHost ? request.forwardedHost : request.host;
-    if (!host) {
-        return false;
-    }
-    return originUrl.host === host;
 }
 
 function readRequiredValue(value: string | undefined, name: string): string {
@@ -166,20 +131,6 @@ function parseAllowedOrigins(rawValue: string | undefined): string[] {
     });
 }
 
-function parseTrustProxy(rawValue: string | undefined): boolean {
-    const value = rawValue?.trim();
-    if (value === undefined || value === '') {
-        return false;
-    }
-    if (value === 'true') {
-        return true;
-    }
-    if (value === 'false') {
-        return false;
-    }
-    throw new Error('STUDIO_TRUST_PROXY must be "true" or "false"');
-}
-
 function parseGitConfig(env: StudioRuntimeConfigSource): StudioGitConfig {
     const mode = readOptionalValue(env.STUDIO_GIT_MODE) ?? 'disabled';
     if (mode === 'disabled') {
@@ -208,6 +159,10 @@ export class StudioRuntimeConfigService implements BackendApplicationContributio
     @inject(EarlyExpressMiddleware) @optional()
     protected readonly earlyMiddleware: EarlyExpressMiddleware | undefined;
 
+    /** Theia's own check of every WebSocket upgrade. Not bound on Electron. */
+    @inject(WsOriginValidator) @optional()
+    protected readonly originValidator: WsOriginValidator | undefined;
+
     /**
      * `frame-ancestors` on the application page (#324) — the portal origins
      * the portal bridge talks to, its own origin unless a list is set — early
@@ -215,8 +170,26 @@ export class StudioRuntimeConfigService implements BackendApplicationContributio
      * and the drawio runtime keep their own policies. A configuration that
      * does not load narrows the list to the page's own origin rather than
      * dropping it.
+     *
+     * And an HTTP request that changes something follows the rule Theia
+     * already applies to every WebSocket upgrade (#489): an `Origin` other
+     * than the IDE's own (or `THEIA_HOSTS`) is refused, a missing one — a
+     * server-side caller — is not. The session cookies alone do not stop it:
+     * a page on the same site but another origin (a sibling subdomain, another
+     * localhost port, a webview) sends them along.
      */
     initialize(): void {
+        const originValidator = this.originValidator;
+        if (originValidator) {
+            this.earlyMiddleware?.handlers.push((req, res, next) => {
+                // Reads change nothing, and without CORS headers another origin cannot read the answer.
+                if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || originValidator.allowWsUpgrade(req)) {
+                    next();
+                } else {
+                    res.sendStatus(403);
+                }
+            });
+        }
         this.earlyMiddleware?.handlers.push((req, res, next) => {
             if (req.path === '/' || req.path === '/index.html') {
                 let ancestors = "'self'";

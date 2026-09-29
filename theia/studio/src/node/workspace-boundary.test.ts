@@ -25,7 +25,6 @@ describe('workspace boundary', () => {
             dataDir: path.join(tempDir, 'studio-data'),
             allowedOriginsMode: 'same-origin',
             allowedOrigins: [],
-            trustProxy: false,
             git: { mode: 'disabled' },
             secrets: {}
         };

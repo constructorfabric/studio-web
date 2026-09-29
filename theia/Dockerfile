@@ -20,7 +20,7 @@
 #   STUDIO_GIT_MODE       disabled | commit | push       (default: disabled)
 #   STUDIO_GIT_BRANCH     required for commit/push modes
 #   STUDIO_REPO_URL       if set and /workspace is empty — cloned on start
-#   STUDIO_ALLOWED_ORIGINS, STUDIO_TRUST_PROXY — see poc/theia/README.md
+#   STUDIO_ALLOWED_ORIGINS — see theia/README.md
 
 # ── Build: bundle browser-app (downloads Theia plugins — needs network) ──
 FROM node:22.23.1-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37 AS build

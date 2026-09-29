@@ -663,7 +663,6 @@ function runtimeConfig(
         dataDir: path.join(tempDir, 'runtime-data'),
         allowedOriginsMode: 'same-origin',
         allowedOrigins: [],
-        trustProxy: false,
         git: mode === 'disabled'
             ? { mode }
             : {

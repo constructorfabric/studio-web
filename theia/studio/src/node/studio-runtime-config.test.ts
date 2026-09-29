@@ -1,4 +1,6 @@
-import { createBrowserSession, isOriginAllowed, loadStudioRuntimeConfig, StudioRuntimeConfigService } from './studio-runtime-config';
+import { BackendApplicationHosts } from '@theia/core/lib/node/hosting/backend-application-hosts';
+import { WsOriginValidator } from '@theia/core/lib/node/hosting/ws-origin-validator';
+import { createBrowserSession, loadStudioRuntimeConfig, StudioRuntimeConfigService } from './studio-runtime-config';
 
 describe('studio runtime config', () => {
     const validEnv = {
@@ -8,7 +10,6 @@ describe('studio runtime config', () => {
         STUDIO_REPOSITORY_ROOT: '/tmp/repo',
         STUDIO_DATA_DIR: '/tmp/studio-data',
         STUDIO_ALLOWED_ORIGINS: 'https://studio.example.com,https://preview.example.com',
-        STUDIO_TRUST_PROXY: 'true',
         STUDIO_SESSION_TOKEN: 'top-secret'
     };
 
@@ -41,7 +42,6 @@ describe('studio runtime config', () => {
             workspaceRootName: 'workspace',
             allowedOriginsMode: 'allowlist',
             allowedOrigins: ['https://studio.example.com', 'https://preview.example.com'],
-            trustProxy: true,
             git: { mode: 'disabled' },
             features: {
                 fixedWorkspace: true,
@@ -53,57 +53,6 @@ describe('studio runtime config', () => {
         expect(JSON.stringify(session)).not.toContain('/tmp/repo');
         expect(JSON.stringify(session)).not.toContain('/tmp/studio-data');
         expect(JSON.stringify(session)).not.toContain('studio@example.test');
-    });
-
-    it('uses an explicit allowlist when configured', () => {
-        const config = loadStudioRuntimeConfig(validEnv);
-        expect(isOriginAllowed(config, {
-            origin: 'https://studio.example.com',
-            host: 'internal-host:3000'
-        })).toBe(true);
-        expect(isOriginAllowed(config, {
-            origin: 'https://evil.example.com',
-            host: 'studio.example.com'
-        })).toBe(false);
-    });
-
-    it('allows a missing origin only for Theia same-origin polling semantics', () => {
-        const config = loadStudioRuntimeConfig(validEnv);
-        expect(isOriginAllowed(config, {
-            host: 'studio.example.com'
-        })).toBe(true);
-    });
-
-    it('honors proxy trust decisions for same-origin mode', () => {
-        const config = loadStudioRuntimeConfig({
-            STUDIO_ACTOR_ID: 'actor-1',
-            STUDIO_WORKSPACE_ID: 'workspace-1',
-            STUDIO_WORKSPACE_ROOT: '/tmp/repo/workspace',
-            STUDIO_REPOSITORY_ROOT: '/tmp/repo',
-            STUDIO_DATA_DIR: '/tmp/studio-data',
-            STUDIO_TRUST_PROXY: 'true'
-        });
-        expect(isOriginAllowed(config, {
-            origin: 'https://studio.example.com',
-            host: 'internal-host:3000',
-            forwardedHost: 'studio.example.com'
-        })).toBe(true);
-        expect(isOriginAllowed(config, {
-            origin: 'https://studio.example.com',
-            host: 'internal-host:3000',
-            forwardedHost: 'other.example.com'
-        })).toBe(false);
-    });
-
-    it('rejects malformed proxy trust values', () => {
-        expect(() => loadStudioRuntimeConfig({
-            STUDIO_ACTOR_ID: 'actor-1',
-            STUDIO_WORKSPACE_ID: 'workspace-1',
-            STUDIO_WORKSPACE_ROOT: '/tmp/repo/workspace',
-            STUDIO_REPOSITORY_ROOT: '/tmp/repo',
-            STUDIO_DATA_DIR: '/tmp/studio-data',
-            STUDIO_TRUST_PROXY: 'maybe'
-        })).toThrow('STUDIO_TRUST_PROXY');
     });
 
     it('defaults Git mutations to disabled', () => {
@@ -196,5 +145,60 @@ describe('frame-ancestors on the application page', () => {
     it('leaves every other response alone — webviews and drawio have their own policies', () => {
         expect(headerFor('/webview/index.html', () => loadStudioRuntimeConfig(env))).toBeUndefined();
         expect(headerFor('/bundle.js', () => loadStudioRuntimeConfig(env))).toBeUndefined();
+    });
+});
+
+/**
+ * An HTTP request that changes something follows the rule Theia applies to
+ * every WebSocket upgrade (#489). The session cookies do not stop a page on the
+ * same site and another origin — a sibling subdomain, another localhost port, a
+ * webview — so the origin has to.
+ */
+describe('HTTP requests from another origin', () => {
+    type Handler = (req: object, res: object, next: () => void) => void;
+
+    /**
+     * The first early middleware, on a request that changes something. On
+     * Electron that is the frame-ancestors one, which only passes it on.
+     */
+    const serve = (method: string, headers: Record<string, string>, onElectron = false) => {
+        const service = new StudioRuntimeConfigService();
+        const handlers: Handler[] = [];
+        Object.assign(service, {
+            earlyMiddleware: { handlers },
+            // No THEIA_HOSTS here: the rule is the IDE's own origin, as in every session.
+            originValidator: onElectron
+                ? undefined
+                : Object.assign(new WsOriginValidator(), { backendApplicationHosts: new BackendApplicationHosts() }),
+        });
+        service.initialize();
+        const res = { setHeader: jest.fn(), sendStatus: jest.fn() };
+        const next = jest.fn();
+        handlers[0]({ method, path: '/file-upload', headers }, res, next);
+        return { passed: next.mock.calls.length > 0, status: res.sendStatus.mock.calls[0]?.[0] };
+    };
+    const HOST = 'localhost:41000';
+
+    it('refuses a write from another origin, even one on the same site', () => {
+        expect(serve('POST', { host: HOST, origin: 'http://localhost:5173' })).toEqual({ passed: false, status: 403 });
+        expect(serve('PUT', { host: HOST, origin: 'http://a1b2.webview.localhost:41000' })).toEqual({ passed: false, status: 403 });
+        expect(serve('DELETE', { host: HOST, origin: 'null' })).toEqual({ passed: false, status: 403 });
+    });
+
+    it('lets the IDE’s own page write', () => {
+        expect(serve('POST', { host: HOST, origin: `http://${HOST}` })).toEqual({ passed: true, status: undefined });
+    });
+
+    it('lets a server-side caller through: it sends no Origin, and the control API has its own token', () => {
+        expect(serve('POST', { host: HOST })).toEqual({ passed: true, status: undefined });
+    });
+
+    it('leaves reads alone: without CORS headers another origin cannot read the answer', () => {
+        expect(serve('GET', { host: HOST, origin: 'http://localhost:5173' })).toEqual({ passed: true, status: undefined });
+        expect(serve('OPTIONS', { host: HOST, origin: 'http://localhost:5173' })).toEqual({ passed: true, status: undefined });
+    });
+
+    it('does nothing on Electron, which has no such validator and its own security token', () => {
+        expect(serve('POST', { host: HOST, origin: 'http://localhost:5173' }, true)).toEqual({ passed: true, status: undefined });
     });
 });

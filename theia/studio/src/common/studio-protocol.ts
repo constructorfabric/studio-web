@@ -43,7 +43,6 @@ export interface StudioRuntimeSession {
     readonly workspaceRootName: string;
     readonly allowedOriginsMode: 'same-origin' | 'allowlist';
     readonly allowedOrigins: readonly string[];
-    readonly trustProxy: boolean;
     readonly git: {
         readonly mode: 'disabled' | 'commit' | 'push';
         readonly branch?: string;

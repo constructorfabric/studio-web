@@ -376,7 +376,6 @@ function runtimeConfig(repositoryRoot: string, dataDir: string): StudioRuntimeCo
         dataDir,
         allowedOriginsMode: 'same-origin',
         allowedOrigins: [],
-        trustProxy: false,
         git: { mode: 'disabled' },
         secrets: {}
     };

@@ -732,7 +732,6 @@ async function createHarness(
         dataDir,
         allowedOriginsMode: 'same-origin',
         allowedOrigins: [],
-        trustProxy: false,
         git: { mode: 'disabled' },
         secrets: {}
     };
@@ -788,7 +787,6 @@ async function createMultiRepositoryHarness(
         dataDir,
         allowedOriginsMode: 'same-origin',
         allowedOrigins: [],
-        trustProxy: false,
         git: { mode: 'disabled' },
         secrets: {}
     };

@@ -546,7 +546,6 @@ function createHarness(options: {
             dataDir: '/data',
             allowedOriginsMode: 'same-origin',
             allowedOrigins: [],
-            trustProxy: false,
             git: { mode: 'disabled' },
             secrets: {}
         })
