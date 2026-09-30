@@ -1369,9 +1369,9 @@ Stability is `unstable` except where an ADR fixes the contract (`studio-events`,
 
 - [x] `p2` - **ID**: `cpt-studio-interface-portal-ide-bridge`
 
-- **Contracts**: none external
-- **Technology**: `window.postMessage` between the portal and the embedded IDE, accepted only from `window.parent`. Portal → IDE: `studio.init`, `studio.theme`, `studio.openInEditor`, `studio.openGraph`, `studio.openDocument`, `studio.openProduct`, `studio.openGear`. IDE → portal: `studio.status`, `studio.documentSaved`.
-- **Location**: [`theia/studio/src/browser/portal-bridge-contribution.ts`](../../theia/studio/src/browser/portal-bridge-contribution.ts)
+- **Contracts**: [`docs/theia-bridge-contract-v1.md` §6](../theia-bridge-contract-v1.md#6-portal--ide-browser-channel-postmessage)
+- **Technology**: `window.postMessage` between the portal and the embedded IDE, origin-checked on both ends and never posted to `*`; the IDE accepts only `window.parent`. Portal → IDE: `studio.init`, `studio.theme`, `studio.token`, `studio.openInEditor`, `studio.openGraph`, `studio.openDocument`, `studio.openProduct`, `studio.openGear`, `studio.notify`. IDE → portal: `studio.status`, `studio.documentSaved`, `studio.openComponent`.
+- **Location**: [`theia/studio/src/browser/portal-bridge-contribution.ts`](../../theia/studio/src/browser/portal-bridge-contribution.ts) (the IDE), [`studio-frontend/src-app/app/mfe/editorBridge.ts`](../../studio-frontend/src-app/app/mfe/editorBridge.ts) (the official portal)
 
 - [x] `p2` - **ID**: `cpt-studio-interface-session-control`
 

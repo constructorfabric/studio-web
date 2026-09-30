@@ -14,9 +14,10 @@
 // document, opened in the markdown editor via the `studio-doc:` resolver) and
 // `studio.openProduct` (a product.gdl, opened in the Gearbox perspective) and
 // `studio.openGear` (a gear project's gear, in the same perspective).
-// The portal queues these until its handshake is acked, so a message that
-// arrives with — or before — the session's first paint is still delivered:
-// that is what lets "open the IDE" and "edit this thing" be one click.
+// The bridge listens only once the session's origin rules have arrived
+// (`listenToPortal`) and drops whatever was posted before, so the portal
+// repeats `studio.init` until it is answered and holds these until then: that
+// is what lets "open the IDE" and "edit this thing" be one click.
 //
 // Security (#324): messages are only exchanged with the embedding window, and
 // only when its origin is one the session allows — its own origin, or the

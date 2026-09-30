@@ -158,34 +158,123 @@ Everything else in §2/§4 is additive on top of this slice.
 A second, unrelated transport to §1–§5: the **portal page** talking to the
 **IDE page** it embeds as an iframe (a "Space"). No backend hop, no S2S token —
 `window.postMessage` between two browser windows, origin-checked on both ends
-(`portal-bridge-contribution.ts` in the IDE, the spaces host in the portal).
+(`theia/studio/src/browser/portal-bridge-contribution.ts` in the IDE; the
+spaces host of `studio-frontend-prototype`, and
+`studio-frontend/src-app/app/mfe/editorBridge.ts` in the official portal).
 Present because some things are properties of the *running UI*, not of the
 workspace: the theme, the editor that is open, the dirty count.
 
-**Delivery.** The portal queues every message for a space until the IDE's bridge
-answers the handshake (any `studio.*` reply), then flushes in order. This is
-what makes editing a single gesture: a view can ask for a document while the
-session is still being launched, and the message lands when the IDE is ready
-instead of being dropped into a booting iframe. A frame reload re-arms the
-queue — the bridge in the new document has not acked yet.
+This section describes the bridge as it is on `main`; its tests
+(`portal-bridge-contribution.test.ts`) are the source when the two disagree.
+
+**Handshake.** The bridge listens only once `StudioRuntimeService.getSession()`
+has answered over the IDE's websocket — it needs the session's origin rules
+first. Anything posted before that is dropped, not queued, and if the call
+fails the bridge stays off for the life of the page. It answers the first
+`studio.init` it accepts with `studio.status`; a repeat gets no answer, since
+the status is posted only when the dirty count changes. The acknowledgement is
+therefore *any* `studio.*` message from the IDE, not `studio.status` in
+particular.
+
+**Delivery.** The portal repeats `studio.init` about every two seconds until
+the IDE answers, and holds every other message until then, flushing in order.
+This is what makes editing a single gesture: a view can ask for a file while
+the session is still being launched, and the message lands when the IDE is
+ready instead of being dropped into a booting iframe. Every load of the frame
+re-arms the handshake — the gate's splash (served at the session's address
+while Theia binds its port, refreshing itself), the IDE, the IDE again after a
+reload — and what was already delivered is not replayed: a reloaded IDE
+restores its own layout. Opening messages are not deduplicated by the IDE:
+each copy opens again and switches the perspective again (`studio.openGear`
+without a path shows its quick pick again), so the portal sends each once.
+
+**Origins.**
+
+- *Portal → IDE.* The bridge takes a message only from `window.parent`, only
+  with a `studio.` type, and only from an allowed origin: with no list, the IDE
+  page's own origin (`same-origin` mode); with one, exactly an origin on it;
+  `null` never. The first accepted origin is pinned for the life of the page,
+  and everything the bridge posts goes to it, never to `*`.
+- *The list* is the backend's static `allowed_origins`
+  (`studio-backend/src/studio_session/config.rs`), passed to the container as
+  `STUDIO_ALLOWED_ORIGINS` only when it is not empty; nothing is taken from
+  the launch request. The stands set none, so a session there trusts its own
+  origin; the local profiles list `http://localhost:5173`,
+  `http://localhost:8080` and `http://localhost:8081`. The same list is the IDE
+  page's `frame-ancestors` (`'self'` when there is none), so adding an origin to
+  a stand's list drops `'self'` from it.
+- *IDE → portal.* The portal takes a message only from its frame's window
+  (`event.source === iframe.contentWindow`) and the origin of the frame's
+  address, and posts only to that origin.
+
+**Trust.** The frame has no `sandbox` (decided in #323, which ADR-0021 left it
+to). On a stand the session's address is relative (`/studio/{id}/`), so the
+IDE is on the portal's own origin: a sandbox without `allow-same-origin` gives
+the IDE an opaque origin, and Theia refuses its websocket (the `Origin` must
+name the `Host`); with `allow-same-origin` and `allow-scripts` on one origin the
+IDE can lift its own sandbox. Script in the IDE's page can therefore reach
+`window.parent` and the portal's `sessionStorage`, where the refresh token of
+whoever has the editor open is kept. The IDE's webviews are served from the
+same address (`/studio/{id}/webview/…`), so an extension's webview is on that
+origin too, and the origin's `localStorage` is one quota for the portal, every
+session's layout and every webview — the Claude Code webview's Statsig cache
+alone has been seen filling it. That is accepted, as it was for the prototype
+on the same stands; the IDE is handed the member's access token in any case. A separate origin for `/studio/` is the step if the boundary has to
+hold. The frame is allowed `clipboard-read; clipboard-write`, which only a
+session on another origin needs — a local Docker session answers on its own
+port.
 
 ### portal → IDE
 
 | Message | Payload | Effect |
 |---|---|---|
-| `studio.init` | `{ theme, apiToken, workspaceId }` | handshake: theme, the caller's API token (gears are called same-origin through the session gate), and the tenant the Artifact Graph scopes to |
-| `studio.theme` | `{ theme }` | portal theme changed |
-| `studio.token` | `{ apiToken, workspaceId? }` | silent renew |
-| `studio.openInEditor` | `{ path }` | open a checkout-relative repository file |
+| `studio.init` | `{ theme?, apiToken?, workspaceId?, workspaceName?, viewer? }` | the handshake, answered with `studio.status` the first time only. `theme`, `apiToken`, `viewer` and `workspaceName` as below; `workspaceId` is the tenant the Artifact Graph scopes to |
+| `studio.theme` | `{ theme }` | the portal's theme changed. `'light'` is light and anything else dark; with no theme at all the IDE follows the OS |
+| `studio.token` | `{ apiToken, viewer?, workspaceId?, workspaceName? }` | silent renew: the path `studio.init` takes, without the theme or the answer |
+| `studio.openInEditor` | `{ path }` | open a repository file by its path from the workspace root (`<checkout directory>/<path in the repository>`); the IDE also looks one level below each root. Markdown opens in the documents perspective |
+| `studio.openProduct` | `{ path, branch? }` | open a product description (`product.gdl`) in the Gearbox perspective (`gearbox.product.openAt`), from `branch` when it is not the one checked out; a plain open if that command fails |
+| `studio.openGear` | `{ path? }` | open the gear at `path`, or the project's own (a quick pick when there are several), in the Gearbox perspective (`gearbox.gear.openAt`) |
 | `studio.openGraph` | — | open the Artifact Graph view |
-| `studio.openDocument` | `{ workspaceId, documentId, title? }` | open a **portal document** in the markdown editor |
+| `studio.openDocument` | `{ workspaceId, documentId, title? }` | open a **portal document** in the markdown editor, in the documents perspective |
+| `studio.notify` | `{ message, level?, detail?, source?, link? }` | show a notification in the IDE; an unknown `level` is `info`, and only an http(s) `link` is offered |
+
+The opening messages wait for the IDE's layout; theme, token and notify apply
+at once.
+
+- **`apiToken`** is the member's portal token. Gears are called with it
+  same-origin through the session gate (`/studio-api/…`), the agent CLIs use it
+  per request, and it is written into Theia AI's User-scope preferences as the
+  key of the Studio model — in a shared session, the last member's
+  (ADR-0030 moves this to the connection).
+- **`viewer`** is `{ sub, name?, email?, kind? }`: `sub` is the person
+  (`oidc:<sub>` in the IDE, and a viewer without it is ignored), `name` is
+  shown and names the presence, `email` is what the IDE commits as, and `kind`
+  is `person` unless the portal drives the IDE as an `agent` or a `product`
+  (only `agent` changes anything). Every message that carries an `apiToken`
+  sets the viewer from the same message, so a token sent without `viewer`
+  clears it and stops the presence: the two travel together.
+- **`workspaceName`** is read from any `studio.*` message. Without it the IDE
+  names the workspace after the container's directory, and an empty string
+  reverts to that.
 
 ### IDE → portal
 
 | Message | Payload | Effect |
 |---|---|---|
-| `studio.status` | `{ dirty }` | unsaved-editor count; also the handshake ack |
-| `studio.documentSaved` | `{ workspaceId, documentId }` | the IDE wrote a document back; the portal re-reads the row |
+| `studio.status` | `{ dirty }` | how many widgets hold unsaved changes: in answer to the first `studio.init`, then whenever the count changes (a two-second poll) |
+| `studio.documentSaved` | `{ workspaceId, documentId }` | the IDE wrote a portal document back; a portal showing that row re-reads it |
+| `studio.openComponent` | `{ name }` | show that component's page in the portal's catalogue, by catalogue name; sent by the command `studio.portal.openComponent` (the Gearbox Inspector, `gearbox.gear.openInCatalogue`), and never before the origin is pinned |
+
+### Who sends what
+
+The prototype portal (`studio-frontend-prototype/src/App.tsx`) sends every
+portal → IDE message above and handles all three answers. The official portal
+(`studio-frontend`, [editor bridge](feature/editor-bridge.md)) sends
+`studio.init`, `studio.theme`, `studio.token` and `studio.openInEditor` — only
+files open in its editor so far — and answers `studio.openComponent` with a
+notice until it has a component page (#583). It reads `studio.status` only as
+the acknowledgement (unsaved changes on leaving the editor are #582) and
+ignores `studio.documentSaved`: it opens no portal documents in the IDE.
 
 ### Portal documents as editor resources
 
@@ -218,6 +307,6 @@ reusing the handshake's scope.
 claim optimistic concurrency. It reports `updated_at` as the editor's version
 marker — enough for the markdown editor's external-change detection (Compare /
 Reload from Disk / Keep Local) — and last write wins if two sessions really do
-race. The portal takes the other half of that deal: on `studio.documentSaved`
-it reloads the row, unless its own textarea holds unsaved edits, in which case
-it offers the reload rather than discarding them.
+race. The prototype portal takes the other half of that deal: on
+`studio.documentSaved` it reloads the row, unless its own textarea holds
+unsaved edits, in which case it offers the reload rather than discarding them.
