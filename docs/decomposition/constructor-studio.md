@@ -41,6 +41,7 @@ owner: studio-team
   - [2.24 Deployment and delivery](#224-deployment-and-delivery)
   - [2.25 The organization's people](#225-the-organizations-people)
   - [2.26 The editor's session](#226-the-editors-session)
+  - [2.27 The editor's bridge](#227-the-editors-bridge)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
@@ -1293,7 +1294,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - the readiness probe's key in `studio-session`, so a relaunch is followed like a first launch
 
 - **Out of scope**:
-  - the artifact reaching the frame (#323), keeping the frame alive across screens (#310), stopping sessions
+  - the artifact reaching the frame (`cpt-studio-feature-editor-bridge`), keeping the frame alive across screens (#582), stopping sessions
 
 - **Requirements Covered**:
 
@@ -1325,6 +1326,52 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
   - None
 
+### 2.27 [The editor's bridge](../feature/editor-bridge.md)
+
+- [ ] `p1` - **ID**: `cpt-studio-feature-editor-bridge`
+
+- **Purpose**: The official portal speaks the `postMessage` contract the IDE's bridge implements (`docs/theia-bridge-contract-v1.md` §6, brought up to the bridge here): the IDE in the editor's frame is told the portal's theme, the member's token and identity, the project and the file to open, and its first answer is when the editor is ready.
+
+- **Depends On**: `cpt-studio-feature-editor-session`
+
+- **Scope**:
+  - a frame-hook on the iframe handler, and the shell's bridge module attached to `space-mfe`'s frame
+  - the editor's state ending on the IDE's answer, and a failure for an IDE that never answers
+  - §6 of the contract and the design's portal ↔ IDE interface, matched to the bridge on `main`
+
+- **Out of scope**:
+  - `studio.notify`, `studio.documentSaved`, unsaved edits on leaving the editor (#582), opening products, gears, documents or graphs, the component's page (#583), the UI language
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-studio-fr-ide-session`
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-studio-principle-credentials-by-reference`
+
+- **Design Constraints Covered**:
+
+  - None
+
+- **Domain Model Entities**:
+  - Session, Artifact
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-studio-component-portal-shell`
+
+- **API**:
+  - `window.postMessage` with the IDE, `cpt-studio-interface-portal-ide-bridge`
+
+- **Sequences**:
+
+  - [ ] `p1` - `cpt-studio-seq-open-ide-session`
+
+- **Data**:
+
+  - None
+
 ## 3. Feature Dependencies
 
 ```text
@@ -1342,6 +1389,7 @@ cpt-studio-feature-tenancy
     │       │       └─→ cpt-studio-feature-project-create
     │       │               ├─→ cpt-studio-feature-project-artifacts
     │       │               └─→ cpt-studio-feature-editor-session
+    │       │                       └─→ cpt-studio-feature-editor-bridge
     │       ├─→ cpt-studio-feature-connection-create
     │       └─→ cpt-studio-feature-reserved-areas
     ├─→ cpt-studio-feature-prototype-portal
@@ -1356,6 +1404,7 @@ cpt-studio-feature-tenancy
     │               │       └─→ cpt-studio-feature-kits
     │               ├─→ cpt-studio-feature-ide-ai
     │               ├─→ cpt-studio-feature-editor-session
+    │               │       └─→ cpt-studio-feature-editor-bridge
     │               └─→ cpt-studio-feature-gears-products
     ├─→ cpt-studio-feature-background-work
     └─→ cpt-studio-feature-files
@@ -1369,6 +1418,7 @@ cpt-studio-feature-tenancy
 - `cpt-studio-feature-project-artifacts` requires `cpt-studio-feature-project-create` and `cpt-studio-feature-knowledge-graph`: it syncs the sources the wizard wrote into the graph.
 - `cpt-studio-feature-ide-sessions` requires `cpt-studio-feature-connections`: sessions clone sources with connection credentials.
 - `cpt-studio-feature-editor-session` requires `cpt-studio-feature-project-create` and `cpt-studio-feature-ide-sessions`: it launches the session with the sources the wizard wrote.
+- `cpt-studio-feature-editor-bridge` requires `cpt-studio-feature-editor-session`: it talks to the IDE in the frame the session's address fills, and ends the session's launching state.
 - `cpt-studio-feature-kits` requires `cpt-studio-feature-theia-bridge`: materializing a kit is a control call into the session.
 - `cpt-studio-feature-documents` requires `cpt-studio-feature-knowledge-graph`: a binding names a graph file node.
 - `cpt-studio-feature-contract-registries` and `cpt-studio-feature-deployment` depend on no entry; every other entry rests on them.

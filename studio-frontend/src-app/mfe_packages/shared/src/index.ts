@@ -124,4 +124,4 @@ export {
   type ProjectSource,
   type ProjectStatus,
 } from './project/projectConfig';
-export { sessionSources, type SessionSource } from './project/sessionSources';
+export { checkoutDirectory, sessionSources, type SessionSource } from './project/sessionSources';

@@ -28,6 +28,8 @@ function reason(failure: EditorSessionFailure, t: ScreenText): string {
       return t('editor_session_reason_timeout');
     case 'read':
       return t('editor_session_reason_read');
+    case 'unanswered':
+      return t('editor_session_reason_unanswered');
     case 'unexpected':
       return t('editor_session_reason_unexpected');
     case 'sources':
@@ -44,7 +46,7 @@ export function EditorSessionStatus() {
 
   if (session.phase === 'launching') {
     return (
-      // TODO(#323): keep this state until the bridge's first studio.* reply.
+      // Until the IDE in the frame answers, not only until the backend says ready (editor-bridge.md).
       <div className="absolute inset-0 bg-card p-6 text-label text-muted-foreground" role="status" data-editor-session="launching">
         {t('editor_session_launching')}
       </div>

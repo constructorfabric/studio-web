@@ -12,7 +12,7 @@
 import { eventBus, screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
 import { levelOf, placementOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
-import { createEditorSession } from '@/app/effects/editorSessionEffects';
+import { createEditorSession, type EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
 import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
@@ -37,13 +37,13 @@ function staleScope(current: string | null, claimed: string | undefined): boolea
   return claimed !== undefined && claimed !== current;
 }
 
-export function registerAppContextEffects(app: FrontXApp): void {
+/** `editorSession` is handed in by `main.tsx`, which also gives its frame hook to the iframe handler. */
+export function registerAppContextEffects(app: FrontXApp, editorSession: EditorSession = createEditorSession(app)): void {
   const dispatch = app.store.dispatch;
   const context = () => readAppContext(app);
 
   let routing: RoutingHandle | null = null;
   const catalogs = createContextCatalogs(app, () => routing?.materialize());
-  const editorSession = createEditorSession(app);
 
   const screens = (): ScreenExtension[] =>
     (app.mfeRegistry?.getExtensionsForDomain(screenDomain.id) ?? []) as ScreenExtension[];

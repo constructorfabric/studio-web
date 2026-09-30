@@ -18,6 +18,7 @@ import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
 import { registerAppContextEffects } from '@/app/effects/appContextEffects'; // Top-bar context slot
+import { createEditorSession } from '@/app/effects/editorSessionEffects';
 import { mfeBootstrapSlice } from '@/app/slices/mfeBootstrapSlice';
 import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
@@ -57,7 +58,10 @@ const app = createFrontXApp({
   microfrontends: {
     typeSystem: gtsPlugin,
     mfeHandlers: [
-      new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME),
+      // The handler says when there is a frame; the editor's session talks to
+      // the IDE in its own (docs/feature/editor-bridge.md). Called on mount,
+      // long after `editorSession` below exists.
+      new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME, (frame, entry) => editorSession.frame(frame, entry)),
       new MfeHandlerMF(FRONTX_MFE_ENTRY_MF),
     ],
   },
@@ -88,7 +92,8 @@ registerSlice(appContextSlice);
 registerSlice(appSessionSlice);
 registerSlice(editorSessionSlice);
 registerBootstrapEffects(app);
-registerAppContextEffects(app);
+const editorSession = createEditorSession(app);
+registerAppContextEffects(app, editorSession);
 
 // Register all themes (default theme has default:true, activates automatically)
 app.themeRegistry.register(defaultTheme);

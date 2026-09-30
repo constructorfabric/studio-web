@@ -13,7 +13,7 @@ import {
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
 import { readAppContext } from '@/app/slices/appContextSlice';
-import { APP_SESSION_SLICE_KEY, type SessionProfile } from '@/app/slices/appSessionSlice';
+import { readSessionProfile } from '@/app/slices/appSessionSlice';
 
 function publish(app: FrontXApp, propertyId: string, value: unknown): void {
   try {
@@ -24,11 +24,6 @@ function publish(app: FrontXApp, propertyId: string, value: unknown): void {
       error instanceof Error ? error.message : String(error)
     );
   }
-}
-
-function sessionState(app: FrontXApp): { profile?: SessionProfile | null } {
-  const state = app.store.getState() as Record<string, unknown>;
-  return (state[APP_SESSION_SLICE_KEY] as { profile?: SessionProfile | null } | undefined) ?? {};
 }
 
 export function publishSelectedProject(app: FrontXApp): void {
@@ -63,7 +58,7 @@ export function publishSelectedWorkspace(app: FrontXApp): void {
 }
 
 export function publishSessionProfile(app: FrontXApp): void {
-  publish(app, STUDIO_SHARED_PROPERTY_SESSION_PROFILE, sessionState(app).profile ?? null);
+  publish(app, STUDIO_SHARED_PROPERTY_SESSION_PROFILE, readSessionProfile(app));
 }
 
 // @cpt-dod:cpt-studiofrontend-dod-editor-session-address:p1

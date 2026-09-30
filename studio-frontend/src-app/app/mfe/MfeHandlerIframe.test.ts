@@ -131,6 +131,86 @@ describe('MfeHandlerIframe', () => {
     expect(frameIn(container)?.getAttribute('src')).toBe('https://example.test/first');
   });
 
+  // Another address is another application: whoever talks to the frame starts
+  // over, and a new `src` on the old element would add to the browser's history.
+  it('gives a new address a frame of its own', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const harness = createBridge('https://example.test/first');
+
+    await lifecycle.mount(container, harness.bridge as never);
+    const first = frameIn(container)!;
+    harness.emit('https://example.test/second');
+
+    expect(frameIn(container)).not.toBe(first);
+    expect(frameIn(container)?.getAttribute('src')).toBe('https://example.test/second');
+    expect(container.querySelectorAll('iframe')).toHaveLength(1);
+  });
+
+  it('lets the frame use the clipboard, and puts it in no sandbox', async () => {
+    const lifecycle = await handler.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const { bridge } = createBridge('https://example.test/page');
+
+    await lifecycle.mount(container, bridge as never);
+
+    const frame = frameIn(container)!;
+    expect(frame.getAttribute('allow')).toBe('clipboard-read; clipboard-write');
+    expect(frame.hasAttribute('sandbox')).toBe(false);
+  });
+
+  it('tells the hook of each frame once, and releases it when that frame goes', async () => {
+    const releases: string[] = [];
+    const onFrame = vi.fn((frame: HTMLIFrameElement) => () => void releases.push(frame.getAttribute('src') ?? ''));
+    const hooked = new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME, onFrame);
+    const lifecycle = await hooked.load(entry, 'ext-1');
+    const container = document.createElement('div');
+    const harness = createBridge(null);
+
+    await lifecycle.mount(container, harness.bridge as never);
+    expect(onFrame).not.toHaveBeenCalled();
+
+    harness.emit('https://example.test/first');
+    expect(onFrame).toHaveBeenCalledTimes(1);
+    expect(onFrame).toHaveBeenLastCalledWith(frameIn(container), entry);
+    // The hook is told before the frame can have loaded, with its address set.
+    expect(onFrame.mock.calls[0]?.[0].getAttribute('src')).toBe('https://example.test/first');
+
+    harness.emit('https://example.test/first');
+    expect(onFrame).toHaveBeenCalledTimes(1);
+
+    harness.emit('https://example.test/second');
+    expect(releases).toEqual(['https://example.test/first']);
+    expect(onFrame).toHaveBeenCalledTimes(2);
+
+    harness.emit(null);
+    expect(releases).toEqual(['https://example.test/first', 'https://example.test/second']);
+
+    harness.emit('https://example.test/third');
+    await lifecycle.unmount(container);
+    expect(releases).toEqual([
+      'https://example.test/first',
+      'https://example.test/second',
+      'https://example.test/third',
+    ]);
+  });
+
+  it('still shows the frame when the hook throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const hooked = new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME, () => {
+      throw new Error('boom');
+    });
+    const lifecycle = await hooked.load(entry, 'ext-1');
+    const container = document.createElement('div');
+
+    await lifecycle.mount(container, createBridge('https://example.test/page').bridge as never);
+
+    expect(frameIn(container)?.getAttribute('src')).toBe('https://example.test/page');
+    expect(error).toHaveBeenCalled();
+    await lifecycle.unmount(container);
+    error.mockRestore();
+  });
+
   it('leaves no listener behind after unmount', async () => {
     const lifecycle = await handler.load(entry, 'ext-1');
     const container = document.createElement('div');

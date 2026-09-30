@@ -63,6 +63,7 @@ describe('EditorSessionStatus', () => {
     ['a session that stopped', { kind: 'stopped' }, 'editor_session_reason_stopped'],
     ['a record that never said running', { kind: 'timeout' }, 'editor_session_reason_timeout'],
     ['a state that could not be read', { kind: 'read' }, 'editor_session_reason_read'],
+    ['an IDE that never answered', { kind: 'unanswered' }, 'editor_session_reason_unanswered'],
     ["the portal's own error", { kind: 'unexpected' }, 'editor_session_reason_unexpected'],
     ['sources that could not be read', { kind: 'sources' }, 'editor_session_reason_sources'],
   ] as const)('explains %s', (_case, failure, reason) => {

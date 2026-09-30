@@ -102,11 +102,12 @@ and each changes the code:
   `sessionStorage`, where the refresh token of whoever has the editor open is
   kept. This is accepted here as it has been for the prototype on the same
   stands (a local Docker backend answers on another port, so on another
-  origin). #323 decides sandboxing with same-origin in mind; a separate origin
-  for `/studio/` is the alternative if it decides against it.
+  origin). #323 kept it that way — no `sandbox`, for the reasons in the
+  contract's §6 (`docs/theia-bridge-contract-v1.md`, Trust); a separate origin
+  for `/studio/` is the step if the boundary has to hold.
 - **Leaving the editor does not stop the session.** Stopping is the backend's
   (`session.reap`). Unsaved buffers are still lost when the frame unmounts;
-  that is the open #310 question, not this feature's.
+  that is #582, not this feature's.
 - **The shell draws the states.** It owns the session, so it says what the
   session is doing — over the editor's slot, in the shell's own components and
   translations. The frame handler keeps its generic waiting state.
@@ -167,10 +168,11 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Design**: [DESIGN](../design/constructor-studio.md), sequence `cpt-studio-seq-open-ide-session`
 - **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-editor-session`
 - **Feature**: [Levels in the shell](shell-levels.md) — the editor screen and its address (`cpt-studiofrontend-dod-shell-levels-artifact-address`)
+- **Feature**: [The editor's bridge](editor-bridge.md) — the IDE's answer ends the launching state (#323)
 - **Feature**: [Create a project](project-create.md) — where the sources are written
 - **Feature**: [Project artifacts](project-artifacts.md) — the same sources and connections, resolved for the import
 - **ADR**: [ADR-0003 — Theia sessions](../adr/0003-theia-sessions.md), [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md), [ADR-0021 — an MFE entry may be a frame](../adr/0021-an-mfe-entry-may-be-a-frame.md), [ADR-0026 — studio-events](../adr/0026-studio-events-push-channel.md), [ADR-0030 — a shared session is many people, each as themselves](../adr/0030-a-shared-session-is-many-people-each-as-themselves.md)
-- **Issues**: #322 (this), #310 (the editor epic), #323 (the artifact reaches the frame)
+- **Issues**: #322 (this), #310 (the editor epic), #323 (the editor's bridge), #582 (unsaved edits on leaving the editor)
 - **Dependencies**: studio-session (`/cf/studio-session/v1`, and its readiness probe in `studio-backend/src/studio_session/`), studio-tasks (`/cf/studio-tasks/v1`), studio-events (`/cf/studio-events/v1`), account-management (`/cf/account-management/v1`), studio-connector (`/cf/studio-connector/v1`)
 
 ## 2. Actor Flows (CDSL)
@@ -322,12 +324,13 @@ router, the shell's effects and the frame.
 **Initial State**: Idle
 
 **Transitions**:
-1. [ ] - `p1` - **FROM** Idle **TO** Launching **WHEN** the editor screen is materialized with a project in scope and the launch answers `starting`; until the answer the frame's own waiting state shows, so a live IDE never flashes the launching state - `inst-1`
-2. [ ] - `p1` - **FROM** Idle or Launching **TO** Ready **WHEN** the session is running and its address is published - `inst-2`
-3. [ ] - `p1` - **FROM** Idle or Launching **TO** Failed **WHEN** a read before the launch fails, the launch is refused, or the run ends without the session running - `inst-3`
-4. [ ] - `p1` - **FROM** Failed **TO** Launching **WHEN** the member tries again, or opens the editor of the project again - `inst-4`
-5. [ ] - `p1` - **FROM** Ready **TO** Ready **WHEN** the editor is opened again for the same project; the reuse is asked without drawing the launching state, a changed address is republished, a session that has to be launched again moves to Launching, and a refusal moves to Failed - `inst-5`
+1. [ ] - `p1` - **FROM** Idle **TO** Launching **WHEN** the editor screen is materialized with a project in scope and the launch answers `starting`, or a frame is made for the session's address — the address published, or the editor mounted on the one already published; until then the frame's own waiting state shows - `inst-1`
+2. [ ] - `p1` - **FROM** Launching **TO** Ready **WHEN** the IDE in the frame answers ([editor bridge](editor-bridge.md)); a session the backend calls running is not yet an editor - `inst-2`
+3. [ ] - `p1` - **FROM** Idle or Launching **TO** Failed **WHEN** a read before the launch fails, the launch is refused, or the run ends without the session running; or the IDE has not answered two minutes after its address was published, with no launch in flight - `inst-3`
+4. [ ] - `p1` - **FROM** Failed **TO** Launching **WHEN** the member tries again — the frame is made anew — or opens the editor of the project again - `inst-4`
+5. [ ] - `p1` - **FROM** Ready **TO** Launching **WHEN** the editor is opened again for the same project — a new frame loads the IDE — or the IDE's page loads again; a changed address is republished, a session that has to be launched again waits for its run, and a refusal moves to Failed - `inst-5`
 6. [ ] - `p1` - **FROM** any state **TO** Idle **WHEN** the project in scope changes or is closed; the address is cleared - `inst-6`
+7. [ ] - `p1` - **FROM** Failed **TO** Ready **WHEN** the IDE answers after all: its bridge is still being asked - `inst-7`
 
 ## 5. Definitions of Done
 
@@ -553,8 +556,9 @@ line. The shell **MUST NOT** seed that property with any page; it starts as
 The address carries the gate's `?token=`, and the router now writes the
 browser's address. The seed goes because a static page that says "not available
 yet" would flash before every real session. `seedFrameUrl` and
-`firstFrameUrl` go with it, and the shell stops naming `space-mfe`; the iframe
-fixture reads the same property, so it shows the session's address too.
+`firstFrameUrl` go with it, and the shell names `space-mfe`'s entry only to
+attach the editor's bridge to its frame ([editor bridge](editor-bridge.md)); the
+iframe fixture reads the same property, so it shows the session's address too.
 
 **Implements**:
 - `cpt-studiofrontend-flow-editor-session-open`
@@ -568,10 +572,11 @@ fixture reads the same property, so it shows the session's address too.
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-editor-session-states`
 
 The system **MUST** show over the editor's slot that the session is being
-launched, and when it failed, why — the problem's `detail` for a 503, "not
-available" for a 404, the run's error when it gave up, and an unreadable state
-or the portal's own error each by name — with a way to try again. The frame's
-slot **MUST** stay mounted underneath.
+launched — until the IDE in the frame answers, not only until the backend calls
+it running — and when it failed, why — the problem's `detail` for a 503, "not
+available" for a 404, the run's error when it gave up, an IDE that did not
+answer, and an unreadable state or the portal's own error each by name — with a
+way to try again. The frame's slot **MUST** stay mounted underneath.
 
 A 503 means either sessions are off in this deployment or there is no capacity,
 and only the `detail` text tells them apart; the text is shown rather than
@@ -607,16 +612,18 @@ was started for a project no longer in scope.
 - [ ] A session that does not come up stays launching while the backend retries, and ends in the failed state with the run's error when the backend gives up; nothing keeps asking after that.
 - [ ] "Try again" on a session still starting puts its run back on the queue and launches no second session.
 - [ ] Opening the editor of a project whose session was stopped earlier brings it back as fast as a first launch: its answer carries a new `ready_run_id`, and the stream reports it.
-- [ ] After a backend restart, opening the editor of a project whose IDE is running shows it without the launching state.
+- [ ] After a backend restart, opening the editor of a project whose IDE is running shows it without waiting on a run.
 - [ ] While the stream answers, the browser polls neither the run nor the session record.
 - [ ] The browser's address never contains the session's address or its token, before, during or after the launch.
 - [ ] Switching the project during a launch never shows the previous project's IDE.
-- [ ] Coming back to the editor of the same project neither launches nor shows the launching state; the frame still reloads until #310 keeps it alive.
+- [ ] Coming back to the editor of the same project launches nothing; the frame loads the IDE again (#582), and the launching state lasts until the IDE answers.
 - [ ] Tests cover the reuse, the launch, a failed run, a run handed back already ended, resuming a failed run, the fallback reads, the disabled deployment and the project switch; the source rule on its own, with a personal connection; and the event client's replay from a cursor of `0` and its reported failure.
 - [ ] Backend tests launch, stop and relaunch one session and get two different readiness runs; two launches of one `starting` session get the same one; and a reused `starting` session whose IDE answers is answered `running` with no run.
 
-**Out of scope**: the artifact reaching the frame and the theme and language
-inside it (#323); keeping the frame alive across screens (#310); stopping a
+**Out of scope**: the artifact, the theme and the token reaching the IDE
+([editor bridge](editor-bridge.md), #323) — the UI language is not carried at
+all, the bridge has no field for it; keeping the frame alive across screens, or
+asking before unsaved edits are lost (#582); stopping a
 session, including one whose run gave up; the gear corpus the prototype adds
 to product projects' sessions; repository access through `studio-git` with no
 token in the container (ADR-0030); a wizard that does not offer personal

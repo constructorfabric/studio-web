@@ -57,7 +57,7 @@ export interface MaterializerDeps {
   groups: () => readonly ScreenGroup[];
   catalogs: ContextCatalogs;
   warn?: (message: string) => void;
-  session?: EditorSession;
+  session?: Pick<EditorSession, 'sync'>;
 }
 
 export interface Materializer {
@@ -380,6 +380,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       projectId: next.project ?? null,
       orgId: next.org ?? null,
       editor: group.token === EDITOR_SCREEN_TOKEN && next.project !== undefined,
+      artifact,
     });
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');

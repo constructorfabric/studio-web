@@ -1,3 +1,4 @@
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-frame:p1
 /**
  * Loads a micro-frontend whose entry is a frame rather than a module.
  *
@@ -22,6 +23,14 @@ export interface MfeEntryIframe extends MfeEntry {
 }
 
 /**
+ * Told of every frame the handler creates — one per address — before it is
+ * in the page, and handed back what to call when that frame goes: the address
+ * cleared or replaced, or the container unmounted. What talks to the frame is
+ * the caller's business; the handler still knows nothing of what is inside.
+ */
+export type FrameHook = (frame: HTMLIFrameElement, entry: MfeEntryIframe) => (() => void) | undefined;
+
+/**
  * The shipped default does exactly this one line — the runtime wires the
  * bridge through its own, separate factory afterwards. Written out here
  * rather than imported because `MfeBridgeFactoryDefault` has left the
@@ -41,6 +50,7 @@ class IframeBridgeFactory extends MfeBridgeFactory<ChildMfeBridgeImpl> {
 /** What one mounted container owns, so unmount can undo exactly that. */
 interface MountState {
   unsubscribe: () => void;
+  releaseFrame: () => void;
   wrapper: HTMLElement;
 }
 
@@ -84,10 +94,15 @@ function createFrame(): HTMLIFrameElement {
   frame.style.border = '0';
   frame.setAttribute('title', 'Embedded application');
   // Costs nothing today and narrows what the embedded document learns about
-  // where it was loaded from. No `sandbox`: that decision belongs to #323,
-  // once something other than this repository's own static page is inside
-  // the frame (see docs/adr/0021-an-mfe-entry-may-be-a-frame.md).
+  // where it was loaded from.
   frame.setAttribute('referrerpolicy', 'no-referrer');
+  // Copy and paste in the editor. A same-origin frame has them anyway; the
+  // local Docker session answers on another port, and there it needs this.
+  frame.setAttribute('allow', 'clipboard-read; clipboard-write');
+  // No `sandbox`, decided in #323 (docs/theia-bridge-contract-v1.md §6): on a
+  // stand the editor is on the portal's own origin, where a sandbox without
+  // `allow-same-origin` breaks its websocket and one with it can be lifted
+  // from inside.
   return frame;
 }
 
@@ -109,8 +124,8 @@ function createWaiting(): HTMLElement {
 export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge> {
   readonly bridgeFactory = new IframeBridgeFactory();
 
-  constructor(handledBaseTypeId: string, priority = 10) {
-    super(handledBaseTypeId, priority);
+  constructor(handledBaseTypeId: string, private readonly onFrame?: FrameHook) {
+    super(handledBaseTypeId, 10);
   }
 
   load(entry: MfeEntryIframe, _extensionId: string): Promise<MfeEntryLifecycle<ChildMfeBridge>> {
@@ -118,15 +133,30 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
     // caches the load — so per-mount state is keyed by container rather than
     // captured once. `unmount` receives the container and nothing else.
     const mounted = new WeakMap<Element | ShadowRoot, MountState>();
+    const { onFrame } = this;
+    // The hook's release, or nothing: a hook that throws must not take the frame down with it.
+    const attach = (frame: HTMLIFrameElement): (() => void) | undefined => {
+      try {
+        return onFrame?.(frame, entry);
+      } catch (error) {
+        console.error('[MfeHandlerIframe] onFrame failed:', error);
+        return undefined;
+      }
+    };
 
     const lifecycle: MfeEntryLifecycle<ChildMfeBridge> = {
       mount(container, bridge) {
-        let frame: HTMLIFrameElement | null = null;
         const wrapper = createWrapper();
         // What the wrapper is currently showing: an address, `null` for the
         // waiting state, and `undefined` until the first render — so the
         // first call always draws something, whichever of the two it is.
         let shown: string | null | undefined;
+        let release: (() => void) | undefined;
+
+        const releaseFrame = (): void => {
+          release?.();
+          release = undefined;
+        };
 
         const show = (url: string | null): void => {
           if (url === shown) {
@@ -139,21 +169,22 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
             // more welcome — it would re-announce itself to a screen reader.
             return;
           }
+          releaseFrame();
           if (url === null) {
             // Both "not said yet" and "said there is none" (readUrl's two
             // nulls) mean the frame has nowhere to point — including after
             // one was already shown, when the property is cleared. Drop the
-            // stale frame rather than leave it loaded on a dead address, and
-            // forget it so the next real address builds a fresh one.
-            frame = null;
+            // stale frame rather than leave it loaded on a dead address.
             wrapper.replaceChildren(createWaiting());
           } else {
-            if (frame === null) {
-              wrapper.replaceChildren();
-              frame = createFrame();
-              wrapper.appendChild(frame);
-            }
+            // A new address gets a new frame, not a new `src`: it is another
+            // application (another session), whoever talks to the frame
+            // starts over with it, and the frame's own history does not pile
+            // up in the browser's back button.
+            const frame = createFrame();
             frame.setAttribute('src', url);
+            wrapper.replaceChildren(frame);
+            release = attach(frame);
           }
           shown = url;
         };
@@ -168,13 +199,14 @@ export class MfeHandlerIframe extends MfeHandler<MfeEntryIframe, ChildMfeBridge>
           show(readUrl(bridge.getProperty(entry.urlProperty)));
         });
 
-        mounted.set(container, { unsubscribe, wrapper });
+        mounted.set(container, { unsubscribe, releaseFrame, wrapper });
       },
 
       unmount(container) {
         const state = mounted.get(container);
         if (state === undefined) return;
         state.unsubscribe();
+        state.releaseFrame();
         mounted.delete(container);
         // Removes only what this handler put in the container — never a
         // sibling's DOM, and never the shadow root's own isolation style.

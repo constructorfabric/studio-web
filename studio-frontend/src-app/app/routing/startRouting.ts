@@ -36,7 +36,7 @@ export function startRouting(
   app: FrontXApp,
   catalogs: ContextCatalogs,
   history: NavigationHistory = resolveNavigationHistory(),
-  session?: EditorSession
+  session?: Pick<EditorSession, 'sync'>
 ): RoutingHandle {
   const registry = app.mfeRegistry;
   if (!registry) throw new Error('[routing] the MFE registry is not available on the app');

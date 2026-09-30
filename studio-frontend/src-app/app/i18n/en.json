@@ -9,5 +9,7 @@
   "editor_session_reason_stopped": "The session stopped before it was ready.",
   "editor_session_reason_timeout": "The session was not ready in time.",
   "editor_session_reason_read": "The session's state could not be read.",
-  "editor_session_reason_unexpected": "The editor ran into an unexpected error."
+  "editor_session_reason_unanswered": "The editor did not answer.",
+  "editor_session_reason_unexpected": "The editor ran into an unexpected error.",
+  "editor_component_unavailable": "The component catalogue is not in the portal yet."
 }

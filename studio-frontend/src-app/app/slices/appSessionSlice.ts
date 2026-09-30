@@ -25,7 +25,7 @@
  * which verifies the signature.
  */
 
-import { createSlice, type ReducerPayload } from '@gears-frontx/react';
+import { createSlice, type FrontXApp, type ReducerPayload } from '@gears-frontx/react';
 
 export interface SessionProfile {
   id: string;
@@ -60,5 +60,9 @@ const { slice, setSessionProfile, clearSessionProfile } = createSlice({
 export const appSessionSlice = slice;
 export { setSessionProfile, clearSessionProfile };
 export const APP_SESSION_SLICE_KEY = SLICE_KEY;
+
+export function readSessionProfile(app: Pick<FrontXApp, 'store'>): SessionProfile | null {
+  return ((app.store.getState() as Record<string, unknown>)[SLICE_KEY] as AppSessionState | undefined)?.profile ?? null;
+}
 
 export default slice.reducer;

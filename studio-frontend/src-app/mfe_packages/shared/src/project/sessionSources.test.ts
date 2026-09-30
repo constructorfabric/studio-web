@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ConnectionDto } from '../connector/connectorTypes';
-import { sessionSources } from './sessionSources';
+import { checkoutDirectory, sessionSources } from './sessionSources';
 
 function connection(id: string, scope: string): ConnectionDto {
   return {
@@ -55,6 +55,20 @@ describe('sessionSources', () => {
     >[0][number];
 
     expect(sessionSources([stored], [connection('c-org', 'organization')]).map((repo) => repo.name)).toEqual(['source']);
+  });
+
+  it("finds the directory an artifact's repository is checked out into, the launch's suffix included", () => {
+    const sources = [
+      { connection_id: 'c-org', full_path: 'acme/skipped', clone_url: '' },
+      source('acme/web'),
+      source('other/web'),
+    ];
+
+    expect(checkoutDirectory(sources, 'acme/web')).toBe('web');
+    expect(checkoutDirectory(sources, 'other/web')).toBe('web-2');
+    // Not cloned, or not a source of the project: nowhere to look.
+    expect(checkoutDirectory(sources, 'acme/skipped')).toBeNull();
+    expect(checkoutDirectory(sources, 'acme/unknown')).toBeNull();
   });
 
   it('sends no reference for a personal connection, nor for one the organization no longer has', () => {

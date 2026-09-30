@@ -9,5 +9,7 @@
   "editor_session_reason_stopped": "Сессия остановилась, не успев запуститься.",
   "editor_session_reason_timeout": "Сессия не запустилась вовремя.",
   "editor_session_reason_read": "Не удалось прочитать состояние сессии.",
-  "editor_session_reason_unexpected": "В редакторе произошла непредвиденная ошибка."
+  "editor_session_reason_unanswered": "Редактор не ответил.",
+  "editor_session_reason_unexpected": "В редакторе произошла непредвиденная ошибка.",
+  "editor_component_unavailable": "Каталога компонентов в портале пока нет."
 }
