@@ -9,14 +9,12 @@ import { stubFrame } from '@frontx-test-utils/stubFrame';
 import {
   INIT_REPEAT_MS,
   connectEditorBridge,
-  editorTheme,
   type EditorBridgeOptions,
   type EditorInit,
 } from './editorBridge';
 
 const ORIGIN = 'https://portal.test';
 const ADDRESS = `${ORIGIN}/studio/s1/?token=gate`;
-
 
 const INIT: EditorInit = { theme: 'light', workspaceId: 'p1', apiToken: 'T1' };
 
@@ -179,18 +177,5 @@ describe('connectEditorBridge', () => {
 
     expect(f.types()).toEqual(['studio.init']);
     expect(options.onAnswer).not.toHaveBeenCalled();
-  });
-});
-
-describe('editorTheme', () => {
-  it.each([
-    ['default', 'light'],
-    ['light', 'light'],
-    ['dark', 'dark'],
-    ['dracula', 'dark'],
-    ['dracula-large', 'dark'],
-    [undefined, 'dark'],
-  ] as const)('shows the IDE %s as %s', (portal, editor) => {
-    expect(editorTheme(portal)).toBe(editor);
   });
 });

@@ -23,10 +23,11 @@ export interface MfeEntryIframe extends MfeEntry {
 }
 
 /**
- * Told of every frame the handler creates — one per address — before it is
- * in the page, and handed back what to call when that frame goes: the address
- * cleared or replaced, or the container unmounted. What talks to the frame is
- * the caller's business; the handler still knows nothing of what is inside.
+ * Told of every frame the handler creates — one per address — once it is in
+ * the page with its address set and before it loads, and handed back what to
+ * call when that frame goes: the address cleared or replaced, or the
+ * container unmounted. What talks to the frame is the caller's business; the
+ * handler still knows nothing of what is inside.
  */
 export type FrameHook = (frame: HTMLIFrameElement, entry: MfeEntryIframe) => (() => void) | undefined;
 

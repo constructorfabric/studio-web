@@ -2,7 +2,6 @@
 // @cpt-state:cpt-studiofrontend-state-editor-bridge:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-handshake:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-sender:p1
-// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-theme:p1
 /**
  * The portal's half of the editor's `postMessage` channel
  * (docs/theia-bridge-contract-v1.md §6, docs/feature/editor-bridge.md).
@@ -58,11 +57,6 @@ export interface EditorBridgeOptions {
  * before, and until the IDE binds its port the frame shows the gate's splash.
  */
 export const INIT_REPEAT_MS = 2_000;
-
-/** The portal's light themes (`src-app/app/themes/`); the IDE takes anything but `'light'` as dark. */
-export function editorTheme(portalThemeId: string | undefined): EditorTheme {
-  return portalThemeId === 'default' || portalThemeId === 'light' ? 'light' : 'dark';
-}
 
 export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBridgeOptions) {
   const portal = frame.ownerDocument.defaultView;

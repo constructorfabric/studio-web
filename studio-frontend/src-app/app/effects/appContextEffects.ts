@@ -12,7 +12,7 @@
 import { eventBus, screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
 import { levelOf, placementOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
-import { createEditorSession, type EditorSession } from '@/app/effects/editorSessionEffects';
+import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
 import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
@@ -37,8 +37,8 @@ function staleScope(current: string | null, claimed: string | undefined): boolea
   return claimed !== undefined && claimed !== current;
 }
 
-/** `editorSession` is handed in by `main.tsx`, which also gives its frame hook to the iframe handler. */
-export function registerAppContextEffects(app: FrontXApp, editorSession: EditorSession = createEditorSession(app)): void {
+/** `editorSession` is handed in by `main.tsx`, which also gives its frame hook to the iframe handler: one session, never two. */
+export function registerAppContextEffects(app: FrontXApp, editorSession: EditorSession): void {
   const dispatch = app.store.dispatch;
   const context = () => readAppContext(app);
 

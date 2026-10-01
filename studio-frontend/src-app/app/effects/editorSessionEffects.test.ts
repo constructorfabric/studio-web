@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthStateEvent, FrontXApp } from '@gears-frontx/react';
+import type { AuthSession, AuthStateEvent, FrontXApp } from '@gears-frontx/react';
 
 const { mockHas, mockGetService, publishFrameUrl, toastInfo } = vi.hoisted(() => ({
   mockHas: vi.fn(),
@@ -28,6 +31,11 @@ import {
   type StudioRunState,
   type StudioSessionState,
 } from '@/app/api';
+import { DARK_THEME_ID } from '@/app/themes/dark';
+import { DEFAULT_THEME_ID } from '@/app/themes/default';
+import { DRACULA_THEME_ID } from '@/app/themes/dracula';
+import { DRACULA_LARGE_THEME_ID } from '@/app/themes/dracula-large';
+import { LIGHT_THEME_ID } from '@/app/themes/light';
 import reducer, {
   EDITOR_SESSION_SLICE_KEY,
   type EditorSessionPhase,
@@ -52,7 +60,6 @@ const entry = (id: string): MfeEntryIframe => ({
   domainActions: [],
   urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~',
 });
-
 
 function refusal(status: number, detail?: string): Error {
   return Object.assign(new Error(`Request failed with status code ${status}`), {
@@ -96,12 +103,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function harness() {
+function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'Web' } = {}) {
   let state: EditorSessionState = reducer(undefined, { type: '@@init' });
   const phases: EditorSessionPhase[] = [];
   let themeId = 'default';
   const themeListeners = new Set<() => void>();
   const authListeners = new Set<(event: AuthStateEvent) => void>();
+  const getSession = vi.fn<() => Promise<AuthSession | null>>().mockResolvedValue({ kind: 'bearer', token: 'T1' });
   const app = {
     store: {
       dispatch: (action: unknown) => {
@@ -110,8 +118,8 @@ function harness() {
       },
       getState: () => ({
         [EDITOR_SESSION_SLICE_KEY]: state,
-        [APP_CONTEXT_SLICE_KEY]: { project: { id: PROJECT, name: 'Web' } },
-        [APP_SESSION_SLICE_KEY]: { profile: PROFILE },
+        [APP_CONTEXT_SLICE_KEY]: { project: { id: PROJECT, name: projectName } },
+        [APP_SESSION_SLICE_KEY]: { profile },
       }),
     },
     themeRegistry: {
@@ -122,7 +130,7 @@ function harness() {
       },
     },
     auth: {
-      getSession: vi.fn().mockResolvedValue({ kind: 'bearer', token: 'T1' }),
+      getSession,
       subscribe: (listener: (event: AuthStateEvent) => void) => {
         authListeners.add(listener);
         return () => authListeners.delete(listener);
@@ -134,8 +142,8 @@ function harness() {
     themeId = id;
     themeListeners.forEach((listener) => listener());
   };
-  const renewToken = (token: string): void =>
-    authListeners.forEach((listener) => listener({ state: 'authenticated', session: { kind: 'bearer', token } }));
+  const authEvent = (event: AuthStateEvent): void => authListeners.forEach((listener) => listener(event));
+  const renewToken = (token: string): void => authEvent({ state: 'authenticated', session: { kind: 'bearer', token } });
 
   const stream: { onEvent: ((event: StudioEvent) => void) | null; onComplete: (() => void) | null } = {
     onEvent: null,
@@ -187,10 +195,11 @@ function harness() {
 
   // The iframe handler: one frame per address, told to the session's hook
   // before it loads; leaving the editor unmounts it, coming back mounts a new
-  // one on the address still published.
+  // one on the address still published, and nothing is drawn while it is away.
   const ide = { answers: true };
   const frames: ReturnType<typeof stubFrame>[] = [];
   let shown: string | null = null;
+  let mounted = true;
   let release: (() => void) | undefined;
   const mountFrame = (url: string | null): void => {
     release?.();
@@ -205,13 +214,17 @@ function harness() {
   publishFrameUrl.mockImplementation((_app: unknown, url: string | null) => {
     if (url === shown) return;
     shown = url;
-    mountFrame(url);
+    if (mounted) mountFrame(url);
   });
   const unmount = (): void => {
+    mounted = false;
     release?.();
     release = undefined;
   };
-  const mount = (): void => mountFrame(shown);
+  const mount = (): void => {
+    mounted = true;
+    mountFrame(shown);
+  };
 
   return {
     editor,
@@ -222,7 +235,9 @@ function harness() {
     mount,
     unmount,
     setTheme,
+    authEvent,
     renewToken,
+    getSession,
     state: () => state,
     phases,
     events,
@@ -883,6 +898,124 @@ describe('createEditorSession', () => {
       });
     });
 
+    it.each([
+      [DEFAULT_THEME_ID, 'light'],
+      [LIGHT_THEME_ID, 'light'],
+      [DARK_THEME_ID, 'dark'],
+      [DRACULA_THEME_ID, 'dark'],
+      [DRACULA_LARGE_THEME_ID, 'dark'],
+    ])('shows the portal theme %s as %s', async (portal, editor) => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+      h.setTheme(portal);
+
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      expect(h.frames[0]?.sent()[0]).toMatchObject({ type: 'studio.init', theme: editor });
+    });
+
+    it('says only what it knows: no viewer without a profile, no name for an unnamed project, no token but a bearer one', async () => {
+      const h = harness({ profile: null, projectName: '' });
+      h.getSession.mockResolvedValue({ kind: 'cookie' });
+      h.launch.mockResolvedValue(session('running'));
+
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      h.authEvent({ state: 'authenticated', session: { kind: 'cookie' } });
+
+      expect(h.frames[0]?.sent()[0]).toEqual({ type: 'studio.init', theme: 'light', workspaceId: PROJECT });
+      expect(h.frames[0]?.types()).not.toContain('studio.token');
+    });
+
+    it('says so when the session cannot be read, and starts the IDE without a token', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const h = harness();
+      h.getSession.mockRejectedValue(new Error('IdP unreachable'));
+      h.launch.mockResolvedValue(session('running'));
+
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      expect(h.frames[0]?.sent()[0]).not.toHaveProperty('apiToken');
+      expect(warn).toHaveBeenCalledWith('[editor-session] no session for the editor:', 'IdP unreachable');
+      warn.mockRestore();
+    });
+
+    it('takes no token from a read that a renewal has overtaken', async () => {
+      const h = harness();
+      const read = deferred<AuthSession | null>();
+      h.getSession.mockReturnValue(read.promise);
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      h.renewToken('T2');
+      read.resolve({ kind: 'bearer', token: 'T1' });
+      await settle();
+      h.frames[0]?.load();
+
+      expect(h.frames[0]?.sent().map((message) => message.apiToken).filter(Boolean)).toEqual(['T2', 'T2']);
+    });
+
+    it('takes no token from the read of a frame that has gone', async () => {
+      const h = harness();
+      const first = deferred<AuthSession | null>();
+      h.getSession.mockReturnValueOnce(first.promise).mockResolvedValue({ kind: 'bearer', token: 'T2' });
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      h.editor.retry();
+      await vi.waitFor(() => expect(h.frames).toHaveLength(2));
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      first.resolve({ kind: 'bearer', token: 'T1' });
+      await settle();
+      h.frames[1]?.load();
+
+      const tokens = h.frames[1]?.sent().map((message) => message.apiToken).filter(Boolean);
+      expect(tokens).not.toContain('T1');
+      expect(tokens?.slice(-1)).toEqual(['T2']);
+    });
+
+    it('is told by the newest frame only, and the older one going leaves the newer in charge', async () => {
+      const h = harness();
+      h.ide.answers = false;
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(published()).toEqual([ADDRESS]));
+      await settle();
+
+      // Another container's frame for the same entry, while the first is still up.
+      const newer = stubFrame(ADDRESS, () => false);
+      h.editor.frame(newer.frame, entry(EDITOR_FRAME_ENTRY));
+      newer.load();
+      h.frames[0]?.answer({ type: 'studio.status', dirty: 0 });
+      expect(h.state().phase).toBe('launching');
+      newer.answer({ type: 'studio.status', dirty: 0 });
+      expect(h.state().phase).toBe('ready');
+
+      h.unmount();
+      h.open(PROJECT, { ...FILE, artifactId: 'a2', path: 'README.md' });
+
+      expect(h.state().phase).toBe('ready');
+      expect(newer.sent()).toContainEqual({ type: 'studio.openInEditor', path: 'web/README.md' });
+    });
+
+    it("does not open the last project's file in the next project's IDE", async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      h.open('p2', null);
+      await vi.waitFor(() => expect(h.frames).toHaveLength(2));
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      expect(h.frames[1]?.sent()[0]).toMatchObject({ type: 'studio.init', workspaceId: 'p2' });
+      expect(h.frames[1]?.types()).not.toContain('studio.openInEditor');
+    });
+
     it('is told a renewed token with the viewer, and the portal theme when it changes', async () => {
       const h = harness();
       h.launch.mockResolvedValue(session('running'));
@@ -939,6 +1072,13 @@ describe('createEditorSession', () => {
       expect(toastInfo).toHaveBeenCalledWith('shell:editor_component_unavailable');
     });
 
+    it("attaches to the entry space-mfe declares", () => {
+      const manifest = join(dirname(fileURLToPath(import.meta.url)), '../../mfe_packages/space-mfe/mfe.json');
+      const { entries } = JSON.parse(readFileSync(manifest, 'utf-8')) as { entries: { id: string }[] };
+
+      expect(entries.map((declared) => declared.id)).toContain(EDITOR_FRAME_ENTRY);
+    });
+
     it("attaches to the editor's frame only", () => {
       const h = harness();
       const other = stubFrame(ADDRESS, () => h.ide.answers);
@@ -987,6 +1127,27 @@ describe('createEditorSession', () => {
         expect(h.state().phase).toBe('launching');
 
         relaunch.resolve(session('running'));
+        await vi.advanceTimersByTimeAsync(ANSWER_DEADLINE_MS);
+        expect(h.state().failure).toEqual({ kind: 'unanswered' });
+      });
+
+      it('sets no deadline for a launch that ends after the member left, and waits again on the way back', async () => {
+        const h = harness();
+        h.ide.answers = false;
+        const first = deferred<ReturnType<typeof session>>();
+        h.launch.mockReturnValueOnce(first.promise).mockResolvedValue(session('running'));
+        h.open();
+        await vi.waitFor(() => expect(h.launch).toHaveBeenCalledTimes(1));
+
+        h.leave();
+        h.unmount();
+        first.resolve(session('running'));
+        await vi.advanceTimersByTimeAsync(ANSWER_DEADLINE_MS * 2);
+        expect(published()).toEqual([ADDRESS]);
+        expect(h.state().phase).toBe('launching');
+
+        h.open();
+        h.mount();
         await vi.advanceTimersByTimeAsync(ANSWER_DEADLINE_MS);
         expect(h.state().failure).toEqual({ kind: 'unanswered' });
       });

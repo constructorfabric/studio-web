@@ -10,6 +10,7 @@
 // @cpt-flow:cpt-studiofrontend-flow-editor-bridge-open:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-answer:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-init:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-theme:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-file:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-component:p1
 
@@ -38,11 +39,13 @@ import {
   type StudioRunState,
   type StudioSession,
 } from '@/app/api';
-import { connectEditorBridge, editorTheme, type EditorMessage } from '@/app/mfe/editorBridge';
+import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app/mfe/editorBridge';
 import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
 import { publishFrameUrl } from '@/app/mfe/sharedContext';
 import { readAppContext } from '@/app/slices/appContextSlice';
 import { readSessionProfile } from '@/app/slices/appSessionSlice';
+import { DEFAULT_THEME_ID } from '@/app/themes/default';
+import { LIGHT_THEME_ID } from '@/app/themes/light';
 import {
   editorSessionFailed,
   editorSessionLaunching,
@@ -65,9 +68,12 @@ const MAX_READ_FAILURES = 5;
  */
 const ANSWER_DEADLINE_MS = 2 * 60_000;
 
-/** `space-mfe`'s entry (`src-app/mfe_packages/space-mfe/mfe.json`): the one frame the editor's bridge attaches to. */
+/** `space-mfe`'s entry (`src-app/mfe_packages/space-mfe/mfe.json`, checked by the tests): the one frame the editor's bridge attaches to. */
 export const EDITOR_FRAME_ENTRY =
   'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
+
+/** The portal's light themes; the IDE has one light theme, and every other portal theme is dark there. */
+const LIGHT_THEMES: ReadonlySet<string> = new Set([DEFAULT_THEME_ID, LIGHT_THEME_ID]);
 
 export interface EditorScope {
   projectId: string | null;
@@ -380,7 +386,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       return;
     }
     dispatch(editorSessionLaunching());
-    armAnswerTimer();
+    // Nobody waits on a hidden editor: coming back mounts a frame, and the frame arms its own.
+    if (readEditorSession(app).shown) armAnswerTimer();
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-3
 
@@ -406,7 +413,12 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
 
-  /** Who the IDE is working for, and what to call the workspace: an empty name would rename it "workspace". */
+  /**
+   * Who the IDE is working for, and what to call the workspace: an empty name
+   * would rename it "workspace". Read when a message goes out: the profile is
+   * in the store long before an IDE answers (bootstrap reads it), and one that
+   * came later would reach the IDE with the next token.
+   */
   const person = () => {
     const profile = readSessionProfile(app);
     return {
@@ -415,13 +427,15 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     };
   };
 
-  const theme = () => editorTheme(app.themeRegistry.getCurrent()?.id);
+  const theme = (): EditorTheme => (LIGHT_THEMES.has(app.themeRegistry.getCurrent()?.id ?? '') ? 'light' : 'dark');
 
   const adoptToken = (session: AuthSession | null | undefined): void => {
     const next = session?.kind === 'bearer' ? session.token : undefined;
     if (next === token) return;
     token = next;
     // With the viewer, always: a token without one makes the IDE forget who is at the keyboard.
+    // A session that ends is not told: the bridge has no message that takes a token back, and the
+    // sign-in screen that follows replaces the shell, the frame with it.
     if (next) bridge?.post({ type: 'studio.token', apiToken: next, ...person() });
   };
 
@@ -437,14 +451,13 @@ export function createEditorSession(app: FrontXApp): EditorSession {
         ...(token ? { apiToken: token } : {}),
         ...person(),
       }),
+      // A disposed bridge reports nothing, so these come from the current frame only.
       onAnswer: () => {
-        if (bridge !== mine) return;
         answered = true;
         clearAnswerTimer();
         dispatch(editorSessionReady());
       },
       onReload: () => {
-        if (bridge !== mine) return;
         answered = false;
         dispatch(editorSessionLaunching());
         armAnswerTimer();
@@ -457,10 +470,18 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     bridge = mine;
     if (file) mine.post(openMessage(file));
     const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.post({ type: 'studio.theme', theme: theme() }));
-    const unsubscribeAuth = app.auth?.subscribe?.((event) =>
-      adoptToken(event.state === 'authenticated' ? event.session : null)
+    // Every renewal; the read only until one is heard, and only for this frame.
+    let heard = false;
+    const unsubscribeAuth = app.auth?.subscribe?.((event) => {
+      heard = true;
+      adoptToken(event.state === 'authenticated' ? event.session : null);
+    });
+    void app.auth?.getSession().then(
+      (session) => {
+        if (!heard && bridge === mine) adoptToken(session);
+      },
+      (error: unknown) => console.warn('[editor-session] no session for the editor:', errorMessage(error))
     );
-    void app.auth?.getSession().then(adoptToken, () => undefined);
     // A frame that has just been made has not answered yet.
     dispatch(editorSessionLaunching());
     armAnswerTimer();
@@ -483,8 +504,6 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       abandon();
       project = projectId;
       entered = false;
-      file = null;
-      projectSources = [];
       dispatch(editorSessionReset());
     }
     org = orgId;

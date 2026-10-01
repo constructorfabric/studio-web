@@ -69,6 +69,7 @@ describe('registerAppContextEffects', () => {
     store: { dispatch, getState: () => state },
     mfeRegistry: { getExtensionsForDomain: vi.fn(() => screens) },
   } as unknown as FrontXApp;
+  const editorSession = { sync: vi.fn(), retry: vi.fn(), frame: vi.fn() };
 
   beforeEach(async () => {
     state['app/context'] = {
@@ -78,7 +79,7 @@ describe('registerAppContextEffects', () => {
     };
     handle.groups.mockReturnValue(groupScreens(screens));
     handle.navigation.currentRoute.mockReturnValue(IN_PROJECT);
-    registerAppContextEffects(app);
+    registerAppContextEffects(app, editorSession);
     await emit('app/routing/start');
   });
 
@@ -94,6 +95,13 @@ describe('registerAppContextEffects', () => {
     expect(mockStartRouting).toHaveBeenCalledTimes(1);
     expect(handle.retry).toHaveBeenCalledTimes(1);
     expect(handle.materialize).not.toHaveBeenCalled();
+  });
+
+  // The session is main.tsx's, the one whose hook the iframe handler calls: routing and Try again use no other.
+  it('routes with the editor session it is given, and asks it to try again', async () => {
+    expect(mockStartRouting).toHaveBeenCalledWith(app, catalogs, undefined, editorSession);
+    await emit('app/editor/session/retry');
+    expect(editorSession.retry).toHaveBeenCalledTimes(1);
   });
 
   it('loads the organizations when the context is asked for', async () => {
