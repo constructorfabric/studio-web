@@ -106,7 +106,7 @@ function deferred<T>() {
 function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'Web' } = {}) {
   let state: EditorSessionState = reducer(undefined, { type: '@@init' });
   const phases: EditorSessionPhase[] = [];
-  let themeId = 'default';
+  let themeId: string | undefined = 'default';
   const themeListeners = new Set<() => void>();
   const authListeners = new Set<(event: AuthStateEvent) => void>();
   const getSession = vi.fn<() => Promise<AuthSession | null>>().mockResolvedValue({ kind: 'bearer', token: 'T1' });
@@ -123,7 +123,7 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
       }),
     },
     themeRegistry: {
-      getCurrent: () => ({ id: themeId }),
+      getCurrent: () => (themeId === undefined ? undefined : { id: themeId }),
       subscribe: (listener: () => void) => {
         themeListeners.add(listener);
         return () => themeListeners.delete(listener);
@@ -138,7 +138,7 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
     },
     i18nRegistry: { t: (key: string) => key },
   } as unknown as FrontXApp;
-  const setTheme = (id: string): void => {
+  const setTheme = (id: string | undefined): void => {
     themeId = id;
     themeListeners.forEach((listener) => listener());
   };
@@ -904,6 +904,7 @@ describe('createEditorSession', () => {
       [DARK_THEME_ID, 'dark'],
       [DRACULA_THEME_ID, 'dark'],
       [DRACULA_LARGE_THEME_ID, 'dark'],
+      [undefined, 'dark'],
     ])('shows the portal theme %s as %s', async (portal, editor) => {
       const h = harness();
       h.launch.mockResolvedValue(session('running'));
@@ -940,6 +941,23 @@ describe('createEditorSession', () => {
       expect(h.frames[0]?.sent()[0]).not.toHaveProperty('apiToken');
       expect(warn).toHaveBeenCalledWith('[editor-session] no session for the editor:', 'IdP unreachable');
       warn.mockRestore();
+    });
+
+    it('drops the token when the session ends and tells the IDE nothing, then takes the next one', async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      const before = h.frames[0]?.sent().length;
+      h.authEvent({ state: 'unauthenticated' });
+      expect(h.frames[0]?.sent()).toHaveLength(before ?? 0);
+      // A reloaded IDE is not handed the ended session's token.
+      h.frames[0]?.load();
+      expect(h.frames[0]?.sent().slice(-1)[0]).toEqual({ type: 'studio.init', theme: 'light', workspaceId: PROJECT, viewer: VIEWER, workspaceName: 'Web' });
+
+      h.renewToken('T3');
+      expect(h.frames[0]?.sent().slice(-1)).toEqual([{ type: 'studio.token', apiToken: 'T3', viewer: VIEWER, workspaceName: 'Web' }]);
     });
 
     it('takes no token from a read that a renewal has overtaken', async () => {
