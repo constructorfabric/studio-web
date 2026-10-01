@@ -272,7 +272,7 @@ portal's theme changes, without reloading the frame.
 - `cpt-studiofrontend-flow-editor-bridge-open`
 
 **Touches**:
-- Entities: `editorTheme`, `app.themeRegistry`
+- Entities: `editorSessionEffects`, `DEFAULT_THEME_ID`, `LIGHT_THEME_ID`, `app.themeRegistry`
 
 ### The file the member opened is open
 

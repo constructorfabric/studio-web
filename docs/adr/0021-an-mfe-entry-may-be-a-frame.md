@@ -12,12 +12,17 @@ Date: 2026-09-22
 Status: accepted
 Branch: `feat/iframe-mfe-handler`
 
+Amended 2026-10-01 by #323: the handler tells a hook of every frame it makes,
+makes a new frame for every address, and puts it in no `sandbox` — see
+[the amendment](#amendment-2026-10-01--the-editors-frame).
+
 ## Table of Contents
 
 <!-- toc -->
 
 - [Context and Problem Statement](#context-and-problem-statement)
 - [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
 - [Traceability](#traceability)
 
 <!-- /toc -->
@@ -215,7 +220,8 @@ goes away when `placement: hidden` exists.
 * In development the fixture is served from its own preview port and is
   cross-origin to the portal; in a production image it is same-origin under
   `/mfes/`. Irrelevant while nothing talks to the frame, and the first thing to
-  check when #323 starts posting messages into one.
+  check when #323 starts posting messages into one. *It did: see the
+  amendment.*
 * The rail carries a demonstration item in every environment, production
   included, between this change and #318.
 * The frame is created with `referrerpolicy="no-referrer"` but no `sandbox`.
@@ -224,12 +230,41 @@ goes away when `placement: hidden` exists.
   inside it yet but a static page this repository ships, and #323 is the
   issue that puts a real application there and starts posting messages across
   that boundary — it is the place to decide what the frame may be trusted
-  with, and to say so rather than inherit this silence.
+  with, and to say so rather than inherit this silence. *Decided there: no
+  `sandbox` — see the amendment.*
 * The eventual move to `alpha.7` now has one more caller of the bridge's
   identity fields to update.
 * The generator's new branch is the price #321 does not pay. It is also the
   first time this repository has said in code that a micro-frontend need not be
   a module, which is the claim the platform will be asked to adopt later.
+
+## More Information
+
+### Amendment 2026-10-01 — the editor's frame
+
+#323 put the IDE in the frame and settled what this record left to it. The
+handler still knows nothing of what is inside; three things changed.
+
+- **The handler tells a hook of every frame.** `MfeHandlerIframe` takes an
+  optional `onFrame(frame, entry)`, called for every frame it makes — in the
+  page, with its address set, before it loads — and calls what that returns
+  when the frame goes: the address cleared or replaced, or the container
+  unmounted. The per-container teardown above releases it with the
+  subscription. The shell attaches the editor's bridge there
+  (`docs/feature/editor-bridge.md`).
+- **A new address gets a new frame, not a new `src`.** Another address is
+  another session: whatever talks to the frame starts over with it, and the
+  frame's history does not pile up behind the browser's Back button. The value
+  still drives the redraw: the same address does nothing.
+- **No `sandbox`, and the clipboard allowed.** On a stand the session's address
+  is relative, so the IDE is on the portal's own origin: a sandbox without
+  `allow-same-origin` gives it an opaque origin and Theia refuses its
+  websocket, and one with it can be lifted from inside. The clipboard
+  (`clipboard-read; clipboard-write`) is for a session on another origin — a
+  local Docker one. What the IDE can reach as a result is in §6 of
+  `docs/theia-bridge-contract-v1.md`. Messages go to the origin of the frame's
+  address and are taken from the frame's window and that origin only, so a
+  fixture on its own port and an IDE on the portal's origin are both covered.
 
 ## Traceability
 

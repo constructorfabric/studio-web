@@ -177,7 +177,9 @@ therefore *any* `studio.*` message from the IDE, not `studio.status` in
 particular.
 
 **Delivery.** The portal repeats `studio.init` about every two seconds until
-the IDE answers, and holds every other message until then, flushing in order.
+the IDE answers, and holds every other message until then, flushing in order —
+the prototype every message, this portal only the latest of each type, since a
+later file, theme or token makes the earlier one moot.
 This is what makes editing a single gesture: a view can ask for a file while
 the session is still being launched, and the message lands when the IDE is
 ready instead of being dropped into a booting iframe. Every load of the frame
