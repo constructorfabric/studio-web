@@ -1889,6 +1889,42 @@ impl super::port::RepoFileReader for IngestService {
     ) -> anyhow::Result<Vec<(String, String)>> {
         IngestService::read_synced_clone(self, secret_ref, repo_full_path).await
     }
+
+    async fn read_repo_file(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(dir) = self.shared_checkout_dir(Some(workspace_id), Some(repo_dir)) else {
+            return Ok(None);
+        };
+        read_one(dir, path).await
+    }
+
+    async fn read_synced_clone_file(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(root) = self.work_root.as_ref() else {
+            return Ok(None);
+        };
+        let dir = root.join(clone::checkout_key(secret_ref, repo_full_path));
+        if !dir.join(".git").is_dir() {
+            return Ok(None);
+        }
+        read_one(dir, path).await
+    }
+}
+
+/// [`clone::read_text_file`] off the async runtime.
+async fn read_one(dir: PathBuf, path: &str) -> anyhow::Result<Option<String>> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || clone::read_text_file(&dir, &path))
+        .await
+        .map_err(|e| anyhow!("file read did not finish: {e}"))
 }
 
 #[cfg(test)]
@@ -2403,7 +2439,23 @@ mod prune_tests {
             .read_synced_clone("studio-connection-2", "org/repo")
             .await
             .expect("read");
+        let reader: &dyn crate::artifact_ingest::port::RepoFileReader = &svc;
+        let one = reader
+            .read_synced_clone_file("studio-connection-1", "org/repo", "docs/adr.md")
+            .await
+            .expect("read one");
+        let absent = reader
+            .read_synced_clone_file("studio-connection-1", "org/repo", "docs/missing.md")
+            .await
+            .expect("read one");
         let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            one.as_deref(),
+            Some("# Decision"),
+            "one file reads as the whole walk read it"
+        );
+        assert_eq!(absent, None);
 
         assert_eq!(
             files,

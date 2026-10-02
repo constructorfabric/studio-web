@@ -431,6 +431,14 @@ pub struct DocumentBindingListDto {
     pub total: u32,
 }
 
+/// The current text of a bound repository file.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BindingTextDto {
+    /// The file as the checkout the detectors read holds it.
+    pub text: String,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ClassifyResultDto {
@@ -1989,6 +1997,33 @@ async fn decide_binding(
     Ok(Json(binding_dto(binding, false)))
 }
 
+/// The text of a bound repository file, read from the same checkout the
+/// detectors analyse — the session's, else the sync's clone. An authored
+/// document's content is a column and travels with the document; a repository
+/// file's lives in the checkout, and a reader of the Specs list had no way to
+/// open it.
+async fn get_binding_text(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<BindingTextDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let text = service
+        .project_binding_text(&ctx, workspace_id, project_id, id, reader.as_ref())
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("no such binding, or no checkout holds its file")
+                .with_resource("document_binding")
+                .create()
+        })?;
+    Ok(Json(BindingTextDto { text }))
+}
+
 async fn delete_binding(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -3405,6 +3440,35 @@ pub fn register_routes(
     .error_403(openapi)
     .error_500(openapi)
     .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/document-bindings/{id}/text")
+        .operation_id("studio_documents.get_binding_text")
+        .summary("Read a bound repository file's text")
+        .description(
+            "The current text of the file a binding names, from the checkout the Spec \
+         Quality detectors read: the session's when there is one, else the sync's clone. \
+         A spec-rows repository row's `id` is its binding id, and `project_id` is the \
+         project the Specs list was read for. Not found when there is no such binding in \
+         that project or no checkout holds the file yet; unavailable when this deployment \
+         keeps no checkout to read from.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Binding id")
+        .query_param(
+            "project_id",
+            true,
+            "The project whose Specs list the binding is on",
+        )
+        .handler(get_binding_text)
+        .json_response_with_schema::<BindingTextDto>(openapi, StatusCode::OK, "File text")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
 
     // ── ingested-document bindings ──────────────────────────────────────────
     // Classification reads content the caller already holds (it loaded the

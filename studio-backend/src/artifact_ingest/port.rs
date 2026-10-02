@@ -48,6 +48,38 @@ pub trait RepoFileReader: Send + Sync + 'static {
     ) -> anyhow::Result<Vec<(String, String)>> {
         Ok(Vec::new())
     }
+
+    /// One text file of the checkout [`Self::read_repo_files`] reads, by its
+    /// repo-relative `path`. `None` when the checkout does not hold it as text.
+    ///
+    /// The default walks the whole checkout; an implementation that can open
+    /// the one file should, since a reader opening a document asks for one.
+    async fn read_repo_file(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .read_repo_files(workspace_id, repo_dir)
+            .await?
+            .into_iter()
+            .find_map(|(p, text)| (p == path).then_some(text)))
+    }
+
+    /// The same, from the sync's clone [`Self::read_synced_clone`] reads.
+    async fn read_synced_clone_file(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .read_synced_clone(secret_ref, repo_full_path)
+            .await?
+            .into_iter()
+            .find_map(|(p, text)| (p == path).then_some(text)))
+    }
 }
 
 /// How much of the artifact graph belongs to one scope.

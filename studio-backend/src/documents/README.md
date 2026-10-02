@@ -48,6 +48,7 @@ screen.
 | `GET /review-criteria?type_key=&project_id=` | the semantic review criteria a type is judged by, with ids a verdict can cite ([`review/`](review/README.md)) |
 | `GET /workspaces/{id}/projects/{project}/documents` | the effective set for a project: its own plus inherited |
 | `GET /workspaces/{id}/projects/{project}/analyses` | quality verdicts recorded against them |
+| `GET /document-bindings/{binding}/text?project_id=` | a bound repository file's text, from the checkout the detectors read |
 
 ## In the assembly
 

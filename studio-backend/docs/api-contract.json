@@ -686,6 +686,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/document-bindings/{id}/text",
+      "operation_id": "studio_documents.get_binding_text",
+      "tag": "StudioDocuments",
+      "summary": "Read a bound repository file's text",
+      "authenticated": true,
+      "responses": [
+        "BindingTextDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/organizations/{organization_id}/capabilities",
       "operation_id": "studio_documents.list_organization_capabilities",
       "tag": "StudioDocuments",

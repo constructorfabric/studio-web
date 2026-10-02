@@ -476,6 +476,43 @@ pub fn walk(dir: &Path) -> anyhow::Result<Walk> {
     })
 }
 
+/// One file of a checkout, as [`walk`] would have read it: `None` unless it is
+/// a regular text file within the per-file ceiling, valid UTF-8, outside `.git`
+/// and reached without a symlink.
+///
+/// `rel` is repo-relative with `/` separators. A path that is absolute, empty
+/// in a segment or climbs with `..` reads nothing rather than leaving `dir`.
+pub fn read_text_file(dir: &Path, rel: &str) -> Option<String> {
+    let segments: Vec<&str> = rel.split('/').collect();
+    if rel.starts_with('/')
+        || segments
+            .iter()
+            .any(|seg| seg.is_empty() || *seg == "." || *seg == ".." || seg.contains('\\'))
+        || segments.contains(&".git")
+    {
+        return None;
+    }
+
+    // Every step is checked, not only the file: `walk` never descends a
+    // symlinked directory, so a file below one is not in the checkout.
+    let mut path = dir.to_path_buf();
+    for seg in &segments {
+        path.push(seg);
+        if std::fs::symlink_metadata(&path)
+            .ok()?
+            .file_type()
+            .is_symlink()
+        {
+            return None;
+        }
+    }
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_TEXT_BYTES || !is_text_path(&path) {
+        return None;
+    }
+    String::from_utf8(std::fs::read(&path).ok()?).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,5 +644,56 @@ mod tests {
         let walked = walk(&root).expect("walk");
         assert!(walked.files.is_empty());
         assert!(!walked.complete);
+    }
+
+    /// One file reads as the walk would read it, and nothing outside it.
+    #[test]
+    fn read_text_file_reads_one_file_and_refuses_to_leave_the_checkout() {
+        let root = std::env::temp_dir().join(format!("read-one-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(
+            root.join("docs/prd.md"),
+            "# PRD
+",
+        )
+        .unwrap();
+        std::fs::write(root.join("docs/logo.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        std::fs::write(root.join(".git/config"), "secret").unwrap();
+        std::fs::write(root.join("big.md"), "x".repeat(MAX_TEXT_BYTES as usize + 1)).unwrap();
+
+        assert_eq!(
+            read_text_file(&root, "docs/prd.md").as_deref(),
+            Some(
+                "# PRD
+"
+            )
+        );
+        assert_eq!(read_text_file(&root, "docs/missing.md"), None);
+        assert_eq!(
+            read_text_file(&root, "docs/logo.png"),
+            None,
+            "not a text path"
+        );
+        assert_eq!(
+            read_text_file(&root, "big.md"),
+            None,
+            "over the per-file ceiling"
+        );
+        for escape in [
+            "../etc/passwd",
+            "docs/../../x.md",
+            "/etc/passwd",
+            ".git/config",
+            "docs//prd.md",
+        ] {
+            assert_eq!(
+                read_text_file(&root, escape),
+                None,
+                "{escape} must read nothing"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

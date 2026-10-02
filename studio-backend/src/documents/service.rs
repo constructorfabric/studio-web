@@ -1549,8 +1549,76 @@ impl DocumentsService {
             return Ok(None);
         };
         let tenants = checkout_tenants(std::iter::once(row.project_id), None, workspace_id);
-        let mut by_path = self.checkout_files(ctx, &tenants, reader).await;
-        Ok(by_path.remove(&row.path))
+        Ok(self.checkout_file(ctx, &tenants, &row.path, reader).await)
+    }
+
+    /// [`Self::binding_text`] for a reader of one project's Specs: `None` too
+    /// when the binding belongs to another project of the workspace.
+    pub async fn project_binding_text(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Option<String>> {
+        let Some(row) = self.repo.get_binding(workspace_id, id).await? else {
+            return Ok(None);
+        };
+        if row.project_id.is_some_and(|owner| owner != project_id) {
+            return Ok(None);
+        }
+        let tenants = checkout_tenants(
+            std::iter::once(row.project_id),
+            Some(project_id),
+            workspace_id,
+        );
+        Ok(self.checkout_file(ctx, &tenants, &row.path, reader).await)
+    }
+
+    /// One file of the named tenants' checkouts, tried the way
+    /// [`Self::checkout_files`] tries them: tenant by tenant, and in each
+    /// source the session checkout before the sync's clone. Opens that one
+    /// file rather than reading every checkout to keep one entry.
+    async fn checkout_file(
+        &self,
+        ctx: &SecurityContext,
+        tenants: &[Uuid],
+        path: &str,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Option<String> {
+        for tenant in tenants {
+            let Some(sources) =
+                crate::project_sources::resolve(self.account_management.as_ref(), ctx, *tenant)
+                    .await
+            else {
+                continue;
+            };
+            for resolved in sources {
+                let dir = resolved.source.dir.as_str();
+                match reader.read_repo_file(&tenant.to_string(), dir, path).await {
+                    Ok(Some(text)) => return Some(text),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
+                    }
+                }
+                let Some(secret_ref) = resolved.secret_ref.as_ref() else {
+                    continue;
+                };
+                match reader
+                    .read_synced_clone_file(secret_ref, &resolved.source.full_path, path)
+                    .await
+                {
+                    Ok(Some(text)) => return Some(text),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, dir, "studio-documents: the synced clone could not be read");
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Every file the named tenants' checkouts hold, keyed by repo-relative
