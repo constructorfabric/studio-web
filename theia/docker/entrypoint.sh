@@ -264,6 +264,11 @@ const net = require("net");
 const TOKEN = process.env.STUDIO_SESSION_TOKEN || "";
 const TARGET = { host: "127.0.0.1", port: 3004 };
 const COOKIE = "studio_session_token";
+// The gate is the session's only way in. One broken connection must cost that
+// connection, not every connection after it: log it and keep serving.
+process.on("uncaughtException", (error) => {
+  console.error("[gate] connection error, still serving:", error && error.stack ? error.stack : error);
+});
 // Same-origin bridge to the Studio gateway: the IDE frontend calls
 // /studio-api/<gear path> with its own Authorization header; the gate
 // forwards to the gateway (no CORS, cookie still required).
@@ -405,6 +410,7 @@ http
             },
           )
           .on("error", () => {
+            if (res.headersSent) return res.destroy();
             res.writeHead(502);
             res.end("gateway unreachable");
           }),
@@ -418,6 +424,9 @@ http
       },
     );
     up.on("error", () => {
+      // Theia went away mid-response: the status line is already out, so all
+      // that is left is to end this one response.
+      if (res.headersSent) return res.destroy();
       // The gate is healthy while Theia is still binding its private port.
       // Returning 502 here makes Cloudflare replace this useful splash with
       // its own Bad Gateway page, even though the session is starting
@@ -432,6 +441,10 @@ http
     req.pipe(up);
   })
   .on("upgrade", (req, socket, head) => {
+    // Either side can go first: a closed tab resets the browser socket while
+    // Theia is still writing. Without a listener on both, that reset is an
+    // unhandled 'error' that kills the gate, and the session stays dead.
+    socket.on("error", () => {});
     if (!cookieOk(req)) return socket.destroy();
     const up = net.connect(TARGET.port, TARGET.host, () => {
       let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
@@ -442,7 +455,9 @@ http
       up.pipe(socket);
       socket.pipe(up);
     });
-    up.on("error", () => socket.destroy());
+    up.on("error", () => {});
+    up.on("close", () => socket.destroy());
+    socket.on("close", () => up.destroy());
   })
   .listen(3003, "0.0.0.0");
 GATE
