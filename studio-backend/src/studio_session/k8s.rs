@@ -18,7 +18,7 @@ use k8s_openapi::api::core::v1::{
     LocalObjectReference, PersistentVolumeClaim, PersistentVolumeClaimSpec,
     PersistentVolumeClaimVolumeSource, Pod, PodSecurityContext, PodSpec, Probe,
     ResourceRequirements, SeccompProfile, SecurityContext, Service, ServicePort, ServiceSpec,
-    Volume, VolumeMount, VolumeResourceRequirements,
+    TCPSocketAction, Volume, VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -64,6 +64,40 @@ const SOURCES_ENV: &str = "STUDIO_SOURCES";
 /// check accepted `Pending`, the listing that feeds the session cache did not.
 fn pod_phase_is_live(phase: Option<&str>) -> bool {
     matches!(phase, Some("Running" | "Pending"))
+}
+
+/// How often the liveness probe looks, and how many misses restart the
+/// container: a minute with nothing on the session's port.
+const LIVENESS_PERIOD_SECONDS: i32 = 10;
+const LIVENESS_FAILURES: i32 = 6;
+
+/// How long a `Running` Pod may stay not Ready before a launch stops reusing
+/// it. Well past a slow first clone and the liveness restart above, so this
+/// only catches a Pod nothing will bring back.
+const STUCK_UNREADY_SECS: i64 = 10 * 60;
+
+/// Whether a session Pod can be handed to the portal: live by phase, and not a
+/// `Running` Pod that has been unready for longer than [`STUCK_UNREADY_SECS`].
+///
+/// Phase alone said yes to a Pod whose gate had died: `Running`, unreachable,
+/// and reused on every open until somebody deleted it by hand.
+fn pod_is_live(pod: &Pod, now: k8s_openapi::jiff::Timestamp) -> bool {
+    let status = pod.status.as_ref();
+    let phase = status.and_then(|s| s.phase.as_deref());
+    if !pod_phase_is_live(phase) {
+        return false;
+    }
+    let stuck = phase == Some("Running")
+        && status
+            .and_then(|s| s.conditions.as_ref())
+            .and_then(|conditions| conditions.iter().find(|c| c.type_ == "Ready"))
+            .is_some_and(|ready| {
+                ready.status == "False"
+                    && ready.last_transition_time.as_ref().is_some_and(|since| {
+                        now.duration_since(since.0).as_secs() > STUCK_UNREADY_SECS
+                    })
+            });
+    !stuck
 }
 
 /// The Service that fronts a session Pod — same name (a session is one Pod),
@@ -416,9 +450,13 @@ impl SessionDriver for KubernetesDriver {
                 ..Default::default()
             },
             spec: Some(PodSpec {
-                // A session is one lifetime: a crash is a dead session, not a
-                // restart onto a fresh (empty) workspace.
-                restart_policy: Some("Never".to_string()),
+                // A container restart stays in this Pod, so `/workspace` (an
+                // `emptyDir` lives as long as the Pod) and the session's
+                // address survive it. The entrypoint skips sources it already
+                // cloned. With `Never`, a dead gate left a Pod that was
+                // `Running` forever and unreachable, and the portal kept
+                // reusing it.
+                restart_policy: Some("Always".to_string()),
                 automount_service_account_token: Some(false),
                 security_context: Some(PodSecurityContext {
                     run_as_non_root: Some(true),
@@ -485,6 +523,22 @@ impl SessionDriver for KubernetesDriver {
                         success_threshold: Some(1),
                         ..Default::default()
                     }),
+                    // Whether anything still holds the session's port. TCP, not
+                    // the readiness path: while the workspace is prepared the
+                    // splash holds the port and answers that path with 503, and
+                    // a long clone is not a dead session. A minute with nothing
+                    // listening restarts the container in place.
+                    liveness_probe: Some(Probe {
+                        tcp_socket: Some(TCPSocketAction {
+                            port: IntOrString::Int(THEIA_PORT),
+                            ..Default::default()
+                        }),
+                        initial_delay_seconds: Some(30),
+                        period_seconds: Some(LIVENESS_PERIOD_SECONDS),
+                        timeout_seconds: Some(3),
+                        failure_threshold: Some(LIVENESS_FAILURES),
+                        ..Default::default()
+                    }),
                     security_context: Some(SecurityContext {
                         run_as_non_root: Some(true),
                         run_as_user: Some(1000),
@@ -545,7 +599,7 @@ impl SessionDriver for KubernetesDriver {
 
     async fn is_running(&self, handle: &str) -> bool {
         match self.pods().get_opt(handle).await {
-            Ok(Some(pod)) => pod_phase_is_live(pod.status.and_then(|s| s.phase).as_deref()),
+            Ok(Some(pod)) => pod_is_live(&pod, k8s_openapi::jiff::Timestamp::now()),
             _ => false,
         }
     }
@@ -722,9 +776,13 @@ fn classify_create(e: kube::Error) -> CreateRefusal {
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateRefusal, SessionAddress, StudioSessionConfig, THEIA_PORT, classify_create,
-        pod_phase_is_live, session_address, workspace_claim, workspace_claim_name,
+        CreateRefusal, STUCK_UNREADY_SECS, SessionAddress, StudioSessionConfig, THEIA_PORT,
+        classify_create, pod_is_live, pod_phase_is_live, session_address, workspace_claim,
+        workspace_claim_name,
     };
+    use k8s_openapi::api::core::v1::{Pod, PodCondition, PodStatus};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+    use k8s_openapi::jiff::{SignedDuration, Timestamp};
     use std::collections::BTreeMap;
 
     /// An API refusal, shaped the way the apiserver actually sends it: the
@@ -818,6 +876,57 @@ mod tests {
         assert!(!pod_phase_is_live(Some("Failed")));
         assert!(!pod_phase_is_live(Some("Unknown")));
         assert!(!pod_phase_is_live(None));
+    }
+
+    /// A `Running` Pod with `Ready=False` since `unready_for` seconds ago.
+    fn running_unready(now: Timestamp, unready_for: i64) -> Pod {
+        Pod {
+            status: Some(PodStatus {
+                phase: Some("Running".to_string()),
+                conditions: Some(vec![PodCondition {
+                    type_: "Ready".to_string(),
+                    status: "False".to_string(),
+                    last_transition_time: Some(Time(now - SignedDuration::from_secs(unready_for))),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The dev stand's case: the gate died, the Pod stayed `Running` and
+    /// unready, and every open of the IDE was handed its dead address.
+    #[test]
+    fn a_pod_unready_for_too_long_is_not_reused() {
+        let now = Timestamp::now();
+        assert!(!pod_is_live(
+            &running_unready(now, STUCK_UNREADY_SECS + 1),
+            now
+        ));
+    }
+
+    /// Not every unready Pod is dead: one still preparing its workspace, or
+    /// restarting its container, comes back on its own.
+    #[test]
+    fn a_pod_briefly_unready_or_ready_is_still_live() {
+        let now = Timestamp::now();
+        assert!(pod_is_live(&running_unready(now, 60), now));
+
+        let mut ready = running_unready(now, STUCK_UNREADY_SECS + 1);
+        if let Some(conditions) = ready.status.as_mut().and_then(|s| s.conditions.as_mut()) {
+            conditions[0].status = "True".to_string();
+        }
+        assert!(pod_is_live(&ready, now));
+
+        let pending = Pod {
+            status: Some(PodStatus {
+                phase: Some("Pending".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(pod_is_live(&pending, now), "a Pending Pod has no Ready yet");
     }
 
     fn labels() -> BTreeMap<String, String> {

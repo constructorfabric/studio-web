@@ -645,6 +645,17 @@ impl SessionService {
                     handle = %existing.handle,
                     "studio-session: listed session has no live runtime — discarding it and launching fresh"
                 );
+                // What is left of it may still hold the name the replacement
+                // needs (a `Failed` Pod, or one stuck unready), and the launch
+                // would then fail on `AlreadyExists`. Best effort: a runtime
+                // that is already gone answers NotFound, which is success.
+                if let Err(error) = self.driver.destroy(&existing.handle).await {
+                    tracing::warn!(
+                        %error,
+                        handle = %existing.handle,
+                        "studio-session: the dead session's runtime could not be removed"
+                    );
+                }
                 self.cache_forget(existing.id).await;
             }
         }
@@ -1635,6 +1646,9 @@ mod tests {
     #[derive(Default)]
     struct LaunchingRuntime {
         launched: Mutex<Vec<Launched>>,
+        /// Handles listed but no longer alive: a dead gate, a `Failed` Pod.
+        dead: Mutex<Vec<String>>,
+        destroyed: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -1661,16 +1675,20 @@ mod tests {
             })
         }
         async fn is_running(&self, handle: &str) -> bool {
-            self.launched
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|(ws, _, _)| handle == format!("cf-studio-session-{ws}"))
+            !self.dead.lock().unwrap().iter().any(|h| h == handle)
+                && self
+                    .launched
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(ws, _, _)| handle == format!("cf-studio-session-{ws}"))
         }
         async fn is_reachable(&self, _address: &SessionAddress) -> bool {
             true
         }
         async fn destroy(&self, handle: &str) -> anyhow::Result<()> {
+            self.destroyed.lock().unwrap().push(handle.to_string());
+            self.dead.lock().unwrap().retain(|h| h != handle);
             self.launched
                 .lock()
                 .unwrap()
@@ -1780,6 +1798,45 @@ mod tests {
         ] {
             assert!(env.iter().any(|v| v == wanted), "missing {wanted}");
         }
+    }
+
+    /// A session whose runtime died is removed before its replacement is
+    /// launched. Its Pod keeps the name the replacement needs, so without the
+    /// removal the launch fails on `AlreadyExists` and the IDE never opens.
+    #[tokio::test]
+    async fn a_dead_session_is_removed_before_it_is_replaced() {
+        let root = std::env::temp_dir().join(format!("studio-session-dead-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let workspace = Uuid::from_u128(0xDEAD);
+        let handle = format!("cf-studio-session-{workspace}");
+
+        service
+            .create(&person(0x7A5), workspace, None, None, vec![])
+            .await
+            .expect("first open");
+        runtime.dead.lock().unwrap().push(handle.clone());
+        service
+            .create(&person(0x7A5), workspace, None, None, vec![])
+            .await
+            .expect("the IDE opens again");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(*runtime.destroyed.lock().unwrap(), vec![handle]);
+        assert_eq!(
+            runtime.launched.lock().unwrap().len(),
+            1,
+            "one live runtime, the new one"
+        );
     }
 
     /// WHO A SHARED SESSION IS. One session per workspace is deliberate (the
