@@ -107,12 +107,25 @@ the Documents editor hands the view is worked out in
   (`DesktopGitSync.brought`); the Sync notification offers them, and each opens
   as it was before Sync beside as it is now.
 
-**Two editors format differently.** The Documents editor and the WYSIWYG one
-serialise markdown differently — line wrapping, table padding. In a document
-both save in turn, every save rewrites rows nobody edited. The view counts those
-apart (`1 changed · 17 formatting only`, the dashed rows), but the noise is real
-in git and in pull requests too; making the two serialisers agree is its own
-piece of work.
+**Two editors format differently — and no longer write it.** The Documents
+editor and the WYSIWYG one serialise markdown differently: line wrapping, table
+padding, list bullets. Each now writes back the file's own lines for every
+block that renders the same as before, so a save changes only what was edited:
+
+- WYSIWYG: `preserveUnchangedBlocks` (`studio/src/browser/markdown-editor/
+  markdown-preserve.ts`) cuts the file and the text being saved into the
+  blocks this view compares, lines them up by their rendering, and keeps the
+  file's spelling of every equal one. An edited or added list item takes its
+  list's own bullet — `*` among `-` items would start a second list.
+- Documents: `preserveWrapping` (`product-ext/src/browser/md-rewrap.js`)
+  restores line breaks against the file on disk (it used to restore against its
+  own serialisation, so nothing came back), and a table whose cells are all the
+  same keeps its padding and delimiter row.
+
+On the stand, Alice saving from Documents and then Bob from the WYSIWYG editor
+change one line between them; before, 27 lines added and 79 removed for one
+sentence. The view still counts formatting-only rows apart (`1 changed · 17
+formatting only`) for files written by anything else.
 
 ## How a comparison is made
 
@@ -231,21 +244,29 @@ element that already has the id it renders under — another tab's diagram.
 - **Not driven in a built desktop app:** the Sync notification's *Show changed
   documents*. What it shows is covered — `desktop-git.test.ts` against a real
   remote, and the comparison of two `git:` revisions in the portal session —
-  but not the click itself in electron-app.
+  but not the click itself in electron-app. It needs a desktop build and a
+  signed-in desktop session; see [desktop-studio.md](desktop-studio.md).
 
 ## Found on the way, not changed here
 
-- **A colleague's suggestions appear only after a reload.** Bob's suggestion was
-  on disk (`.studio/changes/<doc>/<bob>.json`) while Alice's open editor did not
-  list it; reopening the page did. Not investigated further.
-- **The Documents editor holds git operations for review.** A write nobody
-  claimed — an agent's, but also a `git checkout`, `git pull` or `git commit`
-  run in the shared checkout — becomes a proposal and the file is put back to
-  the reviewed state while anybody has the document open there. That is by
-  design (`onExternalChange` says so), but it means a branch switch in the
-  portal session leaves the working tree differing from HEAD until someone
-  accepts. Seen on the stand when a commit's paragraph vanished from the file.
-- **Two serialisers** — see [With other people](#with-other-people).
+- **A colleague's suggestions appeared only after a reload** — fixed: a watch
+  on a `.studio` folder that did not exist yet was inert, and a watch is not
+  recursive by default (`product-ext/src/browser/watch-tree.js`).
+- **The Documents editor held git operations for review** — fixed. A write
+  nobody claimed became a proposal and the file was put back, and that included
+  a `git pull` or `git checkout` in the shared checkout: the next share then
+  committed the old text over the colleague's commit. Now a write whose content
+  is exactly what a commit has for the file — HEAD, or the branch it follows
+  while a pull is still moving it — is the commit author's edit, applied like a
+  colleague's save (`studio.git.committedVersion`, answered by
+  `MarkdownDiffGitService.committedVersion`). An agent's write or a hand edit
+  equals no commit and is still held. The one write this lets through
+  unreviewed is a revert to a committed version (`git checkout -- file`); the
+  history keeps what was there before.
+- **The WYSIWYG editor's saves were held as an agent's** in a colleague's
+  Documents editor — fixed: it claims its writes like the Documents editor
+  does (`studio.collab.claimWrite`).
+- **Two serialisers** — fixed; see [With other people](#with-other-people).
 - **The WYSIWYG editor now polls** (`EXTERNAL_POLL_MS`, every two seconds, file
   resources only, not while saving or hidden), as the Documents editor always
   did: on a workspace bind-mounted from Windows (`9p`/drvfs inside the

@@ -260,10 +260,38 @@ B's branch exists in the repository (pushed, or local in the shared checkout).
   refs newest first with their author, then two questions. *Mine ↔ B's branch*
   shows how the document differs; *What B's branch changed* shows only B's
   edits since it branched off, not what happened on yours meanwhile.
-- **Fails as**: a git operation in the shared checkout seeming to "not take" —
-  the Documents editor holds an unclaimed write (a checkout, a commit) for
-  review and puts the file back while anyone has it open there. Close the
-  document in other browsers before switching branches on the stand.
+### 5g. A pull while the document is open
+
+A has the document open in Documents. B pushes an edit to it from elsewhere;
+the shared checkout pulls (or A presses *Share with the team*).
+
+- **Expect**: A's editor takes B's version as *B edited this document* (status
+  line, history), `git status` shows nothing to commit, and no proposal.
+- **Fails as**: the pulled paragraph vanishing from the file and a proposal
+  waiting — the old behaviour, where the next share committed the file back.
+- **Control**: write to the file by hand (`printf ... >>`). That is still held
+  as a proposal and the file is put back.
+
+### 5h. Two editors, one line
+
+A edits a sentence in Documents and saves; B edits the same document in the
+WYSIWYG editor (Workbench) and saves.
+
+- **Expect**: `git diff --numstat` shows `1 1` after each save — tables, wrapped
+  paragraphs and list bullets nobody touched stay as they were — and A's editor
+  applies B's save as B's, with no proposal.
+
+### 5i. Share with the team
+
+A, who knows no git, edits two documents in Doc editing.
+
+- **Expect**: the status bar says *2 documents not shared*; *Share with the
+  team* (Team group) lists them, takes a sentence, and afterwards the commit is
+  A's, carries only those documents and their `.studio` companions, and is on
+  the remote; the tree is clean. On a protected branch it lands on
+  `studio/<person>/<time>` with a link to open a pull request.
+- **Fails as**: files A never opened appearing in the commit, or an editor of
+  the pulled documents showing a proposal (see 5g).
 
 ### 6. Commenting on something that was rendered
 

@@ -24,9 +24,22 @@ export interface MarkdownDiffRefs {
     readonly refs: readonly MarkdownDiffRef[];
 }
 
+/** A document's content as a commit has it: whose commit it came in with. */
+export interface MarkdownCommittedVersion {
+    readonly commit: string;
+    readonly author: string;
+}
+
 export interface MarkdownDiffGitService {
     /** The refs of the repository that holds `file` (a file uri); none outside a repository. */
     listRefs(file: string): Promise<MarkdownDiffRefs>;
     /** Where `ref` and the checked-out HEAD diverged — the start of what that branch changed. */
     mergeBase(file: string, ref: string): Promise<string | undefined>;
+    /**
+     * Whether `content` is exactly what the checked-out commit (or the branch
+     * it follows) has for `file`, and the commit that last changed it there.
+     * A write that git made — a pull, a checkout, Share with the team —
+     * leaves the file equal to a commit; an agent's or a hand edit does not.
+     */
+    committedVersion(file: string, content: string): Promise<MarkdownCommittedVersion | undefined>;
 }

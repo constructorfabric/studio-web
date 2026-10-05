@@ -815,6 +815,8 @@ const EXTERNAL_POLL_MS = 2000;
 // to the save state. Long enough to be read after glancing away, short enough
 // that it is never the answer to "is my work saved".
 const REMOTE_NOTICE_MS = 5000;
+/** studio's answer to "did git write this?" (markdown-diff-contribution.ts). */
+const COMMITTED_VERSION_COMMAND = 'studio.git.committedVersion';
 /* Below this a drag is a click. A hand that moves three pixels on the way down
  * means "this block", not "this eight-pixel corner of it". */
 const AREA_MIN_DRAG = 8;
@@ -2811,6 +2813,22 @@ class MarkdownEditorWidget extends Widget {
         const writer = await collab.lastWriter(this.uri, content.value);
         if (writer && writer.author && !isSelf(writer.author)) {
             await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value, writer.author);
+            return;
+        }
+
+        /*
+         * Nobody claimed it, but git may have written it: a pull, a checkout,
+         * Share with the team bringing a colleague's commit. Held as a
+         * proposal, the file was put back to what I had, and my next share
+         * then committed that — undoing the colleague's work without anybody
+         * seeing it happen. Content equal to a commit is the repository's
+         * version and is taken as the commit's author's edit; an agent's write
+         * or a hand edit is equal to no commit and is still held for review.
+         */
+        const committed = await this.committedVersion(content.value);
+        if (committed) {
+            await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value,
+                { name: committed.author, key: 'git:' + committed.commit });
             return;
         }
 
@@ -5577,6 +5595,17 @@ class MarkdownEditorWidget extends Widget {
      * two versions as documents — a long rewrite, a moved section, a table.
      * Where that extension is absent the buttons are simply not drawn.
      */
+    /** `{ commit, author }` when `full` is a commit's version of this file (studio's git, by command). */
+    async committedVersion(full) {
+        if (!this.commandRegistry || !this.commandRegistry.getCommand(COMMITTED_VERSION_COMMAND)) { return undefined; }
+        try {
+            const answer = await this.commandRegistry.executeCommand(COMMITTED_VERSION_COMMAND, this.uri.toString(), full);
+            return answer && answer.commit ? answer : undefined;
+        } catch (error) {
+            return undefined;
+        }
+    }
+
     renderedCompareAvailable() {
         return !!(this.commandRegistry && this.commandRegistry.getCommand(RENDERED_COMPARE_COMMAND));
     }

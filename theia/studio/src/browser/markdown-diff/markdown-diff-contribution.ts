@@ -41,6 +41,13 @@ export namespace MarkdownDiffCommands {
      * the view without depending on this package.
      */
     export const COMPARE: Command = { id: 'studio.markdownDiff.compare' };
+    /**
+     * `(uri, content)` → `{ commit, author }` when `content` is what a commit
+     * has for that file (a pull, a checkout, Share with the team wrote it),
+     * else undefined. The Documents editor asks before it holds a write
+     * nobody claimed for review.
+     */
+    export const COMMITTED_VERSION: Command = { id: 'studio.git.committedVersion' };
 }
 
 /** Schemes read live; anything else in a text diff is taken as the text the diff editor holds. */
@@ -97,6 +104,20 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
         });
         commands.registerCommand(MarkdownDiffCommands.COMPARE, {
             execute: (request: MarkdownDiffRequest) => this.report(this.diffs.open(request)),
+        });
+        commands.registerCommand(MarkdownDiffCommands.COMMITTED_VERSION, {
+            execute: async (uri: string, content: string) => {
+                const file = new URI(String(uri));
+                if (file.scheme !== 'file' || typeof content !== 'string') {
+                    return undefined;
+                }
+                try {
+                    return await this.git.committedVersion(file.toString(), content);
+                } catch {
+                    // Not knowing is the old behaviour: the write is held for review.
+                    return undefined;
+                }
+            },
         });
     }
 

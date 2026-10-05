@@ -4,9 +4,10 @@
 
 import { injectable } from '@theia/core/shared/inversify';
 import { FileUri } from '@theia/core/lib/common/file-uri';
+import { createHash } from 'crypto';
 import * as path from 'path';
 import { GitRunner, runGit } from './desktop-git';
-import type { MarkdownDiffGitService, MarkdownDiffRef, MarkdownDiffRefs } from '../common/markdown-diff-git-protocol';
+import type { MarkdownCommittedVersion, MarkdownDiffGitService, MarkdownDiffRef, MarkdownDiffRefs } from '../common/markdown-diff-git-protocol';
 
 /** More than anyone scrolls through in a picker; a repository with thousands of tags still answers fast. */
 export const REF_LIMIT = 100;
@@ -35,9 +36,20 @@ export function isSafeRef(ref: string): boolean {
     return /^[A-Za-z0-9._\/@{}^~-]+$/.test(ref) && !ref.startsWith('-');
 }
 
+/** Git's id for a file with this content: the blob's sha1 (or sha256, by the length of the id it is compared with). */
+export function blobId(content: string, algorithm: 'sha1' | 'sha256'): string {
+    const bytes = Buffer.from(content, 'utf8');
+    return createHash(algorithm).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+}
+
+/** Where git is still writing when the file event arrives: a pull updates the files before the branch. */
+export const COMMITTED_RETRY_MS = 400;
+
 @injectable()
 export class MarkdownDiffGitServiceImpl implements MarkdownDiffGitService {
     protected readonly git: GitRunner = runGit;
+
+    protected retryMs = COMMITTED_RETRY_MS;
 
     protected directoryOf(file: string): string {
         return path.dirname(FileUri.fsPath(file));
@@ -67,5 +79,34 @@ export class MarkdownDiffGitServiceImpl implements MarkdownDiffGitService {
         const based = await this.git(this.directoryOf(file), ['merge-base', 'HEAD', ref]);
         const sha = based.stdout.trim();
         return based.code === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : undefined;
+    }
+
+    async committedVersion(file: string, content: string): Promise<MarkdownCommittedVersion | undefined> {
+        const dir = this.directoryOf(file);
+        const name = `./${path.basename(FileUri.fsPath(file))}`;
+        // The file as git stores it: core.autocrlf checks out CRLF for an LF blob.
+        const contents = content.includes('\r\n') ? [content, content.replace(/\r\n/g, '\n')] : [content];
+        const matches = async (ref: string): Promise<boolean> => {
+            const blob = await this.git(dir, ['rev-parse', '--verify', '--quiet', `${ref}:${name}`]);
+            const id = blob.stdout.trim();
+            if (blob.code !== 0 || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(id)) {
+                return false;
+            }
+            const algorithm = id.length === 64 ? 'sha256' : 'sha1';
+            return contents.some(text => blobId(text, algorithm) === id);
+        };
+        const lastChange = async (ref: string): Promise<MarkdownCommittedVersion | undefined> => {
+            const log = await this.git(dir, ['log', '-1', `--format=%H${FIELD}%an`, ref, '--', name]);
+            const [commit, author] = log.stdout.trim().split(FIELD);
+            return log.code === 0 && commit ? { commit, author: author || 'Somebody' } : undefined;
+        };
+        for (const ref of ['HEAD', '@{upstream}']) {
+            if (await matches(ref)) {
+                return lastChange(ref);
+            }
+        }
+        // A checkout moves HEAD after it writes the files; ask once more when it has.
+        await new Promise(resolve => setTimeout(resolve, this.retryMs));
+        return await matches('HEAD') ? lastChange('HEAD') : undefined;
     }
 }
