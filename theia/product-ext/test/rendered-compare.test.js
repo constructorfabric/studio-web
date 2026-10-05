@@ -119,4 +119,42 @@ test('a conflict names whose version is on disk, when co-editing knows', () => {
     assert.strictEqual(conflictRequest({ heading: 'h', a: 'd', b: 'm' }, 'x.md').left.label, 'On disk');
 });
 
+const { personName, proposalRequest, suggestionRequest, suggestionAuthors } = require('../src/browser/rendered-compare.js');
+
+test('a person is a name or an author record', () => {
+    assert.strictEqual(personName('Alice'), 'Alice');
+    assert.strictEqual(personName({ id: 'a1', name: 'Alice' }), 'Alice');
+    assert.strictEqual(personName({ id: 'a1' }), 'a1');
+    assert.strictEqual(personName(undefined), 'Someone');
+});
+
+test('the assistant\'s proposal: its base beside what it proposes', () => {
+    const request = proposalRequest({ title: 'Tighten the intro', author: 'Claude', baseBody: 'b', proposedBody: 'p' }, 'spec.md');
+    assert.deepStrictEqual(request, {
+        title: 'spec.md (Tighten the intro)',
+        left: { content: 'b', label: 'Before' },
+        right: { content: 'p', label: 'Proposed by Claude' }
+    });
+    assert.strictEqual(proposalRequest(undefined, 'spec.md'), undefined);
+    assert.strictEqual(proposalRequest({ title: 't' }, 'spec.md'), undefined, 'a proposal without its bodies has nothing to show');
+});
+
+test('one person\'s suggestions applied, beside the document', () => {
+    const request = suggestionRequest('doc', 'doc+alice', { name: 'Alice' }, 'spec.md');
+    assert.strictEqual(request.title, 'spec.md (Alice’s suggestions)');
+    assert.deepStrictEqual(request.left, { content: 'doc', label: 'Document' });
+    assert.deepStrictEqual(request.right, { content: 'doc+alice', label: 'Alice’s suggestions' });
+    assert.strictEqual(suggestionRequest('doc', 'doc', 'Alice', 'spec.md'), undefined, 'nothing applies: nothing to open');
+});
+
+test('one button per person, in the order their suggestions first appear', () => {
+    const people = suggestionAuthors([
+        { id: 's1', by: { name: 'Bob' } },
+        { id: 's2', by: { name: 'Alice' } },
+        { id: 's3', by: { name: 'Bob' } },
+    ]);
+    assert.deepStrictEqual(people, [{ name: 'Bob', ids: ['s1', 's3'] }, { name: 'Alice', ids: ['s2'] }]);
+    assert.deepStrictEqual(suggestionAuthors(undefined), []);
+});
+
 console.log('rendered-compare: ' + passed + ' passing');

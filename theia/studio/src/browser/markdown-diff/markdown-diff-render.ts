@@ -98,6 +98,10 @@ function textNodes(root: HTMLElement): Text[] {
     return nodes;
 }
 
+function collapseWhitespace(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
+}
+
 interface Range {
     readonly start: number;
     readonly end: number;
@@ -115,7 +119,9 @@ export function markWordChanges(oldRoot: HTMLElement, newRoot: HTMLElement): 'wo
     const newNodes = textNodes(newRoot);
     const oldText = oldNodes.map(node => node.data).join('');
     const newText = newNodes.map(node => node.data).join('');
-    if (oldText === newText) {
+    // Whitespace collapsed: a paragraph rewrapped at another width renders the
+    // same words with a newline where a space was, and that is formatting.
+    if (collapseWhitespace(oldText) === collapseWhitespace(newText)) {
         return 'markup';
     }
     const removed: Range[] = [];

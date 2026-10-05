@@ -62,7 +62,8 @@ const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
 // and what this editor hands it — see rendered-compare.js.
 const {
     RENDERED_COMPARE_COMMAND, RENDERED_HEAD_COMMAND, coalesceRemoteChange, remoteChangeRequest,
-    entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest
+    entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest,
+    proposalRequest, suggestionRequest, suggestionAuthors
 } = require('./rendered-compare');
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
@@ -5205,6 +5206,9 @@ class MarkdownEditorWidget extends Widget {
             '<div class="studio-rail-toolbar">' +
             '<button class="studio-btn" data-act="accept-all">Accept all ' + (pending ? '(' + pending + ')' : '') + '</button>' +
             '<button class="studio-btn" data-act="reject-all">Reject all</button>' +
+            (this.renderedCompareAvailable()
+                ? '<button class="studio-btn ghost" data-act="proposal-rendered" title="The document before, beside the document as proposed">Side by side</button>'
+                : '') +
             '<span class="studio-doc-spacer"></span>' +
             '<button class="studio-icon-btn" data-act="hunk-prev" title="Previous change" aria-label="Previous change">' + ICONS.chevronLeft + '</button>' +
             '<button class="studio-icon-btn" data-act="hunk-next" title="Next change" aria-label="Next change">' + ICONS.chevronRight + '</button>' +
@@ -5365,7 +5369,17 @@ class MarkdownEditorWidget extends Widget {
      */
     suggestionsSectionHtml() {
         const cards = this.changeCardsHtml(entry => entry.proposal && entry.proposal.kind === 'suggestion');
-        return cards ? '<div class="studio-rail-section">Suggestions</div>' + cards : '';
+        if (!cards) { return ''; }
+        // One "side by side" per person: their suggestions applied to the
+        // document, read whole — the cards below are where each is decided.
+        const people = this.renderedCompareAvailable() ? suggestionAuthors(this.suggestions) : [];
+        const readWhole = people.length
+            ? '<div class="studio-rail-toolbar">' + people.map(person =>
+                '<button class="studio-btn ghost" data-act="suggestion-rendered" data-id="' + escapeHtml(person.ids.join(',')) + '" ' +
+                'title="The document with ' + escapeHtml(person.name) + '\u2019s suggestions applied, beside the document">' +
+                'Side by side: ' + escapeHtml(person.name) + '</button>').join('') + '</div>'
+            : '';
+        return '<div class="studio-rail-section">Suggestions</div>' + readWhole + cards;
     }
 
     /** Requirement 7's sequential review: step through the undecided hunks. */
@@ -5518,6 +5532,22 @@ class MarkdownEditorWidget extends Widget {
     /** What one history entry changed, against the version recorded before it. */
     openEntryRendered(entryId) {
         const request = entryChangeRequest(this.historyEntries, entryId, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** The assistant's open proposal, before beside proposed. */
+    openProposalRendered() {
+        const request = proposalRequest(this.openProposal(), this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** One person's open suggestions (`ids`, comma-separated), applied to the document. */
+    openSuggestionsRendered(ids) {
+        const wanted = new Set(String(ids || '').split(',').filter(Boolean));
+        const mine = this.trackedEntries().filter(entry => wanted.has(entry.proposalId));
+        if (!mine.length) { return; }
+        const body = this.reviewedBody();
+        const request = suggestionRequest(body, suggestedMarkdown(body, mine), mine[0].proposal.by, this.uri.path.base);
         if (request) { this.openRenderedCompare(request); }
     }
 
@@ -7646,6 +7676,8 @@ class MarkdownEditorWidget extends Widget {
                 case 'compare-rendered': this.openConflictRendered(); break;
                 case 'history-compare-rendered': this.openHistoryRendered(); break;
                 case 'history-entry-rendered': this.openEntryRendered(id); break;
+                case 'proposal-rendered': this.openProposalRendered(); break;
+                case 'suggestion-rendered': this.openSuggestionsRendered(id); break;
                 case 'compare-head-rendered': this.openHeadRendered(); break;
                 case 'clear-compare': this.compareSelection = []; this.renderRail(); break;
                 case 'history-compare': this.toggleCompare(id); break;

@@ -220,7 +220,11 @@ export class MarkdownDiffWidget extends BaseWidget implements StatefulWidget {
         this.scroller.textContent = '';
         if (left.missing && right.missing) {
             const error = this.element('div', 'studio-md-diff-error');
-            error.textContent = `Neither version could be read. ${right.missing}`;
+            error.textContent = this.input && [this.input.left.uri, this.input.right.uri].some(uri => uri.startsWith('memory:'))
+                // A snapshot (a history entry, a conflict's side) lives as long as
+                // the page; this tab came back with the layout after a reload.
+                ? 'These versions were snapshots and are gone since the page was reloaded. Close this tab and open the comparison again.'
+                : `Neither version could be read. ${right.missing}`;
             this.scroller.appendChild(error);
             this.summary.textContent = '';
             this.changes = [];

@@ -48,6 +48,10 @@ export class MarkdownDiffService {
     protected readonly memory: InMemoryResources;
 
     protected snapshotSequence = 0;
+    // Snapshot addresses must not repeat across page loads: a tab restored with
+    // the layout keeps its old address, and a new comparison at the same
+    // address would be handed that tab, whose snapshots died with the page.
+    protected readonly snapshotSession = Date.now().toString(36);
 
     async open(request: MarkdownDiffRequest, options?: WidgetOpenerOptions): Promise<MarkdownDiffWidget> {
         const snapshots: Array<{ dispose(): void }> = [];
@@ -55,7 +59,7 @@ export class MarkdownDiffService {
             if (version.content !== undefined) {
                 // A text with no address — a history entry, the unsaved side
                 // of a conflict — lives in memory for as long as its tab.
-                const uri = new URI(`memory://studio-markdown-diff/${this.snapshotSequence++}/${fallback}.md`);
+                const uri = new URI(`memory://studio-markdown-diff/${this.snapshotSession}-${this.snapshotSequence++}/${fallback}.md`);
                 snapshots.push(this.memory.add(uri, version.content));
                 return { uri: uri.toString(), label: version.label ?? fallback };
             }
@@ -74,7 +78,13 @@ export class MarkdownDiffService {
         const name = base ? new URI(base).path.base : 'Markdown';
         const title = request.title ?? `${name} (${left.label} ↔ ${right.label})`;
         try {
-            const widget = await this.openHandler.open(encodeMarkdownDiffUri({ title, left, right, base }), { mode: 'activate', ...options });
+            const uri = encodeMarkdownDiffUri({ title, left, right, base });
+            const existing = await this.openHandler.getByUri(uri);
+            const widget = await this.openHandler.open(uri, { mode: 'activate', ...options });
+            if (existing) {
+                // Already open: show what the versions say now, not what they said then.
+                await widget.reload();
+            }
             widget.disposed.connect(() => snapshots.forEach(snapshot => snapshot.dispose()));
             return widget;
         } catch (error) {

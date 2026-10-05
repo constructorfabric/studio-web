@@ -133,7 +133,64 @@ function conflictRequest(comparing, docName) {
     };
 }
 
+/** A person as the stores record them — a name, or an author record with one. */
+function personName(person) {
+    if (!person) { return 'Someone'; }
+    if (typeof person === 'string') { return person; }
+    return person.name || person.id || 'Someone';
+}
+
+/*
+ * READING A PROPOSAL WHOLE. The review queue and the tracked page are where a
+ * change is decided, one hunk at a time. A long rewrite is also read — does the
+ * section still hold together — and that is the document before beside the
+ * document as proposed, nothing decided by looking.
+ */
+
+/** The assistant's proposal: the base it was computed against beside what it proposes. */
+function proposalRequest(proposal, docName) {
+    if (!proposal || proposal.baseBody === undefined || proposal.proposedBody === undefined) { return undefined; }
+    return {
+        title: docName + ' (' + (proposal.title || 'proposal') + ')',
+        left: { content: proposal.baseBody, label: 'Before' },
+        right: { content: proposal.proposedBody, label: 'Proposed by ' + personName(proposal.by || proposal.author) }
+    };
+}
+
+/**
+ * One person's suggestions: the document beside the document with only their
+ * suggestions applied — `suggestedBody` is tracked-changes.js's
+ * suggestedMarkdown over that person's entries alone.
+ */
+function suggestionRequest(documentBody, suggestedBody, by, docName) {
+    if (suggestedBody === undefined || suggestedBody === documentBody) { return undefined; }
+    const name = personName(by);
+    return {
+        title: docName + ' (' + name + '’s suggestions)',
+        left: { content: documentBody, label: 'Document' },
+        right: { content: suggestedBody, label: name + '’s suggestions' }
+    };
+}
+
+/**
+ * The people with suggestions open, once each, in the order their first
+ * suggestion appears — one "side by side" per person, not per card.
+ */
+function suggestionAuthors(suggestions) {
+    const seen = new Map();
+    for (const suggestion of suggestions || []) {
+        const name = personName(suggestion.by);
+        if (!seen.has(name)) { seen.set(name, []); }
+        seen.get(name).push(suggestion.id);
+    }
+    return Array.from(seen, ([name, ids]) => ({ name, ids }));
+}
+
 module.exports = {
+    personName,
+    proposalRequest,
+    suggestionRequest,
+    suggestionAuthors,
     RENDERED_COMPARE_COMMAND,
     RENDERED_HEAD_COMMAND,
     REMOTE_RUN_GAP_MS,

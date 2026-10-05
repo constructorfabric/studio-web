@@ -32,6 +32,10 @@ describe('markWordChanges', () => {
         expect(newCell.textContent).toBe('Keep this sentence as it was before, mostly.');
     });
 
+    it('takes a rewrapped paragraph for formatting, not an edit', () => {
+        expect(markWordChanges(element('<p>one two\nthree four</p>'), element('<p>one two three\nfour</p>'))).toBe('markup');
+    });
+
     it('says when only the markup changed', () => {
         expect(markWordChanges(element('<p><a href="a">link</a></p>'), element('<p><a href="b">link</a></p>'))).toBe('markup');
     });
