@@ -1,0 +1,36 @@
+# The product this project ships, as Gearbox composes it.
+#
+# Written by Constructor Studio from the gears picked for the project. The
+# gears come from `gears-rust` at the commit this was checked against;
+# the Studio IDE brings that commit in when it opens the product. From a
+# checkout of `gears-rust` at that commit, resolve it with
+#
+#   gearbox resolve --root ../gears-rust --product product.gdl --profile dev
+#
+# Reference: https://github.com/MikeFalcon77/gearbox/blob/main/docs/gdl.md
+
+product(
+    id = "studio-web",
+    name = "Studio-web",
+    version = "0.1.0",
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "dfce0968bd17358e51a2d7e05b99a8c774a12950"))],
+    profiles = [
+        embedded(id = "dev"),
+        self_hosted(id = "local", host = "studio-web", worker_discovery = "directory",
+                    target_dir = "target"),
+        kubernetes(id = "prod", discovery = "static", namespace = "studio-web"),
+    ],
+    default_profile = "dev",
+    gears = [
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin", config = {"vendor": "constructorfabric"})]),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("static-authn-plugin")]),
+        use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("tr-authz-plugin")]),
+        use_gear("file-storage", source = "gears-rust"),
+        use_gear("api-gateway", source = "gears-rust"),
+        use_gear("nodes-registry", source = "gears-rust"),
+        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
+        use_gear("credstore", source = "gears-rust", plugins = [plugin("static-credstore-plugin")]),
+        use_gear("resource-group", source = "gears-rust"),
+    ],
+)
