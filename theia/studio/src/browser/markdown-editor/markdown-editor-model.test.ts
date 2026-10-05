@@ -8,7 +8,7 @@ import {
     ResourceSaveOptions,
     ResourceVersion
 } from '@theia/core/lib/common/resource';
-import { MarkdownEditorModel } from './markdown-editor-model';
+import { EXTERNAL_POLL_MS, MarkdownEditorModel } from './markdown-editor-model';
 import { canonicalizeMarkdown, representativeRoundTripFixtures } from './markdown-editor-shared';
 
 describe('MarkdownEditorModel', () => {
@@ -643,6 +643,60 @@ describe('MarkdownEditorModel', () => {
             markdown: '# Local\n',
             version: resource.version
         });
+    });
+
+    it('notices a newer file on disk by polling when the watcher stays silent', async () => {
+        jest.useFakeTimers();
+        try {
+            const uri = new URI('file:///workspace/poll.md');
+            const resource = new MockMarkdownResource(uri, '# Base\n');
+            const model = createModel(resource);
+            const stat = { mtime: 0, etag: 'e0' };
+            const fileService = { resolve: jest.fn(async () => stat) };
+            Object.defineProperty(model, 'fileService', { value: fileService });
+            const sync = jest.spyOn(model as unknown as { scheduleExternalSync(): void }, 'scheduleExternalSync');
+
+            await model.init(uri);
+            // What the model last read, as a FileResource reports it.
+            Object.defineProperty(resource, 'version', { value: { encoding: 'utf8', mtime: 100, etag: 'e1' }, writable: true });
+
+            stat.mtime = 100;
+            stat.etag = 'e1';
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS);
+            await flushMicrotasks();
+            expect(sync).not.toHaveBeenCalled();
+
+            // A colleague saved; no file event came.
+            stat.mtime = 200;
+            stat.etag = 'e2';
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS);
+            await flushMicrotasks();
+            expect(sync).toHaveBeenCalledTimes(1);
+
+            model.dispose();
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS * 3);
+            await flushMicrotasks();
+            expect(fileService.resolve).toHaveBeenCalledTimes(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('does not poll a resource that is not a file', async () => {
+        jest.useFakeTimers();
+        try {
+            const uri = new URI('studio-doc:/doc/1.md');
+            const resource = new MockMarkdownResource(uri, '# Base\n');
+            const model = createModel(resource);
+            const fileService = { resolve: jest.fn() };
+            Object.defineProperty(model, 'fileService', { value: fileService });
+            await model.init(uri);
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS * 2);
+            expect(fileService.resolve).not.toHaveBeenCalled();
+            model.dispose();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it('disposes the resource and external-change listener when the model is disposed', async () => {

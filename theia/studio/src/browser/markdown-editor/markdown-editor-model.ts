@@ -1,5 +1,7 @@
-import { inject, injectable } from '@theia/core/shared/inversify';
-import { DisposableCollection, Emitter, Event } from '@theia/core';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { Disposable, DisposableCollection, Emitter, Event } from '@theia/core';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { FileResourceVersion } from '@theia/filesystem/lib/browser/file-resource';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import URI from '@theia/core/lib/common/uri';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
@@ -12,6 +14,15 @@ import {
 import { Resource, ResourceError, ResourceProvider, ResourceVersion } from '@theia/core/lib/common/resource';
 
 export type MarkdownUpdateOrigin = 'initial' | 'user' | 'external-sync' | 'revert';
+
+/**
+ * How often the file is stat'ed behind the file watcher — the Documents
+ * editor's EXTERNAL_POLL_MS, for the same reason: a watcher can be silent. On a
+ * workspace bind-mounted from Windows (9p/drvfs inside the container) it is
+ * silent always, and without this the editor never learned that a colleague
+ * saved, so it neither took their save nor raised a conflict against it.
+ */
+export const EXTERNAL_POLL_MS = 2000;
 
 export interface MarkdownModifiedExternalChangeState {
     readonly kind: 'modified';
@@ -31,6 +42,13 @@ export type MarkdownExternalChangeState = MarkdownModifiedExternalChangeState | 
 export class MarkdownEditorModel implements Saveable {
     @inject(ResourceProvider)
     protected readonly resourceProvider: ResourceProvider;
+
+    // Optional: the poll is a safety net, and a model without a file service
+    // (a test harness) works from the watcher alone.
+    @inject(FileService) @optional()
+    protected readonly fileService: FileService | undefined;
+
+    protected polling = false;
 
     protected readonly toDispose = new DisposableCollection();
     protected readonly onDirtyChangedEmitter = new Emitter<void>();
@@ -93,6 +111,7 @@ export class MarkdownEditorModel implements Saveable {
         if (resource.onDidChangeContents) {
             this.toDispose.push(resource.onDidChangeContents(() => this.scheduleExternalSync()));
         }
+        this.startExternalPoll(uri);
         const request = ++this.externalReadGeneration;
         const rawMarkdown = await resource.readContents();
         if (this.disposed || request !== this.externalReadGeneration) {
@@ -274,6 +293,45 @@ export class MarkdownEditorModel implements Saveable {
 
     async serialize(): Promise<BinaryBuffer> {
         return BinaryBuffer.fromString(this.dirty ? this.currentMarkdown : this.baselineRawMarkdown);
+    }
+
+    protected startExternalPoll(uri: URI): void {
+        if (!this.fileService || uri.scheme !== 'file') {
+            return;
+        }
+        const timer = setInterval(() => void this.pollExternalChange(), EXTERNAL_POLL_MS);
+        this.toDispose.push(Disposable.create(() => clearInterval(timer)));
+    }
+
+    /**
+     * Read again when the file on disk is newer than the version this model
+     * last read or wrote — what the watcher would have said. Skipped while a
+     * save is in flight (its own write is not news) and while the page is
+     * hidden (nobody is looking, and the next visible tick catches up).
+     */
+    protected async pollExternalChange(): Promise<void> {
+        if (this.disposed || this.polling || this.activeSaveOperations > 0 || !this.fileService || !this.resourceUri) {
+            return;
+        }
+        if (typeof document !== 'undefined' && document.hidden) {
+            return;
+        }
+        const version = this.resource?.version;
+        if (!FileResourceVersion.is(version)) {
+            return;
+        }
+        this.polling = true;
+        try {
+            const stat = await this.fileService.resolve(this.resourceUri, { resolveMetadata: true });
+            if (!this.disposed && stat.mtime > version.mtime && stat.etag !== version.etag) {
+                this.scheduleExternalSync();
+            }
+        } catch {
+            // Gone or unreadable: the watcher or the next save reports it, and
+            // re-reading a missing file every two seconds would not.
+        } finally {
+            this.polling = false;
+        }
     }
 
     protected scheduleExternalSync(): void {
