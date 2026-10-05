@@ -63,7 +63,8 @@ const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
 const {
     RENDERED_COMPARE_COMMAND, RENDERED_HEAD_COMMAND, coalesceRemoteChange, remoteChangeRequest,
     entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest,
-    proposalRequest, suggestionRequest, suggestionAuthors
+    proposalRequest, suggestionRequest, suggestionAuthors,
+    lastSeenKey, readLastSeen, writeLastSeen, changedSinceLastSeen, sinceLastSeenRequest
 } = require('./rendered-compare');
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
@@ -1635,6 +1636,9 @@ class MarkdownEditorWidget extends Widget {
     }
 
     onCloseRequest(msg) {
+        // An unanswered "changed since you last looked" keeps the old version
+        // remembered, so the offer is made again next time rather than lost.
+        if (!this.sinceLastSeen && this.editor) { this.rememberSeen(); }
         openEditors.delete(this.uri.toString());
         if (this.selectionChangeHandler) { document.removeEventListener('selectionchange', this.selectionChangeHandler); }
         if (this.keyHandler) { document.removeEventListener('keydown', this.keyHandler, true); }
@@ -2020,6 +2024,47 @@ class MarkdownEditorWidget extends Widget {
         setTimeout(() => { this.armed = true; }, 0);
         this.setSaveState(this.readOnly ? 'read-only' : 'clean');
         this.applyReviewLock();
+        this.offerSinceLastSeen();
+    }
+
+    // -- since I last looked (rendered-compare.js) ---------------------------
+
+    lastSeenStorageKey() {
+        return lastSeenKey(document.baseURI, this.uri.toString());
+    }
+
+    /*
+     * Offered, never opened by itself: a document that moved on is the common
+     * case in a shared project, and a tab that opens on its own every time is
+     * a tab people learn to close unread. Once offered, what is on screen now
+     * is what they have seen.
+     */
+    offerSinceLastSeen() {
+        let storage;
+        try { storage = globalThis.localStorage; } catch (e) { storage = undefined; }
+        const stored = readLastSeen(storage, this.lastSeenStorageKey());
+        this.sinceLastSeen = this.renderedCompareAvailable() ? changedSinceLastSeen(stored, this.lastSavedBody) : undefined;
+        if (this.sinceLastSeen) { this.renderBanners(); } else { this.rememberSeen(); }
+    }
+
+    /** Remember the body on screen as what I have seen. */
+    rememberSeen(body) {
+        let storage;
+        try { storage = globalThis.localStorage; } catch (e) { storage = undefined; }
+        const seen = body !== undefined ? body : (this.editor ? this.currentBody() : this.lastSavedBody);
+        writeLastSeen(storage, this.lastSeenStorageKey(), seen, Date.now());
+    }
+
+    openSinceLastSeen() {
+        const request = sinceLastSeenRequest(this.sinceLastSeen, this.currentBody(), this.uri.path.base);
+        this.dismissSinceLastSeen();
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    dismissSinceLastSeen() {
+        this.sinceLastSeen = undefined;
+        this.rememberSeen();
+        this.renderBanners();
     }
 
     // -- modes ---------------------------------------------------------------
@@ -2459,6 +2504,7 @@ class MarkdownEditorWidget extends Widget {
             }
             const written = await this.writeBody(body);
             this.lastSavedBody = body;
+            if (!this.sinceLastSeen) { this.rememberSeen(body); }
             this.setSaveState('saved', timeLabel(new Date(written.mtime).toISOString()));
             /* The reviewed body just moved, which is what editBaseline is
                anchored to and what stood the marks down while this edit was
@@ -3884,6 +3930,14 @@ class MarkdownEditorWidget extends Widget {
                     '<button class="studio-btn" data-act="conflict-compare">Compare</button>' +
                     ' <button class="studio-btn" data-act="conflict-mine">Keep mine</button>' +
                     ' <button class="studio-btn" data-act="conflict-theirs">Take theirs</button>'
+            });
+        }
+        if (this.sinceLastSeen) {
+            banners.push({
+                tone: 'info',
+                html: '<b>Changed since you last looked</b> (' + escapeHtml(new Date(this.sinceLastSeen.at).toLocaleString()) + '). ' +
+                    '<button class="studio-btn" data-act="since-last-seen">See changes</button>' +
+                    ' <button class="studio-btn ghost" data-act="since-last-seen-dismiss">Dismiss</button>'
             });
         }
         const proposal = this.openProposal();
@@ -7677,6 +7731,8 @@ class MarkdownEditorWidget extends Widget {
                 case 'history-compare-rendered': this.openHistoryRendered(); break;
                 case 'history-entry-rendered': this.openEntryRendered(id); break;
                 case 'proposal-rendered': this.openProposalRendered(); break;
+                case 'since-last-seen': this.openSinceLastSeen(); break;
+                case 'since-last-seen-dismiss': this.dismissSinceLastSeen(); break;
                 case 'suggestion-rendered': this.openSuggestionsRendered(id); break;
                 case 'compare-head-rendered': this.openHeadRendered(); break;
                 case 'clear-compare': this.compareSelection = []; this.renderRail(); break;

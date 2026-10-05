@@ -186,7 +186,69 @@ function suggestionAuthors(suggestions) {
     return Array.from(seen, ([name, ids]) => ({ name, ids }));
 }
 
+/*
+ * SINCE I LAST LOOKED. The version a person last had on screen, kept on their
+ * own machine (localStorage, the same place identity.js keeps who they are —
+ * this is about what one person saw, so it does not belong in the shared
+ * `.studio/`). When they open the document again and it is not that version,
+ * the editor offers the difference.
+ *
+ * The key is the page's base URI plus the document's. Every portal session
+ * names its checkout /workspace, so the file uri alone would let one project's
+ * spec.md answer for another's; the session's own address tells them apart.
+ */
+const LAST_SEEN_PREFIX = 'studio-last-seen:';
+// A prose document is kilobytes. Past this, keeping a copy per document would
+// crowd out what else the origin keeps, so the feature quietly does nothing.
+const LAST_SEEN_MAX_CHARS = 200000;
+
+function lastSeenKey(baseUri, docUri) {
+    return LAST_SEEN_PREFIX + String(baseUri) + '|' + String(docUri);
+}
+
+function readLastSeen(storage, key) {
+    try {
+        const raw = storage && storage.getItem(key);
+        if (!raw) { return undefined; }
+        const value = JSON.parse(raw);
+        return value && typeof value.body === 'string' && typeof value.at === 'number' ? value : undefined;
+    } catch (e) {
+        return undefined;           // private mode, a full store, a value from elsewhere
+    }
+}
+
+function writeLastSeen(storage, key, body, at) {
+    if (!storage || typeof body !== 'string') { return false; }
+    try {
+        if (body.length > LAST_SEEN_MAX_CHARS) { storage.removeItem(key); return false; }
+        storage.setItem(key, JSON.stringify({ body, at }));
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+/** What to offer on open: the remembered version, when the document is no longer it. */
+function changedSinceLastSeen(stored, body) {
+    return stored && stored.body !== body ? stored : undefined;
+}
+
+function sinceLastSeenRequest(stored, body, docName) {
+    if (!changedSinceLastSeen(stored, body)) { return undefined; }
+    return {
+        title: docName + ' (since you last looked)',
+        left: { content: stored.body, label: 'When you last looked · ' + new Date(stored.at).toLocaleString() },
+        right: { content: body, label: 'Now' }
+    };
+}
+
 module.exports = {
+    LAST_SEEN_MAX_CHARS,
+    lastSeenKey,
+    readLastSeen,
+    writeLastSeen,
+    changedSinceLastSeen,
+    sinceLastSeenRequest,
     personName,
     proposalRequest,
     suggestionRequest,

@@ -157,4 +157,59 @@ test('one button per person, in the order their suggestions first appear', () =>
     assert.deepStrictEqual(suggestionAuthors(undefined), []);
 });
 
+const {
+    LAST_SEEN_MAX_CHARS, lastSeenKey, readLastSeen, writeLastSeen, changedSinceLastSeen, sinceLastSeenRequest
+} = require('../src/browser/rendered-compare.js');
+
+function memoryStorage() {
+    const map = new Map();
+    return {
+        map,
+        getItem: key => (map.has(key) ? map.get(key) : null),
+        setItem: (key, value) => { map.set(key, String(value)); },
+        removeItem: key => { map.delete(key); }
+    };
+}
+
+test('the last-seen key tells two sessions\' /workspace apart', () => {
+    const a = lastSeenKey('https://studio/s/aaa/', 'file:///workspace/docs/spec.md');
+    const b = lastSeenKey('https://studio/s/bbb/', 'file:///workspace/docs/spec.md');
+    assert.notStrictEqual(a, b);
+    assert.ok(a.startsWith('studio-last-seen:'));
+});
+
+test('what I saw is remembered and read back', () => {
+    const storage = memoryStorage();
+    assert.strictEqual(writeLastSeen(storage, 'k', 'body', T0), true);
+    assert.deepStrictEqual(readLastSeen(storage, 'k'), { body: 'body', at: T0 });
+    assert.strictEqual(readLastSeen(storage, 'missing'), undefined);
+    storage.setItem('bad', '{not json');
+    assert.strictEqual(readLastSeen(storage, 'bad'), undefined, 'a broken value is nothing remembered');
+    assert.strictEqual(readLastSeen(undefined, 'k'), undefined, 'no storage (private mode) is nothing remembered');
+});
+
+test('a document too large to keep a copy of is not kept', () => {
+    const storage = memoryStorage();
+    writeLastSeen(storage, 'k', 'small', T0);
+    assert.strictEqual(writeLastSeen(storage, 'k', 'x'.repeat(LAST_SEEN_MAX_CHARS + 1), T0), false);
+    assert.strictEqual(readLastSeen(storage, 'k'), undefined, 'and the stale small copy goes too');
+});
+
+test('a full store does not break the editor', () => {
+    const full = { getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); }, removeItem: () => {} };
+    assert.strictEqual(writeLastSeen(full, 'k', 'body', T0), false);
+});
+
+test('only a changed document is offered, against what I saw', () => {
+    const stored = { body: 'then', at: T0 };
+    assert.strictEqual(changedSinceLastSeen(stored, 'then'), undefined);
+    assert.strictEqual(changedSinceLastSeen(undefined, 'now'), undefined, 'never seen: nothing to compare with');
+    assert.strictEqual(changedSinceLastSeen(stored, 'now'), stored);
+    const request = sinceLastSeenRequest(stored, 'now', 'spec.md');
+    assert.strictEqual(request.title, 'spec.md (since you last looked)');
+    assert.strictEqual(request.left.content, 'then');
+    assert.ok(request.left.label.startsWith('When you last looked · '));
+    assert.deepStrictEqual(request.right, { content: 'now', label: 'Now' });
+});
+
 console.log('rendered-compare: ' + passed + ' passing');
