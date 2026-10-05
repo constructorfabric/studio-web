@@ -93,6 +93,8 @@ import { WorkspaceMigrationService, type WorkspaceStartupMode } from './workspac
 import { WorkspaceSourceRegistry } from './workspace-source-registry';
 import { WorkspaceSyncOrchestrator } from './workspace-sync-orchestrator';
 import { MarkdownDiffGitServiceImpl } from './markdown-diff-git-service';
+import { DocumentShareServiceImpl } from './document-share-service';
+import { documentShareServicePath, type DocumentShareService } from '../common/document-share-protocol';
 import { markdownDiffGitServicePath, type MarkdownDiffGitService } from '../common/markdown-diff-git-protocol';
 
 type WorkspaceRuntimeMode = WorkspaceStartupMode;
@@ -805,6 +807,11 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     // The Constructor Studio CLI's commands (the ribbon's CLI group): named by
     // id from the browser, their command lines owned by the service.
     bind(StudioCliServiceImpl).toSelf().inSingletonScope();
+    // Share with the team: edited documents to the repository, without git.
+    bind(DocumentShareServiceImpl).toSelf().inSingletonScope();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<DocumentShareService>(documentShareServicePath, () => ctx.container.get(DocumentShareServiceImpl))
+    ).inSingletonScope();
     // The refs a document can be compared with (the rendered markdown diff).
     bind(MarkdownDiffGitServiceImpl).toSelf().inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>

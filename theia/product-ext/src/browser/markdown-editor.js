@@ -2846,6 +2846,7 @@ class MarkdownEditorWidget extends Widget {
         this.historyEntries = await this.historyStore.record(this.uri, {
             kind: 'remote-edit',
             author: name,
+            authorKey: author && author.key,
             title: name + ' edited this document',
             body: diskBody
         });
@@ -7829,8 +7830,30 @@ function attachSlashKeys(widget) {
 
 const EDITOR_CSS = require('./editor-css').EDITOR_CSS;
 
+/**
+ * Write every open document's pending edits to disk now, rather than when its
+ * autosave next fires. theia/studio's Share with the team calls this (as the
+ * command studio.documents.saveAll) before it reads what is not shared, so what
+ * a person sees in the editor is what goes to the team.
+ *
+ * @returns how many editors had something to write and could not (a conflict,
+ *          a document held for review): their disk state is what is shared.
+ */
+async function saveAllOpenDocuments() {
+    let unsaved = 0;
+    for (const editor of openEditors.values()) {
+        try {
+            const saved = await editor.save();
+            if (saved === false) { unsaved++; }
+        } catch (e) {
+            unsaved++;
+        }
+    }
+    return unsaved;
+}
+
 module.exports = {
-    MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, buildExtensions,
+    MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, buildExtensions, saveAllOpenDocuments,
     // Pure markup builders, exported for blocks-toolbar.test.js — see the
     // comment above bubbleButtonsHtml for why these are free functions
     // rather than only reachable through a live widget instance.

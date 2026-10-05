@@ -1,0 +1,129 @@
+/* "Share with the team" (share-dialog.tsx). */
+
+.studio-share-dialog .dialogContent {
+    min-width: min(620px, 90vw);
+    max-width: 760px;
+}
+
+.studio-share {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-height: 60vh;
+    overflow: auto;
+}
+
+.studio-share-repository h3 {
+    margin: 0 0 6px;
+    font-size: var(--theia-ui-font-size2);
+}
+
+.studio-share-heading {
+    margin: 10px 0 4px;
+    font-weight: 600;
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.studio-share-hint {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+}
+
+.studio-share-document {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.studio-share-document-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.studio-share-title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.studio-share-path {
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.studio-share-see {
+    flex: none;
+    min-width: 0;
+}
+
+.studio-share-label {
+    display: block;
+    margin: 12px 0 4px;
+    font-weight: 600;
+}
+
+.studio-share-message {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: var(--theia-ui-font-family);
+}
+
+.studio-share-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.studio-share-outcome,
+.studio-share-note,
+.studio-share-conflict {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: var(--theia-textBlockQuote-background);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.studio-share-conflict {
+    flex-direction: column;
+    align-items: stretch;
+    border-left: 3px solid var(--theia-editorWarning-foreground);
+}
+
+.studio-share-conflict p {
+    margin: 0;
+}
+
+.studio-share-outcome.error {
+    border-left: 3px solid var(--theia-errorForeground);
+}
+
+.studio-share-outcome.warn {
+    border-left: 3px solid var(--theia-editorWarning-foreground);
+}
+
+.studio-share-empty {
+    padding: 12px 0;
+    color: var(--theia-descriptionForeground);
+}
+
+/* The status line's "N documents not shared": noticed, not alarming. */
+#theia-statusBar .studio-share-status {
+    font-weight: 600;
+}

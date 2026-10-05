@@ -17,6 +17,25 @@
 
 const { URI } = require('@theia/core/lib/common/uri');
 
+/*
+ * Who did it, when the caller does not say: the person at this editor. This
+ * used to be the literal 'you', and the history file is SHARED — one checkout
+ * for everybody in a portal session — so Bob read Alice's edit as "Edited
+ * spec.md · you", Alice's and Bob's saves coalesced into one entry, and
+ * nothing could tell whose edits a document held (which Share with the team
+ * needs, to share only one's own documents). Required lazily: identity.js
+ * reaches for browser globals this module's node tests do not have.
+ */
+function currentPerson() {
+    try {
+        const { identity } = require('./identity');
+        const record = identity.current();
+        return record && record.name ? { name: record.name, key: record.key } : undefined;
+    } catch (e) {
+        return undefined;
+    }
+}
+
 const HISTORY_DIR = '.studio/history';
 
 // Enough to review a working session without the sidecar growing without
@@ -109,7 +128,9 @@ class HistoryStore {
         const record = {
             id: newEntryId(),
             at: new Date().toISOString(),
-            author: entry.author || 'you',
+            author: entry.author || (currentPerson() || {}).name || 'you',
+            // The person's stable key (identity.js), so a rename does not split them.
+            authorKey: entry.authorKey || (entry.author ? undefined : (currentPerson() || {}).key),
             kind: entry.kind,
             label: spec.label,
             title: entry.title || spec.label,

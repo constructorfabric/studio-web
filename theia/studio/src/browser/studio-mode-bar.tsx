@@ -122,6 +122,13 @@ const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control',
 // registered since the Operations panel replaced Git Operations (#304), so it
 // was never drawn. A session registers no Push: its pushes go through the
 // operations queue, and the panel is View > Operations.
+/**
+ * Doc editing's way to the repository, for people who do not use git: the
+ * edited documents, chosen and said in a sentence, sent in one step
+ * (share/share-contribution.ts). It replaces Push in that mode — Share pushes,
+ * and a second button doing half of it was one more thing to get wrong.
+ */
+const SHARE: ModeAction = { command: 'studio.share.open', icon: 'cloud-upload', label: 'Share', title: 'Send your edited documents to the team' };
 const GIT_OPS: ModeAction = { command: 'studio.desktop.git:push', icon: 'repo-push', label: 'Push', title: 'Push the branch to its remote, and open its pull request' };
 
 /**
@@ -167,9 +174,9 @@ const BY_WORK: readonly Mode[] = [
                     cliAction('validate'),
                 ],
             },
-            // A spec is finished when it is committed: the way there stays in
+            // A spec is finished when the team has it: the way there stays in
             // the mode where it is written.
-            { label: 'Git', actions: [{ ...CHANGES, title: 'What changed in the documents, and commit it' }, GIT_OPS] },
+            { label: 'Team', actions: [SHARE, { ...CHANGES, title: 'What changed in the documents, line by line' }] },
             // The assistants beside the document -- Claude Code or Codex, picked
             // by name (product-ext's `studio.assistants.pick`) -- not Orca's
             // agents in worktrees, which is Agent development's. A portal

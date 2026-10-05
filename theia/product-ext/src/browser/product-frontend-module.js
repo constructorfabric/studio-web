@@ -44,7 +44,7 @@ const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-ser
  */
 const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 
-const { MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS } = require('./markdown-editor');
+const { MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, saveAllOpenDocuments } = require('./markdown-editor');
 const { HtmlViewerWidget, HTML_VIEWER_CSS } = require('./html-viewer');
 const { TableEditorWidget, TABLE_EDITOR_CSS } = require('./table-editor');
 const { COMMENT_UI_CSS } = require('./comment-ui');
@@ -2874,6 +2874,22 @@ const mod = new ContainerModule(bind => {
             commands.registerCommand(REVEAL_ASSISTANT_COMMAND, revealAssistantHandler(ctx.container, commands));
             // The rail's one assistants entry, from the palette too.
             commands.registerCommand(ASSISTANTS_COMMAND, { execute: () => slotStrip.pickAssistant() });
+            /*
+             * Who is at this editor, for theia/studio's Share with the team
+             * (share-contribution.ts): its commits are made as this person, and
+             * "your documents" are the ones this name edited. No label, so not
+             * in the palette; an unresolved hosted identity answers nothing
+             * rather than a placeholder name.
+             */
+            // Pending edits to disk now (markdown-editor.js, saveAllOpenDocuments).
+            commands.registerCommand({ id: 'studio.documents.saveAll' }, { execute: () => saveAllOpenDocuments() });
+            commands.registerCommand({ id: 'studio.identity.current' }, {
+                execute: () => {
+                    const record = identity.current();
+                    if (!record || record.unresolved || !record.name) { return undefined; }
+                    return { name: record.name, email: record.email, key: record.key };
+                }
+            });
             /* Unconditional: the portal's handshake can arrive before anything
              * else this frontend does, and a command that is not there yet is
              * a sign-in silently dropped. */
