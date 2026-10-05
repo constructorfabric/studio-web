@@ -16,8 +16,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "==> infra: postgres + keycloak"
-docker compose up -d postgres keycloak
+echo "==> infra: graph-postgres + keycloak"
+docker compose up -d graph-postgres keycloak
 
 echo "==> step 1/2: seeding root tenant via a no-LLM backend (bootstrap profile)"
 # --wait blocks until the bootstrap backend is healthy; healthy == it reached the
