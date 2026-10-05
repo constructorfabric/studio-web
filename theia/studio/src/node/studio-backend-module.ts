@@ -92,6 +92,8 @@ import { WorkspaceGitService } from './workspace-git-service';
 import { WorkspaceMigrationService, type WorkspaceStartupMode } from './workspace-migration-service';
 import { WorkspaceSourceRegistry } from './workspace-source-registry';
 import { WorkspaceSyncOrchestrator } from './workspace-sync-orchestrator';
+import { MarkdownDiffGitServiceImpl } from './markdown-diff-git-service';
+import { markdownDiffGitServicePath, type MarkdownDiffGitService } from '../common/markdown-diff-git-protocol';
 
 type WorkspaceRuntimeMode = WorkspaceStartupMode;
 
@@ -803,6 +805,11 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     // The Constructor Studio CLI's commands (the ribbon's CLI group): named by
     // id from the browser, their command lines owned by the service.
     bind(StudioCliServiceImpl).toSelf().inSingletonScope();
+    // The refs a document can be compared with (the rendered markdown diff).
+    bind(MarkdownDiffGitServiceImpl).toSelf().inSingletonScope();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<MarkdownDiffGitService>(markdownDiffGitServicePath, () => ctx.container.get(MarkdownDiffGitServiceImpl))
+    ).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioCliService>(studioCliServicePath, () => ctx.container.get(StudioCliServiceImpl))
     ).inSingletonScope();

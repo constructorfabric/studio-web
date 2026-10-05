@@ -5,14 +5,15 @@
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { ApplicationShell, codicon, Navigatable } from '@theia/core/lib/browser';
 import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { Command, CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry, MessageService, SelectionService } from '@theia/core';
+import { Command, CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry, MessageService, QuickInputService, SelectionService } from '@theia/core';
+import { MarkdownDiffGitService, type MarkdownDiffRef } from '../../common/markdown-diff-git-protocol';
 import { UriSelection } from '@theia/core/lib/common/selection';
 import URI from '@theia/core/lib/common/uri';
 import { EditorWidget } from '@theia/editor/lib/browser';
 import { MonacoDiffEditor } from '@theia/monaco/lib/browser/monaco-diff-editor';
 import { NavigatorContextMenu } from '@theia/navigator/lib/browser/navigator-contribution';
 import { MarkdownDiffRequest, MarkdownDiffService, MarkdownDiffVersion } from './markdown-diff-service';
-import { isMarkdownUri, sideLabel } from './markdown-diff-uri';
+import { isMarkdownUri, sideLabel, toGitUri } from './markdown-diff-uri';
 
 export namespace MarkdownDiffCommands {
     export const COMPARE_WITH_HEAD: Command = Command.toDefaultLocalizedCommand({
@@ -20,6 +21,12 @@ export namespace MarkdownDiffCommands {
         category: 'Markdown',
         label: 'Compare with HEAD (Rendered)',
         iconClass: codicon('git-compare'),
+    });
+    export const COMPARE_WITH_REF: Command = Command.toDefaultLocalizedCommand({
+        id: 'studio.markdownDiff.compareWithRef',
+        category: 'Markdown',
+        label: 'Compare with Branch or Tag... (Rendered)',
+        iconClass: codicon('git-branch'),
     });
     export const OPEN_RENDERED: Command = Command.toDefaultLocalizedCommand({
         id: 'studio.markdownDiff.openRendered',
@@ -53,6 +60,12 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
     @inject(MessageService)
     protected readonly messageService: MessageService;
 
+    @inject(QuickInputService)
+    protected readonly quickInput: QuickInputService;
+
+    @inject(MarkdownDiffGitService)
+    protected readonly git: MarkdownDiffGitService;
+
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand(MarkdownDiffCommands.COMPARE_WITH_HEAD, {
             isEnabled: (...args: unknown[]) => !!this.markdownFile(args[0]),
@@ -60,6 +73,14 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
             execute: (...args: unknown[]) => {
                 const file = this.markdownFile(args[0]);
                 return file && this.report(this.diffs.compareWithHead(file));
+            },
+        });
+        commands.registerCommand(MarkdownDiffCommands.COMPARE_WITH_REF, {
+            isEnabled: (...args: unknown[]) => !!this.markdownFile(args[0]),
+            isVisible: (...args: unknown[]) => !!this.markdownFile(args[0]),
+            execute: (...args: unknown[]) => {
+                const file = this.markdownFile(args[0]);
+                return file && this.report(this.compareWithRef(file));
             },
         });
         commands.registerCommand(MarkdownDiffCommands.OPEN_RENDERED, {
@@ -81,6 +102,10 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
         menus.registerMenuAction(NavigatorContextMenu.COMPARE, {
             commandId: MarkdownDiffCommands.COMPARE_WITH_HEAD.id,
             label: MarkdownDiffCommands.COMPARE_WITH_HEAD.label,
+        });
+        menus.registerMenuAction(NavigatorContextMenu.COMPARE, {
+            commandId: MarkdownDiffCommands.COMPARE_WITH_REF.id,
+            label: MarkdownDiffCommands.COMPARE_WITH_REF.label,
         });
     }
 
@@ -153,6 +178,53 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
         };
     }
 
+    /**
+     * A colleague's branch, a release tag: pick the ref, then which question —
+     * how my document differs from theirs, or what their branch changed since
+     * it left mine (the merge base against the branch: a pull request's view).
+     */
+    protected async compareWithRef(file: URI): Promise<unknown> {
+        const { refs, current } = await this.git.listRefs(file.toString());
+        const candidates = refs.filter(ref => ref.name !== current);
+        if (!candidates.length) {
+            this.messageService.info(`${file.path.base}: no other branch or tag to compare with.`);
+            return undefined;
+        }
+        const pickedRef = await this.quickInput.pick(candidates.map(ref => ({ label: ref.name, description: refDescription(ref), ref })), {
+            placeHolder: `Compare ${file.path.base} with...`,
+            matchOnDescription: true,
+        });
+        if (!pickedRef) {
+            return undefined;
+        }
+        const ref = pickedRef.ref;
+        const question = await this.quickInput.pick([
+            { label: `Mine \u2194 ${ref.name}`, description: 'how your document differs from it', id: 'mine' as const },
+            { label: `What ${ref.name} changed`, description: 'since it branched off yours, as a pull request shows it', id: 'branch' as const },
+        ], { placeHolder: ref.name });
+        if (!question) {
+            return undefined;
+        }
+        if (question.id === 'mine') {
+            return this.diffs.open({
+                left: { uri: toGitUri(file, ref.name), label: ref.name },
+                right: { uri: file, label: 'Working Tree' },
+                base: file,
+            });
+        }
+        const base = await this.git.mergeBase(file.toString(), ref.name);
+        if (!base) {
+            this.messageService.warn(`${ref.name} and your branch share no history to compare from.`);
+            return undefined;
+        }
+        return this.diffs.open({
+            title: `${file.path.base} (what ${ref.name} changed)`,
+            left: { uri: toGitUri(file, base), label: `Where it branched \u00b7 ${base.slice(0, 7)}` },
+            right: { uri: toGitUri(file, ref.name), label: ref.name },
+            base: file,
+        });
+    }
+
     protected async report<T>(opening: Promise<T>): Promise<T | undefined> {
         try {
             return await opening;
@@ -161,6 +233,12 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
             return undefined;
         }
     }
+}
+
+function refDescription(ref: MarkdownDiffRef): string {
+    const kind = ref.kind === 'remote' ? 'remote branch' : ref.kind;
+    const when = ref.date ? new Date(ref.date).toLocaleDateString() : '';
+    return [kind, ref.author, when].filter(Boolean).join(' \u00b7 ');
 }
 
 /** The working-tree file behind a `git:` revision uri. */

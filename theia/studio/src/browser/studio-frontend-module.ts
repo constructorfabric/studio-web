@@ -25,6 +25,7 @@ import { MarkdownDiffContribution } from './markdown-diff/markdown-diff-contribu
 import { MarkdownDiffOpenHandler, MarkdownDiffService } from './markdown-diff/markdown-diff-service';
 import { decodeMarkdownDiffUri } from './markdown-diff/markdown-diff-uri';
 import { MarkdownDiffWidget } from './markdown-diff/markdown-diff-widget';
+import { MarkdownDiffGitService, markdownDiffGitServicePath } from '../common/markdown-diff-git-protocol';
 import URI from '@theia/core/lib/common/uri';
 import { GraphOpenHandler } from './graph-open-handler';
 import { ObjectDetailsWidget } from './object-details-widget';
@@ -182,6 +183,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(MarkdownDiffOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownDiffOpenHandler);
     bind(MarkdownDiffService).toSelf().inSingletonScope();
+    bind(MarkdownDiffGitService).toDynamicValue(ctx =>
+        ctx.container.get(WebSocketConnectionProvider).createProxy<MarkdownDiffGitService>(markdownDiffGitServicePath)
+    ).inSingletonScope();
     bind(MarkdownDiffContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(MarkdownDiffContribution);
     bind(MenuContribution).toService(MarkdownDiffContribution);
