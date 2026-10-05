@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describeRepository, pullRequestLinkOf, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
+import { broughtDocuments } from '../common/desktop-git';
 
 // Real git against a bare repository standing in for the remote: what Sync and
 // Push do is git's behaviour, and a fake runner would only test the fake.
@@ -79,6 +80,38 @@ describe('Sync on the desktop', () => {
         expect(result.outcome).toBe('updated');
         expect(result.message).toContain('fast-forwarded by 1 commit');
         expect(fs.existsSync(path.join(clone, 'b.txt'))).toBe(true);
+    });
+
+    it('says which documents a fast-forward brought, and between which commits', async () => {
+        const { remote, root, clone } = project();
+        const before = git(clone, 'rev-parse', 'HEAD');
+        const other = path.join(scratch, 'other');
+        git(scratch, 'clone', '-q', remote, other);
+        fs.mkdirSync(path.join(other, 'docs'));
+        commit(other, 'docs/spec.md', '# Spec\n');
+        commit(other, 'README.md', 'one, edited\n');
+        commit(other, 'code.ts', 'export {};\n');
+        git(other, 'push', '-q');
+        const after = git(other, 'rev-parse', 'HEAD');
+
+        const result = await syncRepository(runGit, root, clone);
+        expect(result.outcome).toBe('updated');
+        expect(result.brought).toEqual({ from: before, to: after, documents: ['README.md', 'docs/spec.md'] });
+        expect(broughtDocuments([result]).map(entry => entry.document)).toEqual(['README.md', 'docs/spec.md']);
+    });
+
+    it('brings no documents when only code changed, and says nothing of the kind when up to date', async () => {
+        const { remote, root, clone } = project();
+        const other = path.join(scratch, 'other');
+        git(scratch, 'clone', '-q', remote, other);
+        commit(other, 'code.ts', 'export {};\n');
+        git(other, 'push', '-q');
+        const updated = await syncRepository(runGit, root, clone);
+        expect(updated.brought?.documents).toEqual([]);
+        const again = await syncRepository(runGit, root, clone);
+        expect(again.outcome).toBe('up-to-date');
+        expect(again.brought).toBeUndefined();
+        expect(broughtDocuments([updated, again])).toEqual([]);
     });
 
     it('says a branch is up to date, and what it has to push', async () => {

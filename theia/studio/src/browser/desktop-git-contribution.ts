@@ -22,7 +22,10 @@ import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { ScmService } from '@theia/scm/lib/browser/scm-service';
-import { describePush, describeSync, pushTargetOf, type DesktopGitPush, type DesktopGitRepository } from '../common/desktop-git';
+import { broughtDocuments, describePush, describeSync, pushTargetOf, type DesktopGitPush, type DesktopGitRepository, type DesktopGitSync } from '../common/desktop-git';
+import { FileUri } from '@theia/core/lib/common/file-uri';
+import { MarkdownDiffService } from './markdown-diff/markdown-diff-service';
+import { toGitUri } from './markdown-diff/markdown-diff-uri';
 import { desktopPush, desktopRepositories, desktopSync } from './desktop-git-client';
 import { desktopStatus } from './desktop-studio-client';
 import { WorkspaceSourcesFrontendController } from './workspace-sources-controller';
@@ -143,6 +146,8 @@ export class DesktopGitContribution implements CommandContribution, FrontendAppl
 @injectable()
 export class DesktopWorkspaceSourcesController extends WorkspaceSourcesFrontendController {
     @inject(WindowService) protected readonly windows!: WindowService;
+    @inject(MarkdownDiffService) protected readonly markdownDiffs!: MarkdownDiffService;
+    @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
 
     protected syncing = false;
 
@@ -162,21 +167,56 @@ export class DesktopWorkspaceSourcesController extends WorkspaceSourcesFrontendC
         this.syncing = true;
         this.emitChange();
         try {
-            const results = [];
+            const results: DesktopGitSync[] = [];
             for (const root of openFolders(this.workspaceService)) {
                 results.push(...await desktopSync(root));
             }
             const { level, text } = describeSync(results);
-            if (level === 'warn') {
-                this.messageService.warn(text);
-            } else {
-                this.messageService.info(text);
-            }
+            // On the desktop each member has their own clone, so Sync is how a
+            // colleague's edits arrive; say which documents they touched, and
+            // let them be read rather than only counted.
+            const documents = broughtDocuments(results);
+            const show = documents.length ? (documents.length === 1 ? 'Show the changed document' : `Show ${documents.length} changed documents`) : undefined;
+            const shown = level === 'warn'
+                ? this.messageService.warn(text, ...(show ? [show] : []))
+                : this.messageService.info(text, ...(show ? [show] : []));
+            void shown.then(choice => {
+                if (show && choice === show) {
+                    void this.showBroughtDocuments(results);
+                }
+            });
         } catch (error) {
             this.messageService.error(`Sync: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
             this.syncing = false;
             this.emitChange();
+        }
+    }
+
+    /** Pick one of the documents a Sync brought, and read it before beside after. */
+    protected async showBroughtDocuments(results: readonly DesktopGitSync[]): Promise<void> {
+        const documents = broughtDocuments(results);
+        const open = (entry: typeof documents[number]): Promise<unknown> => {
+            const file = FileUri.create(entry.repository.path).resolve(entry.document);
+            const short = (sha: string): string => sha.slice(0, 7);
+            return this.markdownDiffs.open({
+                title: `${file.path.base} (what Sync brought)`,
+                left: { uri: toGitUri(file, entry.brought.from), label: `Before Sync \u00b7 ${short(entry.brought.from)}` },
+                right: { uri: toGitUri(file, entry.brought.to), label: `After Sync \u00b7 ${short(entry.brought.to)}` },
+                base: file,
+            });
+        };
+        if (documents.length === 1) {
+            await open(documents[0]);
+            return;
+        }
+        const picked = await this.quickInput.pick(documents.map(entry => ({
+            label: entry.document,
+            description: entry.repository.name,
+            entry,
+        })), { placeHolder: 'Which document to read, as it was before Sync and as it is now' });
+        if (picked) {
+            await open(picked.entry);
         }
     }
 

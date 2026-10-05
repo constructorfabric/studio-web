@@ -23,6 +23,29 @@ export interface DesktopGitSync {
     readonly path: string;
     readonly outcome: 'updated' | 'up-to-date' | 'diverged' | 'skipped' | 'failed';
     readonly message: string;
+    /** What an `updated` Sync brought: the commits it moved between, and the documents that changed. */
+    readonly brought?: DesktopGitBrought;
+}
+
+/**
+ * The documents a fast-forward changed, so the member can read what came in
+ * rather than only how many commits did. On the desktop every member has their
+ * own clone, and Sync is how a colleague's edits arrive.
+ */
+export interface DesktopGitBrought {
+    /** HEAD before the fast-forward. */
+    readonly from: string;
+    /** HEAD after it. */
+    readonly to: string;
+    /** Markdown files added or modified between the two, relative to the clone. */
+    readonly documents: readonly string[];
+}
+
+/** The documents a set of Sync results brought, one entry per document. */
+export function broughtDocuments(results: readonly DesktopGitSync[]): Array<{ repository: DesktopGitSync; brought: DesktopGitBrought; document: string }> {
+    return results.flatMap(repository => repository.brought
+        ? repository.brought.documents.map(document => ({ repository, brought: repository.brought!, document }))
+        : []);
 }
 
 export interface DesktopGitPush {

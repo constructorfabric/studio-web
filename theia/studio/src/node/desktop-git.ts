@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { DesktopGitPush, DesktopGitRepository, DesktopGitSync } from '../common/desktop-git';
+import type { DesktopGitBrought, DesktopGitPush, DesktopGitRepository, DesktopGitSync } from '../common/desktop-git';
 
 /*
  * Git on the desktop: what Sync, Push and the Sources view do with the clones
@@ -175,14 +175,31 @@ export async function syncRepository(git: GitRunner, root: string, dir: string):
             message: `${branch} and ${upstream} have both moved (${counted.ahead} ahead, ${counted.behind} behind); left as it is — merge or rebase it in Source Control`,
         };
     }
+    const from = await text(git, dir, ['rev-parse', 'HEAD']);
     const merged = await git(dir, ['merge', '--ff-only', '@{upstream}']);
     if (merged.code !== 0) {
         return { name, path: dir, outcome: 'failed', message: `${branch} could not be fast-forwarded: ${reasonOf(merged)}` };
     }
+    const to = await text(git, dir, ['rev-parse', 'HEAD']);
+    const brought = from && to ? await documentsBetween(git, dir, from, to) : undefined;
     return {
         name, path: dir, outcome: 'updated',
         message: `${branch} fast-forwarded by ${counted.behind} ${counted.behind === 1 ? 'commit' : 'commits'} from ${upstream}`,
+        ...(brought ? { brought } : {}),
     };
+}
+
+/** Past this many, the list is a repository's worth of churn, not documents to read. */
+const BROUGHT_DOCUMENTS_LIMIT = 200;
+
+/** The markdown files added or modified between two commits; deleted ones have nothing to read. */
+async function documentsBetween(git: GitRunner, dir: string, from: string, to: string): Promise<DesktopGitBrought | undefined> {
+    const listed = await text(git, dir, ['diff', '--name-only', '--diff-filter=AM', '-z', from, to, '--', '*.md', '*.markdown']);
+    if (listed === undefined) {
+        return undefined;
+    }
+    const documents = listed.split('\0').map(file => file.trim()).filter(Boolean).slice(0, BROUGHT_DOCUMENTS_LIMIT);
+    return { from, to, documents };
 }
 
 /**
