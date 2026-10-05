@@ -58,9 +58,12 @@ const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
 const { diffHunks, applyHunks, countPending, splitLines } = require('./diff');
 const { preserveWrapping } = require('./md-rewrap');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
-// theia/studio's rendered markdown comparison (markdown-diff-contribution.ts).
-const RENDERED_COMPARE_COMMAND = 'studio.markdownDiff.compare';
-const RENDERED_HEAD_COMMAND = 'studio.markdownDiff.compareWithHead';
+// theia/studio's rendered markdown comparison (markdown-diff-contribution.ts),
+// and what this editor hands it — see rendered-compare.js.
+const {
+    RENDERED_COMPARE_COMMAND, RENDERED_HEAD_COMMAND, coalesceRemoteChange, remoteChangeRequest,
+    entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest
+} = require('./rendered-compare');
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
@@ -2565,13 +2568,36 @@ class MarkdownEditorWidget extends Widget {
         this.setSaveState('conflict');
         this.renderBanners();
         this.messageService.warn(this.uri.path.base + ' changed on disk — your version was not saved.');
+        void this.nameConflictWriter(this.conflict);
+    }
+
+    /*
+     * Whose version is on disk, when co-editing knows: a colleague who claimed
+     * those bytes (collab.lastWriter, the same claim applyRemoteEdit trusts).
+     * Asked after the conflict is entered rather than before, so a slow or
+     * absent co-editing backend never delays the guarantee that neither version
+     * is lost; it only names one of them a moment later, or never.
+     */
+    async nameConflictWriter(conflict) {
+        let writer;
+        try { writer = await collab.lastWriter(this.uri, conflict.diskFull); }
+        catch (e) { return; }
+        if (!writer || !writer.author || isSelf(writer.author) || this.conflict !== conflict) { return; }
+        conflict.writer = writer;
+        if (this.comparing && this.comparing.conflict === conflict) {
+            this.comparing.diskLabel = diskLabel(writer);
+            this.comparing.heading = diskLabel(writer) + ' \u2192 your unsaved version';
+            this.renderRail();
+        }
+        this.renderBanners();
     }
 
     async resolveConflict(choice) {
         if (!this.conflict) { return; }
         const { diskBody, myBody } = this.conflict;
         if (choice === 'compare') {
-            this.comparing = { heading: 'On disk → your unsaved version', a: diskBody, b: myBody };
+            const label = diskLabel(this.conflict.writer);
+            this.comparing = { heading: label + ' → your unsaved version', a: diskBody, b: myBody, diskLabel: label, conflict: this.conflict };
             this.openSlot('changes');
             return;
         }
@@ -2747,6 +2773,8 @@ class MarkdownEditorWidget extends Widget {
      * than patching it, and is not noticeable at the size these edits arrive in.
      */
     async applyRemoteEdit(diskBody, frontmatter, stat, diskFull, author) {
+        // What I had, before their save replaces it: the left of "what they changed".
+        const before = this.currentBody();
         const caret = this.editor && this.editor.state
             ? this.editor.state.selection.from
             : undefined;
@@ -2782,7 +2810,11 @@ class MarkdownEditorWidget extends Widget {
          * states it while it is news and then goes back to the save state; the
          * history entry above is what keeps it afterwards.
          */
-        statusLine.setDocumentState(this.uri, 'clean', name + ' edited this');
+        this.remoteChange = coalesceRemoteChange(this.remoteChange, { author: name, before, after: diskBody, at: Date.now() });
+        statusLine.setDocumentState(this.uri, 'clean', name + ' edited this',
+            this.renderedCompareAvailable()
+                ? { tooltip: 'See what ' + name + ' changed, rendered side by side', run: () => this.openRemoteChangeRendered() }
+                : undefined);
         clearTimeout(this.remoteNoticeTimer);
         this.remoteNoticeTimer = setTimeout(() => this.setSaveState(this.saveState), REMOTE_NOTICE_MS);
 
@@ -3845,7 +3877,9 @@ class MarkdownEditorWidget extends Widget {
         if (this.conflict) {
             banners.push({
                 tone: 'block',
-                html: '<b>Changed on disk.</b> Autosave is paused so neither version is lost. ' +
+                html: (this.conflict.writer && this.conflict.writer.author && this.conflict.writer.author.name
+                    ? '<b>' + escapeHtml(this.conflict.writer.author.name) + ' changed this on disk.</b>'
+                    : '<b>Changed on disk.</b>') + ' Autosave is paused so neither version is lost. ' +
                     '<button class="studio-btn" data-act="conflict-compare">Compare</button>' +
                     ' <button class="studio-btn" data-act="conflict-mine">Keep mine</button>' +
                     ' <button class="studio-btn" data-act="conflict-theirs">Take theirs</button>'
@@ -5429,6 +5463,10 @@ class MarkdownEditorWidget extends Widget {
                 '<div class="studio-history-head">' +
                 '<span class="studio-history-kind kind-' + entry.kind + '">' + escapeHtml(entry.label || entry.kind) + '</span>' +
                 '<span class="studio-doc-spacer"></span>' +
+                (this.renderedCompareAvailable() && entryHasChange(this.historyEntries, entry.id)
+                    ? '<button class="studio-icon-btn" data-act="history-entry-rendered" data-id="' + entry.id + '" ' +
+                      'title="What this changed, rendered side by side" aria-label="What this changed">' + ICONS.changes + '</button>'
+                    : '') +
                 (selectable
                     ? '<button class="studio-icon-btn' + (selected ? ' resolved' : '') + '" data-act="history-compare" data-id="' + entry.id + '" ' +
                       'title="Select for comparison" aria-label="Select for comparison">' + (selected ? ICONS.checkCircle : ICONS.circle) + '</button>' +
@@ -5468,23 +5506,25 @@ class MarkdownEditorWidget extends Widget {
 
     openConflictRendered() {
         if (!this.comparing) { return; }
-        this.openRenderedCompare({
-            title: this.uri.path.base + ' (' + this.comparing.heading + ')',
-            left: { content: this.comparing.a, label: 'On disk' },
-            right: { content: this.comparing.b, label: 'Your unsaved version' }
-        });
+        this.openRenderedCompare(conflictRequest(this.comparing, this.uri.path.base));
     }
 
     openHistoryRendered() {
         const [a, b] = this.compareSelection.map(id => this.historyEntries.find(e => e.id === id)).filter(Boolean);
         if (!a || !b) { return; }
-        const [older, newer] = Date.parse(a.at) <= Date.parse(b.at) ? [a, b] : [b, a];
-        const label = entry => entry.title + ' · ' + entry.author + ' · ' + new Date(entry.at).toLocaleString();
-        this.openRenderedCompare({
-            title: this.uri.path.base + ' (history)',
-            left: { content: older.snapshot, label: label(older) },
-            right: { content: newer.snapshot, label: label(newer) }
-        });
+        this.openRenderedCompare(historyPairRequest(a, b, this.uri.path.base));
+    }
+
+    /** What one history entry changed, against the version recorded before it. */
+    openEntryRendered(entryId) {
+        const request = entryChangeRequest(this.historyEntries, entryId, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** The colleague's latest run of saves, from what I had before it began. */
+    openRemoteChangeRendered() {
+        const request = remoteChangeRequest(this.remoteChange, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
     }
 
     openHeadRendered() {
@@ -7605,6 +7645,7 @@ class MarkdownEditorWidget extends Widget {
                 case 'close-compare': this.comparing = undefined; this.renderRail(); break;
                 case 'compare-rendered': this.openConflictRendered(); break;
                 case 'history-compare-rendered': this.openHistoryRendered(); break;
+                case 'history-entry-rendered': this.openEntryRendered(id); break;
                 case 'compare-head-rendered': this.openHeadRendered(); break;
                 case 'clear-compare': this.compareSelection = []; this.renderRail(); break;
                 case 'history-compare': this.toggleCompare(id); break;

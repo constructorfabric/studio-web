@@ -224,9 +224,14 @@ class StatusLine {
         return widget && widget.uri ? widget.uri : undefined;
     }
 
-    setDocumentState(uri, state, text) {
+    /**
+     * @param action  optional `{ tooltip, run }`: what clicking the state does
+     *                while it is shown — "A edited this" opens what A changed.
+     *                Without one the field opens the project's save settings.
+     */
+    setDocumentState(uri, state, text, action) {
         if (!uri) { return; }
-        this.documentStates.set(uri.toString(), { state, text });
+        this.documentStates.set(uri.toString(), { state, text, action });
         this.render();
     }
 
@@ -404,13 +409,17 @@ class StatusLine {
             text: savingText,
             alignment: StatusBarAlignment.RIGHT,
             priority: 200,
-            tooltip: documentState
+            tooltip: documentState && documentState.action
+                ? documentState.action.tooltip
+                : documentState
                 ? 'Current document save state. ' + (autosave ? 'Autosave is on.' : 'Manual save is enabled.')
                 : autosave
                 ? 'Changes are written to disk as you type. Click to change how this project saves.'
                 : 'Changes are held until you save. Click to change how this project saves.',
             className: 'studio-status-saving' + (documentState ? ' state-' + documentState.state : ''),
-            onclick: () => { if (this.openProjectPage) { this.openProjectPage(); } }
+            onclick: documentState && documentState.action
+                ? () => documentState.action.run()
+                : () => { if (this.openProjectPage) { this.openProjectPage(); } }
         });
 
         // Absent rather than zero: a field that is usually "0 pending" trains

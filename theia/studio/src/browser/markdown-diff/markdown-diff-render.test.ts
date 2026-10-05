@@ -1,5 +1,5 @@
 import { diffMarkdown, parseMarkdown } from './markdown-diff-model';
-import { coalesce, createMarkdownRenderer, markWordChanges, renderDiff, sanitizeHtml, visibleRows } from './markdown-diff-render';
+import { coalesce, createMarkdownRenderer, describeChanges, markWordChanges, renderDiff, sanitizeHtml, visibleRows } from './markdown-diff-render';
 
 const md = createMarkdownRenderer();
 
@@ -105,6 +105,24 @@ describe('renderDiff', () => {
     it('turns task-list markers into boxes', () => {
         const { root } = render('- [ ] todo\n- [x] done\n', '- [ ] todo\n- [x] done\n');
         expect(Array.from(root.querySelectorAll('.new .studio-md-diff-task')).map(box => box.textContent)).toEqual(['☐', '☑']);
+    });
+});
+
+describe('describeChanges', () => {
+    it('counts formatting-only rows apart from real edits', () => {
+        expect(describeChanges({ modified: 18, added: 0, removed: 0 }, 17)).toBe('1 changed · 17 formatting only');
+        expect(describeChanges({ modified: 2, added: 3, removed: 1 }, 0)).toBe('2 changed · 3 added · 1 removed');
+        expect(describeChanges({ modified: 4, added: 0, removed: 0 }, 4)).toBe('4 formatting only');
+        expect(describeChanges({ modified: 0, added: 0, removed: 0 }, 0)).toBe('No changes');
+    });
+
+    it('says which version could not be read', () => {
+        expect(describeChanges({ modified: 0, added: 5, removed: 0 }, 0, ['HEAD'])).toBe('Not in HEAD · 5 added');
+    });
+
+    it('is fed the formatting-only count by renderDiff', () => {
+        const { formattingOnly } = render('See [docs](a.md) here.\n\nOld words stay mostly.\n', 'See [docs](b.md) here.\n\nOld words stay mostly here.\n');
+        expect(formattingOnly).toBe(1);
     });
 });
 

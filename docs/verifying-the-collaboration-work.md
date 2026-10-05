@@ -185,6 +185,40 @@ A types and saves. Watch B.
 Attribution here is content-keyed, not time-keyed, on purpose: it is what stops
 an agent's write from being applied as a person's.
 
+### 5a. What the colleague changed
+
+Right after step 5, on B's side.
+
+- **Expect**: the status line reads `A edited this` and is clickable; clicking
+  opens a tab `<doc> (A's changes)` with the version B had before A started on
+  the left and A's on the right, A's words marked
+  ([rendered-markdown-diff.md](rendered-markdown-diff.md)). Two saves A made a
+  second apart are **one** change there, not the last of them.
+- After the status line has gone back to the save state, open History.
+  **Expect**: A's entry has a *What changed* button that opens the same kind of
+  comparison against the last different version.
+- **Fails as**: "No changes" on A's entry — the history of a shared checkout
+  records A's save twice (A's own entry and B's record of it), and the second
+  must be compared past the first.
+
+### 5b. Two people, one paragraph, the same moment
+
+A types; a quarter of a second later B types in the same document, before A's
+autosave lands.
+
+- **Expect**: B's banner reads `A changed this on disk.` — the writer named,
+  not just "Changed on disk." *Compare* heads the rail with
+  `A's version (on disk) → your unsaved version`, and *Side by side* opens the
+  two versions rendered with the same labels.
+- With B in the Workbench (the WYSIWYG editor) instead: the conflict banner
+  appears with *Side by side* beside *Compare*. Its columns say `On disk` — that
+  editor has no co-editing client to ask who wrote it.
+- **Fails as, on a Windows bind mount**: no banner at all in the WYSIWYG editor.
+  A workspace mounted from `C:\` is `9p` (drvfs) inside the container and
+  delivers no file events; the Documents editor still notices through its own
+  two-second poll, the WYSIWYG one has none. Run the stand on a Docker volume,
+  which is what a portal session has.
+
 ### 6. Commenting on something that was rendered
 
 In rich view:

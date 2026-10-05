@@ -23,7 +23,9 @@ The same view, from every place two versions of a document meet:
 | The WYSIWYG editor's conflict banner — *Side by side*, beside *Compare* | on disk ↔ your unsaved version | Workbench |
 | The Documents editor's History rail — *Last commit* in its head | the last commit ↔ the saved file | Doc editing |
 | The Documents editor's History rail, two versions selected — *Side by side* | the older ↔ the newer version | Doc editing |
-| The Documents editor's conflict comparison — *Side by side*, beside *Close comparison* | on disk ↔ your unsaved version | Doc editing |
+| The Documents editor's conflict comparison — *Side by side*, beside *Close comparison* | the colleague's version on disk ↔ your unsaved version | Doc editing |
+| The status line's `Alice edited this`, while it shows | what you had before Alice's saves began ↔ the document now | Doc editing |
+| A History entry's *What changed* | the last different version before it ↔ that entry | Doc editing |
 
 The tab follows both versions: when the file is saved or a commit moves HEAD,
 the comparison is drawn again at the same scroll position. Its header has the
@@ -31,6 +33,43 @@ previous and next change, *Show only the changes* (each unchanged run folded to
 one line, one block of context kept either side; a fold opens on click), *Open
 as a text diff*, and *Read both versions again*. The strip beside the scrollbar
 marks every change at its height in the document and scrolls there on click.
+
+## With other people
+
+The portal's session is one container per workspace with one checkout
+(`product-ext/src/node/collab.js`), so two people in a document are two editors
+over the same file, and the comparison is how one reads what the other did. What
+the Documents editor hands the view is worked out in
+`product-ext/src/browser/rendered-compare.js`, tested by
+`test/rendered-compare.test.js`:
+
+- **A colleague's save is one change, not one save.** Their editor autosaves
+  about every second while they type, and each save is applied in place on your
+  side. The change kept is the run: from the body you had before their first
+  save to the body after their last, for as long as it is the same author,
+  nothing of yours came in between, and no pause is longer than two minutes.
+  The status line names them for five seconds and, while it does, opens that
+  run.
+- **A history entry's change is against the last different version**, not the
+  previous entry. The history of a shared checkout is written by every editor
+  open on it, so Alice's own "Edited" entry and Bob's "Alice edited this
+  document" hold the same bytes one after the other; compared with each other
+  they are "no changes". The button is not shown when nothing different came
+  before.
+- **A conflict names whose version is on disk** when co-editing knows — the
+  claim a colleague's editor made for those bytes, the same one that lets a save
+  be applied instead of held for review. The banner reads `Alice changed this on
+  disk.` and the column `Alice's version (on disk)`. It is asked after the
+  conflict is entered, so a slow or absent co-editing backend never delays
+  keeping both versions; it only names one of them a moment later, or never.
+  The WYSIWYG editor has no co-editing client, so its column stays `On disk`.
+
+**Two editors format differently.** The Documents editor and the WYSIWYG one
+serialise markdown differently — line wrapping, table padding. In a document
+both save in turn, every save rewrites rows nobody edited. The view counts those
+apart (`1 changed · 17 formatting only`, the dashed rows), but the noise is real
+in git and in pull requests too; making the two serialisers agree is its own
+piece of work.
 
 ## How a comparison is made
 
@@ -142,12 +181,13 @@ element that already has the id it renders under — another tab's diagram.
 - **Images in both columns are the working tree's**: a revision's image is the
   image's own diff, not the document's.
 - **Task lists** render as boxes, read-only.
-- **The WYSIWYG editor's conflict banner did not appear on the verification
-  stand** (2026-10-05, `cf-studio-theia:local` run standalone): with the editor
-  dirty and the file changed outside, the banner never came, so its *Side by
-  side* button is covered by a unit test only. The detection
-  (`MarkdownEditorModel.syncExternalContents`) predates this work and was not
-  changed; the Documents editor's conflict on the same stand worked end to end.
+- **The WYSIWYG editor learns of a change only from file events.** It has no
+  poll behind the watcher, unlike the Documents editor (`EXTERNAL_POLL_MS`). On
+  a workspace bind-mounted from Windows (`9p`/drvfs inside the container) there
+  are no file events, so there it never raises its conflict banner and never
+  takes a colleague's save; on a Docker volume (ext4, what a portal session
+  has) both work — checked 2026-10-05 with two people. Whether the WYSIWYG
+  editor should poll too is open.
 
 ## Verifying
 
@@ -160,3 +200,9 @@ its modified side — is the hot-reload loop of the session image: copy
 --mode production` in `/app/browser-app` (about 12 s), reload, and drive the IDE
 over CDP. Measure the DOM rather than trusting a build: `.studio-md-diff-row`
 counts by kind, `.studio-md-diff-mermaid svg`, the summary text.
+
+Two people need two browser profiles, each named before the IDE boots (navigate
+to `/favicon.ico`, set `localStorage` `studio-identity-name` and
+`studio-identity-id`, then load the IDE), and a workspace on a **Docker
+volume**, not a bind mount from `C:\` — see the limit above. The scenarios are
+5a and 5b in [verifying-the-collaboration-work.md](verifying-the-collaboration-work.md).

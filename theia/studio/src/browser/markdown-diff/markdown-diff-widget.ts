@@ -15,7 +15,7 @@ import { Resource, ResourceProvider } from '@theia/core/lib/common/resource';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { DiffService } from '@theia/workspace/lib/browser/diff-service';
 import { countChanges, diffMarkdown, parseMarkdown } from './markdown-diff-model';
-import { createMarkdownRenderer, MERMAID_PLACEHOLDER_CLASS, renderDiff } from './markdown-diff-render';
+import { createMarkdownRenderer, describeChanges, MERMAID_PLACEHOLDER_CLASS, renderDiff } from './markdown-diff-render';
 import { MarkdownDiffInput } from './markdown-diff-uri';
 import { createMermaidRenderId, getMermaidTheme } from '../markdown-editor/markdown-editor-mermaid';
 import { renderMermaidDiagram } from '../markdown-editor/markdown-editor-mermaid-render';
@@ -238,7 +238,8 @@ export class MarkdownDiffWidget extends BaseWidget implements StatefulWidget {
         rendered.root.classList.toggle('right-missing', !!right.missing);
         this.scroller.appendChild(rendered.root);
         this.changes = rendered.changes;
-        this.summary.textContent = summaryOf(countChanges(rows), left, right, this.input!);
+        const missing = [left.missing ? this.input!.left.label : '', right.missing ? this.input!.right.label : ''].filter(Boolean);
+        this.summary.textContent = describeChanges(countChanges(rows), rendered.formattingOnly, missing);
         this.drawImages(rendered.root);
         this.drawDiagrams();
         this.scroller.scrollTop = scrollTop;
@@ -431,20 +432,6 @@ export class MarkdownDiffWidget extends BaseWidget implements StatefulWidget {
         button.addEventListener('click', action);
         return button;
     }
-}
-
-function summaryOf(counts: ReturnType<typeof countChanges>, left: Version, right: Version, input: MarkdownDiffInput): string {
-    const parts: Array<string | 0> = [
-        left.missing ? `Not in ${input.left.label}` : 0,
-        right.missing ? `Not in ${input.right.label}` : 0,
-    ];
-    parts.push(
-        counts.modified && `${counts.modified} changed`,
-        counts.added && `${counts.added} added`,
-        counts.removed && `${counts.removed} removed`,
-    );
-    const shown = parts.filter((part): part is string => !!part);
-    return shown.length ? shown.join(' · ') : 'No changes';
 }
 
 function findLastIndex<T>(items: readonly T[], predicate: (item: T) => boolean): number {

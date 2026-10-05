@@ -244,6 +244,32 @@ export interface RenderedDiff {
     readonly root: HTMLElement;
     /** One element per changed row, in order, for navigation and the overview ruler. */
     readonly changes: HTMLElement[];
+    /** Modified rows whose text is identical — only markup changed. */
+    readonly formattingOnly: number;
+}
+
+/**
+ * The header's one line about a comparison.
+ *
+ * Formatting-only rows are counted apart from real edits, because a document
+ * two editors save in turn (the Documents editor and the WYSIWYG one, which
+ * serialise markdown differently) differs in dozens of rows nobody changed,
+ * and "18 changed" for one rewritten sentence reads as eighteen edits.
+ */
+export function describeChanges(
+    counts: { modified: number; added: number; removed: number },
+    formattingOnly: number,
+    missing: readonly string[] = [],
+): string {
+    const edited = counts.modified - formattingOnly;
+    const parts = [
+        ...missing.map(label => `Not in ${label}`),
+        edited > 0 ? `${edited} changed` : '',
+        counts.added ? `${counts.added} added` : '',
+        counts.removed ? `${counts.removed} removed` : '',
+        formattingOnly ? `${formattingOnly} formatting only` : '',
+    ].filter(Boolean);
+    return parts.length ? parts.join(' · ') : 'No changes';
 }
 
 /** The whole comparison as a grid of rows. */
@@ -258,6 +284,7 @@ export function renderDiff(
     const root = document.createElement('div');
     root.className = 'studio-md-diff-grid';
     const changes: HTMLElement[] = [];
+    let formattingOnly = 0;
     const visible = visibleRows(rows, options.changesOnly);
     let foldIndex = 0;
     for (let index = 0; index < rows.length; index++) {
@@ -280,6 +307,9 @@ export function renderDiff(
         if (rows[index].kind !== 'equal') {
             changes.push(element);
         }
+        if (element.classList.contains('marked-markup')) {
+            formattingOnly++;
+        }
         root.appendChild(element);
     }
     if (!rows.some(row => row.kind !== 'equal')) {
@@ -288,7 +318,7 @@ export function renderDiff(
         empty.textContent = 'The two versions are identical.';
         root.insertBefore(empty, root.firstChild);
     }
-    return { root, changes };
+    return { root, changes, formattingOnly };
 }
 
 /** Which rows show when unchanged runs are folded: every change, and FOLD_CONTEXT unchanged rows either side. */
