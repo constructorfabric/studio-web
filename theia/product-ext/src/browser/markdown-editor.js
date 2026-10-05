@@ -2020,7 +2020,9 @@ class MarkdownEditorWidget extends Widget {
         // The save path is armed only after load-time normalisation and the
         // re-anchor transaction have settled. Opening a file must never write
         // to it.
-        this.lastSavedBody = docToMarkdown(this.editor.getJSON());
+        // Clean is what the file already says: an unchanged block keeps its
+        // own spelling (see currentBody), so opening a document writes nothing.
+        this.lastSavedBody = this.currentBody();
         setTimeout(() => { this.armed = true; }, 0);
         this.setSaveState(this.readOnly ? 'read-only' : 'clean');
         this.applyReviewLock();
@@ -2298,7 +2300,20 @@ class MarkdownEditorWidget extends Widget {
          * body and restores the original line breaks for every block whose
          * content is unchanged, so a save rewraps only what was edited.
          */
-        return preserveWrapping(this.reviewedBody(), docToMarkdown(this.editor.getJSON()));
+        return preserveWrapping(this.diskBody(), docToMarkdown(this.editor.getJSON()));
+    }
+
+    /*
+     * The body as the file on disk spells it — what this editor last read or
+     * wrote. What currentBody restores unchanged blocks from: restoring against
+     * reviewedBody(), which is already this editor's own serialisation of the
+     * file, gave nothing back, so the first save of a hand-wrapped document
+     * unwrapped every paragraph and re-padded every table in it.
+     */
+    diskBody() {
+        return this.lastWrittenFull !== undefined
+            ? splitFrontmatter(this.lastWrittenFull).body
+            : this.reviewedBody();
     }
 
     /*

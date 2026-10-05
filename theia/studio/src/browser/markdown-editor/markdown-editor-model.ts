@@ -1,5 +1,5 @@
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
-import { Disposable, DisposableCollection, Emitter, Event } from '@theia/core';
+import { CommandService, Disposable, DisposableCollection, Emitter, Event } from '@theia/core';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileResourceVersion } from '@theia/filesystem/lib/browser/file-resource';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
@@ -12,6 +12,7 @@ import {
     restoreMarkdownFromEditorWithTokens
 } from './markdown-editor-shared';
 import { Resource, ResourceError, ResourceProvider, ResourceVersion } from '@theia/core/lib/common/resource';
+import { preserveUnchangedBlocks } from './markdown-preserve';
 
 export type MarkdownUpdateOrigin = 'initial' | 'user' | 'external-sync' | 'revert';
 
@@ -23,6 +24,9 @@ export type MarkdownUpdateOrigin = 'initial' | 'user' | 'external-sync' | 'rever
  * saved, so it neither took their save nor raised a conflict against it.
  */
 export const EXTERNAL_POLL_MS = 2000;
+
+/** product-ext's co-editing claim (product-frontend-module.js). */
+export const CLAIM_WRITE_COMMAND = 'studio.collab.claimWrite';
 
 export interface MarkdownModifiedExternalChangeState {
     readonly kind: 'modified';
@@ -49,6 +53,11 @@ export class MarkdownEditorModel implements Saveable {
     protected readonly fileService: FileService | undefined;
 
     protected polling = false;
+
+    // Optional for the same reason: the claim is a courtesy to the Documents
+    // editor, and a model without commands (a test harness) saves without one.
+    @inject(CommandService) @optional()
+    protected readonly commands: CommandService | undefined;
 
     protected readonly toDispose = new DisposableCollection();
     protected readonly onDirtyChangedEmitter = new Emitter<void>();
@@ -187,14 +196,22 @@ export class MarkdownEditorModel implements Saveable {
                 throw new Error('Markdown editor resource is not saveable.');
             }
             const savedMarkdown = this.currentMarkdown;
+            // What goes to disk: the edited blocks as the editor serialised
+            // them, every other block as the file already spelled it
+            // (markdown-preserve.ts) — so a save does not reformat what nobody
+            // touched. The editor's own form stays the baseline it compares with.
+            const savedRaw = preserveUnchangedBlocks(this.baselineRawMarkdown, savedMarkdown);
             const savedGeneration = this.userEditGeneration;
             const wasDirty = this.dirty;
             this.activeSaveOperations += 1;
             try {
-                await resource.saveContents(savedMarkdown, {
+                if (this.commands) {
+                    await this.claimWrite(savedRaw);
+                }
+                await resource.saveContents(savedRaw, {
                     version: resource.version
                 });
-                this.baselineRawMarkdown = savedMarkdown;
+                this.baselineRawMarkdown = savedRaw;
                 this.baselineMarkdown = savedMarkdown;
                 if (savedGeneration === this.userEditGeneration) {
                     this.currentMarkdown = savedMarkdown;
@@ -293,6 +310,22 @@ export class MarkdownEditorModel implements Saveable {
 
     async serialize(): Promise<BinaryBuffer> {
         return BinaryBuffer.fromString(this.dirty ? this.currentMarkdown : this.baselineRawMarkdown);
+    }
+
+    /**
+     * Tell co-editing these bytes are this person's (product-ext's
+     * studio.collab.claimWrite), so a colleague's Documents editor applies the
+     * save as theirs instead of holding it for review like an assistant's write.
+     */
+    protected async claimWrite(raw: string): Promise<void> {
+        if (!this.commands || !this.resourceUri) {
+            return;
+        }
+        try {
+            await this.commands.executeCommand(CLAIM_WRITE_COMMAND, this.resourceUri.toString(), raw);
+        } catch {
+            // No co-editing here (the desktop, a build without product-ext): nobody to tell.
+        }
     }
 
     protected startExternalPoll(uri: URI): void {

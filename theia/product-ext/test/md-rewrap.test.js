@@ -46,9 +46,25 @@ test('a fenced code block whose only change is whitespace is NOT restored', () =
     assert.strictEqual(preserveWrapping(original, reserialized), reserialized);
 });
 
-test('a table is NOT restored', () => {
-    const original = '| a  |  b |\n| - | - |\n| 1  | 2 |\n';
-    const reserialized = '| a | b |\n| - | - |\n| 1 | 2 |\n';
+// A table whose rows and cells are all the same is the file's own table: its
+// padding and delimiter spelling come back. (It used to be left as the
+// serializer wrote it, so two editors that pad tables differently rewrote every
+// table in the document on every save.)
+test('a table with the same cells is restored, padding and delimiter row included', () => {
+    const original = '| a  |  b |\n|----|:--:|\n| 1  | 2 |\n';
+    const reserialized = '| a | b |\n| - | :-: |\n| 1 | 2 |\n';
+    assert.strictEqual(preserveWrapping(original, reserialized), original);
+});
+
+test('a table with a changed cell is NOT restored', () => {
+    const original = '| a  |  b |\n|----|----|\n| 1  | 2 |\n';
+    const reserialized = '| a | b |\n| - | - |\n| 1 | 3 |\n';
+    assert.strictEqual(preserveWrapping(original, reserialized), reserialized);
+});
+
+test('a table whose alignment changed is NOT restored', () => {
+    const original = '| a | b |\n|---|---|\n| 1 | 2 |\n';
+    const reserialized = '| a | b |\n| - | -: |\n| 1 | 2 |\n';
     assert.strictEqual(preserveWrapping(original, reserialized), reserialized);
 });
 

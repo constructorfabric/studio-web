@@ -2881,6 +2881,18 @@ const mod = new ContainerModule(bind => {
              * in the palette; an unresolved hosted identity answers nothing
              * rather than a placeholder name.
              */
+            /*
+             * "These bytes are mine", for an editor that is not this one —
+             * theia/studio's WYSIWYG editor calls it before it saves. Without a
+             * claim, a colleague's save from that editor reached the Documents
+             * editor as an unattributed write: held for review like an
+             * assistant's, and the file put back under its author.
+             */
+            commands.registerCommand({ id: 'studio.collab.claimWrite' }, {
+                execute: (uri, full) => (typeof uri === 'string' && typeof full === 'string')
+                    ? collab.claimWrite(new URI(uri), full)
+                    : undefined
+            });
             // Pending edits to disk now (markdown-editor.js, saveAllOpenDocuments).
             commands.registerCommand({ id: 'studio.documents.saveAll' }, { execute: () => saveAllOpenDocuments() });
             commands.registerCommand({ id: 'studio.identity.current' }, {

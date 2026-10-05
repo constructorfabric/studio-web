@@ -202,12 +202,43 @@ function rewrapChangedBlock(orig, next) {
  * anything FROM (a brand-new file, or no prior save to compare against);
  * `newBody` is returned untouched rather than guessing.
  */
+/*
+ * Tables, compared row by row and cell by cell.
+ *
+ * The whitespace-collapsed key cannot see a table's row boundaries, which is
+ * why a table was never restored. But a table whose every row has the same
+ * cells IS the same table, whatever padding and delimiter spelling each side
+ * gave it (`| a  |  b |` / `|---|---|` against `| a | b |` / `| - | - |`), and
+ * giving the file's own spelling back is exactly as safe as for a paragraph —
+ * no row is moved, joined or split. Without it, two editors that pad tables
+ * differently rewrote every table in a document on every save.
+ */
+function isTable(block) {
+    const lines = block.split('\n').filter(line => line.trim());
+    return lines.length >= 2 && lines.every(line => /^[ \t]*\|/.test(line));
+}
+
+function tableKey(block) {
+    return block.split('\n').filter(line => line.trim()).map(line => {
+        const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+        if (cells.length && cells.every(cell => /^:?-+:?$/.test(cell))) {
+            // The delimiter row: only the alignment colons mean anything.
+            return cells.map(cell => (cell.startsWith(':') ? ':' : '') + '-' + (cell.length > 1 && cell.endsWith(':') ? ':' : '')).join('|');
+        }
+        return cells.join('|');
+    }).join('\n');
+}
+
+function blockKey(block) {
+    return isTable(block) ? 'TABLE\u0000' + tableKey(block) : collapseKey(block);
+}
+
 function preserveWrapping(originalBody, newBody) {
     if (!originalBody) { return newBody; }
 
     const origBlocks = splitBlocks(originalBody);
     const newBlocks = splitBlocks(newBody);
-    const ops = diffSequences(origBlocks.map(collapseKey), newBlocks.map(collapseKey));
+    const ops = diffSequences(origBlocks.map(blockKey), newBlocks.map(blockKey));
 
     const out = [];
     let posA = 0, posB = 0;
@@ -220,8 +251,8 @@ function preserveWrapping(originalBody, newBody) {
                 const next = newBlocks[posB + i];
                 // No newline in the original: there is no wrapping to put
                 // back, so restoring would just be copying the same text.
-                const restore = orig.includes('\n') &&
-                    !hasSignificantWhitespace(orig) && !hasSignificantWhitespace(next);
+                const restore = (isTable(orig) && isTable(next)) || (orig.includes('\n') &&
+                    !hasSignificantWhitespace(orig) && !hasSignificantWhitespace(next));
                 out.push(restore ? orig : next);
             }
             posA += n; posB += n;

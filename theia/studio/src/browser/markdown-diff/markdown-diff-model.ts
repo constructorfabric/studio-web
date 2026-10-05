@@ -27,6 +27,10 @@ export interface MarkdownBlock {
     readonly tokens: Token[];
     /** 0-based line in the document where the block starts. */
     readonly line: number;
+    /** 0-based line where it ends, exclusive. */
+    readonly endLine: number;
+    /** For a list item: which list of the document it belongs to (0, 1, …). */
+    readonly list?: number;
 }
 
 export interface ParsedMarkdown {
@@ -66,7 +70,7 @@ export function parseMarkdown(md: markdownit, markdown: string): ParsedMarkdown 
     const frontMatter = FRONT_MATTER.exec(text);
     if (frontMatter) {
         const source = frontMatter[0].replace(/\n$/, '');
-        blocks.push({ kind: FRONT_MATTER_KIND, source, tokens: [], line: 0 });
+        blocks.push({ kind: FRONT_MATTER_KIND, source, tokens: [], line: 0, endLine: source.split('\n').length });
         offset = source.split('\n').length;
         // Blank lines in place of the front matter, so token maps stay
         // document line numbers.
@@ -78,14 +82,15 @@ export function parseMarkdown(md: markdownit, markdown: string): ParsedMarkdown 
     const sourceOf = (map: [number, number] | null): string => map ? lines.slice(map[0], map[1]).join('\n') : '';
 
     let index = 0;
+    let lists = 0;
     while (index < tokens.length) {
         const token = tokens[index];
         const end = token.nesting === 1 ? closingIndex(tokens, index) : index;
         const group = tokens.slice(index, end + 1);
         if (token.type === 'bullet_list_open' || token.type === 'ordered_list_open') {
-            blocks.push(...listItems(group, sourceOf));
+            blocks.push(...listItems(group, sourceOf, lists++));
         } else {
-            blocks.push({ kind: kindOf(token), source: sourceOf(token.map), tokens: group, line: token.map?.[0] ?? 0 });
+            blocks.push({ kind: kindOf(token), source: sourceOf(token.map), tokens: group, line: token.map?.[0] ?? 0, endLine: token.map?.[1] ?? 0 });
         }
         index = end + 1;
     }
@@ -121,7 +126,7 @@ function kindOf(token: Token): string {
  * the whole list. Each item renders inside a copy of its list's opening
  * token, carrying the item's own number for an ordered list.
  */
-function listItems(group: Token[], sourceOf: (map: [number, number] | null) => string): MarkdownBlock[] {
+function listItems(group: Token[], sourceOf: (map: [number, number] | null) => string, list: number): MarkdownBlock[] {
     const open = group[0];
     const close = group[group.length - 1];
     const ordered = open.type === 'ordered_list_open';
@@ -141,6 +146,8 @@ function listItems(group: Token[], sourceOf: (map: [number, number] | null) => s
             source: sourceOf(item.map),
             tokens: [listOpen, ...group.slice(index, end + 1), close],
             line: item.map?.[0] ?? 0,
+            endLine: item.map?.[1] ?? 0,
+            list,
         });
         index = end + 1;
     }
