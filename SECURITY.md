@@ -17,8 +17,8 @@ also exposes — email
 [contact@constructorfabric.org](mailto:contact@constructorfabric.org) instead, or
 report it in each affected repository.
 
-Please include the component, the commit or image tag (`sha-<commit>`, `v*`) you
-found it on, steps to reproduce, and the impact as you see it. The
+Please include the component, the commit, image or release tag you found it on
+(`sha-<commit>`, `v*`, `desktop-v*`), steps to reproduce, and the impact as you see it. The
 [organization policy](https://github.com/constructorfabric/governance/blob/main/SECURITY.md#what-to-include)
 lists everything that helps.
 

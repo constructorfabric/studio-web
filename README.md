@@ -259,32 +259,32 @@ How to branch, sign off, test and get a change reviewed is in
 
 ## Troubleshooting
 
-#### The backend never becomes healthy
+### The backend never becomes healthy
 
 `docker compose ps` shows which dependency it waits for, and
 `docker compose logs -f backend` why. On an empty database the backend waits
 for `backend-bootstrap` to seed the root tenant, and that waits for Keycloak to
 finish importing its realm.
 
-#### Browser sign-in fails
+### Browser sign-in fails
 
 Open <https://localhost:8443> and accept the self-signed certificate; the
 portal cannot redirect to a Keycloak the browser does not trust yet.
 
-#### The session image build fails on GitHub's rate limit
+### The session image build fails on GitHub's rate limit
 
 The image resolves the Studio skill engine through `api.github.com`, whose
 anonymous limit is 60 requests an hour per IP, and the build fails rather than
 ship an empty CLI. `export GITHUB_TOKEN=$(gh auth token)` before building;
 Compose passes it as a build secret, so it never lands in the image history.
 
-#### A session runs an old IDE
+### A session runs an old IDE
 
 `docker compose up` builds `cf-studio-theia:local` only when the tag is
 missing; it never refreshes it. Run `docker compose build session-image`, then
 recreate the session — a running session keeps the image it started with.
 
-#### A published run rebuilds images
+### A published run rebuilds images
 
 Compose keeps the base file's `build:` sections even when the override supplies
 an `image:`, so without `--no-build` a tag that failed to pull is rebuilt from
@@ -292,7 +292,7 @@ source without a word. Run `pull` first and keep `--no-build`; a missing tag
 then fails visibly. Published services use `pull_policy: always` because `edge`
 moves: a three-day-old `edge` on your machine is not what `main` runs.
 
-#### Sessions cannot see their files
+### Sessions cannot see their files
 
 The backend and the session containers share `/srv/cf-studio-workspaces` on
 the host, because the host Docker daemon creates the sessions. Change both
