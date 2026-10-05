@@ -152,6 +152,29 @@ describe('DocumentShareServiceImpl', () => {
         expect(git(mine, 'status', '--porcelain')).toBe('M README.md');
     });
 
+    it('runs git only in the folders the session opened', async () => {
+        const { remote, mine } = project();
+        write(mine, 'docs/spec.md', '# Spec findings\n\nEdited.\n');
+        const elsewhere = path.join(scratch, 'elsewhere');
+        fs.mkdirSync(elsewhere);
+        const before = git(remote, 'rev-parse', 'main');
+        const confined = (opened: string) => Object.assign(new DocumentShareServiceImpl(), {
+            workspaceServer: { getMostRecentlyUsedWorkspace: async () => FileUri.create(opened).toString() },
+        });
+
+        // Another folder is open: the repository is neither listed nor shared.
+        const outside = confined(elsewhere);
+        expect((await outside.status([FileUri.create(mine).toString()])).repositories).toEqual([]);
+        expect(await outside.share({ root: FileUri.create(mine).toString(), documents: ['docs/spec.md'], message: 'x', author: ALICE }))
+            .toEqual({ kind: 'failed', detail: 'not a folder of this workspace' });
+        expect(git(remote, 'rev-parse', 'main')).toBe(before);
+
+        // A desktop workspace file listing the folder lets it through.
+        const workspaceFile = path.join(scratch, 'project.theia-workspace');
+        fs.writeFileSync(workspaceFile, JSON.stringify({ folders: [{ path: 'mine' }] }));
+        expect((await confined(workspaceFile).status([FileUri.create(mine).toString()])).repositories.map(r => r.name)).toEqual(['mine']);
+    });
+
     it('leaves everything else in the working tree untouched when the team has not moved', async () => {
         const { mine } = project();
         write(mine, 'docs/spec.md', '# Spec findings\n\nMine.\n');

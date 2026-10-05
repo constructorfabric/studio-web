@@ -260,6 +260,7 @@ B's branch exists in the repository (pushed, or local in the shared checkout).
   refs newest first with their author, then two questions. *Mine ↔ B's branch*
   shows how the document differs; *What B's branch changed* shows only B's
   edits since it branched off, not what happened on yours meanwhile.
+
 ### 5g. A pull while the document is open
 
 A has the document open in Documents. B pushes an edit to it from elsewhere;

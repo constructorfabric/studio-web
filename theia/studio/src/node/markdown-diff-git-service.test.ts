@@ -66,7 +66,8 @@ describe('MarkdownDiffGitServiceImpl', () => {
         const repo = path.join(scratch, 'repo');
         git(scratch, 'init', '-q', '-b', 'main', repo);
         commit(repo, 'docs/spec.md', '# Spec\n');
-        git(repo, 'tag', 'v1');
+        // Lightweight, and never signed: a local tag.gpgSign or forceSignAnnotated would otherwise ask for a message.
+        git(repo, '-c', 'tag.gpgSign=false', '-c', 'tag.forceSignAnnotated=false', 'tag', '--no-sign', 'v1');
         git(repo, 'checkout', '-q', '-b', 'bob/spec');
         commit(repo, 'docs/spec.md', '# Spec\n\nBob\'s paragraph.\n', 'Bob');
         git(repo, 'checkout', '-q', 'main');

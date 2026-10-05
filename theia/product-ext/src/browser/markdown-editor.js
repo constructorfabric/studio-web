@@ -2811,6 +2811,7 @@ class MarkdownEditorWidget extends Widget {
          * somebody else.
          */
         const writer = await collab.lastWriter(this.uri, content.value);
+        if (this.typedWhileAsking(diskBody, content.value)) { return; }
         if (writer && writer.author && !isSelf(writer.author)) {
             await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value, writer.author);
             return;
@@ -2826,6 +2827,7 @@ class MarkdownEditorWidget extends Widget {
          * or a hand edit is equal to no commit and is still held for review.
          */
         const committed = await this.committedVersion(content.value);
+        if (this.typedWhileAsking(diskBody, content.value)) { return; }
         if (committed) {
             await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value,
                 { name: committed.author, key: 'git:' + committed.commit });
@@ -5595,6 +5597,18 @@ class MarkdownEditorWidget extends Widget {
      * two versions as documents — a long rewrite, a moved section, a table.
      * Where that extension is absent the buttons are simply not drawn.
      */
+    /**
+     * Who wrote the file is asked over the wire (the claim, the commit), and a
+     * keystroke can land meanwhile. Applying the disk version then would drop
+     * it without a word, so a document that went dirty while asking becomes
+     * the conflict it now is — the check above, made again.
+     */
+    typedWhileAsking(diskBody, diskFull) {
+        if (this.saveState !== 'dirty' && this.saveState !== 'conflict') { return false; }
+        this.enterConflict(diskBody, this.currentBody(), diskFull);
+        return true;
+    }
+
     /** `{ commit, author }` when `full` is a commit's version of this file (studio's git, by command). */
     async committedVersion(full) {
         if (!this.commandRegistry || !this.commandRegistry.getCommand(COMMITTED_VERSION_COMMAND)) { return undefined; }

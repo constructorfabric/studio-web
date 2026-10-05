@@ -9,7 +9,8 @@
 // desktop's Sync and Push, so credentials are what they already are: the
 // session's helper in a portal session, the token broker's on the desktop.
 
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { WorkspaceServer } from '@theia/workspace/lib/common/workspace-protocol';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -139,15 +140,72 @@ export function reviewBranchName(author: SharePerson | undefined, now: Date): st
     return `studio/${who}/${stamp}`;
 }
 
+/** Whether `target` is `folder` or inside it. */
+export function isWithin(folder: string, target: string): boolean {
+    const relative = path.relative(path.resolve(folder), path.resolve(target));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+/**
+ * The folders a workspace opens: the folder itself, or for a workspace file
+ * (the desktop's `<project>.theia-workspace`) the folders it lists, relative
+ * to the file. Theia writes those files as plain JSON.
+ */
+export function workspaceFolders(workspace: string): string[] {
+    let stat: fs.Stats;
+    try {
+        stat = fs.statSync(workspace);
+    } catch {
+        return [];
+    }
+    if (stat.isDirectory()) {
+        return [path.resolve(workspace)];
+    }
+    try {
+        const folders = (JSON.parse(fs.readFileSync(workspace, 'utf8')) as { folders?: Array<{ path?: unknown }> }).folders ?? [];
+        return folders
+            .map(folder => folder.path)
+            .filter((folder): folder is string => typeof folder === 'string')
+            .map(folder => folder.startsWith('file:') ? FileUri.fsPath(folder) : path.resolve(path.dirname(workspace), folder));
+    } catch {
+        return [];
+    }
+}
+
 @injectable()
 export class DocumentShareServiceImpl implements DocumentShareService {
     protected git: GitRunner = runGit;
     protected now: () => Date = () => new Date();
 
+    /** Which folders this session opened; absent only where nothing is bound (unit tests). */
+    @inject(WorkspaceServer) @optional()
+    protected readonly workspaceServer?: WorkspaceServer;
+
+    /**
+     * The folders git may run in: what the session opened. The roots come
+     * from the client, and git here commits and pushes with the session's
+     * credentials, so a root outside the workspace is refused, not trusted.
+     */
+    protected async allowedFolders(): Promise<string[] | undefined> {
+        if (!this.workspaceServer) {
+            return undefined;
+        }
+        const opened = await this.workspaceServer.getMostRecentlyUsedWorkspace();
+        return opened ? workspaceFolders(FileUri.fsPath(opened)) : [];
+    }
+
+    protected async isAllowed(dir: string): Promise<boolean> {
+        const allowed = await this.allowedFolders();
+        return !allowed || allowed.some(folder => isWithin(folder, dir));
+    }
+
     async status(roots: readonly string[]): Promise<ShareStatus> {
         const repositories: ShareRepository[] = [];
         const seen = new Set<string>();
         for (const root of roots) {
+            if (!await this.isAllowed(FileUri.fsPath(root))) {
+                continue;
+            }
             for (const dir of this.repositoriesOf(FileUri.fsPath(root))) {
                 if (seen.has(dir)) {
                     continue;
@@ -231,6 +289,9 @@ export class DocumentShareServiceImpl implements DocumentShareService {
 
     async share(request: ShareRequest): Promise<ShareOutcome> {
         const dir = FileUri.fsPath(request.root);
+        if (!await this.isAllowed(dir)) {
+            return { kind: 'failed', detail: 'not a folder of this workspace' };
+        }
         const described = await this.describe(dir);
         if (!described) {
             return { kind: 'failed', detail: 'not a git repository' };
