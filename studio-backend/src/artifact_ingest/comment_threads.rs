@@ -150,6 +150,12 @@ pub struct RepositoryThreads {
 /// the same document. Exactly one trailing `.json` is stripped, so a document
 /// genuinely called `data.json` keeps its name — the same rule the IDE applies
 /// when it decides where to write.
+/// Whether `path` is one of the sidecars [`fold_repository`] reads, so a walk
+/// can read their text and leave other files' alone.
+pub(super) fn is_sidecar(path: &str) -> bool {
+    sidecar_of(path).is_some()
+}
+
 fn sidecar_of(path: &str) -> Option<(String, Kind<'_>)> {
     let rest = path.strip_prefix(SIDECAR_DIR)?;
     if let Some(stem) = rest.strip_suffix(LOG_SUFFIX) {

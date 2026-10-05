@@ -16,11 +16,12 @@ use std::process::Command;
 
 /// Backstop on files walked per clone, matched to the tree-API cap.
 const MAX_FILES: usize = 10_000;
-/// Per-file byte ceiling for reading text content into a node (256 KiB).
-const MAX_TEXT_BYTES: u64 = 256 * 1024;
-/// Total text budget across a whole walk, so a big repo can't exhaust memory
-/// (the graph store is in-memory). 24 MiB of prose is plenty for a first cut.
-const MAX_TOTAL_TEXT_BYTES: u64 = 24 * 1024 * 1024;
+// No ceiling on a file's size, and none on a walk's text. There used to be
+// both (256 KiB a file, 24 MiB a walk, from when the graph store lived in
+// memory), and a document over either was walked without its text, which the
+// classifier skips: a 343 KB architecture note on Insight sat in "not scanned"
+// for good. What keeps a walk's text small now is the caller saying which files
+// it reads at all (see [`walk`]), not a size a document can outgrow.
 
 /// One file discovered in the checkout.
 #[derive(Debug, Clone)]
@@ -29,8 +30,9 @@ pub struct WalkedFile {
     pub path: String,
     /// Size in bytes on disk.
     pub size: u64,
-    /// UTF-8 content for text files under the size caps; `None` for binaries,
-    /// oversized files, or once the total text budget is spent.
+    /// The content of a text file the walk was asked to read; `None` for a
+    /// binary, a file it was not asked about, or one it could not read. Bytes
+    /// that are not UTF-8 are replaced rather than costing the whole file.
     pub text: Option<String>,
 }
 
@@ -391,16 +393,20 @@ pub fn head_commit(dir: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Walk a checkout depth-first, skipping `.git` and symlinks, reading text-file
-/// content within the caps. Blocking — call under `spawn_blocking`.
+/// Walk a checkout depth-first, skipping `.git` and symlinks, reading the
+/// content of the text files `read_text` names by their repo-relative path.
+/// Blocking — call under `spawn_blocking`.
+///
+/// Every file is listed; only the text is chosen. A sync reads what it
+/// classifies and counts (documents and comment logs) and lists the rest by
+/// path, so a repository of source never sits in memory whole.
 ///
 /// Unreadable directories and entries are still skipped rather than failing
 /// the walk — one of them must not cost a sync every other file — but the walk
 /// says that it skipped something (see [`Walk::complete`]).
-pub fn walk(dir: &Path) -> anyhow::Result<Walk> {
+pub fn walk(dir: &Path, read_text: &dyn Fn(&str) -> bool) -> anyhow::Result<Walk> {
     let mut out: Vec<WalkedFile> = Vec::new();
     let mut complete = true;
-    let mut text_budget: u64 = MAX_TOTAL_TEXT_BYTES;
     let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
 
     while let Some(current) = stack.pop() {
@@ -451,16 +457,9 @@ pub fn walk(dir: &Path) -> anyhow::Result<Walk> {
             let rel_str = rel.to_string_lossy().replace('\\', "/");
             let size = meta.len();
 
-            let mut text = None;
-            if is_text_path(&path)
-                && size <= MAX_TEXT_BYTES
-                && text_budget >= size
-                && let Ok(bytes) = std::fs::read(&path)
-                && let Ok(s) = String::from_utf8(bytes)
-            {
-                text_budget = text_budget.saturating_sub(size);
-                text = Some(s);
-            }
+            let text = (is_text_path(&path) && read_text(&rel_str))
+                .then(|| std::fs::read(&path).ok().map(utf8))
+                .flatten();
             out.push(WalkedFile {
                 path: rel_str,
                 size,
@@ -476,9 +475,14 @@ pub fn walk(dir: &Path) -> anyhow::Result<Walk> {
     })
 }
 
+/// Text as a reader wants it: the file's own when it is UTF-8, and with the
+/// stray bytes replaced when it is not.
+fn utf8(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
 /// One file of a checkout, as [`walk`] would have read it: `None` unless it is
-/// a regular text file within the per-file ceiling, valid UTF-8, outside `.git`
-/// and reached without a symlink.
+/// a regular text file outside `.git`, reached without a symlink.
 ///
 /// `rel` is repo-relative with `/` separators. A path that is absolute, empty
 /// in a segment or climbs with `..` reads nothing rather than leaving `dir`.
@@ -507,10 +511,10 @@ pub fn read_text_file(dir: &Path, rel: &str) -> Option<String> {
         }
     }
     let meta = std::fs::symlink_metadata(&path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_TEXT_BYTES || !is_text_path(&path) {
+    if !meta.is_file() || !is_text_path(&path) {
         return None;
     }
-    String::from_utf8(std::fs::read(&path).ok()?).ok()
+    std::fs::read(&path).ok().map(utf8)
 }
 
 #[cfg(test)]
@@ -628,10 +632,32 @@ mod tests {
         std::fs::create_dir_all(root.join("docs")).expect("dir");
         std::fs::write(root.join("README.md"), "one\n").expect("write");
         std::fs::write(root.join("docs/a.md"), "two\n").expect("write");
-        let walked = walk(&root).expect("walk");
+        let walked = walk(&root, &|_| true).expect("walk");
         assert!(walked.complete);
         let paths: Vec<&str> = walked.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["README.md", "docs/a.md"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every file is listed and only the asked-for ones are read, whatever
+    /// their size.
+    #[test]
+    fn a_walk_reads_the_text_it_is_asked_for_and_lists_the_rest() {
+        let root = std::env::temp_dir().join(format!("walk-read-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).expect("dir");
+        let big = "# Note\n".repeat(100_000);
+        std::fs::write(root.join("NOTE.md"), &big).expect("write");
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write");
+        let walked = walk(&root, &|p: &str| p.ends_with(".md")).expect("walk");
+        let text = |p: &str| {
+            walked
+                .files
+                .iter()
+                .find(|f| f.path == p)
+                .map(|f| f.text.as_ref().map(String::len))
+        };
+        assert_eq!(text("NOTE.md"), Some(Some(big.len())));
+        assert_eq!(text("src/main.rs"), Some(None), "listed, not read");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -641,7 +667,7 @@ mod tests {
     #[test]
     fn a_walk_that_could_not_read_its_root_is_not_complete() {
         let root = std::env::temp_dir().join(format!("walk-missing-{}", uuid::Uuid::new_v4()));
-        let walked = walk(&root).expect("walk");
+        let walked = walk(&root, &|_| true).expect("walk");
         assert!(walked.files.is_empty());
         assert!(!walked.complete);
     }
@@ -660,7 +686,9 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("docs/logo.png"), [0x89, b'P', b'N', b'G']).unwrap();
         std::fs::write(root.join(".git/config"), "secret").unwrap();
-        std::fs::write(root.join("big.md"), "x".repeat(MAX_TEXT_BYTES as usize + 1)).unwrap();
+        let big = "x".repeat(2 * 1024 * 1024);
+        std::fs::write(root.join("big.md"), &big).unwrap();
+        std::fs::write(root.join("latin1.md"), b"caf\xe9\n").unwrap();
 
         assert_eq!(
             read_text_file(&root, "docs/prd.md").as_deref(),
@@ -676,9 +704,14 @@ mod tests {
             "not a text path"
         );
         assert_eq!(
-            read_text_file(&root, "big.md"),
-            None,
-            "over the per-file ceiling"
+            read_text_file(&root, "big.md").map(|t| t.len()),
+            Some(big.len()),
+            "no size is too large to read"
+        );
+        assert_eq!(
+            read_text_file(&root, "latin1.md").as_deref(),
+            Some("caf\u{fffd}\n"),
+            "a stray byte is replaced, not the file dropped"
         );
         for escape in [
             "../etc/passwd",

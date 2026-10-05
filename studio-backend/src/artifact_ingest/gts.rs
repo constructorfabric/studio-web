@@ -555,10 +555,12 @@ pub fn file_node(
 
 /// A File node built from a real checkout on disk: same identity as the
 /// tree-API node (keyed on path, so the two channels upsert the same instance),
-/// but carrying the snapshot `commit` and whether the file `has_text`.
+/// but carrying the snapshot `commit` and `from_checkout`.
 ///
-/// Not the text itself. What search needs of it is the file's content node
-/// ([`file_content_node`]), so a listing of files stays a listing of paths.
+/// Never the text, and no longer an excerpt of it beside the file either: the
+/// text stays in the checkout, where everything that reads a document reads
+/// it. A node an earlier sync wrote may still say `has_text`, which is how its
+/// content node is found and retired.
 ///
 /// `threads` is the conversation the repository carries about this file in
 /// `.studio/comments/` (see [`super::comment_threads`]), and is `None` for a
@@ -573,7 +575,6 @@ pub fn file_node_cloned(
     repo_full_path: &str,
     path: &str,
     size: u64,
-    has_text: bool,
     commit: Option<&str>,
     threads: Option<ThreadCounts>,
 ) -> GtsNode {
@@ -586,7 +587,7 @@ pub fn file_node_cloned(
             "is_dir": false,
             "size": size,
             "commit": commit,
-            "has_text": has_text,
+            "from_checkout": true,
         }),
     };
     if let (Some(counts), Some(obj)) = (threads, node.value.as_object_mut()) {
@@ -612,6 +613,7 @@ pub fn file_content_instance_id(file_id: &str) -> String {
 /// the file to be read without it: `file` to map a search hit back, `path`
 /// and `repo` to say which file it is. The scope fields are stamped on by the
 /// batch that stamps the file's, so `node_in_scope` answers the same for both.
+#[cfg(test)]
 pub fn file_content_node(file: &GtsNode, text: &str) -> Option<GtsNode> {
     if text.trim().is_empty() {
         return None;
@@ -626,15 +628,6 @@ pub fn file_content_node(file: &GtsNode, text: &str) -> Option<GtsNode> {
             "text": text,
         }),
     })
-}
-
-/// file_content → file.
-pub fn content_of_edge(content_id: &str, file_id: &str) -> GtsEdge {
-    GtsEdge {
-        type_id: REL_CONTENT_OF,
-        from: content_id.to_string(),
-        to: file_id.to_string(),
-    }
 }
 
 /// One pull request. `open_threads` is its unresolved review conversations,
@@ -937,7 +930,6 @@ mod tests {
             "acme/specs",
             "docs/adr/0007.md",
             42,
-            true,
             Some("deadbeef"),
             None,
         );
@@ -963,7 +955,6 @@ mod tests {
             "acme/specs",
             "docs/prd.md",
             42,
-            false,
             None,
             None,
         );
@@ -977,7 +968,6 @@ mod tests {
             "acme/specs",
             "docs/prd.md",
             42,
-            false,
             None,
             Some(ThreadCounts {
                 open: 0,
@@ -1075,8 +1065,9 @@ mod tests {
         assert_eq!(graph_edge_type_schemas().len(), ALL_EDGE_TYPES.len());
     }
 
-    /// The file node is metadata only, and its text goes to a content node
-    /// that names it, under an id anyone holding the file can compute.
+    /// The file node is metadata only. The content node an earlier sync stored
+    /// beside it names it, under an id anyone holding the file can compute,
+    /// which is how a later sync retires it.
     #[test]
     fn a_files_text_is_its_content_node_not_its_own() {
         let file = file_node_cloned(
@@ -1086,13 +1077,13 @@ mod tests {
             "acme/specs",
             "docs/prd.md",
             42,
-            true,
             Some("deadbeef"),
             None,
         );
         assert!(file.value.get("text").is_none());
         assert!(file.value.get("text_excerpt").is_none());
-        assert_eq!(file.value["has_text"], true);
+        assert!(file.value.get("has_text").is_none());
+        assert_eq!(file.value["from_checkout"], true);
 
         let content = file_content_node(&file, "# PRD").expect("text has a content node");
         assert_eq!(content.type_id, FILE_CONTENT_TYPE);

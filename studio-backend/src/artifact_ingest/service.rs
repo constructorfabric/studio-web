@@ -13,13 +13,11 @@
 //! it stays testable on its own.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use bytes::Bytes;
 use credstore_sdk::{CredStoreClientV1, SecretRef};
-use file_parser_sdk::{Detection, FileParserClientV1, ParseBytesRequest};
 use toolkit_security::SecurityContext;
 
 use super::clone;
@@ -60,21 +58,14 @@ const MAX_THREAD_PULLS: u32 = 200;
 /// (studio-web#561).
 const NODE_CHUNK: usize = 1_000;
 const EDGE_CHUNK: usize = 1_000;
-/// Upper bound on a binary document we hand to the file-parser gear. Extraction
-/// cost and the resulting text both scale with size; 15 MiB covers real specs
-/// and slide decks without letting a giant asset stall a sync.
-const MAX_PARSE_BYTES: u64 = 15 * 1024 * 1024;
-
-/// True when a path looks like a document the file-parser can turn into text —
-/// office formats, PDFs, e-books and rich text. Plain-text formats already come
-/// through the walk as `text`, and opaque binaries (images, archives, media)
-/// have no text to extract, so both are skipped.
-fn is_parseable_doc(path: &str) -> bool {
-    const DOC_EXT: &[&str] = &[
-        "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "odp", "rtf", "epub",
-    ];
-    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    DOC_EXT.contains(&ext.as_str())
+/// The files whose text a sync reads: what it classifies, and the comment
+/// logs it counts threads from. Everything else is listed by its path.
+///
+/// A sync used to read every text file, source included, and store an excerpt
+/// of each in the graph for a search endpoint nothing called — on studio-dev
+/// 19,950 content nodes, 136 MB with their embeddings (2026-10-05).
+fn synced_text(path: &str) -> bool {
+    is_prose_path(path) || comment_threads::is_sidecar(path)
 }
 
 /// The stored file nodes of ONE repository in ONE source scope whose path a
@@ -227,10 +218,6 @@ pub struct IngestService {
     /// provider key (`github`, …) → driver.
     drivers: HashMap<String, Arc<dyn ConnectorDriver>>,
     graph: Arc<dyn GraphStore>,
-    /// The file-parser gear, when linked: extracts text (Markdown) from binary
-    /// documents (PDF/docx/…) so their content is indexed for search. `None`
-    /// leaves binary files as metadata-only, exactly as before.
-    file_parser: Option<Arc<dyn FileParserClientV1>>,
     /// studio-documents, when that gear is running: a sync ends by asking it
     /// what the prose files it just read are. `None` leaves a repository
     /// ingested but unclassified, which is what a deployment without the
@@ -284,7 +271,6 @@ impl IngestService {
         credstore: Arc<dyn CredStoreClientV1>,
         drivers: HashMap<String, Arc<dyn ConnectorDriver>>,
         graph: Arc<dyn GraphStore>,
-        file_parser: Option<Arc<dyn FileParserClientV1>>,
         classifier: Option<Arc<dyn DocumentClassifier>>,
         workspaces_root: Option<PathBuf>,
         work_root: Option<PathBuf>,
@@ -293,7 +279,6 @@ impl IngestService {
             credstore,
             drivers,
             graph,
-            file_parser,
             classifier,
             workspaces_root,
             work_root,
@@ -635,8 +620,13 @@ impl IngestService {
                 Some(threads.documents.values().map(|counts| counts.open).sum());
         }
 
+        // Content nodes an earlier sync of this repository wrote, to retire
+        // once its files are rewritten without them. Read before the walk
+        // rewrites them, since `has_text` is how a file says it had one.
+        let legacy_contents = self.legacy_contents(ctx, source_scope, &repo_id).await;
+
         match on_disk {
-            Some((dir, walk, commit)) => {
+            Some((_dir, walk, commit)) => {
                 // The walk stops at the same cap, and says so when it does.
                 listing_complete = walk.complete && walk.files.len() <= MAX_FILES;
                 for wf in walk.files.into_iter().take(MAX_FILES) {
@@ -645,42 +635,23 @@ impl IngestService {
                         gts::file_instance_id(source_scope, connector_id, repo_full_path, &wf.path);
                     edges.push(gts::contains_edge(&repo_id, &file_id));
                     file_paths.insert(wf.path.clone());
-                    // Text files carry their content already; for a binary
-                    // document (no text) ask the file-parser gear to extract it,
-                    // so its content is indexed for search too.
-                    let text = match wf.text {
-                        Some(t) => Some(t),
-                        None => self.parse_binary_text(ctx, &dir, &wf.path, wf.size).await,
-                    };
-                    let file = gts::file_node_cloned(
+                    // The graph keeps what a file is, not what it says: the
+                    // text stays in the checkout, where everything that reads
+                    // a document (the classifier, Spec Quality, the editor)
+                    // reads it.
+                    nodes.push(gts::file_node_cloned(
                         source_scope,
                         &repo_id,
                         connector_id,
                         repo_full_path,
                         &wf.path,
                         wf.size,
-                        text.is_some(),
                         commit.as_deref(),
                         threads.documents.get(&wf.path).copied(),
-                    );
-                    // The text goes beside the file, not into it, so listing
-                    // files never drags it along. Pushed after the file: the
-                    // edge flush comes after every node, and its endpoints
-                    // have to exist by then.
-                    let content = text
-                        .as_deref()
-                        .and_then(|t| gts::file_content_node(&file, t));
-                    nodes.push(file);
-                    if let Some(content) = content {
-                        edges.push(gts::content_of_edge(&content.instance_id, &file_id));
-                        nodes.push(content);
-                    }
-                    // What the classifier reads. The prose text is MOVED here,
-                    // not copied: the content node above has its own copy, and
-                    // a third one per document is what made a large
-                    // repository's walk expensive.
+                    ));
+                    // What the classifier reads, moved rather than copied.
                     if is_prose_path(&wf.path) {
-                        if let Some(content) = text {
+                        if let Some(content) = wf.text {
                             scanned.push(IngestedDocument {
                                 node_id: file_id.clone(),
                                 path: wf.path.clone(),
@@ -810,6 +781,24 @@ impl IngestService {
             0,
         )
         .await?;
+
+        // The excerpts the files above no longer have. Best-effort, like the
+        // prune below: a failure leaves them for the next sync, and costs
+        // nothing but the space they already took.
+        if !legacy_contents.is_empty() {
+            match self.graph.delete_nodes(ctx, &legacy_contents).await {
+                Ok(retired) => info!(
+                    retired,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: retired the file excerpts an earlier sync stored"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: could not retire stored file excerpts; the next sync retries"
+                ),
+            }
+        }
 
         // Forget what the repository no longer has. Everything above only
         // ever adds, so a file deleted or moved away stayed in the graph — and
@@ -1128,7 +1117,7 @@ impl IngestService {
                 &password,
                 None,
             )?;
-            let walked = clone::walk(&res.dir)?;
+            let walked = clone::walk(&res.dir, &synced_text)?;
             Ok((res.dir, walked, res.commit))
         })
         .await
@@ -1191,7 +1180,7 @@ impl IngestService {
                 ),
             }
             let commit = clone::head_commit(&dir);
-            let walked = clone::walk(&dir)?;
+            let walked = clone::walk(&dir, &synced_text)?;
             Ok((dir, walked, commit))
         })
         .await
@@ -1206,42 +1195,42 @@ impl IngestService {
     ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let commit = clone::head_commit(&dir);
-            let walked = clone::walk(&dir)?;
+            let walked = clone::walk(&dir, &|_| true)?;
             Ok((dir, walked, commit))
         })
         .await
         .map_err(|e| anyhow!("workspace read did not finish: {e}"))?
     }
 
-    /// Extract text from a binary document via the file-parser gear, so its
-    /// content is indexed for search. Best-effort: `None` when no parser is
-    /// wired, the file is not a parseable document, it is empty/too large, it
-    /// cannot be read, or extraction yields nothing. `dir` is the checkout root
-    /// and `rel` the repo-relative path.
-    async fn parse_binary_text(
+    /// The content nodes earlier syncs stored beside this repository's files,
+    /// named by the files that still say they have one.
+    ///
+    /// Read from the index (one query), and empty once a sync has rewritten
+    /// every file: a file node written since carries no `has_text`. When no
+    /// stored repository has any left, this and its call can go.
+    async fn legacy_contents(
         &self,
         ctx: &SecurityContext,
-        dir: &Path,
-        rel: &str,
-        size: u64,
-    ) -> Option<String> {
-        let parser = self.file_parser.as_ref()?;
-        if size == 0 || size > MAX_PARSE_BYTES || !is_parseable_doc(rel) {
-            return None;
-        }
-        let bytes = tokio::fs::read(dir.join(rel)).await.ok()?;
-        let req = ParseBytesRequest {
-            filename: Some(rel.to_string()),
-            content_type: None,
-            bytes: Bytes::from(bytes),
-            detection: Detection::Auto,
-        };
-        match parser.parse_bytes(ctx, req).await {
-            Ok(p) if !p.markdown.trim().is_empty() => Some(p.markdown),
-            Ok(_) => None,
+        scope: &str,
+        repo_id: &str,
+    ) -> Vec<GtsNode> {
+        match self
+            .graph
+            .list_in_scope(ctx, Some(gts::FILE_TYPE), scope)
+            .await
+        {
+            Ok(files) => {
+                let ours: Vec<GtsNode> = files
+                    .into_iter()
+                    .filter(|n| {
+                        n.value.get("repo").and_then(serde_json::Value::as_str) == Some(repo_id)
+                    })
+                    .collect();
+                gone_contents(&ours)
+            }
             Err(e) => {
-                tracing::warn!(error = %e, path = rel, "studio-artifact-ingest: file-parser extraction failed — leaving file metadata-only");
-                None
+                warn!(error = %e, "studio-artifact-ingest: could not read the stored files; their excerpts stay for the next sync");
+                Vec::new()
             }
         }
     }
@@ -1937,7 +1926,7 @@ mod tests {
     /// A file node exactly as a sync in `scope` stores it.
     fn file(scope: &str, repo: &str, path: &str) -> GtsNode {
         let repo_id = gts::repo_node(scope, CONNECTOR, "github", repo).instance_id;
-        gts::file_node_cloned(scope, &repo_id, CONNECTOR, repo, path, 1, false, None, None)
+        gts::file_node_cloned(scope, &repo_id, CONNECTOR, repo, path, 1, None, None)
     }
 
     fn repo_id(scope: &str) -> String {
@@ -2019,17 +2008,18 @@ mod tests {
     #[test]
     fn a_gone_file_names_its_content_and_a_file_without_text_names_none() {
         let repo_id = repo_id("project-a");
-        let with_text = gts::file_node_cloned(
+        let mut with_text = gts::file_node_cloned(
             "project-a",
             &repo_id,
             CONNECTOR,
             REPO,
             "docs/prd.md",
             1,
-            true,
             None,
             None,
         );
+        // As a sync before 2026-10-05 stored it.
+        with_text.value["has_text"] = serde_json::json!(true);
         let without = file("project-a", REPO, "logo.png");
         let contents = gone_contents(&[with_text.clone(), without]);
         assert_eq!(contents.len(), 1);
@@ -2172,17 +2162,18 @@ mod prune_tests {
         let scope = project.unwrap_or(WS);
         let r = gts::repo_node(scope, connection, "github", repo);
         let repo_id = r.instance_id.clone();
-        let f = gts::file_node_cloned(
+        let mut f = gts::file_node_cloned(
             scope,
             &repo_id,
             connection,
             repo,
             "README.md",
             1,
-            true,
             None,
             None,
         );
+        // As a sync before 2026-10-05 stored it, with an excerpt beside it.
+        f.value["has_text"] = json!(true);
         let file_id = f.instance_id.clone();
         nodes.push(stamped(r, project));
         nodes.push(stamped(f, project));
@@ -2196,7 +2187,6 @@ mod prune_tests {
             Arc::new(NoSecrets),
             HashMap::new(),
             graph.clone(),
-            None,
             Some(classifier.clone()),
             None,
             None,
@@ -2258,7 +2248,6 @@ mod prune_tests {
             "org/studio-web",
             "docs/a.md",
             1,
-            true,
             None,
             None,
         );
@@ -2299,6 +2288,57 @@ mod prune_tests {
         assert!(nodes.is_empty());
         assert_eq!(flushed, 3);
         assert!(ids(&graph).await.contains(&more_id));
+    }
+
+    /// The excerpt an earlier sync stored beside a file is found from the file
+    /// alone, only for this repository in this scope, and not at all once the
+    /// file has been rewritten without one.
+    #[tokio::test]
+    async fn a_resync_finds_the_excerpts_an_earlier_sync_stored_and_only_those() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let (repo_id, file_id) = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        let (other_repo, _) = synced(&mut nodes, Some(PROJECT), "conn", "org/other");
+        let (_, elsewhere) = synced(&mut nodes, Some(OTHER_PROJECT), "conn", "org/studio-web");
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        let legacy = svc.legacy_contents(&ctx(), PROJECT, &repo_id).await;
+        assert_eq!(legacy.len(), 1, "{legacy:?}");
+        assert_eq!(legacy[0].type_id, gts::FILE_CONTENT_TYPE);
+        assert_eq!(
+            legacy[0].instance_id,
+            gts::file_content_instance_id(&file_id)
+        );
+        assert_ne!(other_repo, repo_id);
+        assert_ne!(
+            legacy[0].instance_id,
+            gts::file_content_instance_id(&elsewhere)
+        );
+
+        // Rewritten by this sync: nothing left to retire.
+        let rewritten = stamped(
+            gts::file_node_cloned(
+                PROJECT,
+                &repo_id,
+                "conn",
+                "org/studio-web",
+                "README.md",
+                1,
+                None,
+                None,
+            ),
+            Some(PROJECT),
+        );
+        assert_eq!(rewritten.instance_id, file_id);
+        graph
+            .upsert_nodes(&ctx(), &[rewritten])
+            .await
+            .expect("upsert");
+        assert!(
+            svc.legacy_contents(&ctx(), PROJECT, &repo_id)
+                .await
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2425,7 +2465,6 @@ mod prune_tests {
             Arc::new(NoSecrets),
             HashMap::new(),
             Arc::new(InMemoryGraphStore::default()),
-            None,
             None,
             None,
             Some(root.clone()),

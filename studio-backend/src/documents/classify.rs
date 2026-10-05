@@ -61,8 +61,35 @@ pub struct Classification {
     pub is_prose: bool,
 }
 
-/// True when a path looks like it could hold a specification document.
+/// Where a repository keeps instructions for its tools rather than its own
+/// documents: a kit's templates and examples, an agent's skills and prompts,
+/// CI workflows. Prose by extension, never a specification of the project.
+///
+/// On Insight these were a third of "Needs review" (2026-10-05): 47 files
+/// under `.cf-studio/`, 43 under `.claude/`, and a kit's ADR example bound
+/// as one of the project's decisions.
+const TOOLING_DIRS: &[&str] = &[".cf-studio", ".claude", ".github"];
+
+/// Files at the repository root that brief an agent, not a reader.
+const TOOLING_FILES: &[&str] = &["claude.md", "agents.md"];
+
+/// True when `path` is tool configuration (see [`TOOLING_DIRS`]).
+fn is_tooling_path(path: &str) -> bool {
+    let path = path.trim_start_matches(['/', '\\']);
+    let mut segments = path.split(['/', '\\']);
+    let first = segments.next().unwrap_or_default();
+    if segments.next().is_some() {
+        return TOOLING_DIRS.contains(&first);
+    }
+    TOOLING_FILES.contains(&first.to_ascii_lowercase().as_str())
+}
+
+/// True when a path looks like it could hold a specification document: prose
+/// by its extension, and not tool configuration.
 pub fn is_prose_path(path: &str) -> bool {
+    if is_tooling_path(path) {
+        return false;
+    }
     let ext = path
         .rsplit('.')
         .next()
@@ -308,6 +335,38 @@ mod tests {
             let c = classify(path, "# whatever", &types);
             assert!(!c.is_prose, "{path} should not be prose");
             assert_eq!(c.type_key, None);
+        }
+    }
+
+    /// A kit's example ADR is a perfect ADR, and still not one of the
+    /// project's decisions.
+    #[test]
+    fn tool_configuration_is_not_a_document_however_well_it_reads() {
+        let types = builtin_types();
+        let adr = format!(
+            "---\ntype: adr\n---\n\n# ADR — x\n\n{}",
+            filled(&["Status", "Context", "Decision", "Consequences"])
+        );
+        for path in [
+            ".cf-studio/config/kits/sdlc/artifacts/ADR/examples/example.md",
+            ".claude/skills/review/SKILL.md",
+            ".github/PULL_REQUEST_TEMPLATE.md",
+            "CLAUDE.md",
+            "AGENTS.md",
+        ] {
+            assert!(!is_prose_path(path), "{path} is tooling");
+            let c = classify(path, &adr, &types);
+            assert!(!c.is_prose, "{path} should not be classified");
+            assert_eq!(c.type_key, None);
+        }
+        // Only at the root, and only those directories.
+        for path in [
+            "docs/CLAUDE.md",
+            "docs/.claude-notes.md",
+            "docs/github/setup.md",
+            "README.md",
+        ] {
+            assert!(is_prose_path(path), "{path} is a document path");
         }
     }
 

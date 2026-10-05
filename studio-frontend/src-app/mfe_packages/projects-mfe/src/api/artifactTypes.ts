@@ -32,6 +32,9 @@ export interface ArtifactNodeValue {
   short_sha?: string;
   login?: string;
   is_dir?: boolean;
+  /** Files read from a checkout rather than listed through a connector. */
+  from_checkout?: boolean;
+  /** Written by syncs before 2026-10-05, beside an excerpt they no longer store. */
   has_text?: boolean;
   /** RFC 3339. Issues, pull requests, commits and comments — files, repos and users have none. */
   created_at?: string;

@@ -62,7 +62,7 @@ describe('rows of the kinds outside the default listing', () => {
 
 describe('rows of the default listing', () => {
   it('names a file by its last segment and keeps its checkout-relative path', () => {
-    const file = row('file', { repo: 'repo-1', path: 'docs/guide/a.md', has_text: true });
+    const file = row('file', { repo: 'repo-1', path: 'docs/guide/a.md', from_checkout: true });
     expect(file.name).toBe('a.md');
     expect(file.path).toBe('docs/guide/a.md');
     expect(file.repository).toBe('group/repo');
@@ -71,7 +71,13 @@ describe('rows of the default listing', () => {
   });
 
   it('says where a file came from when it has no time', () => {
-    expect(row('file', { repo: 'repo-1', path: 'a.md', has_text: false }).provenance).toBe('tree');
+    expect(row('file', { repo: 'repo-1', path: 'a.md' }).provenance).toBe('tree');
+    expect(row('file', { repo: 'repo-1', path: 'logo.png', from_checkout: true }).provenance).toBe(
+      'checkout'
+    );
+    expect(row('file', { repo: 'repo-1', path: 'a.md', has_text: true }).provenance).toBe(
+      'checkout'
+    );
     expect(row('file', { repo: 'repo-1', path: 'a.md', origin: 'upload' }).provenance).toBe(
       'upload'
     );

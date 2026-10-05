@@ -681,3 +681,70 @@ async fn a_studio_document_is_recorded_by_its_id_named_or_inline() {
         assert_eq!(s.binding_id, None);
     }
 }
+
+// ── tool configuration ───────────────────────────────────────────────────
+
+/// A kit's example ADR declares its type and fills every section, and is
+/// still not one of the project's documents: it is recorded as not one and
+/// nothing is asked about it. A person who says otherwise is listened to.
+#[tokio::test]
+async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
+    use super::model::BindingState;
+    use super::service::{BindingAction, BindingDecision};
+
+    let _flag = CONFIGURED_FLAG.lock().await;
+    crate::spec_quality::set_configured_for_tests(true);
+    let rig = Rig::new(Some(50)).await;
+    let kit = ".cf-studio/config/kits/sdlc/artifacts/ADR/examples/example.md";
+    let skill = ".claude/skills/review/SKILL.md";
+    let files = [
+        (kit, prd("an example")),
+        (skill, prd("a prompt")),
+        ("docs/a.md", prd("ours")),
+    ];
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+
+    let (changed, _) = rig.sync(&files).await;
+    assert_eq!(changed, 1, "only docs/a.md is a document");
+    let runs = rig.take_runs();
+    let purpose = run_for(&runs, "purpose").unwrap();
+    assert_eq!(item_ids(purpose), ["docs/a.md"]);
+
+    let state_of = |path: &'static str| {
+        let rig = &rig;
+        async move {
+            let (bindings, _) = rig
+                .service
+                .list_bindings(rig.workspace, None, crate::pagination::PageQuery::default())
+                .await
+                .unwrap();
+            bindings
+                .into_iter()
+                .find(|b| b.path == path)
+                .map(|b| b.state)
+                .unwrap()
+        }
+    };
+    assert_eq!(state_of(kit).await, BindingState::NotADocument);
+    assert_eq!(state_of(skill).await, BindingState::NotADocument);
+
+    rig.service
+        .decide_binding(
+            &rig.ctx,
+            rig.workspace,
+            rig.binding(skill),
+            BindingDecision {
+                action: BindingAction::Set {
+                    type_key: "prd".to_owned(),
+                },
+                source: None,
+                confidence: None,
+                content: None,
+            },
+        )
+        .await
+        .unwrap();
+    rig.sync(&files).await;
+    assert_eq!(state_of(skill).await, BindingState::Manual);
+    assert_eq!(state_of(kit).await, BindingState::NotADocument);
+}

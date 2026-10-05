@@ -49,7 +49,9 @@ function instant(value: ArtifactNodeValue): number | null {
 
 function fileProvenance(value: ArtifactNodeValue): ArtifactProvenance {
   if (value.origin) return 'upload';
-  if (value.has_text === true) return 'checkout';
+  // `from_checkout` since 2026-10-05; a node an earlier sync wrote says so
+  // through `has_text`, which only a checkout ever set.
+  if (value.from_checkout === true || value.has_text === true) return 'checkout';
   return 'tree';
 }
 

@@ -1727,6 +1727,22 @@ fn keep_existing_verdict(prior: &document_binding::Model) -> Option<BindingState
     detected_by_llm.then_some(state)
 }
 
+/// Whether a person, rather than the classifier, settled this binding.
+///
+/// `Confirmed` is written by both: by a person accepting a proposal, and by
+/// [`settle`] for a front matter that declares its type and conforms. The
+/// source tells them apart, since only the latter is `front_matter` and
+/// confirmed without anybody looking.
+fn ruled_by_person(prior: &document_binding::Model) -> bool {
+    let source = prior.source.as_deref().and_then(DetectionSource::parse);
+    match BindingState::parse(&prior.state) {
+        Some(BindingState::Manual) => true,
+        Some(BindingState::Confirmed) => source != Some(DetectionSource::FrontMatter),
+        Some(BindingState::NotADocument) => source != Some(DetectionSource::Heuristic),
+        _ => false,
+    }
+}
+
 /// Stable digest of a document's content.
 fn content_digest(content: &str) -> String {
     Uuid::new_v5(&CONTENT_NS, content.as_bytes())
@@ -1885,7 +1901,15 @@ impl DocumentsService {
             // A binding that already has a better answer than this run can
             // produce keeps it; only its conformance is refreshed against what
             // the file says today.
-            let keep = prior.and_then(keep_existing_verdict);
+            //
+            // For a path that cannot hold a document only a person's answer is
+            // better. The classifier's own (a front matter it took at its word,
+            // a detector's guess) was given before the path was ruled out, and
+            // keeping it would leave a kit's example ADR bound for good.
+            let document_path = is_prose_path(&file.path);
+            let keep = prior
+                .and_then(keep_existing_verdict)
+                .filter(|_| document_path || prior.is_some_and(ruled_by_person));
             if keep.is_some() {
                 kept += 1;
             }
@@ -1904,7 +1928,7 @@ impl DocumentsService {
             // A person's verdict still wins: `keep_existing_verdict` covers
             // `Manual`, so a file somebody declared a document stays one
             // whatever its extension.
-            if !is_prose_path(&file.path) {
+            if !document_path {
                 if let Some(state) = keep {
                     written.push(document_binding::Model {
                         id,

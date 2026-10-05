@@ -34,7 +34,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::Router;
 use credstore_sdk::CredStoreClientV1;
-use file_parser_sdk::FileParserClientV1;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::contracts::{DatabaseCapability, RestApiCapability};
@@ -213,22 +212,6 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 None => None,
             };
 
-            // File-parser gear: extracts text from binary documents (PDF/docx/…)
-            // so their content is indexed for search. Optional — when the gear
-            // is not linked/available, binary files stay metadata-only.
-            let file_parser = match ctx.client_hub().get::<dyn FileParserClientV1>() {
-                Ok(c) => {
-                    info!(
-                        "studio-artifact-ingest: file-parser gear wired — binary documents will be text-extracted"
-                    );
-                    Some(c)
-                }
-                Err(e) => {
-                    warn!(error = %e, "studio-artifact-ingest: file-parser unavailable — binary documents stay metadata-only");
-                    None
-                }
-            };
-
             // studio-documents, if this deployment runs it. Resolved here, in
             // the REST phase, where every gear has initialized — the same
             // reason the graph client is not fetched in `init`. Absent is a
@@ -254,7 +237,6 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 credstore,
                 drivers,
                 graph,
-                file_parser,
                 classifier,
                 workspaces_root,
                 work_root,

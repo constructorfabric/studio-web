@@ -85,10 +85,12 @@ unscoped listings.
   readers fall back to the graph and the next read refills.
 - **Optional**: without the gear's `database:` section there is no index and
   nothing changes but speed.
-- **Not file content.** A file's searchable excerpt is a `file_content` node of
-  its own, joined to the file by `content_of`; search folds a hit on it back
-  into the file. Nothing lists it (`gts::is_listed`), so it has no row here,
-  and a file row is metadata only.
+- **Not file content.** The graph holds no file text at all since 2026-10-05:
+  a sync reads the text of documents and comment logs from the checkout and
+  stores only what a file is. The `file_content` nodes earlier syncs wrote (an
+  8,000-character excerpt each, for a search endpoint no client called) are
+  retired by the next sync of their repository. Nothing ever listed them
+  (`gts::is_listed`), so they never had a row here.
 
 Request 5 has partly landed (weftgraph 0.1.1 filters and orders on declared
 payload paths), but without a count, offsets or an indexed payload ordering,

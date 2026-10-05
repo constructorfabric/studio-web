@@ -1206,18 +1206,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-gears-file-parser-sdk"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2b8500e716f5299f80767212475bf9f7110aacfabc2745716f61c56e8ae6f18"
-dependencies = [
- "async-trait",
- "bytes",
- "cf-gears-toolkit-security",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "cf-gears-file-storage"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2514,7 +2502,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bollard",
- "bytes",
  "cf-gears-account-management",
  "cf-gears-account-management-sdk",
  "cf-gears-api-gateway",
@@ -2525,7 +2512,6 @@ dependencies = [
  "cf-gears-credstore",
  "cf-gears-credstore-sdk",
  "cf-gears-event-broker-sdk",
- "cf-gears-file-parser-sdk",
  "cf-gears-file-storage",
  "cf-gears-gear-orchestrator",
  "cf-gears-graph-storage",
