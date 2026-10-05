@@ -58,6 +58,7 @@
  */
 
 const { URI } = require('@theia/core/lib/common/uri');
+const { watchTree } = require('./watch-tree');
 const { newId, sidecarUri } = require('./comments-store');
 const { identity, authorRecord } = require('./identity');
 
@@ -554,7 +555,9 @@ class CommentLog {
         const prefix = dir.toString() + '/';
         const disposables = [];
         /*
-         * Watch <root>/.studio, NOT the log directory.
+         * Watch the repository root, recursively, NOT the log directory
+         * (watch-tree.js: not even <root>/.studio, which a project with no
+         * comments yet does not have either).
          *
          * A document with no comments yet has no log directory, and a watch
          * registered on a path that does not exist is silently inert and never
@@ -566,11 +569,8 @@ class CommentLog {
          *
          * The filter below keeps this precise despite the broader subscription.
          */
-        try {
-            disposables.push(this.fileService.watch(new URI(root.toString() + '/' + SIDECAR_ROOT)));
-        } catch (e) {
-            console.warn('[studio] could not watch the comment logs', dir.toString(), e);
-        }
+        const watch = watchTree(this.fileService, root, e => console.warn('[studio] could not watch the comment logs', dir.toString(), e));
+        if (watch) { disposables.push(watch); }
         let timer;
         /* `event.contains` tests one named resource, and the resource of
          * interest is "any .jsonl under this directory" — including files this

@@ -186,6 +186,19 @@ class ChangesStore {
     async pendingFilesStatus(anyUri, options) {
         const root = await this.rootFor(anyUri);
         const indexUri = this.indexUri(root);
+        /*
+         * No index is an empty queue, not an unreadable one. A project nobody
+         * has proposed anything in has no `.studio/changes/` at all, and
+         * answering `available: false` there put "The review queue could not
+         * load" with a Retry button in every fresh project's rail — and hid the
+         * Suggestions section below it, so a colleague's first suggestion was
+         * invisible. Only an index that exists and cannot be read is unavailable.
+         */
+        let present;
+        try { present = await this.fileService.exists(indexUri); } catch (e) { present = true; }
+        if (!present) {
+            return { available: true, files: [] };
+        }
         const data = await this.readJson(indexUri, undefined);
         if (!data || typeof data !== 'object' || Array.isArray(data) || data.version !== 1 ||
             !data.files || typeof data.files !== 'object' || Array.isArray(data.files)) {

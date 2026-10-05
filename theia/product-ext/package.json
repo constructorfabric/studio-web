@@ -42,7 +42,7 @@
     "test:right-panel-width": "node test/right-panel-width.test.js",
     "test:rail": "node test/rail.test.js",
     "test:studio-findings": "node test/studio-quality.test.js && node test/studio-findings-refresh.test.js",
-    "test": "node test/markdown-roundtrip.test.js && node test/markdown-gate.test.js && node test/math-repair.test.js && node test/serialize-escaping.test.js && node test/blocks-ranking.test.js && node test/blocks-toolbar.test.js && node test/block-commands.test.js && node test/node-views.test.js && node test/code-block.test.js && node test/link-editor.test.js && node test/schema-coverage.test.js && node test/integration.test.js && node test/md-rewrap.test.js && node test/suggestion-review.test.js && node test/identity.test.js && node test/collab-roster.test.js && node test/collab.test.js && node test/tasks.test.js && node test/element-anchor.test.js && node test/link-cards.test.js && node test/git-identity.test.js && node test/welcome.test.js && node test/start-pages.test.js && node test/assistant-unavailable.test.js && node test/status-line-modes.test.js && node test/navigator-filter-patch.test.js && node test/right-panel-width.test.js && node test/rail.test.js && node test/studio-quality.test.js && node test/studio-findings-refresh.test.js && node test/rendered-compare.test.js",
+    "test": "node test/markdown-roundtrip.test.js && node test/markdown-gate.test.js && node test/math-repair.test.js && node test/serialize-escaping.test.js && node test/blocks-ranking.test.js && node test/blocks-toolbar.test.js && node test/block-commands.test.js && node test/node-views.test.js && node test/code-block.test.js && node test/link-editor.test.js && node test/schema-coverage.test.js && node test/integration.test.js && node test/md-rewrap.test.js && node test/suggestion-review.test.js && node test/identity.test.js && node test/collab-roster.test.js && node test/collab.test.js && node test/tasks.test.js && node test/element-anchor.test.js && node test/link-cards.test.js && node test/git-identity.test.js && node test/welcome.test.js && node test/start-pages.test.js && node test/assistant-unavailable.test.js && node test/status-line-modes.test.js && node test/navigator-filter-patch.test.js && node test/right-panel-width.test.js && node test/rail.test.js && node test/studio-quality.test.js && node test/studio-findings-refresh.test.js && node test/rendered-compare.test.js && node test/watch-tree.test.js",
     "test:navigator-filter-patch": "node test/navigator-filter-patch.test.js",
     "test:status-line-modes": "node test/status-line-modes.test.js",
     "test:markdown-gate": "node test/markdown-gate.test.js",
@@ -53,7 +53,8 @@
     "test:serialize": "node test/serialize-escaping.test.js",
     "test:block-commands": "node test/block-commands.test.js",
     "test:integration": "node test/integration.test.js",
-    "test:rendered-compare": "node test/rendered-compare.test.js"
+    "test:rendered-compare": "node test/rendered-compare.test.js",
+    "test:watch-tree": "node test/watch-tree.test.js"
   },
   "dependencies": {
     "@tiptap/core": "^2.11.5",

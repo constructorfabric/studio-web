@@ -91,6 +91,7 @@
  */
 
 const { URI } = require('@theia/core/lib/common/uri');
+const { watchTree } = require('./watch-tree');
 const { identity, authorRecord, keyForId } = require('./identity');
 const { diffHunks, hash, splitLines } = require('./diff');
 
@@ -425,7 +426,7 @@ class ChangeLog {
     /**
      * Watch every author's file for this document.
      *
-     * Watches `<root>/.studio/changes`, not the document's own directory, for the
+     * Watches the repository root (watch-tree.js), not the document's own directory, for the
      * reason comment-log.js records at length: a document with no suggestions has
      * no directory, and a Theia watch registered on a path that does not exist is
      * silently inert and never recovers when the path appears — so the FIRST
@@ -441,11 +442,9 @@ class ChangeLog {
         const root = await this.rootFor(docUri);
         const prefix = logDirUri(root, docUri).toString() + '/';
         const disposables = [];
-        try {
-            disposables.push(this.fileService.watch(new URI(root.toString() + '/' + CHANGES_DIR)));
-        } catch (e) {
-            console.warn('[studio] could not watch the suggestion files', prefix, e);
-        }
+        // The repository root, recursively: see watch-tree.js for why not CHANGES_DIR.
+        const watch = watchTree(this.fileService, root, e => console.warn('[studio] could not watch the suggestion files', prefix, e));
+        if (watch) { disposables.push(watch); }
         let timer;
         disposables.push(this.fileService.onDidFilesChange(event => {
             const touched = (event && event.changes ? event.changes : [])
