@@ -582,7 +582,7 @@ gears:
         # epoch, often a type set). At the default ef_search of 40 a filter that
         # admits a tenth of the rows leaves ~4 candidates, so a small tenant
         # sharing the index with a large one gets an EMPTY page while its own
-        # vectors are in the table (weftgraph README, "Vector search needs two
+        # vectors are in the table (graph-storage README, "Vector search needs two
         # session parameters"). Iterative scanning keeps reading until the
         # filtered page is full. The gear cannot SET LOCAL per query
         # (gears-rust #4871), so it is per connection, here.

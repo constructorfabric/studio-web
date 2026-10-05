@@ -38,7 +38,7 @@ theia-event-broker = ["theia-bridge", "dep:event-broker-sdk"]
 # Turning `llm` back on for a cluster deploy therefore needs the deadlock
 # resolved first, plus an LLM key in that environment.
 #
-# `graph` links the graph-storage gear (crate `weftgraph`) with both of
+# `graph` links the graph-storage gear (`cf-gears-graph-storage`) with both of
 # its embedding providers, and the consumers that feed it: the repository
 # importer in studio-connector, artifact-ingest and the gears catalogue.
 # Default ON: `docker compose up` should give a working knowledge graph. The
@@ -158,18 +158,17 @@ resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "0.3.5
 # catalogue, the repository importer) talk to the gear through the SDK's
 # `GraphStorageClientV1` from the ClientHub, exactly as they talk to credstore.
 #
-# PREVIEW NAME: the gear is not on gears-rust `main` yet (constructorfabric/
-# gears-rust#4794), so it is published to crates.io from the fork under the code
-# name `weftgraph` — the name a first-party gear takes is Constructor Fabric's to
-# choose. Only the package names differ: the libraries are still `graph_storage`
-# and `graph_storage_sdk`, so moving to the official crates later is these two
-# lines. Every other gears crate comes from crates.io too, so there is one
-# toolkit in the binary and no `[patch]` block.
+# The official crates, published by gears-rust's release-plz since
+# constructorfabric/gears-rust#4794 merged; they replace the interim `weftgraph`
+# preview crates, whose libraries had the same names. The embedding plugins come
+# in through the gear's `onnx` and `remote` features. Every other gears crate
+# comes from crates.io too, so there is one toolkit in the binary and no
+# `[patch]` block.
 #
 # NB: this gear runs ONLY against `pg_graph` (PostgreSQL 19 + pgvector) — see
 # the graph-postgres service in docker-compose.yml.
-graph_storage = { package = "weftgraph", version = "0.1.1", optional = true }
-graph_storage_sdk = { package = "weftgraph-sdk", version = "0.1.1", optional = true }
+graph_storage = { package = "cf-gears-graph-storage", version = "0.1.4", optional = true }
+graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", version = "0.1.1", optional = true }
 
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", version = "0.10.0", features = ["bootstrap"] }
