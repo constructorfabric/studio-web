@@ -72,7 +72,9 @@ export class MarkdownDiffContribution implements CommandContribution, MenuContri
             isVisible: (...args: unknown[]) => !!this.markdownFile(args[0]),
             execute: (...args: unknown[]) => {
                 const file = this.markdownFile(args[0]);
-                return file && this.report(this.diffs.compareWithHead(file));
+                // A second argument may carry the caller's open discussions (product-ext's editor).
+                const notes = (args[1] as Pick<MarkdownDiffRequest, 'notes'> | undefined)?.notes;
+                return file && this.report(this.diffs.compareWithHead(file, notes));
             },
         });
         commands.registerCommand(MarkdownDiffCommands.COMPARE_WITH_REF, {

@@ -239,6 +239,60 @@ function wrapRanges(nodes: Text[], ranges: Range[], tag: 'ins' | 'del', classNam
     }
 }
 
+export interface NoteMarks {
+    /** Discussions whose passage is in a changed row — what a reader of the change should look at. */
+    readonly onChanges: number;
+    /** Discussions whose passage is on the left and gone from the right: the edit took their anchor. */
+    readonly orphaned: number;
+}
+
+/**
+ * Mark where open discussions are. Each cell whose text holds a note's quote
+ * gets a badge naming it; a quote found only in the left column is the edit
+ * taking the passage a discussion is about, which is the one thing a reader
+ * of a change must not miss — that badge says the thread will lose its place.
+ *
+ * Run after renderDiff: the badges are not document text, and the word marks
+ * are computed on document text.
+ */
+export function markNotes(root: HTMLElement, notes: ReadonlyArray<{ quote: string; label: string }>, rightLabel: string): NoteMarks {
+    let onChanges = 0;
+    let orphaned = 0;
+    const rows = Array.from(root.querySelectorAll<HTMLElement>('.studio-md-diff-row'));
+    const textOf = (cell: Element | null): string => collapseWhitespace(cell?.textContent ?? '');
+    for (const note of notes) {
+        const quote = collapseWhitespace(note.quote);
+        if (!quote) {
+            continue;
+        }
+        const inOld = rows.filter(row => textOf(row.querySelector('.studio-md-diff-cell.old')).includes(quote));
+        const inNew = rows.filter(row => textOf(row.querySelector('.studio-md-diff-cell.new')).includes(quote));
+        const lost = inOld.length > 0 && inNew.length === 0;
+        if (lost) {
+            orphaned++;
+        }
+        if ([...inOld, ...inNew].some(row => !row.classList.contains('equal'))) {
+            onChanges++;
+        }
+        for (const row of inNew) {
+            badge(row.querySelector('.studio-md-diff-cell.new')!, note.label, false, rightLabel);
+        }
+        for (const row of inOld) {
+            badge(row.querySelector('.studio-md-diff-cell.old')!, note.label, lost, rightLabel);
+        }
+    }
+    return { onChanges, orphaned };
+}
+
+function badge(cell: Element, label: string, lost: boolean, rightLabel: string): void {
+    const element = cell.ownerDocument!.createElement('span');
+    element.className = 'studio-md-diff-note' + (lost ? ' orphaned' : '');
+    element.textContent = lost ? '\u{1F4AC}!' : '\u{1F4AC}';
+    element.title = lost ? `${label}\n\nThis passage is not in ${rightLabel}: the discussion will lose its place.` : label;
+    element.setAttribute('aria-label', element.title);
+    cell.insertBefore(element, cell.firstChild);
+}
+
 export interface RenderOptions {
     /** Show only the changes and a little context, with each unchanged run folded into one line. */
     readonly changesOnly: boolean;
@@ -266,6 +320,7 @@ export function describeChanges(
     counts: { modified: number; added: number; removed: number },
     formattingOnly: number,
     missing: readonly string[] = [],
+    notes: NoteMarks = { onChanges: 0, orphaned: 0 },
 ): string {
     const edited = counts.modified - formattingOnly;
     const parts = [
@@ -274,6 +329,8 @@ export function describeChanges(
         counts.added ? `${counts.added} added` : '',
         counts.removed ? `${counts.removed} removed` : '',
         formattingOnly ? `${formattingOnly} formatting only` : '',
+        notes.onChanges ? `${notes.onChanges} ${notes.onChanges === 1 ? 'discussion' : 'discussions'} on changed text` : '',
+        notes.orphaned ? `${notes.orphaned} would lose ${notes.orphaned === 1 ? 'its' : 'their'} place` : '',
     ].filter(Boolean);
     return parts.length ? parts.join(' · ') : 'No changes';
 }

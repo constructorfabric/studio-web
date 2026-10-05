@@ -212,4 +212,25 @@ test('only a changed document is offered, against what I saw', () => {
     assert.deepStrictEqual(request.right, { content: 'now', label: 'Now' });
 });
 
+const { threadNotes } = require('../src/browser/rendered-compare.js');
+
+test('open inline threads become notes; resolved, unquoted and component threads do not', () => {
+    const notes = threadNotes([
+        { id: 't1', scope: 'inline', quote: 'quick brown', resolved: false, messages: [
+            { author: { name: 'Alice' }, body: 'Is   brown\nright?' },
+            { author: 'Bob', body: 'yes' },
+            { author: 'Alice', body: 'ok' },
+        ] },
+        { id: 't2', quote: 'settled', resolved: true, messages: [{ author: 'Bob', body: 'done' }] },
+        { id: 't3', scope: 'inline', quote: '', messages: [{ author: 'Bob', body: 'no anchor' }] },
+        { id: 't4', scope: 'component', quote: 'figure', messages: [] },
+        { id: 't5', quote: 'no messages yet', messages: [] },
+    ]);
+    assert.deepStrictEqual(notes, [
+        { quote: 'quick brown', label: 'Alice: Is brown right? (+2 replies)' },
+        { quote: 'no messages yet', label: 'A discussion' },
+    ]);
+    assert.deepStrictEqual(threadNotes(undefined), []);
+});
+
 console.log('rendered-compare: ' + passed + ' passing');

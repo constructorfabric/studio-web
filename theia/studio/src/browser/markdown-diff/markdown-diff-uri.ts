@@ -17,12 +17,20 @@ export interface MarkdownDiffSide {
     readonly label: string;
 }
 
+/** A discussion anchored in the document: the passage it quotes, and what to call it. */
+export interface MarkdownDiffNote {
+    readonly quote: string;
+    readonly label: string;
+}
+
 export interface MarkdownDiffInput {
     readonly title: string;
     readonly left: MarkdownDiffSide;
     readonly right: MarkdownDiffSide;
     /** The file the document lives in, for its relative images and links. */
     readonly base?: string;
+    /** Open discussions, marked where their passage is — and where it no longer is. */
+    readonly notes?: readonly MarkdownDiffNote[];
 }
 
 export function encodeMarkdownDiffUri(input: MarkdownDiffInput): URI {
@@ -30,6 +38,7 @@ export function encodeMarkdownDiffUri(input: MarkdownDiffInput): URI {
         left: input.left,
         right: input.right,
         base: input.base,
+        ...(input.notes && input.notes.length ? { notes: input.notes } : {}),
     }));
 }
 
@@ -37,8 +46,8 @@ export function decodeMarkdownDiffUri(uri: URI): MarkdownDiffInput {
     if (uri.scheme !== MARKDOWN_DIFF_SCHEME) {
         throw new Error(`Not a rendered markdown comparison: ${uri.toString()}`);
     }
-    const { left, right, base } = JSON.parse(uri.query) as Omit<MarkdownDiffInput, 'title'>;
-    return { title: uri.path.toString(), left, right, base };
+    const { left, right, base, notes } = JSON.parse(uri.query) as Omit<MarkdownDiffInput, 'title'>;
+    return { title: uri.path.toString(), left, right, base, ...(notes ? { notes } : {}) };
 }
 
 export function isMarkdownUri(uri: URI): boolean {

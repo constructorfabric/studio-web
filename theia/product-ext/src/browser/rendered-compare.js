@@ -242,7 +242,30 @@ function sinceLastSeenRequest(stored, body, docName) {
     };
 }
 
+/*
+ * DISCUSSIONS IN A COMPARISON. A change is read beside the threads on the
+ * passages it touches: what was being argued about, and — the one a reader
+ * must not miss — a thread whose quoted passage the change removes, which will
+ * lose its place. Open inline threads only; a resolved one is settled, and a
+ * component thread has no quote to find.
+ */
+function threadNotes(threads) {
+    const notes = [];
+    for (const thread of threads || []) {
+        if (!thread || thread.resolved || !thread.quote || (thread.scope && thread.scope !== 'inline')) { continue; }
+        const messages = thread.messages || [];
+        const first = messages[0];
+        const opening = first
+            ? personName(first.author) + ': ' + String(first.body || '').replace(/\s+/g, ' ').slice(0, 140)
+            : 'A discussion';
+        const replies = messages.length > 1 ? ' (+' + (messages.length - 1) + (messages.length === 2 ? ' reply)' : ' replies)') : '';
+        notes.push({ quote: thread.quote, label: opening + replies });
+    }
+    return notes;
+}
+
 module.exports = {
+    threadNotes,
     LAST_SEEN_MAX_CHARS,
     lastSeenKey,
     readLastSeen,

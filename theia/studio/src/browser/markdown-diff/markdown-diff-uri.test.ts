@@ -14,6 +14,13 @@ describe('markdown diff uri', () => {
         expect(decodeMarkdownDiffUri(new URI(uri.toString()))).toEqual(input);
     });
 
+    it('carries the open discussions with it, and leaves them out when there are none', () => {
+        const base = { title: 't', left: { uri: 'file:///a.md', label: 'L' }, right: { uri: 'file:///b.md', label: 'R' } };
+        const withNotes = { ...base, notes: [{ quote: 'quick brown', label: 'Alice: really?' }] };
+        expect(decodeMarkdownDiffUri(new URI(encodeMarkdownDiffUri(withNotes).toString()))).toEqual(withNotes);
+        expect(encodeMarkdownDiffUri({ ...base, notes: [] }).query).not.toContain('notes');
+    });
+
     it('refuses a uri of another scheme', () => {
         expect(() => decodeMarkdownDiffUri(new URI('file:///a.md'))).toThrow();
     });

@@ -64,7 +64,7 @@ const {
     RENDERED_COMPARE_COMMAND, RENDERED_HEAD_COMMAND, coalesceRemoteChange, remoteChangeRequest,
     entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest,
     proposalRequest, suggestionRequest, suggestionAuthors,
-    lastSeenKey, readLastSeen, writeLastSeen, changedSinceLastSeen, sinceLastSeenRequest
+    lastSeenKey, readLastSeen, writeLastSeen, changedSinceLastSeen, sinceLastSeenRequest, threadNotes
 } = require('./rendered-compare');
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
@@ -5568,7 +5568,9 @@ class MarkdownEditorWidget extends Widget {
     openRenderedCompare(request) {
         if (!this.renderedCompareAvailable()) { return; }
         void this.commandRegistry.executeCommand(RENDERED_COMPARE_COMMAND, Object.assign({
-            base: this.uri.scheme === 'file' ? this.uri.toString() : undefined
+            base: this.uri.scheme === 'file' ? this.uri.toString() : undefined,
+            // The document's open threads, marked where their passage is.
+            notes: threadNotes(this.threads)
         }, request));
     }
 
@@ -5613,7 +5615,7 @@ class MarkdownEditorWidget extends Widget {
 
     openHeadRendered() {
         if (!this.commandRegistry) { return; }
-        void this.commandRegistry.executeCommand(RENDERED_HEAD_COMMAND, this.uri);
+        void this.commandRegistry.executeCommand(RENDERED_HEAD_COMMAND, this.uri, { notes: threadNotes(this.threads) });
     }
 
     toggleCompare(entryId) {

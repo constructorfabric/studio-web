@@ -15,7 +15,7 @@ import { Resource, ResourceProvider } from '@theia/core/lib/common/resource';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { DiffService } from '@theia/workspace/lib/browser/diff-service';
 import { countChanges, diffMarkdown, parseMarkdown } from './markdown-diff-model';
-import { createMarkdownRenderer, describeChanges, MERMAID_PLACEHOLDER_CLASS, renderDiff } from './markdown-diff-render';
+import { createMarkdownRenderer, describeChanges, markNotes, MERMAID_PLACEHOLDER_CLASS, renderDiff } from './markdown-diff-render';
 import { MarkdownDiffInput } from './markdown-diff-uri';
 import { createMermaidRenderId, getMermaidTheme } from '../markdown-editor/markdown-editor-mermaid';
 import { renderMermaidDiagram } from '../markdown-editor/markdown-editor-mermaid-render';
@@ -243,7 +243,8 @@ export class MarkdownDiffWidget extends BaseWidget implements StatefulWidget {
         this.scroller.appendChild(rendered.root);
         this.changes = rendered.changes;
         const missing = [left.missing ? this.input!.left.label : '', right.missing ? this.input!.right.label : ''].filter(Boolean);
-        this.summary.textContent = describeChanges(countChanges(rows), rendered.formattingOnly, missing);
+        const notes = markNotes(rendered.root, this.input?.notes ?? [], this.input?.right.label ?? 'the right version');
+        this.summary.textContent = describeChanges(countChanges(rows), rendered.formattingOnly, missing, notes);
         this.drawImages(rendered.root);
         this.drawDiagrams();
         this.scroller.scrollTop = scrollTop;

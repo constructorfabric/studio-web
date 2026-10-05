@@ -22,7 +22,12 @@ export interface MarkdownDiffRequest {
     readonly title?: string;
     /** The document's file, for relative images and links. */
     readonly base?: URI | string;
+    /** Open discussions to mark in the comparison (MarkdownDiffNote). */
+    readonly notes?: ReadonlyArray<{ readonly quote: string; readonly label: string }>;
 }
+
+/** Discussions carried into one comparison; past this the badges are noise. */
+const NOTE_LIMIT = 100;
 
 @injectable()
 export class MarkdownDiffOpenHandler extends WidgetOpenHandler<MarkdownDiffWidget> {
@@ -78,7 +83,8 @@ export class MarkdownDiffService {
         const name = base ? new URI(base).path.base : 'Markdown';
         const title = request.title ?? `${name} (${left.label} ↔ ${right.label})`;
         try {
-            const uri = encodeMarkdownDiffUri({ title, left, right, base });
+            const notes = (request.notes ?? []).filter(note => note.quote && note.quote.trim()).slice(0, NOTE_LIMIT);
+            const uri = encodeMarkdownDiffUri({ title, left, right, base, ...(notes.length ? { notes } : {}) });
             const existing = await this.openHandler.getByUri(uri);
             const widget = await this.openHandler.open(uri, { mode: 'activate', ...options });
             if (existing) {
@@ -94,11 +100,12 @@ export class MarkdownDiffService {
     }
 
     /** The file against its last commit, read through the built-in git extension. */
-    compareWithHead(file: URI): Promise<MarkdownDiffWidget> {
+    compareWithHead(file: URI, notes?: MarkdownDiffRequest['notes']): Promise<MarkdownDiffWidget> {
         return this.open({
             left: { uri: toGitUri(file, 'HEAD'), label: 'HEAD' },
             right: { uri: file, label: 'Working Tree' },
             base: file,
+            ...(notes ? { notes } : {}),
         });
     }
 }

@@ -1,5 +1,5 @@
 import { diffMarkdown, parseMarkdown } from './markdown-diff-model';
-import { coalesce, createMarkdownRenderer, describeChanges, markWordChanges, renderDiff, sanitizeHtml, visibleRows } from './markdown-diff-render';
+import { coalesce, createMarkdownRenderer, describeChanges, markNotes, markWordChanges, renderDiff, sanitizeHtml, visibleRows } from './markdown-diff-render';
 
 const md = createMarkdownRenderer();
 
@@ -127,6 +127,41 @@ describe('describeChanges', () => {
     it('is fed the formatting-only count by renderDiff', () => {
         const { formattingOnly } = render('See [docs](a.md) here.\n\nOld words stay mostly.\n', 'See [docs](b.md) here.\n\nOld words stay mostly here.\n');
         expect(formattingOnly).toBe(1);
+    });
+});
+
+describe('markNotes', () => {
+    it('badges the passage a discussion quotes, on both sides', () => {
+        const { root } = render('Intro.\n\nThe quick brown fox.\n', 'Intro.\n\nThe quick red fox.\n');
+        const marks = markNotes(root, [{ quote: 'Intro', label: 'Alice: is this needed?' }], 'Working Tree');
+        expect(marks).toEqual({ onChanges: 0, orphaned: 0 });
+        expect(Array.from(root.querySelectorAll('.studio-md-diff-note')).map(badge => (badge as HTMLElement).title)).toEqual([
+            'Alice: is this needed?', 'Alice: is this needed?',
+        ]);
+    });
+
+    it('counts a discussion on changed text, and one whose passage the edit took', () => {
+        const { root } = render('Keep.\n\nThe quick brown fox.\n\nDrop this sentence.\n', 'Keep.\n\nThe quick red fox.\n');
+        const marks = markNotes(root, [
+            { quote: 'quick red', label: 'on the edit' },
+            { quote: 'Drop this sentence', label: 'Bob: why?' },
+            { quote: 'not anywhere', label: 'elsewhere' },
+        ], 'Working Tree');
+        expect(marks).toEqual({ onChanges: 2, orphaned: 1 });
+        const orphan = root.querySelector('.studio-md-diff-note.orphaned') as HTMLElement;
+        expect(orphan.title).toContain('This passage is not in Working Tree');
+        expect(orphan.closest('.studio-md-diff-cell')!.classList.contains('old')).toBe(true);
+    });
+
+    it('matches a quote across a line break the rendering keeps', () => {
+        const { root } = render('one two\nthree\n', 'one two\nthree\n');
+        expect(markNotes(root, [{ quote: 'two three', label: 'x' }], 'R').onChanges).toBe(0);
+        expect(root.querySelectorAll('.studio-md-diff-note').length).toBe(2);
+    });
+
+    it('puts the discussions in the summary', () => {
+        expect(describeChanges({ modified: 1, added: 0, removed: 0 }, 0, [], { onChanges: 2, orphaned: 1 }))
+            .toBe('1 changed · 2 discussions on changed text · 1 would lose its place');
     });
 });
 

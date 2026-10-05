@@ -219,6 +219,30 @@ del.studio-md-diff-word.removed {
     background: var(--theia-list-hoverBackground);
 }
 
+/* An open discussion on this passage (markNotes). */
+.studio-md-diff-cell {
+    position: relative;
+}
+
+.studio-md-diff-note {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 8px;
+    background: var(--theia-badge-background);
+    color: var(--theia-badge-foreground);
+    cursor: help;
+    user-select: none;
+}
+
+.studio-md-diff-note.orphaned {
+    background: var(--theia-editorWarning-foreground, #cca700);
+    color: var(--theia-editor-background);
+}
+
 .studio-md-diff-identical,
 .studio-md-diff-error {
     margin: 8px 16px 12px;
