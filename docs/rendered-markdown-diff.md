@@ -26,6 +26,15 @@ The same view, from every place two versions of a document meet:
 | The Documents editor's conflict comparison — *Side by side*, beside *Close comparison* | the colleague's version on disk ↔ your unsaved version | Doc editing |
 | The status line's `Alice edited this`, while it shows | what you had before Alice's saves began ↔ the document now | Doc editing |
 | A History entry's *What changed* | the last different version before it ↔ that entry | Doc editing |
+| The assistant's proposal header — *Side by side*, beside *Accept all / Reject all* | the base it was computed against ↔ what it proposes | Doc editing |
+| The Suggestions section — *Side by side: Bob*, one per person | the document ↔ the document with only Bob's suggestions applied | Doc editing |
+| The banner *Changed since you last looked* — *See changes* | the version you last had on screen ↔ now | Doc editing |
+| *Compare with Branch or Tag... (Rendered)* — palette, explorer *Compare* group | your file ↔ the ref, or what the ref changed since it branched off yours | any |
+| The desktop's Sync notification — *Show N changed documents* | each document before Sync ↔ after | desktop |
+
+Every comparison opened from the Documents editor carries the document's open
+discussions: a badge on each passage a thread quotes, a warning badge where the
+change removed it, and both counted in the summary.
 
 The tab follows both versions: when the file is saved or a commit moves HEAD,
 the comparison is drawn again at the same scroll position. Its header has the
@@ -63,6 +72,40 @@ the Documents editor hands the view is worked out in
   conflict is entered, so a slow or absent co-editing backend never delays
   keeping both versions; it only names one of them a moment later, or never.
   The WYSIWYG editor has no co-editing client, so its column stays `On disk`.
+- **A proposal or a person's suggestions, read whole.** The review queue and the
+  tracked page decide a change one hunk at a time; a long rewrite is also read.
+  The assistant's proposal is its stored base beside its proposed body. A
+  person's suggestions are `tracked-changes.js`'s `suggestedMarkdown` over that
+  person's entries alone — the document as it would be if only they were
+  accepted. One button per person, not per card.
+- **Since you last looked.** The version you last had on screen is kept on your
+  own machine (`localStorage`, beside identity: it is about what one person saw,
+  not part of the shared `.studio/`) — when you save, close the document, or
+  answer the offer. Opening it again when it is no longer that version shows
+  *Changed since you last looked*; the offer is never opened by itself, and an
+  unanswered one is made again next time. The key is the page's base URI as well
+  as the file, because every portal session names its checkout `/workspace`.
+  Documents over 200 000 characters are not kept.
+- **Discussions.** `threadNotes` turns the document's open inline threads into
+  notes (the quote, and the opener's name and first line); the view badges each
+  cell holding a quote. A quote on the left and nowhere on the right is the edit
+  taking the text a thread is anchored to — that thread will lose its place, and
+  its badge and the summary say so (`1 would lose its place`). Resolved threads
+  and component threads (no quote) are not carried.
+- **A colleague's branch.** *Compare with Branch or Tag* lists the refs of the
+  repository the document is in, newest first, through a small RPC
+  (`common/markdown-diff-git-protocol.ts`, node side
+  `node/markdown-diff-git-service.ts`) that runs git in the document's own
+  directory — a portal session's checkout or any of a desktop project's clones.
+  Then one of two questions: *Mine ↔ ref*, or *What ref changed* — the merge
+  base against the ref, which is a pull request's view: their edits, without
+  what happened on yours since. A picked ref that could read as a git option is
+  refused.
+- **What Sync brought (desktop).** Each member has their own clone there, so
+  Sync is how a colleague's edits arrive. A fast-forward records HEAD before and
+  after and the markdown files added or modified between them
+  (`DesktopGitSync.brought`); the Sync notification offers them, and each opens
+  as it was before Sync beside as it is now.
 
 **Two editors format differently.** The Documents editor and the WYSIWYG one
 serialise markdown differently — line wrapping, table padding. In a document
@@ -133,10 +176,14 @@ commandRegistry.executeCommand('studio.markdownDiff.compare', {
     left: { content: older, label: 'Monday' },     // or { uri: 'git:…' }
     right: { uri: 'file:///workspace/docs/spec.md' },
     base: 'file:///workspace/docs/spec.md',  // optional: relative images and links
+    notes: [{ quote: 'quick brown', label: 'Alice: really?' }],  // optional: discussions to badge
 });
 ```
 
-`studio.markdownDiff.compareWithHead` takes a file `URI`. `compare` has no
+`studio.markdownDiff.compareWithHead` takes a file `URI` and, optionally, a
+second argument `{ notes }`. A text snapshot (`content`) lives as long as the
+page; a tab restored with the layout after a reload says its snapshots are
+gone instead of showing two empty columns. `compare` has no
 palette entry; *Compare with HEAD (Rendered)* and *Open Rendered Diff* do, and
 show where they apply. Inside `studio`, inject `MarkdownDiffService` instead.
 
@@ -181,13 +228,29 @@ element that already has the id it renders under — another tab's diagram.
 - **Images in both columns are the working tree's**: a revision's image is the
   image's own diff, not the document's.
 - **Task lists** render as boxes, read-only.
-- **The WYSIWYG editor learns of a change only from file events.** It has no
-  poll behind the watcher, unlike the Documents editor (`EXTERNAL_POLL_MS`). On
-  a workspace bind-mounted from Windows (`9p`/drvfs inside the container) there
-  are no file events, so there it never raises its conflict banner and never
-  takes a colleague's save; on a Docker volume (ext4, what a portal session
-  has) both work — checked 2026-10-05 with two people. Whether the WYSIWYG
-  editor should poll too is open.
+- **Not driven in a built desktop app:** the Sync notification's *Show changed
+  documents*. What it shows is covered — `desktop-git.test.ts` against a real
+  remote, and the comparison of two `git:` revisions in the portal session —
+  but not the click itself in electron-app.
+
+## Found on the way, not changed here
+
+- **A colleague's suggestions appear only after a reload.** Bob's suggestion was
+  on disk (`.studio/changes/<doc>/<bob>.json`) while Alice's open editor did not
+  list it; reopening the page did. Not investigated further.
+- **The Documents editor holds git operations for review.** A write nobody
+  claimed — an agent's, but also a `git checkout`, `git pull` or `git commit`
+  run in the shared checkout — becomes a proposal and the file is put back to
+  the reviewed state while anybody has the document open there. That is by
+  design (`onExternalChange` says so), but it means a branch switch in the
+  portal session leaves the working tree differing from HEAD until someone
+  accepts. Seen on the stand when a commit's paragraph vanished from the file.
+- **Two serialisers** — see [With other people](#with-other-people).
+- **The WYSIWYG editor now polls** (`EXTERNAL_POLL_MS`, every two seconds, file
+  resources only, not while saving or hidden), as the Documents editor always
+  did: on a workspace bind-mounted from Windows (`9p`/drvfs inside the
+  container) there are no file events at all, and before this it never raised
+  its conflict banner or took a colleague's save there.
 
 ## Verifying
 

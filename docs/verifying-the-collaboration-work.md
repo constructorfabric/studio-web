@@ -213,11 +213,57 @@ autosave lands.
 - With B in the Workbench (the WYSIWYG editor) instead: the conflict banner
   appears with *Side by side* beside *Compare*. Its columns say `On disk` — that
   editor has no co-editing client to ask who wrote it.
-- **Fails as, on a Windows bind mount**: no banner at all in the WYSIWYG editor.
-  A workspace mounted from `C:\` is `9p` (drvfs) inside the container and
-  delivers no file events; the Documents editor still notices through its own
-  two-second poll, the WYSIWYG one has none. Run the stand on a Docker volume,
-  which is what a portal session has.
+- **On a Windows bind mount** a workspace mounted from `C:\` is `9p` (drvfs)
+  inside the container and delivers no file events. Both editors still notice,
+  each through its own two-second poll — the WYSIWYG one since it got one; the
+  banner then comes up to two seconds late. A Docker volume is what a portal
+  session has, and the closer stand.
+
+### 5c. Reading a proposal, and a colleague's suggestions, whole
+
+- An unclaimed write (an agent's) lands while A has the document open.
+  **Expect**: the proposal header has *Side by side*; it opens `Before ↔
+  Proposed by assistant`, the edited words marked, rewrapped paragraphs counted
+  as formatting, not edits.
+- B switches to *Suggesting* and types. **Expect** on A's side, in the
+  Suggestions section: *Side by side: B*, opening `Document ↔ B's suggestions`
+  with only B's change. **Known**: A may need to reopen the document before B's
+  suggestion is listed at all.
+
+### 5d. What changed since you last looked
+
+A opens the document and leaves (closes it, or the page). Something changes it.
+A opens it again.
+
+- **Expect**: a banner `Changed since you last looked (<when>)` with *See
+  changes* and *Dismiss*. *See changes* opens the remembered version beside the
+  current one. Either answer makes the current version the remembered one; no
+  answer keeps the offer for next time.
+- Another person, another browser: their own memory. Nothing of this is in
+  `.studio/`.
+
+### 5e. The discussions a change touches
+
+With open threads in the document, open any comparison from the Documents
+editor — *Last commit* is the simplest.
+
+- **Expect**: a badge on each passage a thread quotes, in both columns; a
+  **warning** badge on the left where the change removed a quoted passage (its
+  tooltip: the discussion will lose its place); the summary counts them, e.g.
+  `1 changed · 1 discussion on changed text · 1 would lose its place`.
+
+### 5f. A colleague's branch
+
+B's branch exists in the repository (pushed, or local in the shared checkout).
+
+- *Compare with Branch or Tag... (Rendered)* on the document. **Expect**: the
+  refs newest first with their author, then two questions. *Mine ↔ B's branch*
+  shows how the document differs; *What B's branch changed* shows only B's
+  edits since it branched off, not what happened on yours meanwhile.
+- **Fails as**: a git operation in the shared checkout seeming to "not take" —
+  the Documents editor holds an unclaimed write (a checkout, a commit) for
+  review and puts the file back while anyone has it open there. Close the
+  document in other browsers before switching branches on the stand.
 
 ### 6. Commenting on something that was rendered
 
