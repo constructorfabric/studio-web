@@ -22,6 +22,7 @@ import { MarkdownEditorModel } from './markdown-editor/markdown-editor-model';
 import { MarkdownEditorOpenHandler } from './markdown-editor/markdown-editor-open-handler';
 import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
 import { MarkdownDiffContribution } from './markdown-diff/markdown-diff-contribution';
+import { AssistantRevealGuard } from './assistant-reveal-guard';
 import { MarkdownDiffOpenHandler, MarkdownDiffService } from './markdown-diff/markdown-diff-service';
 import { decodeMarkdownDiffUri } from './markdown-diff/markdown-diff-uri';
 import { MarkdownDiffWidget } from './markdown-diff/markdown-diff-widget';
@@ -178,6 +179,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(MarkdownEditorConflictService).toSelf().inSingletonScope();
     bind(MarkdownEditorModel).toSelf();
     bind(MarkdownEditorWidget).toSelf();
+    // The right flank does not open on an assistant nobody asked for.
+    bind(AssistantRevealGuard).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(AssistantRevealGuard);
     // Two versions of a markdown document, rendered side by side.
     bind(MarkdownDiffWidget).toSelf();
     bind(MarkdownDiffOpenHandler).toSelf().inSingletonScope();
