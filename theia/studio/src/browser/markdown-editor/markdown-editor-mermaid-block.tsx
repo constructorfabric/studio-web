@@ -9,23 +9,15 @@ import {
     applyMermaidDraft,
     cancelMermaidEditing,
     changeMermaidDraft,
-    createMermaidConfig,
     createMermaidEditorSessionState,
     createMermaidRenderId,
     getMermaidTheme,
-    sanitizeMermaidSvg,
     shouldReuseMermaidRender,
     startMermaidEditing,
-    validateMermaidSource,
-    type MermaidPreviewTheme,
     type MermaidRenderCacheEntry,
     type MermaidThemeType
 } from './markdown-editor-mermaid';
-
-interface MermaidApi {
-    initialize(config: Record<string, unknown>): void;
-    render(id: string, text: string): Promise<{ svg: string }>;
-}
+import { renderMermaidDiagram } from './markdown-editor-mermaid-render';
 
 interface MermaidCodeBlockEditorProps extends CodeBlockEditorProps {
     readonly mermaidThemeType: MermaidThemeType;
@@ -205,35 +197,6 @@ export function MermaidCodeBlockEditor(props: MermaidCodeBlockEditorProps): Reac
             </div>
         </div>
     );
-}
-
-async function renderMermaidDiagram(options: {
-    readonly code: string;
-    readonly theme: MermaidPreviewTheme;
-    readonly renderId: string;
-}): Promise<string> {
-    validateMermaidSource(options.code);
-    const task = mermaidRenderQueue.then(async () => {
-        const mermaid = await loadMermaid();
-        mermaid.initialize(createMermaidConfig(options.theme));
-        const result = await mermaid.render(options.renderId, options.code);
-        return sanitizeMermaidSvg(result.svg);
-    });
-    mermaidRenderQueue = task.then(() => undefined, () => undefined);
-    return task;
-}
-
-let mermaidModulePromise: Promise<MermaidApi> | undefined;
-let mermaidRenderQueue: Promise<void> = Promise.resolve();
-
-async function loadMermaid(): Promise<MermaidApi> {
-    if (!mermaidModulePromise) {
-        mermaidModulePromise = import('mermaid').then(module => {
-            const candidate = (module as { default?: unknown }).default ?? module;
-            return candidate as MermaidApi;
-        });
-    }
-    return mermaidModulePromise;
 }
 
 async function copyPlainText(value: string): Promise<void> {

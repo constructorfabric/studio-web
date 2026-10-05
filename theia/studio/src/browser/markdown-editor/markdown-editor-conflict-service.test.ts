@@ -127,6 +127,30 @@ describe('MarkdownEditorConflictService', () => {
         expect(diffService.openDiffEditor).not.toHaveBeenCalled();
         expect(resources.added).toHaveLength(0);
     });
+
+    it('opens the same two versions rendered side by side, as texts beside the file', async () => {
+        const { MarkdownEditorConflictService } = loadConflictServiceModule();
+        const service = new MarkdownEditorConflictService() as ConflictServiceUnderTest;
+        const markdownDiffs = { open: jest.fn().mockResolvedValue(undefined) };
+        Object.defineProperty(service, 'markdownDiffs', { value: markdownDiffs });
+
+        await service.openRenderedDiff(createConflictModel());
+        await service.openRenderedDiff(createDeletedConflictModel());
+
+        expect(markdownDiffs.open.mock.calls.map(call => ({ ...call[0], base: call[0].base?.toString() }))).toEqual([
+            {
+                title: 'guide.md (Disk ↔ Local)',
+                left: { content: '# Disk  \r\n\r\nText\r\n', label: 'On disk' },
+                right: { content: '# Local\n', label: 'Your version' },
+                base: 'file:///workspace/guide.md',
+            },
+            expect.objectContaining({
+                title: 'guide.md (Disk Deleted ↔ Local)',
+                left: { content: '', label: 'Deleted on disk' },
+            }),
+        ]);
+        await expect(service.openRenderedDiff(createCleanModel())).rejects.toThrow('no pending external change');
+    });
 });
 
 function loadConflictServiceModule(): { MarkdownEditorConflictService: new () => unknown } {
@@ -172,6 +196,7 @@ function createCleanModel(): ConflictModelStub {
 
 interface ConflictServiceUnderTest {
     openDiff(model: ConflictModelStub): Promise<void>;
+    openRenderedDiff(model: ConflictModelStub): Promise<void>;
     createResourcePair(leftContents: string, rightContents: string): unknown;
 }
 

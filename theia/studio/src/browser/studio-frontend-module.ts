@@ -21,6 +21,11 @@ import { MarkdownEditorConflictService } from './markdown-editor/markdown-editor
 import { MarkdownEditorModel } from './markdown-editor/markdown-editor-model';
 import { MarkdownEditorOpenHandler } from './markdown-editor/markdown-editor-open-handler';
 import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
+import { MarkdownDiffContribution } from './markdown-diff/markdown-diff-contribution';
+import { MarkdownDiffOpenHandler, MarkdownDiffService } from './markdown-diff/markdown-diff-service';
+import { decodeMarkdownDiffUri } from './markdown-diff/markdown-diff-uri';
+import { MarkdownDiffWidget } from './markdown-diff/markdown-diff-widget';
+import URI from '@theia/core/lib/common/uri';
 import { GraphOpenHandler } from './graph-open-handler';
 import { ObjectDetailsWidget } from './object-details-widget';
 import { bindAgentCredentials } from './agent-credentials';
@@ -75,6 +80,7 @@ import { RoadmapReportWidget } from './roadmap-report-widget';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
+import '../../src/browser/markdown-diff/markdown-diff.css';
 import '../../src/browser/workspace-sources.css';
 import '../../src/browser/orca.css';
 import '../../src/browser/desktop-studio.css';
@@ -171,6 +177,24 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(MarkdownEditorConflictService).toSelf().inSingletonScope();
     bind(MarkdownEditorModel).toSelf();
     bind(MarkdownEditorWidget).toSelf();
+    // Two versions of a markdown document, rendered side by side.
+    bind(MarkdownDiffWidget).toSelf();
+    bind(MarkdownDiffOpenHandler).toSelf().inSingletonScope();
+    bind(OpenHandler).toService(MarkdownDiffOpenHandler);
+    bind(MarkdownDiffService).toSelf().inSingletonScope();
+    bind(MarkdownDiffContribution).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(MarkdownDiffContribution);
+    bind(MenuContribution).toService(MarkdownDiffContribution);
+    bind(TabBarToolbarContribution).toService(MarkdownDiffContribution);
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: MarkdownDiffWidget.FACTORY_ID,
+        createWidget: (options: { uri: string }) => {
+            const widget = ctx.container.get<MarkdownDiffWidget>(MarkdownDiffWidget);
+            widget.id = `${MarkdownDiffWidget.FACTORY_ID}:${options.uri}`;
+            void widget.setInput(decodeMarkdownDiffUri(new URI(options.uri)));
+            return widget;
+        }
+    })).inSingletonScope();
     bind(WorkspaceGraphFrontendController).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(WorkspaceGraphFrontendController);
     bind(AnalyzeApplicationShellProvider).toFactory(ctx => () => ctx.container.get(ApplicationShell));

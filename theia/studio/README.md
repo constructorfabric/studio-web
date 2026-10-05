@@ -20,6 +20,7 @@ contribution point.
 | Object Details | `studio:object-details` | with the graph; it reads the graph's selection |
 | Artifact Graph | `studio:artifact-graph` | on request |
 | Workspace Sources | `studio:workspace-sources` | on request |
+| Rendered markdown diff | `studio.markdownDiff:<uri>` | main area, one tab per comparison — [docs/rendered-markdown-diff.md](../../docs/rendered-markdown-diff.md) |
 
 `DEFAULT_LAYOUT` in `src/browser/studio-contribution.ts` is the one place that
 says what a fresh session opens on, and the Workbench perspective reads the same

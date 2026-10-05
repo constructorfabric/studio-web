@@ -49,6 +49,7 @@ repository.
 - [roadmap-alignment.md](roadmap-alignment.md) — the Q3 roadmap against what the prototype has de-risked.
 - [gear-intelligence-sync.md](gear-intelligence-sync.md) — importing delivery evidence for the gear catalogue.
 - [kit-registry-prototype.md](kit-registry-prototype.md) — the kit registry's prototype slice.
+- [rendered-markdown-diff.md](rendered-markdown-diff.md) — two versions of a document rendered side by side: where it opens from, how it compares, how other extensions call it.
 
 **Runbooks:**
 

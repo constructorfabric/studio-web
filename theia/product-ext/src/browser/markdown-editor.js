@@ -58,6 +58,9 @@ const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
 const { diffHunks, applyHunks, countPending, splitLines } = require('./diff');
 const { preserveWrapping } = require('./md-rewrap');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
+// theia/studio's rendered markdown comparison (markdown-diff-contribution.ts).
+const RENDERED_COMPARE_COMMAND = 'studio.markdownDiff.compare';
+const RENDERED_HEAD_COMMAND = 'studio.markdownDiff.compareWithHead';
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
@@ -5188,7 +5191,11 @@ class MarkdownEditorWidget extends Widget {
         // decisions attached, so it renders and returns before the review UI.
         if (this.comparing) {
             this.listEl.innerHTML =
-                '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="close-compare">Close comparison</button></div>' +
+                '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="close-compare">Close comparison</button>' +
+                (this.renderedCompareAvailable()
+                    ? '<button class="studio-btn ghost" data-act="compare-rendered" title="Both versions rendered, side by side, in a tab">Side by side</button>'
+                    : '') +
+                '</div>' +
                 comparisonHtml(diffHunks(this.comparing.a, this.comparing.b).hunks, { heading: this.comparing.heading });
             this.footEl.textContent = '';
             return;
@@ -5383,6 +5390,9 @@ class MarkdownEditorWidget extends Widget {
     renderHistory() {
         this.railHeadEl.innerHTML =
             '<span class="studio-rail-title">History</span>' +
+            (this.renderedCompareAvailable() && this.uri.scheme === 'file'
+                ? '<button class="studio-btn ghost" data-act="compare-head-rendered" title="The saved file against its last commit, rendered side by side">Last commit</button>'
+                : '') +
             (this.compareSelection.length === 2
                 ? '<button class="studio-btn ghost" data-act="clear-compare">Clear</button>'
                 : '');
@@ -5401,6 +5411,10 @@ class MarkdownEditorWidget extends Widget {
             if (a && b) {
                 const [older, newer] = Date.parse(a.at) <= Date.parse(b.at) ? [a, b] : [b, a];
                 comparison = '<div class="studio-compare">' +
+                    (this.renderedCompareAvailable()
+                        ? '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="history-compare-rendered" ' +
+                          'title="These two versions rendered, side by side, in a tab">Side by side</button></div>'
+                        : '') +
                     comparisonHtml(diffHunks(older.snapshot, newer.snapshot).hunks, {
                         heading: older.title + ' (' + older.author + ', ' + new Date(older.at).toLocaleString() + ')' +
                             '  →  ' + newer.title + ' (' + newer.author + ', ' + new Date(newer.at).toLocaleString() + ')'
@@ -5432,6 +5446,50 @@ class MarkdownEditorWidget extends Widget {
         this.footEl.textContent = this.compareSelection.length === 1
             ? 'Select a second version to compare.'
             : withSnapshots.length + ' restorable version' + (withSnapshots.length === 1 ? '' : 's');
+    }
+
+    /*
+     * The rendered, side-by-side comparison (theia/studio's markdown-diff,
+     * by command so this package does not depend on that one). The line
+     * hunks above stay the place to decide on a change; this is for reading
+     * two versions as documents — a long rewrite, a moved section, a table.
+     * Where that extension is absent the buttons are simply not drawn.
+     */
+    renderedCompareAvailable() {
+        return !!(this.commandRegistry && this.commandRegistry.getCommand(RENDERED_COMPARE_COMMAND));
+    }
+
+    openRenderedCompare(request) {
+        if (!this.renderedCompareAvailable()) { return; }
+        void this.commandRegistry.executeCommand(RENDERED_COMPARE_COMMAND, Object.assign({
+            base: this.uri.scheme === 'file' ? this.uri.toString() : undefined
+        }, request));
+    }
+
+    openConflictRendered() {
+        if (!this.comparing) { return; }
+        this.openRenderedCompare({
+            title: this.uri.path.base + ' (' + this.comparing.heading + ')',
+            left: { content: this.comparing.a, label: 'On disk' },
+            right: { content: this.comparing.b, label: 'Your unsaved version' }
+        });
+    }
+
+    openHistoryRendered() {
+        const [a, b] = this.compareSelection.map(id => this.historyEntries.find(e => e.id === id)).filter(Boolean);
+        if (!a || !b) { return; }
+        const [older, newer] = Date.parse(a.at) <= Date.parse(b.at) ? [a, b] : [b, a];
+        const label = entry => entry.title + ' · ' + entry.author + ' · ' + new Date(entry.at).toLocaleString();
+        this.openRenderedCompare({
+            title: this.uri.path.base + ' (history)',
+            left: { content: older.snapshot, label: label(older) },
+            right: { content: newer.snapshot, label: label(newer) }
+        });
+    }
+
+    openHeadRendered() {
+        if (!this.commandRegistry) { return; }
+        void this.commandRegistry.executeCommand(RENDERED_HEAD_COMMAND, this.uri);
     }
 
     toggleCompare(entryId) {
@@ -7545,6 +7603,9 @@ class MarkdownEditorWidget extends Widget {
                 case 'open-changed-file': this.openChangedFile(act.getAttribute('data-path')); break;
                 case 'rail-changes': this.openSlot('changes'); break;
                 case 'close-compare': this.comparing = undefined; this.renderRail(); break;
+                case 'compare-rendered': this.openConflictRendered(); break;
+                case 'history-compare-rendered': this.openHistoryRendered(); break;
+                case 'compare-head-rendered': this.openHeadRendered(); break;
                 case 'clear-compare': this.compareSelection = []; this.renderRail(); break;
                 case 'history-compare': this.toggleCompare(id); break;
                 case 'history-restore': this.restoreVersion(id); break;

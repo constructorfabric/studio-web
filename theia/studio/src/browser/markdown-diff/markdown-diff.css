@@ -1,0 +1,338 @@
+/*
+ * The rendered markdown comparison (markdown-diff-widget.ts).
+ *
+ * One grid, one scrollbar: each row holds a block from each version, so the
+ * two columns stay aligned without synchronising two scroll positions, and a
+ * block added on one side leaves an empty, hatched cell on the other.
+ * Colours are the diff editor's own, so the view reads like the text diff it
+ * sits beside in every theme.
+ */
+
+.studio-md-diff {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    color: var(--theia-foreground);
+    background: var(--theia-editor-background);
+    outline: none;
+}
+
+.studio-md-diff-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--theia-panel-border);
+    background: var(--theia-editorGroupHeader-tabsBackground, var(--theia-editor-background));
+    flex: none;
+}
+
+.studio-md-diff-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: 1;
+    min-width: 0;
+}
+
+.studio-md-diff-label {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-left: 16px;
+}
+
+.studio-md-diff-label.old {
+    color: var(--theia-gitDecoration-deletedResourceForeground);
+}
+
+.studio-md-diff-label.new {
+    color: var(--theia-gitDecoration-addedResourceForeground);
+}
+
+.studio-md-diff-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: none;
+}
+
+.studio-md-diff-summary {
+    color: var(--theia-descriptionForeground);
+    margin-right: 8px;
+    white-space: nowrap;
+}
+
+.studio-md-diff-button {
+    border: none;
+    background: transparent;
+    color: var(--theia-icon-foreground);
+    width: 24px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.studio-md-diff-button:hover {
+    background: var(--theia-toolbar-hoverBackground);
+}
+
+.studio-md-diff-button.active {
+    background: var(--theia-inputOption-activeBackground);
+    outline: 1px solid var(--theia-inputOption-activeBorder, transparent);
+}
+
+.studio-md-diff-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.studio-md-diff-scroller {
+    position: absolute;
+    inset: 0 14px 0 0;
+    overflow: auto;
+}
+
+/* The change markers, beside the scrollbar. */
+.studio-md-diff-ruler {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    border-left: 1px solid var(--theia-panel-border);
+    cursor: pointer;
+}
+
+.studio-md-diff-marker {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    min-height: 3px;
+    border-radius: 1px;
+    pointer-events: none;
+}
+
+.studio-md-diff-marker.added {
+    background: var(--theia-editorGutter-addedBackground);
+}
+
+.studio-md-diff-marker.removed {
+    background: var(--theia-editorGutter-deletedBackground);
+}
+
+.studio-md-diff-marker.modified,
+.studio-md-diff-marker.replaced {
+    background: var(--theia-editorGutter-modifiedBackground);
+}
+
+.studio-md-diff-grid {
+    padding: 8px 0 48px;
+}
+
+.studio-md-diff-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.studio-md-diff-cell {
+    min-width: 0;
+    padding: 0 16px;
+    border-left: 3px solid transparent;
+    overflow-wrap: anywhere;
+}
+
+.studio-md-diff-cell.old {
+    border-right: 1px solid var(--theia-panel-border);
+}
+
+.studio-md-diff-row.removed .studio-md-diff-cell.old,
+.studio-md-diff-row.replaced .studio-md-diff-cell.old,
+.studio-md-diff-row.modified .studio-md-diff-cell.old {
+    /* Half the word colour when the theme has no line colour, so a whole
+       paragraph tinted does not shout louder than a marked word in it. */
+    background: var(--theia-diffEditor-removedLineBackground, color-mix(in srgb, var(--theia-diffEditor-removedTextBackground) 50%, transparent));
+    border-left-color: var(--theia-editorGutter-deletedBackground);
+}
+
+.studio-md-diff-row.added .studio-md-diff-cell.new,
+.studio-md-diff-row.replaced .studio-md-diff-cell.new,
+.studio-md-diff-row.modified .studio-md-diff-cell.new {
+    background: var(--theia-diffEditor-insertedLineBackground, color-mix(in srgb, var(--theia-diffEditor-insertedTextBackground) 50%, transparent));
+    border-left-color: var(--theia-editorGutter-addedBackground);
+}
+
+/* Same words, different markup (a reformatted table, a link target): marked
+   at the edge only, so it does not read like the paragraph was rewritten. */
+.studio-md-diff-row.modified.marked-markup .studio-md-diff-cell {
+    background: none;
+    border-left-style: dashed;
+}
+
+.studio-md-diff-cell.empty {
+    background-image: repeating-linear-gradient(-45deg, transparent 0 6px, var(--theia-diffEditor-diagonalFill, rgba(128, 128, 128, 0.15)) 6px 7px);
+}
+
+.studio-md-diff-flash {
+    animation: studio-md-diff-flash 0.9s ease-out;
+}
+
+@keyframes studio-md-diff-flash {
+    from { box-shadow: inset 0 0 0 2px var(--theia-focusBorder); }
+    to { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+.studio-md-diff-word {
+    text-decoration: none;
+    border-radius: 2px;
+}
+
+ins.studio-md-diff-word.added {
+    background: var(--theia-diffEditor-insertedTextBackground);
+    outline: 1px solid var(--theia-diffEditor-insertedTextBorder, transparent);
+}
+
+del.studio-md-diff-word.removed {
+    background: var(--theia-diffEditor-removedTextBackground);
+    outline: 1px solid var(--theia-diffEditor-removedTextBorder, transparent);
+    text-decoration: line-through;
+    text-decoration-color: var(--theia-editorGutter-deletedBackground);
+}
+
+.studio-md-diff-fold {
+    display: block;
+    width: 100%;
+    margin: 4px 0;
+    padding: 2px 0;
+    border: none;
+    border-top: 1px dashed var(--theia-panel-border);
+    border-bottom: 1px dashed var(--theia-panel-border);
+    background: transparent;
+    color: var(--theia-descriptionForeground);
+    font-size: var(--theia-ui-font-size0);
+    cursor: pointer;
+}
+
+.studio-md-diff-fold:hover {
+    color: var(--theia-foreground);
+    background: var(--theia-list-hoverBackground);
+}
+
+.studio-md-diff-identical,
+.studio-md-diff-error {
+    margin: 8px 16px 12px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    background: var(--theia-textBlockQuote-background);
+    color: var(--theia-descriptionForeground);
+}
+
+.studio-md-diff-error {
+    color: var(--theia-errorForeground);
+}
+
+/* The documents themselves: prose, readable, close to the editor's own page. */
+.studio-md-diff-cell {
+    font-family: var(--theia-ui-font-family);
+    font-size: calc(var(--theia-ui-font-size1) + 1px);
+    line-height: 1.6;
+}
+
+.studio-md-diff-cell > :first-child {
+    margin-top: 0.6em;
+}
+
+.studio-md-diff-cell > :last-child {
+    margin-bottom: 0.6em;
+}
+
+.studio-md-diff-cell h1,
+.studio-md-diff-cell h2 {
+    border-bottom: 1px solid var(--theia-panel-border);
+    padding-bottom: 0.2em;
+}
+
+.studio-md-diff-cell h1 { font-size: 1.8em; }
+.studio-md-diff-cell h2 { font-size: 1.45em; }
+.studio-md-diff-cell h3 { font-size: 1.2em; }
+
+.studio-md-diff-cell code {
+    font-family: var(--theia-code-font-family);
+    font-size: 0.9em;
+    background: var(--theia-textCodeBlock-background);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+}
+
+.studio-md-diff-cell pre {
+    background: var(--theia-textCodeBlock-background);
+    padding: 8px 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.studio-md-diff-cell pre code {
+    background: none;
+    padding: 0;
+}
+
+.studio-md-diff-cell blockquote {
+    margin: 0.6em 0;
+    padding: 0 1em;
+    border-left: 3px solid var(--theia-textBlockQuote-border);
+    color: var(--theia-descriptionForeground);
+}
+
+.studio-md-diff-cell table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+}
+
+.studio-md-diff-cell th,
+.studio-md-diff-cell td {
+    border: 1px solid var(--theia-panel-border);
+    padding: 4px 10px;
+}
+
+.studio-md-diff-cell img {
+    max-width: 100%;
+}
+
+.studio-md-diff-cell a {
+    color: var(--theia-textLink-foreground);
+}
+
+/* Every list item is its own row; the lists around them should not show the seams. */
+.studio-md-diff-cell > ul,
+.studio-md-diff-cell > ol {
+    margin: 0.15em 0;
+    padding-left: 1.6em;
+}
+
+.studio-md-diff-task-item {
+    list-style: none;
+    margin-left: -1.3em;
+}
+
+.studio-md-diff-task {
+    display: inline-block;
+    width: 1.3em;
+}
+
+.studio-md-diff-front-matter {
+    opacity: 0.75;
+    font-size: 0.85em;
+}
+
+.studio-md-diff-mermaid.drawn {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.studio-md-diff-mermaid svg {
+    max-width: 100%;
+    height: auto;
+}

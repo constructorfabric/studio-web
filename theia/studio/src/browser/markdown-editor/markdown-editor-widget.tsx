@@ -234,6 +234,7 @@ export class MarkdownEditorWidget extends ReactWidget implements Navigatable, Sa
                 </span>
                 <div className='studio-markdown-editor-conflict-actions'>
                     <button type='button' disabled={conflictActionsDisabled} onClick={() => void this.compareExternalChange()}>Compare</button>
+                    <button type='button' disabled={conflictActionsDisabled} title='Both versions rendered, side by side' onClick={() => void this.compareExternalChangeRendered()}>Side by side</button>
                     <button type='button' disabled={conflictActionsDisabled} onClick={() => void this.reloadFromDisk()}>Reload from Disk</button>
                     <button type='button' disabled={conflictActionsDisabled} onClick={() => void this.keepLocal()}>Keep Local</button>
                 </div>
@@ -437,6 +438,12 @@ export class MarkdownEditorWidget extends ReactWidget implements Navigatable, Sa
     protected async compareExternalChange(): Promise<void> {
         await this.runConflictAction('Compare', async () => {
             await this.conflictService.openDiff(this.saveable);
+        });
+    }
+
+    protected async compareExternalChangeRendered(): Promise<void> {
+        await this.runConflictAction('Side by side', async () => {
+            await this.conflictService.openRenderedDiff(this.saveable);
         });
     }
 
