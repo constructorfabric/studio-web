@@ -9,7 +9,7 @@ import {
 } from '@gears-frontx/react';
 import { refusalFrom, type Refusal } from '@constructor-studio/mfe-shared';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
-import type { TaskStatusDto } from '../api/artifactTypes';
+import { StudioTasksApiService, type TaskRunDto } from '../api/StudioTasksApiService';
 import {
   importAbandoned,
   importStarted,
@@ -36,6 +36,22 @@ function gearSaid(text: string | null | undefined): Refusal | null {
   return text ? { kind: 'provider', text } : null;
 }
 
+/** A run's state as an import row's; a cancelled sync did not come through. */
+function importStatus(run: TaskRunDto): RepoImportStatus {
+  return run.state === 'cancelled' ? 'failed' : run.state;
+}
+
+/** Nodes the sync has flushed so far, from the counts in the run's `result`. */
+function storedOf(run: TaskRunDto): number {
+  const stored = run.result?.stored;
+  return typeof stored === 'number' && Number.isFinite(stored) ? stored : 0;
+}
+
+/** What the row says: what it did, why it stopped, or where it is. */
+function runMessage(run: TaskRunDto): string | null {
+  return run.summary ?? run.last_error ?? run.progress ?? null;
+}
+
 async function bounded<T>(
   items: readonly T[],
   limit: number,
@@ -59,6 +75,7 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
   eventBus.on('mfe/artifacts/sync-requested', (request: SyncRequest) => {
     const { projectId, workspaceId, repos, unsyncable } = request;
     const ingest = apiRegistry.getService(ArtifactIngestApiService);
+    const studioTasks = apiRegistry.getService(StudioTasksApiService);
     const generation = (generations.get(projectId) ?? 0) + 1;
     generations.set(projectId, generation);
 
@@ -82,7 +99,7 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
     };
 
     void (async () => {
-      const tasks = new Map<string, string>();
+      const runs = new Map<string, string>();
       const failures = new Map<string, number>();
 
       // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-4
@@ -97,15 +114,15 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
             project_id: projectId,
             workspace_id: workspaceId ?? undefined,
           });
-          tasks.set(entry.repo, enqueued.run_id);
-          dispatch(repoEnqueued({ projectId, repo: entry.repo, taskId: enqueued.run_id }));
+          runs.set(entry.repo, enqueued.run_id);
+          dispatch(repoEnqueued({ projectId, repo: entry.repo, runId: enqueued.run_id }));
         } catch (error) {
           progressed(entry.repo, 'failed', refusalFrom(error, 'artifacts_reason_request_failed'));
         }
       });
       // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-4
 
-      for (let poll = 0; poll < MAX_POLLS && tasks.size > 0; poll += 1) {
+      for (let poll = 0; poll < MAX_POLLS && runs.size > 0; poll += 1) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         if (superseded()) return;
         if (openProjectId() !== projectId) {
@@ -115,25 +132,25 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
 
         // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
         const answers = await Promise.all(
-          [...tasks].map(async ([repo, taskId]) => {
+          [...runs].map(async ([repo, runId]) => {
             try {
-              const task: TaskStatusDto = await ingest.task({ taskId }).fetch({ staleTime: 0 });
-              return { repo, task, error: null };
+              const run = await studioTasks.run({ runId }).fetch({ staleTime: 0 });
+              return { repo, run, error: null };
             } catch (error) {
-              return { repo, task: null, error };
+              return { repo, run: null, error };
             }
           })
         );
         // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
 
-        for (const { repo, task, error } of answers) {
-          if (!task) {
+        for (const { repo, run, error } of answers) {
+          if (!run) {
             // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
             // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-9
             const misses = (failures.get(repo) ?? 0) + 1;
             failures.set(repo, misses);
             if (isNotFound(error) || misses >= MAX_POLL_FAILURES) {
-              tasks.delete(repo);
+              runs.delete(repo);
               progressed(repo, 'lost', refusalFrom(error, 'artifacts_reason_task_lost'));
             }
             // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
@@ -142,19 +159,20 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
           }
 
           failures.delete(repo);
-          stored.set(repo, task.stored);
+          stored.set(repo, storedOf(run));
 
           // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
           // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
-          if (task.status === 'succeeded' || task.status === 'failed') tasks.delete(repo);
-          progressed(repo, task.status, gearSaid(task.message));
+          const status = importStatus(run);
+          if (status === 'succeeded' || status === 'failed') runs.delete(repo);
+          progressed(repo, status, gearSaid(runMessage(run)));
           // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
           // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
         }
       }
 
       // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12
-      for (const repo of tasks.keys()) {
+      for (const repo of runs.keys()) {
         progressed(repo, 'unwatched', { kind: 'i18n', key: 'artifacts_reason_unwatched' });
       }
       // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12

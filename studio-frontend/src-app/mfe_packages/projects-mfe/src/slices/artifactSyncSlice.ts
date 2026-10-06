@@ -14,7 +14,7 @@ export type RepoImportStatus =
 
 export interface RepoImport {
   repo: string;
-  taskId: string | null;
+  runId: string | null;
   status: RepoImportStatus;
   reason: Refusal | null;
   stored: number;
@@ -70,14 +70,14 @@ const { slice, importStarted, repoEnqueued, repoProgressed, importAbandoned } = 
       const rows: RepoImport[] = [
         ...repos.map((repo) => ({
           repo,
-          taskId: null,
+          runId: null,
           status: 'queued' as const,
           reason: null,
           stored: 0,
         })),
         ...unsyncable.map(({ repo, reason }) => ({
           repo,
-          taskId: null,
+          runId: null,
           status: 'unsyncable' as const,
           reason,
           stored: 0,
@@ -88,11 +88,11 @@ const { slice, importStarted, repoEnqueued, repoProgressed, importAbandoned } = 
 
     repoEnqueued: (
       state: ArtifactSyncState,
-      action: ReducerPayload<{ projectId: string; repo: string; taskId: string }>
+      action: ReducerPayload<{ projectId: string; repo: string; runId: string }>
     ) => {
       const found = repoOf(state, action.payload.projectId, action.payload.repo);
       if (!found) return;
-      found.row.taskId = action.payload.taskId;
+      found.row.runId = action.payload.runId;
       found.row.status = 'running';
     },
 

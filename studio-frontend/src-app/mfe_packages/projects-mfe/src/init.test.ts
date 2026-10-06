@@ -34,6 +34,10 @@ vi.mock('./api/DocumentsApiService', () => ({
   DocumentsApiService: class DocumentsApiService {},
 }));
 
+vi.mock('./api/StudioTasksApiService', () => ({
+  StudioTasksApiService: class StudioTasksApiService {},
+}));
+
 // Both gears' clients are shared with the other MFEs now; `init.ts` imports
 // them from the package, and nothing else in this test's graph pulls the
 // package at runtime (the wire types are type-only imports and erase).
@@ -86,9 +90,10 @@ describe('projects-mfe init', () => {
     const { initWorkspaceEffects } = await import('./effects/workspaceEffects');
     const module = await import('./init');
 
-    // Four gears: account-management, studio-connector, studio-artifact-ingest
-    // and studio-documents (the journey-stage catalogue the create wizard reads).
-    expect(register).toHaveBeenCalledTimes(4);
+    // Five gears: account-management, studio-connector, studio-artifact-ingest,
+    // studio-tasks (the run each repository's sync is) and studio-documents
+    // (the journey-stage catalogue the create wizard reads).
+    expect(register).toHaveBeenCalledTimes(5);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

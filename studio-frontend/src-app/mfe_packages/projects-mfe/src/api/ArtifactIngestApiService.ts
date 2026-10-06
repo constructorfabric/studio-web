@@ -9,11 +9,18 @@ import type {
   ArtifactNodeListDto,
   SyncBody,
   SyncEnqueuedDto,
-  TaskStatusDto,
 } from './artifactTypes';
 import { IdempotencyKeyPlugin } from './idempotencyKeyPlugin';
 
 export const ARTIFACT_INGEST_API_BASE_URL = '/cf/studio-artifact-ingest/v1';
+
+/** `POST /sync`: the one route here that starts a run. */
+export const SYNC_PATH = '/sync';
+
+/** Whether a request URL, as the plugins see it (base included), is `POST /sync`'s. */
+export function startsSync(url: string): boolean {
+  return url.split('?')[0] === `${ARTIFACT_INGEST_API_BASE_URL}${SYNC_PATH}`;
+}
 
 /**
  * A page is cheap now, but the read still fires on every window focus without
@@ -47,7 +54,7 @@ export class ArtifactIngestApiService extends BaseApiService {
     const restProtocol = new RestProtocol({ timeout: 30000 });
     const restEndpoints = new RestEndpointProtocol(restProtocol);
     // `POST /sync` starts a run (202 + run_id): its retry must answer that run.
-    restProtocol.plugins.add(new IdempotencyKeyPlugin((url) => url.endsWith('/sync')));
+    restProtocol.plugins.add(new IdempotencyKeyPlugin(startsSync));
 
     super({ baseURL: ARTIFACT_INGEST_API_BASE_URL }, restProtocol, restEndpoints);
   }
@@ -63,13 +70,8 @@ export class ArtifactIngestApiService extends BaseApiService {
     NodesParams
   >(nodesPath, { staleTime: NODES_STALE_TIME_MS });
 
-  readonly task = this.protocol(RestEndpointProtocol).queryWith<
-    TaskStatusDto,
-    { taskId: string }
-  >(({ taskId }) => `/tasks/${taskId}`);
-
   readonly sync = this.protocol(RestEndpointProtocol).mutation<SyncEnqueuedDto, SyncBody>(
     'POST',
-    '/sync'
+    SYNC_PATH
   );
 }
