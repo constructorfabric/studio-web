@@ -37,7 +37,12 @@ export interface ProjectSource {
 }
 
 /** Whether shares through `connection` can open a pull request — GitHub only
- *  for now, so anything else is offered the branch alone. */
+ *  for now, so anything else is offered the branch alone.
+ *
+ *  Mirrors the backend's `ConnectorDriver::supports_pull_requests`
+ *  (studio-backend/src/connectors/driver.rs; true only in github.rs): change
+ *  both together. For a source already attached, the backend says it itself —
+ *  `pull_requests` of `GET /studio-connector/v1/sources/{source}/sharing`. */
 export function supportsPullRequests(connection: Pick<Connection, "provider"> | null | undefined): boolean {
   return connection?.provider === "github";
 }
