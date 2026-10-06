@@ -248,11 +248,16 @@ the runner calls `threads_pass.py find` after the rounds and, per PR, `threads_p
 `open-threads.json` (only the threads to re-check: answered after our last word, or outdated with no answer),
 `plan.json`, an empty `approved.json` and `summary.md`. Do only this:
 1. For each thread, read it and the code at `tree/` (the thread's path and line; the author's reply names the
-   commit — `git -C <workdir>/tree log` / `show` to check it). Apply the rules of step 4 "Threads from earlier
-   rounds" exactly: fixed → resolve, no reply; disagrees and right → resolve with "Agreed — withdrawn."; not
-   fixed → one "Still at `<sha7>`: …" reply; disagrees and wrong → one reply with the evidence, unless we
-   already argued in that thread — then leave it. A merged PR is the author's final word on scope: a
-   "not taken in this PR" / "follow-up" answer there → resolve with "Noted as a follow-up." No agents.
+   commit — `git -C <workdir>/tree log` / `show` to check it). Then:
+   - fixed at the head → resolve, no reply;
+   - the author disagrees and is right → resolve with "Agreed — withdrawn.";
+   - the author disagrees and is wrong → one reply with the evidence, unless we already argued in that thread;
+   - anything else — above all "fixed" that is not at the head yet — → leave it, **no reply**. Authors often
+     answer every thread first and push after; a "Still at" written in between is wrong a few minutes later
+     (#557: 15 such replies, then the push). The next round re-checks it at the new head. Never write
+     "Still at" in this pass.
+   A merged PR is the author's final word on scope: a "not taken in this PR" / "follow-up" answer there →
+   resolve with "Noted as a follow-up." No agents.
 2. Write `<workdir>/replies.json` and publish — no review is posted, only the thread actions:
    `publish_review.py <N> --repo constructorfabric/studio-web --findings <workdir>/approved.json --summary <workdir>/summary.md --plan <workdir>/plan.json --replies <workdir>/replies.json --quiet-if-empty --auto`
 3. Finish with one line: `PR #<N> threads: <m> resolved, <r> replies, <k> left open`.

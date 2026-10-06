@@ -173,8 +173,11 @@ code anchor, …) is a convention finding, not a failing check.
     open(path, "w").write(text)
 
 
-def own_threads(repo, n, me):
-    """Unresolved review threads opened by `me` (earlier rounds of this skill)."""
+STILL_AT_RE = re.compile(r"Still at `([0-9a-f]{7,40})`")
+
+
+def own_threads(repo, n, me, head=""):
+    """Unresolved review threads opened by `me` (earlier rounds of this skill). `head`: the PR head now."""
     owner, name = repo.split("/")
     res = subprocess.run(["gh", "api", "graphql", "-f", f"query={THREADS_QUERY}", "-F", f"owner={owner}",
                           "-F", f"name={name}", "-F", f"number={n}"], capture_output=True, text=True)
@@ -187,6 +190,11 @@ def own_threads(repo, n, me):
         if t["isResolved"] or not comments or (comments[0]["author"] or {}).get("login") != me:
             continue
         first, last = comments[0], comments[-1]
+        ours_last = (last["author"] or {}).get("login") == me
+        # Our last word was "Still at <sha>" and the PR has moved past that sha: the author may have fixed it
+        # without writing again.
+        still_at = STILL_AT_RE.search(last["body"]) if ours_last and last is not first else None
+        moved_on = bool(still_at and head and not head.startswith(still_at.group(1)))
         body = [l for l in first["body"].strip().splitlines() if l.strip()]
         out.append({
             "thread_id": t["id"],
@@ -200,10 +208,10 @@ def own_threads(repo, n, me):
             "last_author": (last["author"] or {}).get("login"),
             "last_body": last["body"].strip()[:600] if last is not first else "",
             "last_comment_id": last["databaseId"],
-            # Someone answered after our last word ("fixed in …", a disagreement), or nobody answered but the
-            # commented lines changed (a silent fix): re-check it. Otherwise our word is the last one and the
-            # thread waits for the author — leave it alone.
-            "needs_recheck": (last["author"] or {}).get("login") != me or (t["isOutdated"] and len(comments) == 1),
+            # Someone answered after our last word ("fixed in …", a disagreement), nobody answered but the
+            # commented lines changed (a silent fix), or our "Still at <sha>" is about an older head: re-check
+            # it. Otherwise our word is the last one and the thread waits for the author — leave it alone.
+            "needs_recheck": not ours_last or (t["isOutdated"] and len(comments) == 1) or moved_on,
         })
     return out
 
@@ -360,7 +368,7 @@ def main():
     open(f"{workdir}/existing-comments.md", "w").write("\n".join(said) + "\n" if said else "none\n")
 
     me = sh("gh", "api", "user", "--jq", ".login").strip()
-    threads = [] if blind else own_threads(repo, n, me)
+    threads = [] if blind else own_threads(repo, n, me, pr["headRefOid"])
     json.dump(threads or [], open(f"{workdir}/open-threads.json", "w"), indent=2, ensure_ascii=False)
     if threads is None:
         threads_note = "Could not read review threads (GraphQL failed): don't post thread replies this run."

@@ -118,8 +118,12 @@ for pr in "${prs[@]}"; do
     --output-format json > "$wd/result.json" 2> "$wd/claude-stderr.log" \
     || echo "$(date -Is) PR #$pr: claude exited with $?"
   summarize "$wd/result.json"
-  # Threads this round re-checked are not re-checked again between rounds unless someone writes in them.
-  succeeded "$wd/result.json" && python3 "$here/threads_pass.py" record "$wd" > /dev/null
+  # Threads this round re-checked are not re-checked again between rounds unless someone writes in them, and the
+  # head counts as reviewed even when the orchestrator had nothing to publish (else the next tick reviews it again).
+  if succeeded "$wd/result.json" && [ "${DRY_RUN:-}" != "1" ]; then
+    python3 "$here/threads_pass.py" record "$wd" > /dev/null
+    python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import review_state as s; s.record(sys.argv[2], int(sys.argv[3]), sys.argv[4], posted=False, note="round finished, nothing published")' "$here" "$repo" "$pr" "$head"
+  fi
 done
 
 # Between rounds: our open threads that someone answered (or whose lines changed) on a PR with no round pending —

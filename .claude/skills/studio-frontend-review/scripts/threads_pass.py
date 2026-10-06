@@ -13,8 +13,8 @@ Usage:
 
 `find` looks at open PRs (not drafts) and PRs merged in the last --merged-days days that this skill has reviewed
 (a local state file exists). An open PR qualifies only when its head is already reviewed — otherwise the next
-round handles the threads; a merged PR always does. A thread needs a re-check when someone answered after our last word, or when nobody answered and the
-commented lines changed (outdated). A thread already re-checked at its current last comment is skipped (state in
+round handles the threads; a merged PR always does. A thread needs a re-check when someone answered after our last word, when nobody answered and the
+commented lines changed (outdated), or when our last word is "Still at <sha>" and the head moved past it. A thread already re-checked at its current last comment is skipped (state in
 $REVIEW_RUNS/state/threads-handled.json), so a thread we deliberately leave open never costs another run.
 
 `prepare` writes <workdir>/tree (detached worktree at the head), open-threads.json (only the threads to re-check),
@@ -42,9 +42,9 @@ def load_handled():
         return {}
 
 
-def pending(repo, n, me):
+def pending(repo, n, me, head):
     handled = load_handled()
-    threads = own_threads(repo, n, me) or []
+    threads = own_threads(repo, n, me, head) or []
     return [t for t in threads if t["needs_recheck"] and handled.get(t["thread_id"]) != t["last_comment_id"]]
 
 
@@ -69,7 +69,7 @@ def cmd_find(a):
         # An open PR whose head is not reviewed yet gets a round, which re-checks the threads; a merged one never will.
         if pr["state"] == "OPEN" and not head_reviewed(a.repo, n, pr["headRefOid"], me):
             continue
-        if pending(a.repo, n, me):
+        if pending(a.repo, n, me, pr["headRefOid"]):
             print(n)
 
 
@@ -78,7 +78,7 @@ def cmd_prepare(a):
     n, workdir = int(a.pr), os.path.abspath(a.workdir)
     pr = json.loads(sh("gh", "pr", "view", str(n), "--repo", a.repo, "--json",
                        "number,title,state,headRefOid,baseRefName,url"))
-    threads = pending(a.repo, n, me)
+    threads = pending(a.repo, n, me, pr["headRefOid"])
     os.makedirs(workdir, exist_ok=True)
     tree = f"{workdir}/tree"
     if not os.path.isdir(tree):
