@@ -278,7 +278,13 @@ export class AnalyzeStudioClient {
         const res = await StudioApi.fetch(
             `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}` +
             `/quality/${detector}`,
-            { method: 'POST', body: JSON.stringify(body) },
+            {
+                method: 'POST',
+                // The run starts here (202 + run_id); the key makes a retry of
+                // this one request answer that run rather than start another.
+                headers: { 'Idempotency-Key': idempotencyKey() },
+                body: JSON.stringify(body),
+            },
         );
         return readJson(res);
     }
@@ -300,6 +306,22 @@ export class AnalyzeStudioClient {
 }
 
 /** The body of a good answer, or what Studio said was wrong with the request. */
+/**
+ * A fresh `Idempotency-Key`. `crypto.randomUUID` exists only in a secure
+ * context (and not in every test DOM); `getRandomValues` exists everywhere a
+ * session runs, so the key is a v4 UUID either way.
+ */
+export function idempotencyKey(): string {
+    if (typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const hex = Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 async function readJson<T>(res: Response): Promise<T> {
     if (!res.ok) {
         let message = `HTTP ${res.status}`;

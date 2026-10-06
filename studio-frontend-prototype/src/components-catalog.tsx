@@ -661,11 +661,11 @@ export function ComponentsCatalog({
     setBusy(true);
     setSync("queued…");
     try {
-      const { task_id } = await api.syncComponents(token, body);
+      const { run_id } = await api.syncComponents(token, body);
       const deadline = Date.now() + 10 * 60 * 1000;
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
-        const t = await api.componentsCatalogTask(token, task_id);
+        const t = await api.componentsCatalogTask(token, run_id);
         if (t.status === "succeeded") {
           setSync(`${t.gears} gears · ${t.versions} versions`);
           await reload();

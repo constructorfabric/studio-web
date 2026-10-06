@@ -1,10 +1,10 @@
 //! REST surface for artifact ingest.
 //!
 //! `POST /studio-artifact-ingest/v1/sync` enqueues a background sync (issues,
-//! pull requests and files) and returns a task id.
+//! pull requests and files) and answers `202` with a `run_id`.
 //!
-//! The sync is an `artifact.ingest` run on `studio-tasks`: the task id *is* a
-//! run id, `GET /studio-tasks/v1/runs/{task_id}` is how it is polled (its
+//! The sync is an `artifact.ingest` run on `studio-tasks`:
+//! `GET /studio-tasks/v1/runs/{run_id}` is how it is polled (its
 //! `result` carries the counts per phase), and the sync survives the process
 //! that accepted it. This gear used to answer the same poll a second time
 //! under its own path.
@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use axum::extract::Query;
+use axum::http::HeaderMap;
 use axum::{Extension, Router};
 use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
@@ -144,9 +145,9 @@ pub struct SyncRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct SyncEnqueued {
-    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}` for the
-    /// outcome; its `result` carries the counts as they tick up.
-    pub task_id: String,
+    /// The studio-tasks run doing the sync: poll `GET /studio-tasks/v1/runs/{run_id}`
+    /// for the outcome; its `result` carries the counts as they tick up.
+    pub run_id: String,
     /// `queued` at enqueue time.
     pub status: String,
 }
@@ -449,8 +450,10 @@ pub struct ManualFileResponse {
 async fn sync(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
+    headers: HeaderMap,
     Json(req): Json<SyncRequest>,
-) -> ApiResult<JsonBody<SyncEnqueued>> {
+) -> ApiResult<(StatusCode, JsonBody<SyncEnqueued>)> {
+    let idempotency_key = crate::idempotency::key(&headers)?;
     let svc = ingest.get()?;
     let queue = ingest.queue()?;
 
@@ -516,7 +519,7 @@ async fn sync(
                 task_type: TASK_TYPE,
                 payload,
                 partition_key: Some(&partition_key),
-                idempotency_key: None,
+                idempotency_key: idempotency_key.as_deref(),
                 coalesce_queued: true,
                 // A sync is the long job someone waits for, and the project it
                 // was asked for is the session they are waiting in. A
@@ -529,10 +532,13 @@ async fn sync(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
-    Ok(Json(SyncEnqueued {
-        task_id: run_id.to_string(),
-        status: "queued".to_string(),
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SyncEnqueued {
+            run_id: run_id.to_string(),
+            status: "queued".to_string(),
+        }),
+    ))
 }
 
 async fn reconcile(
@@ -1082,15 +1088,18 @@ pub fn register_routes(
             "Checks the connector token, then queues a durable `artifact.ingest` \
              run: issues and pull requests from the API, and files from a \
              shallow git clone (or the tree API when no volume is mounted). \
-             Returns a task id to poll — which is also a run id, so \
-             `GET /studio-tasks/v1/runs/{id}` can cancel or retry it.",
+             Answers 202 with the `run_id`: follow it at \
+             `GET /studio-tasks/v1/runs/{run_id}`, which can also cancel or retry it. \
+             Send an `Idempotency-Key` header to make a retry of this request safe: \
+             a repeat with the same key answers the same run.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .json_request::<SyncRequest>(openapi, "Source to ingest")
         .handler(sync)
-        .json_response_with_schema::<SyncEnqueued>(openapi, StatusCode::OK, "Sync enqueued")
+        .json_response_with_schema::<SyncEnqueued>(openapi, StatusCode::ACCEPTED, "Sync enqueued")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

@@ -17,10 +17,10 @@ describe("background work client", () => {
     vi.unstubAllGlobals();
   });
 
-  function jsonMock(body: unknown) {
+  function jsonMock(body: unknown, status = 200) {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(body), {
-        status: 200,
+        status,
         headers: { "Content-Type": "application/json" },
       }),
     );
@@ -74,18 +74,33 @@ describe("background work client", () => {
   });
 
   it("queues a chat notification as a run", async () => {
-    const fetchMock = jsonMock({ run_id: "r-1", poll: "/studio-tasks/v1/runs/r-1" });
-    await api.queueNotification("token", {
-      connection_id: "c-1",
-      target: "C0",
-      text: "3 tests red",
-    });
+    const fetchMock = jsonMock({ run_id: "r-1", poll: "/studio-tasks/v1/runs/r-1" }, 202);
+    await expect(
+      api.queueNotification("token", {
+        connection_id: "c-1",
+        target: "C0",
+        text: "3 tests red",
+      }),
+    ).resolves.toEqual({ run_id: "r-1", poll: "/studio-tasks/v1/runs/r-1" });
     expect(fetchMock).toHaveBeenCalledWith(
       "/cf/studio-notify/v1/messages",
       expect.objectContaining({ method: "POST" }),
     );
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(body).toEqual({ connection_id: "c-1", target: "C0", text: "3 tests red" });
+  });
+
+  it("makes a notification's retry safe with the Idempotency-Key header, not a body field", async () => {
+    const fetchMock = jsonMock({ run_id: "r-1", poll: "/studio-tasks/v1/runs/r-1" }, 202);
+    await api.queueNotification("token", { workspace_id: "w-1", text: "hi" }, "key-1");
+    await api.queueNotification("token", { workspace_id: "w-1", text: "hi" });
+    const first = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    const second = (fetchMock.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe("key-1");
+    // A new action gets a key of its own.
+    expect(second["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.idempotency_key).toBeUndefined();
   });
 
   it("queues an IDE notification against a workspace, with no connection", async () => {
@@ -102,6 +117,16 @@ describe("background work client", () => {
     expect(body.connection_id).toBeUndefined();
   });
 
+  it("reads a 204 as done, without a body to parse", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.presenceLeave("token")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-presence/v1/me",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("encodes a run id in the path rather than interpolating it raw", async () => {
     const fetchMock = jsonMock({ id: "r-1" });
     await api.cancelTaskRun("token", "r/1");
@@ -114,11 +139,14 @@ describe("background work client", () => {
   it("fires a schedule through the scheduler, not the task queue", async () => {
     // `run-now` is the only way a person starts background work: it runs a
     // task type and payload a schedule already validated.
-    const fetchMock = jsonMock({ run_id: "r-2" });
+    const fetchMock = jsonMock({ run_id: "r-2" }, 202);
     await expect(api.runScheduleNow("token", "s-1")).resolves.toEqual({ run_id: "r-2" });
     expect(fetchMock).toHaveBeenCalledWith(
       "/cf/studio-scheduler/v1/schedules/s-1/run-now",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }),
+      }),
     );
   });
 });

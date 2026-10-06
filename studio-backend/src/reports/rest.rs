@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::{Extension, Router};
 use toolkit::api::canonical_prelude::*;
@@ -184,8 +185,8 @@ pub struct ReportListDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ReportSyncEnqueued {
-    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}`.
-    pub task_id: String,
+    /// The studio-tasks run doing the refresh: poll `GET /studio-tasks/v1/runs/{run_id}`.
+    pub run_id: String,
     pub status: String,
 }
 
@@ -419,7 +420,9 @@ async fn sync_report(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
-) -> ApiResult<JsonBody<ReportSyncEnqueued>> {
+    headers: HeaderMap,
+) -> ApiResult<(StatusCode, JsonBody<ReportSyncEnqueued>)> {
+    let idempotency_key = crate::idempotency::key(&headers)?;
     let k = report(&id)?;
     // Queued in the caller's own tenant: no organization to hand it to.
     let payload = serde_json::to_value(RefreshPayload {
@@ -436,17 +439,20 @@ async fn sync_report(
                 task_type: TASK_TYPE,
                 payload,
                 partition_key: Some("reports"),
-                idempotency_key: None,
+                idempotency_key: idempotency_key.as_deref(),
                 coalesce_queued: true,
                 notify_workspace_id: None,
             },
         )
         .await
         .map_err(|e| internal(format!("{e:#}")))?;
-    Ok(Json(ReportSyncEnqueued {
-        task_id: run.to_string(),
-        status: "queued".into(),
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ReportSyncEnqueued {
+            run_id: run.to_string(),
+            status: "queued".into(),
+        }),
+    ))
 }
 
 fn schedule_dto(v: Option<crate::scheduler::port::ScheduleView>) -> ReportScheduleDto {
@@ -653,14 +659,21 @@ pub fn register_routes(
              connection, keeps what it read, and queues a sync of the board the plan names (a \
              `catalog.sync` run). What it did -- and why not, when it failed -- is on the source \
              afterwards. A schedule on `studio-scheduler` with task type `reports.refresh` and \
-             payload `{\"report\": \"roadmap\"}` keeps a report current on its own.",
+             payload `{\"report\": \"roadmap\"}` keeps a report current on its own. Answers \
+             202 with the `run_id`; send an `Idempotency-Key` header to make a retry of this \
+             request safe, since a repeat with the same key answers the same run.",
         )
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
         .path_param("report_id", "The report (`roadmap`)")
+        .param(crate::idempotency::param())
         .handler(sync_report)
-        .json_response_with_schema::<ReportSyncEnqueued>(openapi, StatusCode::OK, "The queued run")
+        .json_response_with_schema::<ReportSyncEnqueued>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "The queued run",
+        )
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

@@ -17,6 +17,7 @@ mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-
 mod graph_error; // a gear refusal said in full: CanonicalError plus its field violations
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
+mod idempotency; // the Idempotency-Key request header every 202 operation takes, parsed once
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations

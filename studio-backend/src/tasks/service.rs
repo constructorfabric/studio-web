@@ -48,6 +48,11 @@ pub struct NewRun<'a> {
     /// still queued produces the same graph once. Unlike `idempotency_key` it
     /// only ever joins a run that has not started, so asking again after one
     /// began still reads whatever changed meanwhile.
+    ///
+    /// With an `idempotency_key` too: a waiting run with no key is joined and
+    /// takes this key, so a replay after it started still answers it; a
+    /// waiting run under a different key is a different intent and is not
+    /// joined.
     pub coalesce_queued: bool,
     /// Where to say so when this run ends, if anywhere: the workspace whose IDE
     /// session should be told.
@@ -147,7 +152,27 @@ impl TaskService {
                 .find_waiting(req.tenant, task_type, req.partition_key, &req.payload)
                 .await?
         {
-            return Ok(existing);
+            match (key.as_deref(), existing.idempotency_key.as_deref()) {
+                // Nobody asked for repeat-safety: joining is the whole point.
+                (None, _) => return Ok(existing),
+                (Some(ours), Some(theirs)) if ours == theirs => return Ok(existing),
+                // A waiting run that answers to a different key is a different
+                // intent. Joining it would leave this key pointing nowhere, so
+                // a replay of THIS request would start yet another run.
+                (Some(_), Some(_)) => {}
+                // Join it and make it answer to our key too, so a replay after
+                // it started still finds it by key rather than by waiting.
+                (Some(ours), None) => {
+                    if let Some(joined) = self.attach_key(req.tenant, existing, ours).await? {
+                        return Ok(joined);
+                    }
+                    // Lost a race for the key: whoever won it — very likely our
+                    // own concurrent retry — holds the run to answer with.
+                    if let Some(winner) = self.find_by_idempotency_key(req.tenant, ours).await? {
+                        return Ok(winner);
+                    }
+                }
+            }
         }
 
         let id = Uuid::new_v4();
@@ -372,7 +397,54 @@ impl TaskService {
             )
             .all(&conn)
             .await?;
-        Ok(waiting.into_iter().find(|run| run.payload == *payload))
+        // A run that answers to no key first: it is the one a keyed request can
+        // join (see `enqueue`), and for an unkeyed request any of them will do.
+        Ok(waiting
+            .into_iter()
+            .filter(|run| run.payload == *payload)
+            .min_by_key(|run| run.idempotency_key.is_some()))
+    }
+
+    /// Give a run that has no idempotency key this one, and hand it back.
+    ///
+    /// Guarded by `idempotency_key IS NULL`, so a run is never re-keyed: of two
+    /// requests racing to attach, one wins and the other gets `None`. The
+    /// unique index on `(tenant_id, idempotency_key)` refuses a key another run
+    /// already holds, which is also `None` here — the caller then looks the key
+    /// up and answers with that run.
+    async fn attach_key(
+        &self,
+        tenant: Uuid,
+        run: entity::Model,
+        key: &str,
+    ) -> anyhow::Result<Option<entity::Model>> {
+        let conn = self.db.conn()?;
+        let updated = entity::Entity::update_many()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(
+                Condition::all()
+                    .add(entity::Column::Id.eq(run.id))
+                    .add(entity::Column::IdempotencyKey.is_null()),
+            )
+            .col_expr(entity::Column::IdempotencyKey, Expr::value(key))
+            .col_expr(
+                entity::Column::UpdatedAt,
+                Expr::value(OffsetDateTime::now_utc()),
+            )
+            .exec(&conn)
+            .await;
+        match updated {
+            Ok(result) if result.rows_affected == 1 => Ok(Some(entity::Model {
+                idempotency_key: Some(key.to_owned()),
+                ..run
+            })),
+            Ok(_) => Ok(None),
+            Err(e) => {
+                tracing::warn!(run = %run.id, "studio-tasks: idempotency key not attached ({e:#})");
+                Ok(None)
+            }
+        }
     }
 
     async fn find_by_idempotency_key(
@@ -492,3 +564,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod pg_tests;

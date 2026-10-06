@@ -1399,7 +1399,7 @@ async fn create_workspace_document(
     Extension(service): Extension<Arc<DocumentsService>>,
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<CreateDocumentDto>,
-) -> ApiResult<JsonBody<DocumentDto>> {
+) -> ApiResult<(StatusCode, JsonBody<DocumentDto>)> {
     service
         .authorize(&ctx, workspace_id)
         .await
@@ -1417,7 +1417,7 @@ async fn create_workspace_document(
         )
         .await
         .map_err(invalid)?;
-    Ok(Json(document_dto(doc, false)))
+    Ok((StatusCode::CREATED, Json(document_dto(doc, false))))
 }
 
 async fn create_project_document(
@@ -1425,7 +1425,7 @@ async fn create_project_document(
     Extension(service): Extension<Arc<DocumentsService>>,
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<CreateDocumentDto>,
-) -> ApiResult<JsonBody<DocumentDto>> {
+) -> ApiResult<(StatusCode, JsonBody<DocumentDto>)> {
     service
         .authorize(&ctx, workspace_id)
         .await
@@ -1447,7 +1447,7 @@ async fn create_project_document(
         )
         .await
         .map_err(invalid)?;
-    Ok(Json(document_dto(doc, false)))
+    Ok((StatusCode::CREATED, Json(document_dto(doc, false))))
 }
 
 async fn get_document(
@@ -1753,8 +1753,10 @@ async fn analyze_project_documents(
     Extension(service): Extension<Arc<DocumentsService>>,
     Extension(quality): Extension<Quality>,
     Path((workspace_id, project_id, detector)): Path<(Uuid, Uuid, String)>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<AnalyzeBindingsRequest>,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    let idempotency_key = crate::idempotency::key(&headers)?;
     service
         .authorize(&ctx, workspace_id)
         .await
@@ -1854,7 +1856,7 @@ async fn analyze_project_documents(
                 task_type: crate::spec_quality::batch_task::BATCH_TASK_TYPE,
                 payload,
                 partition_key: None,
-                idempotency_key: None,
+                idempotency_key: idempotency_key.as_deref(),
                 coalesce_queued: false,
                 // Nothing to tell an IDE session about: this run's result is
                 // read on the Specs screen that asked for it.
@@ -1864,11 +1866,14 @@ async fn analyze_project_documents(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
-    Ok(Json(AnalyzeEnqueuedDto {
-        poll: format!("/studio-tasks/v1/runs/{run_id}"),
-        run_id: run_id.to_string(),
-        documents,
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AnalyzeEnqueuedDto {
+            poll: format!("/studio-tasks/v1/runs/{run_id}"),
+            run_id: run_id.to_string(),
+            documents,
+        }),
+    ))
 }
 
 async fn classify_project_files(
@@ -2785,7 +2790,7 @@ pub fn register_routes(
     .operation_id("studio_documents.analyze_project_documents")
     .summary("Run a Spec Quality detector over a project's documents")
     .description(
-        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.          The run RECORDS each document's result itself as it finishes: a          `spec_finding` node per detector per document, whose `details.findings`          are the findings placed in the text, and the gate verdict a stage reads.          A caller does not write them back, and should not: a second write          without `details.findings` would replace the one the run made.",
+        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Answers 202 with the `run_id`; follow the run at the returned          `poll`. Send an `Idempotency-Key` header to make a retry of this request          safe: a repeat with the same key answers the same run.          The run RECORDS each document's result itself as it finishes: a          `spec_finding` node per detector per document, whose `details.findings`          are the findings placed in the text, and the gate verdict a stage reads.          A caller does not write them back, and should not: a second write          without `details.findings` would replace the one the run made.",
     )
     .tag("StudioDocuments")
     .authenticated()
@@ -2793,11 +2798,12 @@ pub fn register_routes(
     .path_param("workspace_id", "Workspace tenant id")
     .path_param("project_id", "Project tenant id")
     .path_param("detector", "purpose | leak | bloat | traceability")
+    .param(crate::idempotency::param())
     .json_request::<AnalyzeBindingsRequest>(openapi, "Bindings to analyse")
     .handler(analyze_project_documents)
     .json_response_with_schema::<AnalyzeEnqueuedDto>(
         openapi,
-        StatusCode::OK,
+        StatusCode::ACCEPTED,
         "The run doing the analysis",
     )
     .error_400(openapi)
@@ -3325,7 +3331,7 @@ pub fn register_routes(
         .path_param("workspace_id", "Workspace tenant id")
         .json_request::<CreateDocumentDto>(openapi, "Document to create")
         .handler(create_workspace_document)
-        .json_response_with_schema::<DocumentDto>(openapi, StatusCode::OK, "Created document")
+        .json_response_with_schema::<DocumentDto>(openapi, StatusCode::CREATED, "Created document")
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -3348,7 +3354,7 @@ pub fn register_routes(
     .path_param("project_id", "Project tenant id")
     .json_request::<CreateDocumentDto>(openapi, "Document to create")
     .handler(create_project_document)
-    .json_response_with_schema::<DocumentDto>(openapi, StatusCode::OK, "Created document")
+    .json_response_with_schema::<DocumentDto>(openapi, StatusCode::CREATED, "Created document")
     .error_400(openapi)
     .error_401(openapi)
     .error_403(openapi)

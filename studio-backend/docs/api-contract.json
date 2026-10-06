@@ -139,9 +139,6 @@
       "tag": "StudioDomainModel",
       "summary": "Drop a field from a type",
       "authenticated": true,
-      "responses": [
-        "EditFieldResponse"
-      ],
       "errors": [
         "400",
         "401",
@@ -169,9 +166,6 @@
       "tag": "StudioOrganizations",
       "summary": "Delete an organization",
       "authenticated": true,
-      "responses": [
-        "OrganizationDeletionDto"
-      ],
       "errors": [
         "400",
         "401",
@@ -187,9 +181,6 @@
       "tag": "StudioPresence",
       "summary": "Leave: drop the caller's presence without waiting for it to lapse",
       "authenticated": true,
-      "responses": [
-        "OnlineListDto"
-      ],
       "errors": [
         "401",
         "500"
@@ -241,9 +232,6 @@
       "tag": "StudioUser",
       "summary": "Leave an organization",
       "authenticated": true,
-      "responses": [
-        "LeaveResultDto"
-      ],
       "errors": [
         "400",
         "401",
@@ -272,9 +260,6 @@
       "tag": "StudioUser",
       "summary": "Remove a user's membership in an organization (organization owner)",
       "authenticated": true,
-      "responses": [
-        "LeaveResultDto"
-      ],
       "errors": [
         "400",
         "401",

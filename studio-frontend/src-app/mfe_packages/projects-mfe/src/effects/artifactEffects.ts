@@ -97,8 +97,8 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
             project_id: projectId,
             workspace_id: workspaceId ?? undefined,
           });
-          tasks.set(entry.repo, enqueued.task_id);
-          dispatch(repoEnqueued({ projectId, repo: entry.repo, taskId: enqueued.task_id }));
+          tasks.set(entry.repo, enqueued.run_id);
+          dispatch(repoEnqueued({ projectId, repo: entry.repo, taskId: enqueued.run_id }));
         } catch (error) {
           progressed(entry.repo, 'failed', refusalFrom(error, 'artifacts_reason_request_failed'));
         }

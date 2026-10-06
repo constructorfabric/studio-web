@@ -155,7 +155,7 @@ function ReportCard({
     act("refresh", async () => {
       await api.updateReportSource(token, report.id, inputOf(draft));
       const run = await api.syncReport(token, report.id);
-      const done = await finished(token, run.task_id);
+      const done = await finished(token, run.run_id);
       onChanged();
       setVersion((v) => v + 1);
       return done.ok ? `Refreshed: ${done.message ?? "plan read, board sync queued"}.` : `Refresh failed: ${done.message}`;

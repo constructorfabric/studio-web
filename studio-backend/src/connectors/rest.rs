@@ -1293,22 +1293,30 @@ pub fn register_routes(
             "Reads the repository's file tree and contributor list through this \
              connection and upserts them as typed nodes and edges; the graph \
              embeds every node on write. The import runs in the background — \
-             this returns a task id at once — a studio-tasks run id: poll \
-             `GET /studio-tasks/v1/runs/{task_id}` for the phase and the outcome. Node keys are derived, so re-running \
-             converges instead of duplicating. `wait: true` runs the import \
-             inline instead and answers with the outcome, which fits the gateway \
-             deadline only for small repositories.",
+             this answers 202 at once with the studio-tasks `run_id`: follow \
+             `GET /studio-tasks/v1/runs/{run_id}` for the phase and the outcome. Node keys are \
+             derived, so re-running converges instead of duplicating. `wait: true` waits for \
+             the run and answers 200 with the outcome, which fits the gateway deadline only \
+             for small repositories; a run still going at the deadline is a 202 like any \
+             other. Send an `Idempotency-Key` header to make a retry of this request safe: a \
+             repeat with the same key answers the same run.",
         )
         .tag("StudioConnectors")
         .authenticated()
         .require_license_features::<License>([])
         .path_param("id", "Connection id")
+        .param(crate::idempotency::param())
         .json_request::<GraphSyncRequest>(openapi, "What to import")
         .handler(graph_sync)
         .json_response_with_schema::<GraphSyncAcceptedDto>(
             openapi,
+            StatusCode::ACCEPTED,
+            "The run to follow",
+        )
+        .json_response_with_schema::<GraphSyncAcceptedDto>(
+            openapi,
             StatusCode::OK,
-            "The task id to poll, or (with `wait`) the outcome",
+            "With `wait`: the finished outcome",
         )
         .error_400(openapi)
         .error_401(openapi)
@@ -1404,13 +1412,14 @@ impl From<SyncOutcome> for GraphSyncResultDto {
     }
 }
 
-/// What the import call answers: a task to poll, or — with `wait` — the
-/// finished outcome under the same shape (`status: succeeded`).
+/// What the import call answers: a run to follow (`202`), or — with `wait` —
+/// the finished outcome under the same shape (`200`, `status: succeeded`).
 #[cfg(feature = "graph")]
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct GraphSyncAcceptedDto {
-    pub task_id: String,
+    /// The studio-tasks run doing the import: `GET /studio-tasks/v1/runs/{run_id}`.
+    pub run_id: String,
     /// `queued` | `running` | `succeeded` | `failed`.
     pub status: String,
     pub repo_full_path: String,
@@ -1430,8 +1439,10 @@ async fn graph_sync(
     Extension(connectors): Extension<Connectors>,
     Extension(graph): Extension<GraphSink>,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<GraphSyncRequest>,
-) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
+) -> ApiResult<(StatusCode, JsonBody<GraphSyncAcceptedDto>)> {
+    let idempotency_key = crate::idempotency::key(&headers)?;
     let svc = Arc::clone(connectors.get()?);
     // Resolved for its 503: an import cannot run where there is no graph, and
     // saying so now beats a run that retries until it dead-letters.
@@ -1476,7 +1487,7 @@ async fn graph_sync(
                 // other: two walks of the same tree would fight over the same
                 // node keys.
                 partition_key: Some(&format!("{id}:{repo_full_path}")),
-                idempotency_key: None,
+                idempotency_key: idempotency_key.as_deref(),
                 coalesce_queued: false,
                 notify_workspace_id: None,
             },
@@ -1496,12 +1507,15 @@ async fn graph_sync(
         return wait_for_import(&queue, tenant, run_id, repo_full_path).await;
     }
 
-    Ok(Json(GraphSyncAcceptedDto {
-        task_id: run_id.to_string(),
-        status: "queued".to_owned(),
-        repo_full_path,
-        outcome: None,
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(GraphSyncAcceptedDto {
+            run_id: run_id.to_string(),
+            status: "queued".to_owned(),
+            repo_full_path,
+            outcome: None,
+        }),
+    ))
 }
 
 /// Poll one import to completion, for `wait: true`.
@@ -1509,14 +1523,15 @@ async fn graph_sync(
 /// Bounded well inside the gateway's deadline: an import of a few hundred files
 /// does not reliably finish in time, which the request field's own
 /// documentation has always said. Timing out here cancels nothing — the run
-/// carries on and the caller gets its id.
+/// carries on and the caller gets its id — with `202`, because the work is
+/// still going; `200` is kept for the answer that carries the outcome.
 #[cfg(feature = "graph")]
 async fn wait_for_import(
     queue: &Arc<dyn crate::tasks::TaskQueue>,
     tenant: Uuid,
     run_id: Uuid,
     repo_full_path: String,
-) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
+) -> ApiResult<(StatusCode, JsonBody<GraphSyncAcceptedDto>)> {
     use crate::tasks::RunState;
 
     const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
@@ -1534,12 +1549,15 @@ async fn wait_for_import(
         };
         match run.state {
             RunState::Succeeded => {
-                return Ok(Json(GraphSyncAcceptedDto {
-                    task_id: run_id.to_string(),
-                    status: run.state.as_str().to_owned(),
-                    repo_full_path,
-                    outcome: run.result.and_then(sync_outcome_of).map(Into::into),
-                }));
+                return Ok((
+                    StatusCode::OK,
+                    Json(GraphSyncAcceptedDto {
+                        run_id: run_id.to_string(),
+                        status: run.state.as_str().to_owned(),
+                        repo_full_path,
+                        outcome: run.result.and_then(sync_outcome_of).map(Into::into),
+                    }),
+                ));
             }
             RunState::Failed | RunState::Cancelled => {
                 return Err(StudioConnectorError::invalid_argument()
@@ -1553,14 +1571,17 @@ async fn wait_for_import(
             RunState::Queued | RunState::Running => {}
         }
     }
-    // Still going. The honest answer is the task id — which is what the caller
+    // Still going. The honest answer is the run id — which is what the caller
     // would have got without `wait`.
-    Ok(Json(GraphSyncAcceptedDto {
-        task_id: run_id.to_string(),
-        status: "running".to_owned(),
-        repo_full_path,
-        outcome: None,
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(GraphSyncAcceptedDto {
+            run_id: run_id.to_string(),
+            status: "running".to_owned(),
+            repo_full_path,
+            outcome: None,
+        }),
+    ))
 }
 
 /// A run's `result` read back as the walk's own outcome.

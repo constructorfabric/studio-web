@@ -111,7 +111,7 @@ not the Keycloak subject.
 |---|---|---|
 | `GET /studio-user/v1/organizations/{org}/members?offset=&limit=` | `people.view` | `{ items: [{ user_id, display_name?, email?, role, status, source, created_at_epoch_ms, updated_at_epoch_ms }], total }` |
 | `PUT /studio-user/v1/users/{user}/memberships/{org}` | `people.manage` | body `{ role: "owner"\|"admin"\|"member", status?: "active"\|"suspended", source?: "assignment"\|"manual" }` → the membership |
-| `DELETE /studio-user/v1/users/{user}/memberships/{org}` | `people.manage` | `{ connections_removed }` |
+| `DELETE /studio-user/v1/users/{user}/memberships/{org}` | `people.manage` | 204 |
 | `GET /studio-user/v1/organizations/{org}/invitations` | `people.view` | `{ items: [{ id, org_id, email, role, expires_at_epoch_ms, accepted_at_epoch_ms? }] }` |
 | `POST /studio-user/v1/organizations/{org}/invitations` | `people.invite` | body `{ email, role: "member"\|"admin" }` → `{ invitation, token }` |
 | `DELETE /studio-user/v1/organizations/{org}/invitations/{id}` | `people.invite` | 204 |
@@ -140,7 +140,7 @@ What the answers mean, and what a screen must not assume:
   A person who is not a member is `404`.
 - **Suspended** keeps the row and its role and grants nothing while it stands.
 - **Removing** also deletes that person's *personal* connections in the
-  organization (`connections_removed`). Say so in the confirmation.
+  organization. Say so in the confirmation; the answer is a 204 and carries no count.
 - **An invitation is not a link to send.** The person sees it when they sign in
   with that address proven, and accepts it themselves — the portal already does
   this in `OrganizationAccessGate`. The `token` in the create answer is for other

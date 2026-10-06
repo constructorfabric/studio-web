@@ -556,6 +556,9 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                         Authorization: `Bearer ${await this.session.accessToken()}`,
                         ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
                         ...(req.headers.accept ? { Accept: String(req.headers.accept) } : {}),
+                        // What makes a retried POST that starts work answer the run it
+                        // already started (studio-backend `idempotency.rs`).
+                        ...(req.headers['idempotency-key'] ? { 'Idempotency-Key': String(req.headers['idempotency-key']) } : {}),
                     },
                     body,
                 });

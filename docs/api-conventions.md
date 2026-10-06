@@ -17,6 +17,9 @@ yet and are the reviewer's job.
 - [E. Events](#e-events)
 - [F. Documentation](#f-documentation)
 - [G. Versioning](#g-versioning)
+- [H. Status codes](#h-status-codes)
+- [I. Idempotency](#i-idempotency)
+- [J. Batches](#j-batches)
 - [How this is enforced](#how-this-is-enforced)
 
 ---
@@ -203,6 +206,108 @@ either portal calls has to exist in `studio-backend/docs/api-contract.json`. It
 runs in CI on every push with no component filter, because the drift it looks
 for is exactly the drift a per-component filter hides.
 
+## H. Status codes
+
+**H1 *(by review)* — the success code says what happened, and the method
+decides it.**
+
+| The operation | Answers |
+| --- | --- |
+| `GET` | `200` with the element or the list (B1) |
+| `POST` that creates a resource a caller can then `GET` | `201` with the created element |
+| `POST` that is an action finished within the request — compute, validate, report | `200` with its result, or `204` |
+| `POST` that starts work | `202` with `{ "run_id": … }` (D1) |
+| `PUT`, `PATCH` | `200` with the element as it now is |
+| `DELETE` | `204`, no body |
+
+A client branches on the code before it reads the body, so the code has to mean
+the same thing on every route: `201` is "there is a new thing, here it is",
+`202` is "nothing has happened yet, watch this run", `204` is "done, there is
+nothing to read". Two routes that create something and answer `200` and `201`
+make every caller check for both, and a `DELETE` that answers a body invites a
+screen to depend on it.
+
+An action whose work is done within the request — artifact-ingest's
+`reconcile`, the domain model's `sync` and `import`, `memberships/backfill` —
+is an action, not started work, and answers `200`. An operation that offers to
+wait for its run (`"wait": true` on `graph-sync`) answers `200` with the outcome
+when the run finished within the request, and the same `202` as without waiting
+when it did not; both are declared.
+
+**H2 *(by review)* — a `DELETE` answers `204` even when the screen wants to know
+what is left.** It reads that with the `GET` it already has. A deletion that
+can partly fail is not a success with a report in its body: it is a failure in
+the canonical taxonomy (B10), with what did not happen in `context`.
+
+**H3 *(by review)* — a retried `DELETE` that finds nothing answers `404`, and a
+client treats that as done.** `DELETE` is idempotent in its effect, not in its
+answer: B8 makes "not there" a `404`, and a client that retries after a lost
+response will meet it.
+
+**H4 — the failure codes are the error contract's.** Which status a failure
+carries, and what a client branches on instead, is
+[`errors-catalog.md`](errors-catalog.md) and B7–B10. Nothing in this section
+adds a failure code.
+
+## I. Idempotency
+
+**I1 *(by review)* — a `POST` that starts work accepts an `Idempotency-Key`
+header.** The same key in the same tenant gives the same run: a repeat answers
+the same `202` with the same `run_id`, and nothing is enqueued twice. The key is
+stored on the run in the transaction that creates it (`studio-tasks`,
+`idempotency_key`), so it holds across a restart and across replicas, for as
+long as the run row is kept. A key is 1–255
+visible ASCII characters; anything else is `400` `invalid_argument`.
+
+**I2 *(by review)* — a client makes one key per intent and reuses it only to
+retry that intent.** `crypto.randomUUID()` when the person presses the button,
+the same value on the automatic retry after a timeout or a lost response, a new
+one when the person presses it again. A key derived from the payload would make
+two deliberate identical requests one.
+
+**I3 *(by review)* — only a success is remembered.** A request refused with a
+`4xx` enqueues nothing, so its retry is validated and authorized again rather
+than answered from a cache. That is what lets a caller fix the input and resend
+with the same key.
+
+**I4 *(by review)* — work whose result depends only on when it runs coalesces
+instead.** A sync asked for twice while the first is still queued is one run
+(`coalesce_queued`), with or without a key; asked for again after it started,
+it is a second run, because the source may have changed meanwhile.
+
+**I5 *(by review)* — a `POST` that creates a resource does not take
+`Idempotency-Key` yet.** Replaying a `201` needs the created element's id kept
+against the key, per resource, and no gear does that today. Until one does, a
+create that must not happen twice is guarded by a natural unique key in its
+table — a name, a slug — and answers `409` `already_exists` on the repeat.
+
+## J. Batches
+
+**J1 *(by review)* — a batch is one operation over a set, and its body is
+`{ "items": [...] }`.** The same field B1 lists answer with. Each item carries
+the caller's own `id` for it, echoed back untouched, so the caller can join
+results to what it sent without relying on order.
+
+**J2 *(by review)* — a batch declares its limit, and refuses a larger set
+whole.** The limit is a named constant, quoted in the operation's
+`description`; a request over it is `400` `invalid_argument` and nothing in it
+runs. Not truncated: a caller that sent 250 items and got 200 results has lost
+50 without being told. `analyze-batch` (`spec_quality::batch_task::MAX_ITEMS`,
+200) is the worked example.
+
+**J3 *(by review)* — a batch that takes longer than a request is one run.** It
+answers `202` with the run (D1, I1), and the run's `result` holds one outcome per
+item: the caller's `id`, a `status`, and an `error` when it did not succeed.
+Per-item progress reaches the portal as `task.*` events of that one run, not as a
+run per item.
+
+**J4 *(by review)* — a batch that finishes within the request answers `200`
+with `{ "items": [...] }` in the order of the request**, one outcome per item in
+the shape of J3. One item failing does not fail the response; the request fails
+only when it could not be attempted at all, with one canonical problem (B10).
+There is no `207 Multi-Status`: the error contract has one problem per
+response, and a batch's per-item outcomes are its result, not its status.
+
 ---
 
 ## How this is enforced
@@ -286,8 +391,9 @@ what "designed inside the gear that owns it" produces.
 
 ### Rules that are not checked yet
 
-B2, B4, B5, B6, D1, D3, E1–E5, F3, F4, G1 and G2 are reviewer's rules today.
-The ones worth mechanising next, in order: **B6** (a DTO field scan catches
-`camelCase` on the wire), **D1** (the `202` + `run_id` shape), and **E3** (the
-event vocabulary against `events-catalog.md`). Each is a scan of the same
+B2, B4, B5, B6, D1, D3, E1–E5, F3, F4, G1, G2, H1–H3, I1–I5 and J1–J4 are reviewer's rules today.
+The ones worth mechanising next, in order: **H1** (the success code against the
+method and the operation's verb, with D1's `202` + `run_id` shape), **B6** (a
+DTO field scan catches `camelCase` on the wire), and **E3** (the event
+vocabulary against `events-catalog.md`). Each is a scan of the same
 sources this module already reads.

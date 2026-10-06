@@ -209,9 +209,12 @@ async fn heartbeat(
 async fn sign_out(
     Extension(ctx): Extension<SecurityContext>,
     Extension(registry): Extension<Registry>,
-) -> ApiResult<JsonBody<OnlineListDto>> {
+) -> ApiResult<StatusCode> {
+    // Nothing to report: who is left online is `GET /online`, and a DELETE
+    // answers 204 (docs/api-conventions.md). Forgetting somebody who already
+    // lapsed is the same success, so a retried sign-out is not an error.
     registry.0.forget(&caller(&ctx));
-    Ok(Json(online_list(&registry)))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn online_list(registry: &Registry) -> OnlineListDto {
@@ -319,13 +322,15 @@ pub fn register_routes(
             "For a deliberate sign-out. Without it a person shows as online for \
              up to the heartbeat window after closing the tab, which is correct \
              but slow. Their undelivered messages go too: a note written to \
-             somebody who then left was written to the person who was there.",
+             somebody who then left was written to the person who was there. \
+             Answers 204 with no body, also when the caller had already lapsed; \
+             `GET /online` says who is left.",
         )
         .tag("StudioPresence")
         .authenticated()
         .require_license_features::<License>([])
         .handler(sign_out)
-        .json_response_with_schema::<OnlineListDto>(openapi, StatusCode::OK, "Who is left online")
+        .no_content_response(StatusCode::NO_CONTENT, "Left")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi)

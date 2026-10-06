@@ -172,7 +172,7 @@ describe('AnalyzeStudioClient', () => {
     it('starts a detector with the text on screen, and reports Studio\'s reason when it refuses', async () => {
         const fetchMock = stubFetch((url, init) => {
             if (url.pathname === '/studio-api/studio-documents/v1/workspaces/ws-1/projects/p-1/quality/purpose') {
-                return { body: { run_id: 'run-1', poll: '/studio-tasks/v1/runs/run-1', documents: 1 } };
+                return { status: 202, body: { run_id: 'run-1', poll: '/studio-tasks/v1/runs/run-1', documents: 1 } };
             }
             if (url.pathname.endsWith('/quality/leak')) {
                 expect(init?.method).toBe('POST');
@@ -184,6 +184,8 @@ describe('AnalyzeStudioClient', () => {
         const body = { binding_ids: [], documents: [{ path: 'docs/prd.md', text: '# PRD\nunsaved', type_key: 'prd' }] };
         await expect(client.startRun('ws-1', 'p-1', 'purpose', body)).resolves.toMatchObject({ run_id: 'run-1' });
         expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual(body);
+        // One key per start, so a retry of that request answers the run it started.
+        expect(fetchMock.mock.calls[0][1].headers['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
         await expect(client.startRun('ws-1', 'p-1', 'leak', body)).rejects.toThrow('an inline document is at most 262144');
     });
 

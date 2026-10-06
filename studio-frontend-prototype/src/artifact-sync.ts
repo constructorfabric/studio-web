@@ -171,7 +171,7 @@ export async function runRepoSync(
     // (a rejected credential, say) would otherwise be over before the stream is
     // open, and this is what replays those events.
     const cursor = await currentCursor(token);
-    const { task_id } = await api.syncArtifacts(token, {
+    const { run_id } = await api.syncArtifacts(token, {
       provider: parsed.provider,
       secret_ref: repo.token_ref,
       repo_full_path: parsed.full_path,
@@ -184,7 +184,7 @@ export async function runRepoSync(
     // there is nothing to poll: the line below moves when the backend says so.
     const end = await followRun(
       token,
-      task_id,
+      run_id,
       (e) => {
         const c = countsOf(e.result);
         const phase = (e.phase || e.state).replace(/…$/, "");

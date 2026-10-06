@@ -479,7 +479,17 @@ impl SchedulerService {
     /// The human entry point — "run the sweep now" — and the reason there is no
     /// generic "enqueue any task" route: the schedule already names the task
     /// type and the payload, both validated when it was written.
-    pub async fn run_now(&self, ctx: &SecurityContext, id: Uuid) -> anyhow::Result<Uuid> {
+    ///
+    /// `request_key` is the caller's `Idempotency-Key`: the same key on the same
+    /// schedule answers the run it already started. It is scoped by the
+    /// schedule because the run lives in the platform tenant, where every
+    /// caller's keys meet.
+    pub async fn run_now(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+        request_key: Option<&str>,
+    ) -> anyhow::Result<Uuid> {
         let schedule = self
             .get(id)
             .await?
@@ -487,8 +497,12 @@ impl SchedulerService {
         let queue = self.queue()?;
         let now = OffsetDateTime::now_utc();
         // A manual run gets its own idempotency key — it is a different event
-        // from the scheduled firing, and asking twice means two runs.
-        let key = format!("{}:manual:{}", schedule.id, format_instant(now));
+        // from the scheduled firing, and asking twice means two runs, unless
+        // the two asks are one request retried under one `Idempotency-Key`.
+        let key = match request_key {
+            Some(request_key) => format!("{}:manual:key:{request_key}", schedule.id),
+            None => format!("{}:manual:{}", schedule.id, format_instant(now)),
+        };
         let run = queue
             .enqueue(
                 ctx,

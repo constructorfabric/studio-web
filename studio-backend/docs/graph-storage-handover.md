@@ -55,7 +55,7 @@ gears-rust upgrade for studio-web — see § 4.
    re-imports converge, so nothing durable is lost.
 5. **Contract changes visible to the portal.**
    - `POST /studio-connector/v1/connections/{id}/graph-sync` answers
-     `{task_id, status: "queued"}`; poll `GET /studio-tasks/v1/runs/{task_id}`.
+     `202 {run_id, status: "queued"}`; poll `GET /studio-tasks/v1/runs/{run_id}`.
      `"wait": true` keeps the old inline answer for small repositories.
    - graph-storage REST is v2 (`/types` batch, `/ingest`, `/nodes`,
      `/nodes/{key}`, `/search` with `mode`, `/graph/traverse`,

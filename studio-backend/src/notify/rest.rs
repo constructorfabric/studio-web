@@ -86,11 +86,6 @@ pub struct SendRequest {
     /// default when it is absent; ignored by Slack and Discord.
     #[serde(default)]
     pub topic: Option<String>,
-    /// Repeat-safe key. A second request with the same key in the same tenant
-    /// returns the first run rather than queuing another — which is what makes
-    /// a caller's own retry safe.
-    #[serde(default)]
-    pub idempotency_key: Option<String>,
     /// Tenant that owns the connection. Omitted = the caller's own.
     #[schema(value_type = Option<String>)]
     #[serde(default)]
@@ -114,8 +109,12 @@ pub struct QueuedDto {
 async fn send(
     Extension(ctx): Extension<SecurityContext>,
     Extension(notify): Extension<Notify>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<SendRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<QueuedDto>)> {
+    // The repeat-safe key is the `Idempotency-Key` header, as on every
+    // operation that answers 202 — no longer a body field.
+    let idempotency_key = crate::idempotency::key(&headers)?;
     // Exactly one destination. Refused rather than defaulted: a caller who
     // names both has two different ideas about where this message goes, and
     // picking one is how a notification ends up somewhere nobody expected.
@@ -149,7 +148,7 @@ async fn send(
                 text: &req.text,
                 link: req.link.as_deref(),
                 topic: req.topic.as_deref(),
-                idempotency_key: req.idempotency_key.as_deref(),
+                idempotency_key: idempotency_key.as_deref(),
             },
         )
         .await
@@ -190,12 +189,16 @@ pub fn register_routes(
              connection, or a workspace with no live IDE session are all 400 here \
              rather than a failed delivery later. Delivery is retried with \
              exponential backoff and dead-lettered after several attempts; the run \
-             carries the outcome, so poll `GET /studio-tasks/v1/runs/{id}`. Pass \
-             `idempotency_key` to make your own retry of this request safe.",
+             carries the outcome, so poll `GET /studio-tasks/v1/runs/{id}`. Send an \
+             `Idempotency-Key` header to make your own retry of this request safe: a \
+             second request with the same key in the same tenant answers the first run \
+             rather than queuing another. (The body field `idempotency_key` it replaces \
+             is gone.)",
         )
         .tag("StudioNotify")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .json_request::<SendRequest>(openapi, "The notification to deliver")
         .handler(send)
         .json_response_with_schema::<QueuedDto>(openapi, StatusCode::ACCEPTED, "Queued")

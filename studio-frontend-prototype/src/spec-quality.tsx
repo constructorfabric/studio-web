@@ -16,7 +16,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { api, apiUrl } from "./api";
+import { api, apiUrl, idempotent } from "./api";
 import { projectRepoRows } from "./project-sources";
 import { weightedMixture } from "./analysis";
 import type { DocDuplication } from "./api";
@@ -196,6 +196,7 @@ async function runDetector(
   const fromSeq = await currentCursor(token);
   const created = await sqFetch<AnalyzeEnqueued>(`/studio-spec-quality/v1/analyze/${detector}`, token, {
     method: "POST",
+    headers: idempotent(),
     body: JSON.stringify(payload),
     signal,
   });

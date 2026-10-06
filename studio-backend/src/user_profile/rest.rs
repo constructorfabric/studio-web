@@ -578,16 +578,6 @@ async fn get_my_logins(
     Ok(Json(LoginListDto { items }))
 }
 
-/// What leaving took with it.
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct LeaveResultDto {
-    /// How many of the leaver's personal connections were removed along with
-    /// the membership. Reported rather than silent: it is their credentials
-    /// that just disappeared, and they should be told how many.
-    pub connections_removed: u32,
-}
-
 async fn get_my_memberships(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -726,7 +716,7 @@ async fn delete_membership(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path((user_id, org_id)): Path<(String, String)>,
-) -> ApiResult<JsonBody<LeaveResultDto>> {
+) -> ApiResult<StatusCode> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org, "people.manage").await?;
@@ -740,7 +730,7 @@ async fn leave_my_organization(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(org_id): Path<String>,
-) -> ApiResult<JsonBody<LeaveResultDto>> {
+) -> ApiResult<StatusCode> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     // No authority gate: leaving is nobody's permission to give. The last-owner
@@ -754,7 +744,7 @@ async fn leave(
     service: &Arc<IdentityService>,
     user_id: &str,
     org: Uuid,
-) -> ApiResult<JsonBody<LeaveResultDto>> {
+) -> ApiResult<StatusCode> {
     match service
         .leave_organization(ctx, user_id, org)
         .await
@@ -768,9 +758,15 @@ async fn leave(
                 .sync_owner_grant(ctx, user_id, org, false)
                 .await
                 .map_err(internal)?;
-            Ok(Json(LeaveResultDto {
-                connections_removed: connections_removed as u32,
-            }))
+            // How many credentials went with the membership is logged, not
+            // answered: a DELETE is 204.
+            tracing::info!(
+                user = %user_id,
+                organization = %org,
+                connections_removed,
+                "studio-user: membership ended"
+            );
+            Ok(StatusCode::NO_CONTENT)
         }
         Err(refusal) => Err(refused(refusal, user_id, &org.to_string())),
     }
@@ -1292,7 +1288,7 @@ pub fn register_routes(
              along with the personal connections they created there. The user record and their \
              other memberships are untouched. Organization owners only, and refused where it \
              would leave the organization without an owner — the same rule that applies when \
-             somebody leaves of their own accord.",
+             somebody leaves of their own accord. Answers 204 with no body.",
         )
         .tag("StudioUser")
         .authenticated()
@@ -1300,11 +1296,7 @@ pub fn register_routes(
         .path_param("user_id", "Canonical Studio user id")
         .path_param("org_id", "Organization (tenant) id")
         .handler(delete_membership)
-        .json_response_with_schema::<LeaveResultDto>(
-            openapi,
-            StatusCode::OK,
-            "Membership removed, and what went with it",
-        )
+        .no_content_response(StatusCode::NO_CONTENT, "Membership removed")
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -1322,18 +1314,14 @@ pub fn register_routes(
              its only owner is told to appoint another first, and its only person is told that \
              leaving would mean deleting the organization, which is a separate act. Documents, \
              projects and authorship stay with the organization; the caller's personal \
-             connections do not, and the response says how many were removed.",
+             connections in it are removed with the membership. Answers 204 with no body.",
         )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
         .path_param("org_id", "Organization (tenant) id")
         .handler(leave_my_organization)
-        .json_response_with_schema::<LeaveResultDto>(
-            openapi,
-            StatusCode::OK,
-            "Left, and what went with it",
-        )
+        .no_content_response(StatusCode::NO_CONTENT, "Left")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

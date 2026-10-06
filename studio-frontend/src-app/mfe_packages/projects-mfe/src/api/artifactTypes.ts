@@ -66,8 +66,9 @@ export interface SyncBody {
   project_id?: string;
 }
 
+/** `202` from `POST /sync`: the studio-tasks run doing it. */
 export interface SyncEnqueuedDto {
-  task_id: string;
+  run_id: string;
   status: string;
 }
 

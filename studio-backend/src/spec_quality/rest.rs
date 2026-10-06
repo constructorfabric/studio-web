@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::DefaultBodyLimit;
+use axum::http::HeaderMap;
 use axum::{Extension, Router};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
@@ -286,8 +287,10 @@ async fn enqueue_analysis(
     ctx: &SecurityContext,
     state: &Arc<ProxyState>,
     detector: &str,
+    headers: &HeaderMap,
     body: Bytes,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    let request_key = crate::idempotency::key(headers)?;
     // Resolved before the submit: accepting an analysis we then cannot watch
     // would leave the caller holding an id nothing in the portal can follow.
     let queue = state.queue()?;
@@ -331,9 +334,11 @@ async fn enqueue_analysis(
                 // No partition: analyses are independent of each other, and
                 // serialising them would turn a document fan-out into a queue.
                 partition_key: None,
-                // The upstream task id is the natural key — a resubmit that
-                // somehow produced the same one is the same analysis.
-                idempotency_key: Some(&upstream_task_id),
+                // The caller's `Idempotency-Key` when it sent one, so a retry
+                // answers the run it already started. Otherwise the upstream
+                // task id is the natural key — a resubmit that somehow
+                // produced the same one is the same analysis.
+                idempotency_key: Some(request_key.as_deref().unwrap_or(&upstream_task_id)),
                 coalesce_queued: false,
                 notify_workspace_id: None,
             },
@@ -344,13 +349,16 @@ async fn enqueue_analysis(
                 .create()
         })?;
 
-    Ok(Json(AnalyzeEnqueuedDto {
-        run_id: run_id.to_string(),
-        task_id: upstream_task_id,
-        detector: detector.to_owned(),
-        status: "queued".to_owned(),
-        poll: format!("/studio-tasks/v1/runs/{run_id}"),
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AnalyzeEnqueuedDto {
+            run_id: run_id.to_string(),
+            task_id: upstream_task_id,
+            detector: detector.to_owned(),
+            status: "queued".to_owned(),
+            poll: format!("/studio-tasks/v1/runs/{run_id}"),
+        }),
+    ))
 }
 
 /// One document in a sweep, as the caller sends it.
@@ -396,8 +404,10 @@ pub struct AnalyzeBatchEnqueuedDto {
 async fn analyze_batch(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
+    headers: HeaderMap,
     Json(req): Json<AnalyzeBatchRequest>,
-) -> ApiResult<JsonBody<AnalyzeBatchEnqueuedDto>> {
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeBatchEnqueuedDto>)> {
+    let request_key = crate::idempotency::key(&headers)?;
     let queue = state.queue()?;
 
     let detector = req.detector.trim().to_owned();
@@ -444,7 +454,7 @@ async fn analyze_batch(
                 // One sweep at a time per detector: they compete for the same
                 // upstream, and two at once only makes both slower.
                 partition_key: Some(&detector),
-                idempotency_key: None,
+                idempotency_key: request_key.as_deref(),
                 coalesce_queued: false,
                 notify_workspace_id: None,
             },
@@ -452,45 +462,52 @@ async fn analyze_batch(
         .await
         .map_err(|e| CanonicalError::internal(format!("sweep not queued: {e:#}")).create())?;
 
-    Ok(Json(AnalyzeBatchEnqueuedDto {
-        run_id: run_id.to_string(),
-        count,
-        detector,
-        status: "queued".to_owned(),
-        poll: format!("/studio-tasks/v1/runs/{run_id}"),
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AnalyzeBatchEnqueuedDto {
+            run_id: run_id.to_string(),
+            count,
+            detector,
+            status: "queued".to_owned(),
+            poll: format!("/studio-tasks/v1/runs/{run_id}"),
+        }),
+    ))
 }
 
 async fn analyze_bloat(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
+    headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
-    enqueue_analysis(&ctx, &state, "bloat", body).await
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    enqueue_analysis(&ctx, &state, "bloat", &headers, body).await
 }
 
 async fn analyze_purpose(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
+    headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
-    enqueue_analysis(&ctx, &state, "purpose", body).await
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    enqueue_analysis(&ctx, &state, "purpose", &headers, body).await
 }
 
 async fn analyze_leak(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
+    headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
-    enqueue_analysis(&ctx, &state, "leak", body).await
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    enqueue_analysis(&ctx, &state, "leak", &headers, body).await
 }
 
 async fn analyze_traceability(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
+    headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
-    enqueue_analysis(&ctx, &state, "traceability", body).await
+) -> ApiResult<(StatusCode, JsonBody<AnalyzeEnqueuedDto>)> {
+    enqueue_analysis(&ctx, &state, "traceability", &headers, body).await
 }
 
 /// One analysis, read rather than relayed.
@@ -984,8 +1001,10 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 const SUBMIT_DESC: &str = "Submits the analysis to the external spec-quality service and \
      records a studio-tasks run that watches it to completion. The service key is \
      attached server-side; callers authenticate with their Studio token. Returns the \
-     run id: follow it on studio-events (subject_type task_run), or read \
-     GET /studio-tasks/v1/runs/{run_id}.";
+     run id with 202: follow it on studio-events (subject_type task_run), or read \
+     GET /studio-tasks/v1/runs/{run_id}. Send an Idempotency-Key header to make a retry \
+     safe: a repeat with the same key answers the same run (the upstream analysis is \
+     submitted again, and only the first one is watched).";
 
 pub fn register_routes(
     mut router: Router,
@@ -1002,6 +1021,7 @@ pub fn register_routes(
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .handler(analyze_bloat)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
@@ -1012,11 +1032,12 @@ pub fn register_routes(
         .operation_id("studio_spec_quality.analyze_batch")
         .summary("Run one detector over a set of documents, as a single run")
         .description(
-            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /studio-spec-quality/v1/verdicts?task_id=….",
+            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /studio-spec-quality/v1/verdicts?task_id=….              Answers 202 with the run_id; send an Idempotency-Key header to make a retry              safe, since a repeat with the same key answers the same run.",
         )
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .handler(analyze_batch)
         .json_response(StatusCode::ACCEPTED, "The run doing the sweep")
         .error_401(openapi)
@@ -1030,6 +1051,7 @@ pub fn register_routes(
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .handler(analyze_purpose)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
@@ -1043,6 +1065,7 @@ pub fn register_routes(
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .handler(analyze_leak)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
@@ -1056,6 +1079,7 @@ pub fn register_routes(
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .handler(analyze_traceability)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)

@@ -294,13 +294,22 @@ async fn run_now(
     Extension(ctx): Extension<SecurityContext>,
     Extension(scheduler): Extension<Scheduler>,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> ApiResult<(StatusCode, JsonBody<FiredDto>)> {
+    let request_key = crate::idempotency::key(&headers)?;
     let svc = scheduler.get()?;
-    let run_id = svc.run_now(&ctx, id).await.map_err(|e| {
-        StudioSchedulerError::failed_precondition()
-            .with_precondition_violation(id.to_string(), format!("{e:#}"), "SCHEDULE_RUN_REFUSED")
-            .create()
-    })?;
+    let run_id = svc
+        .run_now(&ctx, id, request_key.as_deref())
+        .await
+        .map_err(|e| {
+            StudioSchedulerError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "SCHEDULE_RUN_REFUSED",
+                )
+                .create()
+        })?;
     Ok((StatusCode::ACCEPTED, Json(FiredDto { run_id })))
 }
 
@@ -414,12 +423,15 @@ pub fn register_routes(
             "Enqueues the schedule's task once, without touching its cadence. This is \
              the human entry point for background work — and the reason no endpoint \
              accepts an arbitrary task type and payload: this one runs something a \
-             schedule already described and validated.",
+             schedule already described and validated. Answers 202 with the `run_id`. \
+             Two requests are two runs, unless they carry the same `Idempotency-Key` \
+             header: then the second answers the run the first started.",
         )
         .tag("StudioScheduler")
         .authenticated()
         .require_license_features::<License>([])
         .path_param("id", "Schedule id")
+        .param(crate::idempotency::param())
         .handler(run_now)
         .json_response_with_schema::<FiredDto>(openapi, StatusCode::ACCEPTED, "Queued")
         .error_400(openapi)

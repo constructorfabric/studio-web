@@ -11,6 +11,7 @@ import type {
   SyncEnqueuedDto,
   TaskStatusDto,
 } from './artifactTypes';
+import { IdempotencyKeyPlugin } from './idempotencyKeyPlugin';
 
 export const ARTIFACT_INGEST_API_BASE_URL = '/cf/studio-artifact-ingest/v1';
 
@@ -45,6 +46,8 @@ export class ArtifactIngestApiService extends BaseApiService {
   constructor() {
     const restProtocol = new RestProtocol({ timeout: 30000 });
     const restEndpoints = new RestEndpointProtocol(restProtocol);
+    // `POST /sync` starts a run (202 + run_id): its retry must answer that run.
+    restProtocol.plugins.add(new IdempotencyKeyPlugin((url) => url.endsWith('/sync')));
 
     super({ baseURL: ARTIFACT_INGEST_API_BASE_URL }, restProtocol, restEndpoints);
   }

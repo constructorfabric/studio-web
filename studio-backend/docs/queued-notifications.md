@@ -15,14 +15,14 @@ connector connection, or the Theia IDE of whoever has a workspace open — see
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: prd-14-gate-2026-09-09' \
   "http://localhost:8090/cf/studio-notify/v1/messages" -d "{
     \"connection_id\": \"$CONN\",
     \"tenant_id\": \"$ORG\",
     \"target\": \"C01ABCDEF\",
     \"title\": \"Spec quality gate failed\",
     \"text\": \"2 of 7 checks are red on *PRD-14*.\",
-    \"link\": \"http://localhost:8080/projects/14/artifacts\",
-    \"idempotency_key\": \"prd-14-gate-2026-09-09\"
+    \"link\": \"http://localhost:8080/projects/14/artifacts\"
   }"
 # → 202 {"run_id": "…", "poll": "/studio-tasks/v1/runs/…"}
 ```
@@ -109,7 +109,7 @@ the attempt cap is what ends it, and the dead letter carries the last reason.
 | Survives a restart | The queue is rows in PostgreSQL, not memory. A crash mid-delivery leaves the run queued; the next process picks it up when the lease expires. |
 | Retried | Exponential backoff, up to **8 attempts** — more than the task default, because a chat platform's refusals skew transient and giving up after five backoffs would drop a message the platform was only asking us to slow down about. |
 | Not retried pointlessly | A revoked credential, a channel the bot is not in, a connection since deleted — refused once and dead-lettered, with the reason on the run. |
-| Repeat-safe accept | `idempotency_key` makes a *caller's* own retry return the first run instead of queuing a second. |
+| Repeat-safe accept | The `Idempotency-Key` request header makes a *caller's* own retry return the first run instead of queuing a second. |
 | **Possibly delivered twice** | The processor is leased (at-least-once). A lease expiring after Slack accepted the message but before the ack committed hands it to another worker, and none of the three platforms offers an idempotency key on a post. **Losing a message is not possible; duplicating one in that window is.** |
 
 ## What the accept path refuses, and why there

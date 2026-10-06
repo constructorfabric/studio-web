@@ -173,7 +173,7 @@ TASK=$(curl -s -X POST "${H[@]}" -d '{
   "tenant": "<owner_tenant_id>",
   "max_entries": 800
 }' "http://127.0.0.1:8090/cf/studio-connector/v1/connections/<connection-id>/graph-sync" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
 
 # state: queued | running (progress = current phase) | succeeded (result) | failed (last_error)
 curl -s "${H[@]}" "http://127.0.0.1:8090/cf/studio-tasks/v1/runs/$TASK"

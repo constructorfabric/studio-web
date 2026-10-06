@@ -1,16 +1,17 @@
 //! REST surface for the gears catalog.
 //!
 //! `POST /studio-components-catalog/v1/sync` enqueues a background sync of the
-//! crates.io keyword into the graph and returns a task id. `GET /gears` and
-//! `GET /versions` read the catalog back.
+//! crates.io keyword into the graph and answers `202` with a `run_id`.
+//! `GET /gears` and `GET /versions` read the catalog back.
 //!
-//! The sync is a `catalog.sync` run on `studio-tasks`, so the task id is a run
-//! id and `GET /studio-tasks/v1/runs/{task_id}` is how it is polled; its
+//! The sync is a `catalog.sync` run on `studio-tasks`, so
+//! `GET /studio-tasks/v1/runs/{run_id}` is how it is polled; its
 //! `result` carries the gear, version and stored counts as they tick up.
 
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::{Extension, Router};
 use serde_json::Value;
@@ -117,9 +118,9 @@ impl LicenseFeature for License {}
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct CatalogSyncEnqueued {
-    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}` for the
-    /// outcome; its `result` carries the counts as they tick up.
-    pub task_id: String,
+    /// The studio-tasks run doing the sync: poll `GET /studio-tasks/v1/runs/{run_id}`
+    /// for the outcome; its `result` carries the counts as they tick up.
+    pub run_id: String,
     pub status: String,
 }
 
@@ -685,8 +686,10 @@ pub struct VersionsQuery {
 async fn sync(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
+    headers: HeaderMap,
     body: Option<Json<SyncRequestDto>>,
-) -> ApiResult<JsonBody<CatalogSyncEnqueued>> {
+) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
+    let idempotency_key = crate::idempotency::key(&headers)?;
     let queue = catalog.queue()?;
     let sources = match body {
         Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
@@ -709,7 +712,7 @@ async fn sync(
                 // two syncs at once would write the same gear nodes, so they
                 // queue behind each other instead.
                 partition_key: Some("catalog"),
-                idempotency_key: None,
+                idempotency_key: idempotency_key.as_deref(),
                 coalesce_queued: true,
                 notify_workspace_id: None,
             },
@@ -717,10 +720,13 @@ async fn sync(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
-    Ok(Json(CatalogSyncEnqueued {
-        task_id: run_id.to_string(),
-        status: "queued".to_string(),
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CatalogSyncEnqueued {
+            run_id: run_id.to_string(),
+            status: "queued".to_string(),
+        }),
+    ))
 }
 
 fn to_dtos(nodes: Vec<super::gts::GtsNode>) -> Vec<CatalogNodeDto> {
@@ -2904,7 +2910,7 @@ async fn create_repo(
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<CreateRepoRequest>,
-) -> ApiResult<JsonBody<CreateRepoResultDto>> {
+) -> ApiResult<(StatusCode, JsonBody<CreateRepoResultDto>)> {
     let created = catalog
         .service
         .create_project_repo(
@@ -2923,11 +2929,14 @@ async fn create_repo(
                 .with_constraint(format!("create repo failed: {e:#}"))
                 .create()
         })?;
-    Ok(Json(CreateRepoResultDto {
-        full_name: created.full_name,
-        html_url: created.html_url,
-        default_branch: created.default_branch,
-    }))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateRepoResultDto {
+            full_name: created.full_name,
+            html_url: created.html_url,
+            default_branch: created.default_branch,
+        }),
+    ))
 }
 
 async fn list_versions(
@@ -2981,14 +2990,22 @@ pub fn register_routes(
             "Lists every crate under the configured keyword (constructorfabric), \
              fetches each crate's detail and version history from crates.io, and \
              upserts gear + crate_version nodes (joined by has_version) into the \
-             graph. Returns a task id to poll.",
+             graph. Answers 202 with the `run_id` to follow at \
+             `GET /studio-tasks/v1/runs/{run_id}`. Send an `Idempotency-Key` header \
+             to make a retry of this request safe: a repeat with the same key \
+             answers the same run.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .param(crate::idempotency::param())
         .json_request::<SyncRequestDto>(openapi, "Sources to sync")
         .handler(sync)
-        .json_response_with_schema::<CatalogSyncEnqueued>(openapi, StatusCode::OK, "Sync enqueued")
+        .json_response_with_schema::<CatalogSyncEnqueued>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Sync enqueued",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -3493,7 +3510,8 @@ pub fn register_routes(
             .description(
                 "Creates a repository through the project's connector and records \
                  it as that project's gear repository in one step, so a new \
-                 project does not need the repository to exist first.",
+                 project does not need the repository to exist first. Answers 201; \
+                 `GET …/projects/{project_id}/gear-repo` reads the record back.",
             )
             .tag("StudioComponentsCatalog")
             .authenticated()
@@ -3503,7 +3521,7 @@ pub fn register_routes(
             .json_request::<CreateRepoRequest>(openapi, "New repository")
             .json_response_with_schema::<CreateRepoResultDto>(
                 openapi,
-                StatusCode::OK,
+                StatusCode::CREATED,
                 "Created repository",
             )
             .error_400(openapi)
