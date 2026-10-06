@@ -5,6 +5,10 @@
 // to them (their comments, suggestions and history), commit only those, as
 // the person, bring in what the team pushed meanwhile (a rebase, so the
 // project's history stays a line), and push to the branch the project works on.
+// A project that shares through pull requests takes the other road (`propose`):
+// the documents become one commit on the person's review branch, built in an
+// index of its own, and the checkout's branch and files are not touched — so
+// the shared checkout never holds a commit the team's branch does not.
 // Git runs in each repository's own folder through the same runner as the
 // desktop's Sync and Push, so credentials are what they already are: the
 // session's helper in a portal session, the token broker's on the desktop.
@@ -13,10 +17,12 @@ import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { WorkspaceServer } from '@theia/workspace/lib/common/workspace-protocol';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { GitResult, GitRunner, pullRequestLinkOf, repositoriesUnder, runGit } from './desktop-git';
+import { personSlug, shareBranchOf } from '../common/document-share-protocol';
 import type {
-    DocumentShareService, ShareDocument, ShareOutcome, SharePerson, ShareRepository, ShareRequest, ShareStatus,
+    DocumentShareService, ShareDocument, ShareOutcome, SharePerson, ShareRepository, ShareRequest, ShareReview, ShareStatus,
 } from '../common/document-share-protocol';
 
 const STUDIO_DIR = '.studio';
@@ -135,9 +141,38 @@ export function failureOf(result: GitResult): Failure {
     return 'failed';
 }
 
+/**
+ * The person, not the container: their name always, their address when the
+ * identity has one (else the repository's own).
+ */
+export function identityArgs(author: SharePerson | undefined): string[] {
+    return author?.name
+        ? ['-c', `user.name=${author.name}`, ...(author.email ? ['-c', `user.email=${author.email}`] : [])]
+        : [];
+}
+
+/**
+ * A `Signed-off-by` line for `signer` (`Name <address>`), in the message's
+ * closing trailers when it has some — what `git commit --signoff` writes.
+ */
+export function withSignOff(message: string, signer: string | undefined): string {
+    const trimmed = message.replace(/\s+$/, '');
+    if (!signer) {
+        return trimmed;
+    }
+    const line = `Signed-off-by: ${signer}`;
+    if (trimmed.split('\n').includes(line)) {
+        return trimmed;
+    }
+    const paragraphs = trimmed.split(/\n\s*\n/);
+    const last = paragraphs[paragraphs.length - 1];
+    const trailers = paragraphs.length > 1 && last.split('\n').every(text => /^[A-Za-z][\w-]*: /.test(text));
+    return `${trimmed}${trailers ? '\n' : '\n\n'}${line}`;
+}
+
 /** A branch for review, when the project's branch refuses direct changes. */
 export function reviewBranchName(author: SharePerson | undefined, now: Date): string {
-    const who = (author?.name ?? 'studio').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'studio';
+    const who = personSlug(author);
     const stamp = now.toISOString().slice(0, 16).replace(/[-:T]/g, '');
     return `studio/${who}/${stamp}`;
 }
@@ -201,7 +236,7 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         return !allowed || allowed.some(folder => isWithin(folder, dir));
     }
 
-    async status(roots: readonly string[]): Promise<ShareStatus> {
+    async status(roots: readonly string[], person?: SharePerson): Promise<ShareStatus> {
         const repositories: ShareRepository[] = [];
         const seen = new Set<string>();
         for (const root of roots) {
@@ -213,7 +248,7 @@ export class DocumentShareServiceImpl implements DocumentShareService {
                     continue;
                 }
                 seen.add(dir);
-                const described = await this.describe(dir);
+                const described = await this.describe(dir, person);
                 if (described) {
                     repositories.push(described);
                 }
@@ -226,12 +261,12 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         return fs.existsSync(path.join(folder, '.git')) ? [path.resolve(folder)] : repositoriesUnder(folder);
     }
 
-    protected async text(dir: string, args: readonly string[]): Promise<string | undefined> {
-        const result = await this.git(dir, args);
+    protected async text(dir: string, args: readonly string[], env?: Readonly<Record<string, string>>): Promise<string | undefined> {
+        const result = await this.git(dir, args, env);
         return result.code === 0 ? result.stdout.trim() : undefined;
     }
 
-    protected async describe(dir: string): Promise<ShareRepository | undefined> {
+    protected async describe(dir: string, person?: SharePerson): Promise<ShareRepository | undefined> {
         const listed = await this.git(dir, ['status', '--porcelain=v1', '-z', '-uall']);
         if (listed.code !== 0) {
             return undefined;
@@ -254,6 +289,9 @@ export class DocumentShareServiceImpl implements DocumentShareService {
                 documents.push(await this.document(dir, { path: owner, state: 'modified' }, companions, true));
             }
         }
+        if (person) {
+            await this.markInReview(dir, shareBranchOf(person), documents);
+        }
         return {
             root: FileUri.create(dir).toString(),
             name: path.basename(dir),
@@ -262,6 +300,35 @@ export class DocumentShareServiceImpl implements DocumentShareService {
             unsent: Number(unsentText ?? 0) || 0,
             documents: documents.sort((a, b) => a.path.localeCompare(b.path)),
         };
+    }
+
+    /**
+     * Mark the documents whose text and `.studio` files are, here, exactly
+     * what the person's review branch has: they are in the pull request, and
+     * stay changed in this checkout only until it is merged and pulled. Read
+     * from the remote-tracking ref the last share fetched, without asking the
+     * remote — a count must not wait on the network.
+     */
+    protected async markInReview(dir: string, branch: string, documents: ShareDocument[]): Promise<void> {
+        const ref = `refs/remotes/origin/${branch}`;
+        if (!documents.length || !await this.text(dir, ['rev-parse', '--verify', '--quiet', ref])) {
+            return;
+        }
+        for (let i = 0; i < documents.length; i++) {
+            const document = documents[i];
+            let same = true;
+            for (const file of [document.path, ...document.companions]) {
+                const theirs = await this.text(dir, ['rev-parse', '--verify', '--quiet', `${ref}:${file}`]);
+                const mine = fs.existsSync(path.join(dir, ...file.split('/'))) ? await this.text(dir, ['hash-object', '--', file]) : undefined;
+                if (theirs !== mine) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                documents[i] = { ...document, inReview: true };
+            }
+        }
     }
 
     protected async document(dir: string, entry: StatusEntry, companions: string[], onlyCompanions = false): Promise<ShareDocument> {
@@ -304,6 +371,11 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         const changed = new Set(parseStatus((await this.git(dir, ['status', '--porcelain=v1', '-z', '-uall'])).stdout).map(e => e.path));
         const toCommit = paths.filter(file => changed.has(file));
 
+        if (request.review) {
+            return toCommit.length
+                ? this.propose(dir, request.review, toCommit, request)
+                : { kind: 'nothing', branch: request.review.branch };
+        }
         if (toCommit.length === 0 && described.unsent === 0 && !request.prefer) {
             return { kind: 'nothing', branch: described.branch };
         }
@@ -313,13 +385,10 @@ export class DocumentShareServiceImpl implements DocumentShareService {
                 return { kind: 'failed', detail: added.stderr.trim() };
             }
             const author = request.author;
-            // The person, not the container: their name always, their address
-            // when the identity has one (else the repository's own).
-            const env = author?.name
-                ? ['-c', `user.name=${author.name}`, ...(author.email ? ['-c', `user.email=${author.email}`] : [])]
-                : [];
-            // Only these paths, whatever else anybody staged in a shared checkout.
-            const committed = await this.git(dir, [...env, 'commit', '--no-verify', '-m', commitMessage(request.message, author, request.coAuthors), '--', ...toCommit]);
+            const env = identityArgs(author);
+            // Only these paths, whatever else anybody staged in a shared checkout;
+            // signed off, since projects that take changes by review check DCO.
+            const committed = await this.git(dir, [...env, 'commit', '--no-verify', '--signoff', '-m', commitMessage(request.message, author, request.coAuthors), '--', ...toCommit]);
             if (committed.code !== 0) {
                 return { kind: 'failed', detail: (committed.stderr || committed.stdout).trim() };
             }
@@ -343,6 +412,97 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         }
         const retried = await this.push(dir, described.branch, request.author, false);
         return retried === 'rejected' ? { kind: 'failed', detail: 'the remote kept moving; try again' } : retried;
+    }
+
+    /**
+     * The documents as one commit on the person's review branch: on top of it
+     * while a request from it is open, else on top of `base` as the remote has
+     * it now (a merged or closed request's branch starts over). Built in an
+     * index of its own from the files as they are, so neither the checkout's
+     * branch nor anybody's working files move.
+     */
+    protected async propose(dir: string, review: ShareReview, files: readonly string[], request: ShareRequest): Promise<ShareOutcome> {
+        const fetchedBase = await this.git(dir, ['fetch', '--quiet', 'origin', `+refs/heads/${review.base}:refs/remotes/origin/${review.base}`]);
+        if (fetchedBase.code !== 0) {
+            return this.failed(fetchedBase);
+        }
+        for (let attempt = 0; attempt < 2; attempt++) {
+            let parent: string | undefined;
+            if (review.open) {
+                const fetched = await this.git(dir, ['fetch', '--quiet', 'origin', `+refs/heads/${review.branch}:refs/remotes/origin/${review.branch}`]);
+                parent = fetched.code === 0 ? await this.text(dir, ['rev-parse', `refs/remotes/origin/${review.branch}^{commit}`]) : undefined;
+            }
+            parent ??= await this.text(dir, ['rev-parse', `refs/remotes/origin/${review.base}^{commit}`]);
+            if (!parent) {
+                return { kind: 'failed', detail: `the remote has no branch ${review.base}` };
+            }
+            const commit = await this.commitOnto(dir, parent, files, request);
+            if (typeof commit !== 'string') {
+                return commit;
+            }
+            // Starting over replaces what a finished request left on the branch.
+            const refspec = `${review.open ? '' : '+'}${commit}:refs/heads/${review.branch}`;
+            const pushed = await this.git(dir, ['push', 'origin', refspec]);
+            if (pushed.code === 0) {
+                // What `status` compares with, to tell what is in the request already.
+                await this.git(dir, ['update-ref', `refs/remotes/origin/${review.branch}`, commit]);
+                return { kind: 'review', branch: review.branch };
+            }
+            // Somebody added to the request meanwhile (the person, from another
+            // window): once more, on top of that.
+            if (failureOf(pushed) !== 'rejected') {
+                return this.failed(pushed);
+            }
+        }
+        return { kind: 'failed', detail: 'the review branch kept moving; try again' };
+    }
+
+    /** A commit of `files` as they are on disk over `parent`'s tree, as the person, signed off. */
+    protected async commitOnto(dir: string, parent: string, files: readonly string[], request: ShareRequest): Promise<string | ShareOutcome> {
+        const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-share-'));
+        const index = { GIT_INDEX_FILE: path.join(scratch, 'index') };
+        try {
+            const steps: string[][] = [['read-tree', parent]];
+            for (const file of files) {
+                if (fs.existsSync(path.join(dir, ...file.split('/')))) {
+                    // Through the repository's filters (line endings), as `git add` would.
+                    const blob = await this.text(dir, ['hash-object', '-w', '--', file]);
+                    if (!blob) {
+                        return { kind: 'failed', detail: `could not read ${file}` };
+                    }
+                    steps.push(['update-index', '--add', '--cacheinfo', `100644,${blob},${file}`]);
+                } else {
+                    steps.push(['update-index', '--force-remove', '--', file]);
+                }
+            }
+            for (const step of steps) {
+                const done = await this.git(dir, step, index);
+                if (done.code !== 0) {
+                    return { kind: 'failed', detail: (done.stderr || done.stdout).trim() };
+                }
+            }
+            const tree = await this.text(dir, ['write-tree'], index);
+            if (!tree) {
+                return { kind: 'failed', detail: 'could not write the tree' };
+            }
+            const identity = identityArgs(request.author);
+            const committer = await this.text(dir, [...identity, 'var', 'GIT_COMMITTER_IDENT']);
+            const signer = committer?.replace(/\s+\d+\s+[+-]\d{4}$/, '');
+            const message = withSignOff(commitMessage(request.message, request.author, request.coAuthors), signer);
+            const committed = await this.git(dir, [...identity, 'commit-tree', tree, '-p', parent, '-m', message]);
+            return committed.code === 0
+                ? committed.stdout.trim()
+                : { kind: 'failed', detail: (committed.stderr || committed.stdout).trim() };
+        } finally {
+            fs.rmSync(scratch, { recursive: true, force: true });
+        }
+    }
+
+    protected failed(result: GitResult): ShareOutcome {
+        const failure = failureOf(result);
+        return failure === 'sign-in' || failure === 'offline'
+            ? { kind: failure, detail: result.stderr.trim() }
+            : { kind: 'failed', detail: (result.stderr || result.stdout).trim() };
     }
 
     /** Rebase onto what the team pushed; undefined when that went through. */

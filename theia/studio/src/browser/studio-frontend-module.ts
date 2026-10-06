@@ -24,6 +24,7 @@ import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
 import { MarkdownDiffContribution } from './markdown-diff/markdown-diff-contribution';
 import { AssistantRevealGuard } from './assistant-reveal-guard';
 import { ShareContribution } from './share/share-contribution';
+import { ShareSharingClient } from './share/share-sharing-client';
 import { DocumentShareService, documentShareServicePath } from '../common/document-share-protocol';
 import { MarkdownDiffOpenHandler, MarkdownDiffService } from './markdown-diff/markdown-diff-service';
 import { decodeMarkdownDiffUri } from './markdown-diff/markdown-diff-uri';
@@ -186,6 +187,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(DocumentShareService).toDynamicValue(ctx =>
         ctx.container.get(WebSocketConnectionProvider).createProxy<DocumentShareService>(documentShareServicePath)
     ).inSingletonScope();
+    bind(ShareSharingClient).toSelf().inSingletonScope();
     bind(ShareContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(ShareContribution);
     bind(FrontendApplicationContribution).toService(ShareContribution);

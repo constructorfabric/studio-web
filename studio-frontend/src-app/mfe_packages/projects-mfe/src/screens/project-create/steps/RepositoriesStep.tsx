@@ -9,6 +9,11 @@ import { Search, Lock, Eye } from 'lucide-react';
 import {
   Checkbox,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
   Table,
   TableBody,
@@ -31,12 +36,84 @@ import {
   pickSource,
   searchRepositories,
   selectConnection,
+  setShareMode,
 } from '../../../slices/createSlice';
-import { MAX_SOURCES, repoKey, sourceKey } from '../../../model/projectDraft';
+import {
+  MAX_SOURCES,
+  repoKey,
+  sourceKey,
+  supportsPullRequests,
+  type RepositoryPick,
+  type ShareMode,
+} from '../../../model/projectDraft';
+import { useThemedRoot } from '../../../shared/useThemedRoot';
 import styles from '../NewProjectWizard.module.css';
 
-const RepositoryTable: React.FC<{ connectionId: string; orgId: string }> = ({
+const SHARE_MODES: readonly { value: ShareMode; labelKey: string }[] = [
+  { value: 'branch', labelKey: 'share_branch' },
+  { value: 'pull_request', labelKey: 'share_pull_request' },
+];
+
+/**
+ * How a picked repository's shared edits land: on the project's branch, or
+ * through a pull request. Lives on the row so the choice is made where the
+ * repository is picked; the row toggles on click, so the control keeps its
+ * clicks — the portalled list included, since React bubbles through portals.
+ */
+const ShareModeSelect: React.FC<{
+  pick: RepositoryPick;
+  pullRequests: boolean;
+  container: HTMLElement | null;
+}> = ({ pick, pullRequests, container }) => {
+  const t = useProjectCreateText();
+  const dispatch = useAppDispatch();
+
+  return (
+    <span className={styles.repoShareInner} onClick={(event) => event.stopPropagation()}>
+      <Select
+        value={pick.shareMode}
+        onValueChange={(next: string | null) => {
+          if (!next) return;
+          dispatch(setShareMode({ key: sourceKey(pick), shareMode: next as ShareMode }));
+        }}
+      >
+        <SelectTrigger
+          size="sm"
+          className={styles.repoShareTrigger}
+          aria-label={t('share_label', { repo: pick.fullPath })}
+        >
+          <SelectValue>
+            {(selected: unknown) =>
+              t(selected === 'pull_request' ? 'share_pull_request' : 'share_branch')
+            }
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent container={container ?? undefined}>
+          {SHARE_MODES.map((mode) => {
+            const unavailable = mode.value === 'pull_request' && !pullRequests;
+            return (
+              <SelectItem
+                key={mode.value}
+                value={mode.value}
+                disabled={unavailable}
+              >
+                {unavailable
+                  ? `${t(mode.labelKey)} · ${t('share_github_only')}`
+                  : t(mode.labelKey)}
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+    </span>
+  );
+};
+
+ShareModeSelect.displayName = 'ShareModeSelect';
+
+const RepositoryTable: React.FC<{ connectionId: string; provider: string; orgId: string }> = ({
   connectionId,
+  provider,
   orgId,
 }) => {
   const t = useProjectCreateText();
@@ -54,7 +131,9 @@ const RepositoryTable: React.FC<{ connectionId: string; orgId: string }> = ({
   // Keys, not the array: a page holds up to 100 rows and the selection up to
   // 100 picks, so a linear scan per row is the one place this screen could get
   // quadratic.
-  const pickedKeys = new Set(sources.map(sourceKey));
+  const picks = new Map(sources.map((pick) => [sourceKey(pick), pick]));
+  const pullRequests = supportsPullRequests(provider);
+  const [container, findThemedRoot] = useThemedRoot();
   const atCap = sources.length >= MAX_SOURCES;
 
   // @cpt-begin:cpt-studiofrontend-dod-project-create-many-sources:p1:inst-2
@@ -65,13 +144,14 @@ const RepositoryTable: React.FC<{ connectionId: string; orgId: string }> = ({
         fullPath: repo.full_path,
         cloneUrl: repo.clone_url,
         connectionId,
+        shareMode: 'branch',
       })
     );
   };
   // @cpt-end:cpt-studiofrontend-dod-project-create-many-sources:p1:inst-2
 
   return (
-    <div className={styles.repoViewport}>
+    <div ref={findThemedRoot} className={styles.repoViewport}>
       <Input
         className={styles.repoSearch}
         type="search"
@@ -113,12 +193,16 @@ const RepositoryTable: React.FC<{ connectionId: string; orgId: string }> = ({
                   {t('col_updated')}
                 </TableHead>
                 {/* @cpt-end:cpt-studiofrontend-algo-project-create-repos:p2:inst-3 */}
+                <TableHead scope="col" className={styles.repoShareHead}>
+                  {t('col_share')}
+                </TableHead>
               </TableRow>
             </TableHeader>
             {/* @cpt-begin:cpt-studiofrontend-algo-project-create-repos:p2:inst-4 */}
             <TableBody>
             {repositories.map((repo) => {
-              const picked = pickedKeys.has(repoKey(connectionId, repo.id));
+              const pick = picks.get(repoKey(connectionId, repo.id));
+              const picked = pick !== undefined;
               const blocked = atCap && !picked;
               const isPublic = repo.visibility === 'public';
               return (
@@ -152,6 +236,15 @@ const RepositoryTable: React.FC<{ connectionId: string; orgId: string }> = ({
                     </span>
                   </TableCell>
                   <TableCell className={styles.repoUpdated} title={t('no_data')} />
+                  <TableCell className={styles.repoShare}>
+                    {pick ? (
+                      <ShareModeSelect
+                        pick={pick}
+                        pullRequests={pullRequests}
+                        container={container}
+                      />
+                    ) : null}
+                  </TableCell>
                 </TableRow>
               );
             })}
@@ -200,7 +293,12 @@ const Catalogue: React.FC<{ orgId: string }> = ({ orgId }) => {
           ))}
         </TabsList>
       </Tabs>
-      <RepositoryTable key={active.id} connectionId={active.id} orgId={orgId} />
+      <RepositoryTable
+        key={active.id}
+        connectionId={active.id}
+        provider={active.provider}
+        orgId={orgId}
+      />
     </>
   );
 };

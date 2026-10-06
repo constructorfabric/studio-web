@@ -36,6 +36,7 @@ use super::driver::{
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::url_guard::check_url;
+use crate::project_sources::{self, ProjectSource, ShareMode};
 use crate::user_profile::PersonResolver;
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
@@ -881,6 +882,109 @@ impl ConnectorService {
         publish_through(driver.as_ref(), &auth, write).await
     }
 
+    /// How a project's source shares edits, and what the IDE needs to do it:
+    /// the mode, the branch a pull request targets, whether the provider can
+    /// open one, and — given the person's `head` branch in pull-request mode —
+    /// the request already open from it.
+    ///
+    /// `source` is the source's checkout directory, the name the IDE knows the
+    /// repository by. The project config is read as the caller, so a person who
+    /// may not read the project learns nothing, not even that the source is
+    /// there. A source whose connection the caller cannot use still answers
+    /// with its mode; it only says that no request can be opened.
+    pub async fn source_sharing(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        source: &str,
+        head: Option<&str>,
+    ) -> Result<SourceSharing, SourceRefusal> {
+        let src = self.project_source(ctx, project, source).await?;
+        let connection = match self.source_connection(ctx, project, &src).await {
+            Ok(found) => Some(found),
+            Err(error) => {
+                tracing::debug!(
+                    %project,
+                    source = %src.dir,
+                    error = %format!("{error:#}"),
+                    "source sharing without its connection"
+                );
+                None
+            }
+        };
+        Ok(sharing_through(
+            connection
+                .as_ref()
+                .map(|(driver, auth)| (driver.as_ref(), auth)),
+            src,
+            head,
+        )
+        .await)
+    }
+
+    /// Open a pull request from `head` into the source's branch with the
+    /// source's connection — or reuse the one already open between them.
+    ///
+    /// The IDE has pushed `head` already; it has no provider token of its own,
+    /// so this is the step it cannot take. The source's share mode is not
+    /// checked: the mode decides what the IDE offers, not what a member may ask.
+    pub async fn open_source_pull_request(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        source: &str,
+        request: SourcePullRequest<'_>,
+    ) -> Result<OpenedPullRequest, SourceRefusal> {
+        let src = self.project_source(ctx, project, source).await?;
+        let (driver, auth) = self
+            .source_connection(ctx, project, &src)
+            .await
+            .map_err(SourceRefusal::Unavailable)?;
+        open_source_through(driver.as_ref(), &auth, &src, request)
+            .await
+            .map_err(SourceRefusal::Unavailable)
+    }
+
+    /// The project's source named by its checkout directory.
+    async fn project_source(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        source: &str,
+    ) -> Result<ProjectSource, SourceRefusal> {
+        let sources = project_sources::read(self.am.as_ref(), ctx, project)
+            .await
+            .ok_or_else(|| {
+                SourceRefusal::NotFound(format!("project {project} has no readable configuration"))
+            })?;
+        sources
+            .into_iter()
+            .find(|s| s.dir == source)
+            .ok_or_else(|| {
+                SourceRefusal::NotFound(format!("project {project} has no source named {source}"))
+            })
+    }
+
+    /// The driver and credentials of a source's connection, found from the
+    /// project.
+    async fn source_connection(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        source: &ProjectSource,
+    ) -> anyhow::Result<(Arc<dyn ConnectorDriver>, ConnectionAuth)> {
+        let id = source.connection_id.ok_or_else(|| {
+            anyhow!(
+                "the source {} names no connection, so its provider cannot be asked anything",
+                source.dir
+            )
+        })?;
+        let c = self.find(ctx, project, id).await?;
+        let driver = Arc::clone(self.driver(&c.provider)?);
+        let auth = self.auth(ctx, &c).await?;
+        Ok((driver, auth))
+    }
+
     /// What the caller must know about a connection before queuing a delivery
     /// against it: whether it can deliver at all, whether a target is needed,
     /// and whose credential it is.
@@ -1126,6 +1230,135 @@ async fn publish_through(
         branch_created,
         pull_request,
     })
+}
+
+/// Why a call about one of a project's sources was not answered.
+#[derive(Debug)]
+pub enum SourceRefusal {
+    /// The project's config is not readable by the caller, or it has no such
+    /// source. The two are not told apart, as account-management does not.
+    NotFound(String),
+    /// The source is there but cannot do what was asked: it names no usable
+    /// connection, its provider cannot open pull requests, or the provider
+    /// refused.
+    Unavailable(anyhow::Error),
+}
+
+/// What [`ConnectorService::source_sharing`] answers.
+#[derive(Debug)]
+pub struct SourceSharing {
+    /// The source's checkout directory.
+    pub source: String,
+    pub share_mode: ShareMode,
+    /// The branch shared edits land on, and what a pull request targets: the
+    /// source's branch, else the repository's default. `None` when neither is
+    /// known — no branch configured and the provider could not be asked.
+    pub base: Option<String>,
+    /// Whether a pull request can be opened through the source's connection.
+    pub pull_requests: bool,
+    /// The request open from the asked-for head into `base`, in pull-request
+    /// mode.
+    pub open_pull_request: Option<OpenedPullRequest>,
+}
+
+/// A pull request to open for a project's source.
+pub struct SourcePullRequest<'a> {
+    /// The branch the IDE pushed.
+    pub head: &'a str,
+    /// What to merge into; the source's branch, else the repository default.
+    pub base: Option<&'a str>,
+    pub title: &'a str,
+    pub body: Option<&'a str>,
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+/// The sharing answer over a driver, or over none when the source's
+/// connection cannot be used. A provider failure here is not fatal: the mode
+/// is still worth knowing, and what could not be learned is left unset.
+async fn sharing_through(
+    connection: Option<(&dyn ConnectorDriver, &ConnectionAuth)>,
+    source: ProjectSource,
+    head: Option<&str>,
+) -> SourceSharing {
+    let repo = source.full_path.trim();
+    let pull_requests = connection.is_some_and(|(driver, _)| driver.supports_pull_requests());
+    let mut base = source.branch.clone();
+    if base.is_none()
+        && !repo.is_empty()
+        && let Some((driver, auth)) = connection
+    {
+        match driver.default_branch(auth, repo).await {
+            Ok(branch) => base = Some(branch),
+            Err(error) => tracing::debug!(
+                repo,
+                error = %format!("{error:#}"),
+                "no default branch for source sharing"
+            ),
+        }
+    }
+
+    let mut open_pull_request = None;
+    if source.share_mode == ShareMode::PullRequest
+        && pull_requests
+        && !repo.is_empty()
+        && let (Some(head), Some(base), Some((driver, auth))) =
+            (non_empty(head), base.as_deref(), connection)
+        && head != base
+    {
+        match driver.find_open_pull_request(auth, repo, head, base).await {
+            Ok(found) => open_pull_request = found,
+            Err(error) => tracing::debug!(
+                repo,
+                head,
+                error = %format!("{error:#}"),
+                "cannot look up an open pull request for source sharing"
+            ),
+        }
+    }
+
+    SourceSharing {
+        source: source.dir,
+        share_mode: source.share_mode,
+        base,
+        pull_requests,
+        open_pull_request,
+    }
+}
+
+/// Opening a source's pull request, over a driver.
+async fn open_source_through(
+    driver: &dyn ConnectorDriver,
+    auth: &ConnectionAuth,
+    source: &ProjectSource,
+    request: SourcePullRequest<'_>,
+) -> anyhow::Result<OpenedPullRequest> {
+    if !driver.supports_pull_requests() {
+        anyhow::bail!(
+            "{} cannot open pull requests through this connection",
+            driver.display_name()
+        );
+    }
+    let repo = source.full_path.trim();
+    if repo.is_empty() {
+        anyhow::bail!("the source {} names no repository", source.dir);
+    }
+    let head = non_empty(Some(request.head))
+        .ok_or_else(|| anyhow!("a pull request needs the branch it is opened from"))?;
+    let title =
+        non_empty(Some(request.title)).ok_or_else(|| anyhow!("a pull request needs a title"))?;
+    let base = match non_empty(request.base).or(source.branch.as_deref()) {
+        Some(base) => base.to_string(),
+        None => driver.default_branch(auth, repo).await?,
+    };
+    if head == base {
+        anyhow::bail!("a pull request needs a branch other than {base} to open from");
+    }
+    driver
+        .open_pull_request(auth, repo, head, &base, title, non_empty(request.body))
+        .await
 }
 
 fn now_secs() -> u64 {
@@ -1483,6 +1716,10 @@ mod publish_tests {
     struct RecordingDriver {
         /// Branches that already exist, name → head sha.
         existing: Vec<(String, String)>,
+        /// Pull requests already open, head → base.
+        open_pulls: Vec<(String, String)>,
+        /// A provider that cannot open pull requests.
+        no_pulls: bool,
         calls: Mutex<Vec<String>>,
     }
 
@@ -1493,7 +1730,7 @@ mod publish_tests {
                     .iter()
                     .map(|(n, s)| (n.to_string(), s.to_string()))
                     .collect(),
-                calls: Mutex::new(Vec::new()),
+                ..Self::default()
             }
         }
 
@@ -1594,6 +1831,29 @@ mod publish_tests {
                 url: Some("https://example.test/pull/7".into()),
                 created: true,
             })
+        }
+
+        fn supports_pull_requests(&self) -> bool {
+            !self.no_pulls
+        }
+
+        async fn find_open_pull_request(
+            &self,
+            _auth: &ConnectionAuth,
+            _repo: &str,
+            head: &str,
+            base: &str,
+        ) -> anyhow::Result<Option<OpenedPullRequest>> {
+            self.log(format!("find_open_pull_request({head} -> {base})"));
+            Ok(self
+                .open_pulls
+                .iter()
+                .any(|(h, b)| h == head && b == base)
+                .then(|| OpenedPullRequest {
+                    number: 3,
+                    url: Some("https://example.test/pull/3".into()),
+                    created: false,
+                }))
         }
     }
 
@@ -1766,5 +2026,177 @@ mod publish_tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("base branch nope does not exist"), "{err}");
+    }
+
+    fn source(branch: Option<&str>, mode: ShareMode) -> ProjectSource {
+        ProjectSource {
+            connection_id: Some(Uuid::nil()),
+            full_path: "acme/specs".into(),
+            clone_url: "https://example.test/acme/specs.git".into(),
+            branch: branch.map(str::to_string),
+            dir: "specs".into(),
+            share_mode: mode,
+        }
+    }
+
+    fn pull<'a>(head: &'a str, base: Option<&'a str>) -> SourcePullRequest<'a> {
+        SourcePullRequest {
+            head,
+            base,
+            title: "Share from Studio",
+            body: None,
+        }
+    }
+
+    /// The configured branch is the base; the open request from the person's
+    /// branch is found without asking what the default branch is.
+    #[tokio::test]
+    async fn a_pull_request_source_reports_the_request_open_from_the_head() {
+        let driver = RecordingDriver {
+            open_pulls: vec![("studio/ann/share".into(), "dev".into())],
+            ..RecordingDriver::default()
+        };
+        let auth = auth();
+        let got = sharing_through(
+            Some((&driver, &auth)),
+            source(Some("dev"), ShareMode::PullRequest),
+            Some("studio/ann/share"),
+        )
+        .await;
+
+        assert_eq!(got.source, "specs");
+        assert_eq!(got.share_mode, ShareMode::PullRequest);
+        assert_eq!(got.base.as_deref(), Some("dev"));
+        assert!(got.pull_requests);
+        assert_eq!(got.open_pull_request.map(|p| p.number), Some(3));
+        assert_eq!(
+            driver.calls(),
+            vec!["find_open_pull_request(studio/ann/share -> dev)"]
+        );
+    }
+
+    /// Without a configured branch the base is the repository default; in the
+    /// branch mode nobody looks for a request.
+    #[tokio::test]
+    async fn a_branch_source_looks_for_no_request() {
+        let driver = RecordingDriver::default();
+        let auth = auth();
+        let got = sharing_through(
+            Some((&driver, &auth)),
+            source(None, ShareMode::Branch),
+            Some("studio/ann/share"),
+        )
+        .await;
+
+        assert_eq!(got.share_mode, ShareMode::Branch);
+        assert_eq!(got.base.as_deref(), Some("main"));
+        assert!(got.open_pull_request.is_none());
+        assert_eq!(driver.calls(), vec!["default_branch"]);
+    }
+
+    /// A source whose connection cannot be used still tells its mode.
+    #[tokio::test]
+    async fn a_source_without_a_usable_connection_still_tells_its_mode() {
+        let got = sharing_through(
+            None,
+            source(Some("main"), ShareMode::PullRequest),
+            Some("studio/ann/share"),
+        )
+        .await;
+
+        assert_eq!(got.share_mode, ShareMode::PullRequest);
+        assert_eq!(got.base.as_deref(), Some("main"));
+        assert!(!got.pull_requests);
+        assert!(got.open_pull_request.is_none());
+    }
+
+    /// The request goes into the source's branch, not the repository default.
+    #[tokio::test]
+    async fn a_source_pull_request_targets_the_sources_branch() {
+        let driver = RecordingDriver::default();
+        let out = open_source_through(
+            &driver,
+            &auth(),
+            &source(Some("dev"), ShareMode::PullRequest),
+            pull("studio/ann/share", None),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.number, 7);
+        assert_eq!(
+            driver.calls(),
+            vec!["open_pull_request(studio/ann/share -> dev: Share from Studio)"]
+        );
+    }
+
+    /// A named base wins over the source's branch; with neither, the default.
+    #[tokio::test]
+    async fn a_named_base_wins_and_none_falls_back_to_the_default() {
+        let driver = RecordingDriver::default();
+        open_source_through(
+            &driver,
+            &auth(),
+            &source(Some("dev"), ShareMode::Branch),
+            pull("studio/ann/share", Some("release")),
+        )
+        .await
+        .unwrap();
+        open_source_through(
+            &driver,
+            &auth(),
+            &source(None, ShareMode::Branch),
+            pull("studio/ann/share", None),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            driver.calls(),
+            vec![
+                "open_pull_request(studio/ann/share -> release: Share from Studio)",
+                "default_branch",
+                "open_pull_request(studio/ann/share -> main: Share from Studio)",
+            ]
+        );
+    }
+
+    /// A provider that cannot open requests is refused by name, before any call.
+    #[tokio::test]
+    async fn a_provider_without_pull_requests_is_refused() {
+        let driver = RecordingDriver {
+            no_pulls: true,
+            ..RecordingDriver::default()
+        };
+        let err = open_source_through(
+            &driver,
+            &auth(),
+            &source(Some("dev"), ShareMode::PullRequest),
+            pull("studio/ann/share", None),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("Recording cannot open pull requests"), "{err}");
+        assert!(driver.calls().is_empty(), "{:?}", driver.calls());
+    }
+
+    /// A request from the base into itself, or with no head, is refused.
+    #[tokio::test]
+    async fn a_source_pull_request_needs_a_head_other_than_the_base() {
+        let driver = RecordingDriver::default();
+        let src = source(Some("dev"), ShareMode::PullRequest);
+        let same = open_source_through(&driver, &auth(), &src, pull("dev", None))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(same.contains("other than dev"), "{same}");
+        let blank = open_source_through(&driver, &auth(), &src, pull("  ", None))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(blank.contains("branch it is opened from"), "{blank}");
+        assert!(driver.calls().is_empty(), "{:?}", driver.calls());
     }
 }

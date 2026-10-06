@@ -294,6 +294,27 @@ A, who knows no git, edits two documents in Doc editing.
 - **Fails as**: files A never opened appearing in the commit, or an editor of
   the pulled documents showing a proposal (see 5g).
 
+### 5j. Share through a pull request
+
+Create a project whose GitHub repository is picked with *Through a pull
+request*. In its session, A edits a document and shares it.
+
+- **Expect**: the dialog says the project takes changes through review; the
+  button reads *Send 1 document for review*. Afterwards a pull request from
+  `studio/<A>/share` into the source's branch is open, holding one commit that
+  is A's, signed off, with only that document and its `.studio` files.
+  `git log -1` and `git status` in the checkout are what they were before the
+  share. Shared again, the document is listed under *In your pull request*
+  and not counted in the status bar.
+- **Then**: A edits it again and shares. The same request now has two
+  commits. Merge it (squash), let the checkout pull, edit, and share. A new
+  request opens, starting from the merged branch.
+- **Fails as**: a commit on the checkout's own branch (the next pull would
+  replay it), a second open request from the same person, or a request that
+  carries the old commit after a merge.
+- **Control**: a repository picked with *Commit to the branch* still shares as
+  in 5i.
+
 ### 6. Commenting on something that was rendered
 
 In rich view:

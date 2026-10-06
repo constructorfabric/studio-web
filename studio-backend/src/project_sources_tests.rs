@@ -109,3 +109,34 @@ fn a_personal_connection_does_not() {
     );
     assert_eq!(to_git_source(resolved(None, false)).token_ref, None);
 }
+
+#[test]
+fn a_source_shares_through_a_pull_request_only_when_it_says_so() {
+    let got = parse(&json!({ "sources": [
+        { "full_path": "acme/api", "clone_url": "https://h/acme/api", "share_mode": "pull_request" },
+        { "full_path": "acme/web", "clone_url": "https://h/acme/web", "share_mode": "branch" },
+        { "full_path": "acme/docs", "clone_url": "https://h/acme/docs" },
+        { "full_path": "acme/ops", "clone_url": "https://h/acme/ops", "share_mode": "Pull_Request" },
+        { "full_path": "acme/lib", "clone_url": "https://h/acme/lib", "share_mode": 1 },
+    ]}));
+    let modes: Vec<_> = got.iter().map(|s| s.share_mode).collect();
+    assert_eq!(
+        modes,
+        [
+            ShareMode::PullRequest,
+            ShareMode::Branch,
+            ShareMode::Branch,
+            ShareMode::Branch,
+            ShareMode::Branch,
+        ],
+        "absent or unknown is the branch mode every project had before"
+    );
+}
+
+#[test]
+fn a_share_mode_is_spelled_as_the_config_spells_it() {
+    for mode in [ShareMode::Branch, ShareMode::PullRequest] {
+        assert_eq!(ShareMode::parse(Some(mode.as_str())), mode);
+    }
+    assert_eq!(ShareMode::default(), ShareMode::Branch);
+}

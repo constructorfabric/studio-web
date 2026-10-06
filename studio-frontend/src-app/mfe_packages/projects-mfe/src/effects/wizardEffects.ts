@@ -45,7 +45,7 @@ async function requiredStages(workspaceId: string): Promise<string[]> {
   }
 }
 
-function toProjectConfig(draft: ProjectDraft, stages: readonly string[]): ProjectConfig {
+export function toProjectConfig(draft: ProjectDraft, stages: readonly string[]): ProjectConfig {
   const config: ProjectConfig = {
     mode: draft.mode ?? 'greenfield',
     stages: [...stages],
@@ -58,6 +58,7 @@ function toProjectConfig(draft: ProjectDraft, stages: readonly string[]): Projec
       connection_id: pick.connectionId,
       full_path: pick.fullPath,
       clone_url: pick.cloneUrl,
+      share_mode: pick.shareMode,
     }));
     if (sources.length === 1) config.source_git_url = sources[0]!.cloneUrl;
   }

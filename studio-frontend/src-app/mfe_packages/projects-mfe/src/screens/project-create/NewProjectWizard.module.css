@@ -378,3 +378,19 @@ input.repoSearch {
   white-space: nowrap;
 }
 
+
+/* Wide enough for "Through a pull request" in the kit's small trigger; empty on
+   rows not picked, so an unpicked table reads as before. */
+.repoShareHead,
+.repoShare {
+  width: 12rem;
+}
+
+.repoShareInner {
+  display: inline-flex;
+}
+
+.repoShareTrigger {
+  width: 11rem;
+  font-size: var(--text-meta-size);
+}

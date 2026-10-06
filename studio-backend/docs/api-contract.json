@@ -669,6 +669,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-connector/v1/sources/{source}/sharing",
+      "operation_id": "studio_connector.get_source_sharing",
+      "tag": "StudioConnectors",
+      "summary": "How a project's repository shares a person's edits",
+      "authenticated": true,
+      "responses": [
+        "SourceSharingDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/declared-capabilities",
       "operation_id": "studio_documents.list_declared_capabilities",
       "tag": "StudioDocuments",
@@ -2239,6 +2256,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/sources/{source}/pull-requests",
+      "operation_id": "studio_connector.open_source_pull_request",
+      "tag": "StudioConnectors",
+      "summary": "Open a pull request for a project's repository with its connection",
+      "authenticated": true,
+      "request": "OpenSourcePullRequestDto",
+      "responses": [
+        "OpenedPullRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

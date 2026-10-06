@@ -634,6 +634,27 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         ))
     }
 
+    /// Whether [`Self::open_pull_request`] does anything but refuse. Asked
+    /// before offering a pull request at all, so a caller can say "this
+    /// provider cannot" up front instead of after a push.
+    fn supports_pull_requests(&self) -> bool {
+        false
+    }
+
+    /// The pull request open from `head` into `base`, when there is one.
+    /// `None` is also the answer of a driver that cannot open requests: there
+    /// is then nothing open through it to find.
+    async fn find_open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        head: &str,
+        base: &str,
+    ) -> anyhow::Result<Option<OpenedPullRequest>> {
+        let _ = (auth, repo_full_path, head, base);
+        Ok(None)
+    }
+
     /// Unresolved review threads on the repository's open pull requests, at
     /// most `max_pulls` of them, most recently updated first.
     ///

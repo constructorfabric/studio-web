@@ -4,7 +4,8 @@
 //!
 //! ```json
 //! { "connection_id": "<uuid>", "full_path": "acme/api",
-//!   "clone_url": "https://github.com/acme/api.git", "branch": "main" }
+//!   "clone_url": "https://github.com/acme/api.git", "branch": "main",
+//!   "share_mode": "pull_request" }
 //! ```
 //!
 //! under the project's own tenant. Everything that asks "which repositories
@@ -19,6 +20,12 @@
 //! from `full_path` here exactly as the portal derives it
 //! (`checkoutDirectory`), so "open this file in the editor" and the clone
 //! agree on where the file is.
+//!
+//! `share_mode` is how the IDE's "Share with the team" lands a person's edits
+//! in that repository: `branch` commits and pushes to the working branch,
+//! `pull_request` pushes to the person's own branch and opens a pull request
+//! into it. Absent, or anything else, is `branch` — what every project did
+//! before the choice existed.
 
 use std::collections::HashSet;
 
@@ -43,6 +50,36 @@ pub const PERSONAL_SCOPE: &str = "personal";
 /// The directory name for a source whose `full_path` has no last segment.
 const FALLBACK_DIR: &str = "source";
 
+/// How "Share with the team" lands edits in a source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShareMode {
+    /// Commit and push to the working branch.
+    #[default]
+    Branch,
+    /// Push to a per-person branch and open a pull request into the working
+    /// branch.
+    PullRequest,
+}
+
+impl ShareMode {
+    /// `"pull_request"` is the one value with a meaning of its own; anything
+    /// else, absent included, is [`ShareMode::Branch`].
+    pub fn parse(raw: Option<&str>) -> Self {
+        match raw {
+            Some("pull_request") => Self::PullRequest,
+            _ => Self::Branch,
+        }
+    }
+
+    /// The value as the project config spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Branch => "branch",
+            Self::PullRequest => "pull_request",
+        }
+    }
+}
+
 /// One repository of a project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSource {
@@ -56,6 +93,8 @@ pub struct ProjectSource {
     pub branch: Option<String>,
     /// The directory under the workspace root it is checked out into.
     pub dir: String,
+    /// How "Share with the team" lands edits here.
+    pub share_mode: ShareMode,
 }
 
 fn text<'a>(entry: &'a Value, key: &str) -> Option<&'a str> {
@@ -119,6 +158,7 @@ pub fn parse(config: &Value) -> Vec<ProjectSource> {
             clone_url: clone_url.to_owned(),
             branch: text(entry, "branch").map(str::to_owned),
             dir,
+            share_mode: ShareMode::parse(text(entry, "share_mode")),
         });
     }
     out

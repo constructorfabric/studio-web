@@ -3,7 +3,7 @@
  * One record, the project config's `sources[]`, in the shape the FrontX portal
  * writes and the backend reads (`studio-backend/src/project_sources.rs`):
  *
- *   { connection_id, full_path, clone_url, branch? }
+ *   { connection_id, full_path, clone_url, branch?, share_mode? }
  *
  * The prototype used to keep its own list in the workspace settings'
  * `repos[]`, which nothing else read: a project attached here had no code in
@@ -21,6 +21,10 @@
 import { api } from "./api";
 import type { Connection, RemoteRepo, RepoEntry } from "./api";
 
+/** How the IDE's "Share with the team" lands edits: straight onto the
+ *  project's branch, or on a per-person branch through a pull request. */
+export type ShareMode = "branch" | "pull_request";
+
 export interface ProjectSource {
   connection_id: string;
   /** `owner/repo` on the provider. */
@@ -28,6 +32,14 @@ export interface ProjectSource {
   clone_url: string;
   /** The branch to check out; the repository's default when absent. */
   branch?: string;
+  /** How shared edits reach this repository; `branch` when absent. */
+  share_mode?: ShareMode;
+}
+
+/** Whether shares through `connection` can open a pull request — GitHub only
+ *  for now, so anything else is offered the branch alone. */
+export function supportsPullRequests(connection: Pick<Connection, "provider"> | null | undefined): boolean {
+  return connection?.provider === "github";
 }
 
 const FALLBACK_DIR = "source";
@@ -71,12 +83,14 @@ export function hasRepository(sources: readonly ProjectSource[] | undefined, url
   return !!key && (sources ?? []).some((s) => repoKey(s.clone_url) === key);
 }
 
-/** `sources` with the picked repositories added through `connection`; one the
- *  config already lists is not added twice. */
+/** `sources` with the picked repositories added through `connection`, each
+ *  shared as `shareMode`; one the config already lists is not added twice
+ *  (and keeps the mode it has). */
 export function withPicked(
   sources: readonly ProjectSource[] | undefined,
   connection: Pick<Connection, "id">,
   picks: readonly RemoteRepo[],
+  shareMode: ShareMode = "branch",
 ): { sources: ProjectSource[]; added: number } {
   const out = [...(sources ?? [])];
   let added = 0;
@@ -87,6 +101,7 @@ export function withPicked(
       full_path: r.full_path,
       clone_url: r.clone_url,
       ...(r.default_branch ? { branch: r.default_branch } : {}),
+      share_mode: shareMode,
     });
     added += 1;
   }
@@ -118,6 +133,7 @@ export function asRows(
       source: providerOf(connection),
       url: source.clone_url,
       ...(source.branch ? { branch: source.branch } : {}),
+      ...(source.share_mode ? { share_mode: source.share_mode } : {}),
       ...(connection ? { token_ref: connection.secret_ref } : {}),
     };
   });

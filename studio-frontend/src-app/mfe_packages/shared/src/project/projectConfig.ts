@@ -10,6 +10,17 @@ export const PROJECT_CONFIG_TYPE =
 export type ProjectMode = 'greenfield' | 'modernize';
 export type ProjectStatus = 'draft' | 'active' | 'archived';
 
+/**
+ * How the IDE's "Share with the team" lands a person's edits in a repository:
+ * `branch` commits and pushes straight to the branch the project works on;
+ * `pull_request` pushes to a per-person branch and opens (or adds to) a pull
+ * request. Pull requests are GitHub-only for now.
+ */
+export type ShareMode = 'branch' | 'pull_request';
+
+/** What an absent `share_mode` means — the behaviour every older project has. */
+export const DEFAULT_SHARE_MODE: ShareMode = 'branch';
+
 /** One repository a project was seeded from. */
 export interface ProjectSource {
   connection_id: string;
@@ -17,6 +28,8 @@ export interface ProjectSource {
   clone_url: string;
   /** The branch a session checks out; the repository's default when absent. */
   branch?: string;
+  /** How shared edits reach this repository; {@link DEFAULT_SHARE_MODE} when absent. */
+  share_mode?: ShareMode;
 }
 
 /**

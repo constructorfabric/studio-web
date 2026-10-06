@@ -31,13 +31,14 @@ export interface GitResult {
     readonly stderr: string;
 }
 
-export type GitRunner = (cwd: string, args: readonly string[]) => Promise<GitResult>;
+/** `env` adds to the process's own, e.g. `GIT_INDEX_FILE` for an index of one's own. */
+export type GitRunner = (cwd: string, args: readonly string[], env?: Readonly<Record<string, string>>) => Promise<GitResult>;
 
 /** `git` itself, never asking on a terminal nobody sees. */
-export const runGit: GitRunner = (cwd, args) => new Promise(resolve => {
+export const runGit: GitRunner = (cwd, args, env) => new Promise(resolve => {
     const child = spawn('git', [...args], {
         cwd,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: '0' },
         windowsHide: true,
     });
     let stdout = '';

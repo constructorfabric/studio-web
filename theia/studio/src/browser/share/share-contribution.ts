@@ -11,11 +11,12 @@ import { Command, CommandContribution, CommandRegistry, Disposable, DisposableCo
 import URI from '@theia/core/lib/common/uri';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { DocumentShareService, type ShareRepository } from '../../common/document-share-protocol';
+import { DocumentShareService, shareBranchOf, type ShareRepository } from '../../common/document-share-protocol';
 import { MarkdownDiffService } from '../markdown-diff/markdown-diff-service';
 import { toGitUri } from '../markdown-diff/markdown-diff-uri';
 import { ShareDialog } from './share-dialog';
 import { Person, unsharedCount } from './share-model';
+import { RepositorySharing, ShareSharingClient } from './share-sharing-client';
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -67,6 +68,7 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
     @inject(MarkdownDiffService) protected readonly diffs: MarkdownDiffService;
     @inject(WindowService) protected readonly windows: WindowService;
     @inject(FileService) @optional() protected readonly files: FileService | undefined;
+    @inject(ShareSharingClient) @optional() protected readonly sharingClient: ShareSharingClient | undefined;
 
     protected readonly toDispose = new DisposableCollection();
     protected recountTimer: ReturnType<typeof setTimeout> | undefined;
@@ -135,7 +137,7 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
             return;
         }
         try {
-            const { repositories } = await withTimeout(this.service.status(roots), STATUS_TIMEOUT_MS);
+            const { repositories } = await withTimeout(this.service.status(roots, await this.me()), STATUS_TIMEOUT_MS);
             this.retries = 0;
             this.showCount(unsharedCount(repositories));
         } catch {
@@ -191,7 +193,8 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
                 return;
             }
             await this.flush();
-            const [{ repositories }, me] = await Promise.all([withTimeout(this.service.status(roots), STATUS_TIMEOUT_MS), this.me()]);
+            const me = await this.me();
+            const { repositories } = await withTimeout(this.service.status(roots, me), STATUS_TIMEOUT_MS);
             if (!repositories.length) {
                 this.messages.info('This project has no repository to share to.');
                 return;
@@ -204,6 +207,8 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
                 service: this.service,
                 repositories,
                 me,
+                sharing: await this.sharingOf(repositories, me),
+                openPullRequest: (sharing, head, title, body) => this.sharingClient!.openPullRequest(sharing, head, title, body),
                 showChanges: document => void this.diffs.compareWithHead(new URI(document.uri)),
                 showConflict: (repository, path, theirs) => void this.showConflict(repository, path, theirs),
                 openLink: url => this.windows.openNewWindow(url, { external: true }),
@@ -222,6 +227,31 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
             this.opening = false;
             this.scheduleRecount();
         }
+    }
+
+    /**
+     * How each repository is shared, as its project decided. A repository
+     * Studio says nothing about — or does not answer for in time — shares
+     * straight to its branch, as it always did.
+     */
+    protected async sharingOf(repositories: readonly ShareRepository[], me: Person | undefined): Promise<Map<string, RepositorySharing>> {
+        const found = new Map<string, RepositorySharing>();
+        const client = this.sharingClient;
+        if (!client) {
+            return found;
+        }
+        const rootFsPaths = this.workspace.tryGetRoots().map(root => root.resource.path.fsPath());
+        await Promise.all(repositories.map(async repository => {
+            try {
+                const sharing = await withTimeout(client.sharing(rootFsPaths, repository.name, shareBranchOf(me)), STATUS_TIMEOUT_MS);
+                if (sharing) {
+                    found.set(repository.root, sharing);
+                }
+            } catch {
+                // Unknown: straight to the branch.
+            }
+        }));
+        return found;
     }
 
     protected async flush(): Promise<void> {

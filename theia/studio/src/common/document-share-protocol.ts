@@ -3,7 +3,11 @@
 //
 // The decisions behind it (2026-10-05): changes go straight to the branch the
 // project works on, and to a branch of their own for review only when that one
-// refuses them; in a portal session — one checkout for everybody — a person
+// refuses them — unless the project chose, when it picked the repository from
+// its connection, that changes go through a pull request (`share_mode` of the
+// project's source, 2026-10-06): then each person has one branch,
+// `studio/<person>/share`, and one pull request, which every later share adds
+// to while it is open; in a portal session — one checkout for everybody — a person
 // shares the documents THEY edited, a colleague's edits in the same file going
 // along as co-authors; and sharing is a button, never automatic.
 //
@@ -31,6 +35,11 @@ export interface ShareDocument {
     readonly editors: readonly string[];
     /** The `.studio` files that belong to it (comments, suggestions, history) and changed too. */
     readonly companions: readonly string[];
+    /**
+     * Already in the person's pull request as it is now: shared for review,
+     * and changed here only until the request is merged and pulled.
+     */
+    readonly inReview?: boolean;
 }
 
 export interface ShareRepository {
@@ -59,16 +68,44 @@ export interface ShareRequest {
     readonly author?: SharePerson;
     readonly coAuthors?: readonly SharePerson[];
     /**
+     * Through a pull request rather than onto the branch: the documents go to
+     * `branch` (`shareBranchOf` the person) as one commit on top of what it
+     * has — or, when no request is open from it any more, on top of `base` —
+     * and the checkout's own branch and files are left as they are.
+     */
+    readonly review?: ShareReview;
+    /**
      * After a `conflict`: whose wording wins where both changed the same lines.
      * Everything else either side changed is kept either way.
      */
     readonly prefer?: 'mine' | 'theirs';
 }
 
+export interface ShareReview {
+    readonly branch: string;
+    /** The branch the request goes into. */
+    readonly base: string;
+    /** A request from `branch` is open: add to it rather than start over from `base`. */
+    readonly open: boolean;
+}
+
+/** The person's one branch for review, in every repository. */
+export function shareBranchOf(person: SharePerson | undefined): string {
+    return `studio/${personSlug(person)}/share`;
+}
+
+/** `Alice Example` → `alice-example`; `studio` for nobody. */
+export function personSlug(person: SharePerson | undefined): string {
+    return (person?.name ?? 'studio').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'studio';
+}
+
 export type ShareOutcomeKind =
     /** On the branch the project works on. */
     | 'shared'
-    /** The branch refused direct changes; they went to a branch of their own, for review. */
+    /**
+     * On a branch of their own, for review: the project shares through pull
+     * requests, or its branch refused direct changes.
+     */
     | 'review'
     /** Somebody changed the same lines in the meantime; nothing was sent yet. */
     | 'conflict'
@@ -95,7 +132,10 @@ export interface ShareOutcome {
 }
 
 export interface DocumentShareService {
-    /** What is not shared yet, in the repositories under these folders (file uris). */
-    status(roots: readonly string[]): Promise<ShareStatus>;
+    /**
+     * What is not shared yet, in the repositories under these folders (file
+     * uris). With the person, a document already in their pull request says so.
+     */
+    status(roots: readonly string[], person?: SharePerson): Promise<ShareStatus>;
     share(request: ShareRequest): Promise<ShareOutcome>;
 }

@@ -1,6 +1,8 @@
 import type { ShareDocument, ShareRepository } from '../../common/document-share-protocol';
 import { coAuthorsOf, defaultMessage, describeOutcome, isMine, splitDocuments, unsharedCount } from './share-model';
 
+const inReview = (d: ShareDocument): ShareDocument => ({ ...d, inReview: true });
+
 function document(path: string, title: string, editors: string[] = [], state: ShareDocument['state'] = 'modified'): ShareDocument {
     return { path, uri: `file:///w/${path}`, state, title, editors, companions: [] };
 }
@@ -20,6 +22,22 @@ describe('share model', () => {
         const { mine, others } = splitDocuments(repository, ALICE);
         expect(mine.map(d => d.path)).toEqual(['a.md']);
         expect(others.map(d => d.path)).toEqual(['c.md']);
+    });
+
+    it('keeps what is already in my pull request apart, and does not count it', () => {
+        const repository: ShareRepository = { root: 'file:///w', name: 'w', unsent: 0, documents: [document('a.md', 'A', ['Alice']), inReview(document('b.md', 'B'))] };
+        const { mine, others, inReview: proposed } = splitDocuments(repository, ALICE);
+        expect(mine.map(d => d.path)).toEqual(['a.md']);
+        expect(others).toEqual([]);
+        expect(proposed.map(d => d.path)).toEqual(['b.md']);
+        expect(unsharedCount([repository])).toBe(1);
+    });
+
+    it('says a pull request is the plan, and when it could not be opened', () => {
+        expect(describeOutcome({ kind: 'review', branch: 'studio/alice/share', reviewUrl: 'https://x/pull/1' }, 2, true))
+            .toEqual({ level: 'info', text: 'Your 2 documents are in your pull request, for the team to review.' });
+        expect(describeOutcome({ kind: 'review', branch: 'studio/alice/share', detail: 'error: HTTP 400' }, 1, true))
+            .toEqual({ level: 'warn', text: 'Your document is on "studio/alice/share", but the pull request could not be opened. (HTTP 400)' });
     });
 
     it('starts the message from the titles', () => {

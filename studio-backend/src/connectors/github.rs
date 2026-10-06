@@ -330,41 +330,6 @@ struct ReviewThread {
     is_resolved: bool,
 }
 
-impl GitHubDriver {
-    /// The open pull request for `head` → `base`, when there is one.
-    ///
-    /// GitHub wants `head` qualified by the owner of the fork it lives on;
-    /// within one repository that is the repository's own owner.
-    async fn find_open_pull_request(
-        &self,
-        auth: &ConnectionAuth,
-        repo_full_path: &str,
-        head: &str,
-        base: &str,
-    ) -> anyhow::Result<Option<OpenedPullRequest>> {
-        let owner = repo_full_path.split('/').next().unwrap_or_default();
-        let url = format!("{}/repos/{repo_full_path}/pulls", auth.root());
-        let res = self
-            .request(&url, auth)
-            .query(&[
-                ("state", "open"),
-                ("head", &format!("{owner}:{head}")),
-                ("base", base),
-            ])
-            .send()
-            .await?;
-        if !res.status().is_success() {
-            return Ok(None);
-        }
-        let pulls: Vec<GitHubPullRef> = res.json().await?;
-        Ok(pulls.into_iter().next().map(|pr| OpenedPullRequest {
-            number: pr.number,
-            url: Some(pr.html_url),
-            created: false,
-        }))
-    }
-}
-
 #[async_trait]
 impl ConnectorDriver for GitHubDriver {
     fn provider(&self) -> &'static str {
@@ -1035,6 +1000,41 @@ impl ConnectorDriver for GitHubDriver {
             "GitHub {status} opening a pull request {head} → {base}: {}",
             body.chars().take(300).collect::<String>()
         );
+    }
+
+    fn supports_pull_requests(&self) -> bool {
+        true
+    }
+
+    /// GitHub wants `head` qualified by the owner of the fork it lives on;
+    /// within one repository that is the repository's own owner.
+    async fn find_open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        head: &str,
+        base: &str,
+    ) -> anyhow::Result<Option<OpenedPullRequest>> {
+        let owner = repo_full_path.split('/').next().unwrap_or_default();
+        let url = format!("{}/repos/{repo_full_path}/pulls", auth.root());
+        let res = self
+            .request(&url, auth)
+            .query(&[
+                ("state", "open"),
+                ("head", &format!("{owner}:{head}")),
+                ("base", base),
+            ])
+            .send()
+            .await?;
+        if !res.status().is_success() {
+            return Ok(None);
+        }
+        let pulls: Vec<GitHubPullRef> = res.json().await?;
+        Ok(pulls.into_iter().next().map(|pr| OpenedPullRequest {
+            number: pr.number,
+            url: Some(pr.html_url),
+            created: false,
+        }))
     }
 
     /// Unresolved review threads, per open pull request, from the GraphQL API.

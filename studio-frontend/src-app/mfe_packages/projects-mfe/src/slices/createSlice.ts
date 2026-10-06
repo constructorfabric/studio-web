@@ -12,6 +12,7 @@ import {
   sourceKey,
   type ProjectDraft,
   type RepositoryPick,
+  type ShareMode,
 } from '../model/projectDraft';
 import { FIRST_STEP_KEY, type WizardStepKey } from '../model/wizardSteps';
 
@@ -41,6 +42,7 @@ const {
   goToStep,
   editDraft,
   pickSource,
+  setShareMode,
   selectConnection,
   searchRepositories,
   submitStarted,
@@ -80,6 +82,20 @@ const {
       state.error = null;
     },
     // @cpt-end:cpt-studiofrontend-dod-project-create-many-sources:p1:inst-1
+    /** Switches how one picked repository is shared; a row not picked is ignored. */
+    setShareMode: (
+      state: CreateState,
+      action: ReducerPayload<{ key: string; shareMode: ShareMode }>
+    ) => {
+      const { key, shareMode } = action.payload;
+      if (!state.draft.sources.some((pick) => sourceKey(pick) === key)) return;
+      state.draft = {
+        ...state.draft,
+        sources: state.draft.sources.map((pick) =>
+          sourceKey(pick) === key ? { ...pick, shareMode } : pick
+        ),
+      };
+    },
     selectConnection: (state: CreateState, action: ReducerPayload<string>) => {
       if (state.connectionId === action.payload) return;
       state.connectionId = action.payload;
@@ -105,6 +121,7 @@ export {
   goToStep,
   editDraft,
   pickSource,
+  setShareMode,
   selectConnection,
   searchRepositories,
   submitStarted,

@@ -1,4 +1,4 @@
-import type { ProjectMode } from '@constructor-studio/mfe-shared';
+import type { ProjectMode, ShareMode } from '@constructor-studio/mfe-shared';
 /**
  * What the New project wizard is collecting, before anything is sent.
  *
@@ -25,7 +25,7 @@ import type { ProjectMode } from '@constructor-studio/mfe-shared';
  */
 
 
-export type { ProjectMode };
+export type { ProjectMode, ShareMode };
 
 /** Only `draft` is reachable at creation; the ladder moves forward from there. */
 export const INITIAL_STATUS = 'draft';
@@ -48,6 +48,22 @@ export interface RepositoryPick {
   readonly cloneUrl: string;
   /** Which connection it came from — the tab the user was on. */
   readonly connectionId: string;
+  /**
+   * How "Share with the team" lands edits in it. Picked as `branch` — what
+   * every project did before the choice existed — and switched per row.
+   */
+  readonly shareMode: ShareMode;
+}
+
+/**
+ * Providers whose connections can open a pull request on a share. GitHub
+ * only for now — a share elsewhere has no pull request to open — so the
+ * wizard does not offer the mode for any other provider.
+ */
+const PULL_REQUEST_PROVIDERS: ReadonlySet<string> = new Set(['github']);
+
+export function supportsPullRequests(provider: string | null | undefined): boolean {
+  return !!provider && PULL_REQUEST_PROVIDERS.has(provider);
 }
 
 /**

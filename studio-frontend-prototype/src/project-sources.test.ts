@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Connection, RemoteRepo } from "./api";
-import { asRows, checkoutDir, hasRepository, named, withPicked, without } from "./project-sources";
+import { asRows, checkoutDir, hasRepository, named, supportsPullRequests, withPicked, without } from "./project-sources";
 import type { ProjectSource } from "./project-sources";
 
 const connection = {
@@ -38,12 +38,33 @@ describe("picking repositories", () => {
     default_branch: branch,
   });
 
-  it("adds each through its connection with its default branch", () => {
+  it("adds each through its connection with its default branch, shared to that branch", () => {
     const got = withPicked([], connection, [pick("acme/api", "main")]);
     expect(got.added).toBe(1);
     expect(got.sources).toEqual([
-      { connection_id: "c1", full_path: "acme/api", clone_url: "https://github.com/acme/api.git", branch: "main" },
+      {
+        connection_id: "c1",
+        full_path: "acme/api",
+        clone_url: "https://github.com/acme/api.git",
+        branch: "main",
+        share_mode: "branch",
+      },
     ]);
+  });
+
+  it("records the share mode chosen for them, and leaves the listed ones as they are", () => {
+    const listed: ProjectSource = { ...src("acme/web"), share_mode: "branch" };
+    const got = withPicked([listed], connection, [pick("acme/web"), pick("acme/api")], "pull_request");
+    expect(got.sources.map((s) => [s.full_path, s.share_mode])).toEqual([
+      ["acme/web", "branch"],
+      ["acme/api", "pull_request"],
+    ]);
+  });
+
+  it("offer a pull request only through a GitHub connection", () => {
+    expect(supportsPullRequests(connection)).toBe(true);
+    expect(supportsPullRequests({ provider: "bitbucket" })).toBe(false);
+    expect(supportsPullRequests(null)).toBe(false);
   });
 
   it("does not add a repository the config already lists, however its URL is spelled", () => {
@@ -59,6 +80,11 @@ describe("detaching", () => {
     expect(without(sources, "app-2")).toEqual([src("a/app")]);
     expect(without(sources, "nope")).toEqual(sources);
   });
+
+  it("keeps how the remaining sources are shared", () => {
+    const sources = [src("a/app"), { ...src("b/web"), share_mode: "pull_request" as const }];
+    expect(without(sources, "app")).toEqual([{ ...src("b/web"), share_mode: "pull_request" }]);
+  });
 });
 
 describe("rows", () => {
@@ -66,6 +92,10 @@ describe("rows", () => {
     expect(asRows([{ ...src("acme/api"), branch: "dev" }], [connection])).toEqual([
       { name: "api", source: "github", url: "https://github.com/acme/api.git", branch: "dev", token_ref: "studio-connection-c1" },
     ]);
+  });
+
+  it("say how the source is shared when the config says", () => {
+    expect(asRows([{ ...src("acme/api"), share_mode: "pull_request" }], [connection])[0]?.share_mode).toBe("pull_request");
   });
 
   it("of a connection not visible from here have no token reference", () => {

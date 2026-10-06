@@ -118,10 +118,12 @@ export {
 export { createScreenTranslations, createText, type ScreenText } from './i18n/screenText';
 export { errorMessage } from './errors/message';
 export {
+  DEFAULT_SHARE_MODE,
   PROJECT_CONFIG_TYPE,
   type ProjectConfig,
   type ProjectMode,
   type ProjectSource,
   type ProjectStatus,
+  type ShareMode,
 } from './project/projectConfig';
 export { checkoutDirectory, sessionSources, type SessionSource } from './project/sessionSources';

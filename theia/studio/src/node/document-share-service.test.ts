@@ -7,8 +7,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
-    commitMessage, companionOf, DocumentShareServiceImpl, editorsSince, failureOf, parseStatus, reviewBranchName, titleOf,
+    commitMessage, companionOf, DocumentShareServiceImpl, editorsSince, failureOf, parseStatus, reviewBranchName, titleOf, withSignOff,
 } from './document-share-service';
+import { shareBranchOf } from '../common/document-share-protocol';
 
 // Real git against a bare remote, as desktop-git.test.ts: what sharing does is
 // git's behaviour, and a fake runner would only test the fake.
@@ -111,6 +112,18 @@ describe('reading git for a person', () => {
         expect(failureOf(result('fatal: unable to access \'https://x\': Could not resolve host: x'))).toBe('offline');
         expect(failureOf(result(' ! [rejected]        main -> main (fetch first)'))).toBe('rejected');
         expect(failureOf(result('something else'))).toBe('failed');
+    });
+
+    it('signs off in the closing trailers, once', () => {
+        expect(withSignOff('Edit', 'Alice <a@x>')).toBe('Edit\n\nSigned-off-by: Alice <a@x>');
+        expect(withSignOff('Edit\n\nCo-authored-by: Bob <b@x>\n', 'Alice <a@x>')).toBe('Edit\n\nCo-authored-by: Bob <b@x>\nSigned-off-by: Alice <a@x>');
+        expect(withSignOff('Edit\n\nSigned-off-by: Alice <a@x>', 'Alice <a@x>')).toBe('Edit\n\nSigned-off-by: Alice <a@x>');
+        expect(withSignOff('Edit', undefined)).toBe('Edit');
+    });
+
+    it('gives each person one branch for review', () => {
+        expect(shareBranchOf(ALICE)).toBe('studio/alice-example/share');
+        expect(shareBranchOf(undefined)).toBe('studio/studio/share');
     });
 
     it('names a review branch after the person and the minute', () => {
@@ -252,7 +265,68 @@ describe('DocumentShareServiceImpl', () => {
         expect(outcome.kind).toBe('review');
         expect(outcome.branch).toMatch(/^studio\/alice-example\/\d{12}$/);
         expect(git(remote, 'log', '-1', '--format=%s', outcome.branch!)).toBe('Edit');
+        // Signed off as the person, so a project that checks DCO takes the review.
+        expect(git(remote, 'log', '-1', '--format=%(trailers:key=Signed-off-by,valueonly)', outcome.branch!)).toBe('Alice Example <alice@example.com>');
         expect(git(remote, 'log', '-1', '--format=%s', 'main')).toBe('base');
+    });
+
+    describe('through a pull request', () => {
+        const review = (open: boolean) => ({ branch: shareBranchOf(ALICE), base: 'main', open });
+
+        it('sends the documents to the person\'s branch and leaves the checkout as it was', async () => {
+            const { remote, mine } = project();
+            write(mine, 'docs/spec.md', '# Spec findings\n\nProposed.\n');
+            write(mine, '.studio/history/docs/spec.md.json', '{"version":1,"entries":[]}');
+            write(mine, 'README.md', '# Readme, edited by someone else\n');
+            const head = git(mine, 'rev-parse', 'HEAD');
+            const service = new DocumentShareServiceImpl();
+
+            const outcome = await service.share({
+                root: FileUri.create(mine).toString(), documents: ['docs/spec.md'], message: 'Propose', author: ALICE, review: review(false),
+            });
+            expect(outcome).toEqual({ kind: 'review', branch: 'studio/alice-example/share' });
+            const branch = 'studio/alice-example/share';
+            expect(git(remote, 'log', '--format=%an|%s', branch).split('\n')).toEqual(['Alice Example|Propose', 'Seed|base']);
+            expect(git(remote, 'show', '--name-only', '--format=', branch).split('\n').sort()).toEqual(['.studio/history/docs/spec.md.json', 'docs/spec.md']);
+            expect(git(remote, 'show', `${branch}:docs/spec.md`)).toBe('# Spec findings\n\nProposed.');
+            expect(git(remote, 'log', '-1', '--format=%(trailers:key=Signed-off-by,valueonly)', branch)).toBe('Alice Example <alice@example.com>');
+            // Nothing moved here: the branch, the index and every file are as they were.
+            expect(git(mine, 'rev-parse', 'HEAD')).toBe(head);
+            expect(git(remote, 'rev-parse', 'main')).toBe(head);
+            expect(git(mine, 'status', '--porcelain', '-uall').split('\n').map(line => line.trim()).sort()).toEqual(['?? .studio/history/docs/spec.md.json', 'M README.md', 'M docs/spec.md'].sort());
+
+            // The document is in the request now, and says so until it changes again.
+            const [listed] = (await service.status([FileUri.create(mine).toString()], ALICE)).repositories;
+            expect(listed.documents.find(d => d.path === 'docs/spec.md')?.inReview).toBe(true);
+            write(mine, 'docs/spec.md', '# Spec findings\n\nProposed, and then some.\n');
+            const [again] = (await service.status([FileUri.create(mine).toString()], ALICE)).repositories;
+            expect(again.documents.find(d => d.path === 'docs/spec.md')?.inReview).toBeUndefined();
+        });
+
+        it('adds to the open request, and starts over from the base once it is not open', async () => {
+            const { remote, mine, theirs } = project();
+            const service = new DocumentShareServiceImpl();
+            const root = FileUri.create(mine).toString();
+            write(mine, 'docs/spec.md', '# Spec findings\n\nOne.\n');
+            await service.share({ root, documents: ['docs/spec.md'], message: 'One', author: ALICE, review: review(false) });
+            write(mine, 'docs/spec.md', '# Spec findings\n\nTwo.\n');
+            expect((await service.share({ root, documents: ['docs/spec.md'], message: 'Two', author: ALICE, review: review(true) })).kind).toBe('review');
+            expect(git(remote, 'log', '--format=%s', 'studio/alice-example/share').split('\n')).toEqual(['Two', 'One', 'base']);
+
+            // Merged (as a squash, so the branch is no ancestor) and the team moved on.
+            write(theirs, 'docs/spec.md', '# Spec findings\n\nTwo.\n');
+            commitAll(theirs, 'Squashed request');
+            git(theirs, 'push', '-q');
+            write(mine, 'docs/spec.md', '# Spec findings\n\nThree.\n');
+            await service.share({ root, documents: ['docs/spec.md'], message: 'Three', author: ALICE, review: review(false) });
+            expect(git(remote, 'log', '--format=%s', 'studio/alice-example/share').split('\n')).toEqual(['Three', 'Squashed request', 'base']);
+        }, 30_000);
+
+        it('says when there is nothing to send', async () => {
+            const { mine } = project();
+            expect(await new DocumentShareServiceImpl().share({ root: FileUri.create(mine).toString(), documents: [], message: '', author: ALICE, review: review(false) }))
+                .toEqual({ kind: 'nothing', branch: 'studio/alice-example/share' });
+        });
     });
 
     it('says there is nothing to share', async () => {

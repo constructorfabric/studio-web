@@ -538,6 +538,9 @@ export interface RepoEntry {
   branch?: string;
   /** credstore secret reference holding the repo PAT (private repos). */
   token_ref?: string;
+  /** A project source's `share_mode` (`project-sources.ts`), shown on its
+   *  row; never sent with a session — the IDE reads it from the config. */
+  share_mode?: "branch" | "pull_request";
 }
 
 /* ── studio-connector: source connections ── */

@@ -17,7 +17,10 @@
  * one whose `secret_ref` is the entry's `token_ref`, looked up on the tenant
  * and then its ancestors, the way the backend looks. An entry whose
  * repository the config already lists is skipped, so a second run changes
- * nothing. `local` entries, `root_*` and every other settings field stay in
+ * nothing. Entries the config already lists are written back verbatim, their
+ * `share_mode` included; a moved entry gets none, which reads as `branch`
+ * (commit straight to the branch, as before the choice existed).
+ * `local` entries, `root_*` and every other settings field stay in
  * the settings: they describe a working copy, not the project's repositories.
  * Nothing is deleted.
  *

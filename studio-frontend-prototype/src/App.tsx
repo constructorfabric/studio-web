@@ -44,7 +44,15 @@ import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./wor
 import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
 import { runRepoSync, pruneDetached, findRepoNode, type SyncProgress } from "./artifact-sync";
-import { hasRepository, projectRepoRows, withPicked, without, type ProjectSource } from "./project-sources";
+import {
+  hasRepository,
+  projectRepoRows,
+  supportsPullRequests,
+  withPicked,
+  without,
+  type ProjectSource,
+  type ShareMode,
+} from "./project-sources";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { GearsTable, PermissionsTable } from "./system-tables";
@@ -6571,15 +6579,17 @@ type Reach = "organization" | "workspace" | "personal";
  *  `sources` (`project-sources.ts`), the record every session clones from and
  *  both portals read. Shared by the Sources-tab repository browser and the
  *  "Pick from a connector…" picker. The connection is named by id; its token
- *  stays server-side. Returns how many were added. */
+ *  stays server-side. `shareMode` is how "Share with the team" in the IDE
+ *  lands edits in them. Returns how many were added. */
 async function attachReposToWorkspace(
   token: string,
   ws: Workspace,
   connection: Connection,
   picks: RemoteRepo[],
+  shareMode: ShareMode = "branch",
 ): Promise<number> {
   const current = (await api.projectConfig(token, ws.id)) ?? {};
-  const { sources, added } = withPicked(current.sources, connection, picks);
+  const { sources, added } = withPicked(current.sources, connection, picks, shareMode);
   if (added > 0) await api.putProjectConfig(token, ws.id, { ...current, sources });
   return added;
 }
@@ -7105,6 +7115,37 @@ function Spark({ days }: { days: number[] }) {
   );
 }
 
+/** How a source's shared edits read on its row; nothing for the default. */
+function shareModeText(mode: RepoEntry["share_mode"]): string {
+  return mode === "pull_request" ? " · shared through a pull request" : "";
+}
+
+/** "How changes are shared" for the repositories about to be attached: straight
+ *  to the branch (what every source did before the choice existed), or through
+ *  a pull request — offered only where the connection can open one. */
+function ShareModeSelect({
+  value,
+  onChange,
+  connection,
+}: {
+  value: ShareMode;
+  onChange: (mode: ShareMode) => void;
+  connection: Connection | null;
+}) {
+  const pullRequests = supportsPullRequests(connection);
+  return (
+    <label className="sub" title="How “Share with the team” in the IDE lands edits in these repositories">
+      Changes:{" "}
+      <select value={value} onChange={(e) => onChange(e.target.value as ShareMode)}>
+        <option value="branch">Commit to the branch</option>
+        <option value="pull_request" disabled={!pullRequests}>
+          Through a pull request{pullRequests ? "" : " (GitHub only)"}
+        </option>
+      </select>
+    </label>
+  );
+}
+
 function ProjectSources({
   token,
   workspace: ws,
@@ -7276,7 +7317,10 @@ function ProjectSources({
                 </span>
                 <span>
                   <span className="src-name">{r.name}</span>
-                  <span className="sub">Repository{r.branch ? ` · ${r.branch}` : ""}</span>
+                  <span className="sub">
+                    Repository{r.branch ? ` · ${r.branch}` : ""}
+                    {shareModeText(r.share_mode)}
+                  </span>
                 </span>
               </>
             ),
@@ -7375,7 +7419,7 @@ function ProjectSources({
             <VTile
               icon={<GitBranchIcon />}
               title={r.name}
-              subtitle={`${r.source}${r.branch ? ` · ${r.branch}` : ""}`}
+              subtitle={`${r.source}${r.branch ? ` · ${r.branch}` : ""}${shareModeText(r.share_mode)}`}
               onClick={open}
               tone={node ? undefined : "attn"}
               stats={[
@@ -7432,6 +7476,7 @@ function SourceAttachPicker({
   const [repos, setRepos] = useState<RemoteRepo[] | null>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [attached, setAttached] = useState<ProjectSource[]>([]);
+  const [shareMode, setShareMode] = useState<ShareMode>("branch");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -7476,13 +7521,16 @@ function SourceAttachPicker({
 
   const connection = (connections ?? []).find((c) => c.id === connId) ?? null;
   const picks = (repos ?? []).filter((r) => checked[r.id]);
+  // A pull request chosen on a GitHub connection does not carry over to one
+  // that cannot open it.
+  const effectiveShareMode: ShareMode = supportsPullRequests(connection) ? shareMode : "branch";
 
   const attach = async () => {
     if (!connection || picks.length === 0) return;
     setBusy(true);
     setErr(null);
     try {
-      await attachReposToWorkspace(token, ws, connection, picks);
+      await attachReposToWorkspace(token, ws, connection, picks, effectiveShareMode);
       setChecked({});
       await loadAttached();
       onAttached();
@@ -7562,6 +7610,7 @@ function SourceAttachPicker({
           )}
           <div className="row">
             <span className="grow" />
+            <ShareModeSelect value={effectiveShareMode} onChange={setShareMode} connection={connection} />
             <button
               type="button"
               className="primary"
@@ -8248,6 +8297,7 @@ function RepoBrowser({
   const [busy, setBusy] = useState(false);
   // Clone URLs already attached to this project — so a repo can't be added twice.
   const [attached, setAttached] = useState<ProjectSource[]>([]);
+  const [shareMode, setShareMode] = useState<ShareMode>("branch");
 
   const loadAttached = useCallback(async () => {
     const config = await api.projectConfig(token, workspace.id).catch(() => null);
@@ -8274,12 +8324,13 @@ function RepoBrowser({
   }, [load, loadAttached, sourcesTick]);
 
   const picks = (repos ?? []).filter((r) => checked[r.id]);
+  const effectiveShareMode: ShareMode = supportsPullRequests(connection) ? shareMode : "branch";
 
   const attach = async () => {
     if (picks.length === 0) return;
     setBusy(true);
     try {
-      const added = await attachReposToWorkspace(token, workspace, connection, picks);
+      const added = await attachReposToWorkspace(token, workspace, connection, picks, effectiveShareMode);
       onNote(
         `Attached ${added} repositor${added === 1 ? "y" : "ies"} to ${workspace.name} — ` +
           `cloned on the next session launch.`,
@@ -8346,6 +8397,7 @@ function RepoBrowser({
 
       <div className="row">
         <span className="grow" />
+        <ShareModeSelect value={effectiveShareMode} onChange={setShareMode} connection={connection} />
         <button className="primary" disabled={picks.length === 0 || busy} onClick={() => void attach()}>
           {busy ? "Attaching…" : `Add ${picks.length || ""} to ${workspace.name}`}
         </button>

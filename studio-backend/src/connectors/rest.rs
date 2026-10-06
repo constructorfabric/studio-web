@@ -13,6 +13,12 @@
 //! connection answers with the driver's own refusal rather than an empty
 //! result, so "Slack has no repositories" comes back as a failed-precondition
 //! violation with that sentence in it.
+//!
+//! `…/sources/{source}/…` is a project's repository rather than a connection:
+//! the IDE knows a repository by its checkout directory and the project it
+//! belongs to, never by a connection id, and it holds no provider token. So
+//! those routes find the source in the project's config, read as the caller,
+//! and act with the source's own connection.
 
 use std::sync::Arc;
 
@@ -33,7 +39,7 @@ use super::graph_sync::SyncOutcome;
 use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
 use super::service::{
     Connection, ConnectionEdit, ConnectorService, FileWrite, NewConnection, PublishOutcome,
-    PullRequestIntent,
+    PullRequestIntent, SourcePullRequest, SourceRefusal, SourceSharing,
 };
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
@@ -344,6 +350,64 @@ impl From<PublishOutcome> for WrittenFileDto {
     }
 }
 
+/// A pull request named by its number, without saying who opened it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestRefDto {
+    pub number: i64,
+    pub url: Option<String>,
+}
+
+/// How one of a project's repositories shares a person's edits.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SourceSharingDto {
+    /// The source's checkout directory — the IDE's repository folder name.
+    pub source: String,
+    /// `branch`: commit and push to the working branch. `pull_request`: push
+    /// to the person's own branch and open a pull request into `base`.
+    pub share_mode: String,
+    /// The working branch: the source's configured branch, else the
+    /// repository default. Absent when neither could be learned.
+    pub base: Option<String>,
+    /// Whether a pull request can be opened through the source's connection
+    /// by the caller: false when it names none, the caller may not use its
+    /// token, or the provider cannot open requests.
+    pub pull_requests: bool,
+    /// In `pull_request` mode, given `?head=`: the request already open from
+    /// that branch into `base`.
+    pub open_pull_request: Option<PullRequestRefDto>,
+}
+
+impl From<SourceSharing> for SourceSharingDto {
+    fn from(s: SourceSharing) -> Self {
+        Self {
+            source: s.source,
+            share_mode: s.share_mode.as_str().to_string(),
+            base: s.base,
+            pull_requests: s.pull_requests,
+            open_pull_request: s.open_pull_request.map(|p| PullRequestRefDto {
+                number: p.number,
+                url: p.url,
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct OpenSourcePullRequestDto {
+    /// The branch the changes were pushed to.
+    pub head: String,
+    /// What to merge into. Omitted means the source's branch, else the
+    /// repository default.
+    #[serde(default)]
+    pub base: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct RemoteRepoListDto {
@@ -429,6 +493,22 @@ pub struct ListingQuery {
     limit: Option<u32>,
     #[serde(default)]
     tenant: Option<Uuid>,
+}
+
+/// Which project a source belongs to, and the person's share branch.
+#[derive(Debug, Deserialize)]
+pub struct SourceSharingQuery {
+    project_id: Uuid,
+    /// The branch the IDE shares to; given, the open pull request from it is
+    /// looked up.
+    #[serde(default)]
+    head: Option<String>,
+}
+
+/// Which project a source belongs to.
+#[derive(Debug, Deserialize)]
+pub struct ProjectQuery {
+    project_id: Uuid,
 }
 
 /// Just the tenant override, for routes with no listing knobs of their own.
@@ -683,6 +763,66 @@ async fn write_file(
                 .create()
         })?;
     Ok(Json(outcome.into()))
+}
+
+fn source_refusal(source: &str, refusal: SourceRefusal) -> CanonicalError {
+    match refusal {
+        SourceRefusal::NotFound(reason) => StudioConnectorError::not_found(reason)
+            .with_resource(source.to_string())
+            .create(),
+        SourceRefusal::Unavailable(error) => StudioConnectorError::failed_precondition()
+            .with_precondition_violation(
+                source.to_string(),
+                format!("{error:#}"),
+                "SOURCE_PULL_REQUEST_UNAVAILABLE",
+            )
+            .create(),
+    }
+}
+
+/// How a project's source shares edits, for the IDE's "Share with the team".
+async fn get_source_sharing(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(source): Path<String>,
+    Query(q): Query<SourceSharingQuery>,
+) -> ApiResult<JsonBody<SourceSharingDto>> {
+    let svc = connectors.get()?;
+    let sharing = svc
+        .source_sharing(&ctx, q.project_id, &source, q.head.as_deref())
+        .await
+        .map_err(|r| source_refusal(&source, r))?;
+    Ok(Json(sharing.into()))
+}
+
+/// Open or reuse a pull request for a project's source with its connection.
+async fn open_source_pull_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(source): Path<String>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<OpenSourcePullRequestDto>,
+) -> ApiResult<JsonBody<OpenedPullRequestDto>> {
+    let svc = connectors.get()?;
+    let opened = svc
+        .open_source_pull_request(
+            &ctx,
+            q.project_id,
+            &source,
+            SourcePullRequest {
+                head: &body.head,
+                base: body.base.as_deref(),
+                title: &body.title,
+                body: body.body.as_deref(),
+            },
+        )
+        .await
+        .map_err(|r| source_refusal(&source, r))?;
+    Ok(Json(OpenedPullRequestDto {
+        number: opened.number,
+        url: opened.url,
+        created: opened.created,
+    }))
 }
 
 async fn list_repositories(
@@ -1025,6 +1165,71 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The file as the provider reports it after the write",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-connector/v1/sources/{source}/sharing")
+        .operation_id("studio_connector.get_source_sharing")
+        .summary("How a project's repository shares a person's edits")
+        .description(
+            "The IDE asks this before Share with the team. `source` is the repository's \
+             checkout directory in the project's IDE. Answers the source's `share_mode` \
+             (`branch` or `pull_request`), the branch shared edits land on, whether a pull \
+             request can be opened through the source's connection, and — given `head` in \
+             `pull_request` mode — the request already open from it. The project config is \
+             read as the caller: a project they may not read, or a source it does not have, \
+             is 404. A connection the caller may not use is not an error; `pull_requests` is \
+             then false.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("source", "The source's checkout directory")
+        .query_param("project_id", true, "The project the source belongs to")
+        .query_param(
+            "head",
+            false,
+            "The person's share branch, to find its open pull request",
+        )
+        .handler(get_source_sharing)
+        .json_response_with_schema::<SourceSharingDto>(
+            openapi,
+            StatusCode::OK,
+            "The source's share mode and pull request state",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-connector/v1/sources/{source}/pull-requests")
+        .operation_id("studio_connector.open_source_pull_request")
+        .summary("Open a pull request for a project's repository with its connection")
+        .description(
+            "Called by the IDE after it pushed `head`: opens a pull request from `head` into \
+             `base` (omitted: the source's branch, else the repository default) with the \
+             source's connection, or answers the one already open between them with \
+             `created: false`. The IDE holds no provider token, so this is the step it cannot \
+             take itself. The source's share mode is not checked. A source without a usable \
+             connection, or a provider that cannot open pull requests, answers 400 with the \
+             reason.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("source", "The source's checkout directory")
+        .query_param("project_id", true, "The project the source belongs to")
+        .json_request::<OpenSourcePullRequestDto>(openapi, "The pull request to open")
+        .handler(open_source_pull_request)
+        .json_response_with_schema::<OpenedPullRequestDto>(
+            openapi,
+            StatusCode::OK,
+            "The pull request opened, or the one already open",
         )
         .error_400(openapi)
         .error_401(openapi)

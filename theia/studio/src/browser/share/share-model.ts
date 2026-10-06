@@ -19,13 +19,23 @@ export function isMine(document: ShareDocument, me: Person | undefined): boolean
     return document.editors.length === 0 || (!!me && document.editors.includes(me.name));
 }
 
-export function splitDocuments(repository: ShareRepository, me: Person | undefined): { mine: ShareDocument[]; others: ShareDocument[] } {
+/**
+ * Mine, others', and those already in my pull request as they are — shared
+ * for review, so nothing to choose until they change again.
+ */
+export function splitDocuments(repository: ShareRepository, me: Person | undefined): { mine: ShareDocument[]; others: ShareDocument[]; inReview: ShareDocument[] } {
     const mine: ShareDocument[] = [];
     const others: ShareDocument[] = [];
+    const inReview: ShareDocument[] = [];
     for (const document of repository.documents) {
-        (isMine(document, me) ? mine : others).push(document);
+        (document.inReview ? inReview : isMine(document, me) ? mine : others).push(document);
     }
-    return { mine, others };
+    return { mine, others, inReview };
+}
+
+/** The documents there is something to do with: not already in review as they are. */
+export function toShare(repository: ShareRepository): ShareDocument[] {
+    return repository.documents.filter(document => !document.inReview);
 }
 
 /** What the message box starts with: the documents, by their titles. */
@@ -54,7 +64,10 @@ export function coAuthorsOf(documents: readonly ShareDocument[], me: Person | un
 
 /** How many documents are not shared, across the repositories — the status line's number. */
 export function unsharedCount(repositories: readonly ShareRepository[]): number {
-    return repositories.reduce((sum, repository) => sum + repository.documents.length + (repository.documents.length === 0 && repository.unsent > 0 ? 1 : 0), 0);
+    return repositories.reduce((sum, repository) => {
+        const documents = toShare(repository).length;
+        return sum + documents + (documents === 0 && repository.unsent > 0 ? 1 : 0);
+    }, 0);
 }
 
 export interface Said {
@@ -62,13 +75,24 @@ export interface Said {
     readonly text: string;
 }
 
-/** An outcome, as a sentence. */
-export function describeOutcome(outcome: ShareOutcome, documents: number): Said {
+/**
+ * An outcome, as a sentence. `viaPullRequest`: the project shares through
+ * pull requests, so review is the plan rather than a branch's refusal.
+ */
+export function describeOutcome(outcome: ShareOutcome, documents: number, viaPullRequest = false): Said {
     const what = documents === 1 ? 'Your document is' : documents > 1 ? `Your ${documents} documents are` : 'Your changes are';
     switch (outcome.kind) {
         case 'shared':
             return { level: 'info', text: `${what} shared with the team.` };
         case 'review':
+            if (viaPullRequest) {
+                return outcome.reviewUrl
+                    ? { level: 'info', text: `${what} in your pull request, for the team to review.` }
+                    : {
+                        level: 'warn',
+                        text: `${what} on "${outcome.branch}", but the pull request could not be opened. ${firstLine(outcome.detail)}`.trim(),
+                    };
+            }
             return {
                 level: 'info',
                 text: `The project only takes reviewed changes, so yours went to review as "${outcome.branch}".`
