@@ -108,7 +108,7 @@ RUN set -eu; \
       unzip -q /tmp/plugin.vsix -d "plugins/${dir}"; \
       rm -f /tmp/plugin.vsix; \
     }; \
-    fetch_vsix Anthropic claude-code 2.1.227 anthropic.claude-code; \
+    fetch_vsix Anthropic claude-code 2.1.292 anthropic.claude-code; \
     fetch_vsix openai chatgpt 26.5803.61601 openai.chatgpt
 
 
@@ -249,8 +249,8 @@ ARG TARGETARCH
 RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
     npm install -g \
       @openai/codex@0.49.0 \
-      @anthropic-ai/claude-agent-sdk@0.3.223 \
-      @anthropic-ai/claude-code@2.1.266 \
+      @anthropic-ai/claude-agent-sdk@0.3.292 \
+      @anthropic-ai/claude-code@2.1.292 \
       opencode-ai@1.18.30 \
     && npm cache clean --force \
     && sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules \
