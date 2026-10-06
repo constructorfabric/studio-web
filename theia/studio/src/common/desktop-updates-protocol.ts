@@ -18,6 +18,8 @@ export type UpdateCheck =
     | { readonly state: 'current'; readonly version: string; readonly channel: 'stable' | 'beta' }
     /** Found; it downloads now, and the restart question follows. */
     | { readonly state: 'downloading'; readonly version: string; readonly current: string }
+    /** Found, by a build that does not update itself (an unsigned macOS app): the release page is offered. */
+    | { readonly state: 'manual'; readonly version: string; readonly current: string }
     /** Already downloaded; the restart question has been asked again. */
     | { readonly state: 'ready'; readonly version: string }
     | { readonly state: 'failed'; readonly message: string };
@@ -49,6 +51,12 @@ export function describeUpdateCheck(result: UpdateCheck): { level: 'info' | 'war
                 level: 'info',
                 text: `Constructor Studio ${result.version} is available (you have ${result.current}). ` +
                     'It is downloading; you will be asked to restart when it is ready.'
+            };
+        case 'manual':
+            return {
+                level: 'info',
+                text: `Constructor Studio ${result.version} is available (you have ${result.current}). ` +
+                    'This copy does not update itself: download the new one from its release page.'
             };
         case 'ready':
             return { level: 'info', text: `Constructor Studio ${result.version} is downloaded and installs when you restart.` };

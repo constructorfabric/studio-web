@@ -412,10 +412,18 @@ After `theia build` in `theia/electron-app`:
 npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 ```
 
-- The output is `theia/electron-app/dist/`: an NSIS installer
-  (`Constructor-Studio-<version>-win-x64.exe`, a per-user install, no
-  administrator rights) and a zip of the same app. The script also names dmg
-  and AppImage targets for macOS and Linux; only Windows has been built so far.
+- The output is `theia/electron-app/dist/`, for the platform it runs on (the
+  native modules are the ones `theia rebuild:electron` built there). On
+  Windows: an NSIS installer (`Constructor-Studio-<version>-win-x64.exe`, a
+  per-user install, no administrator rights) and a zip of the same app. On a
+  Mac: `Constructor-Studio-<version>-mac-arm64.dmg` and a zip of the same app,
+  which is what an update downloads. The script also names AppImage targets
+  for Linux; Linux has not been built.
+- On macOS the app is signed with a Developer ID when electron-builder finds
+  one (`CSC_LINK`, `CSC_KEY_PASSWORD`; notarized when `APPLE_API_KEY`,
+  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` are set too). Without one it is
+  signed ad hoc -- Apple Silicon runs nothing unsigned -- and
+  `studio-desktop.json` says `"updates": "manual"` (*Updates* below).
 - `--environments <file>` ships another list; `--studio-url <address>
   [--issuer <realm>]` ships exactly one Studio.
 - `--gearbox <path>` ships that `gearbox` executable as `resources/bin/gearbox.exe`,
@@ -427,16 +435,21 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
   self-contained (its only external is `electron`), so the installer carries
   the bundle, `desktop-main.js`, the git credential helper, the built-in
   plugins and the CFS map schema. No asar — the bundle spawns executables
-  (`rg.exe`, the `node-pty` agents, the helper) by paths relative to itself.
+  (`rg`, the `node-pty` agents, the helper) by paths relative to itself.
 
 ### In CI
 
-`.github/workflows/desktop-windows.yml` builds and packages on `windows-2022`,
-where the native modules compile, and uploads the installer and the zip as the
-run's artifact. It no longer builds the `gearbox` engine; `gearbox-engine.yml`
-does, once per revision (*The gearbox engine* below). It runs
+`.github/workflows/desktop.yml` builds and packages on two runners, where the
+native modules compile: `windows-2022` for the Windows installer and zip,
+`macos-15` (Apple Silicon) for the dmg and zip. Each uploads its files as an
+artifact of the run (`constructor-studio-windows-<version>`,
+`constructor-studio-macos-<version>`); a `desktop-v*` tag publishes both into
+one release. Intel Macs are not built: that would be a second Mac build and a
+`darwin-x64` CLI and engine. The workflow no longer builds the `gearbox`
+engine; `gearbox-engine.yml` does, once per revision and platform (*The gearbox
+engine* below). It runs
 for PRs changing `theia/electron-app/**` or the workflow, for matching pushes to
-`main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop — Windows build → Run workflow**).
+`main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop build → Run workflow**).
 New commits cancel older PR/main builds; release tags and manual builds are not
 cancelled. Feature-branch pushes in forks do not trigger another installer build.
 Manual inputs are:
@@ -446,6 +459,30 @@ Manual inputs are:
 | `default_environment` | `dev` | the Studio the build starts on |
 | `studio_url`, `issuer` | empty | instead, ship exactly one Studio |
 | `version` | `0.1.0` | the version the installer carries |
+| `platforms` | `both` | `windows` or `macos` builds one installer only |
+
+### Installing on a Mac
+
+The dmg holds the app; drag it into **Applications**. Until the build is
+signed with a Developer ID, macOS refuses its first start ("Apple could not
+verify…"). Allow it once: **System Settings → Privacy & Security → Open
+Anyway** (macOS 15), or right-click the app → **Open** (macOS 14 and older), or
+in a terminal:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Constructor Studio.app"
+```
+
+Started from the Finder or the Dock, a Mac app gets launchd's `PATH`, without
+Homebrew or what `~/.zprofile` adds. `desktop-main.js` asks the member's login
+shell for its `PATH` once at start (`$SHELL -ilc`, five seconds at most; the
+shell sees `STUDIO_RESOLVING_SHELL_ENV=1`), so terminals, git and the
+extensions find the same tools a terminal does. Started from a terminal, the
+app keeps that terminal's `PATH`.
+
+A `cfstudio://` link reaches a Mac app as an `open-url` event rather than an
+argument. One that starts the app can come before Theia listens for it, so
+`desktop-main.js` keeps it where Theia's start reads a Windows link.
 
 ### The Extensions view
 
@@ -537,11 +574,16 @@ in the installer either. It is the extension `constructorfabric.gearbox-engine`
 from source at the repository, revision and Rust that `theia/Dockerfile`'s
 `gearbox` stage pins for the session image -- one pin for both.
 
-- `.github/workflows/gearbox-engine.yml` builds it on `windows-2022` and
-  publishes each version once, into a release `gearbox-engine-v<version>`. The
+- `.github/workflows/gearbox-engine.yml` builds it on `windows-2022`
+  (`win32-x64`) and `macos-15` (`darwin-arm64`), and publishes each version
+  once, into a release `gearbox-engine-v<version>` holding a VSIX per
+  platform; a platform added later goes into the release that exists. The
   version is `theia/gearbox-engine/package.json`'s (raised when the packaging
   changes) and the revision: `0.1.0-55f7015` since #514. A new revision in the Dockerfile
-  is a new release. Nothing is built when the release exists.
+  is a new release. Nothing is built for a platform the release already holds.
+- The VSIX records `gearbox` as executable, and the app keeps that mode when
+  it unpacks it (`unpackVsix`), as it does for the CLI's Python and `cfs`;
+  without it nothing in them runs on a Mac.
 - `assistants-manifest.mjs --gearbox-engine` pins that asset's SHA-256 into the
   installer's manifest, and the app fetches it like the CLI (a pinned entry,
   unpacked into `~/ConstructorStudio/plugins/<id>-<version>/`, listed as
@@ -718,6 +760,13 @@ which every `desktop-v*` release refreshes
 (`theia/electron-app/desktop-updater.js`). It checks on start and every six
 hours, downloads what it finds, and asks once it has: restart now, later (it
 installs on quit), or read what changed. Nothing is forced.
+
+A Mac app without a Developer ID is the exception: macOS installs an update
+only when its signature matches the running app's, and an ad-hoc signature
+matches nothing else. Such a build (`"updates": "manual"` in
+`studio-desktop.json`) checks the same feed (`latest-mac.yml`, `beta-mac.yml`)
+but downloads nothing: it says a new version is out and offers its release
+page, once per version, and Check for Updates says the same.
 
 **Help → Check for Updates…** checks now and says what it found — the latest
 already, an update downloading, one downloaded (and asks again), or why the
@@ -982,7 +1031,10 @@ secret. Deleting it only means Studio stops removing what it had added.
 ## Known limits
 
 - The installer is not code-signed, so Windows SmartScreen asks before the
-  first run.
+  first run. The macOS app is signed ad hoc: Gatekeeper asks to allow it once
+  (*Installing on a Mac*), and it does not update itself.
+- The macOS build is for Apple Silicon only, and has not been run on a Mac
+  by its author: it was built and packaged in CI.
 - The workspace a member opens is cloned, not synchronised: the Studio sees
   what they push, and nothing before it.
 - The desktop's events do not reach the portal, and the portal cannot send a

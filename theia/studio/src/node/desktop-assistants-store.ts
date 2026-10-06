@@ -83,7 +83,19 @@ export function skippedEntry(name: string, target: string): boolean {
     return target.startsWith('win32-') && /^extension\/bin\/linux-[^/]+\//.test(name.replace(/\\/g, '/'));
 }
 
-/** Unpacks a VSIX (a zip) into `dest`, refusing any entry that would land outside it. */
+/**
+ * Whether a zip entry is executable: the Unix mode its archiver recorded, in
+ * the high half of the external attributes. The gearbox engine, the CLI's
+ * Python and its `cfs` shim are; on macOS and Linux they run only with the bit.
+ */
+export function executableEntry(entry: Pick<yauzl.Entry, 'externalFileAttributes'>): boolean {
+    return ((entry.externalFileAttributes >>> 16) & 0o111) !== 0;
+}
+
+/**
+ * Unpacks a VSIX (a zip) into `dest`, refusing any entry that would land
+ * outside it. An entry the archive marks executable stays executable.
+ */
 export function unpackVsix(vsix: string, dest: string, skip: (name: string) => boolean = () => false): Promise<void> {
     return new Promise((resolve, reject) => {
         yauzl.open(vsix, { lazyEntries: true, autoClose: true }, (openError, zip) => {
@@ -114,7 +126,11 @@ export function unpackVsix(vsix: string, dest: string, skip: (name: string) => b
                         return;
                     }
                     fs.mkdirSync(path.dirname(target), { recursive: true });
-                    pump(stream, fs.createWriteStream(target)).then(() => zip.readEntry(), fail);
+                    const mode = executableEntry(entry) ? 0o755 : 0o644;
+                    pump(stream, fs.createWriteStream(target, { mode }))
+                        // Past the umask, and over a file an earlier attempt left.
+                        .then(() => process.platform === 'win32' ? undefined : fs.promises.chmod(target, mode))
+                        .then(() => zip.readEntry(), fail);
                 });
             });
             zip.readEntry();

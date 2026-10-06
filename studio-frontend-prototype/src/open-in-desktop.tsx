@@ -16,7 +16,7 @@ import { ISSUER } from "./oidc";
 
 /** Where the desktop installer is published: the workflow that builds it. */
 export const DESKTOP_DOWNLOAD_URL =
-  "https://github.com/constructorfabric/studio-web/actions/workflows/desktop-windows.yml";
+  "https://github.com/constructorfabric/studio-web/actions/workflows/desktop.yml";
 
 /** The link the desktop app opens a project with. Mirrors
  *  `theia/studio/src/common/desktop-link.ts`, which reads it.

@@ -8,12 +8,14 @@ name: Gearbox engine extension
 #
 # Each version -- theia/gearbox-engine/package.json's version plus the
 # revision, e.g. 0.1.0-3b64969 -- is published once, into its own release
-# `gearbox-engine-v<version>`, and never replaced: installed apps pin its
-# SHA-256. A new revision in the Dockerfile is a new release; a change to the
-# packaging alone needs that package.json's version raised.
+# `gearbox-engine-v<version>`, with one VSIX per desktop platform (win32-x64,
+# darwin-arm64), and never replaced: installed apps pin its SHA-256. A new
+# revision in the Dockerfile is a new release; a change to the packaging alone
+# needs that package.json's version raised. A platform added later goes into
+# the release that is already there, beside the VSIXs it holds.
 #
-# A pull request builds it and keeps the VSIX as an artifact. A push publishes
-# the version when its release is missing -- on the upstream that is main; a
+# A pull request builds it and keeps the VSIXs as artifacts. A push publishes
+# what the version's release is missing -- on the upstream that is main; a
 # fork publishes into its own releases, which is how a fork's desktop build
 # gets an engine to fetch.
 
@@ -39,10 +41,19 @@ permissions:
 
 jobs:
   build:
-    # windows-2022 for the same reason as desktop-windows.yml: its toolchain.
-    runs-on: windows-2022
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # windows-2022 for the same reason as desktop.yml: its toolchain.
+          - runner: windows-2022
+            target: win32-x64
+            engine: gearbox.exe
+          - runner: macos-15
+            target: darwin-arm64
+            engine: gearbox
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -72,8 +83,10 @@ jobs:
         id: published
         shell: bash
         run: |
-          if gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            echo "$ENGINE_TAG is already published; nothing to build"
+          vsix="constructorfabric.gearbox-engine-$ENGINE_VERSION-${{ matrix.target }}.vsix"
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] \
+            && gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$vsix"; then
+            echo "$vsix is already published in $ENGINE_TAG; nothing to build"
             echo "done=true" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/cache@v4
@@ -83,7 +96,7 @@ jobs:
             gearbox-src/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: gearbox-windows-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
+          key: gearbox-${{ matrix.target }}-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
       - name: Build the engine
         if: steps.published.outputs.done != 'true'
         shell: bash
@@ -96,23 +109,72 @@ jobs:
           rustup toolchain install "$GEARBOX_RUST" --profile minimal
           CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
             cargo "+$GEARBOX_RUST" build --release --locked -p gearbox-cli
-          ./target/release/gearbox.exe --version
+          ./target/release/${{ matrix.engine }} --version
       - name: Pack
         if: steps.published.outputs.done != 'true'
         shell: bash
-        run: python theia/gearbox-engine/build_vsix.py --engine gearbox-src/target/release/gearbox.exe --ref "$GEARBOX_REF" --target win32-x64 --out dist
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} theia/gearbox-engine/build_vsix.py --engine gearbox-src/target/release/${{ matrix.engine }} --ref "$GEARBOX_REF" --target ${{ matrix.target }} --out dist
       - uses: actions/upload-artifact@v6
         if: steps.published.outputs.done != 'true'
         with:
-          name: gearbox-engine-${{ env.ENGINE_VERSION }}
+          name: gearbox-engine-${{ env.ENGINE_VERSION }}-${{ matrix.target }}
           path: dist/*.vsix
           if-no-files-found: error
-      - name: Publish
-        if: steps.published.outputs.done != 'true' && github.event_name != 'pull_request'
+
+  publish:
+    # One job publishes what the builds made, so two of them never race to
+    # create the release.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            theia/Dockerfile
+            theia/gearbox-engine/package.json
+          sparse-checkout-cone-mode: false
+      - name: Version
         shell: bash
         run: |
           set -euo pipefail
+          ref=$(sed -n 's/^ARG STUDIO_GEARBOX_REF=//p' theia/Dockerfile | tr -d '\r')
+          version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
+          echo "ENGINE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "ENGINE_TAG=gearbox-engine-v$version" >> "$GITHUB_ENV"
+          echo "GEARBOX_REF=$ref" >> "$GITHUB_ENV"
+      # Nothing to download when every platform was published already.
+      - uses: actions/download-artifact@v6
+        continue-on-error: true
+        with:
+          pattern: gearbox-engine-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          built=(dist/*.vsix)
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "$ENGINE_TAG already holds every platform; nothing to publish"
+            exit 0
+          fi
+          if gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Published once: an app's manifest pins what is there.
+            existing=$(gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for vsix in "${built[@]}"; do
+              if ! grep -qx "$(basename "$vsix")" <<< "$existing"; then
+                gh release upload "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" "$vsix"
+              fi
+            done
+            exit 0
+          fi
           gh release create "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
             --title "Gearbox engine $ENGINE_VERSION" \
             --notes "The gearbox engine at $GEARBOX_REF, as the extension a desktop Studio fetches. Not an installer to download by hand." \
-            dist/*.vsix
+            "${built[@]}"

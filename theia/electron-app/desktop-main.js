@@ -8,9 +8,41 @@
 // environment. Anything already set in the environment wins, so one build can
 // still be pointed at another Studio for a test.
 
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+/*
+ * macOS starts an app from the Finder or the Dock with launchd's PATH --
+ * /usr/bin:/bin:/usr/sbin:/sbin -- not the member's: no Homebrew, no tools set
+ * up in ~/.zprofile. Terminals, git and the extensions would all miss them. So
+ * the PATH is asked of the member's login shell once, as VS Code does. An app
+ * started from a terminal already has it, and a shell that does not answer in
+ * a few seconds leaves the PATH as it is.
+ */
+function loginShellPath() {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const mark = '__STUDIO_PATH__';
+    try {
+        const out = execFileSync(shell, ['-ilc', `printf '%s%s%s' ${mark} "$PATH" ${mark}`], {
+            encoding: 'utf8',
+            timeout: 5000,
+            stdio: ['ignore', 'pipe', 'ignore'],
+            env: { ...process.env, STUDIO_RESOLVING_SHELL_ENV: '1' },
+        });
+        // Between the marks: an interactive shell may print a greeting around it.
+        return out.split(mark)[1] || undefined;
+    } catch {
+        return undefined;
+    }
+}
+if (process.platform === 'darwin' && !process.env.TERM_PROGRAM) {
+    const shellPath = loginShellPath();
+    if (shellPath) {
+        process.env.PATH = shellPath;
+    }
+}
 
 /**
  * Written by the packaging script: the Studios this build offers and the one
@@ -178,6 +210,22 @@ const link = process.argv.findIndex(arg => /^cfstudio:/i.test(arg));
 if (link >= 0 && !process.argv.includes('--open-url')) {
     const [url] = process.argv.splice(link, 1);
     process.argv.push('--open-url', url);
+}
+// macOS hands a link over as an `open-url` event instead, and one that starts
+// the app may arrive before Theia listens for it. Until it does, the link is
+// put where Theia's start reads it, as on Windows; once it listens, it is
+// Theia's alone.
+if (process.platform === 'darwin') {
+    const { app } = require('electron');
+    const early = (event, url) => {
+        if (app.listenerCount('open-url') > 1) {
+            app.removeListener('open-url', early);
+        } else if (!process.argv.includes('--open-url')) {
+            event.preventDefault();
+            process.argv.push('--open-url', url);
+        }
+    };
+    app.on('open-url', early);
 }
 
 // Updates: checked on start and every few hours, offered once downloaded

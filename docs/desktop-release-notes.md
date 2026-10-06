@@ -9,6 +9,17 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next
+
+### macOS
+
+- **A Mac build.** Every release now carries
+  `Constructor-Studio-<version>-mac-arm64.dmg` for Apple Silicon Macs, beside
+  the Windows installer. It is signed ad hoc: allow it once in System Settings
+  → Privacy & Security, and download each new version from its release page
+  (the app says when one is out) -- it does not update itself until it is
+  signed with a Developer ID. See desktop-studio.md, *Installing on a Mac*.
+
 ## 0.3.0-beta.7
 
 Everything merged since `desktop-v0.3.0-beta.6`. The installer is Windows

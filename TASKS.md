@@ -153,13 +153,22 @@ What was left out on purpose, or worked around to get a binary on one machine:
 
   The installer is unsigned, so SmartScreen stops the first run ("More info" →
   "Run anyway"). Signing needs a code-signing certificate and a secret for
-  `desktop-windows.yml`; electron-builder signs when `CSC_LINK` /
-  `CSC_KEY_PASSWORD` are set. macOS additionally needs notarization.
+  `desktop.yml`; electron-builder signs when `CSC_LINK` /
+  `CSC_KEY_PASSWORD` are set.
+
+- [ ] Sign and notarize the macOS app with a Developer ID @andrejk666
+
+  The Mac build (`desktop.yml`, `macos-15`) is signed ad hoc: Gatekeeper asks
+  the member to allow it once, and it cannot update itself (Squirrel.Mac needs
+  matching signatures), so it points to the release page instead. With an
+  Apple Developer ID, set the secrets `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`
+  and `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`; the workflow
+  passes them on and `package.mjs` then signs, notarizes and updates in place.
 
 - [x] Hand out installers from CI only @andrejk666
 
-  Done: `desktop-windows.yml` builds on `windows-2022` and every `desktop-v*`
-  tag publishes its installer as a GitHub release.
+  Done: `desktop.yml` builds on `windows-2022` and `macos-15`, and every
+  `desktop-v*` tag publishes the installers as a GitHub release.
 
   The first binary was built on a developer machine without MSVC:
   `node-pty` and `keytar` from their N-API prebuilds, `native-keymap` and

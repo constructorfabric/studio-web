@@ -30,7 +30,15 @@
 // workspace's dependency tree into the installer.
 //
 // Native modules are whatever `theia rebuild:electron` produced; nothing is
-// rebuilt here.
+// rebuilt here. So the installer is for the platform and architecture it is
+// packaged on: a Windows runner makes the Windows one, a Mac the macOS one.
+//
+// On macOS the app is signed with a Developer ID when electron-builder is
+// given one (`CSC_LINK`, `CSC_KEY_PASSWORD`; notarized when the `APPLE_*`
+// credentials are set too). Without one it is signed ad hoc -- an Apple
+// Silicon Mac runs nothing unsigned -- which Gatekeeper lets start only once
+// the member has allowed it, and which cannot update itself
+// (desktop-updater.js): the build says so in studio-desktop.json.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -39,7 +47,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const require = createRequire(import.meta.url);
-/** The rolling release the desktop-windows workflow refreshes on each desktop release. */
+/** The rolling release the desktop workflow refreshes on each desktop release. */
 const UPDATES_URL = 'https://github.com/constructorfabric/studio-web/releases/download/desktop-updates';
 const app = dirname(dirname(fileURLToPath(import.meta.url)));
 // The installer carries electron-app's own version, so it is set in one place.
@@ -132,7 +140,12 @@ writeFileSync(join(stage, 'package.json'), JSON.stringify({
 const resources = join(app, 'dist-resources');
 rmSync(resources, { recursive: true, force: true });
 mkdirSync(resources, { recursive: true });
-writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ environments, defaultEnvironment }, null, 2));
+const developerId = Boolean(process.env.CSC_LINK);
+const updates = process.platform === 'darwin' && !developerId ? 'manual' : undefined;
+if (updates) {
+    console.warn('no Developer ID (CSC_LINK): the macOS app is signed ad hoc, and points members to new releases instead of updating itself');
+}
+writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ environments, defaultEnvironment, updates }, null, 2));
 if (values.assistants) {
     cpSync(values.assistants, join(resources, 'assistants.json'));
 }
@@ -181,14 +194,23 @@ await build({
         // A stable release writes beta.yml too, so a member on betas is
         // offered a stable version that has passed their beta.
         generateUpdatesFilesForAllChannels: true,
-        win: {
-            target: ['nsis', 'zip'],
-            artifactName: 'Constructor-Studio-${version}-${os}-${arch}.${ext}',
-        },
+        artifactName: 'Constructor-Studio-${version}-${os}-${arch}.${ext}',
+        win: { target: ['nsis', 'zip'] },
         // A per-user install: no administrator rights, like the rest of a
         // member's tools.
         nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true },
-        mac: { target: ['dmg', 'zip'], category: 'public.app-category.developer-tools' },
+        mac: {
+            // The zip is what an update downloads; the dmg is what a member installs from.
+            target: ['dmg', 'zip'],
+            category: 'public.app-category.developer-tools',
+            darkModeSupport: true,
+            // `-` is an ad-hoc signature; undefined lets electron-builder find the Developer ID.
+            identity: developerId ? undefined : '-',
+            // Notarization requires the hardened runtime; an ad-hoc app gains
+            // nothing from it, and its native modules would need an
+            // entitlement to load under it.
+            hardenedRuntime: developerId,
+        },
         linux: { target: ['AppImage', 'tar.gz'], category: 'Development' },
     },
 });

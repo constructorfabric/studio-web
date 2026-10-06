@@ -1,15 +1,22 @@
-name: Desktop — Windows build
+name: Desktop build
 
-# The desktop Studio (ADR-0027) as an installer: theia/electron-app built on a
-# Windows runner, so its native modules (node-pty, keytar, drivelist,
-# native-keymap, the ffmpeg check) compile against the real toolchain, then
-# packaged by theia/electron-app/scripts/package.mjs into an NSIS installer and
-# a zip. The build offers the Studios in theia/electron-app/environments.json
-# (dev, test, local) and starts on the one given; the member switches in the
-# Studio view. The installer is an artifact of the run.
+# The desktop Studio (ADR-0027) as installers: theia/electron-app built on a
+# Windows runner and on an Apple Silicon Mac, so its native modules (node-pty,
+# keytar, drivelist, native-keymap, the ffmpeg check) compile against each
+# platform's real toolchain, then packaged by
+# theia/electron-app/scripts/package.mjs -- an NSIS installer and a zip for
+# Windows, a dmg and a zip for macOS. The build offers the Studios in
+# theia/electron-app/environments.json (dev, test, local) and starts on the one
+# given; the member switches in the Studio view. The installers are artifacts
+# of the run.
 #
-# Not on every pull request: a Windows runner costs several times a Linux one,
-# and the browser session image does not depend on this. It runs when the
+# The macOS app is signed ad hoc unless the repository has a Developer ID
+# (secrets MAC_CSC_LINK, MAC_CSC_KEY_PASSWORD; notarized with APPLE_API_KEY,
+# APPLE_API_KEY_ID, APPLE_API_ISSUER too). Ad hoc, Gatekeeper asks the member
+# to allow it once, and it points to new releases instead of updating itself.
+#
+# Not on every pull request: Windows and macOS runners cost several times a
+# Linux one, and the browser session image does not depend on this. It runs when the
 # desktop packaging itself changes in a PR, on main, for a release tag, and
 # on demand. Fork feature pushes rely on the upstream PR check instead.
 #
@@ -35,11 +42,16 @@ on:
       version:
         description: The version the installer carries, when not electron-app's own
         default: ''
+      platforms:
+        description: Which installers to build
+        type: choice
+        options: [both, windows, macos]
+        default: both
   pull_request:
     paths:
       - theia/electron-app/**
       - theia/cfs.json
-      - .github/workflows/desktop-windows.yml
+      - .github/workflows/desktop.yml
   push:
     branches: [main]
     # Path filters do not apply to tag pushes, so a release tag always builds.
@@ -47,12 +59,12 @@ on:
     paths:
       - theia/electron-app/**
       - theia/cfs.json
-      - .github/workflows/desktop-windows.yml
+      - .github/workflows/desktop.yml
 
 concurrency:
   # A newer PR or main push supersedes the earlier installer build. Tags and
   # manual builds each get their own group so neither can be discarded.
-  group: desktop-windows-${{ (github.event_name == 'workflow_dispatch' || github.ref_type == 'tag') && github.run_id || github.event.pull_request.number || github.ref }}
+  group: desktop-${{ (github.event_name == 'workflow_dispatch' || github.ref_type == 'tag') && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch') }}
 
 permissions:
@@ -60,11 +72,29 @@ permissions:
 
 jobs:
   build:
-    # Pinned, not windows-latest: that image moved to Visual Studio 2026, which
-    # the node-gyp in this dependency tree (10.x) does not recognise, so every
-    # native module fails with "could not find Visual Studio". 2022 is what it
-    # knows. Move on when node-gyp in the tree does.
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, macos]
+        include:
+          # Pinned, not windows-latest: that image moved to Visual Studio 2026,
+          # which the node-gyp in this dependency tree (10.x) does not
+          # recognise, so every native module fails with "could not find Visual
+          # Studio". 2022 is what it knows. Move on when node-gyp in the tree
+          # does.
+          - platform: windows
+            runner: windows-2022
+            target: win32-x64
+          # Apple Silicon only: Intel Macs would need a second build, and a
+          # second Python, CLI and engine for darwin-x64.
+          - platform: macos
+            runner: macos-15
+            target: darwin-arm64
+        # A manual run may build one of them; every other run builds both.
+        exclude:
+          - platform: ${{ inputs.platforms == 'windows' && 'macos' || inputs.platforms == 'macos' && 'windows' || 'none' }}
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         working-directory: theia
@@ -73,6 +103,13 @@ jobs:
       STUDIO_URL: ${{ inputs.studio_url }}
       STUDIO_ISSUER: ${{ inputs.issuer }}
       STUDIO_VERSION_INPUT: ${{ inputs.version }}
+      # A Developer ID for the macOS app, when the repository has one; empty,
+      # package.mjs signs ad hoc. electron-builder reads these itself.
+      CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MAC_CSC_LINK || '' }}
+      CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+      APPLE_API_KEY: ${{ matrix.platform == 'macos' && secrets.APPLE_API_KEY || '' }}
+      APPLE_API_KEY_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_API_KEY_ID || '' }}
+      APPLE_API_ISSUER: ${{ matrix.platform == 'macos' && secrets.APPLE_API_ISSUER || '' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -80,6 +117,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: theia/package-lock.json
+      # node-gyp on the Mac: a Python it can use (the image's Homebrew one
+      # refuses pip), with setuptools for its gyp.
+      - uses: actions/setup-python@v6
+        if: matrix.platform == 'macos'
+        with:
+          python-version: '3.12'
+      - name: Python for node-gyp
+        if: matrix.platform == 'macos'
+        run: python -m pip install --quiet setuptools
       # studio/src/node/cfs-map-adapter.ts requires this schema at build and at
       # run time; it is generated by Constructor Studio and not in git. The
       # session image copies the same file (theia/Dockerfile).
@@ -101,15 +147,18 @@ jobs:
           fi
           echo "STUDIO_VERSION=${STUDIO_VERSION_INPUT:-$own}" >> "$GITHUB_ENV"
       # What npm ci and the packaging download besides packages: the Electron
-      # binary (npm's `electron` postinstall) and electron-builder's NSIS and
-      # winCodeSign. A few hundred MB per run from GitHub releases, and the
-      # same bytes for as long as the lockfile stays put.
+      # binary (npm's `electron` postinstall) and electron-builder's tools
+      # (NSIS and winCodeSign; the dmg builder). A few hundred MB per run from
+      # GitHub releases, and the same bytes for as long as the lockfile stays
+      # put. The first two paths are Windows', the others macOS'.
       - name: Electron downloads
         uses: actions/cache@v4
         with:
           path: |
             ~/AppData/Local/electron/Cache
             ~/AppData/Local/electron-builder/Cache
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
           key: electron-downloads-${{ runner.os }}-${{ hashFiles('theia/package-lock.json') }}
           restore-keys: electron-downloads-${{ runner.os }}-
       - name: Install
@@ -124,9 +173,7 @@ jobs:
       # does not carry them (#480): it carries their manifest, and the app
       # fetches each one on first need, checks it against the SHA-256 recorded
       # here, and deploys it live (studio/src/node/desktop-assistants.ts).
-      # theia/Dockerfile's `fetch_vsix` lines are the one pin; a pinned version
-      # with no win32 build takes the newest win32 build there is instead, and
-      # the run warns about it. The script downloads each VSIX once to check
+      # theia/Dockerfile's `fetch_vsix` lines are the one pin. The script downloads each VSIX once to check
       # open-vsx's digest. The Constructor Studio CLI (`cfs`) comes the same
       # way, from the release studio-cli.yml publishes for the version
       # theia/cfs.json pins; until that release exists the build warns and
@@ -136,11 +183,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile --target win32-x64 \
+          node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile --target "${{ matrix.target }}" \
             --studio-cli "https://github.com/$GITHUB_REPOSITORY/releases/download" \
             --gearbox-engine "https://github.com/$GITHUB_REPOSITORY/releases/download" \
             --out "$RUNNER_TEMP/assistants.json"
-          echo "STUDIO_ASSISTANTS=$(cygpath -w "$RUNNER_TEMP/assistants.json")" >> "$GITHUB_ENV"
+          manifest="$RUNNER_TEMP/assistants.json"
+          if command -v cygpath >/dev/null; then manifest=$(cygpath -w "$manifest"); fi
+          echo "STUDIO_ASSISTANTS=$manifest" >> "$GITHUB_ENV"
       - name: Rebuild native modules for Electron
         working-directory: theia/electron-app
         run: npx theia rebuild:electron --cacheRoot ..
@@ -161,11 +210,12 @@ jobs:
           node scripts/package.mjs @packArgs
       - uses: actions/upload-artifact@v6
         with:
-          name: constructor-studio-windows-${{ env.STUDIO_VERSION }}
+          name: constructor-studio-${{ matrix.platform }}-${{ env.STUDIO_VERSION }}
           path: |
             theia/electron-app/dist/*.exe
-            theia/electron-app/dist/*.exe.blockmap
+            theia/electron-app/dist/*.dmg
             theia/electron-app/dist/*.zip
+            theia/electron-app/dist/*.blockmap
             theia/electron-app/dist/*.yml
             !theia/electron-app/dist/builder-debug.yml
           if-no-files-found: error
@@ -189,23 +239,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A file type a build did not make is left out, not passed as a pattern.
+          shopt -s nullglob
           ls -la dist
           version="${TAG#desktop-v}"
           flags=(--repo "$GITHUB_REPOSITORY" --title "Constructor Studio desktop $version" --generate-notes --verify-tag)
           # A pre-release version (0.3.1-beta.1) is a GitHub pre-release, and
           # never becomes the repository's "latest".
           if [[ "$version" == *-* ]]; then flags+=(--prerelease); else flags+=(--latest=false); fi
-          gh release create "$TAG" "${flags[@]}" dist/*.exe dist/*.exe.blockmap dist/*.yml dist/*.zip
+          gh release create "$TAG" "${flags[@]}" dist/*.exe dist/*.dmg dist/*.zip dist/*.blockmap dist/*.yml
       - name: The rolling release installed apps read
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
           # The feed electron-updater's generic provider reads: the channel
-          # files (latest.yml, beta.yml) and the installers they point at. A
+          # files (latest.yml, beta.yml; latest-mac.yml, beta-mac.yml) and the
+          # installers they point at -- the macOS update is its zip. A
           # pre-release, so it never becomes the repository's "latest".
           if ! gh release view desktop-updates --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create desktop-updates --repo "$GITHUB_REPOSITORY" --prerelease \
               --title "Desktop updates (rolling)" \
               --notes "The update feed installed desktop apps read. Refreshed by every desktop-v* release; not an installer to download by hand."
           fi
-          gh release upload desktop-updates --repo "$GITHUB_REPOSITORY" --clobber dist/*.exe dist/*.exe.blockmap dist/*.yml
+          gh release upload desktop-updates --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/*.exe dist/*.exe.blockmap dist/*-mac-*.zip dist/*-mac-*.zip.blockmap dist/*.dmg dist/*.dmg.blockmap dist/*.yml

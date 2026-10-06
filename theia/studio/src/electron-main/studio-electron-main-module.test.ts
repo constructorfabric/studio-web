@@ -63,6 +63,11 @@ describe('what the member reads after a check', () => {
         expect(describeUpdateCheck({ state: 'ready', version: '0.3.1' }).text).toMatch(/installs when you restart/);
     });
 
+    it('sends a build that does not update itself to the release page', () => {
+        expect(describeUpdateCheck({ state: 'manual', version: '0.3.1', current: '0.3.0' }).text)
+            .toMatch(/^Constructor Studio 0\.3\.1 is available \(you have 0\.3\.0\)\. This copy does not update itself/);
+    });
+
     it('warns when the check failed, with why', () => {
         expect(describeUpdateCheck({ state: 'failed', message: 'offline' })).toEqual({ level: 'warn', text: 'Could not check for updates: offline' });
     });

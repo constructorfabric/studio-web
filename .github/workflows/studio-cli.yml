@@ -58,13 +58,14 @@ jobs:
           version=$(python -c "import json, sys; sys.path.insert(0, 'theia/studio-cli'); import build_vsix; print(build_vsix.extension_version(json.load(open('theia/cfs.json'))))")
           echo "CLI_VERSION=$version" >> "$GITHUB_ENV"
           echo "CLI_TAG=studio-cli-v$version" >> "$GITHUB_ENV"
-      # The desktop ships for Windows only (desktop-windows.yml). cfs.json
-      # pins a Python for more; add a target here once its desktop exists.
+      # The desktops desktop.yml builds: Windows and Apple Silicon macOS.
+      # cfs.json pins a Python for more; add a target here once its desktop
+      # exists. A target added later goes into the version's existing release.
       - name: Build
         shell: bash
         run: |
           set -euo pipefail
-          for target in win32-x64; do
+          for target in win32-x64 darwin-arm64; do
             python theia/studio-cli/build_vsix.py --target "$target" --out dist
           done
           ls -la dist

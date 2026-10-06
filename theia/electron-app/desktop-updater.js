@@ -21,9 +21,17 @@
 // change, so the choice takes effect without a restart. The first check on
 // start waits for that report. See desktop-update-channel.js.
 //
+// A macOS build without a Developer ID is not updated in place: Squirrel.Mac
+// installs an update only when its signature matches the running app's, and
+// an ad-hoc signature matches nothing but itself. `scripts/package.mjs` marks
+// such a build (`updates: 'manual'` in resources/studio-desktop.json); it
+// still checks, but downloads nothing and offers the release page instead.
+//
 // Bundled into one file by `scripts/package.mjs` (esbuild), because the
 // packaged app ships without node_modules.
 
+const fs = require('fs');
+const path = require('path');
 const { app, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { channelFrom, channelChoice } = require('./desktop-update-channel.js');
@@ -34,6 +42,15 @@ const FIRST_CHECK_MS = 10_000;
 const CHANNEL_WAIT_MS = 60_000;
 const EVERY_MS = 6 * 60 * 60 * 1000;
 
+/** Whether this build installs updates itself, or only says where they are: see above. */
+function updatesInPlace() {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'studio-desktop.json'), 'utf8')).updates !== 'manual';
+    } catch {
+        return true;
+    }
+}
+
 /**
  * Start checking for updates. Only in an installed app: a checkout's
  * `theia start` and an unpacked zip have nothing to update in place.
@@ -42,8 +59,9 @@ function startUpdates({ log = console } = {}) {
     if (!app.isPackaged || process.env.STUDIO_DESKTOP_NO_UPDATES === '1') {
         return;
     }
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    const inPlace = updatesInPlace();
+    autoUpdater.autoDownload = inPlace;
+    autoUpdater.autoInstallOnAppQuit = inPlace;
     // A beta member moving back to stable keeps what they have until stable
     // passes it, rather than being walked back to an older version.
     autoUpdater.allowDowngrade = false;
@@ -75,6 +93,32 @@ function startUpdates({ log = console } = {}) {
             void shell.openExternal(`${RELEASES}/desktop-v${info.version}`);
         }
     };
+    /** A build that does not update in place: the release page, to download and install by hand. */
+    const point = async info => {
+        const { response } = await dialog.showMessageBox({
+            type: 'info',
+            title: 'Constructor Studio update',
+            message: `Constructor Studio ${info.version} is available`,
+            detail: `You have ${app.getVersion()}. This copy does not update itself: download the new one `
+                + 'from its release page and replace the app with it.',
+            buttons: ['Open the release page', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true,
+        });
+        if (response === 0) {
+            void shell.openExternal(`${RELEASES}/desktop-v${info.version}`);
+        }
+    };
+    /** The version a build that does not update in place has pointed at, once. */
+    let pointed;
+    autoUpdater.on('update-available', async info => {
+        if (inPlace || pointed === info.version) {
+            return;
+        }
+        pointed = info.version;
+        await point(info);
+    });
     autoUpdater.on('update-downloaded', async info => {
         downloaded = info;
         // Asked once on its own; Check for Updates asks again.
@@ -115,11 +159,21 @@ function startUpdates({ log = console } = {}) {
             }
             const channel = channelFrom(choice.get(), current) === 'beta' ? 'beta' : 'stable';
             try {
+                const before = pointed;
                 const result = await check();
                 const version = result?.updateInfo?.version;
-                return result?.isUpdateAvailable && version
-                    ? { state: 'downloading', version, current }
-                    : { state: 'current', version: current, channel };
+                if (!result?.isUpdateAvailable || !version) {
+                    return { state: 'current', version: current, channel };
+                }
+                if (!inPlace) {
+                    // The event pointed at a version new to it; one already
+                    // pointed at is asked about again, since the member asked.
+                    if (before === version) {
+                        void point(result.updateInfo);
+                    }
+                    return { state: 'manual', version, current };
+                }
+                return { state: 'downloading', version, current };
             } catch (error) {
                 return { state: 'failed', message: error instanceof Error ? error.message : String(error) };
             }

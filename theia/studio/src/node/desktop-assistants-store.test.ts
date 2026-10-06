@@ -7,11 +7,16 @@ import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import { AssistantPin } from '../common/desktop-assistants';
-import { AssistantStore, Download, renameWhenFree, safeEntryName, sha256File, skippedEntry, unpackVsix } from './desktop-assistants-store';
+import {
+    AssistantStore, Download, executableEntry, renameWhenFree, safeEntryName, sha256File, skippedEntry, unpackVsix
+} from './desktop-assistants-store';
 import { assistantsConfigFrom } from './desktop-assistants';
 
-/** A stored (uncompressed) zip, enough for yauzl: local headers, central directory, end record. */
-function zip(files: Record<string, string>): Buffer {
+/**
+ * A stored (uncompressed) zip, enough for yauzl: local headers, central directory, end record.
+ * `modes` records a Unix mode for an entry, as a POSIX archiver does.
+ */
+function zip(files: Record<string, string>, modes: Record<string, number> = {}): Buffer {
     const locals: Buffer[] = [];
     const centrals: Buffer[] = [];
     let offset = 0;
@@ -34,6 +39,10 @@ function zip(files: Record<string, string>): Buffer {
         central.writeUInt32LE(data.length, 20);
         central.writeUInt32LE(data.length, 24);
         central.writeUInt16LE(nameBuf.length, 28);
+        if (modes[name] !== undefined) {
+            central.writeUInt16LE((3 << 8) | 20, 4);
+            central.writeUInt32LE(((0o100000 | modes[name]) << 16) >>> 0, 38);
+        }
         central.writeUInt32LE(offset, 42);
         locals.push(local, nameBuf, data);
         centrals.push(central, nameBuf);
@@ -246,6 +255,26 @@ describe('unpacking a VSIX', () => {
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
+    });
+
+    (process.platform === 'win32' ? it.skip : it)('keeps an entry executable when the archive says it is', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unpack-'));
+        try {
+            const file = path.join(dir, 'x.vsix');
+            fs.writeFileSync(file, zip({ 'extension/bin/gearbox': 'engine', 'extension/README.md': 'text' }, { 'extension/bin/gearbox': 0o755, 'extension/README.md': 0o644 }));
+            await unpackVsix(file, path.join(dir, 'out'));
+            expect(fs.statSync(path.join(dir, 'out', 'extension', 'bin', 'gearbox')).mode & 0o111).not.toBe(0);
+            expect(fs.statSync(path.join(dir, 'out', 'extension', 'README.md')).mode & 0o111).toBe(0);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('reads the executable bit from an entry', () => {
+        expect(executableEntry({ externalFileAttributes: (0o100755 << 16) >>> 0 })).toBe(true);
+        expect(executableEntry({ externalFileAttributes: (0o100644 << 16) >>> 0 })).toBe(false);
+        // A Windows archiver records no mode.
+        expect(executableEntry({ externalFileAttributes: 0x20 })).toBe(false);
     });
 
     it('leaves out linux binaries only for a windows target', () => {
