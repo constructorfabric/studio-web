@@ -345,6 +345,12 @@ jobs:
       # review, invisible in a rendered chart and invisible from outside the
       # cluster (TLS terminates at Cloudflare, which compresses on its own).
       - run: bash scripts/check-portal-nginx.sh
+      # The documents' contract: every spec declares its type, every cited
+      # `cpt-` id is defined once, every link resolves and every document is
+      # in the index. Here rather than in a job of its own because a runner
+      # costs more than the second this takes, and a docs-only PR selects no
+      # component job that could carry it.
+      - run: node scripts/check-docs.mjs
 
   test-infra:
     needs: test-changes

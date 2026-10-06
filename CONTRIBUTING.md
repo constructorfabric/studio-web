@@ -109,6 +109,8 @@ record to the index table.
 
 **Documents.** Specifications under `docs/` follow Studio's own document types
 ([`docs/README.md`](docs/README.md)), and their `cpt-` ids are defined once.
+A new document under `docs/` goes into that index. `node scripts/check-docs.mjs`
+checks all of this and CI runs it.
 Update the README of a component when you change how it is built or run.
 
 **Desktop Studio.** Changes to `theia/electron-app` or the desktop half of
