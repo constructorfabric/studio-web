@@ -118,7 +118,9 @@ export type Failure = 'sign-in' | 'offline' | 'rejected' | 'protected' | 'failed
 /** What a failed fetch, pull or push means, from what git printed. */
 export function failureOf(result: GitResult): Failure {
     const text = `${result.stderr}\n${result.stdout}`;
-    if (/protected branch|GH006|pre-receive hook declined|not allowed to (push|force push)|You are not allowed to push code to protected branches/i.test(text)) {
+    // GH013 is a ruleset (GitHub's newer branch protection); git prints it as
+    // `[remote rejected]`, which must not be mistaken for a stale branch.
+    if (/protected branch|GH006|GH013|repository rule violations|pre-receive hook declined|not allowed to (push|force push)|You are not allowed to push code to protected branches/i.test(text)) {
         return 'protected';
     }
     if (/Authentication failed|could not read Username|Permission denied|access denied|HTTP Basic: Access denied|returned error: 40[13]|Invalid username or password/i.test(text)) {

@@ -102,6 +102,11 @@ describe('reading git for a person', () => {
     it('tells what a failure means, from what git printed', () => {
         const result = (stderr: string) => ({ code: 1, stdout: '', stderr });
         expect(failureOf(result('remote: error: GH006: Protected branch update failed'))).toBe('protected');
+        expect(failureOf(result([
+            'remote: error: GH013: Repository rule violations found for refs/heads/main.',
+            'remote: - Changes must be made through a pull request.',
+            ' ! [remote rejected] main -> main (push declined due to repository rule violations)',
+        ].join('\n')))).toBe('protected');
         expect(failureOf(result('fatal: Authentication failed for \'https://x\''))).toBe('sign-in');
         expect(failureOf(result('fatal: unable to access \'https://x\': Could not resolve host: x'))).toBe('offline');
         expect(failureOf(result(' ! [rejected]        main -> main (fetch first)'))).toBe('rejected');
