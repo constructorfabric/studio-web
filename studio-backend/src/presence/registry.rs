@@ -158,8 +158,9 @@ impl PresenceRegistry {
         list
     }
 
-    /// Whether one person is online — what a send has to know before it
-    /// promises delivery.
+    /// Whether one person is online. A send asks [`Self::post_if_online`]
+    /// instead, which checks and posts in one step; this is for tests.
+    #[cfg(test)]
     pub fn is_online(&self, user_id: &str, now_ms: i64) -> bool {
         self.people
             .lock()
