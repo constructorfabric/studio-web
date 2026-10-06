@@ -69,7 +69,7 @@ to learn two ways to find out how it went.
 the two. There is no OpenAPI snapshot in the repository and no CI check over it;
 `.github/workflows/studio-delivery.yml` builds and tests both sides and compares
 nothing. We have already paid for exactly this class of drift from the outside:
-`studio-backend/docs/pr-openapi-drift.md` is the fix we sent upstream for
+`docs/inbox/pr-openapi-drift.md` is the fix we sent upstream for
 committed OpenAPI artifacts whose paths no code had ever registered.
 
 Three things are worth stating in the other direction, because this ADR is not a

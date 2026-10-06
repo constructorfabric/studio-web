@@ -23,6 +23,6 @@ README is what you need to work in the directory.
 - Config section `gears.studio-theia`: `enabled`, `event_ingress_path`,
   `request_timeout_secs`; `control_port` and `s2s_token_env` are read but
   unused.
-- Read next: `studio-backend/docs/theia-bridge-architecture.md`,
-  `studio-backend/docs/theia-bridge-local-docker.md`, and in the repository root
+- Read next: `docs/theia-bridge-architecture.md`,
+  `docs/theia-bridge-local-docker.md`, and in the repository root
   `docs/adr/0022-theia-backend-bridge.md` plus `docs/theia-bridge-contract-v1.md`.

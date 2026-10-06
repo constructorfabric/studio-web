@@ -8,7 +8,7 @@
 //! not declare — each of those surfaces as `post-init failed for gear …` on a
 //! pod (CrashLoopBackOff in a cluster), never as a red check on the pull
 //! request that introduced it. That has happened repeatedly: see
-//! `docs/gears-rust-issues.md` §1 (the registry reports a bare "Request
+//! `docs/upstream/gears-rust-issues.md` §1 (the registry reports a bare "Request
 //! validation failed"), `docs/graph-storage-handover.md` §4 (ten free-form
 //! types refused at once by gts 0.12) and `src/connectors/gts.rs`
 //! (`cf.studio.connections.v1` — four name tokens where the grammar wants

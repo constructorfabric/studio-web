@@ -137,7 +137,7 @@ changing one silently leaves the other lying.
 `traceability` is not gateable, and not for want of a rule: `extract` returns no
 pairs for any document set or identifier notation we could construct, and
 `classify` then reports `passed` on a comparison it never made. Written up in
-`studio-backend/docs/spec-quality-issues.md`.
+`docs/upstream/spec-quality-issues.md`.
 
 ## The person's ruling
 

@@ -389,7 +389,7 @@ capabilities `[rest, db, stateful]`, deps `account_management`, config section
 
 ## 4. Additional context
 
-[`docs/background-work.md`](../../studio-backend/docs/background-work.md) is
+[`docs/background-work.md`](../../docs/background-work.md) is
 the operator's view of runs and schedules together.
 
 ## 5. Traceability

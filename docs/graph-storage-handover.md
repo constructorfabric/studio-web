@@ -3,7 +3,7 @@
 Branch `feature/graph-storage-gear-dependency` (11 commits over `main` at
 `ab0faac`). Companion documents: [quickstart](./graph-storage-quickstart.md),
 [API reference](./graph-storage-api.md), and the
-[stand report](./graph-storage-stand-report-2026-09-03.md) with every problem
+[stand report](inbox/graph-storage-stand-report-2026-09-03.md) with every problem
 found and its status.
 
 ## 1. What this branch does, in one paragraph

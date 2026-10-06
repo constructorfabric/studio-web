@@ -19,7 +19,7 @@
 //! reason the verdicts are.
 //!
 //! `traceability` produces no findings: in `extract` mode it finds no pairs at
-//! all (`docs/spec-quality-issues.md` §2), so there is nothing to place.
+//! all (`docs/upstream/spec-quality-issues.md` §2), so there is nothing to place.
 //!
 //! ── The fingerprint ──────────────────────────────────────────────────────────
 //!

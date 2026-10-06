@@ -102,8 +102,10 @@ for (const file of files) {
   }
 }
 
-// A document nobody can find from the index is one nobody keeps up to date.
-const INDEXES = [join(DOCS, 'README.md'), join(DOCS, 'adr', 'README.md')];
+// A document nobody can find from an index is one nobody keeps up to date.
+const INDEXES = ['README.md', 'adr/README.md', 'upstream/README.md', 'inbox/README.md'].map((index) =>
+  join(DOCS, index),
+);
 const indexed = new Set(
   INDEXES.flatMap((index) =>
     [...prose(readFileSync(index, 'utf8')).matchAll(LINK)].map(([, target]) =>
@@ -113,13 +115,17 @@ const indexed = new Set(
 );
 for (const file of files) {
   if (!file.endsWith('README.md') && !indexed.has(resolve(file))) {
-    fail(file, 'is not linked from docs/README.md or docs/adr/README.md');
+    fail(file, `is not linked from any index (${INDEXES.map((i) => i.split(sep).join('/')).join(', ')})`);
   }
 }
 
+// Only the ids of a system this repository defines are held to it: a
+// `cpt-cf-evbk-…` id names another project's spec, which lives there.
+const systemOf = (id) => id.split('-')[1];
+const ownSystems = new Set([...definedIn.keys()].map(systemOf));
 const dangling = new Map();
 for (const [file, id] of citations) {
-  if (!definedIn.has(id)) dangling.set(`${file}\0${id}`, [file, id]);
+  if (ownSystems.has(systemOf(id)) && !definedIn.has(id)) dangling.set(`${file}\0${id}`, [file, id]);
 }
 for (const [file, id] of dangling.values()) fail(file, `cites ${id}, which no document defines`);
 

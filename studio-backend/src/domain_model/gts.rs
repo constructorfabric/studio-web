@@ -6,7 +6,7 @@
 //! a GTS edge type, and every type derives from a graph-storage family so the
 //! graph-storage gear will register it — a free-form type has no derivation
 //! chain to validate against and is refused (see the artifact gear and
-//! `docs/gears-rust-issues.md` §4).
+//! `docs/upstream/gears-rust-issues.md` §4).
 //!
 //! Unlike the tenant-metadata envelope (closed by OP#12 narrowing), the
 //! graph-storage `owned_node` family lets a payload carry arbitrary fields.

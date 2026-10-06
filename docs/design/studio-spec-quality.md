@@ -300,7 +300,7 @@ capabilities `[rest]`, config section `gears.studio-spec-quality`.
 
 ## 4. Additional context
 
-[`studio-backend/docs/spec-quality-issues.md`](../../studio-backend/docs/spec-quality-issues.md)
+[`docs/upstream/spec-quality-issues.md`](../../docs/upstream/spec-quality-issues.md)
 records what the upstream service gets wrong, including why `traceability`
 finds no pairs in `extract` mode. [`docs/spec-findings.md`](../spec-findings.md)
 covers how recorded findings reach the editor.

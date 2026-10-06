@@ -301,7 +301,7 @@ capabilities `[rest, db, stateful]`, config section `gears.studio-tasks`.
 
 ## 4. Additional context
 
-[`docs/queued-notifications.md`](../../studio-backend/docs/queued-notifications.md)
+[`docs/queued-notifications.md`](../../docs/queued-notifications.md)
 explains why the queue is PostgreSQL and not Redis: the enqueue has to be part
 of the transaction that caused it. `cpt-studio-component-notify` uses the same
 substrate.

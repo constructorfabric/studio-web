@@ -801,7 +801,7 @@ impl DomainModelService {
     /// node's is 1 or more. There is deliberately no `if_version` next to it:
     /// the gear takes an expected version on write but reports none on any
     /// read, so a caller has no version to pass back (see
-    /// `docs/gears-rust-issues.md` §5). Until that is closed, an *update* is
+    /// `docs/upstream/gears-rust-issues.md` §5). Until that is closed, an *update* is
     /// last-writer-wins.
     pub async fn create_object(
         &self,

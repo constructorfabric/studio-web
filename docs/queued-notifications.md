@@ -76,7 +76,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
 `error`, and an invented one is refused rather than shown as grey information.
 
 It travels over the studio-theia control bridge
-([theia-bridge-contract-v1.md](../../docs/theia-bridge-contract-v1.md),
+([theia-bridge-contract-v1.md](theia-bridge-contract-v1.md),
 `notifyEditor`), so it needs a backend built with the `theia-bridge` feature and
 `studio-session.theia_control_enabled` on. Where either is missing, the accept
 path says which one.

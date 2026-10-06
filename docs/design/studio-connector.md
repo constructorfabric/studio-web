@@ -404,7 +404,7 @@ not named anywhere: compiling the module submits them to the link-time
 
 ## 4. Additional context
 
-[`docs/notification-connectors.md`](../../studio-backend/docs/notification-connectors.md)
+[`docs/notification-connectors.md`](../../docs/notification-connectors.md)
 covers the chat drivers: the two credentials per platform and how to choose,
 getting each one, sending, and what the drivers do not do.
 

@@ -6,7 +6,7 @@
 //! `workspace_id` or `project_id`), often by `repo`, and orders by the
 //! artifact's own `updated_at`. All three live in the node payload, and
 //! graph-storage's projection can neither filter nor order on a payload path
-//! (`docs/graph-storage-requests.md` §5). So each listing walked the tenant's
+//! (`docs/upstream/graph-storage-requests.md` §5). So each listing walked the tenant's
 //! whole typed node set, one sequential page of 200 at a time: on studio-dev,
 //! 24–33 thousand nodes and 12–20 seconds per walk, behind `/nodes`,
 //! `/source-activity`, `/spec-rows` and `/specs-per-source`. The 60-second

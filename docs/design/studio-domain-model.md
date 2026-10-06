@@ -373,7 +373,7 @@ by type and the drifted ones are reported as `pinned_types` on `POST
 /model/sync`. An existing graph whose 140 types were registered with the old
 per-entity traits keeps them and reports them as pinned until they are
 migrated; a fresh graph registers the fixed traits from the start.
-[`gears-rust-issues.md`](../../studio-backend/docs/gears-rust-issues.md) §4 and
+[`gears-rust-issues.md`](../../docs/upstream/gears-rust-issues.md) §4 and
 §5 record the platform gaps behind the open types and the missing conditional
 update.
 

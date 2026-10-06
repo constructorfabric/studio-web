@@ -141,7 +141,7 @@ typed node set: 28,717 nodes, 31 MB and 144 sequential round trips, a p95 of
 8.06 s on studio-dev, and 12–20 s per walk when measured again on 2026-09-25.
 weftgraph 0.1.1 filters and orders on declared payload paths but has no count,
 no offsets and no indexed payload ordering, so the index stays until it does
-(request 5 in [`graph-storage-requests.md`](../../studio-backend/docs/graph-storage-requests.md));
+(request 5 in [`graph-storage-requests.md`](../../docs/upstream/graph-storage-requests.md));
 then the index is deleted rather than kept in step.
 
 Relations are read by seeded traversal, 400 seeds per call with a budget of
@@ -367,7 +367,7 @@ order, spelled `COLLATE "C"` here.
 
 **Constraints**: none beyond the key.
 
-**Additional info**: A mirror of the artifact graph for the listings graph-storage cannot narrow (payload filters, `docs/graph-storage-requests.md` §5); rebuilt from the graph whenever it cannot be trusted. `studio_artifact_index_fill` marks the tenants it is complete for. See `studio-backend/src/artifact_ingest/index.rs`. Indexes `studio_artifact_index_workspace` on `(tenant_id, workspace_id, type_id)` and `studio_artifact_index_project` on `(tenant_id, project_id, type_id)`: a scope is a workspace or a project, and the planner combines the two. `COLLATE "C"` keeps the byte order the in-process listing returns, which a locale collation would break by ignoring the dashes in a uuid. A fill clears the tenant's rows and inserts with `ON CONFLICT DO NOTHING` while a sync inserts with `DO UPDATE`, so the newer payload stays whichever lands first.
+**Additional info**: A mirror of the artifact graph for the listings graph-storage cannot narrow (payload filters, [`graph-storage-requests.md`](../upstream/graph-storage-requests.md) §5); rebuilt from the graph whenever it cannot be trusted. `studio_artifact_index_fill` marks the tenants it is complete for. See `studio-backend/src/artifact_ingest/index.rs`. Indexes `studio_artifact_index_workspace` on `(tenant_id, workspace_id, type_id)` and `studio_artifact_index_project` on `(tenant_id, project_id, type_id)`: a scope is a workspace or a project, and the planner combines the two. `COLLATE "C"` keeps the byte order the in-process listing returns, which a locale collation would break by ignoring the dashes in a uuid. A fill clears the tenant's rows and inserts with `ON CONFLICT DO NOTHING` while a sync inserts with `DO UPDATE`, so the newer payload stays whichever lands first.
 
 **Example**:
 

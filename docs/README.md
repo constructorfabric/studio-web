@@ -40,10 +40,16 @@ repository.
 - [errors-catalog.md](errors-catalog.md) — the canonical error categories.
 - [events-catalog.md](events-catalog.md) — the `studio-events` vocabulary.
 - [theia-bridge-contract-v1.md](theia-bridge-contract-v1.md) — the wire surface of the Theia bridge (ADR-0022).
+- [graph-storage-api.md](graph-storage-api.md) — the graph-storage API as Studio consumes it.
 
 **Notes and explanations:**
 
 - [documents-from-a-repository.md](documents-from-a-repository.md) — how documents already in a repository are classified and validated.
+- [background-work.md](background-work.md) — studio-tasks and studio-scheduler together: what was there before and how work moves between them.
+- [queued-notifications.md](queued-notifications.md) — why notifications are a queue in PostgreSQL and not Redis.
+- [notification-connectors.md](notification-connectors.md) — Slack, Zulip and Discord as notification destinations.
+- [theia-bridge-architecture.md](theia-bridge-architecture.md) — the backend ↔ Theia bridge end to end (ADR-0022).
+- [graph-storage-handover.md](graph-storage-handover.md) — graph-storage as a dependency, for whoever maintains it here.
 - [backend-handover.md](backend-handover.md) — how the backend works, for someone taking it over.
 - [frontend-handover-hardcode.md](frontend-handover-hardcode.md) — what the prototype knows that the contract does not tell it.
 - [concept-v2-project-is-the-unit.md](concept-v2-project-is-the-unit.md) — an exploration, not accepted.
@@ -57,14 +63,25 @@ repository.
 - [desktop-release-notes.md](desktop-release-notes.md) — what a member notices in each desktop release, and what does not work yet.
 - [sharing-documents-without-git.md](sharing-documents-without-git.md) — *Share with the team*, saves that change only what was edited, and why the assistant panel no longer opens on its own.
 
+**Requests to the platform** — [upstream/](upstream/README.md): what Studio asks
+of graph-storage, account-management, gears-rust and the spec-quality service,
+kept current.
+
+**Inbox** — [inbox/](inbox/README.md): reports and sent drafts that are kept but
+not maintained.
+
 **Runbooks:**
 
+- [theia-bridge-local-docker.md](theia-bridge-local-docker.md) — running the Theia bridge locally in Docker.
+- [graph-storage-quickstart.md](graph-storage-quickstart.md) — local graph-storage experiments with docker compose.
+- [insight-quickstart.md](insight-quickstart.md) — integrating with Constructor Insight.
 - [desktop-contributing.md](desktop-contributing.md) — the rules for changing the desktop Studio.
 - [deploy-k8s-cicd.md](deploy-k8s-cicd.md) — an earlier Kubernetes and CI/CD proposal; the current procedure is [`deploy/README.md`](../deploy/README.md) and [`deploy/PIPELINES.md`](../deploy/PIPELINES.md).
 - [verifying-the-collaboration-work.md](verifying-the-collaboration-work.md) — how to check the collaborative editing work end to end.
 
 Elsewhere in the repository, the READMEs (the root, `studio-backend/`, each gear
 under `studio-backend/src/`, `theia/` and its packages, `deploy/`, `keycloak/`),
-`studio-backend/docs/` (handovers, reports, upstream requests and pull-request
-drafts), `studio-frontend/docs/`, `PRODUCT.md` and `TASKS.md` are likewise not
+`studio-backend/docs/` (the API contract, its baseline, the GTS type inventory
+and the backend architecture diagram, all read by tests or tools),
+`studio-frontend/docs/`, `PRODUCT.md` and `TASKS.md` are likewise not
 specifications.

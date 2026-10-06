@@ -23,7 +23,7 @@
 //!
 //! Why the graph-storage families and not the tenant-metadata envelope: the
 //! latter is closed by OP#12 narrowing, so a derived type cannot declare payload
-//! fields (see `docs/gears-rust-issues.md` §4). The graph-storage families are
+//! fields (see `docs/upstream/gears-rust-issues.md` §4). The graph-storage families are
 //! open, which is what makes goal #2 — extending a type with a new field —
 //! a pure ontology edit rather than a schema migration.
 

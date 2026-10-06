@@ -304,7 +304,7 @@ that is a property of the queue.
 
 ## 4. Additional context
 
-[`docs/queued-notifications.md`](../../studio-backend/docs/queued-notifications.md)
+[`docs/queued-notifications.md`](../../docs/queued-notifications.md)
 has worked examples for both destinations, the table of what guarantees what,
 and why the queue is PostgreSQL and not Redis: the enqueue has to be part of
 the transaction that caused it, and the platforms' own rate limits (roughly one

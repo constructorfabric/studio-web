@@ -272,9 +272,9 @@ gear `studio-theia`, capabilities `[rest]`, config section `gears.studio-theia`
 ## 4. Additional context
 
 The wire contract is [`docs/theia-bridge-contract-v1.md`](../theia-bridge-contract-v1.md).
-[`studio-backend/docs/theia-bridge-architecture.md`](../../studio-backend/docs/theia-bridge-architecture.md)
+[`docs/theia-bridge-architecture.md`](../../docs/theia-bridge-architecture.md)
 explains the trust model and how to inspect the surface, and
-[`studio-backend/docs/theia-bridge-local-docker.md`](../../studio-backend/docs/theia-bridge-local-docker.md)
+[`docs/theia-bridge-local-docker.md`](../../docs/theia-bridge-local-docker.md)
 how to run it locally. Code comments still call the bridge ADR-0010; it is
 ADR-0022.
 

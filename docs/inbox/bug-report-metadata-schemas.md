@@ -125,5 +125,5 @@ back to typed schemas the moment this lands.
 ```bash
 gh issue create --repo constructorfabric/gears-rust \
   --title "GTS/AM: typed derived tenant-metadata schemas cannot be registered — OP#12 treats the base envelope as a closed empty object" \
-  --body-file studio-backend/docs/bug-report-metadata-schemas.md   # секцию до '---'
+  --body-file docs/inbox/bug-report-metadata-schemas.md   # секцию до '---'
 ```

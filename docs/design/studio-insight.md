@@ -300,7 +300,7 @@ a base URL or a key the gear logs a warning, every call answers 503, and
 
 ## 4. Additional context
 
-[`studio-backend/docs/insight-quickstart.md`](../../studio-backend/docs/insight-quickstart.md)
+[`docs/insight-quickstart.md`](../../docs/insight-quickstart.md)
 records the whole upstream contract, the shape of the warehouse, worked queries
 with their real answers, and how to check the wiring.
 
