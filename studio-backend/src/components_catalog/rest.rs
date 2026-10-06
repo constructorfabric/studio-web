@@ -382,6 +382,7 @@ pub struct ProductPreviewRequest {
     /// Display name. Omitted means the id.
     pub name: Option<String>,
     /// Gears by crate name (`cf-gears-api-gateway`) or engine id (`api-gateway`).
+    /// Empty only with `write`: the description a product project starts from.
     pub gears: Vec<String>,
     /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
     pub profile: Option<String>,
@@ -2693,6 +2694,11 @@ async fn gearbox_status(
     }))
 }
 
+/// Where a project's product description lives in its repository: the root,
+/// which both the portal and the IDE's Gearbox look in first. Recorded with
+/// every write, so a reader follows the record rather than this constant.
+const PRODUCT_GDL_PATH: &str = "product.gdl";
+
 async fn preview_product(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -2705,7 +2711,9 @@ async fn preview_product(
             .with_constraint(format!("{e:#}"))
             .create()
     };
-    if body.gears.is_empty() {
+    // Saving no gears is how a product project gets its `product.gdl` when it
+    // is created; previewing none has nothing to show.
+    if body.gears.is_empty() && !body.write.unwrap_or(false) {
         return Err(invalid(anyhow::anyhow!("pick at least one gear")));
     }
     let profile = body.profile.clone().unwrap_or_else(|| "dev".to_string());
@@ -2752,7 +2760,7 @@ async fn preview_product(
                 &project_id.to_string(),
                 branch.as_deref(),
                 &[super::scaffold::ScaffoldFile {
-                    path: "product.gdl".to_string(),
+                    path: PRODUCT_GDL_PATH.to_string(),
                     content: preview.product_gdl.clone(),
                 }],
                 &format!("product: describe {} for Gearbox", body.product_id),
@@ -2808,7 +2816,12 @@ async fn preview_product(
     if let Some(w) = &written {
         record.insert(
             "written".into(),
-            serde_json::json!({ "branch": w.branch, "commit_sha": w.commit_sha, "pr_url": w.pr_url }),
+            serde_json::json!({
+                "branch": w.branch,
+                "commit_sha": w.commit_sha,
+                "pr_url": w.pr_url,
+                "path": PRODUCT_GDL_PATH,
+            }),
         );
     }
     if let Err(e) = catalog
@@ -3678,7 +3691,8 @@ pub fn register_routes(
          validate and resolve it for one deployment profile. Returns the \
          description, the engine's diagnostics, and the applications and gears \
          the resolution arrived at. With `write`, also commits product.gdl to \
-         the project's gear repo on a new branch.",
+         the project's gear repo on a new branch. `write` with no gears commits \
+         the description a new product project starts from, without resolving it.",
     )
     .tag("StudioComponentsCatalog")
     .authenticated()

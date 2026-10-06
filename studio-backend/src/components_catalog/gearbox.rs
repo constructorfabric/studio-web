@@ -1835,6 +1835,17 @@ impl Gearbox {
             pin,
             &by_id,
         );
+        // A product at its project's birth names no gears yet. There is nothing
+        // for the engine to resolve, and the description is still the file the
+        // project starts from: picking gears later rewrites it.
+        if input.gears.is_empty() {
+            return Ok(Preview {
+                product_gdl,
+                composition,
+                resolution: Resolution::default(),
+                corpus_commit: commit,
+            });
+        }
 
         let bin = self.cfg.bin.clone();
         let gdl = product_gdl.clone();

@@ -100,6 +100,7 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
+import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import {
   BookIcon,
@@ -3745,6 +3746,41 @@ function WorkspaceProjects({
       },
     });
 
+    // The repository a step below gives the project, as one of its sources.
+    // `project.config` `sources[]` is what a session, the desktop and the git
+    // proxy clone; a repository recorded only as the gear repo was one the IDE
+    // never opened, so the description written into it was nowhere to be seen.
+    const cloneUrlOf = (ctx: CreateCtx) => ctx.cloneUrl || `https://github.com/${ctx.repoFull}`;
+    const sourcesStep: ProvisionStep<CreateCtx> = {
+      key: "sources",
+      label: "Repository in the project's sources",
+      check: async (ctx) => {
+        const cfg = await api.projectConfig(token, ctx.tenantId).catch(() => null);
+        return hasRepository(cfg?.sources, cloneUrlOf(ctx));
+      },
+      run: async (ctx) => {
+        // "" is the backend's "first GitHub connection"; a source has to name one.
+        const connection = connId || gitConnections[0]?.id;
+        if (!connection) throw new Error("No GitHub connection to clone the repository through");
+        const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
+        const cloneUrl = cloneUrlOf(ctx);
+        if (hasRepository(cfg.sources, cloneUrl)) return;
+        await api.putProjectConfig(token, ctx.tenantId, {
+          ...cfg,
+          source_git_url: cfg.source_git_url || cloneUrl,
+          sources: [
+            ...(cfg.sources ?? []),
+            {
+              connection_id: connection,
+              full_path: ctx.repoFull,
+              clone_url: cloneUrl,
+              ...(ctx.branch ? { branch: ctx.branch } : {}),
+            },
+          ],
+        });
+      },
+    };
+
     // 4) The gear's repository, and the gear.
     //
     //    Only a `new_gears` project has these: it is the one kind whose whole
@@ -3793,6 +3829,7 @@ function WorkspaceProjects({
           ctx.cloneUrl = existingRepo.clone_url;
         },
       });
+      steps.push(sourcesStep);
 
       steps.push({
         key: "scaffold",
@@ -3868,6 +3905,27 @@ function WorkspaceProjects({
           ctx.repoFull = created.full_name;
           ctx.branch = created.default_branch;
           ctx.cloneUrl = created.html_url;
+        },
+      });
+      steps.push(sourcesStep);
+
+      // The product's description, from the first minute. It names no gears
+      // yet; picking them on the Components tab rewrites this same file on
+      // this same branch, so the project has one `product.gdl` from creation
+      // on, rather than none until somebody presses Save.
+      steps.push({
+        key: "product",
+        label: "product.gdl",
+        check: async (ctx) =>
+          !!(await api.projectProduct(token, ctx.tenantId).catch(() => null))?.written,
+        run: async (ctx) => {
+          await api.previewProduct(token, ctx.tenantId, {
+            product_id: productIdFrom(name),
+            name,
+            gears: [],
+            write: true,
+            onto_base: true,
+          });
         },
       });
 

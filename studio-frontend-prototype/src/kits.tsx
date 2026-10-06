@@ -1127,7 +1127,9 @@ function ProductCard({
    *  saved and unchanged is opened as it is. */
   const desktop = useDesktopLauncher();
   const openOnDesktop = (branch: string | undefined) =>
-    desktop.launch(desktopLink({ id: projectId, name: projectName, product: "product.gdl", branch }));
+    desktop.launch(
+      desktopLink({ id: projectId, name: projectName, product: record?.written?.path ?? "product.gdl", branch }),
+    );
   const buildInTheia = async () => {
     let branch = record?.written?.branch;
     if (!branch || stale || !preview) {
