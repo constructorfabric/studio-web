@@ -47,7 +47,7 @@ grep -c 'use .* as _;' src/registered_gears.rs      # платформенных
   два реестра смысла; продукт: фронт, навигация, роли).
 - `../theia-bridge-architecture.md` — детали моста backend ↔ Theia (ADR-0022).
 - `../graph-storage-*.md` — граф: API, быстрый старт, отчёт со стенда.
-- `../insight-quickstart.md` — Constructor Insight: контракт внешнего API,
+- `../../../docs/insight-quickstart.md` — Constructor Insight: контракт внешнего API,
   что лежит в его складе и как это достать (запросы с реальными ответами),
   как гир обслуживает вызов и как подать токен в кластере.
 - Живой контракт запущенной сборки: `http://localhost:8090/cf/docs`.

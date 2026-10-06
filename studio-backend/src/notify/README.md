@@ -6,7 +6,7 @@ The design — why a notification is queued rather than sent, why the run in
 `studio-tasks` is the only record, what the accept path refuses and why there,
 and how a failure is judged worth another attempt — is
 [`docs/design/studio-notify.md`](../../../docs/design/studio-notify.md). Worked
-examples are [`docs/queued-notifications.md`](../../docs/queued-notifications.md).
+examples are [`docs/queued-notifications.md`](../../../docs/queued-notifications.md).
 This README is what you need to work in the directory.
 
 ## REST
