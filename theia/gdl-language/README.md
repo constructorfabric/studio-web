@@ -14,11 +14,11 @@
 > twice.
 
 `gear.gdl` and `product.gdl` in VS Code: highlighting, plus diagnostics,
-completion and hover from [Gearbox](https://github.com/MikeFalcon77/gearbox).
+completion and hover from [Gearbox](https://github.com/constructorfabric/gearbox).
 
 The engine is the language server. `gearbox rpc --stdio` answers LSP
 `initialize`, `didOpen`/`didChange` with `publishDiagnostics` (the `GBX…` codes of
-[gdl.md](https://github.com/MikeFalcon77/gearbox/blob/main/docs/gdl.md)),
+[gdl.md](https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md)),
 `completion` and `hover`. This extension starts it and lets
 `vscode-languageclient` carry the protocol; it has no GDL semantics of its own.
 

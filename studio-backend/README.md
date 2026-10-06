@@ -145,5 +145,5 @@ Everything below was exercised over HTTP against the live server — the same wa
 1. ~~ADR: identity mapping~~ — done: `docs/adr/0001-identity-mapping.md` (decision: dedicated `studio-identity` gear).
 2. Studio PDP plugin (member/reviewer/owner workspace roles) replacing static-authz.
 3. ~~Postgres config profile + docker-compose~~ — done: `config/postgres.yaml` + `docker-compose.yml` (untested against a live Postgres yet).
-4. ~~gears-rust issue drafts~~ — done: `docs/gears-rust-issues.md` (3 issues, ready to file).
+4. ~~gears-rust issue drafts~~ — done: `docs/upstream/gears-rust-issues.md` (3 issues, ready to file).
 5. `studio-identity` gear: PRD/DESIGN via the gears SDLC kit, then implementation.

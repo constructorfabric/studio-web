@@ -3,78 +3,34 @@
 Launches, tracks and reaps the per-workspace Theia IDE sessions — Studio's
 first gear of its own.
 
-## Why it exists
-
-The IDE is not a page in the portal; it is a running container with a checkout,
-credentials and an agent runtime inside it. Somebody has to decide when one
-starts, what goes into it, who may reach it, and when it stops costing money.
-That is this gear.
-
-See `docs/adr/0003-theia-sessions.md` for the architecture.
-
-## One contract, two runtimes
-
-The runtime lives behind `driver::SessionDriver`:
-
-| Driver | Runs | Reached by |
-|---|---|---|
-| `docker.rs` | a container on the local daemon (the MVP) | a published loopback port |
-| `k8s.rs` | a Pod + ClusterIP Service per session | the backend's authenticated proxy (`proxy.rs`) |
-
-The REST contract and the portal flow do not change with the backend.
-
-## The runtime is the registry
-
-Sessions are **not** kept in a map this process owns. The Docker daemon and the
-Kubernetes API are what know which sessions exist: they create them, they
-outlive a backend restart, and they answer the same for every replica. This gear
-lists them from the driver and caches the answer for `registry_ttl_secs`.
-
-Two consequences worth knowing:
-
-- A session's id is **derived**, not drawn: `session_id_for(workspace_id)` is a
-  UUIDv5 over the workspace, because the service admits one live session per
-  workspace and the runtime already names the container after it. Every process,
-  before or after a restart, calls a session by the same name.
-- Whether the IDE is *answering* is the one thing the runtime cannot report — a
-  Pod is `Running` well before Theia binds — so it is probed and remembered
-  across listings. The probe lives inside the read, which means **a read is what
-  advances the state**: nothing promotes `starting` to `running` on its own.
-- So a launch queues a `session.await_ready` run (`ready_task.rs`) to do that
-  reading. A session comes up whether or not the caller stays to watch, and how
-  long it took is a row. Its result names the session and the state it reached
-  and never the URL — that embeds a one-shot gate token, and a run's result is
-  broadcast to every subscriber in the tenant.
-- Queuing it is best-effort: a deployment without [`../tasks`](../tasks) still
-  launches sessions, and the caller polls `GET /sessions/{id}` as it always did.
-
-The reaper (`reap_task.rs`) also works from the driver, fired by
-[`../scheduler`](../scheduler) rather than by a timer of its own.
-
-## What goes into a session
-
-Minted per session and injected as env: a 256-bit **gate token** (the container
-refuses requests without it) and, when the Theia bridge is on, a distinct
-**S2S control token** for [`../studio_theia`](../studio_theia). Repository PATs
-and agent provider keys are resolved from credstore under the *caller's*
-identity, so a workspace only receives keys its tenant may read — a missing one
-is a warning and the session still starts.
-
-## REST
-
-| Method + path | Does |
-|---|---|
-| `POST /sessions` | launch, or reuse the live session for this workspace |
-| `GET /sessions` | the tenant's sessions |
-| `GET /sessions/{id}` | one session; promotes `starting` → `running` |
-| `DELETE /sessions/{id}` | stop and remove it |
-| `/ide/{id}/…` | the browser's proxy path into a Kubernetes session |
+The design — why the runtime is the registry, who may reach a session, what
+goes into its container, the drivers, the readiness and reaping runs, desktop
+leases, the REST surface — is
+[`docs/design/studio-session.md`](../../../docs/design/studio-session.md). This
+README is what you need to work in the directory.
 
 ## In the assembly
 
 - Gear `studio-session`, capabilities `[rest, stateful]`, deps
   `account_management`, `credstore`.
 - Config section `gears.studio-session`; `enabled: false` keeps the gear booting
-  and the routes answering 503, for hosts with no Docker.
+  and the session routes answering 503, for hosts with no Docker. `driver` is
+  `docker` (default) or `kubernetes`.
+- Registers the `session.await_ready` and `session.reap` handlers with
+  [`../tasks`](../tasks), and asks [`../scheduler`](../scheduler) for the
+  `session-reaper` schedule (`platform_schedules()` in `mod.rs`).
+- Publishes `StudioSessionDiscoveryClientV1` (`sdk.rs`) for
+  [`../studio_theia`](../studio_theia); it resolves nothing unless
+  `theia_control_enabled`.
 - The Helm chart refuses a second backend replica while sessions are on — see
   the note in `deploy/helm/studio-web/values.yaml`.
+
+## Working here
+
+- The rules worth testing sit behind seams with fakes: `SessionDriver`
+  (`driver.rs`), `WorkspaceAccess` (`access.rs`), `SessionActivity`
+  (`service.rs`), and the plain `launch_sources::plan`. The service tests run a
+  fake runtime, so none needs Docker or a cluster.
+- `session_id_for` is pinned by a test: changing it renames every live session.
+- The four `k8s_session_*` defaults are pinned against the namespace quota
+  arithmetic in `deploy/helm/studio-web/values.yaml`; change both together.

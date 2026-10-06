@@ -35,6 +35,23 @@ pub struct PlatformIdentityDto {
     pub home_tenant_id: Option<Uuid>,
     pub home_tenant_name: Option<String>,
     pub organization_role: Option<String>,
+    /// Studio's memberships of this person — where they actually belong.
+    /// `home_tenant_*` and `organization_role` are the IdP's attributes and are
+    /// not rewritten when a membership changes elsewhere. Absent when
+    /// studio-user could not be asked; `status` then comes from the attributes.
+    pub memberships: Option<Vec<DirectoryMembershipDto>>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DirectoryMembershipDto {
+    #[schema(value_type = String)]
+    pub org_id: Uuid,
+    pub org_name: Option<String>,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+    /// `active` or `suspended`.
+    pub status: String,
 }
 
 #[derive(Debug)]
@@ -97,6 +114,16 @@ fn to_dto(identity: DirectoryIdentity) -> PlatformIdentityDto {
         home_tenant_id: identity.home_tenant_id,
         home_tenant_name: identity.home_tenant_name,
         organization_role: identity.organization_role,
+        memberships: identity.memberships.map(|held| {
+            held.into_iter()
+                .map(|m| DirectoryMembershipDto {
+                    org_id: m.org_id,
+                    org_name: m.org_name,
+                    role: m.role,
+                    status: m.status,
+                })
+                .collect()
+        }),
     }
 }
 
@@ -146,9 +173,12 @@ async fn list_identities(
 ) -> ApiResult<JsonBody<PlatformIdentityListDto>> {
     require_platform_admin(&ctx, &people).await?;
     let service = configured_service(service)?;
-    let directory = service.list(&ctx).await.map_err(|error| {
-        CanonicalError::internal(format!("identity directory failed: {error:#}")).create()
-    })?;
+    let directory = service
+        .list(&ctx, people.0.as_deref())
+        .await
+        .map_err(|error| {
+            CanonicalError::internal(format!("identity directory failed: {error:#}")).create()
+        })?;
     Ok(Json(PlatformIdentityListDto {
         items: directory.identities.into_iter().map(to_dto).collect(),
         truncated: directory.truncated,
@@ -165,9 +195,29 @@ async fn assign_identity(
 ) -> ApiResult<StatusCode> {
     require_platform_admin(&ctx, &people).await?;
     let role = req.role.trim().to_ascii_lowercase();
-    if !matches!(role.as_str(), "owner" | "member") {
+    // The membership roles studio-user accepts; an `admin` offered nowhere
+    // here was demoted to `member` by every re-assignment.
+    if !matches!(role.as_str(), "owner" | "admin" | "member") {
         return Err(IdentityDirectoryError::invalid_argument()
-            .with_constraint("role must be owner or member")
+            .with_constraint("role must be owner, admin or member")
+            .create());
+    }
+    // A platform administrator belongs to the platform root (ADR-0018 §3).
+    // Assigning one would rewrite their IdP home and groups to a single
+    // organization — the directory's row offered exactly that as "Update".
+    // Their place in an organization is a membership, made on its People screen.
+    if let Some(reader) = people.0.as_deref()
+        && reader
+            .is_platform_admin(&identity_id)
+            .await
+            .unwrap_or(false)
+    {
+        return Err(IdentityDirectoryError::failed_precondition()
+            .with_precondition_violation(
+                identity_id.clone(),
+                "a platform administrator is not assigned from the directory;                  add them on the organization's People screen instead",
+                "PLATFORM_ADMIN_NOT_ASSIGNABLE",
+            )
             .create());
     }
     configured_service(service)?
@@ -249,7 +299,7 @@ pub fn register_routes(
         .operation_id("studio_identity.assign_user")
         .summary("Assign an identity to an organization")
         .description(
-            "Platform-admin-only onboarding action. Updates the Keycloak tenant membership and the organization-level Owner/Member designation.",
+            "Platform-admin-only onboarding action. Updates the Keycloak tenant membership and the              organization-level Owner/Admin/Member designation, and records the Studio membership.              A platform administrator is refused (400 `PLATFORM_ADMIN_NOT_ASSIGNABLE`): their              place in an organization is a membership made on its People screen.",
         )
         .tag("StudioIdentity")
         .authenticated()

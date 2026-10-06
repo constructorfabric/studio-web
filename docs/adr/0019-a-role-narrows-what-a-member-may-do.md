@@ -276,7 +276,7 @@ its DESIGN's "Metadata steward" row already says per-schema grants are explicit.
 What is missing is a way for a PDP to read its own policy document without that
 read being a decision — which is what makes the family-wide escape necessary in
 the first place. That is written up for the platform in
-`studio-backend/docs/account-management-requests.md`, together with a second,
+`docs/upstream/account-management-requests.md`, together with a second,
 smaller ask: a schema that names its owning gear, so a document with one writer
 is not reachable through a generic route at all.
 

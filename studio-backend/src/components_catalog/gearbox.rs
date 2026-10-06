@@ -1,6 +1,6 @@
 //! Product preview through the Gearbox engine.
 //!
-//! Gearbox (<https://github.com/MikeFalcon77/gearbox>) resolves a product out
+//! Gearbox (<https://github.com/constructorfabric/gearbox>) resolves a product out
 //! of gears: which gears a selection really pulls in, which applications they
 //! land in, and what cannot work, as `GBX…` diagnostics. Its input is a
 //! `product.gdl` plus the `gear.gdl` descriptors beside the gears. This module
@@ -105,7 +105,11 @@ pub struct EngineGear {
     pub id: String,
     pub package: EnginePackage,
     /// Set on a plugin: the extension point it fills, named by its SDK crate.
-    #[serde(default)]
+    ///
+    /// The engine calls it `implements` since gearbox#2 (`fills` renamed, no
+    /// alias on its side). Both are read: under `serde(default)` an unknown
+    /// name is not an error, it is every plugin silently becoming a gear.
+    #[serde(default, alias = "implements")]
     pub fills: Option<EngineFills>,
     /// Set on a host: the extension points plugins fill.
     #[serde(default)]
@@ -1214,7 +1218,7 @@ pub fn render_product_gdl(
          #\n\
          #   gearbox resolve --root ../{src} --product product.gdl --profile dev\n\
          #\n\
-         # Reference: https://github.com/MikeFalcon77/gearbox/blob/main/docs/gdl.md\n\
+         # Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md\n\
          \n\
          product(\n\
          \x20   id = {id},\n\
@@ -2047,6 +2051,25 @@ fn run_engine(bin: &Path, args: &[String], cwd: Option<&Path>) -> anyhow::Result
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_plugin_is_read_under_the_engines_new_name_too() {
+        let gear: EngineGear = serde_json::from_value(json!({
+            "id": "static-authn-plugin",
+            "package": {"crate_name": "cf-gears-static-authn-plugin"},
+            "implements": {
+                "spec": "cf.core.authn_resolver.plugin.v1~",
+                "point": {"sdk": {"crate_name": "cf-gears-authn-resolver-sdk"}},
+                "default_vendor": "constructorfabric"
+            }
+        }))
+        .expect("an engine gear with `implements` deserializes");
+        let point = gear
+            .fills
+            .expect("`implements` is the plugin's point")
+            .point;
+        assert_eq!(point.sdk.crate_name, "cf-gears-authn-resolver-sdk");
+    }
 
     /// The corpus shape that matters: a host with an extension point, two
     /// plugins filling it, and a gear that is neither.

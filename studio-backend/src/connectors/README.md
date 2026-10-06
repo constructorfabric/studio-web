@@ -4,51 +4,25 @@ The providers Studio talks to, and the credentials it talks with. One
 connection is configured once per tenant; everything else — repositories, model
 keys, chat channels — is picked from a list.
 
-## Why it exists
-
-The portal used to ask for a clone URL, a branch and a `token_ref` for every
-repository, in every workspace. That put a secret in the browser's hands on
-every launch and made "which repositories do we have" a question nobody could
-answer. A connection replaces all of it: the API returns the credstore
-*reference*, never the token, so launching a session with private repositories
-needs no secret handling in the browser at all.
-
-## Three kinds, one contract
-
-The difference between them is only which capabilities of the driver contract a
-driver implements:
-
-- **source hosts** — GitLab, GitHub, Bitbucket: bring repositories in.
-- **model providers** — Anthropic, OpenAI: the key the IDE agents authenticate
-  with.
-- **chat platforms** — Slack, Zulip, Discord: where notifications are
-  delivered, each with a bot-token and an incoming-webhook variant.
-
-## Three moving parts, deliberately separated
-
-| Part | Knows | Lives in |
-|---|---|---|
-| **driver** (`ConnectorDriver`) | one provider's API | `plugin.rs` — each driver is its own plugin gear |
-| **connection** (`service::Connection`) | a tenant's binding of driver + installation + credential | tenant metadata; the token in credstore |
-| **gear** (`StudioConnectorGear`) | resolving drivers, the catalogue, REST | this module |
-
-Adding a provider means adding a plugin, not editing this gear. A driver
-registers a `PluginV1` instance under `cf.studio.connector.plugin.v1~` and
-publishes itself as a scoped ClientHub client.
-
-Credential visibility is credstore's sharing mode — personal, workspace,
-organization — rather than a concept invented here.
+The design — why a connection replaces per-repository URLs and tokens, the
+driver / connection / gear split, why a provider is a plugin, how scope maps
+onto credstore, the guards on editing and moving a connection, the repository
+import and the routes — is
+[`docs/design/studio-connector.md`](../../../docs/design/studio-connector.md).
+This README is what you need to work in the directory.
 
 ## REST
 
 | Method + path | Does |
 |---|---|
 | `GET /providers` | which drivers this deployment has |
-| `GET`/`POST`/`PATCH`/`DELETE /connections[/{id}]` | the tenant's connections |
+| `GET`/`POST /connections` | the tenant's connections; add one |
+| `PATCH`/`DELETE /connections/{id}` | relabel, move, rotate; remove |
 | `POST /connections/{id}/test` | prove the credential still works |
 | `GET /connections/{id}/repositories` | pick a repository instead of typing a URL |
 | `GET /connections/{id}/targets` | chat channels this connection can reach |
 | `POST /connections/{id}/messages` | send one now (the synchronous path) |
+| `POST /connections/{id}/files` | publish one file, optionally as a pull request |
 | `POST /connections/{id}/graph-sync` → `GET /studio-tasks/v1/runs/{id}` | mirror the provider into the graph |
 | `POST /probe` | check a credential before storing it |
 | `GET /sources/{source}/sharing?project_id=&head=` | how a project's repository shares edits |
@@ -84,6 +58,20 @@ Notifications that must survive a failure go through
 
 ## In the assembly
 
-- Gear `studio-connector` plus one plugin gear per provider, capabilities
-  `[rest]`, deps `types_registry`, `account_management`, `credstore`.
-- Config sections `gears.studio-connector` and `gears.<provider>-connector-plugin`.
+- Gear `studio-connector`, capabilities `[rest]`, deps `types_registry`,
+  `account_management`, `credstore`; no database (the catalogue is tenant
+  metadata, the tokens are in credstore).
+- One plugin gear per provider (`<provider>-connector-plugin`, eleven of them
+  in `plugin.rs`), deps `types_registry`.
+- Config sections `gears.studio-connector` and
+  `gears.<provider>-connector-plugin` (`vendor`, `priority`).
+- Registers the task type `connector.graph_sync` with
+  [`../tasks`](../tasks) when built with the `graph` feature.
+
+## Adding a provider
+
+A driver module implementing `driver::ConnectorDriver` (only the capabilities
+the provider has; the rest refuse by default), a plugin gear in its own child
+module of `plugin.rs`, an instance id in `gts.rs`, and that id in
+`KNOWN_DRIVERS` in `mod.rs`. Its base URL rule (`url_guard::HostRule`) is
+`OneOf` its own hosts unless the provider can be self-hosted.

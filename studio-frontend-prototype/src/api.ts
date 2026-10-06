@@ -36,9 +36,21 @@ export interface PlatformIdentity {
   identity_provider?: string;
   first_seen_at_epoch_ms?: number;
   status: "platform_admin" | "assigned" | "unassigned";
+  /** The IdP's attributes — not rewritten when a membership changes. */
   home_tenant_id?: string;
   home_tenant_name?: string;
-  organization_role?: "owner" | "member";
+  organization_role?: string;
+  /** Where Studio records them as belonging — the authority (ADR-0011 §2).
+   *  Absent when studio-user could not be asked; `status` then follows the
+   *  attributes. Includes the platform root for a platform admin. */
+  memberships?: DirectoryMembership[] | null;
+}
+
+export interface DirectoryMembership {
+  org_id: string;
+  org_name?: string | null;
+  role: string;
+  status: "active" | "suspended" | string;
 }
 
 /** The roles a membership may carry (studio-user `MEMBERSHIP_ROLES`). Only an
@@ -57,6 +69,34 @@ export interface OrgMember {
   source: string;
   created_at_epoch_ms: number;
   updated_at_epoch_ms: number;
+}
+
+/** One way a person signs in. For `provider: "keycloak"` the subject is the
+ *  realm user id — the `id` of a `PlatformIdentity`. */
+export interface PersonLogin {
+  provider: string;
+  subject: string;
+  verified: boolean;
+  linked_at_epoch_ms: number;
+}
+
+/** An external account attributed to a person (`github`, `email`, …). */
+export interface PersonAlias {
+  kind: string;
+  external_id: string;
+  /** suggested | claimed | confirmed */
+  confidence: string;
+  /** Activity on it counts as theirs — only when confirmed. */
+  attributes: boolean;
+  added_at_epoch_ms: number;
+}
+
+/** A member's identities, from
+ *  `GET /studio-user/v1/organizations/{org}/members/{user}/identities`. */
+export interface MemberIdentities {
+  user_id: string;
+  logins: PersonLogin[];
+  aliases: PersonAlias[];
 }
 
 export interface OrgInvitation {
@@ -2343,7 +2383,7 @@ export const api = {
   assignPlatformIdentity: (
     token: string,
     identityId: string,
-    input: { tenant_id: string; role: "owner" | "member" },
+    input: { tenant_id: string; role: MembershipRole },
   ) =>
     request<void>(`/studio-identity/v1/users/${encodeURIComponent(identityId)}/assignment`, token, {
       method: "POST",
@@ -2357,6 +2397,14 @@ export const api = {
       `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members`,
       token,
       "items",
+    ),
+
+  /** One member's sign-in methods and attributed accounts. `people.view`, and
+   *  only for somebody in that organization (404 otherwise). */
+  memberIdentities: (token: string, orgId: string, userId: string) =>
+    request<MemberIdentities>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}/identities`,
+      token,
     ),
 
   /** Add somebody, change their role, or suspend/resume them — one write. An

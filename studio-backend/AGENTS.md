@@ -6,7 +6,7 @@ regression. Read them before changing a gear.
 ## Reading the artifact graph: never `list()` and then filter
 
 graph-storage's projection cannot filter or order on payload fields
-(`docs/graph-storage-requests.md` §5), and `scope`, `repo` and `updated_at` are
+(`docs/upstream/graph-storage-requests.md` §5), and `scope`, `repo` and `updated_at` are
 all payload fields. So `GraphStore::list()` walks the tenant's **whole** typed
 node set in pages of 200, one after another. On studio-dev (2026-09-25) that
 was 24–33 thousand nodes and **12–20 s per call**, which put `/nodes`,
@@ -14,7 +14,7 @@ was 24–33 thousand nodes and **12–20 s per call**, which put `/nodes`,
 product dashboard.
 
 The fix is `studio_artifact_index`, a Postgres mirror of the graph
-(`src/artifact_ingest/index.rs`, explained in `src/artifact_ingest/README.md`).
+(`src/artifact_ingest/index.rs`, explained in `../docs/design/studio-artifact-ingest.md`).
 For it to work, every artifact read and write has to go through its API:
 
 - **Read by scope** with `GraphStore::list_in_scope`, `count_in_scope`,
@@ -41,7 +41,7 @@ graph-storage has payload `$filter`/`$orderby` since weftgraph 0.1.1, and that
 is still not enough to delete the index: the projection has no count, no
 offset, and no index behind a payload ordering, and the in-process client
 cannot update a stored type to declare the paths. The gaps and the migration
-are in `docs/graph-storage-requests.md`, item 5, "Status". When they close,
+are in `docs/upstream/graph-storage-requests.md`, item 5, "Status". When they close,
 delete the index rather than keep two mirrors in step.
 
 ## Gear databases

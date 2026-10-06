@@ -337,7 +337,7 @@ Planned. The Studio PDP **MUST** map a Studio resource type and action to a priv
 
 - [x] `p2` - **ID**: `cpt-studio-fr-presence`
 
-The system **MUST** report who is in Studio from portal heartbeats and deliver a direct message to an online person over the push channel without storing it.
+The system **MUST** report who is in Studio from portal heartbeats and deliver a direct message to an online person on their next heartbeat without storing it.
 
 - **Rationale**: An administrator asked who is working now and how to reach them (`studio_presence` module documentation).
 - **Actors**: `cpt-studio-actor-member`
@@ -350,7 +350,7 @@ The system **MUST** report who is in Studio from portal heartbeats and deliver a
 
 The system **MUST** let a tenant configure one connection per provider — source hosts GitHub, GitLab and Bitbucket; model providers Anthropic and OpenAI; chat platforms Slack, Zulip and Discord, each with a bot-token and an incoming-webhook variant — verify the credential when it is created, and list repositories, targets and files through it, returning the credstore reference and never the token.
 
-- **Rationale**: One connection replaces a clone URL and a token per repository per workspace (`studio-backend/src/connectors/README.md`).
+- **Rationale**: One connection replaces a clone URL and a token per repository per workspace ([studio-connector](../design/studio-connector.md)).
 - **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-provider`
 
 #### Durable credentials
@@ -368,7 +368,7 @@ The system **MUST** keep credential values across a backend restart, encrypted i
 
 The system **MUST** validate a notification to a chat connection, queue it, deliver it with retries, and keep what cannot be delivered as a dead-letter record.
 
-- **Rationale**: A message dropped inside a request handler is dropped for good (`studio-backend/src/notify/README.md`).
+- **Rationale**: A message dropped inside a request handler is dropped for good ([studio-notify](../design/studio-notify.md)).
 - **Actors**: `cpt-studio-actor-provider`
 
 #### Notifications that leave Studio
@@ -415,7 +415,7 @@ The session IDE **MUST** provide the Studio surfaces as Theia extensions: the po
 
 The system **MUST** expose an OpenAI-compatible chat-completions, models and client-config endpoint that authenticates the caller with the member's Studio token and attaches the server-held provider key on the way upstream, streaming responses through.
 
-- **Rationale**: A provider key in the container is readable by anything in it (`studio-backend/src/llm_proxy/README.md`).
+- **Rationale**: A provider key in the container is readable by anything in it ([studio-llm-proxy](../design/studio-llm-proxy.md)).
 - **Actors**: `cpt-studio-actor-agent`
 
 #### Workspace AI chat
@@ -435,7 +435,7 @@ The system **MUST** offer workspace AI chat through the mini-chat gear and its L
 
 The system **MUST** hold document types (template, section checklist, rules, questionnaire), lifecycle stages and the capability vocabulary at organization level, overridable per workspace with a tombstone that hides an inherited entry.
 
-- **Rationale**: An organization's opinion of what a document contains becomes data (`studio-backend/src/documents/README.md`, ADR-0014).
+- **Rationale**: An organization's opinion of what a document contains becomes data ([studio-documents](../design/studio-documents.md), ADR-0014).
 - **Actors**: `cpt-studio-actor-org-owner`
 
 #### Documents and validation
@@ -444,7 +444,7 @@ The system **MUST** hold document types (template, section checklist, rules, que
 
 The system **MUST** create, read, update and delete documents owned by a workspace and inherited by its projects, compose a PRD from a questionnaire, validate a document against its type's checklist and rules, and report each stage's status for a project.
 
-- **Rationale**: "Is this document complete" gets an answer that is not a person reading it (`studio-backend/src/documents/README.md`).
+- **Rationale**: "Is this document complete" gets an answer that is not a person reading it ([studio-documents](../design/studio-documents.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Documents already in a repository
@@ -462,7 +462,7 @@ The system **MUST** classify each prose file of a project's repository — decla
 
 The system **MUST** submit documents to the external spec-quality service's `bloat`, `purpose`, `leak` and `traceability` detectors through an authenticated passthrough, wait for the result as a background run, and record and interpret each verdict.
 
-- **Rationale**: The service's shared secret must not reach the browser (`studio-backend/src/spec_quality/README.md`).
+- **Rationale**: The service's shared secret must not reach the browser ([studio-spec-quality](../design/studio-spec-quality.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 ### 5.6 Knowledge graph
@@ -473,7 +473,7 @@ The system **MUST** submit documents to the external spec-quality service's `blo
 
 The system **MUST** pull issues, pull requests and files from a connection's repository into the knowledge graph as typed GTS nodes with deterministic ids, so a re-sync upserts, and **MUST** serve nodes, edges, files, activity, quality and search over them.
 
-- **Rationale**: A consumer traverses one graph instead of three provider APIs (`studio-backend/src/artifact_ingest/README.md`).
+- **Rationale**: A consumer traverses one graph instead of three provider APIs ([studio-artifact-ingest](../design/studio-artifact-ingest.md)).
 - **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-provider`
 
 #### Domain model in the graph
@@ -493,7 +493,7 @@ The system **MUST** store the Studio domain model as GTS types in graph storage,
 
 The system **MUST** sync every crate published under the `constructorfabric` keyword on crates.io into the graph as `gear` and `crate_version` nodes, and serve the components, versions, field schemas, profiles and activity of that catalogue.
 
-- **Rationale**: "What gears are there, at what versions" had no answer inside Studio (`studio-backend/src/components_catalog/README.md`).
+- **Rationale**: "What gears are there, at what versions" had no answer inside Studio ([studio-components-catalog](../design/studio-components-catalog.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Gear scaffolding
@@ -502,7 +502,7 @@ The system **MUST** sync every crate published under the `constructorfabric` key
 
 The system **MUST** record which repository a project's gears live in, create that repository through a connection, and write a gear skeleton into it on a branch, optionally opening a pull request.
 
-- **Rationale**: Once Studio knows what a gear looks like it can create one (`studio-backend/src/components_catalog/README.md`).
+- **Rationale**: Once Studio knows what a gear looks like it can create one ([studio-components-catalog](../design/studio-components-catalog.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Gearbox products
@@ -520,7 +520,7 @@ The system **MUST** compose a `product.gdl` from picked gears, resolve it with t
 
 The system **MUST** read delivery metrics and pull requests per component from Constructor Insight's read-only SQL endpoint through one integration gear.
 
-- **Rationale**: One place of contact when Insight's contract moves (`studio-backend/src/insight/README.md`).
+- **Rationale**: One place of contact when Insight's contract moves ([studio-insight](../design/studio-insight.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Kits
@@ -529,7 +529,7 @@ The system **MUST** read delivery metrics and pull requests per component from C
 
 The system **MUST** serve a kit catalogue and record, per project, which kits are desired, and ask the session to materialize or reconcile an installation; the kit bytes stay in their Git repositories.
 
-- **Rationale**: A kit is versioned where it lives (`studio-backend/src/kit_registry/README.md`).
+- **Rationale**: A kit is versioned where it lives ([studio-kits](../design/studio-kits.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 ### 5.8 Background work and push
@@ -540,16 +540,16 @@ The system **MUST** serve a kit catalogue and record, per project, which kits ar
 
 The system **MUST** record every background job as a run whose state moves `queued → running → succeeded | failed | cancelled`, written with its queue entry in one transaction, and let a caller list, cancel and retry runs.
 
-- **Rationale**: Three gears had each kept an in-memory task map that lost everything on restart (`studio-backend/src/tasks/README.md`).
+- **Rationale**: Three gears had each kept an in-memory task map that lost everything on restart ([studio-tasks](../design/studio-tasks.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Schedules
 
 - [x] `p2` - **ID**: `cpt-studio-fr-schedules`
 
-The system **MUST** keep cron and interval schedules with an IANA time zone, a concurrency policy (`allow | forbid | replace`) and a missed-schedule policy (`skip | catch_up | backfill`), enqueue a run when one is due, and run one on demand.
+The system **MUST** keep cron and interval schedules evaluated in UTC (other time zones are refused until a time-zone database is in), a concurrency policy (`allow | forbid | replace`) and a missed-schedule policy (`skip | catch_up | backfill`), enqueue a run when one is due, and run one on demand.
 
-- **Rationale**: Nothing in gears-rust schedules anything (`studio-backend/src/scheduler/README.md`).
+- **Rationale**: Nothing in gears-rust schedules anything ([studio-scheduler](../design/studio-scheduler.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Push channel to the portal
@@ -681,7 +681,7 @@ The system **MUST** keep every allowed request inside the caller's tenant subtre
 The system **MUST** keep runs, schedules, the event sequence and credential values across a backend restart.
 
 - **Threshold**: a run, schedule, event cursor or credential written before a restart is readable after it.
-- **Rationale**: In-memory registries lost work on every redeploy (`studio-backend/src/tasks/README.md`, `studio-backend/src/studio_events/mod.rs`).
+- **Rationale**: In-memory registries lost work on every redeploy ([studio-tasks](../design/studio-tasks.md), `studio-backend/src/studio_events/mod.rs`).
 - **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
 
 #### Sessions are bounded

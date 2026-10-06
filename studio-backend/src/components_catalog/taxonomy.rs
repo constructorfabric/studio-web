@@ -137,10 +137,14 @@ pub struct Evidence<'a> {
     pub is_npm: bool,
     /// The directory the scan read it from, repository-relative.
     pub path: Option<&'a str>,
-    /// The repository scan found a `gear.toml` for it.
+    /// The repository scan found a gear description for it.
     pub gear_toml: bool,
-    /// `gear.toml` said `is_plugin = …`.
+    /// The description said it is a plugin (`is_plugin = …`, or `implements`).
     pub gear_toml_plugin: Option<bool>,
+    /// The file that description is, `gear.gdl` or `gear.toml`. `None` is a
+    /// profile scanned before the scan recorded it, when only `gear.toml` was
+    /// read.
+    pub manifest: Option<&'a str>,
     /// The roles of the engine gears it is (`service`, `plugin`).
     pub engine_roles: Vec<&'a str>,
     /// The engine's category for it, when a descriptor gives one.
@@ -304,13 +308,14 @@ pub fn classify(e: &Evidence<'_>) -> Classified {
         return classified(Kind::Sdk, "the crate name ends in -sdk/-sdks");
     }
     if e.gear_toml {
+        let manifest = e.manifest.unwrap_or("gear.toml");
         if e.gear_toml_plugin == Some(true) || name.ends_with("-plugin") {
             return classified(
                 Kind::Plugin,
-                format!("a gear.toml{} declaring a plugin", at(path)),
+                format!("a {manifest}{} declaring a plugin", at(path)),
             );
         }
-        return classified(Kind::Gear, format!("a gear.toml{}", at(path)));
+        return classified(Kind::Gear, format!("a {manifest}{}", at(path)));
     }
     if name.ends_with("-plugin") {
         return classified(
@@ -335,11 +340,11 @@ pub struct Categorised {
 }
 
 /// Decide a component's category from, in order: the engine's descriptor,
-/// the `gear.toml` domain, the category of the gear it belongs to (a plugin's
+/// the category the repository scan read (with the file it read it from), the category of the gear it belongs to (a plugin's
 /// host, an SDK's gear), and a crates.io category that maps unambiguously.
 pub fn categorise(
     engine: Option<&str>,
-    gear_toml: Option<&str>,
+    scanned: Option<(&str, &str)>,
     owner: Option<(&str, &str)>,
     registry: &[&str],
 ) -> Categorised {
@@ -350,8 +355,8 @@ pub fn categorise(
     if let Some(c) = engine.filter(|c| is_category(c)) {
         return hit(c, "gear.gdl".to_string());
     }
-    if let Some(c) = gear_toml.filter(|c| is_category(c)) {
-        return hit(c, "gear.toml".to_string());
+    if let Some((c, manifest)) = scanned.filter(|(c, _)| is_category(c)) {
+        return hit(c, manifest.to_string());
     }
     if let Some((c, of)) = owner.filter(|(c, _)| is_category(c)) {
         return hit(c, format!("the category of {of}"));
@@ -523,6 +528,15 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_names_the_file_the_scan_read() {
+        let mut e = krate("cf-gears-bss-ledger");
+        e.gear_toml = true;
+        e.manifest = Some("gear.gdl");
+        e.path = Some("gears/bss/ledger");
+        assert_eq!(classify(&e).reason, "a gear.gdl at gears/bss/ledger");
+    }
+
+    #[test]
     fn crates_that_are_not_gears_are_libraries_or_sdks() {
         for name in [
             "cf-gears-rustls-corecrypto-provider",
@@ -569,15 +583,19 @@ mod tests {
     #[test]
     fn the_engine_category_wins_then_gear_toml_then_the_owner() {
         assert_eq!(
-            categorise(Some("oss"), Some("bss"), None, &["Web programming"])
-                .category
-                .as_deref(),
+            categorise(
+                Some("oss"),
+                Some(("bss", "gear.gdl")),
+                None,
+                &["Web programming"]
+            )
+            .category
+            .as_deref(),
             Some("oss")
         );
-        assert_eq!(
-            categorise(None, Some("bss"), None, &[]).category.as_deref(),
-            Some("bss")
-        );
+        let scanned = categorise(None, Some(("bss", "gear.gdl")), None, &[]);
+        assert_eq!(scanned.category.as_deref(), Some("bss"));
+        assert_eq!(scanned.reason.as_deref(), Some("gear.gdl"));
         let sdk = categorise(
             None,
             None,
@@ -615,7 +633,7 @@ mod tests {
             "test-support",
         ] {
             assert_eq!(
-                categorise(None, Some(raw), None, &[raw]).category,
+                categorise(None, Some((raw, "gear.toml")), None, &[raw]).category,
                 None,
                 "{raw}"
             );

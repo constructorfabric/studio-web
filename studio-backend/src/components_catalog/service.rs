@@ -1349,7 +1349,7 @@ impl CatalogService {
     }
 
     /// Read the selected sources into gear + version nodes and upsert them.
-    /// Repository gears are discovered from `gear.toml` directories; crates.io
+    /// Repository gears are discovered from their `gear.gdl` or `gear.toml`; crates.io
     /// contributes published versions. The two merge by crate name. Each phase
     /// (and the counts so far) is reported to `progress`.
     pub async fn run_sync(

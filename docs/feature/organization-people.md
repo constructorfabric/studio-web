@@ -22,6 +22,7 @@ owner: studio-team
   - [1.5 The API it stands on](#15-the-api-it-stands-on)
 - [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
   - [See who is in the organization](#see-who-is-in-the-organization)
+  - [Open a member's identities](#open-a-members-identities)
   - [Change a member's role](#change-a-members-role)
   - [Suspend or resume a member](#suspend-or-resume-a-member)
   - [Remove a member](#remove-a-member)
@@ -110,6 +111,7 @@ not the Keycloak subject.
 | Route | Gate | Answer |
 |---|---|---|
 | `GET /studio-user/v1/organizations/{org}/members?offset=&limit=` | `people.view` | `{ items: [{ user_id, display_name?, email?, role, status, source, created_at_epoch_ms, updated_at_epoch_ms }], total }` |
+| `GET /studio-user/v1/organizations/{org}/members/{user}/identities` | `people.view` | `{ user_id, logins: [{ provider, subject, verified, linked_at_epoch_ms }], aliases: [{ kind, external_id, confidence, attributes, added_at_epoch_ms }] }`; `404` for somebody not in `{org}` |
 | `PUT /studio-user/v1/users/{user}/memberships/{org}` | `people.manage` | body `{ role: "owner"\|"admin"\|"member", status?: "active"\|"suspended", source?: "assignment"\|"manual" }` → the membership |
 | `DELETE /studio-user/v1/users/{user}/memberships/{org}` | `people.manage` | 204 |
 | `GET /studio-user/v1/organizations/{org}/invitations` | `people.view` | `{ items: [{ id, org_id, email, role, expires_at_epoch_ms, accepted_at_epoch_ms? }] }` |
@@ -175,6 +177,31 @@ flow obliges every instruction to carry a code marker.
 1. [ ] - `p1` - Owner opens People on the organization level - `inst-1`
 2. [ ] - `p1` - Read the room: `cpt-studiofrontend-algo-organization-people-read` - `inst-2`
 3. [ ] - `p1` - **RETURN** the members and the pending invitations - `inst-3`
+
+### Open a member's identities
+
+- [ ] `p2` - **ID**: `cpt-studiofrontend-flow-organization-people-identities`
+
+**Actor**: Organization owner
+
+**Success Scenarios**:
+- The row unfolds into the person's Studio id, every sign-in identity (provider, subject, verified, when linked) and every attributed account (kind, account, confidence, whether activity counts as theirs).
+- A platform administrator also sees, for each Keycloak login, what the directory says: the account's name, username and e-mail, the broker it came through (`github`, or a password), and its directory status.
+
+**Error Scenarios**:
+- The person left meanwhile (`404`); the panel says their identities could not be read, and the next re-read drops the row.
+- The person has no login yet (added before anyone signed in as them); the panel says so rather than showing an empty table.
+
+**Steps**:
+1. [ ] - `p1` - Owner activates the row's ▸ - `inst-1`
+2. [ ] - `p1` - `API: GET /cf/studio-user/v1/organizations/{org}/members/{user}/identities` - `inst-2`
+3. [ ] - `p2` - **IF** the caller is a platform administrator, match each `keycloak` login's `subject` to the directory row with that `id` - `inst-3`
+4. [ ] - `p1` - **RETURN** the logins and the aliases - `inst-4`
+
+Only for somebody in the organization: authority over a room is authority over
+the people in it. Studio's own records, never the IdP: the IdP reader answers
+about the signed-in person alone, so an owner never enumerates realm accounts
+through this screen.
 
 ### Change a member's role
 
@@ -455,6 +482,8 @@ granted in the wrong one because nothing on screen differed.
 
 - [ ] People on the organization level lists every member with name, role, standing and how they joined, from one paged read of `studio-user`.
 - [ ] A person with no profile name is shown by e-mail, else by a short id — never as an empty row.
+- [ ] A person assigned from the identity directory is named after their IdP name and e-mail; a name they gave themselves is never overwritten. Re-running the membership backfill names those assigned before this.
+- [ ] Opening a row shows the person's sign-in identities and attributed accounts; a platform administrator also sees the directory's account for each Keycloak login.
 - [ ] A non-owner opening People is told the list is for owners, not shown an empty room.
 - [ ] Changing a role, suspending, resuming and removing each re-read the room; the row shows what the server has.
 - [ ] Promoting someone to owner lets them open this screen immediately; demoting them takes that away.

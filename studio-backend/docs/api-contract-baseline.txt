@@ -232,6 +232,7 @@ scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/session
 scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/status
 scope-in-path	GET /studio-user/v1/organizations/{org_id}/invitations
 scope-in-path	GET /studio-user/v1/organizations/{org_id}/members
+scope-in-path	GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/create-repo
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/product/preview

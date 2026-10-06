@@ -345,7 +345,8 @@ struct RawGear {
     gdl_path: Option<String>,
     #[serde(default)]
     package: RawPackage,
-    #[serde(default)]
+    /// `implements` since gearbox#2; see `EngineGear::fills`.
+    #[serde(default, alias = "implements")]
     fills: Option<RawFills>,
     #[serde(default)]
     extension_points: Vec<RawPoint>,
@@ -850,6 +851,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             path: dir.as_deref(),
             gear_toml: scanned_as == Some("gears"),
             gear_toml_plugin: yes_no(&values, "is_plugin"),
+            manifest: brief(&values, "manifest"),
             engine_roles: roles,
             engine_category,
             stored_kind: text(v, "kind"),
@@ -886,7 +888,9 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 reason: None,
             }
         } else {
-            taxonomy::categorise(engine_category, scan_category, host, &registry)
+            let scanned =
+                scan_category.map(|c| (c, brief(&values, "manifest").unwrap_or("gear.toml")));
+            taxonomy::categorise(engine_category, scanned, host, &registry)
         };
         let mut source_categories: Vec<String> = registry.iter().map(|s| s.to_string()).collect();
         if let Some(c) = scan_category
@@ -1277,6 +1281,17 @@ fn related_crates(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_engine_plugin_is_read_under_implements_too() {
+        let gear: RawGear = serde_json::from_value(json!({
+            "id": "static-authn-plugin",
+            "package": {"crate_name": "cf-gears-static-authn-plugin"},
+            "implements": {"spec": "cf.core.authn_resolver.plugin.v1~"}
+        }))
+        .expect("an engine gear with `implements` deserializes");
+        assert_eq!(gear.fills_spec(), Some("cf.core.authn_resolver.plugin.v1~"));
+    }
 
     fn node(type_id: &'static str, value: Value) -> CatalogNodeView {
         CatalogNodeView {

@@ -174,8 +174,9 @@ impl RepoEnricher {
     }
 
     /// Read the repository and return one [`RepoGear`] per component. What counts
-    /// as a component depends on the mode: a `gear.toml` directory (Gears) or a
-    /// `packages/*/package.json` package (FrontX micro-frontends).
+    /// as a component depends on the mode: a gear directory, described by a
+    /// `gear.gdl` or a `gear.toml` (Gears), or a `packages/*/package.json`
+    /// package (FrontX micro-frontends).
     pub async fn enrich(&self, ctx: &SecurityContext) -> Result<Vec<RepoGear>> {
         let auth = self.resolve_auth(ctx).await?;
         let listing: Vec<String> = match &self.checkout {
@@ -279,14 +280,9 @@ impl RepoEnricher {
         Ok(out)
     }
 
-    /// Gears: one component per `gear.toml` directory.
+    /// Gears: one component per gear directory, as [`gear_dirs`] finds them.
     async fn discover_gears(&self, auth: &ConnectionAuth, paths: &[&str]) -> Result<Vec<RepoGear>> {
-        let mut gear_dirs: Vec<String> = Vec::new();
-        for &p in paths {
-            if p.ends_with("/gear.toml") || p == "gear.toml" {
-                gear_dirs.push(parent_dir(p));
-            }
-        }
+        let gear_dirs = gear_dirs(paths);
         let codeowners = self.read_codeowners(auth).await;
         let wide = self.repo_wide(auth).await;
         let mut out: Vec<RepoGear> = Vec::with_capacity(gear_dirs.len());
@@ -368,6 +364,19 @@ impl RepoEnricher {
             });
         }
         attach_consumers(&mut out, &own);
+        // A plugin compiled into its host's crate is not a component, but it
+        // is still an implementation of the host's point.
+        let mut in_crate: Vec<String> = Vec::new();
+        for p in in_crate_plugin_gdls(paths) {
+            if let Some(spec) = self
+                .read_file(auth, p)
+                .await
+                .and_then(|b| parse_gear_gdl(&b).implements)
+            {
+                in_crate.push(spec);
+            }
+        }
+        attach_plugins(&mut out, &in_crate);
         info!(gears = out.len(), "studio-gears-catalog: gears discovered");
         Ok(out)
     }
@@ -1220,11 +1229,40 @@ impl RepoEnricher {
             }
         }
 
-        // gear.toml: description, category, plugins. Parsed by hand (a handful
-        // of top-level scalars) to avoid a toml dependency in a --locked build.
-        let gear_toml = format!("{dir}/gear.toml");
-        if let Some(text_body) = self.read_file(auth, &gear_toml).await {
-            let parsed = parse_gear_toml(&text_body);
+        // gear.gdl, then gear.toml: description, category, plugins. Both parsed
+        // by hand, the toml to avoid a toml dependency in a --locked build and
+        // the gdl because the engine is a separate binary the sync may not have.
+        //
+        // The gdl is the description now: gears-rust retired its gear.toml
+        // files into it (constructorfabric/gears-rust#4793). A gear.toml still
+        // fills what the gdl leaves out, because Studio's own skeleton writes
+        // both and the engine's scaffolded gdl carries no description.
+        let gdl_path = [format!("{dir}/gear.gdl"), format!("{dir}/{slug}/gear.gdl")]
+            .into_iter()
+            .find(|p| paths.contains(&p.as_str()));
+        let gdl = match &gdl_path {
+            Some(p) => self.read_file(auth, p).await.map(|b| parse_gear_gdl(&b)),
+            None => None,
+        };
+        let toml = self
+            .read_file(auth, &format!("{dir}/gear.toml"))
+            .await
+            .map(|b| parse_gear_toml(&b));
+        let manifest = match (&gdl, &toml) {
+            (Some(_), _) => Some("gear.gdl"),
+            (None, Some(_)) => Some("gear.toml"),
+            (None, None) => None,
+        };
+        let declared = match (gdl, toml) {
+            (Some(gdl), Some(toml)) => Some(gdl.or(toml)),
+            (gdl, toml) => gdl.or(toml),
+        };
+        if let Some(manifest) = manifest {
+            // Which file described it, for the reason line the taxonomy
+            // writes ("a gear.gdl at ...").
+            f.insert("manifest".into(), text(manifest, None, None));
+        }
+        if let Some(parsed) = declared {
             if let Some(desc) = parsed.description {
                 f.insert("description".into(), text(&desc, None, None));
             }
@@ -1235,20 +1273,7 @@ impl RepoEnricher {
                 f.insert("capabilities".into(), text(&caps.join(", "), None, None));
             }
             if let Some(declared) = parsed.plugins {
-                let mut v = status(
-                    if declared { "yes" } else { "no" },
-                    if declared { "good" } else { "grey" },
-                );
-                if let Some(obj) = v.as_object_mut() {
-                    obj.insert(
-                        "v".into(),
-                        Value::String(format!(
-                            "plugins: {}",
-                            if declared { "declared" } else { "none" }
-                        )),
-                    );
-                }
-                f.insert("plugins".into(), v);
+                f.insert("plugins".into(), plugins_status(declared));
             }
             if let Some(declared) = parsed.extension_point {
                 f.insert("extpoint".into(), boolean(declared));
@@ -1258,6 +1283,26 @@ impl RepoEnricher {
             // that the answer was read and not inferred.
             if let Some(is_plugin) = parsed.is_plugin {
                 f.insert("is_plugin".into(), boolean(is_plugin));
+            }
+            if let Some(maturity) = parsed.maturity {
+                f.insert("maturity".into(), text(&maturity, None, None));
+            }
+            // The specs behind `plugins`, which only the whole repository can
+            // answer for a gdl: see `attach_plugins`.
+            if !parsed.extension_points.is_empty() {
+                f.insert(
+                    "extpoint_specs".into(),
+                    Value::Array(
+                        parsed
+                            .extension_points
+                            .into_iter()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if let Some(spec) = parsed.implements {
+                f.insert("implements".into(), Value::String(spec));
             }
         }
 
@@ -1447,6 +1492,57 @@ fn attach_consumers(gears: &mut [RepoGear], own: &[std::collections::BTreeSet<St
             );
         }
     }
+}
+
+/// `plugins` for every gear whose description declares an extension point:
+/// yes when another gear in the repository implements one of its specs.
+///
+/// A gear.toml said so itself (`has_plugins`); a gear.gdl does not, because
+/// whether a point has implementations is a fact about the other gears, so it
+/// is read off them here, and off `in_crate`, the specs implemented by
+/// plugins compiled into a host's crate. A value the gear.toml already set is
+/// left alone.
+fn attach_plugins(gears: &mut [RepoGear], in_crate: &[String]) {
+    let implemented: std::collections::BTreeSet<String> = gears
+        .iter()
+        .filter_map(|g| g.fields.get("implements").and_then(Value::as_str))
+        .map(str::to_string)
+        .chain(in_crate.iter().cloned())
+        .collect();
+    for gear in gears.iter_mut() {
+        let Some(obj) = gear.fields.as_object_mut() else {
+            continue;
+        };
+        if obj.contains_key("plugins") {
+            continue;
+        }
+        let Some(specs) = obj.get("extpoint_specs").and_then(Value::as_array) else {
+            continue;
+        };
+        let declared = specs
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|s| implemented.contains(s));
+        obj.insert("plugins".into(), plugins_status(declared));
+    }
+}
+
+/// The `plugins` cell: whether the gear has plugins.
+fn plugins_status(declared: bool) -> Value {
+    let mut v = status(
+        if declared { "yes" } else { "no" },
+        if declared { "good" } else { "grey" },
+    );
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "v".into(),
+            Value::String(format!(
+                "plugins: {}",
+                if declared { "declared" } else { "none" }
+            )),
+        );
+    }
+    v
 }
 
 // ── value builders (the { v, b, n, s, l, u } shape the UI renders) ───────────
@@ -1696,8 +1792,70 @@ fn codeowners_match(codeowners: &str, dir: &str) -> Option<String> {
     best.map(|(_, o)| o)
 }
 
-/// The few top-level `gear.toml` scalars the catalogue reads.
-struct GearToml {
+/// The directories that are gears.
+///
+/// One for every `gear.toml`, its own directory, and one for every
+/// `gear.gdl`, which is not always its own directory. gears-rust lays a gear
+/// out beside its SDK (`gears/bss/ledger/{ledger,ledger-sdk,docs}`), and the
+/// gear.toml sat at `gears/bss/ledger` while the gear.gdl sits in the crate,
+/// `gears/bss/ledger/ledger`. The gear is still the outer directory: that is
+/// where its documents and its SDK are. So a gdl in a directory named like
+/// its parent makes the parent the gear.
+///
+/// A gear.gdl under `src/` describes a plugin compiled into its host's crate
+/// (mini-chat's `src/infra/plugins/static_audit`). It has no crate or
+/// directory of its own, so it would be catalogued under the host's crate
+/// name, twice. A gear.gdl under `examples/` describes a toolkit example, and
+/// the catalogue never listed those. Both are skipped.
+fn gear_dirs(paths: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for &p in paths {
+        let dir = if p == "gear.toml" || p.ends_with("/gear.toml") {
+            parent_dir(p)
+        } else if p == "gear.gdl" || p.ends_with("/gear.gdl") {
+            let dir = parent_dir(p);
+            if dir
+                .split('/')
+                .any(|seg| matches!(seg, "src" | "examples") || SKIP_SEGMENTS.contains(&seg))
+            {
+                continue;
+            }
+            let parent = parent_dir(&dir);
+            let own = dir.rsplit('/').next().unwrap_or(&dir);
+            if !parent.is_empty() && parent.rsplit('/').next() == Some(own) {
+                parent
+            } else {
+                dir
+            }
+        } else {
+            continue;
+        };
+        if !out.contains(&dir) {
+            out.push(dir);
+        }
+    }
+    out
+}
+
+/// The gear.gdl files [`gear_dirs`] skips for being under `src/`: plugins
+/// compiled into their host's crate.
+fn in_crate_plugin_gdls<'p>(paths: &[&'p str]) -> Vec<&'p str> {
+    paths
+        .iter()
+        .copied()
+        .filter(|p| p.ends_with("/gear.gdl"))
+        .filter(|p| {
+            let dir = parent_dir(p);
+            dir.split('/').any(|s| s == "src")
+                && !dir
+                    .split('/')
+                    .any(|s| s == "examples" || SKIP_SEGMENTS.contains(&s))
+        })
+        .collect()
+}
+
+/// What a gear's description says, read from its gear.gdl or gear.toml.
+struct DeclaredGear {
     description: Option<String>,
     category: Option<String>,
     /// `capabilities = ["auth", "authz"]`: the capability keys the gear says
@@ -1724,19 +1882,178 @@ struct GearToml {
     /// catalogue that cannot say which gears have one cannot answer the
     /// question a brownfield assembly starts from.
     extension_point: Option<bool>,
+    /// `maturity = "preview"`: gear.gdl only, where it is required.
+    maturity: Option<String>,
+    /// The specs of the extension points it declares (gear.gdl only).
+    extension_points: Vec<String>,
+    /// The spec of the extension point it implements (gear.gdl only).
+    implements: Option<String>,
+}
+
+impl DeclaredGear {
+    /// This description, with its gaps filled from `other`.
+    fn or(self, other: DeclaredGear) -> DeclaredGear {
+        DeclaredGear {
+            description: self.description.or(other.description),
+            category: self.category.or(other.category),
+            capabilities: self.capabilities.or(other.capabilities),
+            plugins: self.plugins.or(other.plugins),
+            is_plugin: self.is_plugin.or(other.is_plugin),
+            extension_point: self.extension_point.or(other.extension_point),
+            maturity: self.maturity.or(other.maturity),
+            extension_points: if self.extension_points.is_empty() {
+                other.extension_points
+            } else {
+                self.extension_points
+            },
+            implements: self.implements.or(other.implements),
+        }
+    }
+
+    fn empty() -> DeclaredGear {
+        DeclaredGear {
+            description: None,
+            category: None,
+            capabilities: None,
+            plugins: None,
+            is_plugin: None,
+            extension_point: None,
+            maturity: None,
+            extension_points: Vec::new(),
+            implements: None,
+        }
+    }
+}
+
+/// The catalogue's fields out of a `gear.gdl`, without the engine.
+///
+/// Reads the arguments of the top-level `gear(...)` call that are plain
+/// strings (`description`, `category`, `maturity`, `implements`), and the
+/// spec of every `extension_point(...)`. GDL is declarative, with no
+/// expressions to evaluate, so this sees what the engine sees; what it
+/// cannot read (a value that is not a string literal) is left unread.
+///
+/// `fills` is the name `implements` had before gearbox#2, and a description
+/// written for an older engine still says it.
+fn parse_gear_gdl(body: &str) -> DeclaredGear {
+    let mut out = DeclaredGear::empty();
+    let chars: Vec<char> = body.chars().collect();
+    let mut i = 0;
+    let mut depth = 0usize;
+    // The key a string at depth 1 is the value of.
+    let mut key: Option<String> = None;
+    // Inside `extension_point(`: the depth of its arguments, and whether
+    // the spec has been read yet.
+    let mut point: Option<usize> = None;
+    let mut point_key: Option<String> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '#' {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '"' {
+            let (s, next) = gdl_string(&chars, i);
+            i = next;
+            if depth == 1
+                && let Some(k) = key.take()
+            {
+                match k.as_str() {
+                    "description" => out.description = Some(s),
+                    "category" => out.category = Some(s),
+                    "maturity" => out.maturity = Some(s),
+                    "implements" | "fills" => out.implements = Some(s),
+                    _ => {}
+                }
+            } else if point == Some(depth) && point_key.as_deref().is_none_or(|k| k == "spec") {
+                out.extension_points.push(s);
+                point = None;
+            }
+            point_key = None;
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let ident: String = chars[start..i].iter().collect();
+            let mut j = i;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let next = chars.get(j).copied();
+            if next == Some('=') && chars.get(j + 1) != Some(&'=') {
+                if depth == 1 {
+                    key = Some(ident);
+                } else if point == Some(depth) {
+                    point_key = Some(ident);
+                }
+                i = j + 1;
+            } else if next == Some('(') && ident == "extension_point" {
+                point = Some(depth + 1);
+                point_key = None;
+                depth += 1;
+                i = j + 1;
+            }
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if point == Some(depth) {
+                    point = None;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            ',' => {
+                key = None;
+                point_key = None;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // A gear that offers its own extension point is a host first, even when
+    // it also implements another's: rate-provider implements the ledger's
+    // point and is where its source plugins attach, and its gear.toml said
+    // `is_plugin = false`.
+    out.is_plugin = Some(out.implements.is_some() && out.extension_points.is_empty());
+    out.extension_point = Some(!out.extension_points.is_empty());
+    out
+}
+
+/// The string literal opening at `chars[at]`, unescaped, and the index past
+/// its closing quote.
+fn gdl_string(chars: &[char], at: usize) -> (String, usize) {
+    let mut s = String::new();
+    let mut i = at + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '"' => return (s, i + 1),
+            '\\' if i + 1 < chars.len() => {
+                s.push(match chars[i + 1] {
+                    'n' => '\n',
+                    't' => '\t',
+                    other => other,
+                });
+                i += 2;
+            }
+            ch => {
+                s.push(ch);
+                i += 1;
+            }
+        }
+    }
+    (s, i)
 }
 
 /// Minimal top-level TOML reader — enough for `description`, `category`/`domain`
 /// and a `plugins` declaration, without pulling in a TOML crate.
-fn parse_gear_toml(body: &str) -> GearToml {
-    let mut out = GearToml {
-        description: None,
-        category: None,
-        capabilities: None,
-        plugins: None,
-        is_plugin: None,
-        extension_point: None,
-    };
+fn parse_gear_toml(body: &str) -> DeclaredGear {
+    let mut out = DeclaredGear::empty();
     // `[gear]` counts as the top level.
     //
     // This used to stop reading at the first `[` of any kind, and every gear in
@@ -2657,17 +2974,112 @@ cf-gears-types-registry = { git = "https://github.com/x/y" }
         ]
     }
 
-    fn gear_dirs_of(tree: &[&str]) -> Vec<String> {
-        tree.iter()
-            .filter(|p| p.ends_with("/gear.toml"))
-            .map(|p| parent_dir(p))
-            .collect()
+    /// The same corpus after gears-rust#4793 retired gear.toml: each gear.gdl
+    /// beside the crate it describes, a plugin compiled into mini-chat's
+    /// crate, and a toolkit example.
+    fn gdl_tree() -> Vec<&'static str> {
+        vec![
+            "gears/bss/ledger/ledger/gear.gdl",
+            "gears/bss/ledger/ledger/Cargo.toml",
+            "gears/bss/ledger/ledger-sdk/Cargo.toml",
+            "gears/bss/ledger/docs/PRD.md",
+            "gears/bss/rate-provider/rate-provider/gear.gdl",
+            "gears/bss/rate-provider/rate-provider/Cargo.toml",
+            "gears/bss/rate-provider/plugins/ecb-plugin/gear.gdl",
+            "gears/bss/rate-provider/plugins/ecb-plugin/Cargo.toml",
+            "gears/chat-engine/chat-engine/gear.gdl",
+            "gears/chat-engine/chat-engine/Cargo.toml",
+            "gears/chat-engine/chat-engine-sdk/Cargo.toml",
+            "gears/system/api-gateway/gear.gdl",
+            "gears/system/api-gateway/Cargo.toml",
+            "gears/system/event-broker/gear.gdl",
+            "gears/system/event-broker/event-broker/Cargo.toml",
+            "gears/approval-service/gear.gdl",
+            "gears/approval-service/docs/PRD.md",
+            "gears/mini-chat/mini-chat/gear.gdl",
+            "gears/mini-chat/mini-chat/Cargo.toml",
+            "gears/mini-chat/mini-chat/src/infra/plugins/static_audit/gear.gdl",
+            "examples/toolkit/api-contracts/api-contracts/gear.gdl",
+        ]
+    }
+
+    #[test]
+    fn a_gear_gdl_makes_the_same_gear_directories_the_gear_toml_did() {
+        assert_eq!(
+            gear_dirs(&gdl_tree()),
+            vec![
+                "gears/bss/ledger",
+                "gears/bss/rate-provider",
+                "gears/bss/rate-provider/plugins/ecb-plugin",
+                "gears/chat-engine",
+                "gears/system/api-gateway",
+                "gears/system/event-broker",
+                "gears/approval-service",
+                "gears/mini-chat",
+            ],
+            "a gdl in its crate names the outer directory; src/ and examples/ are not gears"
+        );
+        // The directories the gear.toml files gave, for the same gears.
+        assert_eq!(
+            gear_dirs(&rust_tree()),
+            vec![
+                "gears/bss/ledger",
+                "gears/bss/rate-provider",
+                "gears/bss/rate-provider/plugins/ecb-plugin",
+                "gears/chat-engine",
+                "gears/system/api-gateway",
+                "gears/approval-service",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_gear_described_twice_is_one_gear() {
+        let tree = [
+            "gears/bss/ledger/gear.toml",
+            "gears/bss/ledger/ledger/gear.gdl",
+            "gears/audit-log/gear.toml",
+            "gears/audit-log/gear.gdl",
+        ];
+        assert_eq!(
+            gear_dirs(&tree),
+            vec!["gears/bss/ledger", "gears/audit-log"]
+        );
+    }
+
+    #[test]
+    fn the_crate_is_still_found_from_a_gdl_directory() {
+        let tree = gdl_tree();
+        let dirs = gear_dirs(&tree);
+        assert_eq!(
+            gear_manifests("gears/bss/ledger", &dirs, &tree),
+            vec![
+                "ledger-sdk/Cargo.toml".to_string(),
+                "ledger/Cargo.toml".to_string()
+            ]
+        );
+        let named: Vec<(String, String)> = vec![
+            (
+                "ledger-sdk/Cargo.toml".into(),
+                "cf-gears-bss-ledger-sdk".into(),
+            ),
+            ("ledger/Cargo.toml".into(), "cf-gears-bss-ledger".into()),
+        ];
+        assert_eq!(
+            primary_crate("ledger", &named).as_deref(),
+            Some("cf-gears-bss-ledger")
+        );
+        assert_eq!(
+            gear_manifests("gears/bss/rate-provider", &dirs, &tree),
+            vec!["rate-provider/Cargo.toml".to_string()],
+            "the ECB plugin is its own gear here too"
+        );
     }
 
     #[test]
     fn a_gear_owns_its_manifests_but_not_a_nested_gear_s() {
         let tree = rust_tree();
-        let dirs = gear_dirs_of(&tree);
+        let dirs = gear_dirs(&tree);
         assert_eq!(
             gear_manifests("gears/bss/rate-provider", &dirs, &tree),
             vec!["rate-provider/Cargo.toml".to_string()],
@@ -2789,5 +3201,209 @@ cf-gears-types-registry = { git = "https://github.com/x/y" }
             r#"{"name":"@gears-frontx/ui-kit","version":"0.4.0"}"#
         ));
         assert!(!is_template_manifest("not json"));
+    }
+
+    // ---- gear.gdl -----------------------------------------------------------
+
+    /// `gears/system/authn-resolver/authn-resolver/gear.gdl` from
+    /// gears-rust#4793, with a comment that must not be read.
+    const AUTHN_RESOLVER_GDL: &str = r#"# Gearbox product metadata for the authn-resolver gear.
+#
+# description = "not this one: a comment"
+
+gear(
+    maturity = "preview",
+    name = "Authentication Resolver",
+    description = "Authentication primitives with pluggable token validation backends.",
+    category = "core-platform-integration",
+    visibility = "internal",
+
+    package = cargo(
+        crate_name = "cf-gears-authn-resolver",
+        lib = "authn_resolver",
+        path = ".",
+    ),
+
+    sdk = cargo(
+        crate_name = "cf-gears-authn-resolver-sdk",
+        lib = "authn_resolver_sdk",
+        path = "../authn-resolver-sdk",
+    ),
+
+    extension_points = [
+        extension_point("cf.core.authn_resolver.plugin.v1~", trait = "AuthNResolverPluginClient"),
+    ],
+
+    config_schema = config(exposes = ["vendor"]),
+)
+"#;
+
+    #[test]
+    fn a_gear_gdl_gives_the_fields_a_gear_toml_did() {
+        let parsed = parse_gear_gdl(AUTHN_RESOLVER_GDL);
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Authentication primitives with pluggable token validation backends.")
+        );
+        assert_eq!(
+            parsed.category.as_deref(),
+            Some("core-platform-integration")
+        );
+        assert_eq!(parsed.maturity.as_deref(), Some("preview"));
+        assert_eq!(
+            parsed.extension_points,
+            ["cf.core.authn_resolver.plugin.v1~"]
+        );
+        assert_eq!(parsed.extension_point, Some(true));
+        assert_eq!(parsed.is_plugin, Some(false));
+        assert_eq!(parsed.implements, None);
+    }
+
+    #[test]
+    fn a_plugin_gdl_says_what_it_implements_under_either_name() {
+        let parsed = parse_gear_gdl(
+            r#"gear(
+    maturity = "preview",
+    package = cargo(crate_name = "cf-gears-oidc-authn-plugin", lib = "oidc_authn_plugin", path = "."),
+    implements = "cf.core.authn_resolver.plugin.v1~",
+    config_schema = config(exposes = ["vendor", "priority"]),
+)"#,
+        );
+        assert_eq!(
+            parsed.implements.as_deref(),
+            Some("cf.core.authn_resolver.plugin.v1~")
+        );
+        assert_eq!(parsed.is_plugin, Some(true));
+        assert_eq!(parsed.extension_point, Some(false));
+        // The keyword before gearbox#2.
+        let older = parse_gear_gdl(r#"gear(fills = "cf.core.x.plugin.v1~")"#);
+        assert_eq!(older.implements.as_deref(), Some("cf.core.x.plugin.v1~"));
+        // The engine's scaffold writes it as a comment when no host is chosen.
+        let commented = parse_gear_gdl(
+            "gear(\n    maturity = \"experimental\",\n    # implements = \"cf.core.x.plugin.v1~\",\n)\n",
+        );
+        assert_eq!(commented.implements, None);
+    }
+
+    #[test]
+    fn only_the_gears_own_arguments_are_read() {
+        // A nested `description` belongs to the call it sits in, and a spec
+        // can be named as well as positional.
+        let parsed = parse_gear_gdl(
+            r#"gear(maturity = "design", id = "bss-rating",
+    serves = [endpoint(name = "rest", description = "not the gear's")],
+    extension_points = [extension_point(trait = "T", spec = "cf.bss.x.plugin.v1~")],
+    description = "Escaped \"quotes\" stay.")"#,
+        );
+        assert_eq!(parsed.maturity.as_deref(), Some("design"));
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Escaped \"quotes\" stay.")
+        );
+        assert_eq!(parsed.extension_points, ["cf.bss.x.plugin.v1~"]);
+    }
+
+    #[test]
+    fn the_gdl_wins_and_the_toml_fills_its_gaps() {
+        let gdl = parse_gear_gdl(r#"gear(maturity = "experimental", name = "Audit Log")"#);
+        let toml = parse_gear_toml(
+            "[gear]\nname = \"Audit Log\"\ndescription = \"Audit trail.\"\n\
+             category = \"bss\"\nis_plugin = true\n",
+        );
+        let merged = gdl.or(toml);
+        assert_eq!(merged.description.as_deref(), Some("Audit trail."));
+        assert_eq!(merged.category.as_deref(), Some("bss"));
+        assert_eq!(merged.maturity.as_deref(), Some("experimental"));
+        // The gdl implements nothing, and the gdl is the description.
+        assert_eq!(merged.is_plugin, Some(false));
+    }
+
+    #[test]
+    fn a_host_has_plugins_when_another_gear_implements_its_point() {
+        let gear = |name: &str, fields: Value| RepoGear {
+            crate_name: name.to_string(),
+            description: None,
+            source_repo: "constructorfabric/gears-rust".to_string(),
+            fields,
+            uml: Vec::new(),
+            kind: None,
+            category: None,
+            payload: None,
+            dir: None,
+            crates: Vec::new(),
+        };
+        let mut gears = vec![
+            gear(
+                "cf-gears-authn-resolver",
+                json!({"extpoint_specs": ["cf.core.authn_resolver.plugin.v1~"]}),
+            ),
+            gear(
+                "cf-gears-oidc-authn-plugin",
+                json!({"implements": "cf.core.authn_resolver.plugin.v1~"}),
+            ),
+            gear(
+                "cf-gears-bss-ledger",
+                json!({"extpoint_specs": ["cf.bss.rate_provider.plugin.v1~"]}),
+            ),
+            gear(
+                "cf-gears-credstore",
+                json!({"extpoint_specs": ["cf.core.credstore.plugin.v1~"], "plugins": {"b": "yes"}}),
+            ),
+            gear("cf-gears-api-gateway", json!({})),
+            gear(
+                "cf-gears-mini-chat",
+                json!({"extpoint_specs": ["cf.core.mini_chat_audit.plugin.v1~"]}),
+            ),
+        ];
+        attach_plugins(
+            &mut gears,
+            &["cf.core.mini_chat_audit.plugin.v1~".to_string()],
+        );
+        let plugins = |i: usize| {
+            gears[i]
+                .fields
+                .get("plugins")
+                .and_then(|v| v.get("b"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        assert_eq!(plugins(0).as_deref(), Some("yes"));
+        assert_eq!(plugins(2).as_deref(), Some("no"));
+        assert_eq!(
+            plugins(3).as_deref(),
+            Some("yes"),
+            "a gear.toml's own answer is kept"
+        );
+        assert_eq!(plugins(4), None, "no extension point, nothing to say");
+        assert_eq!(
+            plugins(5).as_deref(),
+            Some("yes"),
+            "a plugin compiled into the host's crate counts"
+        );
+    }
+
+    #[test]
+    fn a_plugin_inside_its_hosts_crate_is_found_but_is_not_a_gear() {
+        let tree = gdl_tree();
+        assert_eq!(
+            in_crate_plugin_gdls(&tree),
+            ["gears/mini-chat/mini-chat/src/infra/plugins/static_audit/gear.gdl"]
+        );
+    }
+
+    #[test]
+    fn a_gear_with_its_own_extension_point_is_a_host_even_when_it_implements_one() {
+        // gears/bss/rate-provider/rate-provider/gear.gdl, trimmed.
+        let parsed = parse_gear_gdl(
+            r#"gear(maturity = "preview",
+    implements = "cf.bss.rate_provider.plugin.v1~",
+    extension_points = [extension_point("cf.bss.rate_provider_source.plugin.v1~", trait = "RateSource")])"#,
+        );
+        assert_eq!(parsed.is_plugin, Some(false));
+        assert_eq!(
+            parsed.implements.as_deref(),
+            Some("cf.bss.rate_provider.plugin.v1~")
+        );
+        assert_eq!(parsed.extension_point, Some(true));
     }
 }

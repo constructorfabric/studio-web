@@ -315,13 +315,15 @@ modules, the portal packages, the IDE packages and the infrastructure images.
 
 - [x] `p2` - **ID**: `cpt-studio-component-session`
 
+Design: [studio-session](studio-session.md)
+
 ##### Why this component exists
 
 The IDE is a running container with a checkout, credentials and an agent runtime, and something decides when one starts, who may reach it and when it stops.
 
 ##### Responsibility scope
 
-`studio-backend/src/studio_session/`: launch, list, reach and stop sessions (`/studio-session/v1/sessions`), proxy the IDE for the Kubernetes driver (`/studio-session/v1/ide/{id}/…`), reap after four hours, adopt sessions by label after a restart, mint the gate token and the S2S token. Drivers `docker.rs` and `k8s.rs`.
+`studio-backend/src/studio_session/`: launch, list, reach and stop sessions (`/studio-session/v1/sessions`), lease desktop sessions (`/studio-session/v1/desktop-sessions`, ADR-0027), proxy the IDE for the Kubernetes driver (`/studio-session/v1/ide/{id}/…`), reap after four hours or, with `theia_control_enabled`, after `idle_session_secs` idle (15 min by default) as a scheduled `session.reap` run, wait for a launch to be ready as a `session.await_ready` run, adopt sessions by label after a restart, mint the gate token and the S2S token. Drivers `docker.rs` and `k8s.rs`.
 
 ##### Responsibility boundaries
 
@@ -332,10 +334,14 @@ Does not talk to the Theia node's control API (`cpt-studio-component-theia-bridg
 - `cpt-studio-component-session-image` — launches it
 - `cpt-studio-component-connector` — depends on, for source credentials
 - `cpt-studio-component-theia-bridge` — serves endpoint discovery to
+- `cpt-studio-component-tasks` — runs its reaping and readiness waits as runs
+- `cpt-studio-component-scheduler` — fires its reaping
 
 #### studio-theia
 
 - [x] `p2` - **ID**: `cpt-studio-component-theia-bridge`
+
+Design: [studio-theia](studio-theia.md)
 
 ##### Why this component exists
 
@@ -343,7 +349,7 @@ The portal needs a session's repositories, operations and status from outside th
 
 ##### Responsibility scope
 
-`studio-backend/src/studio_theia/`: `TheiaControlClientV1` on the ClientHub, portal REST under `/studio-theia/v1/workspaces/{workspace_id}/…`, the event ingress at `/studio-theia/v1/events`, and session discovery through `StudioSessionResolver`. Built with the `theia-bridge` feature; `theia-event-broker` swaps its logging sink for the event-broker sink.
+`studio-backend/src/studio_theia/`: `TheiaControlClientV1` on the ClientHub, portal REST under `/studio-theia/v1/workspaces/{workspace_id}/…`, the event ingress at `/studio-theia/v1/events`, and session discovery through `StudioSessionResolver`. Built with the `theia-bridge` feature; the default event sink, `StudioEventsSink`, republishes what the IDE posts onto `studio-events` as `theia.<kind>`; `theia-event-broker` swaps it for the event-broker sink.
 
 ##### Responsibility boundaries
 
@@ -353,11 +359,15 @@ Does not manage session lifecycle and does not define event vocabulary for the p
 
 - `cpt-studio-component-session` — depends on, for endpoint and token
 - `cpt-studio-component-theia-studio` — calls its control API
-- `cpt-studio-component-kits` — is called by, to install kits
+- `cpt-studio-component-kits` — is called by, to install kits and read repositories
+- `cpt-studio-component-notify` — is called by, to notify the editor
+- `cpt-studio-component-events` — publishes to
 
 #### studio-llm-proxy
 
 - [x] `p2` - **ID**: `cpt-studio-component-llm-proxy`
+
+Design: [studio-llm-proxy](studio-llm-proxy.md)
 
 ##### Why this component exists
 
@@ -365,7 +375,7 @@ Theia AI speaks the OpenAI protocol to any base URL; pointing it at a provider d
 
 ##### Responsibility scope
 
-`studio-backend/src/llm_proxy/`: `/studio-llm/v1/chat/completions`, `/studio-llm/v1/models`, `/studio-llm/v1/client-config`; forwards verbatim to the configured OpenAI-compatible upstream with the server-held key, streaming through. Built with the `llm` feature.
+`studio-backend/src/llm_proxy/`: `/studio-llm/v1/chat/completions`, `/studio-llm/v1/models` and `/studio-llm/v1/client-config` forward verbatim to the configured OpenAI-compatible upstream with the key from config, streaming through; `/studio-llm/v1/providers/{provider}/{*rest}` carries the agents' calls (Anthropic, OpenAI) on the caller's own credstore key, private first and shared second (ADR-0030). Built with the `llm` feature.
 
 ##### Responsibility boundaries
 
@@ -374,11 +384,13 @@ Picks no default provider and stores no conversations.
 ##### Related components (by ID)
 
 - `cpt-studio-component-theia-studio` — is called by its portal bridge configuration
-- `cpt-studio-component-platform-feature-gears` — reads the key from credstore
+- `cpt-studio-component-platform-feature-gears` — reads provider keys from credstore, for the provider routes
 
 #### studio-connector
 
 - [x] `p2` - **ID**: `cpt-studio-component-connector`
+
+Design: [studio-connector](studio-connector.md)
 
 ##### Why this component exists
 
@@ -386,7 +398,7 @@ One connection per provider replaces a clone URL and token per repository per wo
 
 ##### Responsibility scope
 
-`studio-backend/src/connectors/`: `/studio-connector/v1/{providers,connections,probe,graph-sync}`, repositories, targets, files and messages through a connection, and the eleven plugin gears in `plugin.rs`: `github-connector-plugin`, `gitlab-connector-plugin`, `bitbucket-connector-plugin`, `anthropic-connector-plugin`, `openai-connector-plugin`, `slack-connector-plugin`, `slack-webhook-connector-plugin`, `zulip-connector-plugin`, `zulip-webhook-connector-plugin`, `discord-connector-plugin`, `discord-webhook-connector-plugin`. `url_guard.rs` checks base URLs.
+`studio-backend/src/connectors/`: `/studio-connector/v1/{providers,connections,probe}` and, per connection, `test`, `repositories`, `targets`, `files` (publish a file or a pull request), `messages` and `graph-sync`, and the eleven plugin gears in `plugin.rs`: `github-connector-plugin`, `gitlab-connector-plugin`, `bitbucket-connector-plugin`, `anthropic-connector-plugin`, `openai-connector-plugin`, `slack-connector-plugin`, `slack-webhook-connector-plugin`, `zulip-connector-plugin`, `zulip-webhook-connector-plugin`, `discord-connector-plugin`, `discord-webhook-connector-plugin`. `url_guard.rs` checks base URLs.
 
 ##### Responsibility boundaries
 
@@ -401,6 +413,8 @@ Returns credstore references, never tokens; does not queue notifications (`cpt-s
 #### studio-credstore-pg
 
 - [x] `p2` - **ID**: `cpt-studio-component-credstore-pg`
+
+Design: [studio-credstore-pg](studio-credstore-pg.md)
 
 ##### Why this component exists
 
@@ -423,6 +437,8 @@ Stores values only; the secret metadata stays in credstore's own database.
 
 - [x] `p2` - **ID**: `cpt-studio-component-secrets-bootstrap`
 
+Design: [studio-secrets-bootstrap](studio-secrets-bootstrap.md)
+
 ##### Why this component exists
 
 A restart left config-seeded references such as `openai-key` fence-poisoned until somebody rewrote them by hand.
@@ -443,6 +459,8 @@ Never fails boot; a problem is a warning.
 
 - [x] `p2` - **ID**: `cpt-studio-component-documents`
 
+Design: [studio-documents](studio-documents.md)
+
 ##### Why this component exists
 
 An organization's opinion of what a document contains, and whether it is complete, becomes data.
@@ -453,17 +471,19 @@ An organization's opinion of what a document contains, and whether it is complet
 
 ##### Responsibility boundaries
 
-Does not copy repository file content; the bytes stay on the graph node. Deeper text analysis is `cpt-studio-component-spec-quality`.
+Does not copy repository file content; a file's text is read from the checkout when it is classified or validated, and never stored. Deeper text analysis is `cpt-studio-component-spec-quality`.
 
 ##### Related components (by ID)
 
 - `cpt-studio-component-artifact-ingest` — shares model with (graph file nodes)
-- `cpt-studio-component-spec-quality` — calls, for the `purpose` detector
+- `cpt-studio-component-spec-quality` — queues `spec_quality.analyze_batch` runs for, on `cpt-studio-component-tasks`
 - `cpt-studio-component-account-management` — authorizes tenant access through
 
 #### studio-spec-quality
 
 - [x] `p2` - **ID**: `cpt-studio-component-spec-quality`
+
+Design: [studio-spec-quality](studio-spec-quality.md)
 
 ##### Why this component exists
 
@@ -471,7 +491,7 @@ The external detectors authenticate with a shared secret that must not reach cal
 
 ##### Responsibility scope
 
-`studio-backend/src/spec_quality/`: the passthrough at `/spec-quality/v1` (analyze, analyze-batch, tasks, health, status, capabilities) and interpreted verdicts at `/studio-spec-quality/v1/verdicts`; the wait for a result is a `studio-tasks` run.
+`studio-backend/src/spec_quality/`: the passthrough at `/studio-spec-quality/v1` (`analyze/{purpose,bloat,leak,traceability}`, `analyze-batch`, `health`, `status`, `capabilities`) and interpreted verdicts at `/studio-spec-quality/v1/verdicts`; the wait for a result is a `studio-tasks` run.
 
 ##### Responsibility boundaries
 
@@ -486,13 +506,15 @@ Judges nothing itself; the service does.
 
 - [x] `p2` - **ID**: `cpt-studio-component-artifact-ingest`
 
+Design: [studio-artifact-ingest](studio-artifact-ingest.md)
+
 ##### Why this component exists
 
 A repository's meaning is spread over the provider API and the checkout; one typed graph answers questions about both.
 
 ##### Responsibility scope
 
-`studio-backend/src/artifact_ingest/`: sync issues, pull requests and files into `gts.cf.studio.artifact.*` nodes with deterministic ids; serve `/studio-artifact-ingest/v1/{nodes,edges,files,repo-files,activity,source-activity,quality,search,sync,tasks}`. Files come from the session checkout, an opt-in shallow clone, or the connector tree API, in that order.
+`studio-backend/src/artifact_ingest/`: sync issues, pull requests and files into `gts.cf.studio.artifact.*` nodes with deterministic ids; serve `/studio-artifact-ingest/v1/{nodes,edges,files,repo-files,activity,source-activity,quality,search,sync,reconcile}`; a sync is polled as a `studio-tasks` run. Keeps the `studio_artifact_index` mirror of the graph for scoped listings. Files come from the session checkout, an opt-in shallow clone, or the connector tree API, in that order.
 
 ##### Responsibility boundaries
 
@@ -507,6 +529,8 @@ Does not classify documents; `cpt-studio-component-documents` binds its file nod
 #### studio-domain-model
 
 - [x] `p2` - **ID**: `cpt-studio-component-domain-model`
+
+Design: [studio-domain-model](studio-domain-model.md)
 
 ##### Why this component exists
 
@@ -529,13 +553,15 @@ The source of truth outside this repository is `studio-internal/domain-model-ui`
 
 - [x] `p2` - **ID**: `cpt-studio-component-components-catalog`
 
+Design: [studio-components-catalog](studio-components-catalog.md)
+
 ##### Why this component exists
 
 "What gears are there, at what versions" lived on crates.io; the catalogue makes it data and lets Studio scaffold new gears and compose products.
 
 ##### Responsibility scope
 
-`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; gear repository, repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); product compose, store and preview with the Gearbox engine (`compose.rs`, `gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set). Routes under `/studio-components-catalog/v1`.
+`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; gear repository, repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); product compose, store and preview with the Gearbox engine (`compose.rs`, `gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set); the roadmap board (`roadmap.rs`), served to `cpt-studio-component-reports` through `port::RoadmapCatalog`. Routes under `/studio-components-catalog/v1`.
 
 ##### Responsibility boundaries
 
@@ -545,11 +571,15 @@ Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio
 
 - `cpt-studio-component-graph-storage` — owns data in
 - `cpt-studio-component-connector` — creates repositories through
-- `cpt-studio-component-insight` — shares the component page with
+- `cpt-studio-component-insight` — reads component activity through `port::ComponentDelivery`
+- `cpt-studio-component-tasks` — runs its sync as a run
+- `cpt-studio-component-reports` — serves the roadmap board to
 
 #### studio-kits
 
 - [x] `p2` - **ID**: `cpt-studio-component-kits`
+
+Design: [studio-kits](studio-kits.md)
 
 ##### Why this component exists
 
@@ -557,7 +587,7 @@ Git answers what a kit contains; Studio needs to know which kits a project wants
 
 ##### Responsibility scope
 
-`studio-backend/src/kit_registry/`: `/studio-kits/v1/catalog` and `/studio-kits/v1/projects/{project_id}/{installations,repositories}`, with materialize and reconcile asking the session to run `cfs kit install`.
+`studio-backend/src/kit_registry/`: `/studio-kits/v1/catalog` and `/studio-kits/v1/projects/{project_id}/{installations,repositories}`, with materialize and reconcile asking the session to run `cfs kit install`, and `…/installations/{kit_slug}/materializations`, where a desktop reports an install it ran itself (ADR-0027, ADR-0032).
 
 ##### Responsibility boundaries
 
@@ -571,6 +601,8 @@ Stores no kit bytes; `cfs` is the only component that writes kit files into a ch
 #### studio-user
 
 - [x] `p2` - **ID**: `cpt-studio-component-user`
+
+Design: [studio-user](studio-user.md)
 
 ##### Why this component exists
 
@@ -593,6 +625,8 @@ Holds no roles on the person; a role belongs to a membership.
 
 - [x] `p2` - **ID**: `cpt-studio-component-identity-directory`
 
+Design: [studio-identity-directory](studio-identity-directory.md)
+
 ##### Why this component exists
 
 A person who signed in but belongs to no organization is in no tenant, so no tenant-scoped list shows them (ADR-0011).
@@ -603,16 +637,18 @@ A person who signed in but belongs to no organization is in no tenant, so no ten
 
 ##### Responsibility boundaries
 
-A read-only projection, not a second user store.
+Not a second user store. It reads the directory, and an assignment writes only the person's tenant and organization role to Keycloak (attributes and the `/tenants/{id}` group) and the owner grant to the access config.
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-keycloak` — reads from
+- `cpt-studio-component-keycloak` — reads from and assigns in
 - `cpt-studio-component-user` — writes memberships through
 
 #### studio-organizations
 
 - [x] `p2` - **ID**: `cpt-studio-component-organizations`
+
+Design: [studio-organizations](studio-organizations.md)
 
 ##### Why this component exists
 
@@ -620,7 +656,7 @@ An organization needs a tenant and an owner written together (ADR-0018).
 
 ##### Responsibility scope
 
-`studio-backend/src/organizations/`: `/studio-organizations/v1/{organizations,rollups,capabilities,access-catalogue}`; creates the tenant, the owner membership and the access grant in a resumable order.
+`studio-backend/src/organizations/`: `/studio-organizations/v1/{organizations,rollups,capabilities,access-catalogue}`; creates the tenant, the owner membership and the access grant in a resumable order, and deletes an organization by evicting everybody and then the tenant.
 
 ##### Responsibility boundaries
 
@@ -636,13 +672,15 @@ Owns no storage.
 
 - [x] `p2` - **ID**: `cpt-studio-component-authz-plugin`
 
+Design: [studio-authz-plugin](studio-authz-plugin.md)
+
 ##### Why this component exists
 
 The Studio PDP layers roles over the tenant model (ADR-0009).
 
 ##### Responsibility scope
 
-`studio-backend/src/studio_authz_plugin.rs`: an AuthZ resolver plugin that returns the tenant clamp for every request and, for a role-mapped resource type, AND-s role grants with it. `privilege_for` maps no resource type today.
+`studio-backend/src/studio_authz_plugin.rs`: an AuthZ resolver plugin that returns the tenant clamp for every request — the token's tenant plus every organization the person is an active member of, cached for 10 s and invalidated by the membership generation; a request with no tenant is denied — and, for a role-mapped resource type, AND-s role grants with it. A write to the access config is decided by ownership, not by the clamp. `privilege_for` maps no resource type today.
 
 ##### Responsibility boundaries
 
@@ -657,13 +695,15 @@ Does not answer administrative authority; gears ask `access_config` for that (AD
 
 - [x] `p2` - **ID**: `cpt-studio-component-presence`
 
+Design: [studio-presence](studio-presence.md)
+
 ##### Why this component exists
 
 Administrators asked who is working now and how to reach them.
 
 ##### Responsibility scope
 
-`studio-backend/src/presence/`: `/studio-presence/v1/{me,online,messages}`; heartbeats in a per-process registry; a message is published as an event to the recipient.
+`studio-backend/src/presence/`: `/studio-presence/v1/{me,online,messages}`; heartbeats in a per-process registry; a message waits in the recipient's in-process inbox (at most 20) and is handed over on their next heartbeat, and one to a person who is not online is refused.
 
 ##### Responsibility boundaries
 
@@ -671,11 +711,13 @@ Stores nothing; state resets on restart.
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-events` — publishes to
+- None; it has no dependencies.
 
 #### studio-events
 
 - [x] `p2` - **ID**: `cpt-studio-component-events`
+
+Design: [studio-events](studio-events.md)
 
 ##### Why this component exists
 
@@ -691,13 +733,15 @@ Knows nothing about tasks, repositories or sessions; producers bring their own p
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-tasks` — subscribes to its announcements
-- `cpt-studio-component-presence` — carries its messages
+- `cpt-studio-component-tasks` — is published to by, with run state
+- `cpt-studio-component-theia-bridge` — is published to by, with IDE events
 - `cpt-studio-component-portal-shell` — is consumed by
 
 #### studio-tasks
 
 - [x] `p2` - **ID**: `cpt-studio-component-tasks`
+
+Design: [studio-tasks](studio-tasks.md)
 
 ##### Why this component exists
 
@@ -720,6 +764,8 @@ Knows nothing about time; `cpt-studio-component-scheduler` does.
 
 - [x] `p2` - **ID**: `cpt-studio-component-scheduler`
 
+Design: [studio-scheduler](studio-scheduler.md)
+
 ##### Why this component exists
 
 Nothing in gears-rust schedules anything.
@@ -740,13 +786,15 @@ Executes no work; it only enqueues runs.
 
 - [x] `p2` - **ID**: `cpt-studio-component-notify`
 
+Design: [studio-notify](studio-notify.md)
+
 ##### Why this component exists
 
 A notification sent from a request handler is lost when the platform is down.
 
 ##### Responsibility scope
 
-`studio-backend/src/notify/`: `POST /studio-notify/v1/messages` validates and queues a `notify.deliver` run; delivery retries and dead-letters.
+`studio-backend/src/notify/`: `POST /studio-notify/v1/messages` validates and queues a `notify.deliver` run to a chat destination through a connection, or to the IDE of a workspace through the studio-theia bridge (`theia-bridge` feature); delivery retries and dead-letters.
 
 ##### Responsibility boundaries
 
@@ -756,10 +804,13 @@ Owns no database; the run is the record.
 
 - `cpt-studio-component-tasks` — depends on
 - `cpt-studio-component-connector` — delivers through
+- `cpt-studio-component-theia-bridge` — delivers to the IDE through
 
 #### studio-insight
 
 - [x] `p2` - **ID**: `cpt-studio-component-insight`
+
+Design: [studio-insight](studio-insight.md)
 
 ##### Why this component exists
 
@@ -767,15 +818,67 @@ Constructor Insight is a separate product; one gear is the assembly's only place
 
 ##### Responsibility scope
 
-`studio-backend/src/insight/`: `/studio-insight/v1/{health,query,pull,push,components}` over Insight's `POST /api/sql/query`.
+`studio-backend/src/insight/`: `/studio-insight/v1/{health,query,pull,push}` and `/studio-insight/v1/components/{metrics,pull-requests}` over Insight's `POST /api/sql/query`; `InsightClient` and `port::ComponentDelivery` on the ClientHub.
 
 ##### Responsibility boundaries
 
-Read-only; holds Insight's instance token server-side.
+Reads through SQL and contributes events and records through `push`; holds Insight's instance token server-side.
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-components-catalog` — enriches its component page
+- `cpt-studio-component-components-catalog` — serves component activity to
+
+#### studio-git
+
+- [x] `p2` - **ID**: `cpt-studio-component-git-proxy`
+
+Design: [studio-git](studio-git.md)
+
+##### Why this component exists
+
+A desktop session must not hold a source host's token, so its clones need a remote that takes the member's Studio token and holds the repository's token itself (ADR-0027).
+
+##### Responsibility scope
+
+`studio-backend/src/git_proxy/`: list a workspace's Git sources (`/studio-git/v1/sources`) and relay Git smart-HTTP (`/studio-git/v1/workspaces/{workspace_id}/sources/{source}/{info/refs,git-upload-pack,git-receive-pack}`), authenticating the member through `authn_resolver` and attaching the source's credstore token upstream; a push that goes through queues the source's `artifact.ingest` run.
+
+##### Responsibility boundaries
+
+Serves only http(s) sources; decides only who reaches the workspace, never what a push may do; stores nothing.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-account-management` — reads the project's sources through
+- `cpt-studio-component-platform-feature-gears` — reads source tokens from credstore
+- `cpt-studio-component-tasks` — enqueues the push re-sync into
+- `cpt-studio-component-artifact-ingest` — queues its run
+- `cpt-studio-component-components-catalog` — lends its relay to, for the gear corpus
+
+#### studio-reports
+
+- [x] `p2` - **ID**: `cpt-studio-component-reports`
+
+Design: [studio-reports](studio-reports.md)
+
+##### Why this component exists
+
+The roadmap workbook lived in the catalogue, with the plan as a browser upload and the layout as code; an organization needs one report configuration that everyone reads (ADR-0033).
+
+##### Responsibility scope
+
+`studio-backend/src/reports/`: the report list, each report's source per organization (one `gts.cf.studio.reports.report_source.v1~` graph node), definitions and the built-in `back_roadmap`, the xlsx writer, the `reports.refresh` task and its schedule. Routes under `/studio-reports/v1/reports`.
+
+##### Responsibility boundaries
+
+Does not read the roadmap board; `cpt-studio-component-components-catalog` does, and answers through `port::RoadmapCatalog`. Executes no schedule; it manages one on `cpt-studio-component-scheduler`.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-components-catalog` — reads the board through
+- `cpt-studio-component-tasks` — enqueues refreshes into
+- `cpt-studio-component-scheduler` — manages its refresh schedule on
+- `cpt-studio-component-connector` — reads the plan file through
+- `cpt-studio-component-graph-storage` — owns data in
 
 #### Access config module
 
@@ -1339,25 +1442,27 @@ Holds no secret values; the Secret contract is in `deploy/README.md`. The kustom
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET POST DELETE` | `/studio-session/v1/sessions`, `/studio-session/v1/ide/{id}/…` | IDE sessions and the IDE proxy | unstable |
+| `GET POST DELETE` | `/studio-session/v1/sessions`, `/studio-session/v1/desktop-sessions`, `/studio-session/v1/ide/{id}/…` | IDE sessions, desktop leases and the IDE proxy | unstable |
+| `GET POST` | `/studio-git/v1/sources`, `/studio-git/v1/workspaces/{workspace_id}/sources/{source}/…` | Git sources and the smart-HTTP relay | unstable |
 | `GET POST` | `/studio-theia/v1/workspaces/{workspace_id}/…`, `/studio-theia/v1/events` | Session control and event ingress | unstable |
-| `GET POST` | `/studio-llm/v1/{chat/completions,models,client-config}` | OpenAI-compatible LLM proxy | unstable |
+| `GET POST` | `/studio-llm/v1/{chat/completions,models,client-config}`, `/studio-llm/v1/providers/{provider}/…` | OpenAI-compatible LLM proxy and the provider relay | unstable |
 | `GET POST PATCH DELETE` | `/studio-connector/v1/…` | Providers, connections, probe, graph sync | unstable |
 | `GET POST PUT DELETE` | `/studio-documents/v1/…` | Types, stages, capabilities, documents, bindings, spec rows | unstable |
-| `GET POST` | `/spec-quality/v1/…`, `/studio-spec-quality/v1/verdicts` | Detector passthrough and verdicts | unstable |
+| `GET POST` | `/studio-spec-quality/v1/…` | Detector passthrough and verdicts | unstable |
 | `GET POST` | `/studio-artifact-ingest/v1/…` | Graph nodes, edges, files, activity, search, sync | unstable |
 | `GET POST PATCH DELETE` | `/studio-domain-model/v1/…` | Model, types, objects, relations | unstable |
 | `GET POST PUT DELETE` | `/studio-components-catalog/v1/…` | Catalogue, scaffolding, products, Gearbox | unstable |
 | `GET POST DELETE` | `/studio-kits/v1/…` | Kit catalogue and installations | unstable |
 | `GET POST PUT DELETE` | `/studio-user/v1/…` | Me, users, logins, aliases, memberships, invitations | unstable |
-| `GET POST PUT` | `/studio-identity/v1/…` | Identity directory and membership backfill | unstable |
-| `GET POST` | `/studio-organizations/v1/…` | Organizations, rollups, capabilities, access catalogue | unstable |
+| `GET POST` | `/studio-identity/v1/…` | Identity directory and membership backfill | unstable |
+| `GET POST DELETE` | `/studio-organizations/v1/…` | Organizations, rollups, capabilities, access catalogue | unstable |
 | `GET POST` | `/studio-presence/v1/{me,online,messages}` | Presence and direct messages | unstable |
 | `GET` | `/studio-events/v1/{stream,events}` | Push channel and replay | stable |
 | `GET POST` | `/studio-tasks/v1/{runs,task-types}` | Runs with cancel and retry | unstable |
 | `GET POST PATCH DELETE` | `/studio-scheduler/v1/schedules` | Schedules and run-now | unstable |
 | `POST` | `/studio-notify/v1/messages` | Queue a notification | unstable |
-| `GET POST` | `/studio-insight/v1/…` | Constructor Insight query and component metrics | unstable |
+| `GET POST` | `/studio-insight/v1/…` | Constructor Insight query, push and component metrics | unstable |
+| `GET POST PUT` | `/studio-reports/v1/…` | Reports, sources, refresh and schedule | unstable |
 
 Stability is `unstable` except where an ADR fixes the contract (`studio-events`, ADR-0026). Exact methods per path are in `api-contract.json`.
 
@@ -1540,14 +1645,14 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     Member ->> Portal: classify the project's documents
-    Portal ->> studio-documents: POST …/projects/{project_id}/document-bindings/classify
-    studio-documents ->> graph-storage: read artifact.file nodes
+    Portal ->> studio-documents: POST …/projects/{project_id}/document-bindings/classify (files)
+    studio-artifact-ingest ->> studio-documents: DocumentClassifier, after a sync
     studio-documents ->> studio-documents: front matter, then heuristics
-    studio-documents ->> studio-spec-quality: purpose detector for the undetermined
+    studio-documents ->> studio-tasks: spec_quality.analyze_batch for what needs analysis
     studio-documents -->> Portal: bindings with type, confidence and validation
 ```
 
-**Description**: The binding records the verdict; the content stays on the graph node.
+**Description**: Classification takes the files from the request, or from an ingest run through `DocumentClassifier`, and reads their text from the checkout; the binding records the verdict and the text is never stored. The gear-level flow is in [studio-documents](studio-documents.md).
 
 #### Compose a product
 
@@ -1570,218 +1675,19 @@ sequenceDiagram
 
 ### 3.7 Database schemas & tables
 
-Each Studio gear with state has its own database on the one PostgreSQL server; columns are as declared in the gear's `migrations.rs`.
-
-- [x] `p3` - **ID**: `cpt-studio-db-documents`
-- [x] `p3` - **ID**: `cpt-studio-db-users`
-- [x] `p3` - **ID**: `cpt-studio-db-tasks`
-- [x] `p3` - **ID**: `cpt-studio-db-scheduler`
-- [x] `p3` - **ID**: `cpt-studio-db-events`
-- [x] `p3` - **ID**: `cpt-studio-db-credstore-values`
-- [x] `p3` - **ID**: `cpt-studio-db-artifact-index`
-
-`cpt-studio-db-documents` is `studio_documents`, `cpt-studio-db-users` is `studio_users`, `cpt-studio-db-tasks` is `studio_tasks`, `cpt-studio-db-scheduler` is `studio_scheduler`, `cpt-studio-db-events` is `studio_events`, `cpt-studio-db-credstore-values` is `studio_credstore_values` and `cpt-studio-db-artifact-index` is `studio_artifact_index` (`studio-backend/config/docker.yaml`). Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`).
-
-#### Table: studio_document_bindings
-
-**ID**: `cpt-studio-dbtable-document-bindings`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | uuid5 of tenant, project and node; re-classifying is an upsert |
-| `tenant_id` | UUID | the workspace tenant |
-| `project_id` | UUID | the project, or `NULL` at workspace level |
-| `node_id` | TEXT | the `artifact.file` graph node holding the bytes |
-| `path` | TEXT | repository path |
-| `type_key` | TEXT | the bound type, `NULL` while undetermined |
-| `state` | TEXT | `detected`, `confirmed`, `manual`, `unknown` or `not_a_document` |
-| `confidence` | REAL | 0.0–1.0 |
-| `source` | TEXT | `front_matter`, `heuristic`, `spec_quality` or `manual` |
-| `candidates` | TEXT | other types it might be, with reasons |
-| `conforms` | BOOLEAN | the validation verdict |
-| `validation` | TEXT | the full validation report |
-| `content_sha` | TEXT | digest, so a stale verdict is distinguishable |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
-
-**PK**: `id`
-
-**Constraints**: `CHECK` on `state` and on `source`.
-
-**Additional info**: See [`docs/documents-from-a-repository.md`](../documents-from-a-repository.md).
-
-**Example**:
-
-| path | state | source |
-|--------|--------|--------|
-| `docs/prd/constructor-studio.md` | `detected` | `front_matter` |
-
-#### Table: studio_document_types
-
-**ID**: `cpt-studio-dbtable-document-types`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | |
-| `tenant_id` | UUID | organization or workspace that defines it |
-| `key`, `name`, `description` | TEXT | |
-| `gts_type_id` | TEXT | |
-| `template` | TEXT | the template specification |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
-
-**PK**: `id`
-
-**Constraints**: `UNIQUE (tenant_id, key)`.
-
-**Additional info**: `studio_process_stages` and `studio_process_capabilities` have the same tenant-and-key shape; `studio_documents` and `studio_document_analyses` hold documents and their per-detector verdicts (`UNIQUE (document_id, detector)`).
-
-**Example**:
-
-| key | name |
-|--------|--------|
-| `prd` | Product Requirements (PRD) |
-
-#### Table: identity_user
-
-**ID**: `cpt-studio-dbtable-identity-user`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | the person |
-| `tenant_id` | UUID | |
-| `display_name`, `email`, `avatar_url`, `locale` | TEXT | profile |
-| `merged_into` | UUID | set when merged into another user |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
-
-**PK**: `id`
-
-**Constraints**: none beyond the key.
-
-**Additional info**: `identity_login` (provider, subject, `user_id`, verified), `identity_membership` (`user_id`, `org_id`, role, source), `identity_alias` (kind, `external_id`, `user_id`, confidence) and `identity_invitation` (`org_id`, email, role, `token_digest` with a unique index) bind to it.
-
-**Example**:
-
-| display_name | merged_into |
-|--------|--------|
-| demo | `NULL` |
-
-#### Table: studio_tasks_runs
-
-**ID**: `cpt-studio-dbtable-tasks-runs`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | |
-| `tenant_id` | UUID | |
-| `task_type`, `partition_key` | TEXT | |
-| `payload`, `result` | JSONB | |
-| `state` | TEXT | `queued`, `running`, `succeeded`, `failed`, `cancelled` |
-| `attempts` | SMALLINT | |
-| `progress`, `summary`, `last_error` | TEXT | |
-| `cancel_requested` | BOOLEAN | |
-| `idempotency_key` | TEXT | unique index `uq_studio_tasks_runs_idempotency` |
-| `requested_by` | UUID | |
-| `created_at`, `updated_at`, `started_at`, `finished_at` | TIMESTAMPTZ | |
-
-**PK**: `id`
-
-**Constraints**: `CHECK` on `state`.
-
-**Additional info**: `studio_scheduler_schedules` holds `expression_kind`, `expression`, `timezone`, `concurrency` and `missed_policy` with `CHECK` constraints and a unique name index.
-
-**Example**:
-
-| task_type | state |
-|--------|--------|
-| `notify.deliver` | `succeeded` |
-
-#### Table: studio_events_log
-
-**ID**: `cpt-studio-dbtable-events-log`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `tenant_id` | UUID | |
-| `seq` | BIGINT | per-tenant sequence |
-| `at_ms` | BIGINT | |
-| `kind`, `subject_type`, `subject_id`, `source` | TEXT | |
-| `payload` | JSONB | |
-
-**PK**: `(tenant_id, seq)`
-
-**Constraints**: none beyond the key.
-
-**Additional info**: `studio_events_cursor` keeps `latest_seq` per tenant.
-
-**Example**:
-
-| kind | subject_type |
-|--------|--------|
-| see [`docs/events-catalog.md`](../events-catalog.md) | |
-
-#### Table: studio_artifact_index
-
-**ID**: `cpt-studio-dbtable-artifact-index`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `tenant_id` | UUID | the graph's tenant |
-| `instance_id` | TEXT (`COLLATE "C"`) | the node key |
-| `type_id` | TEXT | `gts.cf.studio.artifact.*` |
-| `workspace_id`, `project_id`, `repo`, `path` | TEXT | payload fields, `''` when absent |
-| `is_dir` | BOOLEAN | |
-| `updated_at` | TEXT (`COLLATE "C"`) | the artifact's own, ISO-8601 |
-| `search_text` | TEXT | what `/nodes?q=` matches |
-| `payload` | JSONB | as the graph stores it |
-
-**PK**: `(tenant_id, instance_id)`
-
-**Constraints**: none beyond the key.
-
-**Additional info**: A mirror of the artifact graph for the listings graph-storage cannot narrow (payload filters, `docs/graph-storage-requests.md` §5); rebuilt from the graph whenever it cannot be trusted. `studio_artifact_index_fill` marks the tenants it is complete for. See `studio-backend/src/artifact_ingest/index.rs`.
-
-**Example**:
-
-| type_id | project_id | repo |
-|--------|--------|--------|
-| `gts.cf.studio.artifact.issue.v1~` | a project id | `acme/web` |
-
-#### Table: studio_credstore_values
-
-**ID**: `cpt-studio-dbtable-credstore-values`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | |
-| `tenant_id`, `owner_id` | UUID | |
-| `reference` | TEXT | the credstore reference |
-| `nonce`, `ciphertext` | BYTEA | the encrypted value |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
-
-**PK**: `id`
-
-**Constraints**: none beyond the key.
-
-**Additional info**: Encrypted with `STUDIO_CREDSTORE_KEY`; changing the key makes stored values unreadable (`README.md`).
-
-**Example**:
-
-| reference |
-|--------|
-| `studio-connection-…` |
+Each Studio gear with state has its own database on the one PostgreSQL server; columns are as declared in the gear's `migrations.rs`. The tables are documented in the gear's own design:
+
+| Database | Gear | Tables | Design |
+|----------|------|--------|--------|
+| `studio_documents` | studio-documents | `studio_document_bindings`, `studio_document_types`, `studio_process_stages`, `studio_process_capabilities`, `studio_documents`, `studio_document_analyses` | [studio-documents](studio-documents.md#37-database-schemas--tables) |
+| `studio_users` | studio-user | `identity_user`, `identity_login`, `identity_membership`, `identity_alias`, `identity_invitation` | [studio-user](studio-user.md#37-database-schemas--tables) |
+| `studio_tasks` | studio-tasks | `studio_tasks_runs` and its outbox | [studio-tasks](studio-tasks.md#37-database-schemas--tables) |
+| `studio_scheduler` | studio-scheduler | `studio_scheduler_schedules` | [studio-scheduler](studio-scheduler.md#37-database-schemas--tables) |
+| `studio_events` | studio-events | `studio_events_log`, `studio_events_cursor` | [studio-events](studio-events.md#37-database-schemas--tables) |
+| `studio_credstore_values` | studio-credstore-pg | `studio_credstore_values` | [studio-credstore-pg](studio-credstore-pg.md#37-database-schemas--tables) |
+| `studio_artifact_index` | studio-artifact-ingest | `studio_artifact_index`, `studio_artifact_index_fill` | [studio-artifact-ingest](studio-artifact-ingest.md#37-database-schemas--tables) |
+
+The database names are set in `studio-backend/config/docker.yaml`. Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`). The component catalogue, kits and reports keep their state in graph-storage or account-management tenant metadata rather than a database of their own.
 
 ### 3.8 Deployment Topology
 

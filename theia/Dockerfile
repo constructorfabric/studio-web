@@ -181,7 +181,7 @@ RUN --mount=type=secret,id=github_token \
 # crate. Linked against glibc only, so the bookworm build runs on the
 # bookworm-slim runtime. Debug info is stripped: 92 MB with it.
 FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
+ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox.git
 ARG STUDIO_GEARBOX_REF=55f7015a95f0564ecccb6bbb73fbe586102bce82
 WORKDIR /src
 RUN git init -q . \

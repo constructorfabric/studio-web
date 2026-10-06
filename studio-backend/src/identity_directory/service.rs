@@ -11,7 +11,7 @@ use toolkit_security::SecurityContext;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::user_profile::AssignmentRecorder;
+use crate::user_profile::{AssignmentRecorder, OrganizationReader};
 
 pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 const HOME_TENANT_ATTRIBUTE: &str = "tenant_id";
@@ -54,6 +54,40 @@ pub struct DirectoryIdentity {
     pub home_tenant_id: Option<Uuid>,
     pub home_tenant_name: Option<String>,
     pub organization_role: Option<String>,
+    /// Where Studio records this person as belonging — the authority
+    /// (ADR-0011 §2), unlike `home_tenant_*`, which is the IdP's attribute and
+    /// is not rewritten when a membership changes. `None` when studio-user
+    /// could not be asked; the status then falls back to the attribute.
+    pub memberships: Option<Vec<DirectoryMembership>>,
+}
+
+/// One Studio membership of a directory identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryMembership {
+    pub org_id: Uuid,
+    /// The organization's name when account-management could read it.
+    pub org_name: Option<String>,
+    pub role: String,
+    /// `active` or `suspended`.
+    pub status: String,
+}
+
+/// The directory status, from Studio's memberships: the platform root makes a
+/// platform administrator, an active membership anywhere else an assigned
+/// person, and nothing active somebody still waiting for access.
+fn status_from_memberships(memberships: &[DirectoryMembership]) -> &'static str {
+    let active = |m: &&DirectoryMembership| m.status == "active";
+    if memberships
+        .iter()
+        .filter(active)
+        .any(|m| m.org_id == PLATFORM_ROOT_TENANT_ID)
+    {
+        "platform_admin"
+    } else if memberships.iter().any(|m| active(&m)) {
+        "assigned"
+    } else {
+        "unassigned"
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,18 +191,13 @@ impl DirectoryIdentity {
         } else {
             "unassigned"
         };
-        let display_name = [user.first_name.as_deref(), user.last_name.as_deref()]
-            .into_iter()
-            .flatten()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let display_name = full_name(user.first_name.as_deref(), user.last_name.as_deref());
 
         Self {
             id: user.id,
             username: user.username,
             email: user.email,
-            display_name: (!display_name.is_empty()).then_some(display_name),
+            display_name,
             // Not available on a user representation at all — `list` fills it
             // from the dedicated per-user endpoint.
             identity_provider: None,
@@ -181,8 +210,32 @@ impl DirectoryIdentity {
                 .get(ORGANIZATION_ROLE_ATTRIBUTE)
                 .and_then(|values| values.first())
                 .cloned(),
+            memberships: None,
         }
     }
+}
+
+/// "First Last" from whichever parts are there, `None` when neither is.
+fn full_name(first: Option<&str>, last: Option<&str>) -> Option<String> {
+    let name = [first, last]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+/// The name and address a raw Keycloak user representation carries: its full
+/// name, else its username, and its e-mail.
+fn representation_names(user: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let field = |key: &str| user.get(key).and_then(serde_json::Value::as_str);
+    let name = full_name(field("firstName"), field("lastName")).or_else(|| {
+        field("username")
+            .filter(|u| !u.trim().is_empty())
+            .map(str::to_owned)
+    });
+    (name, field("email").map(str::to_owned))
 }
 
 /// Where each page of a listing starts: `0, 200, 400, …`, [`MAX_PAGES`] of
@@ -526,7 +579,15 @@ impl IdentityDirectoryService {
     }
 
     /// The realm's identities, newest first, and whether that is all of them.
-    pub async fn list(&self, ctx: &SecurityContext) -> Result<Directory> {
+    ///
+    /// With `people`, each identity also carries its Studio memberships and
+    /// takes its status from them. Borrowed, like `assign`'s recorder, because
+    /// studio-user already holds a view of this gear.
+    pub async fn list(
+        &self,
+        ctx: &SecurityContext,
+        people: Option<&dyn OrganizationReader>,
+    ) -> Result<Directory> {
         let token = self.admin_token().await?;
         let (users, truncated) = self.keycloak_users(&token).await?;
         let mut tenants = HashMap::<Uuid, Option<String>>::new();
@@ -588,6 +649,39 @@ impl IdentityDirectoryService {
             identity.identity_provider = label;
         }
 
+        if let Some(people) = people {
+            for identity in &mut identities {
+                // One person's failed read leaves that person on the IdP's
+                // word rather than failing the directory.
+                let Ok(held) = people.memberships_of_subject(&identity.id).await else {
+                    continue;
+                };
+                let mut memberships = Vec::with_capacity(held.len());
+                for m in held {
+                    let org_name = if let Some(cached) = tenants.get(&m.org_id) {
+                        cached.clone()
+                    } else {
+                        let resolved = self
+                            .account_management
+                            .get_tenant(ctx, m.org_id)
+                            .await
+                            .ok()
+                            .map(|tenant| tenant.name);
+                        tenants.insert(m.org_id, resolved.clone());
+                        resolved
+                    };
+                    memberships.push(DirectoryMembership {
+                        org_id: m.org_id,
+                        org_name,
+                        role: m.role,
+                        status: m.status,
+                    });
+                }
+                identity.status = status_from_memberships(&memberships);
+                identity.memberships = Some(memberships);
+            }
+        }
+
         sort_identities(&mut identities);
         Ok(Directory {
             identities,
@@ -638,6 +732,9 @@ impl IdentityDirectoryService {
             .json::<serde_json::Value>()
             .await
             .context("decode Keycloak user representation")?;
+        // Read before the representation is edited: the membership record
+        // below names the person with them.
+        let (display_name, email) = representation_names(&user);
 
         let attributes = user
             .as_object_mut()
@@ -697,7 +794,13 @@ impl IdentityDirectoryService {
         // call the assignment again.
         if let Some(memberships) = memberships {
             memberships
-                .record_assignment(&identity_id_string, tenant_id, organization_role)
+                .record_assignment(
+                    &identity_id_string,
+                    tenant_id,
+                    organization_role,
+                    display_name.as_deref(),
+                    email.as_deref(),
+                )
                 .await
                 .with_context(|| {
                     format!(
@@ -727,7 +830,7 @@ impl IdentityDirectoryService {
     ) -> Result<(usize, usize)> {
         let mut recorded = 0usize;
         let mut failed = 0usize;
-        for identity in self.list(ctx).await?.identities {
+        for identity in self.list(ctx, None).await?.identities {
             // `home_tenant_id` is `Some` only when the attribute names a tenant
             // that still exists, so an identity pointing at a deleted tenant is
             // already excluded here rather than recorded as a member of nothing.
@@ -736,7 +839,18 @@ impl IdentityDirectoryService {
             };
             let role = identity.organization_role.as_deref().unwrap_or("member");
             match memberships
-                .record_assignment(&identity.id, tenant_id, role)
+                .record_assignment(
+                    &identity.id,
+                    tenant_id,
+                    role,
+                    Some(
+                        identity
+                            .display_name
+                            .as_deref()
+                            .unwrap_or(&identity.username),
+                    ),
+                    identity.email.as_deref(),
+                )
                 .await
             {
                 Ok(()) => recorded += 1,
@@ -771,8 +885,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        DirectoryIdentity, KeycloakUser, PLATFORM_ROOT_TENANT_ID, is_directory_identity,
-        sort_identities,
+        DirectoryIdentity, DirectoryMembership, KeycloakUser, PLATFORM_ROOT_TENANT_ID,
+        is_directory_identity, representation_names, sort_identities, status_from_memberships,
     };
 
     fn user(value: serde_json::Value) -> KeycloakUser {
@@ -982,6 +1096,46 @@ mod tests {
             order,
             ["alice", "dave", "carol", "bob"],
             "newest first; equal timestamps by username; no timestamp last"
+        );
+    }
+
+    /// The assignment names the person it records from the representation it
+    /// already read: the full name, else the username — the directory's rule.
+    #[test]
+    fn an_assignment_names_the_person_as_the_directory_does() {
+        let named = json!({"username": "dk", "firstName": "Denis", "lastName": "Kortunov", "email": "d@x.org"});
+        assert_eq!(
+            representation_names(&named),
+            (Some("Denis Kortunov".into()), Some("d@x.org".into()))
+        );
+        let bare = json!({"username": "nrggit", "firstName": " "});
+        assert_eq!(representation_names(&bare), (Some("nrggit".into()), None));
+    }
+
+    /// Status follows Studio's memberships, not the IdP attribute: the root
+    /// makes an administrator, an active membership an assigned person, and a
+    /// person only suspended — or recorded nowhere — is still waiting.
+    #[test]
+    fn the_status_is_where_studio_says_somebody_belongs() {
+        let held = |org: uuid::Uuid, status: &str| DirectoryMembership {
+            org_id: org,
+            org_name: None,
+            role: "member".into(),
+            status: status.into(),
+        };
+        let org = uuid::Uuid::from_u128(7);
+        assert_eq!(status_from_memberships(&[]), "unassigned");
+        assert_eq!(
+            status_from_memberships(&[held(org, "suspended")]),
+            "unassigned"
+        );
+        assert_eq!(status_from_memberships(&[held(org, "active")]), "assigned");
+        assert_eq!(
+            status_from_memberships(&[
+                held(org, "active"),
+                held(PLATFORM_ROOT_TENANT_ID, "active")
+            ]),
+            "platform_admin"
         );
     }
 }

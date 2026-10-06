@@ -79,7 +79,7 @@ pub struct CreateObjectRequest {
     /// Refuse the write if the object already exists, instead of replacing it.
     /// The only conditional write the graph can express: it takes an expected
     /// version on write but reports none on read, so an `if_version` for a
-    /// read-then-update has nothing to pass back (`docs/gears-rust-issues.md`
+    /// read-then-update has nothing to pass back (`docs/upstream/gears-rust-issues.md`
     /// §5). Default false — the historical upsert.
     #[serde(default)]
     pub if_absent: bool,

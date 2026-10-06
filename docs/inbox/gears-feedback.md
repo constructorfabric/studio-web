@@ -19,7 +19,7 @@ this document adds the improvement/extension proposals.
 > types-registry; расхождение путей в OpenAPI-артефакте AM; member-handle в PRD §5.6;
 > и главное — typed derived tenant-metadata схемы сейчас нерегистрируемы в принципе)
 > и 6 предложений по расширению — от приоритизации simple-resource-registry (у него
-> появился первый живой заказчик) до OIDC-плагина. Детали: docs/gears-rust-issues.md
+> появился первый живой заказчик) до OIDC-плагина. Детали: docs/upstream/gears-rust-issues.md
 > и docs/gears-feedback.md в studio-web. Готовы созвониться и показать живое демо.
 
 ## Proposals

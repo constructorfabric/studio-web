@@ -153,7 +153,7 @@ else
   # rot silently, so every ```sql block in it is run here: not to check the
   # figures (the warehouse moves) but to catch a statement that stopped being
   # valid — a renamed table, a dropped measure, a tightened upstream.
-  doc=studio-backend/docs/insight-quickstart.md
+  doc=docs/insight-quickstart.md
   if ! command -v python3 >/dev/null && ! command -v python >/dev/null; then
     note "no python — the documented queries were not re-run"
   elif [[ ! -f "$root/$doc" ]]; then

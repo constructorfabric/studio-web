@@ -34,7 +34,7 @@ severity.
 
 `message` is the detector's own `reason` where it gives one, and `evidence[]`
 is its `evidence`. `leak` is always sent with `verify: false`
-(`studio-backend/docs/spec-quality-issues.md` §1).
+(`docs/upstream/spec-quality-issues.md` §1).
 
 `traceability` produces no findings. In `extract` mode it finds zero pairs in
 every set tried (`spec-quality-issues.md` §2), so there is nothing to place.

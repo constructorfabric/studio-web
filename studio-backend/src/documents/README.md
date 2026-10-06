@@ -3,57 +3,30 @@
 Document management: the types a document can be, the templates and checklists
 that shape it, and the documents themselves.
 
-## Why it exists
-
-A specification is not free text — an organization has opinions about what a
-PRD contains, what stage it is at, and whether it is finished. This gear makes
-those opinions data: a document **type** carries a markdown template, a section
-checklist and structural conformance rules, so "is this document complete" has
-an answer that is not a person reading it.
-
-## Workspaces own documents; projects inherit them
-
-Storage scope is always the **workspace** tenant. A document's `project_id`
-column distinguishes project-owned from inherited — `NULL` means
-workspace-level, visible to every project in it. Inheritance is therefore a
-cheap column filter rather than a cross-tenant read, which is what keeps a
-project's document list one query.
-
-Types, stages and capabilities can be defined at the **organization** level and
-overridden at the **workspace** level, with a tombstone to hide an inherited
-entry rather than delete something that is not yours.
-
-## What it owns
-
-Its own relational database (`toolkit_db` / SeaORM plus migrations), the same
-shape as [`../credstore_pg`](../credstore_pg). Access to a workspace or project
-tenant is authorized through account-management, as [`../kit_registry`](../kit_registry)
-does for its project routes.
-
-Document types are also registered in the platform types-registry, which is why
-a profile that gives this gear no database also has no `doc.*` types — the
-`gts-audit` command names them rather than leaving you to notice an empty
-screen.
-
-## REST
-
-| Method + path | Does |
-|---|---|
-| `GET`/`POST`/`DELETE /{organizations\|workspaces}/{id}/types[/{key}]` | the document types, defined at either level |
-| `GET`/`POST`/`DELETE /{organizations\|workspaces}/{id}/stages[/{key}]` | the lifecycle stages |
-| `GET`/`POST`/`DELETE /{organizations\|workspaces}/{id}/capabilities[/{key}]` | what a document at a stage may claim |
-| `GET`/`POST /workspaces/{id}/documents` | list and create |
-| `GET`/`PUT`/`DELETE /workspaces/{id}/documents/{doc}` | one document |
-| `POST /workspaces/{id}/documents/{doc}/validate` | check it against its type's checklist and rules |
-| `GET /review-criteria?type_key=&project_id=` | the semantic review criteria a type is judged by, with ids a verdict can cite ([`review/`](review/README.md)) |
-| `GET /workspaces/{id}/projects/{project}/documents` | the effective set for a project: its own plus inherited |
-| `GET /workspaces/{id}/projects/{project}/analyses` | quality verdicts recorded against them |
-| `GET /document-bindings/{binding}/text?project_id=` | a bound repository file's text, from the checkout the detectors read |
+The design — why the gear exists, how workspaces own documents and projects
+inherit them, how the catalogue overlays organization on workspace, how a
+repository file is classified and analysed, the REST surface and the tables —
+is [`docs/design/studio-documents.md`](../../../docs/design/studio-documents.md).
+This README is what you need to work in the directory.
 
 ## In the assembly
 
 - Gear `studio-documents`, capabilities `[db, rest]`, deps `account_management`,
   `types_registry`.
 - Config section `gears.studio-documents`; no `database:` block means the gear
-  stands down.
-- Deeper analysis of a document's text is [`../spec_quality`](../spec_quality).
+  stands down (no routes, no ports). Document types are also registered in the
+  platform types-registry, so a profile that gives this gear no database also
+  has no `doc.*` types — the `gts-audit` command names them rather than leaving
+  you to notice an empty screen.
+- `config.analyze_on_sync` (default `true`) has a source sync queue Spec
+  Quality over the documents it found new or changed;
+  `config.analyze_on_sync_max_documents` (default `50`) caps one sync. Neither
+  does anything while [`../spec_quality`](../spec_quality) has no key.
+- Storage has the same shape as [`../credstore_pg`](../credstore_pg); tenant
+  access is authorized through account-management, as
+  [`../kit_registry`](../kit_registry) does for its project routes.
+- The built-in templates are in [`templates/`](templates/) and the vendored
+  review criteria in [`review/`](review/README.md) — refresh those from their
+  source, do not edit them here.
+- `repo_tests.rs` runs against the shared test PostgreSQL (`test_pg.rs`);
+  `sync_analysis_tests.rs` covers what a sync queues.
