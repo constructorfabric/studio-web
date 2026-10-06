@@ -212,7 +212,8 @@ impl TaskService {
         let payload = encode_payload(req.tenant, id);
         let tenant = req.tenant;
         let stored = row.clone();
-        self.db
+        let inserted = self
+            .db
             .transaction_ref_mapped::<_, (), anyhow::Error>(move |tx| {
                 Box::pin(async move {
                     entity::Entity::insert(active(stored))
@@ -230,7 +231,19 @@ impl TaskService {
                     Ok(())
                 })
             })
-            .await?;
+            .await;
+        if let Err(e) = inserted {
+            // Two requests with one new key, both past the lookup above (a
+            // retry sent while the first was still running): the unique index
+            // on (tenant_id, idempotency_key) refuses the second insert. The
+            // winner's run is the answer the key promises, not a 500.
+            if let Some(k) = row.idempotency_key.as_deref()
+                && let Some(winner) = self.find_by_idempotency_key(row.tenant_id, k).await?
+            {
+                return Ok(winner);
+            }
+            return Err(e);
+        }
         // Wake the sequencer rather than letting a quiet queue wait out its
         // idle interval.
         self.outbox.flush();

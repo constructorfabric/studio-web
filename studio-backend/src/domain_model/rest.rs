@@ -928,8 +928,9 @@ async fn remove_field(
     Extension(handle): Extension<Handle>,
     Path((id, name)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    // The edited type is not echoed: `GET /types/{id}` reads it back, and a
-    // DELETE answers 204 (docs/api-conventions.md).
+    // The edited type is not echoed: `GET /types/{id}` reads it back, the
+    // `head` of `GET /model/versions` is the version it produced, and a DELETE
+    // answers 204 (docs/api-conventions.md).
     handle
         .0
         .remove_field(&ctx, id.trim(), name.trim())
@@ -1321,7 +1322,9 @@ pub fn register_routes(
              keep whatever they hold under that key — a model edit is not \
              permission to delete data — so it starts being reported as \
              undeclared by `GET /types/{id}/conformance` instead. Answers 204 with \
-             no body; `GET /types/{id}` reads the updated type and its version.",
+             no body; `GET /types/{id}` reads the updated type, and the \
+             version the edit produced is the `head` of \
+             `GET /model/versions`.",
         )
         .tag("StudioDomainModel")
         .authenticated()

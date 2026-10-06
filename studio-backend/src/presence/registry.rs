@@ -173,20 +173,33 @@ impl PresenceRegistry {
     /// Their inbox goes with them. A note written to somebody who then signed
     /// out was written to the person who was there, and holding it for their
     /// next session would deliver it into a different moment.
+    ///
+    /// Both maps are held together, people first, as [`Self::post_if_online`]
+    /// holds them: a send cannot slip a note in between the two removals.
     pub fn forget(&self, user_id: &str) {
-        self.people
-            .lock()
-            .expect("presence registry poisoned")
-            .remove(user_id);
+        let mut people = self.people.lock().expect("presence registry poisoned");
+        people.remove(user_id);
         self.inboxes
             .lock()
             .expect("presence inboxes poisoned")
             .remove(user_id);
     }
 
-    /// Leave a note for somebody. Answers how many are now waiting for them,
-    /// so a sender learns immediately that the recipient is not reading.
-    pub fn post(&self, to_user_id: &str, message: Message) -> usize {
+    /// Leave a note for somebody who is online. Answers how many are now
+    /// waiting for them, so a sender learns immediately that the recipient is
+    /// not reading — or `None`, storing nothing, when they are not there.
+    ///
+    /// The check and the post are one step under the people lock. Checked
+    /// apart, a sign-out landing between them would leave a note in an inbox
+    /// [`Self::forget`] had already emptied, for the next session to receive.
+    pub fn post_if_online(&self, to_user_id: &str, message: Message, now_ms: i64) -> Option<usize> {
+        let people = self.people.lock().expect("presence registry poisoned");
+        if !people
+            .get(to_user_id)
+            .is_some_and(|record| record.is_online(now_ms))
+        {
+            return None;
+        }
         let mut inboxes = self.inboxes.lock().expect("presence inboxes poisoned");
         let inbox = inboxes.entry(to_user_id.to_owned()).or_default();
         inbox.push(message);
@@ -195,7 +208,7 @@ impl PresenceRegistry {
         while inbox.len() > MAX_INBOX {
             inbox.remove(0);
         }
-        inbox.len()
+        Some(inbox.len())
     }
 
     /// Take everything waiting for somebody. A drain, not a read: the caller
@@ -323,7 +336,8 @@ mod tests {
     #[test]
     fn a_note_waits_until_its_recipient_asks_for_it() {
         let registry = PresenceRegistry::default();
-        assert_eq!(registry.post("bob", note("m1", T0)), 1);
+        beat_at(&registry, "bob", T0);
+        assert_eq!(registry.post_if_online("bob", note("m1", T0), T0), Some(1));
 
         let taken = registry.drain("bob");
         assert_eq!(taken.len(), 1);
@@ -337,8 +351,9 @@ mod tests {
         // A cap that dropped the newest would make the inbox stop working at
         // exactly the moment somebody needs to be reached.
         let registry = PresenceRegistry::default();
+        beat_at(&registry, "bob", T0);
         for i in 0..(MAX_INBOX + 3) {
-            registry.post("bob", note(&format!("m{i}"), T0 + i as i64));
+            registry.post_if_online("bob", note(&format!("m{i}"), T0 + i as i64), T0);
         }
         let inbox = registry.drain("bob");
         assert_eq!(inbox.len(), MAX_INBOX);
@@ -349,8 +364,23 @@ mod tests {
     #[test]
     fn signing_out_takes_the_inbox_with_it() {
         let registry = PresenceRegistry::default();
-        registry.post("bob", note("m1", T0));
+        beat_at(&registry, "bob", T0);
+        registry.post_if_online("bob", note("m1", T0), T0);
         registry.forget("bob");
+        assert!(registry.drain("bob").is_empty());
+    }
+
+    #[test]
+    fn a_note_to_somebody_not_here_is_not_stored() {
+        let registry = PresenceRegistry::default();
+        assert_eq!(registry.post_if_online("bob", note("m1", T0), T0), None);
+
+        // Signed out after being here: the send that follows stores nothing
+        // either, so the next session does not open on a stale note.
+        beat_at(&registry, "bob", T0);
+        registry.forget("bob");
+        assert_eq!(registry.post_if_online("bob", note("m2", T0), T0), None);
+        beat_at(&registry, "bob", T0 + 1);
         assert!(registry.drain("bob").is_empty());
     }
 

@@ -260,28 +260,25 @@ async fn send_message(
     let from_display_name = req.from_display_name.as_deref().and_then(clean_label);
 
     let now = now_ms();
-    // Checked before posting, and reported either way. A note to somebody who
+    // Checked as it is posted, and reported either way. A note to somebody who
     // is not there is not queued — so the sender has to be told, rather than
     // left believing it arrived.
-    if !registry.0.is_online(to, now) {
-        return Ok(Json(SendNoteDto {
+    let message = Message {
+        id: uuid::Uuid::new_v4().to_string(),
+        from_user_id,
+        from_display_name,
+        text: text.to_owned(),
+        sent_ms: now,
+    };
+    Ok(Json(match registry.0.post_if_online(to, message, now) {
+        Some(waiting) => SendNoteDto {
+            delivered: true,
+            waiting: waiting as u32,
+        },
+        None => SendNoteDto {
             delivered: false,
             waiting: 0,
-        }));
-    }
-    let waiting = registry.0.post(
-        to,
-        Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            from_user_id,
-            from_display_name,
-            text: text.to_owned(),
-            sent_ms: now,
         },
-    );
-    Ok(Json(SendNoteDto {
-        delivered: true,
-        waiting: waiting as u32,
     }))
 }
 
