@@ -2,39 +2,13 @@
 
 The thing that knows what time it is.
 
-## Why it is a gear of its own
-
-It owns schedules and nothing else: on each tick it works out which are due and
-enqueues runs into [`../tasks`](../tasks). It executes no work, so a bug in cron
-arithmetic cannot stop a repository import — and a deployment that wants
-background work without automatic firing simply drops this gear's `database:`
-block. The queue keeps working; nothing fires on its own.
-
-## What the platform already had, and why this still exists
-
-Nothing in gears-rust schedules anything: 35 gears, no cron, no timer. The one
-place a `Schedule` entity exists is `serverless-runtime`'s design — and that
-gear ships no code at all, documents only, and its own thin-host ADR says the
-host "runs no scheduler, polling loop, or timer mechanism", delegating timing to
-a backend plugin over Temporal, EventBridge or Azure Durable. Adopting it for
-cron would mean adopting Temporal.
-
-So the vocabulary is borrowed and the mechanism is not. The expression shape
-(`{kind: cron|interval, value}`), the IANA `timezone`, the concurrency policy
-(`allow | forbid | replace`) and the missed-schedule policy
-(`skip | catch_up | backfill`) are spelled exactly as
-`gts.cf.core.sless.schedule.v1~` spells them — so a schedule written today moves
-to that gear as data if it ever lands.
-
-## Two properties worth knowing
-
-- **One firer.** A tick runs under a PostgreSQL advisory lock, so a second
-  replica does not double-fire (`ticker.rs`).
-- **At-least-once firing, exactly-once runs.** The scheduler cannot commit its
-  bookkeeping in the same transaction as an enqueue into another gear's
-  database, so a crash mid-firing re-fires. Every firing carries the idempotency
-  key `<schedule_id>:<scheduled_for>`, which makes the repeat the *same* run
-  (`service.rs`).
+The design — why it only enqueues, why schedules are platform-level and UTC
+only, how a tick fires once across replicas and why a re-fire is harmless, the
+two policies, the routes and the table — is
+[`docs/design/studio-scheduler.md`](../../../docs/design/studio-scheduler.md).
+The operator's view of runs and schedules together is
+[`docs/background-work.md`](../../docs/background-work.md). This README is what
+you need to work in the directory.
 
 ## REST
 
@@ -48,7 +22,21 @@ to that gear as data if it ever lands.
 
 - Gear `studio-scheduler`, capabilities `[rest, db, stateful]`, deps
   `account_management`.
-- Config section `gears.studio-scheduler`; no `database:` block means no
-  automatic firing.
-- The session reaper ([`../studio_session`](../studio_session)) is one of its
-  schedules.
+- Config section `gears.studio-scheduler`: `owner_tenant_id` (must equal
+  `account-management.bootstrap.root_id`), `tick_seconds` (60), `enabled`
+  (true). No `database:` block means no automatic firing and a 503 from every
+  route.
+- The platform schedules — the tasks retention sweep and the session reaper
+  ([`../studio_session`](../studio_session)) — are registered at `start`. A
+  gear that contributes one adds a `platform_schedules()` and is chained in
+  `register_platform_schedules`.
+- Another gear keeps a schedule of its own through `port::Schedules`
+  (`studio-reports` does).
+
+## Where things are
+
+- `cron.rs` — the 5-field evaluator and ISO-8601 intervals, written here rather
+  than taken from a crate; the awkward cases (the day-of-month/day-of-week OR
+  rule, February, a `*/n` step rolling over) are pinned by its tests.
+- `policy.rs` — which instants a late tick enqueues.
+- `ticker.rs` — the advisory lock and the loop.

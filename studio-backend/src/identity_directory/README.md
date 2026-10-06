@@ -3,37 +3,28 @@
 A platform-admin view of the identities that exist in Keycloak, including the
 ones that belong to no organization yet.
 
-## Why it exists
-
-Account Management lists users only *inside* one tenant. That is the right
-answer for almost everything and the wrong answer for onboarding: someone who
-has signed in successfully but has not been assigned to an organization is, by
-construction, in no tenant — so no tenant-scoped list can show them, and the
-administrator who is supposed to place them cannot see that they are waiting.
-
-ADR-0011 (authentication does not grant organization membership) makes that gap
-deliberate rather than accidental. This gear is the view it needs.
-
-## What it does not do
-
-It keeps the Keycloak Admin API and its credential **server-side** and exposes a
-root-scoped, read-only projection. The portal never talks to Keycloak, and the
-directory is a projection rather than a second user store — the canonical user
-record is [`../user_profile`](../user_profile)'s.
-
-## REST
-
-| Method + path | Does |
-|---|---|
-| `GET /studio-identity/v1/users` | every identity, with whether it is assigned |
-| `POST /studio-identity/v1/users/{identity_id}/assignment` | place an identity into an organization |
+The design — why the gear exists, what an attribute does and does not prove,
+the order an assignment is written in, the REST surface and the interface it
+serves `studio-user` — is
+[`docs/design/studio-identity-directory.md`](../../../docs/design/studio-identity-directory.md).
+This README is what you need to work in the directory.
 
 ## In the assembly
 
 - Gear `studio-identity-directory`, capabilities `[rest]`, deps
   `account_management`.
-- Config section `gears.studio-identity-directory`; without Keycloak admin
-  credentials the routes answer that the directory is unavailable rather than
-  failing the boot.
-- See the repository-root `docs/adr/0011-authentication-does-not-grant-organization-membership.md`
-  and `docs/adr/0012-self-service-identity-resolution.md`.
+- No config section. The Keycloak admin connection comes from the environment:
+  `STUDIO_IDP_ADMIN_BASE_URL` and `STUDIO_IDP_ADMIN_SECRET` (realm `studio`,
+  client `studio-admin`). Without either, the routes answer 503 rather than
+  failing the boot, and [`../user_profile`](../user_profile) loses its IdP
+  proof channel and its verified addresses.
+- Membership is recorded through `studio-user`; without its database the
+  assignment still writes the IdP side and the backfill answers 503.
+
+## Working here
+
+- The projection's decisions — who is listed, which status, the sort, the page
+  offsets — are unit tests in `service.rs`, built from the JSON Keycloak
+  actually sends, so a renamed field is caught there.
+- Keycloak ships no federated identities on a user representation; they come
+  only from `GET /users/{id}/federated-identity`, one user at a time.

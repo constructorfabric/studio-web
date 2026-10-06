@@ -14,7 +14,7 @@ was 24–33 thousand nodes and **12–20 s per call**, which put `/nodes`,
 product dashboard.
 
 The fix is `studio_artifact_index`, a Postgres mirror of the graph
-(`src/artifact_ingest/index.rs`, explained in `src/artifact_ingest/README.md`).
+(`src/artifact_ingest/index.rs`, explained in `../docs/design/studio-artifact-ingest.md`).
 For it to work, every artifact read and write has to go through its API:
 
 - **Read by scope** with `GraphStore::list_in_scope`, `count_in_scope`,
