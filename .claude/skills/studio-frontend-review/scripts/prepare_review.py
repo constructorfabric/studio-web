@@ -208,6 +208,10 @@ def own_threads(repo, n, me, head=""):
             "last_author": (last["author"] or {}).get("login"),
             "last_body": last["body"].strip()[:600] if last is not first else "",
             "last_comment_id": last["databaseId"],
+            # The whole exchange: the author's answer is often not the last word (ours may follow it), and an
+            # unattended run cannot call `gh` to read it.
+            "conversation": [{"author": (c["author"] or {}).get("login"), "at": c["createdAt"],
+                              "body": c["body"].strip()[:2000]} for c in comments],
             # Someone answered after our last word ("fixed in …", a disagreement), nobody answered but the
             # commented lines changed (a silent fix), or our "Still at <sha>" is about an older head: re-check
             # it. Otherwise our word is the last one and the thread waits for the author — leave it alone.

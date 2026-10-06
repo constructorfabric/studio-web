@@ -169,7 +169,8 @@ python3 .claude/skills/studio-frontend-review/scripts/mutation_checks.py <workdi
 line, naming the mutation and the test that should catch it; `verify` is the printed command. `killed` needs
 nothing. The worktree file is restored after each mutation.
 
-**Threads from earlier rounds** (`open-threads.json`). Only those with `needs_recheck: true` — someone
+**Threads from earlier rounds** (`open-threads.json`; `conversation` holds every comment of the thread — read the
+author's answer there, don't fetch it). Only those with `needs_recheck: true` — someone
 answered after our last comment. Re-check each against the current code (more than 8: hand them to the
 verifier, see agent-briefs.md) and write `<workdir>/replies.json`:
 - fixed → `{"thread_id", "comment_id", "action": "resolve"}` — resolve it, no reply;
