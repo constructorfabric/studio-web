@@ -9,7 +9,7 @@ import type { ProductStore } from "../product-store";
 import type { ProductEditService } from "../product-edit-service";
 import type { SelectionService } from "../shell/selection-service";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
-import { fillLabel, fillsPointOf, pluginsByPoint, pointsOf } from "../../common/extension-points";
+import { implementsLabel, implementsPointOf, pluginsByPoint, pointsOf } from "../../common/extension-points";
 import { productIdentity } from "../shell/screens";
 import { impactOf, type Impact } from "./impact";
 import { DiagnosticsList } from "../diagnostics/diagnostics-list";
@@ -106,7 +106,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
   private chosen(): GearDescriptor | undefined { return this.descriptors().find(d => `${d.source}:${d.id}` === this.candidate || d.id === this.candidate); }
   private hosts(plugin: GearDescriptor): GearDescriptor[] {
     const state = this.products.current;
-    return this.descriptors().filter(host => fillsPointOf(plugin, host) &&
+    return this.descriptors().filter(host => implementsPointOf(plugin, host) &&
       (state.intent?.selected_gears.some(g => g.gear === host.id) || !!state.resolution?.product?.gears[host.id]));
   }
   /**
@@ -136,7 +136,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
 
   /** The catalogue's plugins that fill one of this host's own points. */
   private compatible(host: GearDescriptor): GearDescriptor[] {
-    return this.descriptors().filter(plugin => fillsPointOf(plugin, host));
+    return this.descriptors().filter(plugin => implementsPointOf(plugin, host));
   }
   /**
    * Why there is nothing to write yet, or nothing to change.
@@ -151,10 +151,10 @@ export class AddGearDialog extends ReactDialog<boolean> {
   private pending(): string {
     const gear = this.chosen();
     if (!gear) return "Choose a gear to see what it adds to your product.";
-    if (gear.fills) {
+    if (gear.implements) {
       const hosts = this.hosts(gear);
       if (!hosts.length) {
-        return `Nothing in this product declares ${fillLabel(gear.fills)}, ` +
+        return `Nothing in this product declares ${implementsLabel(gear.implements)}, ` +
           "so there is no gear for this plugin to fill a point on.";
       }
       if (!this.host) return "Choose the gear that will host this plugin.";
@@ -165,7 +165,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
     }
     if (this.resolving) return "Calculating changes…";
     if (this.preview && !this.preview.changed) {
-      return gear.fills && this.host
+      return gear.implements && this.host
         ? `\`${gear.id}\` is already attached to ${this.host}, so nothing would be written.`
         : `\`${gear.id}\` is already in this product, so nothing would be written.`;
     }
@@ -174,7 +174,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
   private proposal(): ProductEdit[] {
     const gear = this.chosen();
     if (!gear) return [];
-    if (!gear.fills) {
+    if (!gear.implements) {
       return [
         { kind: "add_gear", gear: gear.id, source: gear.source },
         // Each staged plugin, attached to the gear the same batch adds, **at the
@@ -251,7 +251,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
     this.writing = false;
     if (!ok) { this.error = "Nothing was added. Refresh the preview and try again."; this.update(); return; }
     this.accepted = true;
-    if (gear.fills && this.host) {
+    if (gear.implements && this.host) {
       // The entry just appended is the last one written, so its own
       // `entry_index` is the address -- not its position in this array, which is
       // only the same while nothing in the list is unusable.
@@ -291,8 +291,8 @@ export class AddGearDialog extends ReactDialog<boolean> {
 
   protected render(): React.ReactNode {
     const chosen = this.chosen(), all = this.descriptors();
-    const filtered = all.filter(d => (!this.initial.point || (d.fills && d.fills.spec === this.initial.point)) &&
-      (!this.initial.host || !!d.fills) && (!this.category || d.category === this.category) &&
+    const filtered = all.filter(d => (!this.initial.point || (d.implements && d.implements.spec === this.initial.point)) &&
+      (!this.initial.host || !!d.implements) && (!this.category || d.category === this.category) &&
       `${d.id} ${d.display_name} ${d.description}`.toLowerCase().includes(this.search.toLowerCase()));
     const introduced = this.impact?.newDiagnostics.length ?? 0;
     // `data-add-gear-flow` is the marker the old Add Gear *panel* carried, kept
@@ -313,7 +313,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
               as `Source: gears-rustHost` -- two facts read as one word. */}
           <h3>{chosen.display_name || chosen.id}</h3><p>{chosen.description}</p>
           <div className="gbx-kv"><span>source</span><span>{chosen.source}</span></div>
-          {chosen.fills && <><label data-add-gear-host data-add-gear-plugin={chosen.id}>Host<select data-add-gear-host-pick aria-label="Plugin host" value={this.host ?? ""} disabled={!!this.initial.host} onChange={e => { this.host = e.target.value; void this.refreshPreview(); }}><option value="">Choose a host</option>{this.hosts(chosen).map(h => <option key={h.id} value={h.id}>{h.id}</option>)}</select></label>
+          {chosen.implements && <><label data-add-gear-host data-add-gear-plugin={chosen.id}>Host<select data-add-gear-host-pick aria-label="Plugin host" value={this.host ?? ""} disabled={!!this.initial.host} onChange={e => { this.host = e.target.value; void this.refreshPreview(); }}><option value="">Choose a host</option>{this.hosts(chosen).map(h => <option key={h.id} value={h.id}>{h.id}</option>)}</select></label>
             {!this.hosts(chosen).length && <p data-add-gear-host-none>{this.pending()}</p>}
             <ProfileScope legend="Profiles for this connection" profiles={this.profiles}
               available={Object.keys(this.products.current.intent?.profiles ?? {})}
@@ -323,7 +323,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
                 addition is two edits rather than one. */}
             {this.host && !this.edits.inProduct(this.host) && <p data-add-gear-host-joins={this.host}>The host {this.host} will become an explicitly selected gear.</p>}
           </>}
-          {!chosen.fills && (() => {
+          {!chosen.implements && (() => {
             const points = pointsOf(chosen), offer = this.compatible(chosen).filter(p => !this.staged.some(entry => entry.plugin === p.id));
             return <section className="gbx-features-list" data-add-gear-plugins data-add-gear-section="plugins">
               <h4>Plugins</h4>
@@ -332,7 +332,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
                   above a list of every plugin in the catalogue, chose one, and
                   was told it would join the closure. The data to refuse that was
                   already on the wire both ways -- the host's `extension_points`
-                  and the plugin's `fills.point` -- so the offer was the defect. */}
+                  and the plugin's `implements.point` -- so the offer was the defect. */}
               {!points.length ? <p data-add-gear-plugins-none>Extension points: none declared. This gear takes no plugins.</p> : <>
                 <p>Extension points: {points.map(point => point.trait_ident).join(", ")}</p>
                 {this.staged.map(entry => <div key={entry.plugin} data-add-gear-staged={entry.plugin}>
@@ -355,7 +355,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
                   <select data-add-gear-plugin-pick aria-label="Plugin to attach" value={this.pluginPick}
                     onChange={e => { this.pluginPick = e.target.value; this.update(); }}>
                     <option value="">Choose a plugin</option>
-                    {/* **Grouped by the point it fills when there is more than
+                    {/* **Grouped by the point it implements when there is more than
                         one** -- mini-chat declares two, and a flat list left a
                         person to know which plugin answers which trait. One
                         point needs no heading. */}
@@ -371,7 +371,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
                   </select>
                   <button type="button" data-add-gear-plugin-add disabled={!this.pluginPick}
                     onClick={() => { if (this.pluginPick) { this.staged = [...this.staged, { plugin: this.pluginPick, profiles: [] }]; this.pluginPick = ""; void this.refreshPreview(); } }}>Attach plugin</button>
-                </> : <p data-add-gear-plugins-unfilled>Every plugin that fills these points is already staged.</p>}
+                </> : <p data-add-gear-plugins-unfilled>Every plugin that implements these points is already staged.</p>}
               </>}
             </section>;
           })()}

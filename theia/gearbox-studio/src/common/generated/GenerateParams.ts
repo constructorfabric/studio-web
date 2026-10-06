@@ -11,5 +11,11 @@ export type GenerateParams = { path: string, profile?: string | null,
 /**
  * Absolute output root. Omitted, the server uses
  * `<workspace>/.gearbox/<product>/<profile>/`, the same layout as the CLI.
+ *
+ * Outside the workspace it is accepted when the folder is new, holds only
+ * dotfiles, or holds a `product.lock` -- a folder chosen for the product,
+ * such as the repository it ships from. That tree keeps its merge base in
+ * `<out>/.gearbox/base/` and is offered a `.gitignore` once. Never inside a
+ * source root.
  */
 out?: string | null, };

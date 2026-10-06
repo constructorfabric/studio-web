@@ -17,7 +17,7 @@ import type { PluginTarget } from "./PluginTarget";
  * `use_gear` line, and the commit wrote twice with a window in between where
  * the description named a gear nobody had configured.
  */
-export type ProductEdit = { "kind": "add_gear", gear: string, source: string, } | { "kind": "remove_gear", gear: string, } | { "kind": "add_source", id: string, at: string, } | { "kind": "set_config", gear: string, key: string, 
+export type ProductEdit = { "kind": "add_gear", gear: string, source: string, } | { "kind": "remove_gear", gear: string, } | { "kind": "add_source", id: string, at: string, } | { "kind": "remove_source", id: string, } | { "kind": "set_config", gear: string, key: string, 
 /**
  * `None` removes the key. A scalar, because a control writes scalars
  * and a nested literal has no control to render it.

@@ -43,6 +43,7 @@ const load: CatalogueLoadResult = {
     { source: "gears-rust", gdl_path: "gears/a/gear.gdl", stage: "declared" } as never,
     { source: "gears-rust", gdl_path: "gears/b/gear.gdl", stage: "declared" } as never,
   ],
+  designs: [],
   diagnostics: [],
 };
 
@@ -209,7 +210,7 @@ describe("a recorded load", () => {
     const record = new LoadRecord();
     record.progress({ token: "catalogue", completed: 0, total: 0, done: true });
     expect(record.complete).toBe(false);
-    record.answered({ total: 0, pending: [], diagnostics: [] });
+    record.answered({ total: 0, pending: [], designs: [], diagnostics: [] });
     expect(record.complete).toBe(true);
   });
 });

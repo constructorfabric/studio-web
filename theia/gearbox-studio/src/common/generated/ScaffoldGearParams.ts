@@ -17,10 +17,10 @@ export type ScaffoldGearParams = { id: string, name: string, version: string,
  */
 kind: GearKind, 
 /**
- * What this plugin fills, when the kind is [`GearKind::Plugin`].
+ * What this plugin implements, when the kind is [`GearKind::Plugin`].
  *
  * **Absent keeps the commented shape, and that shape exists for a reason.**
- * A `fills` naming a spec no described gear declares is refused (GBX0519),
+ * An `implements` naming a spec no described gear declares is refused (GBX0519),
  * so with no host chosen a scaffold writes the declaration as a comment
  * rather than produce a description that is already wrong.
  *

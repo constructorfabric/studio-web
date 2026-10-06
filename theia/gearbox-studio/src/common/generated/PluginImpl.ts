@@ -2,11 +2,11 @@
 import type { ExtensionPointDecl } from "./ExtensionPointDecl";
 
 /**
- * The extension point a plugin gear fills.
+ * The extension point a plugin gear implements.
  */
-export type PluginFill = { 
+export type PluginImpl = { 
 /**
- * The full GTS type id of the spec this plugin fills; matches
+ * The full GTS type id of the spec this plugin implements; matches
  * [`ExtensionPointDecl::spec`] on its host.
  */
 spec: string, 

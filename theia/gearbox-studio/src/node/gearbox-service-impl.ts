@@ -455,7 +455,7 @@ export class GearboxServiceImpl implements GearboxService {
     // initialize or --root to the CLI` -- advice for a command line, shown to a
     // person who opened a project. Having no gears is an empty catalogue.
     if (this.openRoots.length === 0) {
-      return { total: 0, pending: [], diagnostics: [] };
+      return { total: 0, pending: [], designs: [], diagnostics: [] };
     }
     await this.pendingInit;
     // Constructor Studio: a kept engine still has the catalogue it read; say it

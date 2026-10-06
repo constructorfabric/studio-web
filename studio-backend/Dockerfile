@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # Built on bookworm (glibc 2.36); it runs on the trixie runtime below.
 FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS gearbox
 ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox.git
-ARG STUDIO_GEARBOX_REF=55f7015a95f0564ecccb6bbb73fbe586102bce82
+ARG STUDIO_GEARBOX_REF=ea964f94a59627ab818f4215d8251cbd64db098d
 WORKDIR /src
 RUN git init -q . \
     && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \

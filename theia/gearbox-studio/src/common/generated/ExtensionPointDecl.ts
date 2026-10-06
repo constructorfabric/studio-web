@@ -14,7 +14,7 @@ export type ExtensionPointDecl = {
 /**
  * The full GTS type id of the plugin spec, e.g.
  * `cf.toolkit.plugins.plugin.v1~cf.core.authn_resolver.plugin.v1~`. The
- * join key: a plugin's [`PluginFill::spec`] matches this.
+ * join key: a plugin's [`PluginImpl::spec`] matches this.
  */
 spec: string, 
 /**
@@ -44,4 +44,11 @@ sdk_lib: string,
  * host was read from, which is what makes it resolvable by anyone who knows
  * where that root is.
  */
-sdk: CargoRef, };
+sdk: CargoRef, 
+/**
+ * The host's config key it selects a plugin by, as written in
+ * `extension_point(selector = ...)`: a dotted path such as `idp.vendor`.
+ * Absent means the top-level `vendor`. The *value* it defaults to is the
+ * gear's [`GearDescriptor::vendor_selector`].
+ */
+selector?: string | null, };

@@ -6,6 +6,17 @@ import type { Location } from "./Location";
  */
 export type SourceDecl = { "kind": "path", at: string, 
 /**
+ * `crates = registry("crates.io")`: the gears here are also published,
+ * so the generated build takes their crates from this registry at the
+ * versions the checkout declares, and reads only descriptions from the
+ * checkout. `None` is a path dependency on the checkout, as before.
+ *
+ * A declaration of intent, not a guarantee: generation checks each
+ * crate against what was actually published and falls back to the
+ * checkout, loudly, where the two differ.
+ */
+crates?: string | null, 
+/**
  * Where `source(...)` was written in the product description.
  */
 declared_at?: Location | null, } | { "kind": "registry", 

@@ -5,12 +5,17 @@ resolution, the lock, conflicts and generation, as Theia views beside
 Studio's own.
 
 **Provenance.** Ported from Gearbox Studio,
-[`MikeFalcon77/gearbox@55f7015`](https://github.com/MikeFalcon77/gearbox/tree/55f7015a95f0564ecccb6bbb73fbe586102bce82/ide/gearbox-studio),
-the same commit the session image builds the engine from
-(`STUDIO_GEARBOX_REF` in `theia/Dockerfile`). That repository carries no
-licence yet. Its owner's permission is needed before this ships beyond
-evaluation, and every file copied from it keeps its original text apart from
-the changes marked `Constructor Studio:`.
+[`MikeFalcon77/gearbox@55f7015`](https://github.com/MikeFalcon77/gearbox/tree/55f7015a95f0564ecccb6bbb73fbe586102bce82/ide/gearbox-studio).
+The engine now lives at
+[`constructorfabric/gearbox`](https://github.com/constructorfabric/gearbox)
+under Apache-2.0, and the session image builds it from the commit
+`STUDIO_GEARBOX_REF` names in `theia/Dockerfile`, `ea964f9` since the move
+from `fills` to `implements` (gearbox#2). `src/common/generated/`,
+`src/common/extension-points.ts` and `src/browser/ai/generated/` are copied
+from that commit verbatim, because they describe the engine's wire format;
+the views are still the 55f7015 port, with the rename applied. Every file
+copied from it keeps its original text apart from the changes marked
+`Constructor Studio:`.
 
 ## What is ported, and what is not
 

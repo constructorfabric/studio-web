@@ -1303,6 +1303,8 @@ function describeEdit(edit: ProductEdit): string {
       return `remove gear \`${edit.gear}\``;
     case "add_source":
       return `add source \`${edit.id}\` at \`${edit.at}\``;
+    case "remove_source":
+      return `remove source \`${edit.id}\``;
     case "set_config":
       return edit.value === null
         ? `gear \`${edit.gear}\`: clear config \`${edit.key}\``

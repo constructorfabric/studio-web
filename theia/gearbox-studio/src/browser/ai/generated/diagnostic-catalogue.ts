@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 99, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 106, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -356,7 +356,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "gRPC gears with no gRPC hub",
     severity: "error",
     domain: "topology",
-    docs: "A process registers gRPC services and contains no gRPC hub to mount them.\n\nThe counterpart of [`TopologyRestWithoutHost`], and the one that was\nmissing: the runtime refuses this outright with\n`RegistryError::GrpcRequiresHub`, so a product that resolves clean here\ndies while building its registry.\n\n**Unlike its REST neighbour this applies to every process, not only the\nhost.** `run_grpc_phase` is reached from `run_phases_internal` *and*\nfrom `run_oop_serving`, so a worker that links a service-registering\ngear needs a hub of its own. The asymmetry is the runtime's, not an\noversight here: a worker publishes REST through its own out-of-process\nrouter and needs no `rest_host`, while it has no such second path for\ngRPC.\n\nThe corpus makes this reachable rather than theoretical: `cluster` and\n`gear-orchestrator` both declare `grpc` and neither declares `deps`, so\nnothing drags a hub in beside them.",
+    docs: "A process registers gRPC services and contains no gRPC hub to mount them.\n\nThe counterpart of [`TopologyRestWithoutHost`], and the one that was\nmissing: the runtime refuses this outright with\n`RegistryError::GrpcRequiresHub`, so a product that resolves clean here\ndies while building its registry.\n\n**Unlike its REST neighbour this applies to every process, not only the\nhost.** `run_grpc_phase` is reached from `run_phases_internal` *and*\nfrom `run_oop_serving`, so a worker that links a service-registering\ngear needs a hub of its own. The asymmetry is the runtime's, not an\noversight here: a worker publishes REST through its own out-of-process\nrouter and needs no `rest_host`, while it has no such second path for\ngRPC.\n\nThe corpus makes this reachable rather than theoretical: `cluster` and\n`service-discovery` both declare `grpc` and neither declares `deps`, so\nnothing drags a hub in beside them.",
     requiresEvidence: true,
     prevents: "RegistryError::GrpcRequiresHub in cf-gears-toolkit",
   },
@@ -406,6 +406,38 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "topology",
     docs: "Two applications register the same name in the directory.\n\nA worker registers one name -- its own, or its role's. A host registers\none per REST provider it contains, plus one per gRPC provider, each\nunder that gear's own name. So the same name can be registered twice:\nby a host that reaches a gear through its closure, and by a worker\nanchored on that same gear because a description forced it out. A\nconsumer resolving the name then round-robins between two endpoints\nwith nothing marking either as the one meant.\n\n**Not about linking.** A gear compiled into several binaries is expected\nand correct -- co-location is a closure, not a partition -- and produces\nno second registration by itself: a gear linked into a worker anchored\non something else is not registered there at all. Linked, serving\nroutes, and registered under a name are three different sets, and only\nthe third can collide.\n\n**A warning ordinarily and an error for a gear declared\n`one_per_installation`.** Round-robin between two copies of a stateless\nservice is load balancing; between two that own disjoint state it is\ncorruption, and only the gear can say which it is\n(ADR `cpt-gearbox-adr-one-per-installation`).",
+    requiresEvidence: false,
+  },
+  GBX0321: {
+    code: "GBX0321",
+    title: "gear is at design maturity",
+    severity: "error",
+    domain: "topology",
+    docs: "A product selects a gear that is described but has no code yet.\n\n`maturity = \"design\"` in its `gear.gdl`: the catalogue knows the gear's\nid, purpose and documents, and there is no crate to link. Distinct from\nGBX0301 because \"not in the catalogue\" sends the reader looking for a\ntypo or a closed source root, and neither is the problem.",
+    requiresEvidence: false,
+  },
+  GBX0322: {
+    code: "GBX0322",
+    title: "gear is experimental",
+    severity: "warning",
+    domain: "topology",
+    docs: "A product links a gear its description calls `experimental`: its API\nand behaviour may change freely. A warning, because using one is a\nchoice a product may make on purpose -- but it should be a choice.",
+    requiresEvidence: false,
+  },
+  GBX0323: {
+    code: "GBX0323",
+    title: "gear is at preview",
+    severity: "info",
+    domain: "topology",
+    docs: "A product links a gear at `preview`: usable, not declared stable.\nInformation, not a warning: most of the platform is here today, and a\nwarning on every product would be noise that hides GBX0322 and GBX0324.",
+    requiresEvidence: false,
+  },
+  GBX0324: {
+    code: "GBX0324",
+    title: "gear is deprecated",
+    severity: "warning",
+    domain: "topology",
+    docs: "A product links a gear its description calls `deprecated`: still\navailable, not for new products.",
     requiresEvidence: false,
   },
   GBX0401: {
@@ -647,7 +679,7 @@ export const DIAGNOSTIC_CATALOGUE: {
   },
   GBX0518: {
     code: "GBX0518",
-    title: "plugin fills a point its host does not declare",
+    title: "plugin implements a point its host does not declare",
     severity: "error",
     domain: "cluster",
     docs: "A gear lists a plugin under a host that does not declare that point.\n\nThe gap [`PluginHostNotSelected`] leaves. That code asks whether *some*\nselected gear expects the plugin's point, which is the right question for\na plugin selected as an ordinary gear -- and it says nothing about the\n`plugins = [...]` list a plugin was actually written into. So a product\ncould list an authentication plugin under `types-registry`, whose\nprojected `extension_points` is empty, and be told nothing: the host\nlooks for no implementation, the plugin registers for a trait nobody\nqueries, and the link is inert.\n\nFound by a UX pass rather than by a resolution, which is the useful part:\nthe Add Gear panel offered the choice because nothing refused it, and a\nclient is not a boundary (`cpt-gearbox-fr-rpc-writes-opt-in`).",
@@ -655,10 +687,10 @@ export const DIAGNOSTIC_CATALOGUE: {
   },
   GBX0519: {
     code: "GBX0519",
-    title: "plugin fills a point no described gear declares",
+    title: "plugin implements a point no described gear declares",
     severity: "error",
     domain: "cluster",
-    docs: "A plugin fills a spec no described gear declares as an extension point.\n\nThe plugin names only the spec; which trait and which SDK are the host's\nto say. With no host describing it, the fill has nothing to join to, so\nit is reported rather than left to look connected.",
+    docs: "A plugin implements a spec no described gear declares as an extension point.\n\nThe plugin names only the spec; which trait and which SDK are the host's\nto say. With no host describing it, the fill has nothing to join to, so\nit is reported rather than left to look connected.",
     requiresEvidence: false,
   },
   GBX0520: {
@@ -715,7 +747,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "a plugin implements none of its point's trait",
     severity: "warning",
     domain: "cluster",
-    docs: "A gear declares it fills a point, and its crate implements none of that\npoint's trait.\n\nA warning, because the implementation is evidence and not the source of\nthe role: an impl can sit in a generic wrapper or a macro this reader\ncannot see. But the ordinary cause is a `fills` naming the wrong spec,\nand that one is worth a line.",
+    docs: "A gear declares it implements a point, and its crate implements none of that\npoint's trait.\n\nA warning, because the implementation is evidence and not the source of\nthe role: an impl can sit in a generic wrapper or a macro this reader\ncannot see. But the ordinary cause is an `implements` naming the wrong spec,\nand that one is worth a line.",
     requiresEvidence: false,
   },
   GBX0602: {
@@ -829,6 +861,30 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "generator",
     docs: "A house template replaced a builtin for this run.\n\nReported rather than only summarized, and that is the whole point of it\nbeing a diagnostic: the overlay was named in the text output alone, so\n`--format json` and every RPC client saw an unexpected Dockerfile or\nchart with no visible cause and read it as a generator change. A\ntemplate is chosen by the description, so the file it produces is the\nproduct's doing -- which is a fact an operator has to be told.",
+    requiresEvidence: false,
+  },
+  GBX0709: {
+    code: "GBX0709",
+    title: "a crate differs from the version published, so the checkout is patched in",
+    severity: "warning",
+    domain: "generator",
+    docs: "A crate the product takes from a registry differs from what was published.\n\n`crates = registry(...)` on a source says its gears are published, and\ngeneration checks that per crate: the published package records the\ncommit it was cut from (`.cargo_vcs_info.json`), and the checkout is\ncompared against it. Where they differ the build still names the\npublished version, and `[patch]` points it at the checkout -- so one copy\nof the crate is linked, and it is the code the resolver read. A warning,\nbecause the product builds; the output simply is not self-contained until\nthe change is released.",
+    requiresEvidence: false,
+  },
+  GBX0710: {
+    code: "GBX0710",
+    title: "a crate is not published at the checkout's version",
+    severity: "warning",
+    domain: "generator",
+    docs: "A crate the product takes from a registry is not published at the\nversion the checkout declares, so it stays a path dependency.",
+    requiresEvidence: false,
+  },
+  GBX0711: {
+    code: "GBX0711",
+    title: "the registry could not be reached",
+    severity: "warning",
+    domain: "generator",
+    docs: "The registry could not be asked at all -- offline, or cargo failed -- so\nevery crate of the source stays a path dependency.",
     requiresEvidence: false,
   },
 };

@@ -21,7 +21,7 @@
 // the resolver wrote when it created the edge, while it still knew the specifics
 // (`cpt-gearbox-fr-explain`). This walks and prints.
 
-import { fillLabel, pointKey, pointLabel, specSegment } from "../../common/extension-points";
+import { implementsLabel, pointKey, pointLabel, specSegment } from "../../common/extension-points";
 import { codicon, ReactWidget } from "@theia/core/lib/browser";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 import { CommandRegistry } from "@theia/core";
@@ -358,25 +358,25 @@ export class InspectorWidget extends ReactWidget {
           </div>
         )}
 
-        {gear.fills && (
+        {gear.implements && (
           <div className="gbx-kv">
-            <span>fills</span>
+            <span>implements</span>
             <span>
-              <code>{fillLabel(gear.fills)}</code>
-              {!gear.fills.point && (
-                <span className="gbx-muted" data-fills-unjoined="true">
+              <code>{implementsLabel(gear.implements)}</code>
+              {!gear.implements.point && (
+                <span className="gbx-muted" data-implements-unjoined="true">
                   {" "}
                   -- no described host declares it
                 </span>
               )}
-              {gear.fills.default_vendor !== null && gear.fills.default_vendor !== undefined && (
+              {gear.implements.default_vendor !== null && gear.implements.default_vendor !== undefined && (
                 <>
                   {" "}
-                  as vendor <code>{gear.fills.default_vendor}</code>
+                  as vendor <code>{gear.implements.default_vendor}</code>
                 </>
               )}
-              {gear.fills.default_priority !== null && gear.fills.default_priority !== undefined && (
-                <>, priority {gear.fills.default_priority}</>
+              {gear.implements.default_priority !== null && gear.implements.default_priority !== undefined && (
+                <>, priority {gear.implements.default_priority}</>
               )}
             </span>
           </div>

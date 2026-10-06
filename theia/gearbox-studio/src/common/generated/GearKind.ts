@@ -9,11 +9,13 @@
  * own. A scaffold that ignored that difference wrote the same file for both and
  * left a plugin author to find out what else a plugin needs.
  *
- * What differs is **which declarations the file offers**, not generated code. A
- * scaffold has no compiler and does not know where the toolkit or an SDK lives,
- * so the difference is the next declaration each shape needs, written where it
+ * What differs is **which declarations `gear.gdl` offers**. The Rust skeleton
+ * is the same `#[toolkit::gear]` struct for every kind when the engine finds the
+ * toolkit in its roots (a plugin's trait `impl` offered commented), and the
+ * previous comment-only form when it does not. In the description the
+ * difference is the next declaration each shape needs, written where it
  * goes -- and for a plugin with no host chosen, written as a *comment*,
- * because a `fills` naming a spec no described gear declares is refused
+ * because an `implements` naming a spec no described gear declares is refused
  * (GBX0519). A scaffold must not produce a description that is already wrong.
  */
 export type GearKind = "minimal" | "service" | "plugin";

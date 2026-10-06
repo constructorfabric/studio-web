@@ -11,7 +11,8 @@ import type { GearId } from "./GearId";
 import type { GtsTypeDecl } from "./GtsTypeDecl";
 import type { LifecycleDecl } from "./LifecycleDecl";
 import type { Location } from "./Location";
-import type { PluginFill } from "./PluginFill";
+import type { Maturity } from "./Maturity";
+import type { PluginImpl } from "./PluginImpl";
 import type { ProviderDescriptor } from "./ProviderDescriptor";
 import type { RelPath } from "./RelPath";
 import type { Requirement } from "./Requirement";
@@ -28,6 +29,14 @@ export type GearDescriptor = { id: GearId,
  * the entire reason it is separate from `id`.
  */
 display_name: string, description?: string | null, category?: string | null, visibility: Visibility, 
+/**
+ * Declared in `gear(maturity = ...)`, and required there.
+ *
+ * Not carried into the lock, like `config_schema`: it is what the gear
+ * promises, not something resolution decided. A product reports what it
+ * uses below `stable` (GBX0322-0324) instead.
+ */
+maturity: Maturity, 
 /**
  * Which declared source this gear was read from.
  */
@@ -71,16 +80,16 @@ cluster_providers?: Array<ClusterProviderDecl>,
  *
  * Declared in the description by GTS spec and verified against the SDK. A
  * gear may have several: `mini-chat` declares an audit point and a
- * model-policy point, each filled independently.
+ * model-policy point, each implemented independently.
  */
 extension_points?: Array<ExtensionPointDecl>, 
 /**
- * The extension point this gear *fills*, if it is a plugin.
+ * The extension point this gear *implements*, if it is a plugin.
  *
  * Declared, like the host's side. A gear may be both: bss-rate-provider
- * fills the ledger's point and declares one of its own.
+ * implements the ledger's point and declares one of its own.
  */
-fills?: PluginFill | null, 
+implements?: PluginImpl | null, 
 /**
  * The vendor string this gear's config selects a plugin by.
  *
