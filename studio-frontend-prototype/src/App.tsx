@@ -49,6 +49,7 @@ import {
   projectRepoRows,
   supportsPullRequests,
   withPicked,
+  withShareMode,
   without,
   type ProjectSource,
   type ShareMode,
@@ -7146,6 +7147,46 @@ function ShareModeSelect({
   );
 }
 
+/** Where a row's "Changes" save stands: the mode being written, and whether
+ *  the write failed. Nothing for a row at rest. */
+type ShareSave = { mode: ShareMode; failed: boolean };
+
+/** A source's "Changes" on the Sources list: how "Share with the team" in the
+ *  IDE lands edits in it, changed in place. Saves on change. A pull request is
+ *  offered only where the row's connection is GitHub — `asRows` names the
+ *  row's source after its connection's provider, and a connection not visible
+ *  from here is not GitHub as far as this row can tell. */
+function SourceShareMode({
+  row,
+  save,
+  onChange,
+}: {
+  row: RepoEntry;
+  save: ShareSave | undefined;
+  onChange: (mode: ShareMode) => void;
+}) {
+  const pullRequests = supportsPullRequests({ provider: row.source });
+  const saving = !!save && !save.failed;
+  return (
+    <span className="src-share">
+      <select
+        aria-label={`How changes to ${row.name} are shared`}
+        title="How “Share with the team” in the IDE lands edits in this repository"
+        value={saving ? save.mode : (row.share_mode ?? "branch")}
+        disabled={saving}
+        onChange={(e) => onChange(e.target.value as ShareMode)}
+      >
+        <option value="branch">Commit to the branch</option>
+        <option value="pull_request" disabled={!pullRequests && row.share_mode !== "pull_request"}>
+          Through a pull request{pullRequests ? "" : " (GitHub only)"}
+        </option>
+      </select>
+      {saving && <span className="sub">saving…</span>}
+      {save?.failed && <span className="sub src-share-failed">not saved</span>}
+    </span>
+  );
+}
+
 function ProjectSources({
   token,
   workspace: ws,
@@ -7271,6 +7312,29 @@ function ProjectSources({
     await reload();
   };
 
+  /** "Changes" per row, keyed by repo name, while a save is out or after one
+   *  failed. */
+  const [shareSaves, setShareSaves] = useState<Record<string, ShareSave>>({});
+
+  /** Change how one source is shared: the config read fresh, that entry's
+   *  `share_mode` changed and nothing else, written back — the same
+   *  read-modify-write that attach and detach do. */
+  const changeShareMode = async (name: string, mode: ShareMode) => {
+    setShareSaves((s) => ({ ...s, [name]: { mode, failed: false } }));
+    try {
+      const config = (await api.projectConfig(token, ws.id)) ?? {};
+      await api.putProjectConfig(token, ws.id, { ...config, sources: withShareMode(config.sources, name, mode) });
+      await reload();
+      setShareSaves((s) => {
+        const next = { ...s };
+        delete next[name];
+        return next;
+      });
+    } catch {
+      setShareSaves((s) => ({ ...s, [name]: { mode, failed: true } }));
+    }
+  };
+
   const syncLabel = (r: RepoEntry) => {
     const live = sync[r.name];
     return live?.running ? "…" : graphRepo(r) ? "Re-sync" : "Sync";
@@ -7317,12 +7381,20 @@ function ProjectSources({
                 </span>
                 <span>
                   <span className="src-name">{r.name}</span>
-                  <span className="sub">
-                    Repository{r.branch ? ` · ${r.branch}` : ""}
-                    {shareModeText(r.share_mode)}
-                  </span>
+                  <span className="sub">Repository{r.branch ? ` · ${r.branch}` : ""}</span>
                 </span>
               </>
+            ),
+          },
+          {
+            id: "share",
+            header: "Changes",
+            cell: (r) => (
+              <SourceShareMode
+                row={r}
+                save={shareSaves[r.name]}
+                onChange={(mode) => void changeShareMode(r.name, mode)}
+              />
             ),
           },
           {

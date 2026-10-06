@@ -296,8 +296,10 @@ A, who knows no git, edits two documents in Doc editing.
 
 ### 5j. Share through a pull request
 
-Create a project whose GitHub repository is picked with *Through a pull
-request*. In its session, A edits a document and shares it.
+In the prototype, attach a GitHub repository to a project with *Changes:
+Through a pull request* (*Pick from a connector…*), or switch an attached one
+to it in the *Changes* column of the project's Sources list. In its session,
+A edits a document and shares it.
 
 - **Expect**: the dialog says the project takes changes through review; the
   button reads *Send 1 document for review*. Afterwards a pull request from
@@ -312,8 +314,9 @@ request*. In its session, A edits a document and shares it.
 - **Fails as**: a commit on the checkout's own branch (the next pull would
   replay it), a second open request from the same person, or a request that
   carries the old commit after a merge.
-- **Control**: a repository picked with *Commit to the branch* still shares as
-  in 5i.
+- **Control**: a repository on *Commit to the branch* still shares as in 5i;
+  switching it back there in the Sources list makes the next share go to the
+  branch again.
 
 ### 6. Commenting on something that was rendered
 

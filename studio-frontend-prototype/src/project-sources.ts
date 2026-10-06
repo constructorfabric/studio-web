@@ -114,6 +114,18 @@ export function without(sources: readonly ProjectSource[] | undefined, dir: stri
   return (sources ?? []).filter((s) => s !== gone);
 }
 
+/** `sources` with the one checked out into `dir` shared as `mode`; every other
+ *  entry, and every other field of that one, as it was. A `dir` the config no
+ *  longer lists changes nothing. */
+export function withShareMode(
+  sources: readonly ProjectSource[] | undefined,
+  dir: string,
+  mode: ShareMode,
+): ProjectSource[] {
+  const target = named(sources).find((n) => n.dir === dir)?.source;
+  return (sources ?? []).map((s) => (s === target ? { ...s, share_mode: mode } : s));
+}
+
 /** The provider a row says it comes from, by its connection. */
 function providerOf(connection: Connection | undefined): RepoEntry["source"] {
   return connection?.provider === "github" ? "github" : connection?.provider === "gitlab" ? "gitlab" : "git";

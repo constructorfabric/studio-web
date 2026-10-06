@@ -17,7 +17,8 @@ Decided on 2026-10-05:
 
 Decided on 2026-10-06: a project chooses, per repository, whether changes go
 to the branch or through a pull request. The choice is made when the
-repository is picked from a connection, and Share follows it from then on (see
+repository is picked from a connection, can be changed later on the project's
+Sources list, and Share follows it from then on (see
 [Through a pull request](#through-a-pull-request)).
 
 ## Share with the team
@@ -71,18 +72,20 @@ project config's `sources[]` (`cf.studio.project.config.v1`).
 | `branch` (or absent) | Commits and pushes to the branch the project works on, as above. |
 | `pull_request` | Sends the documents to the person's pull request. |
 
-**Where it is chosen.** It is chosen when the repository is picked from a
-connection. The choice is *Commit to the branch* (the default) or *Through a
-pull request*, and there are two places to make it:
+**Where it is chosen.** In the prototype. The choice is *Commit to the
+branch* (the default) or *Through a pull request*:
 
-- **The portal's *Create project* wizard.** On the *Repositories* step, each
-  picked row has a *Changes* column with the choice.
-- **The prototype.** In *Pick from a connector…* and on the Sources tab,
-  *Changes:* beside the *Add* button applies to the repositories being added.
-  Its source list notes "shared through a pull request".
+- **When the repository is added.** In *Pick from a connector…* and on the
+  Sources tab, *Changes:* beside the *Add* button applies to the repositories
+  being added.
+- **Later.** On the project's Sources tab, each repository in the list has a
+  *Changes* column with the same choice. Changing it saves at once; the
+  next share follows it.
 
 Pull requests are offered only for GitHub connections. GitHub's is the only
-driver that can open them; for other providers the option is disabled.
+driver that can open them; for other providers the option is disabled. A
+repository whose connection is not visible from the project is not offered it
+either.
 
 **What a share does then.** Each person has one branch per repository,
 `studio/<person>/share`, and at most one open pull request from it.
@@ -175,7 +178,8 @@ Unit tests:
 - `share-model.test.ts`;
 - the backend's `project_sources` and `connectors` tests (`share_mode`, the
   two routes);
-- the portal's `projects-mfe` wizard tests (the choice is saved).
+- the prototype's `project-sources.test.ts` (the mode is recorded on
+  attach, and changing it later touches only that repository).
 - `assistant-reveal-guard.test.ts`;
 - `markdown-preserve.test.ts`;
 - `markdown-diff-git-service.test.ts` (`committedVersion`);
@@ -183,11 +187,8 @@ Unit tests:
 
 ## Not done
 
-- **Changing the mode of a repository already in a project.** It is chosen
-  only when the repository is added. For now, edit `share_mode` in the
-  project config.
 - **Pull requests on GitLab and Bitbucket.** Their drivers cannot open one
-  yet, so the portal offers the mode only for GitHub.
+  yet, so the mode is offered only for GitHub.
 
 - **The desktop's Sync** pulls through the same check, but has not been driven
   in a built electron-app.

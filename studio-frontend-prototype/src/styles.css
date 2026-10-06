@@ -1912,6 +1912,10 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 /* The product's small status dot before the role. Ours states the source
    flavour instead, which is the fact we actually hold. */
 .src-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); margin-right: 7px; vertical-align: middle; }
+/* A source's "Changes" select, with how its save stands beside it. */
+.src-share { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.src-share .sub { font-size: 11.5px; color: var(--muted-foreground); }
+.src-share .src-share-failed { color: var(--destructive); }
 .src-prs { display: flex; align-items: center; gap: 16px; min-width: 210px; }
 .src-pr-counts { min-width: 72px; line-height: 1.35; }
 .src-open { display: block; font-weight: 600; }

@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { Connection, RemoteRepo } from "./api";
-import { asRows, checkoutDir, hasRepository, named, supportsPullRequests, withPicked, without } from "./project-sources";
+import {
+  asRows,
+  checkoutDir,
+  hasRepository,
+  named,
+  supportsPullRequests,
+  withPicked,
+  withShareMode,
+  without,
+} from "./project-sources";
 import type { ProjectSource } from "./project-sources";
 
 const connection = {
@@ -84,6 +93,38 @@ describe("detaching", () => {
   it("keeps how the remaining sources are shared", () => {
     const sources = [src("a/app"), { ...src("b/web"), share_mode: "pull_request" as const }];
     expect(without(sources, "app")).toEqual([{ ...src("b/web"), share_mode: "pull_request" }]);
+  });
+});
+
+describe("changing how a source is shared", () => {
+  it("changes only that source's mode, and keeps its other fields and the other sources", () => {
+    const sources = [
+      { ...src("a/app"), branch: "main", share_mode: "branch" as const },
+      { ...src("b/web"), branch: "dev" },
+    ];
+    expect(withShareMode(sources, "web", "pull_request")).toEqual([
+      { ...src("a/app"), branch: "main", share_mode: "branch" },
+      { ...src("b/web"), branch: "dev", share_mode: "pull_request" },
+    ]);
+  });
+
+  it("finds the source by its directory, so two of the same name stay apart", () => {
+    const sources = [src("a/app"), src("b/app")];
+    expect(withShareMode(sources, "app-2", "pull_request").map((s) => s.share_mode)).toEqual([
+      undefined,
+      "pull_request",
+    ]);
+  });
+
+  it("goes back to the branch", () => {
+    const sources = [{ ...src("a/app"), share_mode: "pull_request" as const }];
+    expect(withShareMode(sources, "app", "branch")).toEqual([{ ...src("a/app"), share_mode: "branch" }]);
+  });
+
+  it("changes nothing for a directory the config no longer lists", () => {
+    const sources = [src("a/app")];
+    expect(withShareMode(sources, "gone", "pull_request")).toEqual(sources);
+    expect(withShareMode(undefined, "app", "pull_request")).toEqual([]);
   });
 });
 
