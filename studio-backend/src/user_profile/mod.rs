@@ -248,12 +248,16 @@ impl PersonResolver for IdentityService {
 #[async_trait]
 pub trait AssignmentRecorder: Send + Sync + 'static {
     /// Record `subject`'s membership of `org_id` with `role`, provisioning the
-    /// person if this login has not been seen before.
+    /// person if this login has not been seen before. `display_name` and
+    /// `email` are the IdP's: they name a new person and fill a profile's
+    /// blanks, never overwrite it.
     async fn record_assignment(
         &self,
         subject: &str,
         org_id: uuid::Uuid,
         role: &str,
+        display_name: Option<&str>,
+        email: Option<&str>,
     ) -> anyhow::Result<()>;
 
     /// Record that `subject` created `org_id` and owns it.
@@ -271,8 +275,10 @@ impl AssignmentRecorder for IdentityService {
         subject: &str,
         org_id: uuid::Uuid,
         role: &str,
+        display_name: Option<&str>,
+        email: Option<&str>,
     ) -> anyhow::Result<()> {
-        IdentityService::record_assignment(self, subject, org_id, role).await
+        IdentityService::record_assignment(self, subject, org_id, role, display_name, email).await
     }
 
     async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()> {

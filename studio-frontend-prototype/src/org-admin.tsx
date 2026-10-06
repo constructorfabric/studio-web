@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import {
   api,
+  type MemberIdentities,
   type MembershipRole,
   type OrgInvitation,
   type OrgMember,
@@ -50,6 +51,172 @@ const SOURCE_LABEL: Record<string, string> = {
   first_login: "first sign-in",
   manual: "added",
 };
+
+const CONFIDENCE: Record<string, { label: string; badge: string; hint: string }> = {
+  confirmed: { label: "Confirmed", badge: "ok", hint: "Proved by the provider; activity on it counts as theirs" },
+  claimed: { label: "Claimed", badge: "info", hint: "They say it is theirs; not proved yet, so nothing is attributed" },
+  suggested: { label: "Suggested", badge: "neutral", hint: "Studio guessed it; nobody has confirmed it" },
+};
+
+const DIRECTORY_STATUS: Record<PlatformIdentity["status"], string> = {
+  platform_admin: "Platform admin",
+  assigned: "Assigned",
+  unassigned: "Waiting for access",
+};
+
+const when = (ms: number) => <When iso={new Date(ms).toISOString()} />;
+
+/** Everything one member is known by, opened under their row: each way they
+ *  sign in, and each external account attributed to them. A platform admin
+ *  also sees what the IdP says about each realm login — the directory is
+ *  theirs alone, so an owner sees Studio's own records and nothing more. */
+function MemberIdentitiesPanel({
+  token,
+  orgId,
+  member,
+  directory,
+}: {
+  token: string;
+  orgId: string;
+  member: OrgMember;
+  /** The identity directory, keyed by Keycloak subject; empty for an owner. */
+  directory: Map<string, PlatformIdentity>;
+}) {
+  const [ids, setIds] = useState<MemberIdentities | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setIds(null);
+    setError(null);
+    api
+      .memberIdentities(token, orgId, member.user_id)
+      .then((r) => live && setIds(r))
+      .catch((e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token, orgId, member.user_id]);
+
+  if (error) return <div className="member-ids sub">Could not read their identities: {error}</div>;
+  if (!ids) return <div className="member-ids sub">Reading their identities…</div>;
+
+  return (
+    <div className="member-ids">
+      <div className="member-ids-head">
+        <span className="sub">Studio person</span>
+        <code title="The canonical person id every membership and grant keys on">{ids.user_id}</code>
+        <span className="sub">· in this organization since {when(member.created_at_epoch_ms)}</span>
+      </div>
+
+      <h4>
+        Sign-in identities <span className="dt-count">{ids.logins.length}</span>
+      </h4>
+      {ids.logins.length === 0 ? (
+        <p className="sub">No sign-in method resolves to this person — they were added before anyone signed in as them.</p>
+      ) : (
+        <table className="member-ids-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Account</th>
+              <th>Subject</th>
+              <th>Verified</th>
+              {directory.size > 0 && <th>Directory</th>}
+              <th>Linked</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ids.logins.map((l) => {
+              const idp = l.provider === "keycloak" ? directory.get(l.subject) : undefined;
+              return (
+                <tr key={`${l.provider}:${l.subject}`}>
+                  <td>
+                    {l.provider === "keycloak" ? "Studio Keycloak" : l.provider}
+                    {idp && <div className="sub">via {idp.identity_provider || "password"}</div>}
+                  </td>
+                  <td>
+                    {idp ? (
+                      <>
+                        <div>{idp.display_name || idp.username}</div>
+                        <div className="sub">{[idp.username, idp.email].filter(Boolean).join(" · ")}</div>
+                      </>
+                    ) : (
+                      <span className="sub">—</span>
+                    )}
+                  </td>
+                  <td>
+                    <code title={l.subject}>{l.subject}</code>
+                  </td>
+                  <td>
+                    <span className={`badge ${l.verified ? "ok" : "warn"}`}>{l.verified ? "Verified" : "Unverified"}</span>
+                  </td>
+                  {directory.size > 0 && (
+                    <td>
+                      {idp ? (
+                        <>
+                          <div>{DIRECTORY_STATUS[idp.status]}</div>
+                          {idp.home_tenant_name && (
+                            <div className="sub">
+                              home: {idp.home_tenant_name}
+                              {idp.organization_role ? ` · ${idp.organization_role}` : ""}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="sub">not in the directory</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="sub">{when(l.linked_at_epoch_ms)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <h4>
+        Attributed accounts <span className="dt-count">{ids.aliases.length}</span>
+      </h4>
+      {ids.aliases.length === 0 ? (
+        <p className="sub">No external account is attributed to this person yet.</p>
+      ) : (
+        <table className="member-ids-table">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Account</th>
+              <th>Confidence</th>
+              <th>Counts as theirs</th>
+              <th>Added</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ids.aliases.map((a) => {
+              const c = CONFIDENCE[a.confidence];
+              return (
+                <tr key={`${a.kind}:${a.external_id}`}>
+                  <td>{a.kind}</td>
+                  <td>
+                    <code>{a.external_id}</code>
+                  </td>
+                  <td>
+                    <span className={`badge ${c?.badge ?? "neutral"}`} title={c?.hint}>
+                      {c?.label ?? a.confidence}
+                    </span>
+                  </td>
+                  <td>{a.attributes ? "Yes" : <span className="sub">No</span>}</td>
+                  <td className="sub">{when(a.added_at_epoch_ms)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 /* ── Organizations ─────────────────────────────────────────────────────── */
 
@@ -295,6 +462,7 @@ export function OrgMembersView({
   const addable = identities.filter(
     (i) => !known.has(i.email?.toLowerCase()) && !known.has((i.display_name || i.username).toLowerCase()),
   );
+  const directory = new Map(identities.map((i) => [i.id, i]));
   const pending = invitations.filter((i) => !i.accepted_at_epoch_ms && i.expires_at_epoch_ms > Date.now());
   const activeOwners = (members ?? []).filter((m) => m.role === "owner" && m.status === "active").length;
 
@@ -337,6 +505,7 @@ export function OrgMembersView({
             },
           ]}
           empty={{ title: "Nobody belongs to this organization yet.", body: "Add or invite someone below." }}
+          expand={(m) => <MemberIdentitiesPanel token={token} orgId={org.id} member={m} directory={directory} />}
           columns={[
             {
               id: "name",

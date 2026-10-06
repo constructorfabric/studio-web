@@ -151,6 +151,20 @@ pub struct OrganizationMemberListDto {
     pub total: u32,
 }
 
+/// Everything that identifies one member: how they sign in, and which external
+/// accounts are attributed to them. What a members screen shows when a row is
+/// opened.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MemberIdentitiesDto {
+    pub user_id: String,
+    /// Sign-in methods, oldest first. For `provider: keycloak` the `subject` is
+    /// the realm user id the identity directory lists.
+    pub logins: Vec<LoginDto>,
+    /// Attributed external identities, strongest first.
+    pub aliases: Vec<AliasDto>,
+}
+
 /// The roles a membership may carry. `owner` is the one that administers
 /// (its access-config grant is kept in step with it); `admin` and `member`
 /// are what an invitation may offer.
@@ -667,6 +681,30 @@ async fn list_organization_members(
         .collect();
     let (items, total) = crate::pagination::page_of(items, page);
     Ok(Json(OrganizationMemberListDto { items, total }))
+}
+
+async fn get_member_identities(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path((org_id, user_id)): Path<(String, String)>,
+) -> ApiResult<JsonBody<MemberIdentitiesDto>> {
+    let service = configured(service)?;
+    let org = parse_org(&org_id)?;
+    require_org_authority(&ctx, &service, org, "people.view").await?;
+    let (logins, aliases) = service
+        .member_identities(&org.to_string(), &user_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            UserProfileError::not_found("not a member of this organization")
+                .with_resource(format!("{user_id}@{org}"))
+                .create()
+        })?;
+    Ok(Json(MemberIdentitiesDto {
+        user_id,
+        logins: logins.into_iter().map(login_to_dto).collect(),
+        aliases: aliases.into_iter().map(alias_dto).collect(),
+    }))
 }
 
 async fn put_membership(
@@ -1545,6 +1583,35 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    let router = OperationBuilder::get(
+        "/studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
+    )
+    .operation_id("studio_user.get_member_identities")
+    .summary("One member's sign-in methods and attributed identities")
+    .description(
+        "Every login that resolves to this person and every external identity \
+                 attributed to them, with how strongly. Only for a person who holds a \
+                 membership in this organization (404 otherwise), and gated like the member \
+                 list on `people.view`. Read from Studio's own records; the IdP is not asked.",
+    )
+    .tag("StudioUser")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("org_id", "Organization tenant id")
+    .path_param("user_id", "Canonical Studio person id")
+    .handler(get_member_identities)
+    .json_response_with_schema::<MemberIdentitiesDto>(
+        openapi,
+        StatusCode::OK,
+        "The member's identities",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-user/v1/organizations/{org_id}/invitations")
         .operation_id("studio_user.list_organization_invitations")

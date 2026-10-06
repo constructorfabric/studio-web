@@ -157,18 +157,13 @@ impl DirectoryIdentity {
         } else {
             "unassigned"
         };
-        let display_name = [user.first_name.as_deref(), user.last_name.as_deref()]
-            .into_iter()
-            .flatten()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let display_name = full_name(user.first_name.as_deref(), user.last_name.as_deref());
 
         Self {
             id: user.id,
             username: user.username,
             email: user.email,
-            display_name: (!display_name.is_empty()).then_some(display_name),
+            display_name,
             // Not available on a user representation at all — `list` fills it
             // from the dedicated per-user endpoint.
             identity_provider: None,
@@ -183,6 +178,29 @@ impl DirectoryIdentity {
                 .cloned(),
         }
     }
+}
+
+/// "First Last" from whichever parts are there, `None` when neither is.
+fn full_name(first: Option<&str>, last: Option<&str>) -> Option<String> {
+    let name = [first, last]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+/// The name and address a raw Keycloak user representation carries: its full
+/// name, else its username, and its e-mail.
+fn representation_names(user: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let field = |key: &str| user.get(key).and_then(serde_json::Value::as_str);
+    let name = full_name(field("firstName"), field("lastName")).or_else(|| {
+        field("username")
+            .filter(|u| !u.trim().is_empty())
+            .map(str::to_owned)
+    });
+    (name, field("email").map(str::to_owned))
 }
 
 /// Where each page of a listing starts: `0, 200, 400, …`, [`MAX_PAGES`] of
@@ -638,6 +656,9 @@ impl IdentityDirectoryService {
             .json::<serde_json::Value>()
             .await
             .context("decode Keycloak user representation")?;
+        // Read before the representation is edited: the membership record
+        // below names the person with them.
+        let (display_name, email) = representation_names(&user);
 
         let attributes = user
             .as_object_mut()
@@ -697,7 +718,13 @@ impl IdentityDirectoryService {
         // call the assignment again.
         if let Some(memberships) = memberships {
             memberships
-                .record_assignment(&identity_id_string, tenant_id, organization_role)
+                .record_assignment(
+                    &identity_id_string,
+                    tenant_id,
+                    organization_role,
+                    display_name.as_deref(),
+                    email.as_deref(),
+                )
                 .await
                 .with_context(|| {
                     format!(
@@ -736,7 +763,18 @@ impl IdentityDirectoryService {
             };
             let role = identity.organization_role.as_deref().unwrap_or("member");
             match memberships
-                .record_assignment(&identity.id, tenant_id, role)
+                .record_assignment(
+                    &identity.id,
+                    tenant_id,
+                    role,
+                    Some(
+                        identity
+                            .display_name
+                            .as_deref()
+                            .unwrap_or(&identity.username),
+                    ),
+                    identity.email.as_deref(),
+                )
                 .await
             {
                 Ok(()) => recorded += 1,
@@ -772,7 +810,7 @@ mod tests {
 
     use super::{
         DirectoryIdentity, KeycloakUser, PLATFORM_ROOT_TENANT_ID, is_directory_identity,
-        sort_identities,
+        representation_names, sort_identities,
     };
 
     fn user(value: serde_json::Value) -> KeycloakUser {
@@ -983,5 +1021,18 @@ mod tests {
             ["alice", "dave", "carol", "bob"],
             "newest first; equal timestamps by username; no timestamp last"
         );
+    }
+
+    /// The assignment names the person it records from the representation it
+    /// already read: the full name, else the username — the directory's rule.
+    #[test]
+    fn an_assignment_names_the_person_as_the_directory_does() {
+        let named = json!({"username": "dk", "firstName": "Denis", "lastName": "Kortunov", "email": "d@x.org"});
+        assert_eq!(
+            representation_names(&named),
+            (Some("Denis Kortunov".into()), Some("d@x.org".into()))
+        );
+        let bare = json!({"username": "nrggit", "firstName": " "});
+        assert_eq!(representation_names(&bare), (Some("nrggit".into()), None));
     }
 }

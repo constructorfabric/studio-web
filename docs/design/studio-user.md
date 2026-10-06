@@ -262,6 +262,7 @@ is configured.
 | `GET` | `/me/invitations` | Invitations waiting for an address the IdP verified for the caller | stable |
 | `POST` | `/me/invitations/accept` | Accept by `token` or by `invitation_id` from that list | stable |
 | `GET` | `/organizations/{org_id}/members` | Members with profiles, paged (`people.view`) | stable |
+| `GET` | `/organizations/{org_id}/members/{user_id}/identities` | One member's logins and aliases; 404 for a non-member (`people.view`) | experimental |
 | `GET` `POST` | `/organizations/{org_id}/invitations` | List (`people.view`); invite, token returned once (`people.invite`) | stable |
 | `DELETE` | `/organizations/{org_id}/invitations/{invitation_id}` | Withdraw (`people.invite`) | stable |
 | `PUT` `DELETE` | `/users/{user_id}/memberships/{org_id}` | Set role and status; remove (`people.manage`) | stable |
@@ -283,7 +284,7 @@ In process, under the scope `cf.studio._.user_identity.v1~`, published in
 |-----------|------|---------|
 | `PersonResolver` | The caller's person; the person behind a recorded subject | `cpt-studio-component-connector` |
 | `AliasResolver` | Confirmed owners of external identifiers; claims are never returned | `cpt-studio-component-connector` (graph sync) |
-| `AssignmentRecorder` | Record an assignment, or a creation as owner | `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
+| `AssignmentRecorder` | Record an assignment (naming the person from the IdP's name and e-mail, filling only a profile's blanks), or a creation as owner | `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
 | `MembershipEvictor` | End every membership of an organization being deleted | `cpt-studio-component-organizations` |
 | `OrganizationReader` | A subject's active organizations, all its person's subjects, platform-admin test, membership generation | `cpt-studio-component-authz-plugin`, `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
 | `OrganizationRoster` | An organization's active members and their subjects | `cpt-studio-component-organizations` (rollups) |

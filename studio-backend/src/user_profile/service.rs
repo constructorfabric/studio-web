@@ -930,12 +930,44 @@ impl IdentityService {
     /// `resolve_recorded_subject`: this subject comes from the IdP's own user
     /// list, so the identity demonstrably exists — where a subject read out of
     /// some other gear's column demonstrates nothing.
-    pub async fn record_assignment(&self, subject: &str, org_id: Uuid, role: &str) -> Result<()> {
+    ///
+    /// `display_name` and `email` are what the IdP calls the identity. They
+    /// name a person created here, and fill an existing profile's blanks —
+    /// never overwrite it, since a profile is the person's own to edit. Without
+    /// them every assigned person read as "Person 1a2b3c4d" on the members
+    /// screen until they edited their own profile.
+    pub async fn record_assignment(
+        &self,
+        subject: &str,
+        org_id: Uuid,
+        role: &str,
+        display_name: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<()> {
         let user_id = self
-            .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+            .resolve_or_provision(PROVIDER_KEYCLOAK, subject, display_name, email, true)
+            .await?;
+        self.fill_blank_profile(&user_id, display_name, email)
             .await?;
         self.record_membership(&user_id, &org_id.to_string(), role, SOURCE_ASSIGNMENT)
             .await?;
+        Ok(())
+    }
+
+    /// Give a profile the name and address it lacks, leaving any it has.
+    async fn fill_blank_profile(
+        &self,
+        user_id: &str,
+        display_name: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<()> {
+        let Some(mut profile) = self.store.get_user(user_id).await? else {
+            return Ok(());
+        };
+        if fill_blanks(&mut profile, display_name, email) {
+            profile.updated_at_epoch_ms = now_ms();
+            self.store.upsert_user(&profile).await?;
+        }
         Ok(())
     }
 
@@ -1185,6 +1217,32 @@ impl IdentityService {
             out.push((membership, profile));
         }
         Ok(out)
+    }
+
+    /// One member's identities — every sign-in method and every attributed
+    /// external account — for a members screen that opens a row.
+    ///
+    /// `None` when `user_id` holds no membership in `org_id`: authority over an
+    /// organization is authority over its room, so an owner reads the people in
+    /// it and nobody else. Only what this gear recorded; nothing is asked of the
+    /// IdP, whose reader answers about the signed-in person alone.
+    pub async fn member_identities(
+        &self,
+        org_id: &str,
+        user_id: &str,
+    ) -> Result<Option<(Vec<LoginView>, Vec<AliasRecord>)>> {
+        let member = self
+            .store
+            .memberships_of(user_id)
+            .await?
+            .iter()
+            .any(|m| m.org_id == org_id);
+        if !member {
+            return Ok(None);
+        }
+        let mut logins = self.store.logins_of(user_id).await?;
+        logins.sort_by_key(|l| l.linked_at_epoch_ms);
+        Ok(Some((logins, self.list_aliases(user_id).await?)))
     }
 
     /// Make the organization's owner grant agree with one person's membership.
@@ -1570,6 +1628,31 @@ pub fn normalize_key(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
+/// Set the profile's name and address where it has none; `true` when either
+/// changed. A value the profile already holds is the person's, and stays.
+fn fill_blanks(profile: &mut UserProfile, display_name: Option<&str>, email: Option<&str>) -> bool {
+    let given = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let blank = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+    let mut changed = false;
+    if blank(&profile.display_name)
+        && let Some(name) = given(display_name)
+    {
+        profile.display_name = Some(name);
+        changed = true;
+    }
+    if blank(&profile.email)
+        && let Some(address) = given(email)
+    {
+        profile.email = Some(address);
+        changed = true;
+    }
+    changed
+}
+
 /// Normalize and bounds-check an alias key.
 ///
 /// The ceilings match the `CHECK` constraints in `migrations`, so an oversized
@@ -1850,6 +1933,47 @@ mod idp_channel_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn profile(display_name: Option<&str>, email: Option<&str>) -> UserProfile {
+        UserProfile {
+            id: "p".into(),
+            display_name: display_name.map(str::to_owned),
+            email: email.map(str::to_owned),
+            avatar_url: None,
+            locale: None,
+            created_at_epoch_ms: 0,
+            updated_at_epoch_ms: 0,
+            merged_into: None,
+        }
+    }
+
+    /// An assignment names a person the members screen would otherwise call
+    /// "Person 1a2b3c4d" — a blank name, or one that is only spaces, is filled.
+    #[test]
+    fn an_assignment_fills_a_nameless_profile() {
+        let mut p = profile(None, Some("  "));
+        assert!(fill_blanks(
+            &mut p,
+            Some(" Denis Kortunov "),
+            Some("d@example.com")
+        ));
+        assert_eq!(p.display_name.as_deref(), Some("Denis Kortunov"));
+        assert_eq!(p.email.as_deref(), Some("d@example.com"));
+    }
+
+    /// What the person typed into their own profile outranks the IdP.
+    #[test]
+    fn an_assignment_never_renames_somebody() {
+        let mut p = profile(Some("Den"), Some("mine@example.com"));
+        assert!(!fill_blanks(
+            &mut p,
+            Some("Denis Kortunov"),
+            Some("idp@example.com")
+        ));
+        assert_eq!(p.display_name.as_deref(), Some("Den"));
+        assert_eq!(p.email.as_deref(), Some("mine@example.com"));
+        assert!(!fill_blanks(&mut profile(None, None), Some(" "), None));
+    }
 
     fn prefs(pairs: &[(&str, &str)]) -> UiPreferences {
         pairs

@@ -2063,6 +2063,19 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .dt-twisty-col { width: 1%; padding-right: 0; }
 .dt-twisty { min-width: 24px; padding: 0 4px; }
 .dt-table tr.dt-detail td { background: color-mix(in srgb, var(--background) 55%, transparent); }
+/* A member opened: who they are, as every sign-in and attributed account. */
+.member-ids { padding: 4px 4px 8px 28px; display: flex; flex-direction: column; gap: 6px; }
+.member-ids-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.member-ids h4 { margin: 8px 0 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
+.member-ids code { font-family: var(--font-mono); font-size: 12px; word-break: break-all; }
+.member-ids-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Specific enough to beat the outer .ptable cell rules it sits inside. */
+.ptable .member-ids-table thead th { text-align: left; font-weight: 500; font-size: 11px; color: var(--muted-foreground); padding: 4px 12px 4px 0; border-bottom: 1px solid var(--border); background: none; }
+.ptable .member-ids-table tbody td { padding: 6px 12px 6px 0; font-size: 13px; line-height: 1.35; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.ptable .member-ids-table tbody tr { height: auto; }
+.ptable .member-ids-table tbody tr:hover td { background: none; }
+.ptable .member-ids-table tbody tr:last-child td { border-bottom: 0; }
+@media (max-width: 720px) { .member-ids { padding-left: 4px; overflow-x: auto; } }
 .dt-state { padding: 28px 12px; text-align: center; color: var(--muted-foreground); display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .dt-empty-title { color: var(--foreground); font-weight: 500; }
 .dt-empty-body { max-width: 520px; }

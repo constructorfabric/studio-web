@@ -59,6 +59,34 @@ export interface OrgMember {
   updated_at_epoch_ms: number;
 }
 
+/** One way a person signs in. For `provider: "keycloak"` the subject is the
+ *  realm user id — the `id` of a `PlatformIdentity`. */
+export interface PersonLogin {
+  provider: string;
+  subject: string;
+  verified: boolean;
+  linked_at_epoch_ms: number;
+}
+
+/** An external account attributed to a person (`github`, `email`, …). */
+export interface PersonAlias {
+  kind: string;
+  external_id: string;
+  /** suggested | claimed | confirmed */
+  confidence: string;
+  /** Activity on it counts as theirs — only when confirmed. */
+  attributes: boolean;
+  added_at_epoch_ms: number;
+}
+
+/** A member's identities, from
+ *  `GET /studio-user/v1/organizations/{org}/members/{user}/identities`. */
+export interface MemberIdentities {
+  user_id: string;
+  logins: PersonLogin[];
+  aliases: PersonAlias[];
+}
+
 export interface OrgInvitation {
   id: string;
   org_id: string;
@@ -2345,6 +2373,14 @@ export const api = {
       `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members`,
       token,
       "items",
+    ),
+
+  /** One member's sign-in methods and attributed accounts. `people.view`, and
+   *  only for somebody in that organization (404 otherwise). */
+  memberIdentities: (token: string, orgId: string, userId: string) =>
+    request<MemberIdentities>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}/identities`,
+      token,
     ),
 
   /** Add somebody, change their role, or suspend/resume them — one write. An
