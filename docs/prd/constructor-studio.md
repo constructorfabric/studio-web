@@ -117,7 +117,9 @@ These terms are used with exactly this meaning in every document under `docs/`.
 | Session | A running Theia IDE container or Pod for one workspace, managed by `studio-session`. |
 | Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
 | Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
-| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. |
+| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
+| Contract | A GTS id a gear declares with `provide(...)` in its `gear.gdl`: what the gear does for others, stated so the engine can check it. |
+| Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
 | Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
 | Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
 | Run | One unit of durable background work in `studio-tasks`. |
@@ -514,6 +516,43 @@ The system **MUST** compose a `product.gdl` from picked gears, resolve it with t
 - **Rationale**: The portal and the IDE run the same engine at the same commit so they agree (`theia/gearbox-studio/README.md`).
 - **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-agent`
 
+#### A specification maps to gears
+
+- [ ] `p1` - **ID**: `cpt-studio-fr-spec-gear-mapping`
+
+The system **MUST** map every capability a product's specification requires to gears in this order, and **MUST** say for each proposal which step produced it:
+1. **Contract.** A gear that declares the capability's contract with `provide(...)` in its `gear.gdl` is matched. The organization's capability vocabulary translates a capability key into the contracts that satisfy it.
+2. **Evidence.** A capability no declared contract satisfies is searched for in the gears' documentation. A proposal from search cites the passage that supports it, and ranks below every contract match.
+3. **Gap.** A capability neither step covers is a gap, offered as the starting point of a new gear.
+
+The same rules **MUST** apply to every project; nothing in them may name a particular product, repository or corpus.
+
+- **Rationale**: Keyword matching over gear prose (`/compose` today) cannot tell a gear that provides a capability from one that mentions it. Different products bring different specifications, so the mapping must be data-driven (#205, #199).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-agent`
+
+#### A mapping is a decision on record
+
+- [ ] `p1` - **ID**: `cpt-studio-fr-mapping-decisions`
+
+The system **MUST** let a member confirm or reject each proposed mapping. It **MUST** record each decision in the knowledge graph as a link from the specification section through the capability to the gear, with:
+- who decided;
+- which step proposed it;
+- the gear version and the document revision decided against.
+
+A decision **MUST** be shown as needing review again once the section or the gear changes. Past decisions **MUST** rank later proposals of the same capability in the same organization.
+
+- **Rationale**: A product's composition has to be explainable section by section, and a confirmation made once should not be asked for again on the next product (#205, #206).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Non-functional requirements shape the profile, not the gear list
+
+- [ ] `p2` - **ID**: `cpt-studio-fr-nfr-to-profile`
+
+The system **MUST** map a specification's non-functional requirements (where the product runs, tenancy, data residency, scale) to the product's deployment profile and gear configuration in `product.gdl`, and **MUST NOT** turn them into extra gears.
+
+- **Rationale**: "On premises" is the `self_hosted` profile, not a component. Mapping it to a gear would add a component the product does not need.
+- **Actors**: `cpt-studio-actor-member`
+
 #### Delivery metrics from Constructor Insight
 
 - [x] `p3` - **ID**: `cpt-studio-fr-delivery-insight`
@@ -836,6 +875,7 @@ Business-level acceptance criteria for the PRD as a whole. Each is observable on
 - [ ] **AC8** — Classifying a project whose repository contains this `docs/` tree binds every file under `docs/prd`, `docs/design`, `docs/decomposition`, `docs/feature` and `docs/adr` to its declared type, and each binding conforms.
 - [ ] **AC9** — A `studio-events` subscriber receives the transitions of a run it did not start, without polling `studio-tasks`.
 - [ ] **AC10** — A change that adds a REST operation violating `docs/api-conventions.md` fails `cargo test` until the violation is fixed or baselined.
+- [ ] **AC11** — For every product project already on the dev stand, mapping its specification lists each required capability with a contract match, a cited search match or a gap, and the same request run twice returns the same contract matches.
 
 ## 10. Dependencies
 
@@ -875,6 +915,9 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 - Whether nested projects may nest further, whether root projects derive an owner, and what the shared connection catalogue is called while organizations stay hidden (`PRODUCT.md`).
 - Whether source-host access moves from stored tokens to OAuth-app or installation tokens (`docs/roadmap-alignment.md`).
 - Which channel a notification leaves Studio by (`TASKS.md`, 2026-09-17).
+- Who owns the capability-to-contract vocabulary: the platform, the organization, or the platform with organization additions. Today the vocabulary is organization data overridable per workspace (`cpt-studio-fr-document-catalogue`).
+- Whether Gearbox should resolve a product from required contracts instead of picked gears (`requires = [...]` in `product.gdl`), which would move the choice of gear and vendor into the engine.
+- How a product's FrontX micro-frontends are composed with its gears: whether a gear's UI lives beside the gear, and whether the FrontX shell is itself a gear (constructorfabric/gearbox#3).
 
 ## 14. Traceability
 
@@ -902,6 +945,9 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
 | `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
+| `cpt-studio-fr-spec-gear-mapping` | planned: `studio-backend/src/components_catalog/compose.rs` (today keyword matching only); #205, #199 |
+| `cpt-studio-fr-mapping-decisions` | planned: #205, #206 |
+| `cpt-studio-fr-nfr-to-profile` | planned: #205 |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
 | `cpt-studio-fr-theia-bridge` | `studio-backend/src/studio_theia/`; `/studio-theia/v1`; `theia/studio/src/node/studio-control-api.ts` |
 | `cpt-studio-fr-ide-product-surface` | `theia/studio/`, `theia/product-ext/`, `theia/drawio-editor/` |
@@ -947,3 +993,4 @@ Platform gears that serve every requirement rather than one — `gear_orchestrat
 | AC8 | `studio-backend/src/documents/classify.rs`, `studio-backend/src/documents/validate.rs`; `cpt-studio-fr-repository-documents` |
 | AC9 | `studio-backend/src/studio_events/`, `studio-backend/src/tasks/`; `cpt-studio-fr-push-channel` |
 | AC10 | `studio-backend/src/api_contract.rs`; `cpt-studio-fr-api-contract` |
+| AC11 | planned: `studio-backend/src/components_catalog/compose.rs`; `cpt-studio-fr-spec-gear-mapping`, `cpt-studio-fr-mapping-decisions` |

@@ -55,6 +55,8 @@ rules, not rendering, and a second portal would have grown its own copy.
 | `cpt-studio-fr-gear-catalogue` | A `catalog.sync` run reads crates.io, repository sources and roadmap boards into `gear`, `crate_version`, `gear_profile`, `frontx`, `kit` and `roadmap_item` nodes; the read routes serve components, versions, values, history, the reference and activity. |
 | `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
 | `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file. |
+| `cpt-studio-fr-spec-gear-mapping` | Planned: `compose.rs` matches a capability first through the contracts the vocabulary names against the `provide(...)` the engine catalogue reports per gear, then by searching gear documentation, then reports a gap. See `cpt-studio-principle-catalog-contract-first`. |
+| `cpt-studio-fr-mapping-decisions` | Planned: a decision is a graph edge from the specification section through the capability to the gear, carrying who, which step, the gear version and the document revision. |
 
 #### NFR Allocation
 
@@ -150,6 +152,25 @@ mostly prose and prose is what keywords match, so candidates are sorted
 built-first and the shortlist is cut after that sort. Components never built
 are labelled rather than dropped, because a design may name a component that is
 still only a design; `why` names the matched terms.
+
+#### Contract first, evidence second, gap last
+
+- [ ] `p1` - **ID**: `cpt-studio-principle-catalog-contract-first`
+
+A gear that *declares* a capability's contract is a different kind of answer
+from a gear whose documentation *mentions* the capability, and the mapping
+never mixes the two in one ranking.
+- **Contract matches** come from data the engine checks: the vocabulary's
+  contracts for the capability against each gear's `provide(...)`. The same
+  request gives the same answer every time.
+- **Evidence matches** come from search over gear documentation. Each one cites
+  its passage, and all of them rank below every contract match. They are how a
+  capability nobody has given a contract yet still gets a candidate.
+- **A gap** is reported as a gap, never filled by the nearest keyword. It is
+  the input of a new gear.
+
+Built-first (`cpt-studio-principle-catalog-built-first`) still orders the
+candidates within each kind.
 
 #### The portal and the IDE resolve with one engine
 
