@@ -1067,6 +1067,31 @@ impl IdentityService {
             .collect())
     }
 
+    /// Every membership of the person behind `subject`, suspended included.
+    /// Never provisions: the subject comes from the IdP's user list, and a
+    /// person nobody has recorded simply belongs nowhere yet.
+    pub async fn memberships_of_subject(
+        &self,
+        subject: &str,
+    ) -> Result<Vec<super::SubjectMembership>> {
+        let Some(user_id) = self.resolve_subject(PROVIDER_KEYCLOAK, subject).await? else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .store
+            .memberships_of(&user_id)
+            .await?
+            .into_iter()
+            .filter_map(|m| {
+                Some(super::SubjectMembership {
+                    org_id: Uuid::parse_str(&m.org_id).ok()?,
+                    role: m.role,
+                    status: m.status,
+                })
+            })
+            .collect())
+    }
+
     /// Invite an address into an organization.
     ///
     /// Returns the token **once**. It is not stored and cannot be shown again:

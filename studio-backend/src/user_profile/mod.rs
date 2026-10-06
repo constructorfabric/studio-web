@@ -358,6 +358,14 @@ pub trait OrganizationReader: Send + Sync + 'static {
     /// platform administrator cannot drift from the gear that records it.
     async fn is_platform_admin(&self, subject: &str) -> anyhow::Result<bool>;
 
+    /// Every membership the person behind `subject` holds, suspended ones
+    /// included, for a screen that shows where somebody belongs. Unlike
+    /// [`Self::organizations_of`] this decides nothing — so it answers with the
+    /// standing rather than leaving the suspended out. A subject no login knows
+    /// has none.
+    async fn memberships_of_subject(&self, subject: &str)
+    -> anyhow::Result<Vec<SubjectMembership>>;
+
     /// Changes whenever any membership is written anywhere.
     ///
     /// A caller that caches an answer from `organizations_of` keeps this beside
@@ -381,9 +389,27 @@ impl OrganizationReader for IdentityService {
         IdentityService::is_platform_admin(self, subject).await
     }
 
+    async fn memberships_of_subject(
+        &self,
+        subject: &str,
+    ) -> anyhow::Result<Vec<SubjectMembership>> {
+        IdentityService::memberships_of_subject(self, subject).await
+    }
+
     fn membership_generation(&self) -> u64 {
         service::membership_generation()
     }
+}
+
+/// One of a person's memberships, as [`OrganizationReader::memberships_of_subject`]
+/// reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectMembership {
+    pub org_id: uuid::Uuid,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+    /// `active` or `suspended`.
+    pub status: String,
 }
 
 /// One active member of an organization: the person, and every sign-in

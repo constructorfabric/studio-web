@@ -47,7 +47,7 @@ subject, and the address the realm has verified for it.
 
 | Requirement | Design Response |
 |-------------|------------------|
-| `cpt-studio-fr-identity-directory` | `GET /users` reads the realm and marks each identity `unassigned`, `assigned` or `platform_admin`; `POST /users/{id}/assignment` places one. |
+| `cpt-studio-fr-identity-directory` | `GET /users` reads the realm and marks each identity `unassigned`, `assigned` or `platform_admin` from its Studio memberships; `POST /users/{id}/assignment` places one. |
 | `cpt-studio-fr-invitations-membership` | Assignment records the Studio membership through `AssignmentRecorder`; `verified_email` is the only address an invitation is matched against. |
 | `cpt-studio-fr-canonical-user` | `federated_accounts` is the IdP proof channel the confirmation ceremony reads. |
 
@@ -106,6 +106,29 @@ write is not optional: a failure there names the identity and tells the
 administrator to re-run the assignment, which is idempotent. The attribute and
 the group are both kept because tokens read the attribute while
 account-management lists a tenant's users from the group.
+
+The role is `owner`, `admin` or `member`, the set a membership takes; offering
+fewer demoted every `admin` that was re-assigned. A platform administrator is
+refused (`400 PLATFORM_ADMIN_NOT_ASSIGNABLE`): the attribute and the group
+would move them out of the platform root into one organization, and their place
+in an organization is a membership made on its People screen.
+
+**ADRs**: `cpt-studio-adr-membership-is-recorded-where-assignment-happens`
+
+#### Where somebody belongs is read from Studio, not from the IdP
+
+- [ ] `p2` - **ID**: `cpt-studio-principle-identity-directory-membership-is-access`
+
+Each listed identity carries its Studio memberships (`memberships[]`: org id and
+name, role, standing), read through `OrganizationReader` without provisioning,
+and its `status` is derived from them: an active membership of the platform root
+makes `platform_admin`, any other active membership `assigned`, none
+`unassigned`. The `tenant_id` and `studio_organization_role` attributes stay in
+the answer as the IdP's view (`home_tenant_*`, `organization_role`), because a
+membership changed on a People screen never rewrites them; a screen shows where
+the two disagree instead of reading the attribute as access. When studio-user
+cannot be asked, `memberships` is absent and the status falls back to the
+attribute.
 
 **ADRs**: `cpt-studio-adr-membership-is-recorded-where-assignment-happens`
 
@@ -186,8 +209,8 @@ A read-only projection plus one write path; not a second user store.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET` | `/studio-identity/v1/users` | Every identity in the realm, with whether it is assigned, and `truncated` | stable |
-| `POST` | `/studio-identity/v1/users/{identity_id}/assignment` | Place an identity into an organization as `owner` or `member` | stable |
+| `GET` | `/studio-identity/v1/users` | Every identity in the realm, with its Studio memberships, the status they make, and `truncated` | stable |
+| `POST` | `/studio-identity/v1/users/{identity_id}/assignment` | Place an identity into an organization as `owner`, `admin` or `member`; a platform administrator is refused | stable |
 | `POST` | `/studio-identity/v1/memberships/backfill` | Record memberships for identities the IdP already calls assigned | stable |
 
 Every route is platform-admin only (`PLATFORM_ADMIN_REQUIRED`): a membership of
