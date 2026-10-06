@@ -7,7 +7,7 @@ only, how a tick fires once across replicas and why a re-fire is harmless, the
 two policies, the routes and the table — is
 [`docs/design/studio-scheduler.md`](../../../docs/design/studio-scheduler.md).
 The operator's view of runs and schedules together is
-[`docs/background-work.md`](../../docs/background-work.md). This README is what
+[`docs/background-work.md`](../../../docs/background-work.md). This README is what
 you need to work in the directory.
 
 ## REST

@@ -23,7 +23,7 @@ README is what you need to work in the directory.
   `InsightClient` under the ClientHub scope `INSIGHT_INSTANCE_ID`, or the typed
   `port::ComponentDelivery` (what [`../components_catalog`](../components_catalog)
   uses for `/activity`). Both are published in `init`.
-- [`docs/insight-quickstart.md`](../../docs/insight-quickstart.md)
+- [`docs/insight-quickstart.md`](../../../docs/insight-quickstart.md)
   has worked queries with their real answers and how to check the wiring.
 
 ## Working here
