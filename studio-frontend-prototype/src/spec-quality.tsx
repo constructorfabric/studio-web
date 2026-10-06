@@ -721,7 +721,7 @@ export function SpecQuality({
   // file documents (loaded "From repository") resolve to their graph node too.
   const fileIndexRef = useRef<Map<string, string> | null>(null);
 
-  // ── Materialize detector results into the artifact graph (ADR-0010) ──
+  // ── Materialize detector results into the artifact graph (ADR-0022) ──
   // Best-effort: writes findings + derived relations back through the artifact-
   // ingest gear. Keyed on document node instance ids, so it only acts on docs
   // that came from ingested artifacts.

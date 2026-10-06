@@ -1,5 +1,5 @@
 //! studio-session SDK — the in-process discovery contract for the Theia
-//! backend bridge (ADR-0010).
+//! backend bridge (ADR-0022).
 //!
 //! The studio-theia gear consumes [`StudioSessionDiscoveryClientV1`] from
 //! `ClientHub` to turn a workspace into a dial-able Theia control endpoint +
@@ -21,7 +21,7 @@ use super::service::SessionService;
 /// Error returned by discovery lookups.
 pub type StudioSessionError = toolkit_canonical_errors::CanonicalError;
 
-/// The internal Theia control endpoint for one live session (ADR-0010).
+/// The internal Theia control endpoint for one live session (ADR-0022).
 #[derive(Debug, Clone)]
 pub struct TheiaControlEndpoint {
     /// The studio-session id backing this endpoint.

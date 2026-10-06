@@ -1,7 +1,8 @@
 // New Gear wizard — id / name / version / destination with a live FilePlan preview.
 //
-// ADR-0010: a preview is not optional. The right pane is `.gbx-file-plan`, the
-// same shape generate uses, before any write.
+// ADR `cpt-gearbox-adr-authoring-ownership-tiers`: a preview is not optional.
+// The right pane is `.gbx-file-plan`, the same shape generate uses, before any
+// write.
 
 import { ReactWidget } from "@theia/core/lib/browser";
 import { MessageService } from "@theia/core/lib/common/message-service";
@@ -939,7 +940,8 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     try {
       // The same request the preview made, `dry_run` apart. Sending a different
       // one would make the preview a description of something else, which is the
-      // rule ADR-0010 states as "a preview is not optional".
+      // rule ADR `cpt-gearbox-adr-authoring-ownership-tiers` states as "a
+      // preview is not optional".
       const result = await this.service.scaffoldGear({
         id: this.gearId,
         name: this.name,

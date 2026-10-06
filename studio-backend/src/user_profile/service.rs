@@ -372,7 +372,7 @@ impl IdentityService {
         // Every way this person signs in, not the one they used today: a grant
         // records whichever login wrote it, and asking about that login alone
         // makes authority depend on which door somebody came through
-        // (ADR-0006 follow-up 2). A failed lookup falls back to the bare
+        // (ADR-0023 follow-up 2). A failed lookup falls back to the bare
         // subject, which is what this asked before.
         let subjects = self
             .subjects_of(&subject)
@@ -388,7 +388,7 @@ impl IdentityService {
     ///
     /// The one way a Studio gear turns "who is calling" into "which person", so
     /// that no consumer re-derives it from the token and no two consumers key
-    /// the same human differently (ADR-0014). The subject comes off a bearer the
+    /// the same human differently (ADR-0025). The subject comes off a bearer the
     /// platform has already authenticated, which is both why provisioning here
     /// is safe and why the login is recorded as verified.
     pub async fn resolve_caller(&self, ctx: &SecurityContext) -> Result<String> {
@@ -674,7 +674,7 @@ impl IdentityService {
     /// caller, from whichever channels are available.
     ///
     /// Two channels, and neither costs the person a new step (ADR-0012,
-    /// ADR-0014):
+    /// ADR-0025):
     ///
     /// - **their connector credentials.** Every connection in the catalogue
     ///   passed `ConnectorDriver::test()`, which asked the provider "who am I?"
@@ -723,7 +723,7 @@ impl IdentityService {
     ///
     /// Ownership is compared between *people*, not between token subjects, so a
     /// proof left behind under one of the caller's other logins is still theirs
-    /// (ADR-0014).
+    /// (ADR-0025).
     async fn confirm_from_connections(
         &self,
         ctx: &SecurityContext,
@@ -747,7 +747,7 @@ impl IdentityService {
             // `created_by` names the sign-in method that wrote the row, so it is
             // resolved to a person before being compared to one: the caller may
             // be signed in through a different login than the one that left the
-            // proof, and the proof is theirs under either (ADR-0014).
+            // proof, and the proof is theirs under either (ADR-0025).
             let creator = if connection.created_by.trim().is_empty() {
                 None
             } else {
@@ -798,7 +798,7 @@ impl IdentityService {
     /// Walks **every** Keycloak login the person holds, not only the one they
     /// are signed in with. A person who merged two accounts may have brokered a
     /// different provider onto each, and each of those is a proof they own —
-    /// which is the whole point of one person holding several logins (ADR-0014).
+    /// which is the whole point of one person holding several logins (ADR-0025).
     ///
     /// The alias is keyed on the provider handle rather than the provider's
     /// numeric id, because the handle is what the artefacts being attributed
@@ -1572,8 +1572,9 @@ pub fn normalize_key(value: &str) -> String {
 
 /// Normalize and bounds-check an alias key.
 ///
-/// The ceilings match the `CHECK` constraints in `migrations`, so an oversized
-/// value is a 400 from the service rather than a 500 from the database.
+/// These ceilings are the only bound: `kind` and `external_id` are unbounded
+/// `TEXT` in `migrations`, with no `CHECK` behind them, so an oversized value
+/// is refused here, as a 400, or not at all.
 fn normalize_alias(kind: &str, external_id: &str) -> Result<(String, String)> {
     let kind = normalize_key(kind);
     let external_id = normalize_key(external_id);
@@ -1755,7 +1756,7 @@ mod idp_channel_tests {
     async fn every_login_the_person_holds_is_asked_about() {
         // The reason this walks logins instead of the current token: two
         // brokered providers, one on each of the person's Keycloak logins, and
-        // both are proofs they own (ADR-0014).
+        // both are proofs they own (ADR-0025).
         let store = Logins::with(vec![
             (PROVIDER_KEYCLOAK, SUBJECT_A),
             (PROVIDER_KEYCLOAK, SUBJECT_B),

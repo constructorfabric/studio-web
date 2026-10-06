@@ -7,7 +7,7 @@
  *               model + static-authz plugin). No roles.
  *   "roles"   — role-based access: privileges are granted through named roles
  *               (a role IS a set of privileges), assigned to members/teams.
- *               Enforced by the Studio PDP plugin (ADR-0006) LAYERED OVER the
+ *               Enforced by the Studio PDP plugin LAYERED OVER the
  *               tenant model (ADR-0009): tenant isolation is always the outer
  *               bound, roles only narrow access within the tenant — a member
  *               with no matching grant is denied, and no grant can reach across

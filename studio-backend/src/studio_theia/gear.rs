@@ -1,4 +1,4 @@
-//! Composition root for the studio-theia bridge gear (ADR-0010).
+//! Composition root for the studio-theia bridge gear (ADR-0022).
 
 use std::sync::{Arc, OnceLock};
 
@@ -58,7 +58,7 @@ impl Gear for StudioTheiaGear {
         info!(
             control_port = cfg.control_port,
             ingress = %cfg.event_ingress_path,
-            "studio-theia: initializing (discovery unwired — ADR-0010 phase 2)"
+            "studio-theia: initializing (discovery unwired — ADR-0022 phase 2)"
         );
 
         // Discovery is looked up lazily from ClientHub inside the resolver, so
@@ -69,7 +69,8 @@ impl Gear for StudioTheiaGear {
         let endpoint_resolver: Arc<dyn TheiaEndpointResolver> = resolver.clone();
         let token_resolver: Arc<dyn ControlTokenResolver> = resolver;
         // Feature selects the sink: the broker sink under `theia-event-broker`,
-        // otherwise the zero-infra logging sink. Both are `dyn TheiaEventSink`.
+        // otherwise `StudioEventsSink`, which republishes onto studio-events as
+        // `theia.<kind>`. Both are `dyn TheiaEventSink`.
         #[cfg(feature = "theia-event-broker")]
         let sink: Arc<dyn crate::studio_theia::sink::TheiaEventSink> = Arc::new(
             crate::studio_theia::sink::EventBrokerEventSink::new(ctx.client_hub()),

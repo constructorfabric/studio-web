@@ -8934,7 +8934,7 @@ function OrganizationsView({
   );
 }
 
-/* ── Access: model + roles (ADR-0006, P1) ── */
+/* ── Access: model + roles (ADR-0009) ── */
 
 /** Admin surface to choose the organization's access MODEL and, when it is
  *  role-based, edit the roles (each role a set of privileges). Stored as AM
@@ -9206,7 +9206,7 @@ function AccessView({
             <>
               <div className="notice">
                 <b>Enforcement is rolling out.</b> The Studio PDP now filters a project's{" "}
-                <i>Works</i> by these grants (ADR-0006); other surfaces still run allow-all until
+                <i>Works</i> by these grants (ADR-0009); other surfaces still run allow-all until
                 their checks land. Owner keeps every privilege.
               </div>
               {!selfGranted(cfg) && (

@@ -152,7 +152,7 @@ impl Gear for StudioSessionGear {
         }
 
         // Publish the in-process discovery client for the studio-theia bridge
-        // gear (ADR-0010). Registering unconditionally is harmless: when
+        // gear (ADR-0022). Registering unconditionally is harmless: when
         // `theia_control_enabled` is off, resolution returns None.
         ctx.client_hub()
             .register::<dyn crate::studio_session::sdk::StudioSessionDiscoveryClientV1>(Arc::new(

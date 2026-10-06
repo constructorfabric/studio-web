@@ -113,7 +113,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
     protected runtimeMode: WorkspaceRuntimeMode = 'legacy';
     protected canonicalConfigPath = '';
     protected workspaceRoot = '';
-    // Bridge status (ADR-0010): set once onStart completes; the max operation
+    // Bridge status (ADR-0022): set once onStart completes; the max operation
     // sequence observed, so the control API's runtime status is cheap.
     protected started = false;
     protected lastEventSequence = 0;
@@ -177,7 +177,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
     }
 
     /**
-     * Mount the internal S2S control API (ADR-0010). Dormant unless the
+     * Mount the internal S2S control API (ADR-0022). Dormant unless the
      * STUDIO_THEIA_S2S_TOKEN is set, so a normal IDE session is unaffected.
      */
     configure(app: express.Application): void {

@@ -209,7 +209,7 @@ gears:
         # settings paths key on.
         #
         # Two allowed parents, not one. The portal's New project wizard has no
-        # workspace field (ADR-0010) and creates under the organization the
+        # workspace field (ADR-0028) and creates under the organization the
         # session is in; workspace stays allowed so the Org → Workspace →
         # Project shape remains available and already-seeded trees keep working.
         - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~"
@@ -290,7 +290,7 @@ gears:
           x-gts-traits:
             inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"
-          # Organization access config (ADR-0006): {model, roles[]}. Free-form
+          # Organization access config (ADR-0009): {model, roles[]}. Free-form
           # object like workspace.settings; shape enforced client-side until the
           # base tenant_metadata schema is relaxed upstream (gears issue #4).
           "$schema": "http://json-schema.org/draft-07/schema#"
@@ -349,8 +349,8 @@ gears:
   # ── Feature gears: per-user settings, files, AI chat ──
 
   # NB `studio-documents` is deliberately absent from this profile. Its
-  # migrations are PostgreSQL only (ADR-0014), so giving it a SQLite database
-  # here would fail the gear's init rather than enable it. The gear stands down
+  # migrations are PostgreSQL only, so giving it a SQLite database here would
+  # fail the gear's init rather than enable it. The gear stands down
   # without a `database:` section, so the rest of the assembly boots normally
   # and the document and catalogue endpoints simply are not served. Use
   # postgres.yaml or the compose stack when you need them.

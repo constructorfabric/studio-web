@@ -48,7 +48,7 @@ pub trait ControlTokenResolver: Send + Sync {
     ) -> Result<Option<SessionIdentity>, TheiaControlError>;
 }
 
-/// Resolver backed by the studio-session discovery client (ADR-0010 phase 2).
+/// Resolver backed by the studio-session discovery client (ADR-0022 phase 2).
 pub struct StudioSessionResolver {
     hub: Arc<ClientHub>,
 }

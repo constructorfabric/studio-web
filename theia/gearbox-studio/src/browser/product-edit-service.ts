@@ -702,7 +702,8 @@ export class ProductEditService {
    * Commit the configurator's proposal: **one** `applyEdits`, one write.
    *
    * The configurator is the confirmation UI, so there is no second modal -- the
-   * dry run the panel already showed is the preview ADR-0010 requires.
+   * dry run the panel already showed is the preview ADR
+   * `cpt-gearbox-adr-authoring-ownership-tiers` requires.
    *
    * This used to be `addGear` and then a second `applyEdits`, which left a window
    * where the description named a gear nobody had configured: if the second call
@@ -775,7 +776,8 @@ export class ProductEditService {
    *
    * Everything else is the ordinary path: dry run, preview, confirmation, write,
    * and the dirty-buffer refusal, because a description with unsaved changes is
-   * the one case where writing destroys work (ADR-0010, §9.2 refusal 2).
+   * the one case where writing destroys work (ADR
+   * `cpt-gearbox-adr-authoring-ownership-tiers`, §9.2 refusal 2).
    */
   async applyProductEdits(
     target: { path: string; label: string },

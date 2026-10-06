@@ -1,11 +1,17 @@
 //! REST surface for the domain model.
 //!
-//! Five operations cover the three goals:
-//!   * `GET  /types`               — the stored ontology (frontend regen source).
-//!   * `POST /objects`             — create an object of a domain type.
-//!   * `GET  /objects`             — read objects back.
-//!   * `POST /relations`           — relate two objects.
-//!   * `POST /types/{id}/fields`   — extend a type with a new field.
+//! The routes fall into four groups, all under `/studio-domain-model/v1`
+//! (`register_routes` below is the full list):
+//!   * **Types** (`/types…`) — read the stored ontology, the frontend
+//!     regeneration source, and one type with what it inherits; add, change
+//!     and drop a type's fields; check stored objects against a type.
+//!   * **Objects and relations** (`/objects…`, `/relations`) — create and list
+//!     objects of a domain type, relate two of them, read the relation catalog
+//!     and the instance graph.
+//!   * **The model as a whole** (`/model/…`) — sync it into Graph Storage, read
+//!     that graph back, import an uploaded model as the active ontology.
+//!   * **History** (`/model/versions`, `/model/revert`) — list the model's
+//!     versions and restore an earlier one.
 
 use std::sync::Arc;
 

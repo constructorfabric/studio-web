@@ -125,7 +125,7 @@ impl OrganizationService {
     pub async fn may_delete(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
         let subject = ctx.subject_id().to_string();
         // Every way this person signs in, not the one they used today — a grant
-        // records whichever login wrote it (ADR-0006 follow-up 2).
+        // records whichever login wrote it (ADR-0023 follow-up 2).
         let subjects = self
             .people
             .subjects_of(&subject)

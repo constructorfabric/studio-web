@@ -8,7 +8,7 @@ import type { StudioOpenInEditorRequest } from '../common/studio-protocol';
 
 /**
  * Opens/reveals a workspace file in the running IDE on behalf of studio-backend
- * and the portal (ADR-0010 openInEditor).
+ * and the portal (ADR-0022 openInEditor).
  *
  * The paths come from the artifact graph and are repo-relative (e.g.
  * `.github/workflows/ci.yml`). But the session entrypoint clones each workspace

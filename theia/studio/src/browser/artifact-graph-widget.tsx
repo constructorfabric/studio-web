@@ -1061,7 +1061,7 @@ interface Relation {
  * type filters, full-text search over the typed entities, and a properties
  * inspector that surfaces every field the graph store holds for a node or edge.
  * Reads the same backend data the portal shows (`/studio-artifact-ingest/v1/nodes`
- * + `/edges`) — so it needs NO `cfs map` capability. ADR-0010 experiment.
+ * + `/edges`) — so it needs NO `cfs map` capability. ADR-0022 experiment.
  */
 @injectable()
 export class ArtifactGraphWidget extends ReactWidget {
@@ -1214,7 +1214,7 @@ export class ArtifactGraphWidget extends ReactWidget {
         }
     }
 
-    /** Open a file node in the IDE editor (ADR-0010 openInEditor), resolved
+    /** Open a file node in the IDE editor (ADR-0022 openInEditor), resolved
      *  against the first workspace root. Same path used by the portal bridge. */
     protected openFileInEditor(path: string): void {
         void this.opener.onOpenInEditor({ relativePath: path });

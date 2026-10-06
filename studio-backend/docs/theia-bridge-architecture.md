@@ -64,7 +64,7 @@ flowchart LR
 | `TheiaControlClientV1` | `studio_theia/sdk/client.rs` | Object-safe, in-`ClientHub` contract other gears call to drive an IDE. Tenant boundary enforced here. |
 | `TheiaService` | `studio_theia/service.rs` | HTTP client + resolvers. `call()` dials the container; holds the endpoint resolver and the token reverse-resolver. |
 | `StudioSessionResolver` | `studio_theia/discovery.rs` | Bridges to studio-session via `ClientHub`. Implements both `TheiaEndpointResolver` (control) and `ControlTokenResolver` (events). |
-| `TheiaEventSink` | `studio_theia/sink.rs` | Policy seam for forwarded events. `LoggingEventSink` (default) / `EventBrokerEventSink` (feature). |
+| `TheiaEventSink` | `studio_theia/sink.rs` | Policy seam for forwarded events. `StudioEventsSink` (default) / `EventBrokerEventSink` (feature). |
 | `SessionService` | `studio-backend/src/studio_session/service.rs` | In-memory session registry; mints tokens; resolves endpoint + reverse-resolves token. |
 | `StudioRuntimeService` | `theia/studio/src/node/studio-backend-module.ts` | The node backend endpoint: owns the operation journal and the broadcast fan of `StudioRuntimeClient`s. |
 | `StudioEventForwarder` | `theia/studio/src/node/studio-event-forwarder.ts` | A non-browser `StudioRuntimeClient` added to the fan; POSTs every broadcast to the ingress. |
@@ -177,8 +177,9 @@ The ingress is transport; the sink is policy. `TheiaForwardedEvent` carries the
 **trusted** `tenant_id` / `workspace_id` / `session_id` (from the token, not the
 body) plus `kind`, `sequence`, `payload`.
 
-- `LoggingEventSink` (default) — structured trace, zero infra. Keeps the loop
-  observable end-to-end before any broker exists.
+- `StudioEventsSink` (default) — traces each event and republishes it onto
+  `studio-events` as `theia.<kind>`, so the portal sees it on the one push
+  channel (ADR-0026). With no channel available it degrades to the trace.
 - `EventBrokerEventSink` (`--features theia-event-broker`) — republishes each event
   as a typed event onto `event-broker`, tenant-scoped, with a **per-tenant cached
   producer** (so `prepare_all` runs once per tenant, not per event). GTS
@@ -299,7 +300,8 @@ Disabled → endpoints still mount and answer `503` with a reason.
    backend's OpenAPI/Swagger surface (via the gateway) to see them and try them.
 4. **Drive the IDE:** call `GET …/workspaces/{id}/status|session|repositories`,
    `POST …/operations`, `POST …/open` under an authenticated request.
-5. **Watch events:** with `LoggingEventSink`, tail studio-backend logs for
+5. **Watch events:** with `StudioEventsSink`, watch `theia.*` on
+   `GET /studio-events/v1/stream`, or tail studio-backend logs for
    `studio-theia: received forwarded Theia event` (fields: `tenant`, `workspace`,
    `session`, `kind`). With the broker sink, consume the topic once it's registered.
 
@@ -320,6 +322,6 @@ aborts before our TypeScript ever compiles.
 
 - Confirm the GTS topic/event-type/subject names and register the schema.
 - Decide the `event-broker` link (cluster + storage backend + topic provision).
-- Build the Theia node side and run the loop end-to-end with `LoggingEventSink`.
+- Build the Theia node side and run the loop end-to-end with `StudioEventsSink`.
 - Pick the first expansion method from the `StudioRuntimeService` gap (§9) if the
   bridge needs to do more than observe + drive commits/opens.

@@ -336,8 +336,8 @@ export interface GearboxService {
    * Add a gear to a product description, or preview the change.
    *
    * `dryRun` returns what the file would become and writes nothing, which is
-   * ADR-0010's "a preview is not optional" rather than a convenience. The engine
-   * refuses unless this client declared write capability at initialize and the
+   * ADR `cpt-gearbox-adr-authoring-ownership-tiers`'s "a preview is not
+   * optional" rather than a convenience. The engine refuses unless this client declared write capability at initialize and the
    * path is inside the declared workspace.
    */
   addGear(path: string, gear: string, source: string, dryRun: boolean, expectedBefore?: string): Promise<EditGearResult>;

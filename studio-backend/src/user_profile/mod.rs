@@ -7,7 +7,7 @@
 //! identifiers (`alias`) bind, and the mapper that turns a token subject into a
 //! stable user id. Storage is the gear's own relational database (SeaORM) — the
 //! records are looked up and constrained, not traversed; a graph projection for
-//! visualization/path-finding is a later, derived concern (ADR-0006).
+//! visualization/path-finding is a later, derived concern (ADR-0023).
 //!
 //! No database configured → the gear stands down (routes answer 503) rather
 //! than failing a boot, mirroring studio-credstore-pg.
@@ -191,7 +191,7 @@ impl AliasResolver for IdentityService {
 
 /// Turn the caller of a request into the canonical person behind them.
 ///
-/// The one interface a Studio gear uses to answer "whose is this?" (ADR-0014).
+/// The one interface a Studio gear uses to answer "whose is this?" (ADR-0025).
 /// Before it existed, every gear that needed to record an actor reached for
 /// `ctx.subject_id()` — the *sign-in method*, not the person — so a human with
 /// two logins was two actors, and anything keyed that way (a personal
@@ -236,7 +236,7 @@ impl PersonResolver for IdentityService {
 
 /// Record that an IdP identity belongs to an organization.
 ///
-/// The seam ADR-0006 follow-up 1 left open: the act of assigning somebody to an
+/// The seam ADR-0023 follow-up 1 left open: the act of assigning somebody to an
 /// organization happens in the IdP directory, but the membership record — the
 /// thing ADR-0011 §2 makes the authority for organization access — belongs to
 /// this gear. Rather than have the directory learn about person ids, it hands
@@ -339,7 +339,7 @@ pub trait OrganizationReader: Send + Sync + 'static {
     ///
     /// Resolving the whole set once and matching against it keeps the document
     /// as it is: an old grant naming one login is still the person's, whichever
-    /// way they signed in today, without rewriting anything (ADR-0006
+    /// way they signed in today, without rewriting anything (ADR-0023
     /// follow-up 2).
     ///
     /// A subject no login knows answers with just itself, so a caller can

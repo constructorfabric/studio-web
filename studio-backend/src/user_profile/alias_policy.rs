@@ -183,7 +183,7 @@ pub fn displaced_a_proof(held: Option<&Held>, writer: &str) -> bool {
 /// the *sign-in method* that wrote the row, so the comparison that matters is
 /// between people, not between subjects: a person who signed up with e-mail and
 /// later added GitHub is one person with two logins, and a proof they left
-/// behind under either one is still theirs (ADR-0014).
+/// behind under either one is still theirs (ADR-0025).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofOwner {
     /// The caller's own proof — record it.

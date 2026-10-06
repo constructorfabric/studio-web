@@ -5,7 +5,7 @@ import { OpenerService, open } from '@theia/core/lib/browser/opener-service';
 import type { StudioNotifyEditorRequest } from '../common/studio-protocol';
 
 /**
- * Shows a Studio-originated message in this IDE (ADR-0010 `notifyEditor`).
+ * Shows a Studio-originated message in this IDE (ADR-0022 `notifyEditor`).
  *
  * The portal and the backend gears know things the IDE cannot see — an import
  * finished, a publish was rejected, a schedule fired — and until now the only

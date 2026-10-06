@@ -152,9 +152,10 @@ async fn open_in_editor(
 
 /// Receive one forwarded `StudioRuntimeClient` event from a Theia container.
 ///
-/// Phase 3 (ADR-0010) resolves the session to `(tenant, workspace)` and
-/// republishes onto the `event-broker` gear. Today it authenticates the S2S
-/// token, traces the event kind, and acknowledges.
+/// Phase 3 (ADR-0022): the S2S token is reverse-resolved to the session's
+/// trusted `(tenant, workspace)` and the event is handed to the sink — by
+/// default `StudioEventsSink`, which republishes it onto `studio-events` as
+/// `theia.<kind>`; the `event-broker` gear under `theia-event-broker`.
 async fn ingest_events(
     Extension(service): Extension<Option<Arc<TheiaService>>>,
     headers: HeaderMap,

@@ -166,10 +166,11 @@ services:
     build:
       context: .
       dockerfile: studio-backend/Dockerfile.src
-      # ADR-0010: link the studio-theia gear (backend<->Theia bridge). Additive
-      # to the default features (llm + graph). The event sink is LoggingEventSink
+      # ADR-0022: link the studio-theia gear (backend<->Theia bridge). Additive
+      # to the default features (llm + graph). The event sink is StudioEventsSink
       # unless you also build `--features theia-event-broker` (needs event-broker
-      # linked), so this profile republishes nothing and needs no broker infra.
+      # linked): it republishes each forwarded Theia event onto studio-events as
+      # `theia.<kind>`, so this profile needs no broker infra.
       args:
         CARGO_FEATURES: "--features theia-bridge"
     container_name: studio-backend

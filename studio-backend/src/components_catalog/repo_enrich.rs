@@ -3,20 +3,20 @@
 //! crates.io tells us a gear's published *versions*; the gears' repository tells
 //! us what the gear actually *is* — its spec state, ADRs, tests, ownership. This
 //! module reads that engineering metadata straight from the gears' GitHub
-//! repository (default `constructorfabric/gears-rust`) and maps it onto the same
-//! field model the catalogue UI renders, so each Gear opens a real component
-//! page instead of a crates.io stub.
+//! repository (for example `constructorfabric/gears-rust`) and maps it onto the
+//! same field model the catalogue UI renders, so each Gear opens a real
+//! component page instead of a crates.io stub.
 //!
 //! Auth reuses an existing Studio **GitHub connection** — the connector already
 //! holds the token in credstore, so nothing new is wired here. It is entirely
 //! best-effort: no connection, no repo access, or a truncated tree degrades to
 //! "crates.io only", never a failed sync.
 //!
-//! Configuration (all optional; enrichment is off until a tenant is set):
-//!   * `STUDIO_GEARS_CATALOG_TENANT`      — tenant UUID that owns the GitHub connection
-//!   * `STUDIO_GEARS_CATALOG_CONNECTION`  — a specific connection UUID (else the first github one)
-//!   * `STUDIO_GEARS_CATALOG_REPO`        — `owner/name` (default `constructorfabric/gears-rust`)
-//!   * `STUDIO_GEARS_CATALOG_REF`         — git ref to read (default `HEAD`)
+//! There is no process configuration. Which repositories to read comes with
+//! each sync, in the `repositories` of the `POST /studio-components-catalog/v1/sync`
+//! body: per source, the tenant that owns the GitHub connection, the connection
+//! (else the first GitHub one), `owner/name`, the git ref (default `HEAD`) and
+//! the discovery mode.
 
 use std::sync::Arc;
 

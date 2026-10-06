@@ -299,14 +299,14 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 this.postStatus(); // answer the handshake right away
             }
             if (msg.type === 'studio.openGraph') {
-                // Experiment (ADR-0010): the portal's artifact list asks the
+                // Experiment (ADR-0022): the portal's artifact list asks the
                 // embedded IDE to open the Artifact Graph view (backend graph,
                 // no `cfs map` dependency).
                 this.openWhenLayoutReady(() => void this.commands.executeCommand(ArtifactGraphCommand.id));
             }
             if (msg.type === 'studio.openInEditor' && msg.path) {
                 // The portal's file list asks the embedded IDE to open a
-                // repository file in its editor (ADR-0010 openInEditor). Resolved
+                // repository file in its editor (ADR-0022 openInEditor). Resolved
                 // against the first workspace root by the controller.
                 const relativePath = msg.path;
                 this.openWhenLayoutReady(() => void this.openFileInMode(relativePath));
@@ -342,7 +342,7 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // moves nothing and steals no focus, and holding it back would
                 // only make it arrive after the thing it is about is stale.
                 //
-                // The same controller the backend's notifyEditor uses (ADR-0010
+                // The same controller the backend's notifyEditor uses (ADR-0022
                 // §4). Two ways to ask, one way to show.
                 void this.notifier.onNotifyEditor({
                     level: msg.level ?? 'info',

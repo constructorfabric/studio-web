@@ -500,7 +500,7 @@ mod tests {
         (
             "dev.yaml",
             "studio-documents",
-            "its migrations are PostgreSQL only (ADR-0014), so a SQLite database \
+            "its migrations are PostgreSQL only, so a SQLite database \
              here would fail the gear's init rather than enable it",
         ),
         (

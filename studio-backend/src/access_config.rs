@@ -134,7 +134,7 @@ impl AccessConfig {
     /// was in front of whoever wrote it, so matching a single subject answers a
     /// question about a *login*: the same human, signed in the other way, would
     /// not be the owner. Matching the set is what makes the answer about the
-    /// person without rewriting a single grant (ADR-0006 follow-up 2).
+    /// person without rewriting a single grant (ADR-0023 follow-up 2).
     #[must_use]
     pub fn grants_ownership_to(&self, subjects: &[String]) -> bool {
         self.grants.iter().any(|g| {
@@ -262,7 +262,7 @@ pub async fn try_read(
 /// `subject` is a **token subject**, not a canonical person id. That is what
 /// the PDP matches today (`grant.subjectId == request.subject.id`), so writing
 /// anything else here would produce a grant that never matches. Moving the
-/// grant model onto the person is ADR-0006 follow-up 2, and it has to move on
+/// grant model onto the person is ADR-0023 follow-up 2, and it has to move on
 /// both sides at once.
 pub async fn set_owner_grant(
     am: &dyn AccountManagementClient,
@@ -479,7 +479,7 @@ mod tests {
         assert!(!cfg.grants_privilege_to(&one("ada"), "people.manage"));
     }
 
-    /// The defect this set exists to close (ADR-0006 follow-up 2). A grant
+    /// The defect this set exists to close (ADR-0023 follow-up 2). A grant
     /// records whichever login was in front of whoever wrote it. Ada owns the
     /// organization; she also signs in with GitHub. Asked about that login
     /// alone, she is not the owner of the place she owns.

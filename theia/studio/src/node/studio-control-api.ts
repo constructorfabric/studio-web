@@ -1,4 +1,4 @@
-// Internal server-to-server control API for the Theia node backend (ADR-0010).
+// Internal server-to-server control API for the Theia node backend (ADR-0022).
 //
 // Mounts POST routes under /internal/theia/v1 that mirror the v1 slice of
 // `StudioRuntimeService`, so studio-backend's `studio-theia` gear can drive the

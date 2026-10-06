@@ -1,9 +1,9 @@
 // What the chat may ask Gearbox, and what it may not.
 //
 // Eight tools, all of them reads. The one verb that writes stays where
-// `product-tools.ts` put it, and for the reason ADR-0010 gives: a write is
-// previewed and agreed to by a person, through the same dialog the panel's own
-// control uses. `applyGenerate` is deliberately absent -- `planGenerate` is its
+// `product-tools.ts` put it, and for the reason ADR
+// `cpt-gearbox-adr-authoring-ownership-tiers` gives: a write is previewed and
+// agreed to by a person, through the same dialog the panel's own control uses. `applyGenerate` is deliberately absent -- `planGenerate` is its
 // preview half, and a chat that could apply would be a second way to write with
 // only one of them gated.
 //

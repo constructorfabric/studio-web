@@ -1,9 +1,10 @@
 // Create or clone a product description — a screen, not a chain of modals.
 //
-// ADR-0010: a preview is not optional. The right pane shows the exact
-// `product.gdl` the engine would write; Create commits only that text.
-// ADR-0013 amendment: Blank / Clone Local / Clone Git; clone stamps version
-// honestly and does not rewrite sources.
+// ADR `cpt-gearbox-adr-authoring-ownership-tiers`: a preview is not optional.
+// The right pane shows the exact `product.gdl` the engine would write; Create
+// commits only that text.
+// ADR `cpt-gearbox-adr-create-product` amendment: Blank / Clone Local / Clone
+// Git; clone stamps version honestly and does not rewrite sources.
 
 import { Message, ReactWidget } from "@theia/core/lib/browser";
 import { CommandRegistry } from "@theia/core/lib/common";
@@ -259,8 +260,8 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   /**
    * Where the product would go, shown as a hint and never installed as a value.
    *
-   * **ADR-0013: "The wizard asks for a destination folder. It must not silently
-   * take the first workspace root."** It did: this string was written into the
+   * **ADR `cpt-gearbox-adr-create-product`: "The wizard asks for a destination
+   * folder. It must not silently take the first workspace root."** It did: this string was written into the
    * field on open, on every root refresh, and on every keystroke in the id box,
    * and `productPath()` fell back to it when the field was blank -- so a person
    * could finish a create without ever choosing a folder, and what they got was
@@ -318,9 +319,10 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
    * The roots this product may declare as sources, given where it lands.
    *
    * **A root that contains the destination cannot be one of its sources.**
-   * `writable_out_root` refuses any path inside a source root -- ADR-0013 says
-   * so and ADR-0010 tier 5 is why: generation must not write next to
-   * human-authored crates. So a product whose own folder sits inside a declared
+   * `writable_out_root` refuses any path inside a source root -- ADR
+   * `cpt-gearbox-adr-create-product` says so and ADR
+   * `cpt-gearbox-adr-authoring-ownership-tiers` tier 5 is why: generation must
+   * not write next to human-authored crates. So a product whose own folder sits inside a declared
    * source is a product that cannot be written, and the wizard was pre-selecting
    * exactly that: it checked *every* workspace root, and the first of those is
    * this checkout, which contains `products/`.
@@ -443,8 +445,8 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
    * Install `text` as the preview if `token` is still the newest request.
    *
    * An older answer arriving late is dropped rather than shown: the pane showed
-   * whichever request *replied* last, which is the trap ADR-0013 records for the
-   * gear wizard, and here it also decided whether Create was live.
+   * whichever request *replied* last, which is the trap ADR
+   * `cpt-gearbox-adr-create-product` records for the gear wizard, and here it also decided whether Create was live.
    */
   protected settlePreview(token: number, text: string): boolean {
     if (token !== this.previewToken) return false;
@@ -955,8 +957,9 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                 data-create-destination
                 value={this.destination}
                 // Not the suggestion: in the field it read as a value already
-                // chosen beside a Create that would not press (ADR-0013 keeps
-                // the choice explicit). The suggestion is on its button.
+                // chosen beside a Create that would not press (ADR
+                // `cpt-gearbox-adr-create-product` keeps the choice explicit).
+                // The suggestion is on its button.
                 placeholder="not chosen yet"
                 aria-label="destination"
                 disabled={!connected}
@@ -970,8 +973,8 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                   this.schedulePreview();
                 }}
               />
-              {/* The suggestion taken by a press, never by default (ADR-0013).
-                  It is a folder the product list finds: `products/<id>` under
+              {/* The suggestion taken by a press, never by default (ADR
+                  `cpt-gearbox-adr-create-product`). It is a folder the product list finds: `products/<id>` under
                   the opened repository. */}
               {this.productPath() === "" && this.workspaceRoot() !== "" && (
                 <button

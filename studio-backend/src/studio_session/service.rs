@@ -183,7 +183,7 @@ pub struct Session {
     /// this one session; NOT the caller's platform token. Empty for
     /// sessions adopted from an older image (gate disabled there anyway).
     pub session_token: String,
-    /// Per-session S2S control token for the Theia backend bridge (ADR-0010).
+    /// Per-session S2S control token for the Theia backend bridge (ADR-0022).
     /// Minted only when `theia_control_enabled`; empty otherwise and for
     /// adopted sessions. Never handed to the browser — distinct from
     /// `session_token`.
@@ -851,7 +851,7 @@ impl SessionService {
             format!("{a}{b}")
         };
         // Distinct per-session token for the Theia backend-control bridge
-        // (ADR-0010). Only minted when the bridge is enabled; empty otherwise.
+        // (ADR-0022). Only minted when the bridge is enabled; empty otherwise.
         let control_token = if self.cfg.theia_control_enabled {
             let a = Uuid::new_v4().simple().to_string();
             let b = Uuid::new_v4().simple().to_string();
@@ -888,7 +888,7 @@ impl SessionService {
             env.push(format!("STUDIO_ALLOWED_ORIGINS={allowed_origins}"));
         }
         // Hand the container its S2S control token so the Theia node can
-        // authenticate studio-backend's control calls (ADR-0010).
+        // authenticate studio-backend's control calls (ADR-0022).
         if self.cfg.theia_control_enabled {
             env.push(format!("STUDIO_THEIA_S2S_TOKEN={control_token}"));
         }
@@ -1239,7 +1239,7 @@ impl SessionService {
     }
 
     /// Resolve the internal Theia control endpoint for the caller's live
-    /// session on `workspace_id` (ADR-0010). `None` unless the bridge is
+    /// session on `workspace_id` (ADR-0022). `None` unless the bridge is
     /// enabled, a live session exists for this tenant+workspace, and it carries
     /// a control token. The control API is served by the Theia node on the
     /// session's own port under an internal, S2S-token-gated path (Docker MVP);

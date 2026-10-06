@@ -207,7 +207,7 @@ pub struct StudioSessionConfig {
     #[serde(default = "default_orca_port")]
     pub orca_port: u16,
 
-    /// Enable the Theia backend-control bridge (ADR-0010): mint a per-session
+    /// Enable the Theia backend-control bridge (ADR-0022): mint a per-session
     /// S2S control token, inject it into the container as
     /// `STUDIO_THEIA_S2S_TOKEN`, and let the studio-theia gear discover the
     /// session's internal control endpoint. Default off; the Theia node must

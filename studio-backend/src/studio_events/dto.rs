@@ -14,8 +14,10 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct StudioEventDto {
-    /// Monotonic per-process cursor. A client remembers the last one it saw
-    /// and replays the gap with `?after_seq=` after a reconnect.
+    /// Monotonic per-tenant cursor, durable in the `studio_events` database,
+    /// so it survives a restart and is shared by every replica. A client
+    /// remembers the last one it saw and replays the gap with `?after_seq=`
+    /// after a reconnect.
     pub seq: i64,
     /// Milliseconds since the Unix epoch (`new Date(at_ms)` in the browser).
     /// Epoch millis rather than RFC 3339 so no timezone or format negotiation

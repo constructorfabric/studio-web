@@ -658,8 +658,11 @@ pub fn register_routes(
             "Queues a `reports.refresh` run: it reads the plan file again through the source's \
              connection, keeps what it read, and queues a sync of the board the plan names (a \
              `catalog.sync` run). What it did -- and why not, when it failed -- is on the source \
-             afterwards. A schedule on `studio-scheduler` with task type `reports.refresh` and \
-             payload `{\"report\": \"roadmap\"}` keeps a report current on its own. Answers \
+             afterwards. To keep a report current on its own, switch on its schedule with \
+             `PUT .../{report_id}/schedule`: the schedule fires in the platform tenant, so its \
+             payload names the organization (`{\"report\": \"roadmap\", \"organization_id\": \
+             \"...\"}`), and the run hands itself on to that organization's tenant. A schedule \
+             without `organization_id` would refresh the platform tenant's empty source. Answers \
              202 with the `run_id`; send an `Idempotency-Key` header to make a retry of this \
              request safe, since a repeat with the same key answers the same run.",
         )

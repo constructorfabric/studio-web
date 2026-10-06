@@ -12,9 +12,10 @@
 //!
 //! * the board's gears as the last sync stored them (`roadmap_item` nodes,
 //!   their `sheet`: every column's value as the board wrote it);
-//! * the board's plan (`roadmap_plan`, the team's `gears.yaml`): teams,
-//!   people and power for the Gantt and People sheets, the swimlane order,
-//!   and the consumer-project columns;
+//! * the board's plan (the team's `gears.yaml`, kept as text on the report's
+//!   source, [`crate::reports::gts::REPORT_SOURCE_TYPE`], and parsed into a
+//!   [`Plan`]): teams, people and power for the Gantt and People sheets, the
+//!   swimlane order, and the consumer-project columns;
 //! * today, which anchors both timelines and decides what is overdue.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

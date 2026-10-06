@@ -46,7 +46,6 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0031](0031-the-portal-is-developed-against-a-shared-stand.md) | The portal is developed against a shared stand, and the stack on the machine is one switch away | accepted | 2026-09-25 |
 | [0032](0032-the-desktop-gets-its-tools-as-extensions.md) | The desktop gets its tools as extensions, from the Extensions view, and Theia is extended rather than patched | accepted | 2026-09-29 |
 | [0033](0033-a-report-is-a-definition-over-a-source.md) | A report is a definition over a source, and reports are their own gear | accepted | 2026-10-01 |
-| [0031](0031-the-portal-is-developed-against-a-shared-stand.md) | The portal is developed against a shared stand, and the stack on the machine is one switch away | accepted | 2026-09-25 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
@@ -72,8 +71,11 @@ Cross-references in the repository's Markdown were updated to the new numbers.
 These records moved from `studio-backend/docs/adr/` without a new number:
 0001, 0002, 0003, 0005, 0012, 0013, 0014, 0015 and 0016.
 
-Source comments in code and configuration still cite the old numbers where they
-mean a renumbered record; read an old `ADR-0010` next to the Theia bridge as
-ADR-0022, an old backend `ADR-0006` about the canonical user as ADR-0023, an
-old `ADR-0014` about the person resolver as ADR-0025, and an old `ADR-0013`
-about the push channel as ADR-0026.
+On 2026-10-06 source comments in code and configuration were updated the same
+way: a citation that meant a renumbered record now carries its new number
+(ADR-0022 for the Theia bridge, ADR-0023 for the canonical user, ADR-0025 for
+the person resolver, ADR-0026 for the push channel). An `ADR-0006`, `ADR-0010`,
+`ADR-0012`, `ADR-0013` or `ADR-0014` left in the code means the record that
+kept the number. Citations that matched neither record were pointed at the ADR
+that makes the claim, or dropped. The Gearbox Studio views (`theia/gearbox-studio/`)
+cite Gearbox's own ADRs, and do so by their `cpt-gearbox-adr-…` ids.

@@ -75,7 +75,7 @@ export class AccountsApiService extends BaseApiService {
 
   /**
    * `parentId`, not `workspaceId`: a project's allowed parents are the
-   * organization AND the workspace (dev.yaml, ADR-0010), and the New project
+   * organization AND the workspace (dev.yaml, ADR-0028), and the New project
    * wizard creates one straight under the organization.
    */
   readonly getProjects = this.protocol(RestEndpointProtocol).queryWith<

@@ -1,4 +1,4 @@
-//! Configuration for the studio-theia bridge gear (ADR-0010).
+//! Configuration for the studio-theia bridge gear (ADR-0022).
 
 use serde::Deserialize;
 
@@ -6,7 +6,7 @@ use serde::Deserialize;
 ///
 /// Dormant by default (`enabled = false`): the bridge is opt-in until the
 /// studio→Theia control path and studio-session endpoint discovery are wired
-/// (ADR-0010 phase 2). When disabled the gear still boots and mounts its REST,
+/// (ADR-0022 phase 2). When disabled the gear still boots and mounts its REST,
 /// but the event ingress answers 503 and no `TheiaControlClientV1` is published.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StudioTheiaConfig {

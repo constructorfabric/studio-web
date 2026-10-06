@@ -342,7 +342,7 @@ impl Gear for StudioTasksGear {
                 db.clone(),
                 shutdown,
                 Arc::clone(&self.ready),
-                // For announcing transitions on `studio-events` (ADR-0013).
+                // For announcing transitions on `studio-events` (ADR-0026).
                 // Resolved per event inside the dispatcher, so this does not
                 // depend on which gear initialized first.
                 ctx.client_hub(),

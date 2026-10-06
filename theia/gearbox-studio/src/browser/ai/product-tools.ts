@@ -5,8 +5,9 @@
 // refuses when no product is open, refuses when the description has unsaved
 // changes rather than discarding them, renders the exact line it would write,
 // and waits for a person to agree. So the chat gets no privilege the UI does not
-// already have, and the preview stays where ADR-0010 put it -- in front of the
-// write, not behind it.
+// already have, and the preview stays where ADR
+// `cpt-gearbox-adr-authoring-ownership-tiers` put it -- in front of the write,
+// not behind it.
 //
 // One tool, deliberately. The demo asks whether a product can be configured by
 // asking for it in words; adding a second verb before the first one is observed

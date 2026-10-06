@@ -138,7 +138,7 @@ impl NotifyService {
         Ok(())
     }
 
-    /// The same preflight where the bridge is not linked: ADR-0010's gear is
+    /// The same preflight where the bridge is not linked: ADR-0022's gear is
     /// behind the opt-in `theia-bridge` feature, and a build without it cannot
     /// reach any IDE. Said plainly, rather than queuing a run that could only
     /// dead-letter.

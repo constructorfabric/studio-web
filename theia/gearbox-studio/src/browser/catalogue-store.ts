@@ -369,8 +369,9 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * worked and the second did not, and the only cure anyone found was to open a
    * different product whose sources happened to exclude the checkout.
    *
-   * ADR-0013 says start-screen create "runs against the repository workspace the
-   * engine already knows from boot ... not against an open product session".
+   * ADR `cpt-gearbox-adr-create-product` says start-screen create "runs
+   * against the repository workspace the engine already knows from boot ...
+   * not against an open product session".
    * This is the call that makes closing return to that state.
    *
    * `undefined` rather than a constructed session: `initialize` reads an absent

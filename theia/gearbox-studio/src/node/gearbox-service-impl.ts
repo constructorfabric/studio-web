@@ -338,9 +338,9 @@ export class GearboxServiceImpl implements GearboxService {
         // would otherwise be readable and unwritable, which is the worst of both.
         workspace: this.workspace,
         // **Where a product may be created, whatever this session is.**
-        // ADR-0013: "Start-screen create runs against the repository workspace
-        // the engine already knows from boot ... not against an open product
-        // session." It could not, and the reason is two lines up: the session's
+        // ADR `cpt-gearbox-adr-create-product`: "Start-screen create runs
+        // against the repository workspace the engine already knows from boot
+        // ... not against an open product session." It could not, and the reason is two lines up: the session's
         // roots and workspace are what the write gate reads, so opening a
         // product whose `sources` contain the directory products live in made
         // every later create there refuse -- permanently, because unchecking the

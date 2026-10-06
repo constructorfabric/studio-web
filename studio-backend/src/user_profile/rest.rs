@@ -487,7 +487,7 @@ fn parse_org(org_id: &str) -> ApiResult<Uuid> {
 /// Resolve the caller's canonical user id, provisioning on first sight.
 ///
 /// Thin on purpose: the resolution itself belongs to the service, where every
-/// other gear reaches it through `PersonResolver` (ADR-0014). Two copies of this
+/// other gear reaches it through `PersonResolver` (ADR-0025). Two copies of this
 /// rule is how a human ends up keyed two different ways.
 async fn caller_user_id(
     ctx: &SecurityContext,

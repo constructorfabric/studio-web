@@ -265,7 +265,7 @@ fn address_change_needs_token(
 /// `created_by` stores the *subject* that wrote the row, so comparing it with
 /// the caller's subject asks the wrong question: one human may hold several
 /// logins, and a connection created under one of them is still theirs when they
-/// sign in through another (ADR-0014). Both sides are therefore resolved to a
+/// sign in through another (ADR-0025). Both sides are therefore resolved to a
 /// person.
 ///
 /// Without the identity gear (no database configured) there is nothing to
@@ -562,7 +562,7 @@ impl ConnectorService {
     ///
     /// `created_by` stores the subject that wrote the row, so it is resolved to
     /// a person before being compared: somebody who created a connection under
-    /// one of their logins is still its creator under another (ADR-0014).
+    /// one of their logins is still its creator under another (ADR-0025).
     ///
     /// Returns how many were removed. A failure on one is logged and the rest
     /// are still taken: leaving half a person's credentials behind is worse
@@ -1652,7 +1652,7 @@ mod person_guard_tests {
     #[tokio::test]
     async fn another_of_the_callers_own_logins_is_the_caller() {
         // The case the subject comparison got wrong: a different login, the
-        // same human. This is what ADR-0014 exists for.
+        // same human. This is what ADR-0025 exists for.
         let people = Logins {
             caller_person: ONE_PERSON,
             known: Some((OTHER_SUBJECT, ONE_PERSON)),

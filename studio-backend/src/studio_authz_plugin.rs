@@ -1,4 +1,4 @@
-//! Studio AuthZ plugin — the Studio PDP (ADR-0006).
+//! Studio AuthZ plugin — the Studio PDP (ADR-0009).
 //!
 //! Reads the org access config from AM tenant metadata
 //! (`cf.studio.access.config.v1`) and switches on `model`:

@@ -1,8 +1,8 @@
 # Running the studio-backend ↔ Theia bridge locally in Docker (ADR-0022)
 
 Goal: bring the bridge up end-to-end on Docker Desktop (WSL2) and **observe the
-event loop** — a Theia session forwards its events to studio-backend, which logs
-each one through `LoggingEventSink`. No `event-broker`, no GTS registration, no
+event loop** — a Theia session forwards its events to studio-backend, which traces
+each one and republishes it onto `studio-events` through `StudioEventsSink`. No `event-broker`, no GTS registration, no
 schema. That path is deferred (see §5); it is not needed to see the loop work.
 
 Everything below is already wired in the repo — this doc is the runbook, not a
@@ -18,7 +18,7 @@ list of edits to make.
 | `config/docker.yaml` | `studio-session.config.control_reach_host: host.docker.internal` | Backend is containerised; session containers publish ports on the host, so it dials siblings via the host gateway. |
 | `config/docker.yaml` | `studio-session.config.image: cf-studio-theia:local` | The ghcr `edge` tag predates `studio-event-forwarder.ts`; a local build carries it. |
 
-The sink stays `LoggingEventSink` — the broker sink only compiles under the
+The sink stays `StudioEventsSink` — the broker sink only compiles under the
 separate `--features theia-event-broker`, which is **not** set here.
 
 ## 1. Build the Theia session image (carries the forwarder)
@@ -98,7 +98,7 @@ separate unpublished port, driving the IDE needs that port exposed. This does
 ## 5. Deferred — NOT needed for the local loop
 
 These are the `event-broker` items; the local run above deliberately avoids all of
-them by using `LoggingEventSink`.
+them by using `StudioEventsSink`.
 
 - **Confirm GTS names + register schema.** The broker sink's topic/event-type/
   subject ids are placeholders. Needed only under `--features theia-event-broker`,

@@ -5,7 +5,7 @@
  * (GET /cf/studio-user/v1/me/memberships).
  *
  * `role` is the role held in THAT organization — role is a property of
- * membership, never of the person (ADR-0006).
+ * membership, never of the person (ADR-0023).
  */
 export interface Membership {
   user_id: string;

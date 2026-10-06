@@ -1,4 +1,4 @@
-// Theia -> studio event forwarding (ADR-0010 phase 3).
+// Theia -> studio event forwarding (ADR-0022 phase 3).
 //
 // Registers as one additional, non-browser `StudioRuntimeClient` inside the
 // node backend. Every broadcast the endpoint already fans out to browser

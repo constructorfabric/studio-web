@@ -41,7 +41,7 @@ const POD_LABEL: &str = "cf.studio.pod";
 const THEIA_PORT: i32 = 3003;
 const SESSION_READY_PATH: &str = "/__studio_session_ready__";
 const SESSION_TOKEN_ENV: &str = "STUDIO_SESSION_TOKEN";
-/// The Theia backend-control token (ADR-0010), recovered on adoption so a
+/// The Theia backend-control token (ADR-0022), recovered on adoption so a
 /// restarted backend can still reach the node it launched.
 const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
 /// The two variables a session's source summary is rebuilt from.

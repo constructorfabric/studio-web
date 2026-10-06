@@ -201,10 +201,10 @@ export interface StudioRuntimeClient {
     onRepositoriesChanged(repositories: readonly StudioRepositoryDescriptor[]): void;
     onWorkspaceSnapshotChanged?(snapshot: WorkspaceSnapshot): void;
     onWorkspaceActivityEvent?(event: WorkspaceActivityEvent): void;
-    /** Open/reveal a workspace file in the running IDE (ADR-0010). Optional:
+    /** Open/reveal a workspace file in the running IDE (ADR-0022). Optional:
      * only browser clients implement it; the event forwarder ignores it. */
     onOpenInEditor?(request: StudioOpenInEditorRequest): void;
-    /** Show a Studio-originated message in the running IDE (ADR-0010
+    /** Show a Studio-originated message in the running IDE (ADR-0022
      * `notifyEditor`). Optional for the same reason as `onOpenInEditor`: only a
      * browser client has a UI to show it in. */
     onNotifyEditor?(request: StudioNotifyEditorRequest): void;

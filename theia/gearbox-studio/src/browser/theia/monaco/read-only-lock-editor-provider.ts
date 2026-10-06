@@ -2,10 +2,10 @@
 //
 // `cpt-gearbox-fr-lock-read-only`: "The system MUST present `product.lock` as
 // read-only in the editor, in addition to the generated header it already
-// carries." ADR 0010 puts it at tier 1 and says why a header is not enough: "A
-// header comment asks; a read-only editor tells. An edit to the lock is silently
-// discarded by the next resolve, which is the failure mode worth preventing
-// rather than detecting."
+// carries." ADR `cpt-gearbox-adr-authoring-ownership-tiers` puts it at tier 1
+// and says why a header is not enough: "A header comment asks; a read-only
+// editor tells. An edit to the lock is silently discarded by the next resolve,
+// which is the failure mode worth preventing rather than detecting."
 //
 // **Why a rebind, and why this one.** Theia offers three places to make
 // something read-only and two of them do not fit:

@@ -474,8 +474,8 @@ export class ProductSessionService {
     // again, and closing never did -- so a product that named this checkout as a
     // source made the whole checkout a source root for the rest of the session,
     // and `create` under `<checkout>/products/...` was refused from then on.
-    // ADR-0013 puts start-screen create against the boot workspace; this is what
-    // returns to it.
+    // ADR `cpt-gearbox-adr-create-product` puts start-screen create against the
+    // boot workspace; this is what returns to it.
     //
     // Not awaited before returning `true`: the close itself has happened, the
     // reset is a background restoration, and making the Close button wait on an
