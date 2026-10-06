@@ -7,7 +7,11 @@ import {
 } from '@gears-frontx/react';
 import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios';
 import { IDEMPOTENCY_KEY_HEADER, IdempotencyKeyPlugin } from './idempotencyKeyPlugin';
-import { ArtifactIngestApiService, startsSync } from './ArtifactIngestApiService';
+import {
+  ARTIFACT_INGEST_API_BASE_URL,
+  ArtifactIngestApiService,
+  startsSync,
+} from './ArtifactIngestApiService';
 import type { SyncBody } from './artifactTypes';
 
 const request = (
@@ -17,7 +21,7 @@ const request = (
   headers: Record<string, string> = {}
 ) => ({ method, url, body, headers }) as RestRequestContext;
 
-const SYNC_URL = '/cf/studio-artifact-ingest/v1/sync';
+const SYNC_URL = `${ARTIFACT_INGEST_API_BASE_URL}/sync`;
 
 describe('IdempotencyKeyPlugin', () => {
   const plugin = new IdempotencyKeyPlugin(startsSync);
@@ -43,7 +47,7 @@ describe('IdempotencyKeyPlugin', () => {
 
   it('leaves reads and other paths alone', () => {
     expect(plugin.onRequest(request('GET', SYNC_URL)).headers).toEqual({});
-    expect(plugin.onRequest(request('POST', '/cf/studio-artifact-ingest/v1/nodes', {})).headers).toEqual({});
+    expect(plugin.onRequest(request('POST', `${ARTIFACT_INGEST_API_BASE_URL}/nodes`, {})).headers).toEqual({});
     expect(plugin.onRequest(request('POST', '/cf/other-gear/v1/sync', {})).headers).toEqual({});
   });
 });
@@ -52,8 +56,10 @@ describe('startsSync', () => {
   it('names the sync route exactly, with or without a query', () => {
     expect(startsSync(SYNC_URL)).toBe(true);
     expect(startsSync(`${SYNC_URL}?dry=1`)).toBe(true);
-    expect(startsSync('/cf/studio-artifact-ingest/v1/quality/sync')).toBe(false);
-    expect(startsSync('/cf/studio-artifact-ingest/v1/sync/x')).toBe(false);
+    // Built from the base, not written out: these routes do not exist, and
+    // scripts/check-api-usage.mjs reads every literal path as a call.
+    expect(startsSync(`${ARTIFACT_INGEST_API_BASE_URL}/quality/sync`)).toBe(false);
+    expect(startsSync(`${SYNC_URL}/x`)).toBe(false);
   });
 });
 
