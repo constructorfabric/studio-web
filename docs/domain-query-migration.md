@@ -51,6 +51,12 @@ data transition is where it gets tested:
   read (item 2) and no reusable delete (item 4). Those three are exactly what
   this data needs.
 
+  *Team structure is the first case at the line (2026-10-07).* A team, its
+  unit and who is in it with what share are traversed and drawn, so they
+  belong in the graph; organization membership and sign-in stay in studio-user.
+  Today the teams are mirrored from the roadmap plan; they move to being
+  authored in the model at step 7.
+
 ## The steps
 
 | # | Step | Waits on | Done when |
@@ -204,6 +210,15 @@ graph-storage reports no version on read (item 2). When it does:
 - the typed client threads the version from read to write.
 
 No screen that lets two people edit the same object should ship before this.
+
+*Waiting on this (2026-10-07): **the organization's teams.** The roadmap
+report's plan already holds units, teams, people and each person's share of
+their team (`allocation`), and mirrors them into the model as `org-unit`,
+`team`, `person` and `membership` objects (`acquisition: mirrored`, see
+[studio-reports](design/studio-reports.md)). The plan stays the source of
+truth until this step lands, because it has a revision and the model does not.
+When it lands, the direction flips: teams and memberships are authored in the
+model, with `if_version`, and the plan reads them.*
 
 ### 8. Retiring the old reads
 

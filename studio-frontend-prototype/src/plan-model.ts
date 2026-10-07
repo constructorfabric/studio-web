@@ -194,3 +194,21 @@ export function linkOf(people: PlanPeople | null, login: string): LinkState {
   if (!l.person_id) return { kind: "unknown" };
   return l.member ? { kind: "member", personId: l.person_id } : { kind: "outsider", personId: l.person_id };
 }
+
+/** What mirroring the plan into the domain model did. */
+export interface MirrorSummary {
+  written: number;
+  unchanged: number;
+  /** Units, teams and memberships that left the plan, retired (never deleted). */
+  retired: number;
+  /** What could not be mirrored, and why. */
+  skipped: string[];
+}
+
+/** A publish's outcome in one line. */
+export function mirrorText(s: MirrorSummary): string {
+  const parts = [`${s.written} written`, `${s.unchanged} unchanged`];
+  if (s.retired) parts.push(`${s.retired} retired`);
+  const head = `Domain model: ${parts.join(", ")}.`;
+  return s.skipped.length ? `${head} Skipped: ${s.skipped.join("; ")}.` : head;
+}

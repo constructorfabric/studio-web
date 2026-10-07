@@ -2,7 +2,7 @@ import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
-import { sectionBody, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
+import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainQuery, DomainQueryResult } from "./domain-query";
 
@@ -4073,6 +4073,13 @@ export const api = {
    *  the organization's members the plan does not list. */
   reportPlanPeople: (token: string, report: string) =>
     request<PlanPeople>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan/people`, token),
+
+  /** Mirror the plan's units, teams, people and memberships into the domain
+   *  model now (a save of units or people does it in the background). */
+  syncReportPlan: (token: string, report: string) =>
+    request<MirrorSummary>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan/sync`, token, {
+      method: "POST",
+    }),
 
   /** The plan as `gears.yaml`. */
   exportReportPlan: (token: string, report: string) =>

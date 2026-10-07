@@ -17,6 +17,7 @@
 pub mod definition;
 mod github;
 pub mod gts;
+pub mod mirror;
 pub mod people_links;
 pub mod plan_edit;
 pub mod refresh_task;
@@ -112,8 +113,17 @@ impl RestApiCapability for StudioReportsGear {
                     })
             })
         };
+        let domain: service::DomainLink = {
+            let hub = Arc::clone(&hub);
+            Arc::new(move || {
+                hub.get::<dyn crate::domain_model::port::DomainObjects>()
+                    .map_err(|_| anyhow::anyhow!("the domain model is not part of this deployment"))
+            })
+        };
         let service = Arc::new(
-            ReportsService::new(build_store(ctx), catalog, reader).with_schedules(schedules),
+            ReportsService::new(build_store(ctx), catalog, reader)
+                .with_schedules(schedules)
+                .with_domain(domain),
         );
         crate::tasks::registry::register(Arc::new(refresh_task::RefreshTask::new(
             Arc::clone(&service),

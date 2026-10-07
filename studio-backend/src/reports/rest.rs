@@ -20,6 +20,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::mirror::MirrorSummaryDto;
 use super::people_links::{self, PlanPeopleDto};
 use super::plan_edit::{self, LanesDto, NeedDto, PersonDto, ProjectDto, Section, UnitDto};
 use super::refresh_task::{RefreshPayload, TASK_TYPE};
@@ -464,6 +465,10 @@ async fn update_report_source(
 ) -> ApiResult<JsonBody<ReportSourceDto>> {
     let k = report(&id)?;
     let prev = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    let imported = input
+        .plan_yaml
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty());
     let saved = reports
         .service
         .save_source(&ctx, apply(&prev, input))
@@ -473,6 +478,9 @@ async fn update_report_source(
                 .with_constraint(e)
                 .create()
         })?;
+    if imported {
+        mirror_in_background(&reports, &ctx, k.id);
+    }
     Ok(Json(reports.source_dto(&ctx, &saved).await))
 }
 
@@ -672,6 +680,8 @@ async fn save_section(
     section: Section,
 ) -> ApiResult<JsonBody<PlanDto>> {
     let k = report(id)?;
+    // Only these two sections are mirrored into the domain model.
+    let mirrored = matches!(section, Section::Units { .. } | Section::People(_));
     let saved = reports
         .service
         .edit_plan(ctx, k.id, revision, section)
@@ -692,7 +702,49 @@ async fn save_section(
         .plan_document(ctx, k.id)
         .await
         .map_err(|e| internal(format!("{e:#}")))?;
+    if mirrored {
+        mirror_in_background(reports, ctx, k.id);
+    }
     Ok(Json(plan_dto(&saved, &doc)))
+}
+
+/// Mirror the plan's teams into the domain model after a save, without making
+/// the save wait for it: a failure is logged, and `POST …/plan/sync` says why.
+fn mirror_in_background(reports: &Reports, ctx: &SecurityContext, report: &'static str) {
+    let service = Arc::clone(&reports.service);
+    let ctx = ctx.clone();
+    tokio::spawn(async move {
+        match service.mirror(&ctx, report).await {
+            Ok(s) => tracing::info!(
+                report,
+                written = s.written,
+                unchanged = s.unchanged,
+                retired = s.retired,
+                skipped = s.skipped.len(),
+                "studio-reports: plan mirrored into the domain model"
+            ),
+            Err(e) => tracing::warn!(
+                report,
+                error = %format!("{e:#}"),
+                "studio-reports: plan not mirrored into the domain model"
+            ),
+        }
+    });
+}
+
+/// Mirror the plan's teams into the domain model now, and say what it did.
+async fn sync_report_plan(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<MirrorSummaryDto>> {
+    let k = report(&id)?;
+    reports
+        .service
+        .mirror(&ctx, k.id)
+        .await
+        .map(Json)
+        .map_err(|e| internal(format!("{e:#}")))
 }
 
 async fn update_report_plan_lanes(
@@ -1255,6 +1307,24 @@ pub fn register_routes(
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_plan_people)
         .json_response_with_schema::<PlanPeopleDto>(openapi, StatusCode::OK, "The plan's people")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-reports/v1/reports/{report_id}/plan/sync")
+        .operation_id("studio_reports.sync_report_plan")
+        .summary("Mirror the plan's units, teams, people and memberships into the domain model")
+        .description(
+            "When the domain model should show what the plan says now -- after an outage, or \n             to see what a publish does. A save of the units or the people does the same in \n             the background. Units become `org-unit`s, teams `team`s, people `person`s keyed \n             by GitHub login, and a person in a team a `membership` whose `allocation` is \n             their power, all `mirrored`, as the caller (`domain.edit`, ADR-0035). Only what \n             changed is written; what left the plan is retired with `valid_to`, never \n             deleted. Answers what it wrote, left, retired and skipped.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(sync_report_plan)
+        .json_response_with_schema::<MirrorSummaryDto>(openapi, StatusCode::OK, "What the publish did")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

@@ -150,6 +150,38 @@ The plan names people — their emails and how much of each one's time a team
 counts on. For now it is shown to whoever may edit the report's source; who
 may see and edit it is a role question for later (ADR-0019).
 
+#### The plan's teams are mirrored into the domain model, for now
+
+- [x] `p2` - **ID**: `cpt-studio-principle-reports-teams-mirrored`
+
+The plan's units, teams, people and memberships are mirrored into the domain
+model (`mirror.rs`, through `domain_model::port::DomainObjects`), so the rest
+of Studio sees the organization's teams through `/query` and saved views:
+
+| Plan | Domain model |
+|---|---|
+| a unit | `org-unit`, `unit_kind: business_unit` |
+| a team | `team`, `acquisition: mirrored`, its unit as `org_unit_ref` |
+| a person | `person` keyed `github:<login>`, shared by every report |
+| a person in a team, with power | `membership`, `scope_kind: team`, `allocation` = power |
+
+A save of units or people publishes in the background; `POST …/plan/sync`
+publishes now and says what it did. Only what changed is written. What leaves
+the plan is **retired** (`valid_to`, `status`), never deleted, because a
+graph key that is deleted cannot be written again. A person is never retired
+by one report. The writes are the caller's (`domain.edit`, ADR-0035).
+
+**The plan is the source of truth for now, and that is temporary.** The
+target is the reverse: teams, people and memberships authored in the domain
+model, and the plan's Teams and People sections a view of them. It waits on
+step 7 of [the domain-query migration](../domain-query-migration.md) (a
+version on read, graph-storage item 2): until then a write to the model is
+last-writer-wins, and a screen two planners edit must not sit on it. The plan
+has a revision of its own, so mirroring keeps one writer. Two gaps found on
+the way: the model has no team-to-unit relation (`org_unit_ref` is an
+undeclared field, reported by conformance, not refused), and nothing relates
+a team to its members by edge yet (the membership carries both refs).
+
 A person in the plan is linked to a Studio person by login: the login is
 matched against confirmed GitHub aliases (`user_profile::AliasResolver`), and
 membership is read from `OrganizationRoster`. The match is computed on every
@@ -322,6 +354,7 @@ would add on top.
 | `GET` | `/studio-reports/v1/reports/{report_id}/plan` | The plan in sections — lanes, units and teams, people, projects, needs — with the `revision` a save is made against; revision 0 and empty when there is none | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/plan/{lanes,units,people,projects,needs}` | Save one section against `revision`: 400 lists why the plan would not hold together, 409 when it changed since; the first save makes Studio the plan's home | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/plan/people` | Each person in the plan with the Studio person whose **confirmed** GitHub account their login is (ADR-0012) and whether they are an active member; the members with a confirmed GitHub account the plan does not list; how many members have none. Computed on read, nothing stored | unstable |
+| `POST` | `/studio-reports/v1/reports/{report_id}/plan/sync` | Mirror the plan's units, teams, people and memberships into the domain model now; answers what it wrote, left, retired and skipped | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/plan/yaml` | The plan as `gears.yaml`, for the planning script or a backup; 404 without a plan | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/schedule` | Whether the report refreshes on its own and when next; `enabled: false` with no `cron` when there is none | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/schedule` | Switch it on or off, creating it the first time | unstable |

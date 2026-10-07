@@ -30,6 +30,7 @@
 mod access;
 pub(crate) mod gts;
 pub(crate) mod ontology;
+pub mod port;
 mod query;
 mod rest;
 mod service;
@@ -206,6 +207,10 @@ impl RestApiCapability for StudioDomainModelGear {
         let store = build_store(ctx);
         let service = Arc::new(DomainModelService::new(store).with_policy(build_policy(ctx)));
         let _ = self.service.set(service.clone());
+        // What another gear writes and reads objects through (`port.rs`): the
+        // same path as the REST routes, under its caller's context.
+        ctx.client_hub()
+            .register::<dyn port::DomainObjects>(Arc::new(port::Objects(service.clone())));
         // Who may change the model (ADR-0035 §1). studio-user publishes it in
         // its `init`, which runs before any gear's REST phase. Absent, nobody
         // can be shown to hold the authority, and model edits are refused.

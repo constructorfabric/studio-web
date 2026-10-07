@@ -3006,6 +3006,22 @@
     },
     {
       "method": "POST",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/sync",
+      "operation_id": "studio_reports.sync_report_plan",
+      "tag": "StudioReports",
+      "summary": "Mirror the plan's units, teams, people and memberships into the domain model",
+      "authenticated": true,
+      "responses": [
+        "MirrorSummaryDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-reports/v1/reports/{report_id}/sync",
       "operation_id": "studio_reports.sync_report",
       "tag": "StudioReports",

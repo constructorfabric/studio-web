@@ -408,6 +408,13 @@ onto the query, is [the migration plan](../domain-query-migration.md).
 | `types_registry` | SDK client | Catalog every domain, relation and meta type at init |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (feature `graph`), resolved in the REST phase | Register the derived types; store the model, versions, objects and relations; an in-memory store without it |
 
+**Published to other gears:** `port::DomainObjects` in the ClientHub, upsert
+an object by key and list a type's objects, through the same path as
+`POST /objects` and `GET /objects` (the caller's context, the PDP, `warn`
+validation). Changing the model is not offered. Its first consumer is
+studio-reports, which mirrors a roadmap plan's teams; that mirror found the
+model has no team-to-unit relation (it writes `org_unit_ref`, undeclared).
+
 ### 3.5 External Dependencies
 
 None at run time. The seed is embedded at build time from

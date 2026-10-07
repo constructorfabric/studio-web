@@ -18,6 +18,7 @@ import {
   parseNumber,
   quarters,
   linkOf,
+  mirrorText,
   teamChoices,
   withNeed,
   type LinkState,
@@ -239,6 +240,18 @@ export function PlanEditor({
     }
   };
 
+  const publishTeams = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      setNote(mirrorText(await api.syncReportPlan(token, report)));
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const teams = teamChoices(draft.units);
   const projects = draft.projects;
 
@@ -256,6 +269,14 @@ export function PlanEditor({
           </button>
         ))}
         <span style={{ flex: 1 }} />
+        <button
+          className="iconbtn"
+          disabled={plan.revision === 0 || busy}
+          title="Mirror the units, teams, people and their shares into the domain model, so the rest of Studio sees them. Saving teams or people does this on its own."
+          onClick={() => void publishTeams()}
+        >
+          Publish teams to the domain model
+        </button>
         <button className="iconbtn" disabled={plan.revision === 0} onClick={exportYaml}>
           Export gears.yaml
         </button>

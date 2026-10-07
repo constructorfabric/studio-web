@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkOf, move, needOf, parseNumber, quarters, sectionBody, teamChoices, withNeed, type Plan, type PlanPeople } from "./plan-model";
+import { linkOf, mirrorText, move, needOf, parseNumber, quarters, sectionBody, teamChoices, withNeed, type Plan, type PlanPeople } from "./plan-model";
 
 const plan: Plan = {
   revision: 3,
@@ -81,5 +81,16 @@ describe("a person's link to Studio", () => {
   it("has nothing to say about a row typed since the save", () => {
     expect(linkOf(links, "new-example")).toEqual({ kind: "unsaved" });
     expect(linkOf(null, "zed-example")).toEqual({ kind: "unsaved" });
+  });
+});
+
+describe("a publish into the domain model", () => {
+  it("says what it did in one line, and what it skipped", () => {
+    expect(mirrorText({ written: 3, unchanged: 5, retired: 0, skipped: [] })).toBe(
+      "Domain model: 3 written, 5 unchanged.",
+    );
+    expect(mirrorText({ written: 0, unchanged: 8, retired: 2, skipped: ["x: there is no team `t`"] })).toBe(
+      "Domain model: 0 written, 8 unchanged, 2 retired. Skipped: x: there is no team `t`.",
+    );
   });
 });
