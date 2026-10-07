@@ -3,6 +3,7 @@
 // developers: nothing here says commit, push, branch or rebase unless git left
 // no other way to put it, and then only as a detail they can copy.
 
+import URI from '@theia/core/lib/common/uri';
 import type { ShareDocument, ShareOutcome, ShareRepository } from '../../common/document-share-protocol';
 
 export interface Person {
@@ -21,13 +22,21 @@ export function isMine(document: ShareDocument, me: Person | undefined): boolean
 
 /**
  * Mine, others', and those already in my pull request as they are — shared
- * for review, so nothing to choose until they change again.
+ * for review, so nothing to choose until they change again. `reviewed`: the
+ * project takes changes through a pull request, so a document committed here
+ * and not sent is chosen like any other; straight to the branch it is not
+ * listed — the next share sends every commit not sent, chosen or not.
  */
-export function splitDocuments(repository: ShareRepository, me: Person | undefined): { mine: ShareDocument[]; others: ShareDocument[]; inReview: ShareDocument[] } {
+export function splitDocuments(
+    repository: ShareRepository, me: Person | undefined, reviewed = false,
+): { mine: ShareDocument[]; others: ShareDocument[]; inReview: ShareDocument[] } {
     const mine: ShareDocument[] = [];
     const others: ShareDocument[] = [];
     const inReview: ShareDocument[] = [];
     for (const document of repository.documents) {
+        if (document.committed && !reviewed && !document.inReview) {
+            continue;
+        }
         (document.inReview ? inReview : isMine(document, me) ? mine : others).push(document);
     }
     return { mine, others, inReview };
@@ -66,7 +75,9 @@ export function coAuthorsOf(documents: readonly ShareDocument[], me: Person | un
 export function unsharedCount(repositories: readonly ShareRepository[]): number {
     return repositories.reduce((sum, repository) => {
         const documents = toShare(repository).length;
-        return sum + documents + (documents === 0 && repository.unsent > 0 ? 1 : 0);
+        // Commits not sent that changed no document still different from the team's: one thing to send.
+        const unlisted = repository.unsent > 0 && !repository.documents.some(document => document.committed);
+        return sum + documents + (documents === 0 && unlisted ? 1 : 0);
     }, 0);
 }
 
@@ -114,4 +125,19 @@ export function describeOutcome(outcome: ShareOutcome, documents: number, viaPul
 function firstLine(detail: string | undefined): string {
     const line = (detail ?? '').split('\n').map(part => part.replace(/^(fatal|error):\s*/i, '').trim()).find(Boolean);
     return line ? `(${line})` : '';
+}
+
+/**
+ * The repository folder (a uri) a Source Control action was run on: a
+ * repository, as a row's menu passes it, else the one the view shows.
+ */
+export function repositoryRootOf(arg: unknown, selected: string | undefined): string | undefined {
+    const root = (arg as { provider?: { rootUri?: unknown } } | undefined)?.provider?.rootUri;
+    return typeof root === 'string' ? root : selected;
+}
+
+/** Whether two folder uris name the same folder, whatever the trailing slash or escaping. */
+export function sameFolder(a: string, b: string): boolean {
+    const path = (uri: string) => new URI(uri).path.toString().replace(/\/+$/, '');
+    return path(a) === path(b);
 }

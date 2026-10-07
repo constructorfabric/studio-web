@@ -318,6 +318,29 @@ A edits a document and shares it.
   switching it back there in the Sources list makes the next share go to the
   branch again.
 
+### 5k. Committed in Source Control, sent through Share
+
+On a source set to *Through a pull request*, whose branch refuses direct
+pushes, A edits two documents and commits them in Source Control (once with
+an empty message), then presses *Sync Changes*.
+
+- **Expect**: the push is refused, and the checkout is two commits ahead. The
+  Share button in the ribbon has a badge with the number of documents, and so
+  does the status bar. Source Control has *Share with the Team* in its
+  *Changes* title bar, which opens the same window. The window lists the
+  committed documents as *committed here, not sent yet*, ticked, and *Send 2
+  documents for review* is enabled. After sending, `studio/<A>/share` has one
+  signed-off commit with those documents as they are on disk. The checkout's
+  `HEAD` and the team's branch are unchanged. The badge and the status line
+  are gone. An edit to one of those documents brings it back as unshared,
+  while the others read *In your pull request*.
+- **Fails as**: *Send for review* disabled with *A change you shared earlier
+  has not reached the team yet*, the badge staying after the send, or a
+  commit on the checkout's own branch.
+- **Control**: on *Commit to the branch*, Share still pushes those commits
+  as they are (5i). Source Control's own buttons behave exactly as before in
+  both modes, and on the desktop its title bar has no Share button.
+
 ### 6. Commenting on something that was rendered
 
 In rich view:

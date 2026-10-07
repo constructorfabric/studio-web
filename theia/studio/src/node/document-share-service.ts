@@ -9,6 +9,9 @@
 // the documents become one commit on the person's review branch, built in an
 // index of its own, and the checkout's branch and files are not touched — so
 // the shared checkout never holds a commit the team's branch does not.
+// Somebody may still commit there through Source Control, whose push such a
+// project refuses: the documents those commits changed are listed `committed`
+// and proposed the same way, as they are on disk — the commits stay put.
 // Git runs in each repository's own folder through the same runner as the
 // desktop's Sync and Push, so credentials are what they already are: the
 // session's helper in a portal session, the token broker's on the desktop.
@@ -72,6 +75,21 @@ export function parseStatus(output: string): StatusEntry[] {
         }
         const state = code.includes('D') ? 'deleted' : (code === '??' || code.includes('A') || code[0] === 'R') ? 'added' : 'modified';
         entries.push({ path: file, state });
+    }
+    return entries;
+}
+
+/** `git diff --name-status -z --no-renames`, read. */
+export function parseNameStatus(output: string): StatusEntry[] {
+    const entries: StatusEntry[] = [];
+    const fields = output.split('\0');
+    for (let index = 0; index + 1 < fields.length; index += 2) {
+        const code = fields[index];
+        const file = fields[index + 1];
+        if (!code || !file) {
+            continue;
+        }
+        entries.push({ path: file, state: code[0] === 'D' ? 'deleted' : code[0] === 'A' ? 'added' : 'modified' });
     }
     return entries;
 }
@@ -271,14 +289,19 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         if (listed.code !== 0) {
             return undefined;
         }
-        const entries = parseStatus(listed.stdout);
+        const working = parseStatus(listed.stdout);
         const branch = await this.text(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
         const upstream = branch ? await this.text(dir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']) : undefined;
         const unsentText = upstream ? await this.text(dir, ['rev-list', '--count', '@{upstream}..HEAD']) : undefined;
+        const unsent = Number(unsentText ?? 0) || 0;
+        // What the commits not sent yet changed, unless it was changed again since.
+        const changedHere = new Set(working.map(entry => entry.path));
+        const committed = unsent ? (await this.committedChanges(dir)).filter(entry => !changedHere.has(entry.path)) : [];
+        const entries = [...working, ...committed];
         const documents: ShareDocument[] = [];
         for (const entry of entries.filter(e => isDocumentPath(e.path))) {
             const companions = entries.filter(e => companionOf(e.path) === entry.path).map(e => e.path);
-            documents.push(await this.document(dir, entry, companions));
+            documents.push(await this.document(dir, entry, companions, false, unsent > 0));
         }
         // A document whose own text did not change but whose comments or
         // suggestions did is something to share too: a reply is work.
@@ -286,7 +309,14 @@ export class DocumentShareServiceImpl implements DocumentShareService {
             const owner = companionOf(entry.path);
             if (owner && !documents.some(document => document.path === owner)) {
                 const companions = entries.filter(e => companionOf(e.path) === owner).map(e => e.path);
-                documents.push(await this.document(dir, { path: owner, state: 'modified' }, companions, true));
+                documents.push(await this.document(dir, { path: owner, state: 'modified' }, companions, true, unsent > 0));
+            }
+        }
+        // Nothing of it changed since the commit: there is only sending left.
+        for (let i = 0; i < documents.length; i++) {
+            const document = documents[i];
+            if (![document.path, ...document.companions].some(file => changedHere.has(file))) {
+                documents[i] = { ...document, committed: true };
             }
         }
         if (person) {
@@ -297,9 +327,25 @@ export class DocumentShareServiceImpl implements DocumentShareService {
             name: path.basename(dir),
             ...(branch ? { branch } : {}),
             ...(upstream ? { upstream } : {}),
-            unsent: Number(unsentText ?? 0) || 0,
+            unsent,
             documents: documents.sort((a, b) => a.path.localeCompare(b.path)),
         };
+    }
+
+    /**
+     * The files the commits not sent yet changed and that still differ from
+     * the team's: changed on this side of where the two parted (`...`), and
+     * different between the two now — so a change the team already took
+     * another way (a squashed pull request) is not offered again.
+     */
+    protected async committedChanges(dir: string): Promise<StatusEntry[]> {
+        const ours = await this.git(dir, ['diff', '--name-status', '-z', '--no-renames', '@{upstream}...HEAD']);
+        const differs = await this.git(dir, ['diff', '--name-only', '-z', '--no-renames', '@{upstream}', 'HEAD']);
+        if (ours.code !== 0 || differs.code !== 0) {
+            return [];
+        }
+        const still = new Set(differs.stdout.split('\0').filter(Boolean));
+        return parseNameStatus(ours.stdout).filter(entry => still.has(entry.path));
     }
 
     /**
@@ -331,7 +377,7 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         }
     }
 
-    protected async document(dir: string, entry: StatusEntry, companions: string[], onlyCompanions = false): Promise<ShareDocument> {
+    protected async document(dir: string, entry: StatusEntry, companions: string[], onlyCompanions = false, unsentHere = false): Promise<ShareDocument> {
         const file = path.join(dir, ...entry.path.split('/'));
         let markdown = '';
         try {
@@ -345,7 +391,8 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         } catch {
             history = undefined;
         }
-        const lastShared = await this.text(dir, ['log', '-1', '--format=%cI', '--', entry.path]);
+        // Last shared: last in the team's history, when commits made here were never sent.
+        const lastShared = await this.text(dir, ['log', '-1', '--format=%cI', ...(unsentHere ? ['@{upstream}'] : []), '--', entry.path]);
         return {
             path: entry.path,
             uri: FileUri.create(file).toString(),
@@ -372,8 +419,14 @@ export class DocumentShareServiceImpl implements DocumentShareService {
         const toCommit = paths.filter(file => changed.has(file));
 
         if (request.review) {
-            return toCommit.length
-                ? this.propose(dir, request.review, toCommit, request)
+            // Committed here and not sent — through Source Control, whose push
+            // the project's branch refuses — goes to the request as it is on
+            // disk, like an edit not committed. The commits themselves stay
+            // where they are: the request is built beside them, never from them.
+            const committed = new Set(described.unsent ? (await this.committedChanges(dir)).map(entry => entry.path) : []);
+            const toPropose = paths.filter(file => changed.has(file) || committed.has(file));
+            return toPropose.length
+                ? this.propose(dir, request.review, toPropose, request)
                 : { kind: 'nothing', branch: request.review.branch };
         }
         if (toCommit.length === 0 && described.unsent === 0 && !request.prefer) {

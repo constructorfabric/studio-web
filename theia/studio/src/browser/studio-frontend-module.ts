@@ -24,6 +24,7 @@ import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
 import { MarkdownDiffContribution } from './markdown-diff/markdown-diff-contribution';
 import { AssistantRevealGuard } from './assistant-reveal-guard';
 import { ShareContribution } from './share/share-contribution';
+import { RibbonBadges } from './ribbon-badges';
 import { ShareSharingClient } from './share/share-sharing-client';
 import { DocumentShareService, documentShareServicePath } from '../common/document-share-protocol';
 import { MarkdownDiffOpenHandler, MarkdownDiffService } from './markdown-diff/markdown-diff-service';
@@ -190,7 +191,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(ShareSharingClient).toSelf().inSingletonScope();
     bind(ShareContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(ShareContribution);
+    bind(MenuContribution).toService(ShareContribution);
+    bind(TabBarToolbarContribution).toService(ShareContribution);
     bind(FrontendApplicationContribution).toService(ShareContribution);
+    // The numbers on the ribbon's buttons (Share's, above).
+    bind(RibbonBadges).toSelf().inSingletonScope();
     // The right flank does not open on an assistant nobody asked for.
     bind(AssistantRevealGuard).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(AssistantRevealGuard);

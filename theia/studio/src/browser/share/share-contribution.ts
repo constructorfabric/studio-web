@@ -1,21 +1,31 @@
 // Where "Share with the team" lives: a command, a line in the status bar that
-// says how much is not shared yet (and opens the window), and the Doc editing
-// ribbon's first Git action. See share-dialog.tsx for the window and
-// node/document-share-service.ts for what it does in git.
+// says how much is not shared yet (and opens the window), the Doc editing
+// ribbon's first Git action with the same number on it, and — in a portal
+// session — a button in Source Control beside its own, for whoever commits
+// there: the project's way to the team (straight, or through review) is
+// Share's, and Source Control's push knows nothing of it. Source Control's own
+// actions are left exactly as they are. See share-dialog.tsx for the window
+// and node/document-share-service.ts for what it does in git.
 
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution, codicon } from '@theia/core/lib/browser';
 import { StatusBar, StatusBarAlignment } from '@theia/core/lib/browser/status-bar/status-bar-types';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
-import { Command, CommandContribution, CommandRegistry, Disposable, DisposableCollection, MessageService } from '@theia/core';
+import { Command, CommandContribution, CommandRegistry, Disposable, DisposableCollection, Emitter, MenuContribution, MenuModelRegistry, MessageService } from '@theia/core';
+import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
+import { ScmWidget } from '@theia/scm/lib/browser/scm-widget';
+import { SCM_REPOSITORY_MENU, SCM_SOURCE_CONTROL_MENU } from '@theia/scm/lib/browser/scm-repositories-widget';
 import URI from '@theia/core/lib/common/uri';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { DocumentShareService, shareBranchOf, type ShareRepository } from '../../common/document-share-protocol';
+import { DocumentShareService, shareBranchOf, type ShareDocument, type ShareRepository } from '../../common/document-share-protocol';
 import { MarkdownDiffService } from '../markdown-diff/markdown-diff-service';
 import { toGitUri } from '../markdown-diff/markdown-diff-uri';
+import { isDesktopHost } from '../desktop-git-contribution';
+import { RibbonBadges } from '../ribbon-badges';
 import { ShareDialog } from './share-dialog';
-import { Person, unsharedCount } from './share-model';
+import { Person, repositoryRootOf, sameFolder, unsharedCount } from './share-model';
 import { RepositorySharing, ShareSharingClient } from './share-sharing-client';
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -30,6 +40,17 @@ export const SHARE_COMMAND: Command = Command.toDefaultLocalizedCommand({
     label: 'Share with the Team',
     iconClass: codicon('cloud-upload'),
 });
+
+/**
+ * Share from Source Control: the window for one repository — the one a row's
+ * menu was opened on, or the one the view shows. Visible in a portal session
+ * only; the desktop pushes its own way (desktop-git-contribution.ts).
+ */
+export const SHARE_REPOSITORY_COMMAND: Command = {
+    id: 'studio.share.openRepository',
+    label: 'Share with the Team',
+    iconClass: codicon('cloud-upload'),
+};
 
 /**
  * Who is sharing, as product-ext's identity knows them (name and, in a portal
@@ -59,7 +80,7 @@ const STATUS_TIMEOUT_MS = 10_000;
 const RECOUNT_DELAY_MS = 1500;
 
 @injectable()
-export class ShareContribution implements CommandContribution, FrontendApplicationContribution {
+export class ShareContribution implements CommandContribution, MenuContribution, TabBarToolbarContribution, FrontendApplicationContribution {
     @inject(DocumentShareService) protected readonly service: DocumentShareService;
     @inject(WorkspaceService) protected readonly workspace: WorkspaceService;
     @inject(StatusBar) protected readonly statusBar: StatusBar;
@@ -69,15 +90,43 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
     @inject(WindowService) protected readonly windows: WindowService;
     @inject(FileService) @optional() protected readonly files: FileService | undefined;
     @inject(ShareSharingClient) @optional() protected readonly sharingClient: ShareSharingClient | undefined;
+    @inject(RibbonBadges) @optional() protected readonly badges: RibbonBadges | undefined;
+    @inject(ScmService) @optional() protected readonly scm: ScmService | undefined;
 
     protected readonly toDispose = new DisposableCollection();
     protected recountTimer: ReturnType<typeof setTimeout> | undefined;
     protected opening = false;
+    /** A portal session, as far as known: Source Control's Share shows only once the backend said so. */
+    protected portal = false;
+    protected readonly onDidChangePortalEmitter = new Emitter<void>();
 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand(SHARE_COMMAND, {
             execute: () => this.open(),
             isEnabled: () => !this.opening,
+        });
+        commands.registerCommand(SHARE_REPOSITORY_COMMAND, {
+            execute: (arg?: unknown) => this.open(repositoryRootOf(arg, this.scm?.selectedRepository?.provider.rootUri)),
+            isEnabled: () => !this.opening,
+            isVisible: () => this.portal,
+        });
+    }
+
+    registerMenus(menus: MenuModelRegistry): void {
+        // A repository's row: its "..." menu, and the menu a right-click opens.
+        menus.registerMenuAction([...SCM_REPOSITORY_MENU, '1_studio'], { commandId: SHARE_REPOSITORY_COMMAND.id, label: SHARE_REPOSITORY_COMMAND.label, order: '0' });
+        menus.registerMenuAction([...SCM_SOURCE_CONTROL_MENU, '1_studio'], { commandId: SHARE_REPOSITORY_COMMAND.id, label: SHARE_REPOSITORY_COMMAND.label, order: '0' });
+    }
+
+    registerToolbarItems(registry: TabBarToolbarRegistry): void {
+        // Source Control's title bar, beside its own Commit and Refresh.
+        registry.registerItem({
+            id: SHARE_REPOSITORY_COMMAND.id,
+            command: SHARE_REPOSITORY_COMMAND.id,
+            tooltip: 'Share with the team: send what you edited or committed, the way this project takes changes',
+            priority: -1,
+            isVisible: widget => this.portal && widget instanceof ScmWidget && !!this.scm?.selectedRepository,
+            onDidChange: this.onDidChangePortalEmitter.event,
         });
     }
 
@@ -92,6 +141,29 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
             }));
         }
         this.toDispose.push(this.workspace.onWorkspaceChanged(() => this.scheduleRecount()));
+        // A commit from Source Control changes no file outside .git, so the
+        // file events above miss it; Source Control's own state is the event.
+        if (this.scm) {
+            const scm = this.scm;
+            const watched = new DisposableCollection();
+            const watch = (): void => {
+                watched.dispose();
+                for (const repository of scm.repositories) {
+                    if (repository.provider.onDidChange) {
+                        watched.push(repository.provider.onDidChange(() => this.scheduleRecount()));
+                    }
+                }
+                this.scheduleRecount();
+            };
+            this.toDispose.push(watched);
+            this.toDispose.push(scm.onDidAddRepository(watch));
+            this.toDispose.push(scm.onDidRemoveRepository(watch));
+            watch();
+        }
+        void isDesktopHost().then(desktop => {
+            this.portal = !desktop;
+            this.onDidChangePortalEmitter.fire();
+        });
         const onFocus = (): void => this.scheduleRecount();
         window.addEventListener('focus', onFocus);
         this.toDispose.push(Disposable.create(() => window.removeEventListener('focus', onFocus)));
@@ -143,6 +215,7 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
         } catch {
             // No repository, a backend still starting: say nothing rather than something wrong.
             void this.statusBar.removeElement(STATUS_ID);
+            this.badges?.set(SHARE_COMMAND.id, 0);
             this.retryLater();
         }
     }
@@ -155,6 +228,7 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
     }
 
     protected showCount(count: number): void {
+        this.badges?.set(SHARE_COMMAND.id, count);
         if (!count) {
             void this.statusBar.removeElement(STATUS_ID);
             return;
@@ -181,7 +255,8 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
         }
     }
 
-    async open(): Promise<void> {
+    /** The window, for every repository with something to share, or for the one at `only` (a folder uri). */
+    async open(only?: string): Promise<void> {
         if (this.opening) {
             return;
         }
@@ -194,7 +269,8 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
             }
             await this.flush();
             const me = await this.me();
-            const { repositories } = await withTimeout(this.service.status(roots, me), STATUS_TIMEOUT_MS);
+            const listed = (await withTimeout(this.service.status(roots, me), STATUS_TIMEOUT_MS)).repositories;
+            const repositories = only ? listed.filter(repository => sameFolder(repository.root, only)) : listed;
             if (!repositories.length) {
                 this.messages.info('This project has no repository to share to.');
                 return;
@@ -209,7 +285,7 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
                 me,
                 sharing: await this.sharingOf(repositories, me),
                 openPullRequest: (sharing, head, title, body) => this.sharingClient!.openPullRequest(sharing, head, title, body),
-                showChanges: document => void this.diffs.compareWithHead(new URI(document.uri)),
+                showChanges: (document, against) => void this.showChanges(document, against),
                 showConflict: (repository, path, theirs) => void this.showConflict(repository, path, theirs),
                 openLink: url => this.windows.openNewWindow(url, { external: true }),
                 report: said => {
@@ -264,6 +340,24 @@ export class ShareContribution implements CommandContribution, FrontendApplicati
                 }
             }
         }
+    }
+
+    /**
+     * A document's changes: against its last commit, or — when commits made
+     * here are not sent yet — against the team's version, so what was
+     * committed and not sent shows too.
+     */
+    protected async showChanges(document: ShareDocument, against: string | undefined): Promise<void> {
+        const file = new URI(document.uri);
+        if (!against) {
+            await this.diffs.compareWithHead(file);
+            return;
+        }
+        await this.diffs.open({
+            left: { uri: toGitUri(file, against), label: 'The team’s version' },
+            right: { uri: file, label: 'Yours' },
+            base: file,
+        });
     }
 
     /** The team's version beside mine — what the conflict is about. */
