@@ -1778,6 +1778,98 @@ impl IngestService {
         }
         Ok((nodes.len(), edges.len()))
     }
+
+    /// Record a member's decision on one mapping (`cpt-studio-fr-mapping-decisions`):
+    /// a `mapping_decision` node scoped like the document it is about, and a
+    /// `decision_on` edge to that document when it is a repository file.
+    ///
+    /// Deciding the same (document, section, capability, gear) again replaces
+    /// the decision. The instance id is returned.
+    pub async fn record_mapping_decision(
+        &self,
+        ctx: &SecurityContext,
+        decision: &MappingDecision,
+    ) -> anyhow::Result<GtsNode> {
+        use super::gts;
+        let id = gts::mapping_decision_instance_id(
+            &decision.document,
+            &decision.section,
+            &decision.capability,
+            &decision.gear,
+        );
+        let decided_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        let mut value = serde_json::json!({
+            "title": format!("{} → {}: {}", decision.capability, decision.gear, decision.decision),
+            "document": decision.document,
+            "document_revision": decision.document_revision,
+            "section": decision.section,
+            "capability": decision.capability,
+            "gear": decision.gear,
+            "gear_version": decision.gear_version,
+            "step": decision.step,
+            "decision": decision.decision,
+            "decided_by": ctx.subject_id().to_string(),
+            "decided_at": decided_at,
+            "workspace_id": decision.workspace_id,
+        });
+        if let (Some(obj), Some(project)) = (value.as_object_mut(), &decision.project_id) {
+            obj.insert(
+                "project_id".to_string(),
+                serde_json::Value::String(project.clone()),
+            );
+        }
+        let node = GtsNode {
+            type_id: gts::MAPPING_DECISION_TYPE,
+            instance_id: id.clone(),
+            value,
+        };
+        self.graph
+            .upsert_nodes(ctx, std::slice::from_ref(&node))
+            .await?;
+        if let Some(node_id) = &decision.document_node {
+            self.graph
+                .upsert_edges(ctx, &[gts::decision_on_edge(&id, node_id)])
+                .await?;
+        }
+        Ok(node)
+    }
+
+    /// The mapping decisions recorded in a workspace or project.
+    pub async fn list_mapping_decisions(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        self.list_in_scope(ctx, Some("mapping_decision"), scope)
+            .await
+    }
+}
+
+/// A member's decision on one proposed mapping, as the portal sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappingDecision {
+    pub workspace_id: String,
+    pub project_id: Option<String>,
+    /// The declaring document: a bound file's binding id or a Studio
+    /// document's id, as `declared-capabilities` names it.
+    pub document: String,
+    /// The artifact node of a bound file, for the `decision_on` edge.
+    pub document_node: Option<String>,
+    /// What the document was when this was decided.
+    pub document_revision: String,
+    /// Where in the document the capability is declared. `front matter` for a
+    /// `capabilities:` line, which is where every capability comes from today.
+    pub section: String,
+    pub capability: String,
+    /// The gear by catalogue name. A rejected gap uses the empty string.
+    pub gear: String,
+    pub gear_version: Option<String>,
+    /// The mapping step that proposed it: `contract`, `evidence` or `gap`.
+    pub step: String,
+    /// `confirmed` or `rejected`.
+    pub decision: String,
 }
 
 /// What the portfolio counts, answered without a page to count.

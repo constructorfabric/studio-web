@@ -39,9 +39,13 @@ pub const COMMIT_TYPE: &str = "gts.cf.studio.artifact.commit.v1~";
 /// took 48 pages and eight seconds to walk. Search is the only reader the
 /// excerpt ever had, and search reaches it here just as well.
 pub const FILE_CONTENT_TYPE: &str = "gts.cf.studio.artifact.file_content.v1~";
+/// A member's decision on one mapping of a specification to a gear: which
+/// gear covers a capability a document declares, or that it does not
+/// (`cpt-studio-fr-mapping-decisions`).
+pub const MAPPING_DECISION_TYPE: &str = "gts.cf.studio.artifact.mapping_decision.v1~";
 
 /// Every artifact node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 9] = [
+pub const ALL_NODE_TYPES: [&str; 10] = [
     REPO_TYPE,
     ISSUE_TYPE,
     PULL_REQUEST_TYPE,
@@ -51,6 +55,7 @@ pub const ALL_NODE_TYPES: [&str; 9] = [
     COMMENT_TYPE,
     COMMIT_TYPE,
     FILE_CONTENT_TYPE,
+    MAPPING_DECISION_TYPE,
 ];
 
 /// The node types the artifact listing returns by default — the four
@@ -118,9 +123,11 @@ pub const REL_FINDING_ON: &str = "gts.cf.studio.rel.finding_on.v1~";
 pub const REL_COMMENT_ON: &str = "gts.cf.studio.rel.comment_on.v1~";
 /// file_content → file — the file an excerpt was taken from.
 pub const REL_CONTENT_OF: &str = "gts.cf.studio.rel.content_of.v1~";
+/// mapping_decision → document: the document whose capability it decides.
+pub const REL_DECISION_ON: &str = "gts.cf.studio.rel.decision_on.v1~";
 
 /// Every relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 9] = [
+pub const ALL_EDGE_TYPES: [&str; 10] = [
     REL_ARTIFACT_OF,
     REL_CONTAINS,
     REL_AUTHORED_BY,
@@ -130,6 +137,7 @@ pub const ALL_EDGE_TYPES: [&str; 9] = [
     REL_FINDING_ON,
     REL_COMMENT_ON,
     REL_CONTENT_OF,
+    REL_DECISION_ON,
 ];
 
 /// The graph-storage families our types derive from.
@@ -166,7 +174,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
     (
         REPO_TYPE,
         "Repository",
@@ -212,11 +220,16 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
         "FileContent",
         "A bounded excerpt of a text file, kept beside the file for search.",
     ),
+    (
+        MAPPING_DECISION_TYPE,
+        "MappingDecision",
+        "A member's decision on which gear covers a capability a document declares.",
+    ),
 ];
 
 /// The relation types, with a title and a description each — the catalog side
 /// of [`ALL_EDGE_TYPES`].
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 9] = [
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 10] = [
     (
         REL_ARTIFACT_OF,
         "ArtifactOf",
@@ -261,6 +274,11 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 9] = [
         REL_CONTENT_OF,
         "ContentOf",
         "A file's searchable excerpt and the file it was taken from.",
+    ),
+    (
+        REL_DECISION_ON,
+        "DecisionOn",
+        "A mapping decision and the document whose capability it decides.",
     ),
 ];
 
@@ -890,6 +908,28 @@ pub fn finding_on_edge(finding_id: &str, subject_id: &str) -> GtsEdge {
         type_id: REL_FINDING_ON,
         from: finding_id.to_string(),
         to: subject_id.to_string(),
+    }
+}
+
+// ── Mapping decisions (cpt-studio-fr-mapping-decisions) ──
+
+/// One decision per (document, section, capability, gear): deciding again
+/// replaces it, and the payload says when and by whom.
+pub fn mapping_decision_instance_id(
+    document: &str,
+    section: &str,
+    capability: &str,
+    gear: &str,
+) -> String {
+    anon_id(&["mapping_decision", document, section, capability, gear])
+}
+
+/// mapping_decision → document (the document whose capability it decides).
+pub fn decision_on_edge(decision_id: &str, document_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_DECISION_ON,
+        from: decision_id.to_string(),
+        to: document_id.to_string(),
     }
 }
 

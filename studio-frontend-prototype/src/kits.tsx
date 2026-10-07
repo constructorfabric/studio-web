@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   matchReason,
+  pastDecisions,
+  type Candidate,
   type DeclaredCapability,
   type GearConfig,
   type GearboxStatus,
@@ -547,9 +549,15 @@ function SuggestedComponents({
       // The catalogue and the profiles are read by the server now, which is
       // also where the matching rules live. What still travels from here is the
       // workspace's own capability vocabulary.
-      const [declared, vocab] = await Promise.all([
+      const [declared, vocab, decisions] = await Promise.all([
         api.declaredCapabilities(token, projectId),
         api.capabilities(token, workspaceId),
+        // Past decisions only rank the proposals; without them the plan
+        // still stands, so a failure here is not the page's failure.
+        api.mappingDecisions(token, projectId).then(
+          (d) => d.items,
+          () => [],
+        ),
       ]);
       // Every capability the project's documents declare, in the order first
       // met -- Studio's own documents and the repository files bound to a type
@@ -558,7 +566,9 @@ function SuggestedComponents({
       setSources(Object.fromEntries(declared.items.map((c) => [c.key, c.sources])));
       onCapabilities?.(caps.length);
       setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
-      const next = (await api.composePlan(token, caps, vocab.items ?? [])).items;
+      const next = (
+        await api.composePlan(token, caps, vocab.items ?? [], pastDecisions(decisions, declared.items))
+      ).items;
       setPlan(next);
       // A product nobody has picked for yet starts from the best built gear
       // per capability. One that has picks keeps them: suggestions are a
@@ -571,6 +581,34 @@ function SuggestedComponents({
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Record a member's decision on one proposal, against the first document
+   *  that declares the capability, then ask again so the ranking shows it. */
+  const decide = async (capability: string, c: Candidate, decision: "confirmed" | "rejected") => {
+    const source = (sources[capability] ?? [])[0];
+    if (!source) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideMapping(token, {
+        workspace_id: workspaceId,
+        project_id: projectId,
+        document: source.id,
+        document_node: source.node_id ?? null,
+        document_revision: source.revision ?? "",
+        capability,
+        gear: c.name,
+        gear_version: c.version ?? null,
+        step: c.step ?? "evidence",
+        decision,
+      });
+    } catch (cause) {
+      setError(errText(cause));
+      setBusy(false);
+      return;
+    }
+    await suggest();
   };
 
   // Read on arrival: the documents are the question this page answers, so it
@@ -717,6 +755,41 @@ function SuggestedComponents({
                             )}
                             {c.built === "docs-only" && (
                               <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
+                            )}
+                            {c.decision && (
+                              <span
+                                title={
+                                  c.decision.needs_review
+                                    ? "The document or the gear changed since this was decided — decide again"
+                                    : `A member ${c.decision.decision} this mapping`
+                                }
+                                style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: c.decision.needs_review ? 0.6 : 1 }}
+                              >
+                                {c.decision.decision === "confirmed" ? "CONFIRMED" : "REJECTED"}
+                                {c.decision.needs_review && " · REVIEW"}
+                              </span>
+                            )}
+                            {(sources[row.capability] ?? []).length > 0 && (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Confirm: this gear covers the capability"
+                                  disabled={busy}
+                                  onClick={() => void decide(row.capability, c, "confirmed")}
+                                  style={{ ...chipToggleStyle, marginLeft: 6 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Reject: this gear does not cover the capability"
+                                  disabled={busy}
+                                  onClick={() => void decide(row.capability, c, "rejected")}
+                                  style={chipToggleStyle}
+                                >
+                                  ✗
+                                </button>
+                              </>
                             )}
                           </span>
                         );

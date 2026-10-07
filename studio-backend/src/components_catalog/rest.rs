@@ -837,6 +837,12 @@ pub struct CandidateDto {
     /// gear's own documentation. Such a match ranks after every evidence match
     /// from the catalogue's text. Null otherwise.
     pub cites: Option<String>,
+    /// The version the catalogue knows the component at. Send it back with a
+    /// decision, so a later version reopens it.
+    pub version: Option<String>,
+    /// A member's earlier decision on this gear for this capability. Null when
+    /// nobody has decided.
+    pub decision: Option<DecisionMarkDto>,
     /// The gear declares this capability itself, rather than being found by
     /// the words in its name and description.
     pub declared: bool,
@@ -863,6 +869,44 @@ pub struct ComposePlanDto {
     pub total: u32,
 }
 
+/// A member's earlier decision on a mapping, as the composer is given it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PastDecisionDto {
+    pub capability: String,
+    pub gear: String,
+    /// `confirmed` or `rejected`.
+    pub decision: String,
+    /// The gear's version when it was decided.
+    #[serde(default)]
+    pub gear_version: Option<String>,
+    /// The declaring document's revision is no longer the one decided
+    /// against. The caller compares, because it holds the current revision.
+    #[serde(default)]
+    pub document_changed: bool,
+}
+
+/// What an earlier decision says about a candidate now.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DecisionMarkDto {
+    /// `confirmed` or `rejected`.
+    pub decision: String,
+    /// The document or the gear changed since: decide again. It ranks as if
+    /// nobody had decided.
+    pub needs_review: bool,
+}
+
+fn past_decision(d: PastDecisionDto) -> super::compose::PastDecision {
+    super::compose::PastDecision {
+        capability: d.capability,
+        gear: d.gear,
+        decision: d.decision,
+        gear_version: d.gear_version,
+        document_changed: d.document_changed,
+    }
+}
+
 /// What a product needs, and the vocabulary to look for it with.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -880,6 +924,11 @@ pub struct ComposeRequest {
     /// found by its terms alone.
     #[serde(default)]
     pub contracts: std::collections::BTreeMap<String, Vec<String>>,
+    /// What members already decided in this scope, newest first, as
+    /// `GET /studio-artifact-ingest/v1/mapping-decisions` lists them. A
+    /// confirmed gear ranks first within its step and a rejected one last.
+    #[serde(default)]
+    pub decisions: Vec<PastDecisionDto>,
 }
 
 /// POST /studio-components-catalog/v1/compose — match needs to components.
@@ -936,6 +985,9 @@ pub struct ConformanceRequest {
     /// The contracts of the same vocabulary, as for `/compose`.
     #[serde(default)]
     pub contracts: std::collections::BTreeMap<String, Vec<String>>,
+    /// Earlier mapping decisions, as for `/compose`.
+    #[serde(default)]
+    pub decisions: Vec<PastDecisionDto>,
 }
 
 /// A component the code depends on.
@@ -1061,6 +1113,7 @@ async fn conformance(
         &super::compose::Vocabulary {
             terms: req.terms,
             contracts: req.contracts,
+            decisions: req.decisions.into_iter().map(past_decision).collect(),
         },
     );
     let mut explained: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -1180,6 +1233,7 @@ async fn compose_plan(
         &super::compose::Vocabulary {
             terms: req.terms,
             contracts: req.contracts,
+            decisions: req.decisions.into_iter().map(past_decision).collect(),
         },
     );
     let items: Vec<PlanRowDto> = rows
@@ -1198,6 +1252,11 @@ async fn compose_plan(
                     contracts: c.contracts,
                     passage: c.passage,
                     cites: c.cites,
+                    version: c.version,
+                    decision: c.decision.map(|d| DecisionMarkDto {
+                        decision: d.decision,
+                        needs_review: d.needs_review,
+                    }),
                     declared: c.declared,
                     score: u32::try_from(c.score).unwrap_or(u32::MAX),
                     why: c.why,

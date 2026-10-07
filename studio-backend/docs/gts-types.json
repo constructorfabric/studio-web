@@ -189,6 +189,24 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.decision_on.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A relation between two artifact nodes.",
+        "title": "Relation",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.decision_on.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.duplicates.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -459,6 +477,50 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.issue.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.mapping_decision.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "A member's decision on which gear covers a capability a document declares.",
+        "title": "MappingDecision",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/state",
+            "/payload/author",
+            "/payload/login",
+            "/payload/labels",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/severity",
+            "/payload/text_excerpt"
+          ],
+          "vector_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/login",
+            "/payload/text_excerpt"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.mapping_decision.v1~"
     },
     {
       "gear": "studio-artifact-ingest",
@@ -7320,6 +7382,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.artifact.mapping_decision.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A member's decision on which gear covers a capability a document declares.",
+        "title": "MappingDecision",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.artifact.mapping_decision.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.artifact.pull_request.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A pull/merge request pulled from the connector API.",
@@ -7431,6 +7506,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.rel.content_of.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.rel.decision_on.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A mapping decision and the document whose capability it decides.",
+        "title": "DecisionOn",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.rel.decision_on.v1~"
     },
     {
       "gear": "studio-artifact-ingest",

@@ -136,6 +136,74 @@ pub struct Vocabulary {
     pub terms: std::collections::BTreeMap<String, Vec<String>>,
     /// Capability key to the contracts that satisfy it.
     pub contracts: std::collections::BTreeMap<String, Vec<String>>,
+    /// What members already decided about these capabilities in this scope
+    /// (`cpt-studio-fr-mapping-decisions`). They rank the proposals: a
+    /// confirmed gear first within its step, a rejected one last.
+    pub decisions: Vec<PastDecision>,
+}
+
+/// A member's earlier decision on a mapping, as the composer is given it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PastDecision {
+    pub capability: String,
+    pub gear: String,
+    /// `confirmed` or `rejected`.
+    pub decision: String,
+    /// The gear's version when it was decided.
+    pub gear_version: Option<String>,
+    /// The declaring document has changed since. The caller knows the
+    /// document's current revision; the composer does not.
+    pub document_changed: bool,
+}
+
+/// What a candidate's earlier decision says now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionMark {
+    /// `confirmed` or `rejected`.
+    pub decision: String,
+    /// The document or the gear changed since it was decided, so it ranks as
+    /// if undecided and asks to be decided again.
+    pub needs_review: bool,
+}
+
+impl DecisionMark {
+    /// Confirmed first, undecided next, rejected last. A decision that needs
+    /// review ranks as undecided: it no longer says anything about now.
+    fn rank(mark: Option<&Self>) -> u8 {
+        match mark {
+            Some(m) if !m.needs_review && m.decision == "confirmed" => 0,
+            Some(m) if !m.needs_review && m.decision == "rejected" => 2,
+            _ => 1,
+        }
+    }
+}
+
+/// The newest decision on (capability, gear), judged against the gear's
+/// current version. `decisions` is newest first, as the listing returns it.
+fn decision_mark(
+    decisions: &[PastDecision],
+    capability: &str,
+    gear: &str,
+    current_version: Option<&str>,
+) -> Option<DecisionMark> {
+    let d = decisions
+        .iter()
+        .find(|d| d.capability == capability && d.gear == gear)?;
+    let version_moved = match (d.gear_version.as_deref(), current_version) {
+        (Some(then), Some(now)) => then != now,
+        _ => false,
+    };
+    Some(DecisionMark {
+        decision: d.decision.clone(),
+        needs_review: d.document_changed || version_moved,
+    })
+}
+
+/// The version the catalogue knows a component at, newest first.
+fn current_version(component: &Value) -> Option<&str> {
+    ["newest_version", "max_version"]
+        .iter()
+        .find_map(|k| component.get(*k).and_then(Value::as_str))
 }
 
 /// One component offered for one capability.
@@ -165,6 +233,11 @@ pub struct Candidate {
     pub composable: Composability,
     /// The engine's reason, when `Blocked`. Absent otherwise.
     pub composable_why: Option<String>,
+    /// The version the catalogue knows the component at, which a decision
+    /// records so it can tell when the gear has moved on.
+    pub version: Option<String>,
+    /// A member's earlier decision on this gear for this capability.
+    pub decision: Option<DecisionMark>,
 }
 
 /// One capability, and what could fill it.
@@ -566,6 +639,13 @@ fn plan_with_limit(
                         built: build_state(component, profiles.get(name)),
                         composable: composability(profiles.get(name)),
                         composable_why: blocked_reason(profiles.get(name)),
+                        version: current_version(component).map(str::to_owned),
+                        decision: decision_mark(
+                            &vocabulary.decisions,
+                            capability,
+                            name,
+                            current_version(component),
+                        ),
                     })
                 })
                 .collect();
@@ -584,6 +664,10 @@ fn plan_with_limit(
                 a.step
                     .rank()
                     .cmp(&b.step.rank())
+                    .then(
+                        DecisionMark::rank(a.decision.as_ref())
+                            .cmp(&DecisionMark::rank(b.decision.as_ref())),
+                    )
                     .then(a.cites.is_some().cmp(&b.cites.is_some()))
                     .then(b.declared.cmp(&a.declared))
                     .then(a.built.rank().cmp(&b.built.rank()))
@@ -733,6 +817,7 @@ mod tests {
         Vocabulary {
             terms: keyed(pairs),
             contracts: Default::default(),
+            decisions: Vec::new(),
         }
     }
 
@@ -795,6 +880,7 @@ mod tests {
         let vocab = Vocabulary {
             terms: keyed(&[("auth", &["authentication", "login", "identity"])]),
             contracts: keyed(&[("auth", &["cf.core.authn_resolver.plugin.v1~"])]),
+            decisions: Vec::new(),
         };
         let rows = plan(&["auth".to_owned()], &components, &profiles, &vocab);
         let row = &rows[0];
@@ -819,6 +905,7 @@ mod tests {
         let vocab = Vocabulary {
             terms: Default::default(),
             contracts: keyed(&[("cap", &["x/Api"])]),
+            decisions: Vec::new(),
         };
         let first = plan(&["cap".to_owned()], &components, &profiles, &vocab);
         let again = plan(&["cap".to_owned()], &components, &profiles, &vocab);
@@ -844,6 +931,7 @@ mod tests {
         let vocab = Vocabulary {
             terms: Default::default(),
             contracts: keyed(&[("cap", &["x/Api"])]),
+            decisions: Vec::new(),
         };
         let rows = plan(
             &["cap".to_owned()],
@@ -919,6 +1007,92 @@ mod tests {
                 .contains("issues every invoice")
         );
         assert_eq!(rows[0].candidates[0].cites, None);
+    }
+
+    fn decided(
+        capability: &str,
+        gear: &str,
+        decision: &str,
+        version: Option<&str>,
+    ) -> PastDecision {
+        PastDecision {
+            capability: capability.to_owned(),
+            gear: gear.to_owned(),
+            decision: decision.to_owned(),
+            gear_version: version.map(str::to_owned),
+            document_changed: false,
+        }
+    }
+
+    /// `cpt-studio-fr-mapping-decisions`: a past decision ranks the next
+    /// proposal of the same capability, within its step and never across.
+    #[test]
+    fn a_confirmed_gear_ranks_first_and_a_rejected_one_last_within_their_step() {
+        let components: Vec<Value> = ["a", "b", "c"]
+            .iter()
+            .map(|n| json!({ "name": n, "kind": "gear", "description": "chat", "newest_version": "1.0.0" }))
+            .collect();
+        let mut vocab = vocabulary(&[]);
+        vocab.decisions = vec![
+            decided("chat", "c", "confirmed", Some("1.0.0")),
+            decided("chat", "a", "rejected", Some("1.0.0")),
+            decided("other", "b", "rejected", None),
+        ];
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &serde_json::Map::new(),
+            &vocab,
+        );
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["c", "b", "a"]);
+        assert_eq!(
+            rows[0].candidates[0].decision,
+            Some(DecisionMark {
+                decision: "confirmed".into(),
+                needs_review: false
+            })
+        );
+        assert_eq!(
+            rows[0].candidates[1].decision, None,
+            "another capability's decision"
+        );
+    }
+
+    /// A decision taken against another version of the gear, or another
+    /// revision of the document, no longer says anything about now.
+    #[test]
+    fn a_decision_on_a_moved_gear_or_document_needs_review_and_ranks_as_undecided() {
+        let components = vec![
+            json!({ "name": "a", "kind": "gear", "description": "chat", "newest_version": "2.0.0" }),
+            json!({ "name": "b", "kind": "gear", "description": "chat", "newest_version": "1.0.0" }),
+        ];
+        let mut vocab = vocabulary(&[]);
+        vocab.decisions = vec![
+            decided("chat", "a", "confirmed", Some("1.0.0")),
+            PastDecision {
+                document_changed: true,
+                ..decided("chat", "b", "rejected", Some("1.0.0"))
+            },
+        ];
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &serde_json::Map::new(),
+            &vocab,
+        );
+        let row = &rows[0];
+        assert!(
+            row.candidates
+                .iter()
+                .all(|c| c.decision.as_ref().unwrap().needs_review)
+        );
+        let names: Vec<&str> = row.candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["a", "b"],
+            "both undecided again, so the name decides"
+        );
     }
 
     /// The documents are not asked when the catalogue already answered: a

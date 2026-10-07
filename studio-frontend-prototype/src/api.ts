@@ -253,7 +253,72 @@ export interface Conformance {
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
   key: string;
-  sources: { kind: "document" | "file"; id: string; label: string }[];
+  sources: {
+    kind: "document" | "file";
+    id: string;
+    label: string;
+    /** What the document is now: a Studio document's `updated_at`, a file's
+     *  `content_sha`. A decision taken against another one needs review. */
+    revision?: string;
+    /** The artifact node of a bound file. */
+    node_id?: string | null;
+  }[];
+}
+
+/** A member's decision on one mapping of a capability to a gear. */
+export interface MappingDecision {
+  id: string;
+  document: string;
+  document_revision: string;
+  section: string;
+  capability: string;
+  gear: string;
+  gear_version?: string | null;
+  step: string;
+  decision: "confirmed" | "rejected";
+  decided_by: string;
+  decided_at: string;
+  workspace_id?: string | null;
+  project_id?: string | null;
+}
+
+export interface MappingDecisionInput {
+  workspace_id: string;
+  project_id?: string;
+  document: string;
+  document_node?: string | null;
+  document_revision: string;
+  capability: string;
+  gear: string;
+  gear_version?: string | null;
+  step: "contract" | "evidence" | "gap";
+  decision: "confirmed" | "rejected";
+}
+
+/** An earlier decision as the composer takes it. */
+export interface PastDecision {
+  capability: string;
+  gear: string;
+  decision: string;
+  gear_version?: string | null;
+  document_changed: boolean;
+}
+
+/** Decisions as the composer takes them: newest first, each marked changed
+ *  when its document no longer has the revision it was decided against. */
+export function pastDecisions(
+  decisions: readonly MappingDecision[],
+  declared: readonly DeclaredCapability[],
+): PastDecision[] {
+  const revisionOf = new Map<string, string | undefined>();
+  for (const c of declared) for (const s of c.sources) revisionOf.set(s.id, s.revision);
+  return decisions.map((d) => ({
+    capability: d.capability,
+    gear: d.gear,
+    decision: d.decision,
+    gear_version: d.gear_version ?? null,
+    document_changed: revisionOf.has(d.document) && revisionOf.get(d.document) !== d.document_revision,
+  }));
 }
 
 /** What the project is for, chosen at creation:
@@ -339,6 +404,10 @@ export interface Candidate {
   /** The document the passage is quoted from, when it came from the gear's
    *  own documentation rather than the catalogue's text. */
   cites?: string | null;
+  /** The version the catalogue knows the component at, recorded with a decision. */
+  version?: string | null;
+  /** A member's earlier decision on this gear for this capability. */
+  decision?: { decision: "confirmed" | "rejected"; needs_review: boolean } | null;
   /** The gear declares this capability itself (gear.toml, or its catalogue
    *  page) -- a statement, not a match on the words it uses. */
   declared?: boolean;
@@ -3442,19 +3511,40 @@ export const api = {
       body: JSON.stringify({ project_id: projectId, capabilities, terms, contracts }),
     });
   },
-  composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+  composePlan: (
+    token: string,
+    capabilities: string[],
+    vocabulary: readonly Capability[],
+    decisions: readonly PastDecision[] = [],
+  ) => {
     // A capability with no terms is matched against its own name, which is what
     // it meant before vocabularies existed — so it is left out of the map
     // rather than sent as an empty list.
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
     const contracts = contractsOf(vocabulary);
+    const body = decisions.length
+      ? { capabilities, terms, contracts, decisions }
+      : { capabilities, terms, contracts };
     return request<{ items: PlanRow[]; total: number }>(
       "/studio-components-catalog/v1/compose",
       token,
-      { method: "POST", body: JSON.stringify({ capabilities, terms, contracts }) },
+      { method: "POST", body: JSON.stringify(body) },
     );
   },
+  /** The mapping decisions recorded in a workspace or project, newest first. */
+  mappingDecisions: (token: string, scope: string) =>
+    request<{ items: MappingDecision[]; total: number }>(
+      `/studio-artifact-ingest/v1/mapping-decisions?scope=${encodeURIComponent(scope)}`,
+      token,
+    ),
+  /** Confirm or reject one proposed mapping. Deciding the same document,
+   *  capability and gear again replaces the decision. */
+  decideMapping: (token: string, body: MappingDecisionInput) =>
+    request<MappingDecision>("/studio-artifact-ingest/v1/mapping-decisions", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /** What moved in each catalogued gear, over a window of days.
    *
    *  The catalogue is read by the server, and so are the rules that turn it

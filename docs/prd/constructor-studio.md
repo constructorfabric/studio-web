@@ -946,7 +946,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
 | `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/components_catalog/compose.rs` (contract, then evidence from the catalogue's text with a cited passage, then gap); `gearbox.rs` (`gdl_contracts`); `documents/model.rs` (`Capability::contracts`); planned: evidence from gear documentation; #205, #199 |
-| `cpt-studio-fr-mapping-decisions` | planned: #205, #206 |
+| `cpt-studio-fr-mapping-decisions` | `studio-backend/src/artifact_ingest/` (`mapping_decision` node, `decision_on` edge; `/studio-artifact-ingest/v1/mapping-decisions`); ranking in `components_catalog/compose.rs`; prototype project tab `components` (✓/✗ on a candidate); planned: decisions shared across an organization; #205, #206 |
 | `cpt-studio-fr-nfr-to-profile` | planned: #205 |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
 | `cpt-studio-fr-theia-bridge` | `studio-backend/src/studio_theia/`; `/studio-theia/v1`; `theia/studio/src/node/studio-control-api.ts` |

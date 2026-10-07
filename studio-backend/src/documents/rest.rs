@@ -1324,6 +1324,12 @@ pub struct CapabilitySourceDto {
     pub id: Uuid,
     /// The document's title, or the file's repository path.
     pub label: String,
+    /// What the document was when this was read: a Studio document's
+    /// `updated_at`, a file's `content_sha`. A mapping decided against one
+    /// revision needs review once the document has another.
+    pub revision: String,
+    /// The artifact-graph node of a bound file. Null for a Studio document.
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1363,6 +1369,8 @@ async fn list_declared_capabilities(
                     kind: s.kind,
                     id: s.id,
                     label: s.label,
+                    revision: s.revision,
+                    node_id: s.node_id,
                 })
                 .collect(),
         })

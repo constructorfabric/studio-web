@@ -783,6 +783,8 @@ impl DocumentsService {
                         kind: "document".to_string(),
                         id: doc.id,
                         label: doc.title.clone(),
+                        revision: doc.updated_at.clone(),
+                        node_id: None,
                     },
                 );
             }
@@ -806,6 +808,8 @@ impl DocumentsService {
                         kind: "file".to_string(),
                         id: binding.id,
                         label: binding.path.clone(),
+                        revision: binding.content_sha.clone(),
+                        node_id: Some(binding.node_id.clone()),
                     },
                 );
             }
@@ -1811,6 +1815,13 @@ pub struct CapabilitySource {
     pub kind: String,
     pub id: Uuid,
     pub label: String,
+    /// What the document was when this was read: a Studio document's
+    /// `updated_at`, a file's `content_sha`. A mapping decided against one
+    /// revision needs review once the document has another.
+    pub revision: String,
+    /// The artifact-graph node of a bound file, which a mapping decision links
+    /// to. A Studio document has none.
+    pub node_id: Option<String>,
 }
 
 fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {

@@ -302,6 +302,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/mapping-decisions",
+      "operation_id": "studio_artifact_ingest.list_mapping_decisions",
+      "tag": "StudioArtifactIngest",
+      "summary": "List the mapping decisions recorded in a workspace or project",
+      "authenticated": true,
+      "responses": [
+        "MappingDecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/nodes",
       "operation_id": "studio_artifact_ingest.list_nodes",
       "tag": "StudioArtifactIngest",
@@ -1938,6 +1954,23 @@
       "request": "ManualFileRequest",
       "responses": [
         "ManualFileResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/mapping-decisions",
+      "operation_id": "studio_artifact_ingest.create_mapping_decision",
+      "tag": "StudioArtifactIngest",
+      "summary": "Record a member's decision on a capability-to-gear mapping",
+      "authenticated": true,
+      "request": "MappingDecisionRequest",
+      "responses": [
+        "MappingDecisionDto"
       ],
       "errors": [
         "400",

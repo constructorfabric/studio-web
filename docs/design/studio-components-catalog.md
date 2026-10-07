@@ -56,7 +56,7 @@ rules, not rendering, and a second portal would have grown its own copy.
 | `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
 | `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file. |
 | `cpt-studio-fr-spec-gear-mapping` | `compose.rs` matches a capability first through the contracts the vocabulary names against what the engine reports per gear, then by the vocabulary's terms in the catalogue's text with a cited passage, then reports a gap. The catalogue sync writes the engine's report into the profile as `gdl_contracts`: provided contracts, hosted extension points and implemented ones. Searching gear documentation is planned. See `cpt-studio-principle-catalog-contract-first`. |
-| `cpt-studio-fr-mapping-decisions` | Planned: a decision is a graph edge from the specification section through the capability to the gear, carrying who, which step, the gear version and the document revision. |
+| `cpt-studio-fr-mapping-decisions` | A decision is a `mapping_decision` node in the artifact graph, linked to the declaring file by a `decision_on` edge, carrying who, when, which step, the gear version and the document revision. The composer takes a scope's decisions with the question: a confirmed gear ranks first within its step, a rejected one last, and a decision whose gear version or document revision has moved on is marked as needing review and ranks as undecided. |
 
 #### NFR Allocation
 

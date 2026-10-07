@@ -381,6 +381,97 @@ pub struct QualityFindingsRequest {
     pub project_id: Option<String>,
 }
 
+/// A member's decision on one proposed mapping of a capability to a gear.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct MappingDecisionRequest {
+    /// The workspace the deciding document belongs to.
+    pub workspace_id: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// The declaring document as `declared-capabilities` names it: a bound
+    /// file's binding id or a Studio document's id.
+    pub document: String,
+    /// The artifact node of a bound file. Linked by a `decision_on` edge.
+    #[serde(default)]
+    pub document_node: Option<String>,
+    /// The document's `revision` when this was decided.
+    pub document_revision: String,
+    /// Where in the document the capability is declared. Defaults to
+    /// `front matter`, where every declared capability comes from today.
+    #[serde(default)]
+    pub section: Option<String>,
+    pub capability: String,
+    /// The gear by catalogue name. Empty when deciding a gap.
+    #[serde(default)]
+    pub gear: String,
+    #[serde(default)]
+    pub gear_version: Option<String>,
+    /// `contract`, `evidence` or `gap`: the step that proposed it.
+    pub step: String,
+    /// `confirmed` or `rejected`.
+    pub decision: String,
+}
+
+/// A recorded mapping decision.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MappingDecisionDto {
+    pub id: String,
+    pub document: String,
+    pub document_revision: String,
+    pub section: String,
+    pub capability: String,
+    pub gear: String,
+    pub gear_version: Option<String>,
+    pub step: String,
+    pub decision: String,
+    pub decided_by: String,
+    /// RFC 3339 UTC.
+    pub decided_at: String,
+    pub workspace_id: Option<String>,
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MappingDecisionListDto {
+    pub items: Vec<MappingDecisionDto>,
+    /// Every decision in the scope is in `items`.
+    pub total: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct MappingDecisionsQuery {
+    /// Workspace or project tenant.
+    pub scope: String,
+}
+
+fn mapping_decision_dto(id: String, v: &Value) -> MappingDecisionDto {
+    let s = |key: &str| {
+        v.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let o = |key: &str| v.get(key).and_then(Value::as_str).map(str::to_owned);
+    MappingDecisionDto {
+        id,
+        document: s("document"),
+        document_revision: s("document_revision"),
+        section: s("section"),
+        capability: s("capability"),
+        gear: s("gear"),
+        gear_version: o("gear_version"),
+        step: s("step"),
+        decision: s("decision"),
+        decided_by: s("decided_by"),
+        decided_at: s("decided_at"),
+        workspace_id: o("workspace_id"),
+        project_id: o("project_id"),
+    }
+}
+
 /// Count of graph objects upserted.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -772,6 +863,104 @@ async fn save_quality(
         nodes: nodes as u32,
         edges: edges as u32,
     }))
+}
+
+async fn create_mapping_decision(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Json(req): Json<MappingDecisionRequest>,
+) -> ApiResult<(StatusCode, JsonBody<MappingDecisionDto>)> {
+    let invalid = |field: &str, why: String| {
+        StudioArtifactIngestError::invalid_argument()
+            .with_field_violation(field, why, "INVALID")
+            .create()
+    };
+    let trimmed = |s: &str| s.trim().to_owned();
+    let workspace_id = trimmed(&req.workspace_id);
+    let document = trimmed(&req.document);
+    let capability = trimmed(&req.capability);
+    if workspace_id.is_empty() {
+        return Err(invalid("workspace_id", "must name a workspace".into()));
+    }
+    if document.is_empty() {
+        return Err(invalid(
+            "document",
+            "must name the declaring document".into(),
+        ));
+    }
+    if capability.is_empty() {
+        return Err(invalid("capability", "must name a capability".into()));
+    }
+    let step = trimmed(&req.step);
+    if !matches!(step.as_str(), "contract" | "evidence" | "gap") {
+        return Err(invalid(
+            "step",
+            format!("must be contract, evidence or gap, got `{step}`"),
+        ));
+    }
+    let decision = trimmed(&req.decision);
+    if !matches!(decision.as_str(), "confirmed" | "rejected") {
+        return Err(invalid(
+            "decision",
+            format!("must be confirmed or rejected, got `{decision}`"),
+        ));
+    }
+    let gear = trimmed(&req.gear);
+    if gear.is_empty() && step != "gap" {
+        return Err(invalid(
+            "gear",
+            "a contract or evidence mapping names its gear".into(),
+        ));
+    }
+    let non_empty = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+    let input = super::service::MappingDecision {
+        workspace_id,
+        project_id: non_empty(req.project_id),
+        document,
+        document_node: non_empty(req.document_node),
+        document_revision: trimmed(&req.document_revision),
+        section: non_empty(req.section).unwrap_or_else(|| "front matter".to_owned()),
+        capability,
+        gear,
+        gear_version: non_empty(req.gear_version),
+        step,
+        decision,
+    };
+    let node = ingest
+        .get()?
+        .record_mapping_decision(&ctx, &input)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok((
+        StatusCode::CREATED,
+        Json(mapping_decision_dto(node.instance_id, &node.value)),
+    ))
+}
+
+async fn list_mapping_decisions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Query(q): Query<MappingDecisionsQuery>,
+) -> ApiResult<JsonBody<MappingDecisionListDto>> {
+    let scope = q.scope.trim();
+    if scope.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation("scope", "must name a tenant".to_owned(), "INVALID")
+            .create());
+    }
+    let mut items: Vec<MappingDecisionDto> = ingest
+        .get()?
+        .list_mapping_decisions(&ctx, scope)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .into_iter()
+        .map(|n| mapping_decision_dto(n.instance_id, &n.value))
+        .collect();
+    // Newest first, and the id breaks a tie, so the order is the same on
+    // every read.
+    items.sort_by(|a, b| b.decided_at.cmp(&a.decided_at).then(a.id.cmp(&b.id)));
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(MappingDecisionListDto { items, total }))
 }
 
 async fn search(
@@ -1305,6 +1494,57 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Upsert counts",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-artifact-ingest/v1/mapping-decisions")
+        .operation_id("studio_artifact_ingest.create_mapping_decision")
+        .summary("Record a member's decision on a capability-to-gear mapping")
+        .description(
+            "Confirms or rejects one proposed mapping of a capability a document \
+             declares to a gear, or to nothing (a gap). The decision is a \
+             mapping_decision node in the artifact graph, linked to a bound file by a \
+             decision_on edge, and it records who decided, when, which step proposed \
+             it, the gear version and the document revision decided against. \
+             Deciding the same document, section, capability and gear again replaces \
+             the decision.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<MappingDecisionRequest>(openapi, "The decision")
+        .handler(create_mapping_decision)
+        .json_response_with_schema::<MappingDecisionDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The decision as recorded",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/mapping-decisions")
+        .operation_id("studio_artifact_ingest.list_mapping_decisions")
+        .summary("List the mapping decisions recorded in a workspace or project")
+        .description(
+            "Every mapping decision in the scope, newest first. The composer takes them \
+             with a capability's proposals: a confirmed gear ranks first within its \
+             step, a rejected one last, and a decision whose gear version or document \
+             revision has moved on is reported as needing review.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("scope", true, "Workspace or project tenant")
+        .handler(list_mapping_decisions)
+        .json_response_with_schema::<MappingDecisionListDto>(
+            openapi,
+            StatusCode::OK,
+            "The decisions",
         )
         .error_400(openapi)
         .error_401(openapi)
