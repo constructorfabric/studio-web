@@ -28,7 +28,15 @@ import {
   type PlatformIdentity,
 } from "./api";
 import { DataTable, When, useConfirm } from "./data-table";
-import { errText, initials } from "./format";
+import { errText } from "./format";
+import {
+  EmailList,
+  MemberDirectoryForm,
+  PersonPhoto,
+  directoryLine,
+  otherEmails,
+  primaryEmail,
+} from "./people-profile";
 
 const ROLES: { value: MembershipRole; label: string; hint: string }[] = [
   { value: "owner", label: "Owner", hint: "Administers the organization: people, access, integrations" },
@@ -39,8 +47,8 @@ const ROLES: { value: MembershipRole; label: string; hint: string }[] = [
 const shortId = (id: string) => id.slice(0, 8);
 
 /** What a member is called: their name, else their address, else their id. */
-export function memberName(m: Pick<OrgMember, "display_name" | "email" | "user_id">): string {
-  return m.display_name?.trim() || m.email?.trim() || `Person ${shortId(m.user_id)}`;
+export function memberName(m: Pick<OrgMember, "display_name" | "email" | "emails" | "user_id">): string {
+  return m.display_name?.trim() || primaryEmail(m) || `Person ${shortId(m.user_id)}`;
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -75,12 +83,18 @@ function MemberIdentitiesPanel({
   orgId,
   member,
   directory,
+  members,
+  onSaved,
 }: {
   token: string;
   orgId: string;
   member: OrgMember;
   /** The identity directory, keyed by Keycloak subject; empty for an owner. */
   directory: Map<string, PlatformIdentity>;
+  /** The room, for choosing whom the member reports to. */
+  members: OrgMember[];
+  /** Re-read the room after the description changes. */
+  onSaved: () => void | Promise<void>;
 }) {
   const [ids, setIds] = useState<MemberIdentities | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +123,25 @@ function MemberIdentitiesPanel({
         <span className="sub">· in this organization since {when(member.created_at_epoch_ms)}</span>
       </div>
 
+      <h4>How the organization describes them</h4>
+      <MemberDirectoryForm
+        token={token}
+        orgId={orgId}
+        member={member}
+        members={members}
+        nameOf={memberName}
+        onSaved={onSaved}
+      />
+
+      {member.emails && (
+        <>
+          <h4>
+            Addresses <span className="dt-count">{member.emails.length}</span>
+          </h4>
+          <EmailList emails={member.emails} />
+        </>
+      )}
+
       <h4>
         Sign-in identities <span className="dt-count">{ids.logins.length}</span>
       </h4>
@@ -120,6 +153,7 @@ function MemberIdentitiesPanel({
             <tr>
               <th>Provider</th>
               <th>Account</th>
+              <th>Email</th>
               <th>Subject</th>
               <th>Verified</th>
               {directory.size > 0 && <th>Directory</th>}
@@ -140,6 +174,16 @@ function MemberIdentitiesPanel({
                       <>
                         <div>{idp.display_name || idp.username}</div>
                         <div className="sub">{[idp.username, idp.email].filter(Boolean).join(" · ")}</div>
+                      </>
+                    ) : (
+                      <span className="sub">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {l.email ? (
+                      <>
+                        <div>{l.email}</div>
+                        <div className="sub">{l.email_verified ? "verified by the provider" : "not verified"}</div>
                       </>
                     ) : (
                       <span className="sub">—</span>
@@ -463,6 +507,11 @@ export function OrgMembersView({
     (i) => !known.has(i.email?.toLowerCase()) && !known.has((i.display_name || i.username).toLowerCase()),
   );
   const directory = new Map(identities.map((i) => [i.id, i]));
+  const byId = new Map((members ?? []).map((m) => [m.user_id, m]));
+  const nameOfId = (userId: string) => {
+    const m = byId.get(userId);
+    return m ? memberName(m) : undefined;
+  };
   const pending = invitations.filter((i) => !i.accepted_at_epoch_ms && i.expires_at_epoch_ms > Date.now());
   const activeOwners = (members ?? []).filter((m) => m.role === "owner" && m.status === "active").length;
 
@@ -491,7 +540,13 @@ export function OrgMembersView({
           rowKey={(m) => m.user_id}
           rowLabel={memberName}
           search={{ placeholder: "Search members" }}
-          searchText={(m) => [m.display_name, m.email, m.role, m.status]}
+          searchText={(m) => [
+            m.display_name,
+            ...(m.emails?.map((e) => e.address) ?? [m.email]),
+            m.role,
+            m.status,
+            directoryLine(m.directory, nameOfId),
+          ]}
           filters={[
             {
               id: "standing",
@@ -505,7 +560,16 @@ export function OrgMembersView({
             },
           ]}
           empty={{ title: "Nobody belongs to this organization yet.", body: "Add or invite someone below." }}
-          expand={(m) => <MemberIdentitiesPanel token={token} orgId={org.id} member={m} directory={directory} />}
+          expand={(m) => (
+            <MemberIdentitiesPanel
+              token={token}
+              orgId={org.id}
+              member={m}
+              directory={directory}
+              members={members ?? []}
+              onSaved={load}
+            />
+          )}
           columns={[
             {
               id: "name",
@@ -513,13 +577,31 @@ export function OrgMembersView({
               compare: (a, b) => memberName(a).localeCompare(memberName(b)),
               cell: (m) => (
                 <div className="pcell">
-                  <span className="account-avatar small">{initials(memberName(m))}</span>
+                  <PersonPhoto name={memberName(m)} url={m.avatar_url} />
                   <div>
                     <div className="pname plain">{memberName(m)}</div>
-                    <div className="sub">{m.email && m.email !== memberName(m) ? m.email : shortId(m.user_id)}</div>
+                    <div className="sub">
+                      {primaryEmail(m) && primaryEmail(m) !== memberName(m) ? primaryEmail(m) : shortId(m.user_id)}
+                      {otherEmails(m).length > 0 && (
+                        <span title={otherEmails(m).map((e) => e.address).join(", ")}>
+                          {" "}
+                          +{otherEmails(m).length}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ),
+            },
+            {
+              id: "position",
+              header: "Position",
+              compare: (a, b) =>
+                directoryLine(a.directory, nameOfId).localeCompare(directoryLine(b.directory, nameOfId)),
+              cell: (m) => {
+                const line = directoryLine(m.directory, nameOfId);
+                return line ? <span>{line}</span> : <span className="sub">—</span>;
+              },
             },
             {
               id: "role",
@@ -552,6 +634,19 @@ export function OrgMembersView({
                   {m.status === "suspended" ? "Suspended" : "Active"}
                 </span>
               ),
+            },
+            {
+              id: "seen",
+              header: "Last seen",
+              compare: (a, b) => (a.last_seen_at_epoch_ms ?? 0) - (b.last_seen_at_epoch_ms ?? 0),
+              cell: (m) =>
+                m.last_seen_at_epoch_ms != null ? (
+                  <span className="sub">
+                    <When iso={new Date(m.last_seen_at_epoch_ms).toISOString()} />
+                  </span>
+                ) : (
+                  <span className="sub">—</span>
+                ),
             },
             {
               id: "joined",

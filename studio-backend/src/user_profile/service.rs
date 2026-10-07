@@ -8,13 +8,14 @@
 //! reach another org. Cross-org identity operations (merge) stay a narrow
 //! platform action.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Result, anyhow};
+use sha2::{Digest, Sha256};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -121,7 +122,81 @@ pub struct UserProfile {
     pub updated_at_epoch_ms: i64,
     /// Set when this user was merged into another; reads follow it.
     pub merged_into: Option<String>,
+    /// When the person last made a request, to within
+    /// [`LAST_SEEN_GRANULARITY_MS`]. Written only by [`IdentityService::seen`].
+    pub last_seen_at_epoch_ms: Option<i64>,
 }
+
+/// How stale a recorded "last seen" may be before a request writes it again.
+/// A write per request would turn every read into a write.
+pub const LAST_SEEN_GRANULARITY_MS: i64 = 5 * 60 * 1000;
+
+/// How long what the realm said about a person is trusted before it is asked
+/// again. An address changed in the identity provider shows within a day.
+pub const REALM_REFRESH_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// How an organization describes one of its people. Every field is optional,
+/// and none of it decides anything: it is what a members screen shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DirectoryProfile {
+    /// The company the person works for, when it is not the organization's own.
+    pub affiliation: Option<String>,
+    pub department: Option<String>,
+    /// Job title.
+    pub title: Option<String>,
+    /// The person they report to, as a canonical user id.
+    pub reports_to: Option<String>,
+}
+
+/// Longest directory field. A label, not a biography.
+pub const MAX_DIRECTORY_FIELD: usize = 120;
+
+/// One address a person can be reached at, and where Studio learned it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PersonEmail {
+    /// Lowercased.
+    pub address: String,
+    /// `profile` (typed by the person), `sign_in` (the identity provider's
+    /// address for one of their logins) or `alias` (an attributed `email`
+    /// identity).
+    pub source: &'static str,
+    /// Whether something other than the person vouches for it: the identity
+    /// provider, or a confirmed alias.
+    pub verified: bool,
+    /// The address to show first: the profile's, else the first verified one.
+    pub primary: bool,
+}
+
+/// Somebody the caller shares an organization with, as that organization
+/// shows them to any of its members (ADR-0036): who they are, their photo,
+/// their role and how the organization describes them — never their
+/// addresses or how they sign in.
+#[derive(Clone, Debug)]
+pub struct Colleague {
+    pub org_id: String,
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub role: String,
+    pub directory: DirectoryProfile,
+    pub last_seen_at_epoch_ms: Option<i64>,
+}
+
+/// A stored photo.
+#[derive(Clone, Debug)]
+pub struct AvatarRecord {
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+    /// SHA-256 of `bytes`, hex.
+    pub digest: String,
+    pub updated_at_epoch_ms: i64,
+}
+
+/// Image types a photo may be stored as. SVG is refused: it is a document
+/// that can carry script, not a picture.
+pub const AVATAR_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
+/// Largest photo stored. Avatars render at a few dozen pixels.
+pub const MAX_AVATAR_BYTES: usize = 1024 * 1024;
 
 /// What a person has chosen about how Studio looks to them.
 ///
@@ -199,6 +274,10 @@ pub struct LoginView {
     pub user_id: String,
     pub verified: bool,
     pub linked_at_epoch_ms: i64,
+    /// The address the identity provider holds for this sign-in, as last read
+    /// by [`IdentityService::refresh_from_realm`]; `None` until then.
+    pub email: Option<String>,
+    pub email_verified: bool,
 }
 
 /// A person's membership in one organization, carrying the role held there.
@@ -276,6 +355,10 @@ pub struct IdentityService {
     /// The organization a person joins the first time they are seen, if the
     /// installation says there is one.
     first_login_join: OnceLock<Option<(Uuid, String)>>,
+    /// When each person's "last seen" was last written by this process.
+    last_seen: Mutex<HashMap<String, i64>>,
+    /// When this process last asked the realm about each person.
+    realm_read: Mutex<HashMap<String, i64>>,
 }
 
 impl IdentityService {
@@ -286,6 +369,8 @@ impl IdentityService {
             connectors: OnceLock::new(),
             federated: OnceLock::new(),
             first_login_join: OnceLock::new(),
+            last_seen: Mutex::new(HashMap::new()),
+            realm_read: Mutex::new(HashMap::new()),
         }
     }
 
@@ -393,8 +478,11 @@ impl IdentityService {
     /// is safe and why the login is recorded as verified.
     pub async fn resolve_caller(&self, ctx: &SecurityContext) -> Result<String> {
         let subject = ctx.subject_id().to_string();
-        self.resolve_or_provision(PROVIDER_KEYCLOAK, &subject, None, None, true)
-            .await
+        let user_id = self
+            .resolve_or_provision(PROVIDER_KEYCLOAK, &subject, None, None, true)
+            .await?;
+        self.seen(&user_id).await;
+        Ok(user_id)
     }
 
     /// The person behind a sign-in method, or `None` when no `login` row knows
@@ -444,6 +532,7 @@ impl IdentityService {
             created_at_epoch_ms: now,
             updated_at_epoch_ms: now,
             merged_into: None,
+            last_seen_at_epoch_ms: None,
         };
         self.store.upsert_user(&profile).await?;
         let login = LoginView {
@@ -452,6 +541,8 @@ impl IdentityService {
             user_id: user_id.clone(),
             verified,
             linked_at_epoch_ms: now,
+            email: None,
+            email_verified: false,
         };
         self.store.upsert_login(&login).await?;
 
@@ -476,6 +567,319 @@ impl IdentityService {
             );
         }
         Ok(user_id)
+    }
+
+    /// Note that the person made a request. Written at most once per
+    /// [`LAST_SEEN_GRANULARITY_MS`] per person and process, and never fatal:
+    /// a members screen reading "last active" is not worth refusing a request
+    /// over.
+    pub async fn seen(&self, user_id: &str) {
+        let now = now_ms();
+        {
+            let mut seen = self.last_seen.lock().unwrap_or_else(|e| e.into_inner());
+            if seen
+                .get(user_id)
+                .is_some_and(|at| now - at < LAST_SEEN_GRANULARITY_MS)
+            {
+                return;
+            }
+            seen.insert(user_id.to_owned(), now);
+        }
+        if let Err(error) = self.store.touch_last_seen(user_id, now).await {
+            tracing::debug!(user = %user_id, "studio-user: could not record last seen: {error:#}");
+        }
+    }
+
+    /// Ask the identity provider about each of the person's realm sign-ins:
+    /// record the address it holds for each, and give a blank profile the
+    /// name and address it lacks.
+    ///
+    /// A person first seen through a token carries no name in Studio — the
+    /// token's subject is all `resolve_caller` has — so without this a
+    /// members screen shows ids. At most once per person per
+    /// [`REALM_REFRESH_MS`] and process; a failed read is retried by the next
+    /// call. Never fatal, for the same reason as `seen`.
+    pub async fn refresh_from_realm(&self, user_id: &str) {
+        let Some(Some(directory)) = self.federated.get() else {
+            return;
+        };
+        {
+            let now = now_ms();
+            let mut read = self.realm_read.lock().unwrap_or_else(|e| e.into_inner());
+            if read
+                .get(user_id)
+                .is_some_and(|at| now - at < REALM_REFRESH_MS)
+            {
+                return;
+            }
+            read.insert(user_id.to_owned(), now);
+        }
+        let logins = match self.store.logins_of(user_id).await {
+            Ok(logins) => logins,
+            Err(error) => {
+                self.forget_realm_read(user_id);
+                tracing::warn!(user = %user_id, "studio-user: could not list logins: {error:#}");
+                return;
+            }
+        };
+        let mut people = Vec::new();
+        for login in logins.iter().filter(|l| l.provider == PROVIDER_KEYCLOAK) {
+            match directory.realm_person(&login.subject).await {
+                Ok(Some(person)) => {
+                    if let Err(error) = self
+                        .store
+                        .set_login_email(
+                            &login.provider,
+                            &login.subject,
+                            person.email.as_deref(),
+                            person.email_verified,
+                        )
+                        .await
+                    {
+                        tracing::warn!(user = %user_id, "studio-user: could not record a sign-in address: {error:#}");
+                    }
+                    people.push(person);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.forget_realm_read(user_id);
+                    tracing::debug!(user = %user_id, "studio-user: the realm could not name a sign-in: {error:#}");
+                }
+            }
+        }
+        let name = people
+            .iter()
+            .find_map(|p| p.display_name.clone())
+            .or_else(|| {
+                people
+                    .iter()
+                    .map(|p| p.username.trim())
+                    .find(|u| !u.is_empty())
+                    .map(str::to_owned)
+            });
+        let email = people
+            .iter()
+            .filter(|p| p.email_verified)
+            .chain(people.iter())
+            .find_map(|p| p.email.clone());
+        if let Err(error) = self
+            .fill_blank_profile(user_id, name.as_deref(), email.as_deref())
+            .await
+        {
+            tracing::warn!(user = %user_id, "studio-user: could not name a person: {error:#}");
+        }
+    }
+
+    fn forget_realm_read(&self, user_id: &str) {
+        self.realm_read
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(user_id);
+    }
+
+    /// Every address the person can be reached at: the profile's, each
+    /// sign-in's, and each attributed `email` identity.
+    pub async fn emails_of(
+        &self,
+        user_id: &str,
+        profile_email: Option<&str>,
+    ) -> Result<Vec<PersonEmail>> {
+        let logins = self.store.logins_of(user_id).await?;
+        let aliases = self.store.aliases_of(user_id).await?;
+        Ok(person_emails(profile_email, &logins, &aliases))
+    }
+
+    /// Every address of each of these people, read in two queries whatever
+    /// their number. `people` pairs a user id with their profile address.
+    pub async fn emails_of_people(
+        &self,
+        people: &[(String, Option<String>)],
+    ) -> Result<HashMap<String, Vec<PersonEmail>>> {
+        let ids: Vec<String> = people.iter().map(|(id, _)| id.clone()).collect();
+        let mut logins: HashMap<String, Vec<LoginView>> = HashMap::new();
+        for login in self.store.logins_of_many(&ids).await? {
+            logins.entry(login.user_id.clone()).or_default().push(login);
+        }
+        let mut aliases: HashMap<String, Vec<AliasRecord>> = HashMap::new();
+        for alias in self.store.aliases_of_many(&ids).await? {
+            aliases
+                .entry(alias.user_id.clone())
+                .or_default()
+                .push(alias);
+        }
+        Ok(people
+            .iter()
+            .map(|(id, email)| {
+                let mut own_logins = logins.remove(id).unwrap_or_default();
+                own_logins.sort_by_key(|l| l.linked_at_epoch_ms);
+                let own_aliases = aliases.remove(id).unwrap_or_default();
+                (
+                    id.clone(),
+                    person_emails(email.as_deref(), &own_logins, &own_aliases),
+                )
+            })
+            .collect())
+    }
+
+    /// Everybody the person shares an organization with, one row per
+    /// organization and person, the person included.
+    ///
+    /// Only active memberships count, on both sides: a suspended member sees
+    /// nobody through that organization, and nobody sees them (ADR-0036).
+    /// The organizations come from the person's own memberships, so there is
+    /// no organization a caller can name to look into.
+    pub async fn colleagues(&self, user_id: &str) -> Result<Vec<Colleague>> {
+        let mut profiles: HashMap<String, Option<UserProfile>> = HashMap::new();
+        let mut out = Vec::new();
+        for room in self.store.memberships_of(user_id).await? {
+            if room.status != leaving::STATUS_ACTIVE {
+                continue;
+            }
+            let directory = self.store.directory_in_org(&room.org_id).await?;
+            let mut members: Vec<MembershipView> = self
+                .store
+                .memberships_in_org(&room.org_id)
+                .await?
+                .into_iter()
+                .filter(|m| m.status == leaving::STATUS_ACTIVE)
+                .collect();
+            members.sort_by(|a, b| a.user_id.cmp(&b.user_id));
+            for member in members {
+                if !profiles.contains_key(&member.user_id) {
+                    let profile = self.store.get_user(&member.user_id).await?;
+                    profiles.insert(member.user_id.clone(), profile);
+                }
+                let profile = profiles.get(&member.user_id).cloned().flatten();
+                out.push(Colleague {
+                    org_id: room.org_id.clone(),
+                    display_name: profile.as_ref().and_then(|p| p.display_name.clone()),
+                    avatar_url: profile.as_ref().and_then(|p| p.avatar_url.clone()),
+                    last_seen_at_epoch_ms: profile.as_ref().and_then(|p| p.last_seen_at_epoch_ms),
+                    directory: directory.get(&member.user_id).cloned().unwrap_or_default(),
+                    role: member.role,
+                    user_id: member.user_id,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// How one organization describes its people, by user id.
+    pub async fn directory_of(&self, org_id: &str) -> Result<HashMap<String, DirectoryProfile>> {
+        self.store.directory_in_org(org_id).await
+    }
+
+    /// A description of one member as it would be stored, or why it cannot
+    /// be. A manager must be a member of the same organization, and not the
+    /// person themselves.
+    pub async fn checked_directory(
+        &self,
+        org_id: &str,
+        user_id: &str,
+        profile: DirectoryProfile,
+    ) -> Result<DirectoryProfile> {
+        let profile = check_directory(profile).map_err(|why| anyhow!("{why}"))?;
+        if let Some(manager) = profile.reports_to.as_deref() {
+            if manager == user_id {
+                return Err(anyhow!("a person cannot report to themselves"));
+            }
+            let room = self.store.memberships_in_org(org_id).await?;
+            if !room.iter().any(|m| m.user_id == manager) {
+                return Err(anyhow!("reports_to must be a member of this organization"));
+            }
+        }
+        Ok(profile)
+    }
+
+    /// Replace how the organization describes one member. `Ok(None)` when the
+    /// person holds no membership there.
+    pub async fn set_member_directory(
+        &self,
+        org_id: &str,
+        user_id: &str,
+        profile: DirectoryProfile,
+    ) -> Result<Option<DirectoryProfile>> {
+        let profile = self.checked_directory(org_id, user_id, profile).await?;
+        Ok(self
+            .store
+            .set_directory(user_id, org_id, &profile)
+            .await?
+            .then_some(profile))
+    }
+
+    /// Store the person's photo and point their profile at it.
+    ///
+    /// The bytes decide the type, not the declaration: a body that does not
+    /// start like the image it claims to be is refused, so the route that
+    /// serves it back never serves anything but a picture.
+    pub async fn set_avatar(
+        &self,
+        user_id: &str,
+        declared: &str,
+        bytes: Vec<u8>,
+    ) -> Result<UserProfile> {
+        let content_type = check_avatar(declared, &bytes).map_err(|why| anyhow!("{why}"))?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let digest = hex::encode(hasher.finalize());
+        let now = now_ms();
+        self.store
+            .put_avatar(
+                user_id,
+                &AvatarRecord {
+                    content_type: content_type.to_owned(),
+                    bytes,
+                    digest: digest.clone(),
+                    updated_at_epoch_ms: now,
+                },
+            )
+            .await?;
+        let mut profile = self
+            .store
+            .get_user(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user {user_id} does not exist"))?;
+        profile.avatar_url = Some(avatar_path(user_id, &digest));
+        profile.updated_at_epoch_ms = now;
+        self.store.upsert_user(&profile).await?;
+        Ok(profile)
+    }
+
+    /// Remove the person's stored photo. A photo they linked from elsewhere
+    /// is not Studio's to remove, and stays.
+    pub async fn remove_avatar(&self, user_id: &str) -> Result<UserProfile> {
+        self.store.delete_avatar(user_id).await?;
+        let mut profile = self
+            .store
+            .get_user(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user {user_id} does not exist"))?;
+        if profile
+            .avatar_url
+            .as_deref()
+            .is_some_and(|url| url.starts_with(&avatar_path(user_id, "")))
+        {
+            profile.avatar_url = None;
+            profile.updated_at_epoch_ms = now_ms();
+            self.store.upsert_user(&profile).await?;
+        }
+        Ok(profile)
+    }
+
+    /// The stored photo, when `digest` names its current version.
+    ///
+    /// The digest is what makes the anonymous route safe to serve: it is only
+    /// learned from a profile read the caller was allowed to make, and a stale
+    /// or guessed one finds nothing.
+    pub async fn avatar(&self, user_id: &str, digest: &str) -> Result<Option<AvatarRecord>> {
+        if Uuid::parse_str(user_id).is_err() {
+            return Ok(None);
+        }
+        Ok(self
+            .store
+            .avatar_of(user_id)
+            .await?
+            .filter(|a| a.digest == digest))
     }
 
     /// Read a profile by user id, following a merge pointer if present. Bounded
@@ -592,6 +996,8 @@ impl IdentityService {
                 user_id: user_id.to_owned(),
                 verified,
                 linked_at_epoch_ms: now_ms(),
+                email: None,
+                email_verified: false,
             })
             .await
     }
@@ -1482,11 +1888,14 @@ impl IdentityService {
                 &membership.source,
             )
             .await?;
+            self.carry_directory(&membership.org_id, from_user, into_user)
+                .await?;
             self.store
                 .delete_membership(from_user, &membership.org_id)
                 .await?;
             result.memberships_moved += 1;
         }
+        self.carry_avatar(from_user, into_user).await?;
 
         source.merged_into = Some(into_user.to_owned());
         source.updated_at_epoch_ms = now_ms();
@@ -1495,6 +1904,58 @@ impl IdentityService {
         // may go is now wrong.
         memberships_changed();
         Ok(result)
+    }
+}
+
+impl IdentityService {
+    /// In one organization, give the merge target the source's description
+    /// when it has none of its own, and point whoever reported to the source
+    /// at the target.
+    async fn carry_directory(&self, org_id: &str, from_user: &str, into_user: &str) -> Result<()> {
+        let directory = self.store.directory_in_org(org_id).await?;
+        if let Some(described) = directory.get(from_user)
+            && !directory.contains_key(into_user)
+        {
+            let mut carried = described.clone();
+            if carried.reports_to.as_deref() == Some(into_user) {
+                carried.reports_to = None;
+            }
+            self.store
+                .set_directory(into_user, org_id, &carried)
+                .await?;
+        }
+        for (user_id, described) in &directory {
+            if user_id == from_user || described.reports_to.as_deref() != Some(from_user) {
+                continue;
+            }
+            let mut repointed = described.clone();
+            repointed.reports_to = (user_id != into_user).then(|| into_user.to_owned());
+            self.store
+                .set_directory(user_id, org_id, &repointed)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Give the merge target the source's stored photo when it has none, and
+    /// remove the source's: a merged-away person is never shown.
+    async fn carry_avatar(&self, from_user: &str, into_user: &str) -> Result<()> {
+        let Some(photo) = self.store.avatar_of(from_user).await? else {
+            return Ok(());
+        };
+        let mut target = self
+            .store
+            .get_user(into_user)
+            .await?
+            .ok_or_else(|| anyhow!("target user {into_user} does not exist"))?;
+        if self.store.avatar_of(into_user).await?.is_none() && target.avatar_url.is_none() {
+            self.store.put_avatar(into_user, &photo).await?;
+            target.avatar_url = Some(avatar_path(into_user, &photo.digest));
+            target.updated_at_epoch_ms = now_ms();
+            self.store.upsert_user(&target).await?;
+        }
+        self.store.delete_avatar(from_user).await?;
+        Ok(())
     }
 }
 
@@ -1574,6 +2035,7 @@ pub(crate) async fn seed_service_account_in(
             created_at_epoch_ms: now,
             updated_at_epoch_ms: now,
             merged_into: None,
+            last_seen_at_epoch_ms: None,
         });
         profile.display_name = Some(account.display_name.clone());
         profile.email = Some(account.email.clone());
@@ -1588,6 +2050,8 @@ pub(crate) async fn seed_service_account_in(
                 user_id: user_id.clone(),
                 verified: true,
                 linked_at_epoch_ms: now,
+                email: None,
+                email_verified: false,
             })
             .await?;
     }
@@ -1639,6 +2103,262 @@ async fn attribute_alias_in(
                 AliasOutcome::Written
             })
         }
+    }
+}
+/// The gateway prefix every route is served under (`prefix_path` in every
+/// config profile). A photo's URL goes straight into an `<img>`, which cannot
+/// add it the way an API client does.
+const GATEWAY_PREFIX: &str = "/cf";
+
+/// Where a stored photo is served. Anonymous, because an `<img>` sends no
+/// token; the digest is what keeps it from being guessed.
+pub fn avatar_path(user_id: &str, digest: &str) -> String {
+    format!("{GATEWAY_PREFIX}/studio-user/v1/avatars/{user_id}/{digest}")
+}
+
+/// The image type the bytes actually are, when it is one a photo may be.
+pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else {
+        None
+    }
+}
+
+/// Decide whether a photo may be stored, and as what.
+pub fn check_avatar(declared: &str, bytes: &[u8]) -> Result<&'static str, String> {
+    let declared = declared.trim().to_ascii_lowercase();
+    if !AVATAR_TYPES.contains(&declared.as_str()) {
+        return Err(format!(
+            "a photo must be one of {}; got {declared}",
+            AVATAR_TYPES.join(", ")
+        ));
+    }
+    if bytes.is_empty() {
+        return Err("the photo is empty".to_owned());
+    }
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return Err(format!(
+            "a photo may be at most {} KiB; this one is {} KiB",
+            MAX_AVATAR_BYTES / 1024,
+            bytes.len().div_ceil(1024)
+        ));
+    }
+    match sniff_image(bytes) {
+        Some(actual) if actual == declared => Ok(actual),
+        Some(actual) => Err(format!("the photo is {actual}, not {declared}")),
+        None => Err("the photo is not an image of a supported type".to_owned()),
+    }
+}
+
+/// Trim every field, drop the empty ones, and refuse the oversized.
+pub fn check_directory(profile: DirectoryProfile) -> Result<DirectoryProfile, String> {
+    let field = |name: &str, value: Option<String>| -> Result<Option<String>, String> {
+        let value = value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        match value {
+            Some(v) if v.chars().count() > MAX_DIRECTORY_FIELD => Err(format!(
+                "{name} may be at most {MAX_DIRECTORY_FIELD} characters"
+            )),
+            other => Ok(other),
+        }
+    };
+    let reports_to = profile
+        .reports_to
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty());
+    if let Some(manager) = reports_to.as_deref()
+        && Uuid::parse_str(manager).is_err()
+    {
+        return Err("reports_to must be a user id".to_owned());
+    }
+    Ok(DirectoryProfile {
+        affiliation: field("affiliation", profile.affiliation)?,
+        department: field("department", profile.department)?,
+        title: field("title", profile.title)?,
+        reports_to,
+    })
+}
+
+/// Every address a person can be reached at, strongest claim kept.
+///
+/// The profile's comes first and is primary when present; then each
+/// sign-in's, as the identity provider holds it; then each attributed `email`
+/// identity. An address met twice keeps its first source and is verified if
+/// either sighting was.
+pub fn person_emails(
+    profile_email: Option<&str>,
+    logins: &[LoginView],
+    aliases: &[AliasRecord],
+) -> Vec<PersonEmail> {
+    let mut out: Vec<PersonEmail> = Vec::new();
+    let mut add = |address: &str, source: &'static str, verified: bool| {
+        let address = address.trim().to_lowercase();
+        if address.is_empty() {
+            return;
+        }
+        if let Some(known) = out.iter_mut().find(|e| e.address == address) {
+            known.verified |= verified;
+        } else {
+            out.push(PersonEmail {
+                address,
+                source,
+                verified,
+                primary: false,
+            });
+        }
+    };
+    if let Some(email) = profile_email {
+        add(email, "profile", false);
+    }
+    for login in logins {
+        if let Some(email) = login.email.as_deref() {
+            add(email, "sign_in", login.email_verified);
+        }
+    }
+    for alias in aliases.iter().filter(|a| a.kind == "email") {
+        add(&alias.external_id, "alias", alias.confidence == "confirmed");
+    }
+    let primary = out
+        .iter()
+        .position(|e| e.source == "profile")
+        .or_else(|| out.iter().position(|e| e.verified))
+        .or(if out.is_empty() { None } else { Some(0) });
+    if let Some(index) = primary {
+        out[index].primary = true;
+    }
+    out
+}
+
+#[cfg(test)]
+mod people_profile_tests {
+    use super::*;
+
+    fn login(email: Option<&str>, verified: bool) -> LoginView {
+        LoginView {
+            provider: PROVIDER_KEYCLOAK.to_owned(),
+            subject: "s".to_owned(),
+            user_id: "u".to_owned(),
+            verified: true,
+            linked_at_epoch_ms: 0,
+            email: email.map(str::to_owned),
+            email_verified: verified,
+        }
+    }
+
+    fn alias(kind: &str, id: &str, confidence: &str) -> AliasRecord {
+        AliasRecord {
+            kind: kind.to_owned(),
+            external_id: id.to_owned(),
+            user_id: "u".to_owned(),
+            confidence: confidence.to_owned(),
+            added_at_epoch_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_person_with_several_sign_ins_has_several_addresses() {
+        let emails = person_emails(
+            Some("Ada@Work.example"),
+            &[
+                login(Some("ada@work.example"), true),
+                login(Some("ada@home.example"), false),
+                login(None, false),
+            ],
+            &[
+                alias("email", "ada@commits.example", "confirmed"),
+                alias("github", "ada", "confirmed"),
+                alias("email", "maybe@ada.example", "suggested"),
+            ],
+        );
+        let seen: Vec<_> = emails
+            .iter()
+            .map(|e| (e.address.as_str(), e.source, e.verified, e.primary))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("ada@work.example", "profile", true, true),
+                ("ada@home.example", "sign_in", false, false),
+                ("ada@commits.example", "alias", true, false),
+                ("maybe@ada.example", "alias", false, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_profile_address_the_first_verified_one_is_primary() {
+        let emails = person_emails(
+            None,
+            &[
+                login(Some("first@x.example"), false),
+                login(Some("second@x.example"), true),
+            ],
+            &[],
+        );
+        assert!(!emails[0].primary);
+        assert!(emails[1].primary);
+        assert!(person_emails(None, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_photo_is_what_its_bytes_say() {
+        let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
+        assert_eq!(check_avatar("image/png", &png), Ok("image/png"));
+        assert_eq!(check_avatar(" IMAGE/PNG ", &png), Ok("image/png"));
+        assert!(check_avatar("image/jpeg", &png).is_err());
+        assert!(check_avatar("image/svg+xml", b"<svg/>").is_err());
+        assert!(check_avatar("image/png", b"not an image").is_err());
+        assert!(check_avatar("image/png", &[]).is_err());
+        let mut big = png.clone();
+        big.resize(MAX_AVATAR_BYTES + 1, 0);
+        assert!(check_avatar("image/png", &big).is_err());
+        let webp = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
+        assert_eq!(check_avatar("image/webp", &webp), Ok("image/webp"));
+    }
+
+    #[test]
+    fn a_directory_entry_is_trimmed_and_bounded() {
+        let checked = check_directory(DirectoryProfile {
+            affiliation: Some("  Acronis ".to_owned()),
+            department: Some("   ".to_owned()),
+            title: None,
+            reports_to: Some(" 6f1c3a52-1111-4222-8333-944455556666 ".to_owned()),
+        })
+        .unwrap();
+        assert_eq!(checked.affiliation.as_deref(), Some("Acronis"));
+        assert_eq!(checked.department, None);
+        assert_eq!(
+            checked.reports_to.as_deref(),
+            Some("6f1c3a52-1111-4222-8333-944455556666")
+        );
+        assert!(
+            check_directory(DirectoryProfile {
+                title: Some("x".repeat(MAX_DIRECTORY_FIELD + 1)),
+                ..DirectoryProfile::default()
+            })
+            .is_err()
+        );
+        assert!(
+            check_directory(DirectoryProfile {
+                reports_to: Some("max".to_owned()),
+                ..DirectoryProfile::default()
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_photo_is_served_under_the_gateway_prefix() {
+        assert_eq!(
+            avatar_path("u-1", "abc"),
+            "/cf/studio-user/v1/avatars/u-1/abc"
+        );
     }
 }
 
@@ -1751,6 +2471,8 @@ mod idp_channel_tests {
                     user_id: PERSON.to_owned(),
                     verified: true,
                     linked_at_epoch_ms: 0,
+                    email: None,
+                    email_verified: false,
                 })
                 .collect())
         }
@@ -1970,6 +2692,7 @@ mod tests {
             created_at_epoch_ms: 0,
             updated_at_epoch_ms: 0,
             merged_into: None,
+            last_seen_at_epoch_ms: None,
         }
     }
 
