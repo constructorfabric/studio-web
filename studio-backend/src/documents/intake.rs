@@ -262,6 +262,86 @@ pub fn declared_capabilities(content: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The most statements a document contributes to [`declared_requirements`].
+const MAX_REQUIREMENTS: usize = 30;
+/// The longest statement kept, in characters.
+const MAX_REQUIREMENT_CHARS: usize = 300;
+
+/// The non-functional statements a document makes: the lines of its sections
+/// about non-functional requirements, operations and deployment.
+///
+/// These shape where and how the product runs, not what it is made of
+/// (`cpt-studio-fr-nfr-to-profile`), so the composer reads them for the
+/// deployment profile and never for gears. Like the capabilities, this is an
+/// index over the text, re-derived on every write.
+///
+/// A section counts when its heading names one of those subjects, at any
+/// level. It ends at the next heading of the same level or higher. Comments,
+/// fenced code and table separators are skipped; list markers are removed.
+pub fn declared_requirements(content: &str) -> Vec<String> {
+    const SUBJECTS: [&str; 5] = [
+        "non-functional",
+        "nonfunctional",
+        "operational",
+        "deployment",
+        "operations",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    let mut inside: Option<usize> = None;
+    let mut in_fence = false;
+    let mut in_comment = false;
+    for raw in content.lines() {
+        let line = raw.trim();
+        if in_comment {
+            in_comment = !line.contains("-->");
+            continue;
+        }
+        if line.starts_with("<!--") {
+            in_comment = !line.contains("-->");
+            continue;
+        }
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let hashes = line.chars().take_while(|c| *c == '#').count();
+        if hashes > 0 && line[hashes..].starts_with(' ') {
+            let heading = line[hashes..].trim().to_lowercase();
+            if inside.is_some_and(|level| hashes <= level) {
+                inside = None;
+            }
+            if inside.is_none() && SUBJECTS.iter().any(|s| heading.contains(s)) {
+                inside = Some(hashes);
+            }
+            continue;
+        }
+        if inside.is_none() || line.is_empty() || line.starts_with("|-") || line.starts_with("| -")
+        {
+            continue;
+        }
+        let text = line
+            .trim_start_matches(['-', '*', '+'])
+            .trim_start_matches("[ ]")
+            .trim_start_matches("[x]")
+            .trim()
+            .trim_matches('|')
+            .replace(" | ", " — ")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+        out.push(text.chars().take(MAX_REQUIREMENT_CHARS).collect());
+        if out.len() >= MAX_REQUIREMENTS {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -517,5 +597,27 @@ status: draft
             declared_capabilities("---\ncapabilities: [auth, \"storage\", 'deploy']\n---\n"),
             vec!["auth", "storage", "deploy"]
         );
+    }
+
+    /// What a PRD says about where it runs, read out of the sections that say it.
+    #[test]
+    fn requirements_are_the_lines_of_the_non_functional_and_operational_sections() {
+        let body = "# P\n\n## 1. Overview\n\nRuns anywhere is not a requirement here.\n\n\
+                    ## 6. Non-Functional Requirements\n\n<!-- template advice\nspanning lines -->\n\
+                    - Must run on premises, air-gapped.\n* Data stays in the EU.\n\n\
+                    ### 6.1 Scale\n\n- 500 tenants.\n\n\
+                    ```yaml\nreplicas: 3\n```\n\n\
+                    ## 7. Operational Concept\n\n| Target | Kubernetes |\n|---|---|\n\n\
+                    ## 8. Use Cases\n\n- Not this one.\n";
+        assert_eq!(
+            declared_requirements(body),
+            vec![
+                "Must run on premises, air-gapped.",
+                "Data stays in the EU.",
+                "500 tenants.",
+                "Target — Kubernetes",
+            ]
+        );
+        assert!(declared_requirements("# Nothing here\n").is_empty());
     }
 }

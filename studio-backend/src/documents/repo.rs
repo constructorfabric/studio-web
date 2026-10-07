@@ -327,6 +327,7 @@ impl DocumentsRepo {
                 capability::Column::Label,
                 capability::Column::Terms,
                 capability::Column::Contracts,
+                capability::Column::Nonfunctional,
                 capability::Column::Hidden,
                 capability::Column::UpdatedAt,
             ])?;
@@ -409,6 +410,8 @@ impl DocumentsRepo {
                 document::Column::Status,
                 document::Column::Conforms,
                 document::Column::Validation,
+                document::Column::Capabilities,
+                document::Column::Requirements,
                 document::Column::UpdatedAt,
             ])?;
         document::Entity::insert(model.into_active_model())
@@ -563,6 +566,7 @@ impl DocumentsRepo {
                 document_binding::Column::Conforms,
                 document_binding::Column::Validation,
                 document_binding::Column::Capabilities,
+                document_binding::Column::Requirements,
                 document_binding::Column::ContentSha,
                 document_binding::Column::UpdatedAt,
             ])?;

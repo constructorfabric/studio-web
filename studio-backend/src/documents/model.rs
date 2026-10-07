@@ -159,6 +159,10 @@ pub struct Capability {
     /// - a GTS extension-point segment (`cf.core.authn_resolver.plugin.v1~`).
     #[serde(default)]
     pub contracts: Vec<String>,
+    /// Answered by where and how the product runs, not by what it is made
+    /// of: the composer offers it no gears (`cpt-studio-fr-nfr-to-profile`).
+    #[serde(default)]
+    pub nonfunctional: bool,
     pub owner: Owner,
     #[serde(default)]
     pub hidden: bool,
@@ -298,6 +302,7 @@ pub fn builtin_capabilities() -> Vec<Capability> {
             .iter()
             .map(|c| (*c).to_string())
             .collect(),
+        nonfunctional: key == "deploy",
         owner: Owner::Builtin,
         hidden: false,
     })
@@ -644,6 +649,10 @@ pub struct Document {
     /// questionnaire seeds them; a hand-edited document re-declares them.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The non-functional statements its NFR, operational and deployment
+    /// sections make ([`super::intake::declared_requirements`]).
+    #[serde(default)]
+    pub requirements: Vec<String>,
     /// Subject id of the creator (as a string principal).
     pub created_by: String,
     /// RFC 3339 UTC timestamps.
@@ -797,6 +806,9 @@ pub struct DocumentBinding {
     /// Composer for a bound file the same way it reads an authored document's.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The file's non-functional statements, as for a document.
+    #[serde(default)]
+    pub requirements: Vec<String>,
     /// Digest of the content last classified/validated, so the caller can tell
     /// a stale verdict from a current one after a re-sync.
     pub content_sha: String,

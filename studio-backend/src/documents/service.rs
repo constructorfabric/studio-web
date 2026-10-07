@@ -483,6 +483,7 @@ impl DocumentsService {
             label: cap.label.clone(),
             terms: serde_json::to_string(&cap.terms)?,
             contracts: serde_json::to_string(&cap.contracts)?,
+            nonfunctional: cap.nonfunctional,
             hidden: cap.hidden,
             created_at: now,
             updated_at: now,
@@ -711,6 +712,7 @@ impl DocumentsService {
         };
         let report = validate(&body, &ty.template);
         let capabilities = serde_json::to_string(&intake::declared_capabilities(&body))?;
+        let requirements = serde_json::to_string(&intake::declared_requirements(&body))?;
         let now = OffsetDateTime::now_utc();
         let model = document::Model {
             id: Uuid::new_v4(),
@@ -723,6 +725,7 @@ impl DocumentsService {
             conforms: report.conforms,
             validation: serde_json::to_string(&report)?,
             capabilities: capabilities.clone(),
+            requirements,
             created_by,
             created_at: now,
             updated_at: now,
@@ -761,12 +764,17 @@ impl DocumentsService {
     /// still in review does not: "what this project needs" is not a guess the
     /// classifier made about a file nobody has looked at. In the order first
     /// met, Studio's documents before the repository's.
+    ///
+    /// The same documents' non-functional statements come back beside them,
+    /// each with the document that makes it: what the composer reads for the
+    /// deployment profile (`cpt-studio-fr-nfr-to-profile`).
     pub async fn declared_capabilities(
         &self,
         workspace_id: Uuid,
         project_id: Uuid,
-    ) -> Result<Vec<DeclaredCapability>> {
+    ) -> Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)> {
         let mut out: Vec<DeclaredCapability> = Vec::new();
+        let mut requirements: Vec<DeclaredRequirement> = Vec::new();
         let mut add =
             |key: &str, source: CapabilitySource| match out.iter_mut().find(|c| c.key == key) {
                 Some(c) => c.sources.push(source),
@@ -776,18 +784,20 @@ impl DocumentsService {
                 }),
             };
         for doc in self.all_documents(workspace_id, Some(project_id)).await? {
+            let source = CapabilitySource {
+                kind: "document".to_string(),
+                id: doc.id,
+                label: doc.title.clone(),
+                revision: doc.updated_at.clone(),
+                node_id: None,
+            };
             for key in &doc.capabilities {
-                add(
-                    key,
-                    CapabilitySource {
-                        kind: "document".to_string(),
-                        id: doc.id,
-                        label: doc.title.clone(),
-                        revision: doc.updated_at.clone(),
-                        node_id: None,
-                    },
-                );
+                add(key, source.clone());
             }
+            requirements.extend(doc.requirements.iter().map(|text| DeclaredRequirement {
+                text: text.clone(),
+                source: source.clone(),
+            }));
         }
         let (rows, _) = self
             .repo
@@ -801,20 +811,22 @@ impl DocumentsService {
             ) {
                 continue;
             }
+            let source = CapabilitySource {
+                kind: "file".to_string(),
+                id: binding.id,
+                label: binding.path.clone(),
+                revision: binding.content_sha.clone(),
+                node_id: Some(binding.node_id.clone()),
+            };
             for key in &binding.capabilities {
-                add(
-                    key,
-                    CapabilitySource {
-                        kind: "file".to_string(),
-                        id: binding.id,
-                        label: binding.path.clone(),
-                        revision: binding.content_sha.clone(),
-                        node_id: Some(binding.node_id.clone()),
-                    },
-                );
+                add(key, source.clone());
             }
+            requirements.extend(binding.requirements.iter().map(|text| DeclaredRequirement {
+                text: text.clone(),
+                source: source.clone(),
+            }));
         }
-        Ok(out)
+        Ok((out, requirements))
     }
 
     /// Every effective document in scope.
@@ -930,6 +942,7 @@ impl DocumentsService {
         // Re-index rather than preserve: the front matter is the document's own
         // statement of what it declares, and an edit is allowed to change it.
         row.capabilities = serde_json::to_string(&intake::declared_capabilities(&row.content))?;
+        row.requirements = serde_json::to_string(&intake::declared_requirements(&row.content))?;
         row.updated_at = OffsetDateTime::now_utc();
         self.repo.upsert_doc(row.clone()).await?;
         doc_from_row(row)
@@ -1128,6 +1141,7 @@ fn capability_from_row(row: capability::Model, workspace_id: Option<Uuid>) -> Re
         label: row.label,
         terms,
         contracts,
+        nonfunctional: row.nonfunctional,
         owner: owner_of(row.tenant_id, workspace_id),
         hidden: row.hidden,
     })
@@ -1182,6 +1196,7 @@ fn doc_from_row(row: document::Model) -> Result<Document> {
     let capabilities: Vec<String> = serde_json::from_str(&row.capabilities).unwrap_or_default();
     Ok(Document {
         capabilities,
+        requirements: serde_json::from_str(&row.requirements).unwrap_or_default(),
         id: row.id,
         tenant_id: row.tenant_id,
         project_id: row.project_id,
@@ -1808,6 +1823,13 @@ pub struct DeclaredCapability {
     pub sources: Vec<CapabilitySource>,
 }
 
+/// One non-functional statement a project's document makes, and the document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeclaredRequirement {
+    pub text: String,
+    pub source: CapabilitySource,
+}
+
 /// A document declaring a capability: one Studio holds (`document`, by title)
 /// or a bound repository file (`file`, by path).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1840,6 +1862,7 @@ fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
         conforms: row.conforms,
         validation: serde_json::from_str(&row.validation).ok(),
         capabilities: serde_json::from_str(&row.capabilities).unwrap_or_default(),
+        requirements: serde_json::from_str(&row.requirements).unwrap_or_default(),
         content_sha: row.content_sha,
         created_at: rfc3339(row.created_at),
         updated_at: rfc3339(row.updated_at),
@@ -1965,6 +1988,9 @@ impl DocumentsService {
                         capabilities: prior
                             .map(|p| p.capabilities.clone())
                             .unwrap_or_else(|| "[]".to_string()),
+                        requirements: prior
+                            .map(|p| p.requirements.clone())
+                            .unwrap_or_else(|| "[]".to_string()),
                         content_sha: prior
                             .map(|p| p.content_sha.clone())
                             .unwrap_or_else(|| sha.clone()),
@@ -1991,6 +2017,7 @@ impl DocumentsService {
                     conforms: None,
                     validation: "{}".to_string(),
                     capabilities: "[]".to_string(),
+                    requirements: "[]".to_string(),
                     content_sha: sha,
                     created_at: prior.map(|p| p.created_at).unwrap_or(now),
                     updated_at: now,
@@ -2030,6 +2057,7 @@ impl DocumentsService {
             // the evidence it holds. Either one missing, it stays a proposal.
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
             let capabilities = super::intake::declared_capabilities(&file.content);
+            let requirements = super::intake::declared_requirements(&file.content);
             if collect
                 && type_key.is_some()
                 && state != BindingState::NotADocument
@@ -2069,6 +2097,7 @@ impl DocumentsService {
                     None => "{}".to_string(),
                 },
                 capabilities: serde_json::to_string(&capabilities)?,
+                requirements: serde_json::to_string(&requirements)?,
                 content_sha: sha,
                 created_at: prior.map(|p| p.created_at).unwrap_or(now),
                 updated_at: now,
@@ -2597,6 +2626,7 @@ mod tests {
             label: label.to_string(),
             terms: "[\"custom\"]".to_string(),
             contracts: "[]".to_string(),
+            nonfunctional: false,
             hidden,
             created_at: now,
             updated_at: now,
@@ -2705,6 +2735,7 @@ mod tests {
             status: DocStatus::Draft,
             conforms,
             capabilities: Vec::new(),
+            requirements: Vec::new(),
             created_by: "someone".to_string(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -2875,6 +2906,7 @@ mod tests {
             conforms,
             validation: None,
             capabilities: Vec::new(),
+            requirements: Vec::new(),
             content_sha: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -3085,6 +3117,7 @@ mod reclassification_tests {
             conforms: Some(false),
             validation: "{}".into(),
             capabilities: "[]".to_string(),
+            requirements: "[]".to_string(),
             content_sha: "sha".into(),
             created_at: now,
             updated_at: now,

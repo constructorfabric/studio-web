@@ -31,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0010::Migration),
             Box::new(m0011::Migration),
             Box::new(m0012::Migration),
+            Box::new(m0013::Migration),
         ]
     }
 }
@@ -800,6 +801,64 @@ mod m0012 {
                 .get_connection()
                 .execute_unprepared(
                     "ALTER TABLE studio_process_capabilities DROP COLUMN IF EXISTS contracts;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A document, and a bound file, record the non-functional statements they make.
+///
+/// The same index `capabilities` is, and for the same reason: the composer
+/// asks what a project needs of every document it has, and reading every body
+/// for it would be the walk the index exists to avoid. What these statements
+/// shape is the product's deployment profile, never its gears
+/// (`cpt-studio-fr-nfr-to-profile`).
+mod m0013 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0013_document_requirements"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_documents
+    ADD COLUMN IF NOT EXISTS requirements TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE studio_document_bindings
+    ADD COLUMN IF NOT EXISTS requirements TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE studio_process_capabilities
+    ADD COLUMN IF NOT EXISTS nonfunctional BOOLEAN NOT NULL DEFAULT FALSE;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_documents DROP COLUMN IF EXISTS requirements;
+ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS requirements;
+ALTER TABLE studio_process_capabilities DROP COLUMN IF EXISTS nonfunctional;",
                 )
                 .await?;
             Ok(())

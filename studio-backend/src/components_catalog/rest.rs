@@ -817,6 +817,9 @@ pub struct PlanRowDto {
     /// Candidates exist and none of them is built. Not a gap, and not an
     /// answer either.
     pub unbuilt: bool,
+    /// Answered by the deployment profile, not by gears: no candidates, and
+    /// not a gap.
+    pub nonfunctional: bool,
 }
 
 /// One component offered for one capability.
@@ -867,6 +870,22 @@ pub struct CandidateDto {
 pub struct ComposePlanDto {
     pub items: Vec<PlanRowDto>,
     pub total: u32,
+    /// The deployment profile the project's non-functional statements point
+    /// to. Null when none of them names where the product runs.
+    pub profile: Option<ProfileAdviceDto>,
+}
+
+/// Which profile of `product.gdl` to make the default, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProfileAdviceDto {
+    /// `dev`, `local` or `prod`, as Studio's `product.gdl` names them.
+    pub profile: String,
+    /// The engine's kind of that profile: `embedded`, `self_hosted` or
+    /// `kubernetes`.
+    pub kind: String,
+    /// The statements that point to it.
+    pub because: Vec<String>,
 }
 
 /// A member's earlier decision on a mapping, as the composer is given it.
@@ -929,6 +948,14 @@ pub struct ComposeRequest {
     /// confirmed gear ranks first within its step and a rejected one last.
     #[serde(default)]
     pub decisions: Vec<PastDecisionDto>,
+    /// Capabilities answered by the deployment profile rather than by gears
+    /// (the vocabulary's `nonfunctional` entries). They are offered no gear.
+    #[serde(default)]
+    pub nonfunctional: Vec<String>,
+    /// The project's non-functional statements, as `declared-capabilities`
+    /// returns them. They choose the deployment profile (`profile`).
+    #[serde(default)]
+    pub requirements: Vec<String>,
 }
 
 /// POST /studio-components-catalog/v1/compose — match needs to components.
@@ -988,6 +1015,9 @@ pub struct ConformanceRequest {
     /// Earlier mapping decisions, as for `/compose`.
     #[serde(default)]
     pub decisions: Vec<PastDecisionDto>,
+    /// Capabilities answered by the deployment profile, as for `/compose`.
+    #[serde(default)]
+    pub nonfunctional: Vec<String>,
 }
 
 /// A component the code depends on.
@@ -1005,7 +1035,8 @@ pub struct ImplementerDto {
 pub struct ConformanceRowDto {
     pub capability: String,
     /// `implemented` -- the code depends on a component that fills it --
-    /// or `missing`.
+    /// or `missing`, or `nonfunctional` -- answered by the deployment profile,
+    /// so no component is expected to fill it.
     pub status: String,
     /// The components in the code that fill it.
     pub implemented_by: Vec<ImplementerDto>,
@@ -1114,6 +1145,7 @@ async fn conformance(
             terms: req.terms,
             contracts: req.contracts,
             decisions: req.decisions.into_iter().map(past_decision).collect(),
+            nonfunctional: req.nonfunctional.iter().cloned().collect(),
         },
     );
     let mut explained: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -1133,7 +1165,14 @@ async fn conformance(
             let missing = implemented_by.is_empty();
             ConformanceRowDto {
                 capability: row.capability,
-                status: if missing { "missing" } else { "implemented" }.to_string(),
+                status: if row.nonfunctional {
+                    "nonfunctional"
+                } else if missing {
+                    "missing"
+                } else {
+                    "implemented"
+                }
+                .to_string(),
                 candidates: if missing {
                     row.candidates
                         .iter()
@@ -1234,6 +1273,7 @@ async fn compose_plan(
             terms: req.terms,
             contracts: req.contracts,
             decisions: req.decisions.into_iter().map(past_decision).collect(),
+            nonfunctional: req.nonfunctional.iter().cloned().collect(),
         },
     );
     let items: Vec<PlanRowDto> = rows
@@ -1242,6 +1282,7 @@ async fn compose_plan(
             capability: row.capability,
             gap: row.gap,
             unbuilt: row.unbuilt,
+            nonfunctional: row.nonfunctional,
             candidates: row
                 .candidates
                 .into_iter()
@@ -1267,9 +1308,15 @@ async fn compose_plan(
                 .collect(),
         })
         .collect();
+    let profile = super::compose::deployment_profile(&req.requirements).map(|a| ProfileAdviceDto {
+        profile: a.profile.to_owned(),
+        kind: a.kind.to_owned(),
+        because: a.because,
+    });
     Ok(Json(ComposePlanDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
+        profile,
     }))
 }
 

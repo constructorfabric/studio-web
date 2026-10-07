@@ -705,6 +705,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/declared-requirements",
+      "operation_id": "studio_documents.list_declared_requirements",
+      "tag": "StudioDocuments",
+      "summary": "The non-functional statements a project's documents make",
+      "authenticated": true,
+      "responses": [
+        "DeclaredRequirementListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/document-bindings/{id}/text",
       "operation_id": "studio_documents.get_binding_text",
       "tag": "StudioDocuments",

@@ -265,6 +265,21 @@ export interface DeclaredCapability {
   }[];
 }
 
+/** One non-functional statement a project's document makes. */
+export interface DeclaredRequirement {
+  text: string;
+  source: DeclaredCapability["sources"][number];
+}
+
+/** The deployment profile the project's non-functional statements point to. */
+export interface ProfileAdvice {
+  /** `dev`, `local` or `prod`, as Studio's `product.gdl` names them. */
+  profile: string;
+  /** `embedded`, `self_hosted` or `kubernetes`. */
+  kind: string;
+  because: string[];
+}
+
 /** A member's decision on one mapping of a capability to a gear. */
 export interface MappingDecision {
   id: string;
@@ -437,6 +452,8 @@ export interface PlanRow {
   gap: boolean;
   /** Candidates exist, but none of them has been built. */
   unbuilt: boolean;
+  /** Answered by the deployment profile, not by gears: no candidates, not a gap. */
+  nonfunctional?: boolean;
 }
 
 /** One weekly bar of a gear's churn. */
@@ -625,6 +642,8 @@ export interface Capability {
   /** What the Gearbox engine can report a gear as providing, any of which
    *  satisfies the capability. Matched before `terms`. */
   contracts?: string[];
+  /** Answered by where and how the product runs, not by gears. */
+  nonfunctional?: boolean;
   owner: string;
   owner_tenant_id?: string | null;
 }
@@ -2194,7 +2213,7 @@ export const api = {
   upsertCapability: (
     token: string,
     workspaceId: string,
-    body: { key: string; label: string; terms?: string[]; contracts?: string[]; hidden?: boolean },
+    body: { key: string; label: string; terms?: string[]; contracts?: string[]; nonfunctional?: boolean; hidden?: boolean },
   ) =>
     request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
       method: "POST",
@@ -2841,6 +2860,13 @@ export const api = {
   declaredCapabilities: (token: string, projectId: string) =>
     request<{ items: DeclaredCapability[]; total: number }>(
       `/studio-documents/v1/declared-capabilities?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** The non-functional statements the project's documents make: what the
+   *  composer reads for the deployment profile, never for gears. */
+  declaredRequirements: (token: string, projectId: string) =>
+    request<{ items: DeclaredRequirement[]; total: number }>(
+      `/studio-documents/v1/declared-requirements?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
 
@@ -3516,6 +3542,7 @@ export const api = {
     capabilities: string[],
     vocabulary: readonly Capability[],
     decisions: readonly PastDecision[] = [],
+    requirements: readonly string[] = [],
   ) => {
     // A capability with no terms is matched against its own name, which is what
     // it meant before vocabularies existed — so it is left out of the map
@@ -3523,10 +3550,18 @@ export const api = {
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
     const contracts = contractsOf(vocabulary);
-    const body = decisions.length
-      ? { capabilities, terms, contracts, decisions }
-      : { capabilities, terms, contracts };
-    return request<{ items: PlanRow[]; total: number }>(
+    const nonfunctional = vocabulary.filter((c) => c.nonfunctional).map((c) => c.key);
+    // Each optional part travels only when it says something, so a plain
+    // question stays the plain request it always was.
+    const body = {
+      capabilities,
+      terms,
+      contracts,
+      ...(decisions.length ? { decisions } : {}),
+      ...(nonfunctional.length ? { nonfunctional } : {}),
+      ...(requirements.length ? { requirements } : {}),
+    };
+    return request<{ items: PlanRow[]; total: number; profile?: ProfileAdvice | null }>(
       "/studio-components-catalog/v1/compose",
       token,
       { method: "POST", body: JSON.stringify(body) },

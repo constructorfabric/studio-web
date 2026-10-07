@@ -140,6 +140,8 @@ pub struct Vocabulary {
     /// (`cpt-studio-fr-mapping-decisions`). They rank the proposals: a
     /// confirmed gear first within its step, a rejected one last.
     pub decisions: Vec<PastDecision>,
+    /// Capabilities answered by the deployment profile rather than by gears.
+    pub nonfunctional: std::collections::BTreeSet<String>,
 }
 
 /// A member's earlier decision on a mapping, as the composer is given it.
@@ -250,6 +252,9 @@ pub struct PlanRow {
     /// Candidates exist, but none has been built. Not a gap, and not an answer
     /// either: worth saying out loud rather than leaving to the reader.
     pub unbuilt: bool,
+    /// The capability is answered by the deployment profile, not by gears, so
+    /// it offers none and is not a gap.
+    pub nonfunctional: bool,
 }
 
 /// How many candidates a row offers before the tail is cut.
@@ -562,6 +567,17 @@ fn plan_with_limit(
     capabilities
         .iter()
         .map(|capability| {
+            // Answered by the deployment profile, so no gear is offered for
+            // it, and having none is not a gap (`cpt-studio-fr-nfr-to-profile`).
+            if vocabulary.nonfunctional.contains(capability) {
+                return PlanRow {
+                    capability: capability.clone(),
+                    candidates: Vec::new(),
+                    gap: false,
+                    unbuilt: false,
+                    nonfunctional: true,
+                };
+            }
             let own = vec![capability.clone()];
             let words = vocabulary
                 .terms
@@ -697,9 +713,98 @@ fn plan_with_limit(
                 gap: candidates.is_empty(),
                 unbuilt,
                 candidates,
+                nonfunctional: false,
             }
         })
         .collect()
+}
+
+/// The deployment profile a project's non-functional statements point to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAdvice {
+    /// The profile id in the `product.gdl` Studio writes: `dev`, `local` or
+    /// `prod` (`gearbox::PROFILES`).
+    pub profile: &'static str,
+    /// The engine's kind of that profile: `embedded`, `self_hosted` or
+    /// `kubernetes`.
+    pub kind: &'static str,
+    /// The statements that point to it, as the documents make them.
+    pub because: Vec<String>,
+}
+
+/// The engine's profile kinds, the profile Studio's `product.gdl` declares for
+/// each (`gearbox::render_product_gdl`), and the words that point to one.
+///
+/// These describe the engine's own vocabulary of where a product runs, which
+/// is the same for every project; nothing here names a product.
+const PROFILE_WORDS: [(&str, &str, &[&str]); 3] = [
+    (
+        "kubernetes",
+        "prod",
+        &[
+            "kubernetes",
+            "k8s",
+            "helm",
+            "managed cloud",
+            "cloud-native",
+            "autoscal",
+            "horizontal scal",
+            "high availability",
+        ],
+    ),
+    (
+        "self_hosted",
+        "local",
+        &[
+            "on premises",
+            "on-premises",
+            "on-prem",
+            "on premise",
+            "self-hosted",
+            "self hosted",
+            "air-gapped",
+            "air gapped",
+            "docker compose",
+            "single server",
+        ],
+    ),
+    (
+        "embedded",
+        "dev",
+        &["single process", "embedded", "desktop", "single binary"],
+    ),
+];
+
+/// Which deployment profile the statements point to
+/// (`cpt-studio-fr-nfr-to-profile`).
+///
+/// Each statement is assigned to every kind whose words it mentions. The kind
+/// most statements point to wins; on a tie, the kind the documents mention
+/// first. No statement mentioning any kind is no advice, not a default.
+pub fn deployment_profile(requirements: &[String]) -> Option<ProfileAdvice> {
+    // (kind, profile, statements, index of the first statement)
+    let mut tally: Vec<(&'static str, &'static str, Vec<String>, usize)> = Vec::new();
+    for (i, statement) in requirements.iter().enumerate() {
+        let lower = statement.to_lowercase();
+        for (kind, profile, words) in PROFILE_WORDS {
+            if !words.iter().any(|w| mentions(&lower, w)) {
+                continue;
+            }
+            match tally.iter_mut().find(|(k, ..)| *k == kind) {
+                Some(entry) => entry.2.push(statement.clone()),
+                None => tally.push((kind, profile, vec![statement.clone()], i)),
+            }
+        }
+    }
+    tally.sort_by(|a, b| b.2.len().cmp(&a.2.len()).then(a.3.cmp(&b.3)));
+    tally
+        .into_iter()
+        .next()
+        .map(|(kind, profile, because, _)| ProfileAdvice {
+            profile,
+            kind,
+            because,
+        })
 }
 
 /// What the engine said, as the sync wrote it into the profile.
@@ -818,6 +923,7 @@ mod tests {
             terms: keyed(pairs),
             contracts: Default::default(),
             decisions: Vec::new(),
+            nonfunctional: Default::default(),
         }
     }
 
@@ -881,6 +987,7 @@ mod tests {
             terms: keyed(&[("auth", &["authentication", "login", "identity"])]),
             contracts: keyed(&[("auth", &["cf.core.authn_resolver.plugin.v1~"])]),
             decisions: Vec::new(),
+            nonfunctional: Default::default(),
         };
         let rows = plan(&["auth".to_owned()], &components, &profiles, &vocab);
         let row = &rows[0];
@@ -906,6 +1013,7 @@ mod tests {
             terms: Default::default(),
             contracts: keyed(&[("cap", &["x/Api"])]),
             decisions: Vec::new(),
+            nonfunctional: Default::default(),
         };
         let first = plan(&["cap".to_owned()], &components, &profiles, &vocab);
         let again = plan(&["cap".to_owned()], &components, &profiles, &vocab);
@@ -932,6 +1040,7 @@ mod tests {
             terms: Default::default(),
             contracts: keyed(&[("cap", &["x/Api"])]),
             decisions: Vec::new(),
+            nonfunctional: Default::default(),
         };
         let rows = plan(
             &["cap".to_owned()],
@@ -1092,6 +1201,46 @@ mod tests {
             names,
             ["a", "b"],
             "both undecided again, so the name decides"
+        );
+    }
+
+    /// `cpt-studio-fr-nfr-to-profile`: "where it runs" is not a component.
+    #[test]
+    fn a_nonfunctional_capability_offers_no_gear_and_is_not_a_gap() {
+        let mut vocab = vocabulary(&[("deploy", &["deploy", "helm"])]);
+        vocab.nonfunctional.insert("deploy".to_owned());
+        let rows = plan(
+            &["deploy".to_owned()],
+            &[component("cf-gears-deployer", "deploy with helm")],
+            &serde_json::Map::new(),
+            &vocab,
+        );
+        assert!(rows[0].nonfunctional);
+        assert!(rows[0].candidates.is_empty());
+        assert!(!rows[0].gap);
+    }
+
+    #[test]
+    fn non_functional_statements_point_to_the_profile_most_of_them_name() {
+        let says = |lines: &[&str]| lines.iter().map(|l| (*l).to_owned()).collect::<Vec<_>>();
+        let advice = deployment_profile(&says(&[
+            "Data stays in the EU.",
+            "Must run on premises, air-gapped.",
+            "Installed with Docker Compose on a single server.",
+            "Later, a Helm chart.",
+        ]))
+        .expect("advice");
+        assert_eq!((advice.kind, advice.profile), ("self_hosted", "local"));
+        assert_eq!(advice.because.len(), 2);
+
+        let tie = deployment_profile(&says(&["Runs on Kubernetes.", "Self-hosted too."])).unwrap();
+        assert_eq!(tie.profile, "prod", "a tie goes to the kind named first");
+
+        assert_eq!(deployment_profile(&says(&["Data stays in the EU."])), None);
+        assert_eq!(
+            deployment_profile(&says(&["The premises are leased."])),
+            None,
+            "a word inside another is not the word"
         );
     }
 

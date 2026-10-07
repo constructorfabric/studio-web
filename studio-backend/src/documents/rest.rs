@@ -117,6 +117,9 @@ pub struct CapabilityDto {
     /// satisfies the capability: a contract id with or without its version, or a
     /// GTS extension-point segment. Matched before `terms`.
     pub contracts: Vec<String>,
+    /// Answered by where and how the product runs, not by gears: the composer
+    /// offers it none.
+    pub nonfunctional: bool,
     /// "builtin", "organization" or "workspace".
     pub owner: String,
     pub owner_tenant_id: Option<Uuid>,
@@ -137,6 +140,7 @@ pub struct UpsertCapabilityDto {
     pub label: String,
     pub terms: Option<Vec<String>>,
     pub contracts: Option<Vec<String>>,
+    pub nonfunctional: Option<bool>,
     pub hidden: Option<bool>,
 }
 
@@ -573,6 +577,7 @@ impl From<Capability> for CapabilityDto {
             label: c.label,
             terms: c.terms,
             contracts: c.contracts,
+            nonfunctional: c.nonfunctional,
             owner,
             owner_tenant_id,
             hidden: c.hidden,
@@ -1153,6 +1158,7 @@ async fn upsert_capability_at(
         label: body.label,
         terms: body.terms.unwrap_or_default(),
         contracts: body.contracts.unwrap_or_default(),
+        nonfunctional: body.nonfunctional.unwrap_or(false),
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };
@@ -1348,6 +1354,32 @@ pub struct DeclaredCapabilityListDto {
     pub total: u32,
 }
 
+/// One non-functional statement, and the document that makes it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredRequirementDto {
+    pub text: String,
+    pub source: CapabilitySourceDto,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredRequirementListDto {
+    pub items: Vec<DeclaredRequirementDto>,
+    /// Every statement is in `items`: at most thirty per document.
+    pub total: u32,
+}
+
+fn capability_source_dto(s: super::service::CapabilitySource) -> CapabilitySourceDto {
+    CapabilitySourceDto {
+        kind: s.kind,
+        id: s.id,
+        label: s.label,
+        revision: s.revision,
+        node_id: s.node_id,
+    }
+}
+
 async fn list_declared_capabilities(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -1355,28 +1387,41 @@ async fn list_declared_capabilities(
 ) -> ApiResult<JsonBody<DeclaredCapabilityListDto>> {
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
-    let items: Vec<DeclaredCapabilityDto> = service
+    let (capabilities, _) = service
         .declared_capabilities(workspace_id, project_id)
         .await
-        .map_err(internal)?
+        .map_err(internal)?;
+    let items: Vec<DeclaredCapabilityDto> = capabilities
         .into_iter()
         .map(|c| DeclaredCapabilityDto {
             key: c.key,
-            sources: c
-                .sources
-                .into_iter()
-                .map(|s| CapabilitySourceDto {
-                    kind: s.kind,
-                    id: s.id,
-                    label: s.label,
-                    revision: s.revision,
-                    node_id: s.node_id,
-                })
-                .collect(),
+            sources: c.sources.into_iter().map(capability_source_dto).collect(),
         })
         .collect();
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(DeclaredCapabilityListDto { items, total }))
+}
+
+async fn list_declared_requirements(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<DeclaredRequirementListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let (_, requirements) = service
+        .declared_capabilities(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let items: Vec<DeclaredRequirementDto> = requirements
+        .into_iter()
+        .map(|r| DeclaredRequirementDto {
+            text: r.text,
+            source: capability_source_dto(r.source),
+        })
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(DeclaredRequirementListDto { items, total }))
 }
 
 async fn list_project_documents(
@@ -3297,6 +3342,31 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Declared capabilities",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/declared-requirements")
+        .operation_id("studio_documents.list_declared_requirements")
+        .summary("The non-functional statements a project's documents make")
+        .description(
+            "Every line of the non-functional, operational and deployment sections of \
+             the project's documents, from the same documents `declared-capabilities` \
+             reads, with the document making each. They choose the product's deployment \
+             profile and never its gears: send them to `/compose` as `requirements`.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose statements to read")
+        .handler(list_declared_requirements)
+        .json_response_with_schema::<DeclaredRequirementListDto>(
+            openapi,
+            StatusCode::OK,
+            "Declared non-functional statements",
         )
         .error_400(openapi)
         .error_401(openapi)

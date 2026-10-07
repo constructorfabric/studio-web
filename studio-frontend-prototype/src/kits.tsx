@@ -9,6 +9,7 @@ import {
   type GearboxStatus,
   type KitInstallation,
   type PlanRow,
+  type ProfileAdvice,
   type KitMaterialization,
   type ProductChange,
   type ProductPreview,
@@ -535,6 +536,8 @@ function SuggestedComponents({
   onCapabilities?: (count: number) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
+  /** Where the documents say the product runs: the profile to default to. */
+  const [advice, setAdvice] = useState<ProfileAdvice | null>(null);
   /** Which documents declare each capability, to say where a row comes from. */
   const [sources, setSources] = useState<Record<string, DeclaredCapability["sources"]>>({});
   const [docCount, setDocCount] = useState(0);
@@ -549,7 +552,7 @@ function SuggestedComponents({
       // The catalogue and the profiles are read by the server now, which is
       // also where the matching rules live. What still travels from here is the
       // workspace's own capability vocabulary.
-      const [declared, vocab, decisions] = await Promise.all([
+      const [declared, vocab, decisions, requirements] = await Promise.all([
         api.declaredCapabilities(token, projectId),
         api.capabilities(token, workspaceId),
         // Past decisions only rank the proposals; without them the plan
@@ -557,6 +560,11 @@ function SuggestedComponents({
         api.mappingDecisions(token, projectId).then(
           (d) => d.items,
           () => [],
+        ),
+        // Likewise the statements that pick the deployment profile.
+        api.declaredRequirements(token, projectId).then(
+          (r) => r.items.map((i) => i.text),
+          () => [] as string[],
         ),
       ]);
       // Every capability the project's documents declare, in the order first
@@ -566,10 +574,16 @@ function SuggestedComponents({
       setSources(Object.fromEntries(declared.items.map((c) => [c.key, c.sources])));
       onCapabilities?.(caps.length);
       setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
-      const next = (
-        await api.composePlan(token, caps, vocab.items ?? [], pastDecisions(decisions, declared.items))
-      ).items;
+      const answer = await api.composePlan(
+        token,
+        caps,
+        vocab.items ?? [],
+        pastDecisions(decisions, declared.items),
+        requirements,
+      );
+      const next = answer.items;
       setPlan(next);
+      setAdvice(answer.profile ?? null);
       // A product nobody has picked for yet starts from the best built gear
       // per capability. One that has picks keeps them: suggestions are a
       // source of candidates, not the product.
@@ -668,6 +682,22 @@ function SuggestedComponents({
               {docCount === 1 ? "" : "s"} · {built} built candidate{built === 1 ? "" : "s"} ·{" "}
               {unbuilt} with nothing built yet · {gaps} with nothing at all.
             </p>
+            {advice && (
+              <p
+                style={{ fontSize: 12, margin: "0 0 12px", display: "flex", gap: 8, alignItems: "center" }}
+                title={advice.because.join("\n")}
+              >
+                <span>
+                  The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
+                  {advice.because[0]}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
+                </span>
+                {composing && product.profile !== advice.profile && (
+                  <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
+                    Use {advice.profile}
+                  </button>
+                )}
+              </p>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {plan.map((row) => (
                 <div
@@ -693,6 +723,11 @@ function SuggestedComponents({
                     {row.unbuilt && (
                       <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
                         NOTHING BUILT YET
+                      </span>
+                    )}
+                    {row.nonfunctional && (
+                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }} title="Answered by the deployment profile, not by a gear">
+                        WHERE IT RUNS — THE PROFILE, NOT A GEAR
                       </span>
                     )}
                   </div>

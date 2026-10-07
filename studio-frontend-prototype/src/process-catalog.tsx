@@ -146,6 +146,7 @@ export function ProcessCatalogTab({
   const [capLabel, setCapLabel] = useState("");
   const [capTerms, setCapTerms] = useState("");
   const [capContracts, setCapContracts] = useState("");
+  const [capNonfunctional, setCapNonfunctional] = useState(false);
 
   const addCap = () =>
     run(async () => {
@@ -154,11 +155,13 @@ export function ProcessCatalogTab({
         label: capLabel.trim() || capKey.trim(),
         terms: commaList(capTerms),
         contracts: commaList(capContracts),
+        nonfunctional: capNonfunctional,
       });
       setCapKey("");
       setCapLabel("");
       setCapTerms("");
       setCapContracts("");
+      setCapNonfunctional(false);
     });
 
   const hideCap = (c: Capability) =>
@@ -263,6 +266,11 @@ export function ProcessCatalogTab({
                   {c.contracts!.join(", ")}
                 </span>
               )}
+              {c.nonfunctional && (
+                <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7 }} title="Answered by the deployment profile, never by a gear">
+                  PROFILE
+                </span>
+              )}
             </span>
             <span className="pcat-actions">
               {c.owner === "workspace" ? (
@@ -294,6 +302,10 @@ export function ProcessCatalogTab({
           <label style={{ flex: 1, minWidth: 220 }} title="Contract ids or GTS extension-point segments the Gearbox engine reports. A gear that provides one is matched before any search term.">
             contracts
             <input value={capContracts} onChange={(e) => setCapContracts(e.target.value)} placeholder="cf.core.tracing.plugin.v1~" />
+          </label>
+          <label title="Answered by where and how the product runs (the deployment profile), never by a gear">
+            <input type="checkbox" checked={capNonfunctional} onChange={(e) => setCapNonfunctional(e.target.checked)} />{" "}
+            non-functional
           </label>
           <button className="primary" onClick={addCap} disabled={busy || !capKey.trim()}>
             Add or replace

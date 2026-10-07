@@ -116,6 +116,8 @@ pub mod capability {
         pub terms: String,
         /// JSON array of contracts (`m0012`).
         pub contracts: String,
+        /// Answered by the deployment profile, never by gears (`m0013`).
+        pub nonfunctional: bool,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
         pub created_at: OffsetDateTime,
@@ -196,6 +198,9 @@ pub mod document {
         /// JSON array of capability keys, indexed from the document's own front
         /// matter on every write.
         pub capabilities: String,
+        /// JSON array of the non-functional statements its NFR, operational
+        /// and deployment sections make (`m0013`), indexed on every write.
+        pub requirements: String,
         /// Creator subject id (string principal).
         pub created_by: String,
         pub created_at: OffsetDateTime,
@@ -253,6 +258,9 @@ pub mod document_binding {
         /// (`capabilities: a, b`), `[]` when it declares none. An index over
         /// the file, re-derived on every scan, like `studio_documents`'.
         pub capabilities: String,
+        /// JSON array of the file's non-functional statements (`m0013`),
+        /// re-derived on every scan like `capabilities`.
+        pub requirements: String,
         /// Digest of the content the verdicts above were computed from.
         pub content_sha: String,
         pub created_at: OffsetDateTime,
