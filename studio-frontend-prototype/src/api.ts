@@ -2,6 +2,7 @@ import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
+import { sectionBody, type Plan, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainQuery, DomainQueryResult } from "./domain-query";
 
@@ -4055,4 +4056,20 @@ export const api = {
       token,
       { method: "POST", headers: idempotent() },
     ),
+
+  /** The report's plan in sections; revision 0 and empty when there is none yet. */
+  reportPlan: (token: string, report: string) =>
+    request<Plan>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan`, token),
+
+  /** Save one section of the plan, made against the revision it was read at.
+   *  A 409 means somebody saved since; a 400 lists why the plan would not hold. */
+  updateReportPlan: (token: string, report: string, section: PlanSection, plan: Plan) =>
+    request<Plan>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan/${section}`, token, {
+      method: "PUT",
+      body: JSON.stringify(sectionBody(section, plan)),
+    }),
+
+  /** The plan as `gears.yaml`. */
+  exportReportPlan: (token: string, report: string) =>
+    requestBlob(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan/yaml`, token),
 };

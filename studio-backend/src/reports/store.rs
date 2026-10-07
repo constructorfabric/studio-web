@@ -238,6 +238,7 @@ mod tests {
                 from: "upload".into(),
                 sha: None,
                 read_at: "t".into(),
+                ..PlanSnapshot::default()
             }),
             ..ReportSource::default()
         };

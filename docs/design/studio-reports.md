@@ -112,15 +112,43 @@ says why (`definition_error`) and is drawn with its built-in.
 
 - [x] `p2` - **ID**: `cpt-studio-principle-reports-plan-is-a-file`
 
-The plan stays where the planning team keeps it and is read through the same
-GitHub connection as the board, so it is never a copy someone forgot to
-refresh. It can carry everything else the report needs (`board: owner/48`,
-`roots`, `consumers`, `report`); the same keys saved on the source override the
-plan's, for a plan that does not carry them yet. Uploading the text is the
-fallback when the connection cannot read the file. The plan is kept as text, as
-last read, because its key order sets the project-column, lane and People order
-and JSON keeps none; it is parsed the way PyYAML reads it — a key written twice
-keeps its first position and its last value.
+A plan has one home at a time. It can be a file the planning team keeps,
+read through the same GitHub connection as the board, so it is never a copy
+someone forgot to refresh; or an uploaded text; or Studio itself, where the
+Reports screen edits it (below). It can carry everything else the report needs
+(`board: owner/48`, `roots`, `consumers`, `report`); the same keys saved on the
+source override the plan's, for a plan that does not carry them yet. The plan
+is kept as text because its key order sets the project-column, lane and People
+order and JSON keeps none; it is parsed the way PyYAML reads it — a key written
+twice keeps its first position and its last value.
+
+#### The plan is edited here, one section at a time
+
+- [x] `p2` - **ID**: `cpt-studio-principle-reports-plan-edited-here`
+
+The Reports screen reads the plan in the sections the planning team edits —
+group lanes, units and their teams, people, consumer projects, and per gear
+when each project needs it — and saves one section at a time
+(`plan_edit.rs`). A save replaces that one top-level key of the document and
+nothing else: every other key (`board`, `branches`, an inline `report:`)
+keeps its value and its place, and an entry keeps the fields the section does
+not name (a need written `{ needed: …, why: … }` keeps its `why`). The whole
+plan must hold together afterwards — a person's team is a team, a need's
+project is a project, a team tag is in one unit — or nothing is saved and the
+400 lists every reason.
+
+Every change bumps the snapshot's `revision`, and a save is made against the
+revision it was read at: a save at another one is a 409 (`aborted`,
+`PLAN_REVISION_STALE`), so one editor cannot undo another's change unseen. The
+first save makes Studio the plan's home (`from: studio`): the file it was read
+from is let go, and a refresh no longer reads it over the edit. The text is
+written back by `serde_yaml`, which keeps the strings PyYAML would misread
+(`no`, `YES`, `'20'`) quoted, so `GET …/plan/yaml` is a file the planning
+script reads as before; a file's comments do not survive the first edit.
+
+The plan names people — their emails and how much of each one's time a team
+counts on. For now it is shown to whoever may edit the report's source; who
+may see and edit it is a role question for later (ADR-0019).
 
 #### A client never names a tenant
 
@@ -285,6 +313,9 @@ would add on top.
 | `GET` | `/studio-reports/v1/reports/{report_id}/source` | The organization's source; the plan's size, not its text | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/source` | Save it; a field left out keeps its value, `""` clears it; an unparsable plan file, a plan that is not a YAML mapping or a board that is not `owner/number` is a 400 | unstable |
 | `POST` | `/studio-reports/v1/reports/{report_id}/sync` | Queue a `reports.refresh` run in the caller's tenant; 503 without `studio-tasks` | unstable |
+| `GET` | `/studio-reports/v1/reports/{report_id}/plan` | The plan in sections — lanes, units and teams, people, projects, needs — with the `revision` a save is made against; revision 0 and empty when there is none | unstable |
+| `PUT` | `/studio-reports/v1/reports/{report_id}/plan/{lanes,units,people,projects,needs}` | Save one section against `revision`: 400 lists why the plan would not hold together, 409 when it changed since; the first save makes Studio the plan's home | unstable |
+| `GET` | `/studio-reports/v1/reports/{report_id}/plan/yaml` | The plan as `gears.yaml`, for the planning script or a backup; 404 without a plan | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/schedule` | Whether the report refreshes on its own and when next; `enabled: false` with no `cron` when there is none | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/schedule` | Switch it on or off, creating it the first time | unstable |
 

@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 233,
+  "open_violations": 234,
   "operations": [
     {
       "method": "DELETE",
@@ -1369,6 +1369,35 @@
       "responses": [
         "ReportDto"
       ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/plan",
+      "operation_id": "studio_reports.get_report_plan",
+      "tag": "StudioReports",
+      "summary": "The report's plan, in the sections the Reports screen edits",
+      "authenticated": true,
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/yaml",
+      "operation_id": "studio_reports.export_report_plan",
+      "tag": "StudioReports",
+      "summary": "The plan as gears.yaml",
+      "authenticated": true,
       "errors": [
         "401",
         "404",
@@ -3528,6 +3557,96 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/lanes",
+      "operation_id": "studio_reports.update_report_plan_lanes",
+      "tag": "StudioReports",
+      "summary": "Save the plan's group lanes: their order and names",
+      "authenticated": true,
+      "request": "PlanLanesInputDto",
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/needs",
+      "operation_id": "studio_reports.update_report_plan_needs",
+      "tag": "StudioReports",
+      "summary": "Save the plan's needs: per gear, when each project needs it",
+      "authenticated": true,
+      "request": "PlanNeedsInputDto",
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/people",
+      "operation_id": "studio_reports.update_report_plan_people",
+      "tag": "StudioReports",
+      "summary": "Save the plan's people: login, alias, team, power and email",
+      "authenticated": true,
+      "request": "PlanPeopleInputDto",
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/projects",
+      "operation_id": "studio_reports.update_report_plan_projects",
+      "tag": "StudioReports",
+      "summary": "Save the plan's consumer projects: the needs' columns",
+      "authenticated": true,
+      "request": "PlanProjectsInputDto",
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/units",
+      "operation_id": "studio_reports.update_report_plan_units",
+      "tag": "StudioReports",
+      "summary": "Save the plan's units and their teams",
+      "authenticated": true,
+      "request": "PlanUnitsInputDto",
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

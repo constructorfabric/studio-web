@@ -610,3 +610,102 @@ async fn without_a_scheduler_there_is_no_schedule_and_switching_one_on_says_why(
         .unwrap_err();
     assert!(format!("{err:#}").contains("schedules nothing"), "{err:#}");
 }
+
+fn person(login: &str) -> crate::reports::plan_edit::PersonDto {
+    crate::reports::plan_edit::PersonDto {
+        login: login.into(),
+        alias: None,
+        team: None,
+        unit: None,
+        power: Some(1.0),
+        email: None,
+    }
+}
+
+#[tokio::test]
+async fn a_plan_edited_here_is_studios_and_a_stale_edit_is_refused() {
+    let s = service(Arc::default(), Some(repo()));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("o/r:gears.yaml".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    s.refresh(&ctx(), "roadmap").await.unwrap();
+    let read = s.source(&ctx(), "roadmap").await.unwrap();
+    let rev = read.snapshot.as_ref().unwrap().revision;
+    assert_eq!(rev, 1, "the first read is revision 1");
+
+    let saved = s
+        .edit_plan(
+            &ctx(),
+            "roadmap",
+            rev,
+            Section::People(vec![person("alice"), person("bob-example")]),
+        )
+        .await
+        .expect("saved");
+    let snap = saved.snapshot.as_ref().unwrap();
+    assert_eq!(snap.from, FROM_STUDIO);
+    assert_eq!(snap.revision, 2);
+    assert_eq!(snap.edited_by, Some(ctx().subject_id().to_string()));
+    assert!(saved.plan_file.is_none(), "the file is let go");
+    // The keys the screen did not edit are still there.
+    let (_, doc) = s.plan_document(&ctx(), "roadmap").await.unwrap();
+    assert_eq!(
+        doc.get("board").and_then(Yaml::as_str),
+        Some("constructorfabric/48")
+    );
+    assert_eq!(ReportsService::plan_of(&saved).1.users.len(), 2);
+
+    // A second editor still holding revision 1 is refused, and nothing moves.
+    let err = s
+        .edit_plan(&ctx(), "roadmap", rev, Section::People(Vec::new()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, PlanEditError::Stale { current: 2 }),
+        "{err:?}"
+    );
+    // A refresh no longer reads the file over the edit.
+    s.refresh(&ctx(), "roadmap").await.unwrap();
+    let after = s.source(&ctx(), "roadmap").await.unwrap();
+    assert_eq!(after.snapshot.as_ref().unwrap().revision, 2);
+}
+
+#[tokio::test]
+async fn an_edit_that_breaks_the_plan_is_refused_and_a_first_one_starts_it() {
+    let s = service(Arc::default(), None);
+    let err = s
+        .edit_plan(
+            &ctx(),
+            "roadmap",
+            0,
+            Section::People(vec![crate::reports::plan_edit::PersonDto {
+                team: Some("nobody".into()),
+                ..person("alice")
+            }]),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, PlanEditError::Invalid(m) if m.contains("there is no team `nobody`")),
+        "{err:?}"
+    );
+    assert!(
+        s.source(&ctx(), "roadmap")
+            .await
+            .unwrap()
+            .snapshot
+            .is_none()
+    );
+    let first = s
+        .edit_plan(&ctx(), "roadmap", 0, Section::People(vec![person("alice")]))
+        .await
+        .expect("a plan with nothing before it");
+    assert_eq!(first.snapshot.unwrap().revision, 1);
+}

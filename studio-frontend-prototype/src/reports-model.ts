@@ -158,7 +158,7 @@ export function needsAttention(st: SourceState): boolean {
 const EMPTY_WITHOUT_PLAN = "People, the Gantt's team lanes and the project columns stay empty without one";
 
 export function stateText(st: SourceState): string {
-  const from = (f: string) => (f === "upload" ? "an uploaded file" : f);
+  const from = (f: string) => (f === "upload" ? "an uploaded file" : f === "studio" ? "Studio (edited here)" : f);
   switch (st.kind) {
     case "empty":
       return "Not configured: name the plan file (it can name the board itself), or upload it.";

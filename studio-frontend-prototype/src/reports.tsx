@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { api, type Connection } from "./api";
 import { errText } from "./format";
+import { PlanEditor } from "./plan-editor";
 import { RoadmapReportBody, downloadReport } from "./roadmap-report-view";
 import {
   canRefresh,
@@ -132,6 +133,7 @@ function ReportCard({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [planOpen, setPlanOpen] = useState(false);
   const [advanced, setAdvanced] = useState(
     () => !!(report.source.board || report.source.roots.length || Object.keys(report.source.consumers).length),
   );
@@ -237,7 +239,7 @@ function ReportCard({
         <span>or upload</span>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button className="iconbtn" type="button" onClick={() => pick.current?.click()}>
-            {report.source.plan_uploaded || upload ? "Replace…" : "Load gears.yaml…"}
+            {report.source.plan_uploaded || upload ? "Replace…" : "Import gears.yaml…"}
           </button>
           <input
               ref={pick}
@@ -306,6 +308,22 @@ function ReportCard({
         The plan can carry everything but the connection: <code>board: owner/48</code>, <code>roots: [3342, 4507]</code>,{" "}
         <code>consumers: {"{ A: Acronis }"}</code>, and <code>report: back_roadmap</code> or a definition of its own.
       </p>
+
+      <button className="iconbtn" style={{ alignSelf: "flex-start" }} onClick={() => setPlanOpen((o) => !o)}>
+        {planOpen ? "Hide the plan" : "Edit the plan: teams, people, projects, needs…"}
+      </button>
+      {planOpen && (
+        <div style={{ ...CARD, padding: 10 }}>
+          <PlanEditor
+            token={token}
+            report={report.id}
+            onSaved={() => {
+              onChanged();
+              setVersion((v) => v + 1);
+            }}
+          />
+        </div>
+      )}
 
       {report.id === "roadmap" && <RoadmapReportBody token={token} org={org} version={version} />}
     </section>

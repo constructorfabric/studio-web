@@ -67,14 +67,26 @@ pub struct ReportSource {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanSnapshot {
     pub text: String,
-    /// The file it was read from (`owner/repo:path@ref`), or `upload`.
+    /// The file it was read from (`owner/repo:path@ref`), `upload`, or
+    /// [`FROM_STUDIO`] once it is edited here.
     pub from: String,
     /// The blob it was, for a file.
     #[serde(default)]
     pub sha: Option<String>,
-    /// RFC 3339.
+    /// RFC 3339: when it was read, uploaded or last edited.
     pub read_at: String,
+    /// Bumped by every change, so an edit made against an older plan is
+    /// refused rather than silently undoing someone else's.
+    #[serde(default)]
+    pub revision: u64,
+    /// Who changed it last, as their subject id -- never their name or
+    /// address, which the plan may not even hold.
+    #[serde(default)]
+    pub edited_by: Option<String>,
 }
+
+/// `from` of a plan whose home is Studio: edited here, read from no file.
+pub const FROM_STUDIO: &str = "studio";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Refresh {
@@ -486,6 +498,7 @@ mod tests {
                 from: "o/r:p.yaml@main".into(),
                 sha: Some("abc".into()),
                 read_at: "2026-10-01T00:00:00Z".into(),
+                ..PlanSnapshot::default()
             }),
             last_refresh: Some(Refresh {
                 at: "2026-10-01T00:00:01Z".into(),
