@@ -40,6 +40,14 @@ export interface ShareDocument {
      * and changed here only until the request is merged and pulled.
      */
     readonly inReview?: boolean;
+    /**
+     * Changed only in commits made here that have not reached the team — the
+     * Source Control panel's Commit, or a share that committed and was not
+     * sent — and not since: nothing left to commit, only to send. A project
+     * that takes changes by review sends it to the person's pull request like
+     * any other document; straight to the branch, it goes with the next share.
+     */
+    readonly committed?: boolean;
 }
 
 export interface ShareRepository {
@@ -49,7 +57,12 @@ export interface ShareRepository {
     readonly name: string;
     readonly branch?: string;
     readonly upstream?: string;
-    /** Commits made here and not on the remote yet — a share that committed but did not arrive. */
+    /**
+     * Commits made here and not on the remote yet — a share that committed but
+     * did not arrive, or a commit from the Source Control panel. The documents
+     * they changed are listed too, `committed`, while they still differ from
+     * the team's.
+     */
     readonly unsent: number;
     readonly documents: readonly ShareDocument[];
 }
@@ -61,7 +74,11 @@ export interface ShareStatus {
 export interface ShareRequest {
     /** The repository's folder (a file uri), as `status` named it. */
     readonly root: string;
-    /** Repository-relative paths of the documents to share; may be empty to send what is already committed. */
+    /**
+     * Repository-relative paths of the documents to share; may be empty to send
+     * what is already committed. Through a pull request, a `committed` document
+     * is sent as it is on disk, like any other.
+     */
     readonly documents: readonly string[];
     /** What changed, in the person's words. */
     readonly message: string;

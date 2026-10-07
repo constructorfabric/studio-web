@@ -7,7 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
-    commitMessage, companionOf, DocumentShareServiceImpl, editorsSince, failureOf, parseStatus, reviewBranchName, titleOf, withSignOff,
+    commitMessage, companionOf, DocumentShareServiceImpl, editorsSince, failureOf, parseNameStatus, parseStatus, reviewBranchName, titleOf, withSignOff,
 } from './document-share-service';
 import { shareBranchOf } from '../common/document-share-protocol';
 
@@ -74,6 +74,15 @@ describe('reading git for a person', () => {
             { path: 'docs/gone.md', state: 'deleted' },
             { path: 'docs/to.md', state: 'added' },
         ]);
+    });
+
+    it('reads what commits changed', () => {
+        expect(parseNameStatus(['M', 'docs/a.md', 'A', 'docs/new.md', 'D', 'docs/gone.md', ''].join('\0'))).toEqual([
+            { path: 'docs/a.md', state: 'modified' },
+            { path: 'docs/new.md', state: 'added' },
+            { path: 'docs/gone.md', state: 'deleted' },
+        ]);
+        expect(parseNameStatus('')).toEqual([]);
     });
 
     it('names a document by its first heading, past front matter', () => {
@@ -322,11 +331,72 @@ describe('DocumentShareServiceImpl', () => {
             expect(git(remote, 'log', '--format=%s', 'studio/alice-example/share').split('\n')).toEqual(['Three', 'Squashed request', 'base']);
         }, 30_000);
 
+        it('sends what was committed here and not sent, as it is now, and leaves the commits where they are', async () => {
+            const { remote, mine } = project();
+            // Source Control's Commit, one of them without a message, then a further edit.
+            write(mine, 'docs/spec.md', '# Spec findings\n\nCommitted.\n');
+            write(mine, '.studio/history/docs/spec.md.json', '{"version":1,"entries":[]}');
+            commitAll(mine, 'from source control');
+            write(mine, 'docs/plan.md', '# Plan\n\nCommitted too.\n');
+            git(mine, 'add', '-A');
+            git(mine, '-c', 'user.name=Seed', '-c', 'user.email=seed@example.com', 'commit', '-q', '--allow-empty-message', '-m', '');
+            write(mine, 'docs/plan.md', '# Plan\n\nCommitted, then edited.\n');
+            const head = git(mine, 'rev-parse', 'HEAD');
+            const service = new DocumentShareServiceImpl();
+            const root = FileUri.create(mine).toString();
+
+            const [before] = (await service.status([root], ALICE)).repositories;
+            expect(before.unsent).toBe(2);
+            expect(before.documents.map(d => [d.path, d.state, d.committed ?? false, d.companions])).toEqual([
+                ['docs/plan.md', 'modified', false, []],
+                ['docs/spec.md', 'modified', true, ['.studio/history/docs/spec.md.json']],
+            ]);
+
+            const outcome = await service.share({ root, documents: ['docs/plan.md', 'docs/spec.md'], message: 'Plan and spec', author: ALICE, review: review(false) });
+            expect(outcome).toEqual({ kind: 'review', branch: 'studio/alice-example/share' });
+            const branch = 'studio/alice-example/share';
+            expect(git(remote, 'log', '--format=%s', branch).split('\n')).toEqual(['Plan and spec', 'base']);
+            expect(git(remote, 'show', '--name-only', '--format=', branch).split('\n').sort())
+                .toEqual(['.studio/history/docs/spec.md.json', 'docs/plan.md', 'docs/spec.md']);
+            expect(git(remote, 'show', `${branch}:docs/plan.md`)).toBe('# Plan\n\nCommitted, then edited.');
+            // The project's branch did not get them, and the checkout did not move.
+            expect(git(remote, 'log', '-1', '--format=%s', 'main')).toBe('base');
+            expect(git(mine, 'rev-parse', 'HEAD')).toBe(head);
+
+            // In the request now, rather than "not reached the team" for ever.
+            const [after] = (await service.status([root], ALICE)).repositories;
+            expect(after.documents.map(d => [d.path, d.inReview ?? false])).toEqual([['docs/plan.md', true], ['docs/spec.md', true]]);
+        }, 30_000);
+
+        it('does not offer again what the team already took another way', async () => {
+            const { mine, theirs } = project();
+            write(mine, 'docs/spec.md', '# Spec findings\n\nSame words.\n');
+            commitAll(mine, 'local');
+            write(theirs, 'docs/spec.md', '# Spec findings\n\nSame words.\n');
+            commitAll(theirs, 'Squashed request');
+            git(theirs, 'push', '-q');
+            git(mine, 'fetch', '-q');
+            const [listed] = (await new DocumentShareServiceImpl().status([FileUri.create(mine).toString()], ALICE)).repositories;
+            expect(listed.unsent).toBe(1);
+            expect(listed.documents).toEqual([]);
+        });
+
         it('says when there is nothing to send', async () => {
             const { mine } = project();
             expect(await new DocumentShareServiceImpl().share({ root: FileUri.create(mine).toString(), documents: [], message: '', author: ALICE, review: review(false) }))
                 .toEqual({ kind: 'nothing', branch: 'studio/alice-example/share' });
         });
+    });
+
+    it('still sends what was committed and not sent straight to the branch, chosen or not', async () => {
+        const { remote, mine } = project();
+        write(mine, 'docs/spec.md', '# Spec findings\n\nCommitted.\n');
+        commitAll(mine, 'from source control');
+        const root = FileUri.create(mine).toString();
+        const [listed] = (await new DocumentShareServiceImpl().status([root])).repositories;
+        expect(listed.documents.map(d => [d.path, d.committed])).toEqual([['docs/spec.md', true]]);
+        expect(await new DocumentShareServiceImpl().share({ root, documents: [], message: '' })).toEqual({ kind: 'shared', branch: 'main' });
+        expect(git(remote, 'log', '-1', '--format=%s', 'main')).toBe('from source control');
     });
 
     it('says there is nothing to share', async () => {

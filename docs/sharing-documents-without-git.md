@@ -24,7 +24,19 @@ Sources list, and Share follows it from then on (see
 ## Share with the team
 
 In Doc editing, the *Team* group of the mode bar has **Share with the team**.
-The status bar keeps the count in view: *2 documents not shared*.
+The status bar keeps the count in view: *2 documents not shared*, and the
+same number sits on the Share button as a badge. Both are counted again when
+a file is saved and when Source Control's state changes, so a commit made
+there shows at once.
+
+In a portal session, Source Control has the same button too: in the title bar
+of its *Changes* view, beside its own Commit and Refresh, and in the menu of a
+repository's row. It opens the window for that repository. Source Control's own
+actions are not changed. Its Sync still pushes the way git does, and a project
+that takes changes through review refuses that push (see
+[Committed from Source Control](#committed-from-source-control)). The desktop
+keeps its own Sync and Push (`desktop-git-contribution.ts`), and the button is
+not shown there.
 
 The dialog lists the documents not shared yet, by their first heading. The
 ones the person edited are ticked. A document with no recorded editor (edited
@@ -123,6 +135,33 @@ person edits it again, it is listed as unshared again.
 If the commit arrived but the request could not be opened, the person is told
 so. The branch is there, and the next share tries again.
 
+### Committed from Source Control
+
+Somebody may commit in Source Control instead, and press its *Sync Changes*.
+On a branch that takes changes only through a pull request, the push is
+refused (`GH013`). The checkout is then ahead of the team's branch, and those
+commits used to stay there for good. Share proposed only files that were not
+committed, so the dialog said *A change you shared earlier has not reached the
+team yet* and kept *Send for review* disabled.
+
+Now the documents those commits changed are listed like any other, marked
+*committed here, not sent yet*. They are the files changed between where the
+checkout and the team's branch parted and `HEAD`, as long as they still differ
+from the team's version (`DocumentShareServiceImpl.committedChanges`), with
+their `.studio` companions. A file the team already has in the same state, for
+example after a squash merge, is not offered again. Sending them works as for
+any other document. The files go to the person's request as they are on disk,
+built in a separate index, and the commits themselves stay where they are. A
+document committed and then edited again is sent as it is now. The commit's
+message, even an empty one, does not matter: the request uses the sentence
+typed in the dialog. Afterwards those documents read as *In your pull request*
+and are not counted. *See changes* compares them with the team's version, not
+with the last commit.
+
+On a project that commits straight to the branch nothing changes: the next
+share pushes every commit that has not been sent, so those documents are not
+listed for choosing.
+
 ## A save changes only what was edited
 
 The Documents editor and the WYSIWYG editor each write markdown with their own
@@ -169,13 +208,14 @@ stands aside rather than fight a plugin.
 
 ## Checking it
 
-The checks are 5g–5i in
+The checks are 5g–5k in
 [verifying-the-collaboration-work.md](verifying-the-collaboration-work.md).
 Unit tests:
 
 - `document-share-service.test.ts` (real git, a bare remote; the pull-request
   road under *through a pull request*);
 - `share-model.test.ts`;
+- `ribbon-badges.test.ts`;
 - the backend's `project_sources` and `connectors` tests (`share_mode`, the
   two routes);
 - the prototype's `project-sources.test.ts` (the mode is recorded on

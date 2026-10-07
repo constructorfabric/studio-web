@@ -21,8 +21,8 @@ export interface ShareDialogContext {
     readonly sharing: ReadonlyMap<string, RepositorySharing>;
     /** Open the person's request from `head`, or find the one open. */
     openPullRequest(sharing: RepositorySharing, head: string, title: string, body: string): Promise<OpenPullRequest>;
-    /** Open a document's changes against what was last shared. */
-    showChanges(document: ShareDocument): void;
+    /** Open a document's changes against what was last shared: its last commit, or `against` (the team's branch). */
+    showChanges(document: ShareDocument, against?: string): void;
     /** Open a conflicted document: the team's version beside mine. */
     showConflict(repository: ShareRepository, path: string, theirs: string | undefined): void;
     /** Open a link (a review request) outside the IDE. */
@@ -51,7 +51,7 @@ export class ShareDialog extends ReactDialog<void> {
     constructor(protected readonly context: ShareDialogContext) {
         super({ title: 'Share with the team' });
         for (const repository of context.repositories) {
-            const { mine } = splitDocuments(repository, context.me);
+            const { mine } = splitDocuments(repository, context.me, viaPullRequest(context.sharing.get(repository.root)));
             const open = context.sharing.get(repository.root)?.open;
             this.states.set(repository.root, { selected: new Set(mine.map(document => document.path)), message: defaultMessage(mine), ...(open ? { open } : {}) });
         }
@@ -89,11 +89,11 @@ export class ShareDialog extends ReactDialog<void> {
 
     protected renderRepository(repository: ShareRepository): React.ReactNode {
         const state = this.states.get(repository.root)!;
-        const { mine, others, inReview } = splitDocuments(repository, this.context.me);
-        const several = this.context.repositories.filter(r => toShare(r).length || r.unsent).length > 1;
-        const conflict = state.outcome?.kind === 'conflict' ? state.outcome : undefined;
         const sharing = this.context.sharing.get(repository.root);
         const reviewed = viaPullRequest(sharing);
+        const { mine, others, inReview } = splitDocuments(repository, this.context.me, reviewed);
+        const several = this.context.repositories.filter(r => toShare(r).length || r.unsent).length > 1;
+        const conflict = state.outcome?.kind === 'conflict' ? state.outcome : undefined;
         return <section key={repository.root} className='studio-share-repository'>
             {several && <h3>{repository.name}</h3>}
             {reviewed && <div className='studio-share-note'>
@@ -112,7 +112,8 @@ export class ShareDialog extends ReactDialog<void> {
             {reviewed && inReview.length > 0 && <div className='studio-share-heading'>
                 In your pull request <span className='studio-share-hint'>— {inReview.map(document => document.title).join(', ')}, as {inReview.length === 1 ? 'it is' : 'they are'} now</span>
             </div>}
-            {repository.unsent > 0 && repository.documents.length === 0 &&
+            {/* Through a pull request, what was committed and not sent is listed above, to choose. */}
+            {!reviewed && repository.unsent > 0 && mine.length + others.length === 0 &&
                 <div className='studio-share-note'>A change you shared earlier has not reached the team yet.</div>}
             {conflict ? this.renderConflict(repository, conflict) : <>
                 <label className='studio-share-label' htmlFor={`studio-share-message-${repository.name}`}>What changed?</label>
@@ -158,11 +159,12 @@ export class ShareDialog extends ReactDialog<void> {
                     {document.path}
                     {document.state === 'added' ? ' · new' : document.state === 'deleted' ? ' · deleted' : ''}
                     {editedBy.length > 0 ? ` · edited by ${editedBy.join(', ')}` : ''}
+                    {document.committed ? ' · committed here, not sent yet' : ''}
                     {document.companions.length > 0 ? ` · ${companionsLabel(document)}` : ''}
                 </span>
             </label>
             {document.state !== 'deleted' &&
-                <button className='theia-button secondary studio-share-see' onClick={() => this.context.showChanges(document)}>See changes</button>}
+                <button className='theia-button secondary studio-share-see' onClick={() => this.context.showChanges(document, repository.unsent > 0 ? repository.upstream : undefined)}>See changes</button>}
         </div>;
     }
 

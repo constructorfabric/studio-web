@@ -27,6 +27,7 @@ import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import { MAIN_MENU_BAR, MenuModelRegistry } from '@theia/core/lib/common/menu';
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 import type { StudioCliCommandId } from '../common/studio-cli-protocol';
+import { badgeText, RibbonBadges } from './ribbon-badges';
 import { STUDIO_CLI_LABELS } from '../common/studio-cli-report';
 
 /** The Gearbox perspective's id, owned by `gearbox-studio`. Named here rather
@@ -498,12 +499,19 @@ export class StudioModeBar extends ModeAware {
     @inject(MessageService) @optional()
     protected readonly messages: MessageService | undefined;
 
+    /** The numbers on the buttons: Share's documents not shared yet. */
+    @inject(RibbonBadges) @optional()
+    protected readonly badges: RibbonBadges | undefined;
+
     @postConstruct()
     protected init(): void {
         this.id = StudioModeBar.ID;
         this.addClass('studio-mode-bar');
         this.watchMode();
         this.watchEnablement();
+        if (this.badges) {
+            this.toDispose.push(this.badges.onDidChange(() => this.update()));
+        }
     }
 
     /** Run an action, asking again first: the state drawn may be a moment old. */
@@ -537,8 +545,9 @@ export class StudioModeBar extends ModeAware {
                 {groups.map((g) => (
                     <div key={g.label} className="studio-ribbon-group" role="group" aria-label={g.label}>
                         <div className="studio-ribbon-actions">
-                            {g.actions.map(({ action: a, state }) => (
-                                <button
+                            {g.actions.map(({ action: a, state }) => {
+                                const badge = badgeText(this.badges?.get(a.command));
+                                return <button
                                     key={a.command}
                                     type="button"
                                     // `aria-disabled` rather than `disabled`: a disabled
@@ -551,8 +560,9 @@ export class StudioModeBar extends ModeAware {
                                 >
                                     <span className={`codicon codicon-${a.icon}`} aria-hidden />
                                     <span className="studio-ribbon-label">{a.label}</span>
-                                </button>
-                            ))}
+                                    {badge && <span className="studio-ribbon-badge" aria-label={`${badge} waiting`}>{badge}</span>}
+                                </button>;
+                            })}
                         </div>
                         <div className="studio-ribbon-caption">{g.label}</div>
                     </div>
@@ -661,6 +671,14 @@ const MODE_BAR_CSS = `
     background: transparent; color: var(--theia-foreground); cursor: pointer;
 }
 .studio-ribbon-action .codicon { font-size: 20px; line-height: 22px; }
+.studio-ribbon-action { position: relative; }
+/* How many wait behind the button, over its icon's corner, as an activity bar's badge. */
+.studio-ribbon-badge {
+    position: absolute; top: 1px; right: 8px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 8px; font-size: 10px; line-height: 16px; font-weight: 600; text-align: center;
+    background: var(--theia-activityBarBadge-background, var(--theia-badge-background));
+    color: var(--theia-activityBarBadge-foreground, var(--theia-badge-foreground));
+}
 .studio-ribbon-label { font-size: 11px; line-height: 13px; white-space: nowrap; }
 .studio-ribbon-action.disabled { opacity: .45; cursor: default; }
 .studio-ribbon-action:not(.disabled):hover { background: var(--theia-toolbar-hoverBackground, var(--theia-list-hoverBackground)); border-color: var(--theia-widget-border, var(--theia-editorGroup-border)); }

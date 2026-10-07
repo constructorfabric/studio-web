@@ -1,7 +1,8 @@
 import type { ShareDocument, ShareRepository } from '../../common/document-share-protocol';
-import { coAuthorsOf, defaultMessage, describeOutcome, isMine, splitDocuments, unsharedCount } from './share-model';
+import { coAuthorsOf, defaultMessage, describeOutcome, isMine, repositoryRootOf, sameFolder, splitDocuments, unsharedCount } from './share-model';
 
 const inReview = (d: ShareDocument): ShareDocument => ({ ...d, inReview: true });
+const committed = (d: ShareDocument): ShareDocument => ({ ...d, committed: true });
 
 function document(path: string, title: string, editors: string[] = [], state: ShareDocument['state'] = 'modified'): ShareDocument {
     return { path, uri: `file:///w/${path}`, state, title, editors, companions: [] };
@@ -31,6 +32,26 @@ describe('share model', () => {
         expect(others).toEqual([]);
         expect(proposed.map(d => d.path)).toEqual(['b.md']);
         expect(unsharedCount([repository])).toBe(1);
+    });
+
+    it('lists what was committed and not sent to choose through review, and leaves it to the branch\'s share otherwise', () => {
+        const repository: ShareRepository = {
+            root: 'file:///w', name: 'w', unsent: 2,
+            documents: [committed(document('a.md', 'A', ['Alice'])), committed(document('c.md', 'C', ['Bob'])), document('d.md', 'D')],
+        };
+        const reviewed = splitDocuments(repository, ALICE, true);
+        expect(reviewed.mine.map(d => d.path)).toEqual(['a.md', 'd.md']);
+        expect(reviewed.others.map(d => d.path)).toEqual(['c.md']);
+        const straight = splitDocuments(repository, ALICE);
+        expect(straight.mine.map(d => d.path)).toEqual(['d.md']);
+        expect(straight.others).toEqual([]);
+    });
+
+    it('counts committed documents, and nothing more once they are in the pull request', () => {
+        const pending: ShareRepository = { root: '1', name: '1', unsent: 2, documents: [committed(document('a.md', 'A')), committed(document('b.md', 'B'))] };
+        expect(unsharedCount([pending])).toBe(2);
+        const sent: ShareRepository = { ...pending, documents: pending.documents.map(inReview) };
+        expect(unsharedCount([sent])).toBe(0);
     });
 
     it('says a pull request is the plan, and when it could not be opened', () => {
@@ -68,5 +89,20 @@ describe('share model', () => {
         }
         expect(describeOutcome({ kind: 'shared' }, 1).text).toBe('Your document is shared with the team.');
         expect(describeOutcome({ kind: 'failed', detail: 'fatal: something broke\nmore' }, 1).text).toBe('Your changes could not be shared. (something broke)');
+    });
+});
+
+describe('Share from Source Control', () => {
+    it('shares the repository a row\'s menu was opened on, else the one the view shows', () => {
+        expect(repositoryRootOf({ provider: { rootUri: 'file:///workspace/a' } }, 'file:///workspace/b')).toBe('file:///workspace/a');
+        // The title bar passes the view itself.
+        expect(repositoryRootOf({ id: 'scm-view' }, 'file:///workspace/b')).toBe('file:///workspace/b');
+        expect(repositoryRootOf(undefined, undefined)).toBeUndefined();
+    });
+
+    it('matches a repository by its folder, whatever the trailing slash or escaping', () => {
+        expect(sameFolder('file:///workspace/studio-web', 'file:///workspace/studio-web/')).toBe(true);
+        expect(sameFolder('file:///workspace/my%20docs', 'file:///workspace/my docs')).toBe(true);
+        expect(sameFolder('file:///workspace/a', 'file:///workspace/ab')).toBe(false);
     });
 });
