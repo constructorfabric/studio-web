@@ -8,7 +8,7 @@
 //! reach another org. Cross-org identity operations (merge) stay a narrow
 //! platform action.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -130,6 +130,10 @@ pub struct UserProfile {
 /// How stale a recorded "last seen" may be before a request writes it again.
 /// A write per request would turn every read into a write.
 pub const LAST_SEEN_GRANULARITY_MS: i64 = 5 * 60 * 1000;
+
+/// How long what the realm said about a person is trusted before it is asked
+/// again. An address changed in the identity provider shows within a day.
+pub const REALM_REFRESH_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// How an organization describes one of its people. Every field is optional,
 /// and none of it decides anything: it is what a members screen shows.
@@ -338,8 +342,8 @@ pub struct IdentityService {
     first_login_join: OnceLock<Option<(Uuid, String)>>,
     /// When each person's "last seen" was last written by this process.
     last_seen: Mutex<HashMap<String, i64>>,
-    /// The people this process has already asked the realm about.
-    realm_read: Mutex<HashSet<String>>,
+    /// When this process last asked the realm about each person.
+    realm_read: Mutex<HashMap<String, i64>>,
 }
 
 impl IdentityService {
@@ -351,7 +355,7 @@ impl IdentityService {
             federated: OnceLock::new(),
             first_login_join: OnceLock::new(),
             last_seen: Mutex::new(HashMap::new()),
-            realm_read: Mutex::new(HashSet::new()),
+            realm_read: Mutex::new(HashMap::new()),
         }
     }
 
@@ -577,19 +581,23 @@ impl IdentityService {
     ///
     /// A person first seen through a token carries no name in Studio — the
     /// token's subject is all `resolve_caller` has — so without this a
-    /// members screen shows ids. Once per person per process; a failed read is
-    /// retried by the next call. Never fatal, for the same reason as `seen`.
+    /// members screen shows ids. At most once per person per
+    /// [`REALM_REFRESH_MS`] and process; a failed read is retried by the next
+    /// call. Never fatal, for the same reason as `seen`.
     pub async fn refresh_from_realm(&self, user_id: &str) {
         let Some(Some(directory)) = self.federated.get() else {
             return;
         };
-        if !self
-            .realm_read
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(user_id.to_owned())
         {
-            return;
+            let now = now_ms();
+            let mut read = self.realm_read.lock().unwrap_or_else(|e| e.into_inner());
+            if read
+                .get(user_id)
+                .is_some_and(|at| now - at < REALM_REFRESH_MS)
+            {
+                return;
+            }
+            read.insert(user_id.to_owned(), now);
         }
         let logins = match self.store.logins_of(user_id).await {
             Ok(logins) => logins,
@@ -664,6 +672,38 @@ impl IdentityService {
         let logins = self.store.logins_of(user_id).await?;
         let aliases = self.store.aliases_of(user_id).await?;
         Ok(person_emails(profile_email, &logins, &aliases))
+    }
+
+    /// Every address of each of these people, read in two queries whatever
+    /// their number. `people` pairs a user id with their profile address.
+    pub async fn emails_of_people(
+        &self,
+        people: &[(String, Option<String>)],
+    ) -> Result<HashMap<String, Vec<PersonEmail>>> {
+        let ids: Vec<String> = people.iter().map(|(id, _)| id.clone()).collect();
+        let mut logins: HashMap<String, Vec<LoginView>> = HashMap::new();
+        for login in self.store.logins_of_many(&ids).await? {
+            logins.entry(login.user_id.clone()).or_default().push(login);
+        }
+        let mut aliases: HashMap<String, Vec<AliasRecord>> = HashMap::new();
+        for alias in self.store.aliases_of_many(&ids).await? {
+            aliases
+                .entry(alias.user_id.clone())
+                .or_default()
+                .push(alias);
+        }
+        Ok(people
+            .iter()
+            .map(|(id, email)| {
+                let mut own_logins = logins.remove(id).unwrap_or_default();
+                own_logins.sort_by_key(|l| l.linked_at_epoch_ms);
+                let own_aliases = aliases.remove(id).unwrap_or_default();
+                (
+                    id.clone(),
+                    person_emails(email.as_deref(), &own_logins, &own_aliases),
+                )
+            })
+            .collect())
     }
 
     /// How one organization describes its people, by user id.
@@ -1790,11 +1830,14 @@ impl IdentityService {
                 &membership.source,
             )
             .await?;
+            self.carry_directory(&membership.org_id, from_user, into_user)
+                .await?;
             self.store
                 .delete_membership(from_user, &membership.org_id)
                 .await?;
             result.memberships_moved += 1;
         }
+        self.carry_avatar(from_user, into_user).await?;
 
         source.merged_into = Some(into_user.to_owned());
         source.updated_at_epoch_ms = now_ms();
@@ -1803,6 +1846,58 @@ impl IdentityService {
         // may go is now wrong.
         memberships_changed();
         Ok(result)
+    }
+}
+
+impl IdentityService {
+    /// In one organization, give the merge target the source's description
+    /// when it has none of its own, and point whoever reported to the source
+    /// at the target.
+    async fn carry_directory(&self, org_id: &str, from_user: &str, into_user: &str) -> Result<()> {
+        let directory = self.store.directory_in_org(org_id).await?;
+        if let Some(described) = directory.get(from_user)
+            && !directory.contains_key(into_user)
+        {
+            let mut carried = described.clone();
+            if carried.reports_to.as_deref() == Some(into_user) {
+                carried.reports_to = None;
+            }
+            self.store
+                .set_directory(into_user, org_id, &carried)
+                .await?;
+        }
+        for (user_id, described) in &directory {
+            if user_id == from_user || described.reports_to.as_deref() != Some(from_user) {
+                continue;
+            }
+            let mut repointed = described.clone();
+            repointed.reports_to = (user_id != into_user).then(|| into_user.to_owned());
+            self.store
+                .set_directory(user_id, org_id, &repointed)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Give the merge target the source's stored photo when it has none, and
+    /// remove the source's: a merged-away person is never shown.
+    async fn carry_avatar(&self, from_user: &str, into_user: &str) -> Result<()> {
+        let Some(photo) = self.store.avatar_of(from_user).await? else {
+            return Ok(());
+        };
+        let mut target = self
+            .store
+            .get_user(into_user)
+            .await?
+            .ok_or_else(|| anyhow!("target user {into_user} does not exist"))?;
+        if self.store.avatar_of(into_user).await?.is_none() && target.avatar_url.is_none() {
+            self.store.put_avatar(into_user, &photo).await?;
+            target.avatar_url = Some(avatar_path(into_user, &photo.digest));
+            target.updated_at_epoch_ms = now_ms();
+            self.store.upsert_user(&target).await?;
+        }
+        self.store.delete_avatar(from_user).await?;
+        Ok(())
     }
 }
 

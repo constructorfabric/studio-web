@@ -114,6 +114,23 @@ pub(crate) trait IdentityStore: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+    /// Every sign-in of any of these people, for a listing that would
+    /// otherwise ask once per person.
+    async fn logins_of_many(&self, user_ids: &[String]) -> Result<Vec<LoginView>> {
+        let mut all = Vec::new();
+        for id in user_ids {
+            all.extend(self.logins_of(id).await?);
+        }
+        Ok(all)
+    }
+    /// Every alias of any of these people; see [`Self::logins_of_many`].
+    async fn aliases_of_many(&self, user_ids: &[String]) -> Result<Vec<AliasRecord>> {
+        let mut all = Vec::new();
+        for id in user_ids {
+            all.extend(self.aliases_of(id).await?);
+        }
+        Ok(all)
+    }
     /// Record that the person made a request at `at_ms`.
     async fn touch_last_seen(&self, _user_id: &str, _at_ms: i64) -> Result<()> {
         Ok(())
@@ -765,6 +782,52 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn logins_of_many(&self, user_ids: &[String]) -> Result<Vec<LoginView>> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let ids = user_ids
+            .iter()
+            .map(|id| parse_uuid(id))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(entity::login::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::login::Column::UserId.is_in(ids)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(login_to_view)
+            .collect())
+    }
+
+    async fn aliases_of_many(&self, user_ids: &[String]) -> Result<Vec<AliasRecord>> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let ids = user_ids
+            .iter()
+            .map(|id| parse_uuid(id))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(entity::alias::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::alias::Column::UserId.is_in(ids)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(alias_to_record)
+            .collect())
     }
 
     async fn touch_last_seen(&self, user_id: &str, at_ms: i64) -> Result<()> {

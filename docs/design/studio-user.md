@@ -172,8 +172,8 @@ UI preferences, when they were last seen — and a `merged_into` pointer once
 merged away. A person who signed in with several logins has several addresses:
 the profile's, the one the identity provider holds for each login, and any
 attributed `email` alias; the API lists all of them as `emails`. A blank
-profile is named from the realm the first time the person, or a members
-listing, reads it. A **photo** is stored with the person and served at a URL
+profile is named from the realm when the person, or a members listing, reads
+it, and the realm is asked again at most once a day. A **photo** is stored with the person and served at a URL
 carrying its digest. A **login** is
 a `(provider, subject)` that resolves to a person; Studio's own realm is
 provider `keycloak`. A **membership** is `(person, organization)` with a role
@@ -181,7 +181,9 @@ provider `keycloak`. A **membership** is `(person, organization)` with a role
 (`creation`, `assignment`, `invitation`, `bootstrap`, `first_login`, `manual`).
 It also carries how the organization describes the person — company,
 department, title, manager — so each organization describes its own people
-and sees no other's description (ADR-0023).
+and sees no other's description (ADR-0023). A merge gives the target the source's
+description and photo where it has none of its own, and points whoever
+reported to the source at the target.
 An **alias** is `(kind, external_id)` with a confidence. An **invitation** is
 an address, a role (`member` or `admin`, never `owner`) and a token digest,
 valid for 14 days.
