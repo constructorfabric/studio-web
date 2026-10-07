@@ -60,11 +60,58 @@ export interface DirectoryMembership {
  *  step with the membership. */
 export type MembershipRole = "owner" | "admin" | "member";
 
+/** One address a person can be reached at. A person with several sign-ins
+ *  has several: the profile's, each sign-in's, and attributed `email` aliases. */
+export interface PersonEmail {
+  /** Lowercased. */
+  address: string;
+  /** profile | sign_in | alias */
+  source: string;
+  /** The identity provider, or a confirmed alias, vouches for it. */
+  verified: boolean;
+  /** The one to show first. */
+  primary: boolean;
+}
+
+/** How an organization describes one of its people — shown, never decided from. */
+export interface MemberDirectory {
+  /** The company the person works for. */
+  affiliation?: string | null;
+  department?: string | null;
+  /** Job title. */
+  title?: string | null;
+  /** The member they report to, by user id. */
+  reports_to?: string | null;
+}
+
+/** The caller's Studio person, from `GET /studio-user/v1/me`. */
+export interface StudioProfile {
+  id: string;
+  display_name?: string | null;
+  /** What the person typed; `emails` lists every address they hold. */
+  email?: string | null;
+  /** Usable as is in an `<img>`: a stored photo is served anonymously at a URL carrying its digest. */
+  avatar_url?: string | null;
+  locale?: string | null;
+  created_at_epoch_ms: number;
+  updated_at_epoch_ms: number;
+  /** Absent from a backend older than the people profile. */
+  emails?: PersonEmail[];
+  last_seen_at_epoch_ms?: number | null;
+}
+
 /** One member of an organization, from `GET /studio-user/v1/organizations/{id}/members`. */
 export interface OrgMember {
   user_id: string;
   display_name?: string | null;
   email?: string | null;
+  /** Every address the member holds. Absent from an older backend. */
+  emails?: PersonEmail[];
+  avatar_url?: string | null;
+  /** When the member last made a request, to within five minutes. */
+  last_seen_at_epoch_ms?: number | null;
+  /** How the organization describes the member. */
+  directory?: MemberDirectory | null;
   role: MembershipRole | string;
   status: "active" | "suspended";
   /** creation | assignment | invitation | bootstrap | first_login | manual */
@@ -80,6 +127,9 @@ export interface PersonLogin {
   subject: string;
   verified: boolean;
   linked_at_epoch_ms: number;
+  /** The address the identity provider holds for this sign-in, as last read. */
+  email?: string | null;
+  email_verified?: boolean;
 }
 
 /** An external account attributed to a person (`github`, `email`, …). */
@@ -2540,6 +2590,20 @@ export const api = {
       "items",
     ),
 
+  /** The caller's Studio person, named from the identity provider when blank. */
+  myProfile: (token: string) => request<StudioProfile>("/studio-user/v1/me", token),
+
+  /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
+  uploadMyAvatar: (token: string, contentType: string, base64: string) =>
+    request<StudioProfile>("/studio-user/v1/me/avatar", token, {
+      method: "PUT",
+      body: JSON.stringify({ content_type: contentType, data: base64 }),
+    }),
+
+  /** Remove the caller's stored photo. */
+  deleteMyAvatar: (token: string) =>
+    request<StudioProfile>("/studio-user/v1/me/avatar", token, { method: "DELETE" }),
+
   /** One member's sign-in methods and attributed accounts. `people.view`, and
    *  only for somebody in that organization (404 otherwise). */
   memberIdentities: (token: string, orgId: string, userId: string) =>
@@ -2554,7 +2618,13 @@ export const api = {
     token: string,
     userId: string,
     orgId: string,
-    input: { role: MembershipRole; status?: "active" | "suspended"; source?: "assignment" | "manual" },
+    input: {
+      role: MembershipRole;
+      status?: "active" | "suspended";
+      source?: "assignment" | "manual";
+      /** Replaces how the organization describes the person; absent leaves it. */
+      directory?: MemberDirectory;
+    },
   ) =>
     request<OrgMember>(
       `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
