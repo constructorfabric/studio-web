@@ -1605,7 +1605,7 @@ fn doc_excerpt(body: &str, max: usize) -> String {
             || line.starts_with('|')
             || line.starts_with("- [ ]")
             || line.starts_with("- [x]")
-            || (line.starts_with('[') && line.ends_with(')'))
+            || is_link_only(line)
         {
             continue;
         }
@@ -1620,6 +1620,18 @@ fn doc_excerpt(body: &str, max: usize) -> String {
     }
     let collapsed: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(max).collect()
+}
+
+/// A line that is only a link, as a table of contents is made of:
+/// `[Design](DESIGN.md)`, `- [1. Overview](#1-overview)`, `2. [Scope](#scope)`.
+fn is_link_only(line: &str) -> bool {
+    let bare = line
+        .trim_start_matches(['-', '*', '+'])
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit())
+        .trim_start_matches('.')
+        .trim();
+    bare.starts_with('[') && bare.ends_with(')') && bare.contains("](")
 }
 
 fn text(v: &str, link: Option<&str>, updated: Option<&str>) -> Value {
@@ -2628,6 +2640,21 @@ mod tests {
         );
         assert_eq!(doc_excerpt(body, 12), "PRD — Billin");
         assert_eq!(doc_excerpt("<!-- never closed", 100), "");
+    }
+
+    /// The table of contents a spec template generates is not the purpose. It
+    /// filled the whole excerpt of every gear PRD on the stand (2026-10-07).
+    #[test]
+    fn a_table_of_contents_is_not_part_of_the_excerpt() {
+        let body = "# PRD — Ledger\n\
+            - [1. Overview](#1-overview)\n  - [1.1 Purpose](#11-purpose)\n\
+            1. [Scope](#scope)\n\
+            ## 1. Overview\n\
+            Records every movement. See [the design](DESIGN.md) for how.\n";
+        assert_eq!(
+            doc_excerpt(body, 1000),
+            "PRD — Ledger 1. Overview Records every movement. See [the design](DESIGN.md) for how."
+        );
     }
 
     /// `gears/bss/ledger/gear.toml`, verbatim. Every gear in `gears-rust` is
