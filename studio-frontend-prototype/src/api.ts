@@ -328,6 +328,14 @@ export type Composability = "runs" | "blocked" | "undescribed";
 export interface Candidate {
   name: string;
   kind: string;
+  /** Which step proposed it: `contract` (the engine reports the gear provides
+   *  one of the capability's contracts) or `evidence` (its words were found in
+   *  what the gear says about itself). Every `contract` comes first. */
+  step?: "contract" | "evidence";
+  /** The provided contracts that satisfy the capability (`contract` only). */
+  contracts?: string[];
+  /** The text around the first term found (`evidence` only). */
+  passage?: string | null;
   /** The gear declares this capability itself (gear.toml, or its catalogue
    *  page) -- a statement, not a match on the words it uses. */
   declared?: boolean;
@@ -339,6 +347,13 @@ export interface Candidate {
   composable: Composability;
   /** The engine's reason, when `blocked`. */
   composable_why?: string | null;
+}
+
+/** Why a candidate was offered, in the words of the step that offered it. */
+export function matchReason(c: Candidate): string {
+  if (c.step === "contract") return `provides ${(c.contracts ?? []).join(", ")}`;
+  const how = c.declared ? "the gear declares this capability" : `matched by words: ${c.why.join(", ")}`;
+  return c.passage ? `${how} — “${c.passage}”` : how;
 }
 
 /** One capability, and what could fill it. */
@@ -534,6 +549,9 @@ export interface Capability {
   label: string;
   /** Empty means "match the key itself". */
   terms: string[];
+  /** What the Gearbox engine can report a gear as providing, any of which
+   *  satisfies the capability. Matched before `terms`. */
+  contracts?: string[];
   owner: string;
   owner_tenant_id?: string | null;
 }
@@ -1413,6 +1431,14 @@ export function sessionOrigin(url: string): string {
   }
 }
 
+/** The vocabulary's contracts as the composer takes them: capability key to
+ *  contracts. A capability without any is left out, and is found by its terms. */
+function contractsOf(vocabulary: readonly Capability[]): Record<string, string[]> {
+  const contracts: Record<string, string[]> = {};
+  for (const cap of vocabulary) if (cap.contracts?.length) contracts[cap.key] = cap.contracts;
+  return contracts;
+}
+
 const withAlignedHost = (s: StudioSession): StudioSession => ({
   ...s,
   url: alignSessionHost(s.url),
@@ -2095,7 +2121,7 @@ export const api = {
   upsertCapability: (
     token: string,
     workspaceId: string,
-    body: { key: string; label: string; terms?: string[]; hidden?: boolean },
+    body: { key: string; label: string; terms?: string[]; contracts?: string[]; hidden?: boolean },
   ) =>
     request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
       method: "POST",
@@ -3406,9 +3432,10 @@ export const api = {
   conformance: (token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
+    const contracts = contractsOf(vocabulary);
     return request<Conformance>("/studio-components-catalog/v1/conformance", token, {
       method: "POST",
-      body: JSON.stringify({ project_id: projectId, capabilities, terms }),
+      body: JSON.stringify({ project_id: projectId, capabilities, terms, contracts }),
     });
   },
   composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
@@ -3417,10 +3444,11 @@ export const api = {
     // rather than sent as an empty list.
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
+    const contracts = contractsOf(vocabulary);
     return request<{ items: PlanRow[]; total: number }>(
       "/studio-components-catalog/v1/compose",
       token,
-      { method: "POST", body: JSON.stringify({ capabilities, terms }) },
+      { method: "POST", body: JSON.stringify({ capabilities, terms, contracts }) },
     );
   },
   /** What moved in each catalogued gear, over a window of days.

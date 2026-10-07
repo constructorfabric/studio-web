@@ -326,6 +326,7 @@ impl DocumentsRepo {
             .update_columns([
                 capability::Column::Label,
                 capability::Column::Terms,
+                capability::Column::Contracts,
                 capability::Column::Hidden,
                 capability::Column::UpdatedAt,
             ])?;

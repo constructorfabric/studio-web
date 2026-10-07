@@ -98,11 +98,58 @@ impl Composability {
     }
 }
 
+/// Which step of the mapping proposed a candidate (`cpt-studio-fr-spec-gear-mapping`).
+///
+/// The two are different kinds of answer and never share one ranking.
+/// - `Contract`: the engine reports that the gear provides one of the
+///   capability's contracts. The same request gives the same answer every time.
+/// - `Evidence`: the capability's words appear in what the gear says about
+///   itself. Every evidence match ranks below every contract match.
+///
+/// A capability that neither step covers is a gap ([`PlanRow::gap`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Contract,
+    Evidence,
+}
+
+impl Step {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Step::Contract => "contract",
+            Step::Evidence => "evidence",
+        }
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Step::Contract => 0,
+            Step::Evidence => 1,
+        }
+    }
+}
+
+/// What a capability is looked for with: the workspace's effective vocabulary.
+#[derive(Debug, Clone, Default)]
+pub struct Vocabulary {
+    /// Capability key to the words searched for in a gear's prose.
+    pub terms: std::collections::BTreeMap<String, Vec<String>>,
+    /// Capability key to the contracts that satisfy it.
+    pub contracts: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 /// One component offered for one capability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub name: String,
     pub kind: String,
+    pub step: Step,
+    /// The contracts the gear provides that satisfy the capability. Empty for
+    /// an evidence match.
+    pub contracts: Vec<String>,
+    /// For an evidence match, the text around the first term found, so the
+    /// proposal can be checked against its source.
+    pub passage: Option<String>,
     /// The gear itself declares this capability (`gear.toml`, or a person on
     /// its catalogue page) -- a statement, not a guess from its words.
     pub declared: bool,
@@ -146,9 +193,14 @@ const SHORTLIST: usize = 5;
 /// hyphen, a slash and an `@` all start a word: `storage` finds
 /// `cf-gears-file-storage` and `state` finds `@gears-frontx/state`.
 fn mentions(hay: &str, term: &str) -> bool {
+    mention_at(hay, term).is_some()
+}
+
+/// Where [`mentions`] finds `term` in `hay`, as a byte offset.
+fn mention_at(hay: &str, term: &str) -> Option<usize> {
     let term = term.trim().to_lowercase();
     if term.is_empty() {
-        return false;
+        return None;
     }
     let hay_bytes = hay.as_bytes();
     let mut from = 0usize;
@@ -159,18 +211,121 @@ fn mentions(hay: &str, term: &str) -> bool {
                 .get(at - 1)
                 .is_some_and(|b| b.is_ascii_alphanumeric());
         if !preceded_by_word_char {
-            return true;
+            return Some(at);
         }
-        from = at + 1;
+        // Past the whole first character of the match: `find` returned a
+        // char boundary, and one byte on may not be one.
+        from = at + term.chars().next().map_or(1, char::len_utf8);
         if from >= hay.len() {
             break;
         }
     }
-    false
+    None
+}
+
+/// How much text a passage keeps on each side of the term.
+const PASSAGE_CONTEXT: usize = 80;
+
+/// The text around the first of `words` that one of `texts` mentions.
+///
+/// The texts are searched one at a time and in order, so a passage never runs
+/// from one field into the next.
+fn passage(texts: &[String], words: &[String]) -> Option<String> {
+    for word in words {
+        for text in texts {
+            let lower = text.to_lowercase();
+            let Some(at) = mention_at(&lower, word) else {
+                continue;
+            };
+            // Lowercasing can change byte lengths outside ASCII. The window is
+            // then taken from the lowercased text, so its offsets stay valid.
+            let source = if lower.len() == text.len() {
+                text
+            } else {
+                &lower
+            };
+            let mut start = at.saturating_sub(PASSAGE_CONTEXT);
+            while !source.is_char_boundary(start) {
+                start -= 1;
+            }
+            let mut end = (at + word.trim().len() + PASSAGE_CONTEXT).min(source.len());
+            while !source.is_char_boundary(end) {
+                end += 1;
+            }
+            let mut out = source[start..end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if start > 0 {
+                out.insert_str(0, "… ");
+            }
+            if end < source.len() {
+                out.push_str(" …");
+            }
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// The contracts the engine reports a gear as providing, as the catalogue
+/// sync wrote them into its profile (`auto.gdl_contracts`, see
+/// `gearbox::gear_facts`). `—` is the sync's word for none.
+fn provided_contracts(profile: Option<&Value>) -> Vec<String> {
+    let Some(field) = profile
+        .and_then(|p| p.get("auto"))
+        .and_then(|a| a.get("gdl_contracts"))
+    else {
+        return Vec::new();
+    };
+    field
+        .get("v")
+        .and_then(Value::as_str)
+        .or_else(|| field.as_str())
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty() && *c != "—")
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Does a provided contract satisfy a wanted one?
+///
+/// - The same id.
+/// - A contract named without its version takes any version:
+///   `authz-resolver/AuthZResolverApi` is satisfied by
+///   `authz-resolver/AuthZResolverApi@v1`.
+/// - A GTS segment is satisfied by a chain that ends with it, from a `~`
+///   boundary: `cf.core.idp.plugin.v1~` by
+///   `cf.toolkit.plugins.plugin.v1~cf.core.idp.plugin.v1~`.
+fn satisfies(provided: &str, wanted: &str) -> bool {
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        return false;
+    }
+    if provided == wanted {
+        return true;
+    }
+    if let Some(rest) = provided.strip_prefix(wanted)
+        && rest.starts_with('@')
+        && !wanted.contains('@')
+    {
+        return true;
+    }
+    wanted.ends_with('~')
+        && provided
+            .strip_suffix(wanted)
+            .is_some_and(|head| head.ends_with('~'))
 }
 
 /// Everything about a component that a capability's terms are matched against.
 fn haystack(component: &Value, profile: Option<&Value>) -> String {
+    texts(component, profile).join(" ").to_lowercase()
+}
+
+/// The fields [`haystack`] is made of, one by one and as written.
+fn texts(component: &Value, profile: Option<&Value>) -> Vec<String> {
     let text = |key: &str| {
         component
             .get(key)
@@ -202,8 +357,9 @@ fn haystack(component: &Value, profile: Option<&Value>) -> String {
         text("category"),
         profile_text(profile),
     ]
-    .join(" ")
-    .to_lowercase()
+    .into_iter()
+    .filter(|t| !t.is_empty())
+    .collect()
 }
 
 /// The capability keys a component declares: its `capabilities` field as the
@@ -244,20 +400,27 @@ fn profile_text(profile: Option<&Value>) -> String {
         .to_owned()
 }
 
-/// Resolve capabilities to candidate components.
+/// Resolve capabilities to candidate components, contract first, evidence
+/// second, gap last (`cpt-studio-principle-catalog-contract-first`).
 ///
-/// `terms` is the workspace's effective capability vocabulary — a capability it
-/// invented can give its own search terms rather than getting zero candidates
-/// and no explanation (ADR-0014 §5). A capability the vocabulary does not know
-/// is matched against its own name, which is what it meant before vocabularies
-/// existed.
+/// `vocabulary` is the workspace's effective capability vocabulary. A
+/// capability it invented can give its own contracts and search terms, rather
+/// than getting zero candidates and no explanation (ADR-0014 §5). A capability
+/// the vocabulary does not know has no contracts, and its own name is the only
+/// search term, which is what it meant before vocabularies existed.
 pub fn plan(
     capabilities: &[String],
     components: &[Value],
     profiles: &serde_json::Map<String, Value>,
-    terms: &std::collections::BTreeMap<String, Vec<String>>,
+    vocabulary: &Vocabulary,
 ) -> Vec<PlanRow> {
-    plan_with_limit(capabilities, components, profiles, terms, Some(SHORTLIST))
+    plan_with_limit(
+        capabilities,
+        components,
+        profiles,
+        vocabulary,
+        Some(SHORTLIST),
+    )
 }
 
 /// [`plan`] with every candidate kept: for a question about the whole set --
@@ -267,48 +430,71 @@ pub fn plan_all(
     capabilities: &[String],
     components: &[Value],
     profiles: &serde_json::Map<String, Value>,
-    terms: &std::collections::BTreeMap<String, Vec<String>>,
+    vocabulary: &Vocabulary,
 ) -> Vec<PlanRow> {
-    plan_with_limit(capabilities, components, profiles, terms, None)
+    plan_with_limit(capabilities, components, profiles, vocabulary, None)
 }
 
 fn plan_with_limit(
     capabilities: &[String],
     components: &[Value],
     profiles: &serde_json::Map<String, Value>,
-    terms: &std::collections::BTreeMap<String, Vec<String>>,
+    vocabulary: &Vocabulary,
     limit: Option<usize>,
 ) -> Vec<PlanRow> {
+    let no_contracts = Vec::new();
     capabilities
         .iter()
         .map(|capability| {
             let own = vec![capability.clone()];
-            let words = terms
+            let words = vocabulary
+                .terms
                 .get(capability)
                 .filter(|t| !t.is_empty())
                 .unwrap_or(&own);
+            let wanted = vocabulary
+                .contracts
+                .get(capability)
+                .unwrap_or(&no_contracts);
             let mut candidates: Vec<Candidate> = components
                 .iter()
                 .filter_map(|component| {
                     let name = component.get("name").and_then(Value::as_str)?;
-                    let hay = haystack(component, profiles.get(name));
-                    let declared = declared_capabilities(component, profiles.get(name))
+                    let profile = profiles.get(name);
+                    let contracts: Vec<String> = provided_contracts(profile)
+                        .into_iter()
+                        .filter(|p| wanted.iter().any(|w| satisfies(p, w)))
+                        .collect();
+                    let declared = declared_capabilities(component, profile)
                         .iter()
                         .any(|c| c.eq_ignore_ascii_case(capability));
+                    let hay = haystack(component, profile);
                     let mut why: Vec<String> = Vec::new();
                     if declared {
                         why.push("declared".to_owned());
                     }
+                    let mut found: Vec<String> = Vec::new();
                     for word in words.iter().chain(std::iter::once(capability)) {
-                        if mentions(&hay, word) && !why.iter().any(|w| w == word) {
-                            why.push(word.clone());
+                        if mentions(&hay, word) && !found.iter().any(|w| w == word) {
+                            found.push(word.clone());
                         }
                     }
-                    if why.is_empty() {
+                    why.extend(found.iter().cloned());
+                    let step = if !contracts.is_empty() {
+                        Step::Contract
+                    } else if !why.is_empty() {
+                        Step::Evidence
+                    } else {
                         return None;
-                    }
+                    };
+                    let passage = (step == Step::Evidence)
+                        .then(|| passage(&texts(component, profile), &found))
+                        .flatten();
                     Some(Candidate {
                         name: name.to_owned(),
+                        step,
+                        contracts,
+                        passage,
                         declared,
                         kind: component
                             .get("kind")
@@ -332,9 +518,13 @@ fn plan_with_limit(
             // A gear that says it provides the capability comes before any
             // that only mentions its words; the rest of the order applies
             // within each.
+            // Above all of it, the step: a gear the engine reports as
+            // providing a contract comes before every gear found by its words.
             candidates.sort_by(|a, b| {
-                b.declared
-                    .cmp(&a.declared)
+                a.step
+                    .rank()
+                    .cmp(&b.step.rank())
+                    .then(b.declared.cmp(&a.declared))
                     .then(a.built.rank().cmp(&b.built.rank()))
                     .then(a.composable.rank().cmp(&b.composable.rank()))
                     .then(b.score.cmp(&a.score))
@@ -465,16 +655,181 @@ mod tests {
         json!({ "name": name, "kind": "gear", "description": description })
     }
 
-    fn vocabulary(pairs: &[(&str, &[&str])]) -> std::collections::BTreeMap<String, Vec<String>> {
+    fn keyed(pairs: &[(&str, &[&str])]) -> std::collections::BTreeMap<String, Vec<String>> {
         pairs
             .iter()
-            .map(|(k, terms)| {
+            .map(|(k, items)| {
                 (
                     (*k).to_owned(),
-                    terms.iter().map(|t| (*t).to_owned()).collect(),
+                    items.iter().map(|t| (*t).to_owned()).collect(),
                 )
             })
             .collect()
+    }
+
+    /// A vocabulary of search terms only, as every one was before contracts.
+    fn vocabulary(pairs: &[(&str, &[&str])]) -> Vocabulary {
+        Vocabulary {
+            terms: keyed(pairs),
+            contracts: Default::default(),
+        }
+    }
+
+    /// A profile as the sync writes it for a gear the engine describes.
+    fn providing(contracts: &str) -> Value {
+        json!({ "auto": { "gdl_contracts": { "v": contracts, "b": contracts } } })
+    }
+
+    // ---- contract first, evidence second, gap last -----------------------
+
+    #[test]
+    fn a_contract_is_satisfied_by_its_id_any_version_or_a_gts_chain_ending_in_it() {
+        assert!(satisfies("a/Api@v1", "a/Api@v1"));
+        assert!(satisfies("a/Api@v2", "a/Api"));
+        assert!(!satisfies("a/Api@v2", "a/Api@v1"));
+        assert!(
+            !satisfies("a/ApiV2@v1", "a/Api"),
+            "a longer trait name is another contract"
+        );
+        assert!(satisfies(
+            "cf.toolkit.plugins.plugin.v1~cf.core.idp.plugin.v1~",
+            "cf.core.idp.plugin.v1~"
+        ));
+        assert!(
+            !satisfies(
+                "cf.toolkit.plugins.plugin.v1~x.cf.core.idp.plugin.v1~",
+                "cf.core.idp.plugin.v1~"
+            ),
+            "a segment only matches from a `~` boundary"
+        );
+        assert!(!satisfies("anything", "  "));
+    }
+
+    /// The rule of `cpt-studio-principle-catalog-contract-first`: a gear that
+    /// provides the contract comes first, however few words it shares with
+    /// the capability, and however built the word matches are.
+    #[test]
+    fn a_contract_match_outranks_every_evidence_match() {
+        let components = vec![
+            component(
+                "cf-gears-wordy",
+                "authentication authentication login identity",
+            ),
+            component("cf-gears-resolver", "resolves requests"),
+        ];
+        let profiles: serde_json::Map<String, Value> = [
+            (
+                "cf-gears-wordy".to_owned(),
+                json!({ "auto": { "crates": { "n": 3 } } }),
+            ),
+            ("cf-gears-resolver".to_owned(), {
+                let mut p =
+                    providing("cf.toolkit.plugins.plugin.v1~cf.core.authn_resolver.plugin.v1~");
+                p["auto"]["crates"] = json!({ "n": 0 });
+                p
+            }),
+        ]
+        .into_iter()
+        .collect();
+        let vocab = Vocabulary {
+            terms: keyed(&[("auth", &["authentication", "login", "identity"])]),
+            contracts: keyed(&[("auth", &["cf.core.authn_resolver.plugin.v1~"])]),
+        };
+        let rows = plan(&["auth".to_owned()], &components, &profiles, &vocab);
+        let row = &rows[0];
+        assert_eq!(row.candidates[0].name, "cf-gears-resolver");
+        assert_eq!(row.candidates[0].step, Step::Contract);
+        assert_eq!(
+            row.candidates[0].contracts,
+            ["cf.toolkit.plugins.plugin.v1~cf.core.authn_resolver.plugin.v1~"]
+        );
+        assert_eq!(row.candidates[0].passage, None);
+        assert_eq!(row.candidates[1].step, Step::Evidence);
+        assert!(!row.gap);
+    }
+
+    #[test]
+    fn the_same_request_gives_the_same_contract_matches() {
+        let components: Vec<Value> = ["c", "a", "b"].iter().map(|n| component(n, "")).collect();
+        let profiles: serde_json::Map<String, Value> = ["c", "a", "b"]
+            .iter()
+            .map(|n| ((*n).to_owned(), providing("x/Api@v1, y/Other@v1")))
+            .collect();
+        let vocab = Vocabulary {
+            terms: Default::default(),
+            contracts: keyed(&[("cap", &["x/Api"])]),
+        };
+        let first = plan(&["cap".to_owned()], &components, &profiles, &vocab);
+        let again = plan(&["cap".to_owned()], &components, &profiles, &vocab);
+        assert_eq!(first, again);
+        let names: Vec<&str> = first[0]
+            .candidates
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert!(
+            first[0]
+                .candidates
+                .iter()
+                .all(|c| c.contracts == ["x/Api@v1"])
+        );
+    }
+
+    #[test]
+    fn a_gear_the_engine_reports_nothing_for_is_not_a_contract_match() {
+        let profiles: serde_json::Map<String, Value> =
+            [("g".to_owned(), providing("—"))].into_iter().collect();
+        let vocab = Vocabulary {
+            terms: Default::default(),
+            contracts: keyed(&[("cap", &["x/Api"])]),
+        };
+        let rows = plan(
+            &["cap".to_owned()],
+            &[component("g", "")],
+            &profiles,
+            &vocab,
+        );
+        assert!(rows[0].gap);
+    }
+
+    /// An evidence match cites where its word was found, so it can be checked.
+    #[test]
+    fn an_evidence_match_cites_its_passage() {
+        let long = format!(
+            "{} Issues invoices for every tenant at the end of the month. {}",
+            "Lorem ipsum dolor sit amet. ".repeat(6),
+            "Consectetur adipiscing elit. ".repeat(6)
+        );
+        let rows = plan(
+            &["billing".to_owned()],
+            &[component("cf-gears-ledger", &long)],
+            &serde_json::Map::new(),
+            &vocabulary(&[("billing", &["invoice"])]),
+        );
+        let c = &rows[0].candidates[0];
+        assert_eq!(c.step, Step::Evidence);
+        let passage = c.passage.as_deref().expect("a passage");
+        assert!(
+            passage.contains("Issues invoices for every tenant"),
+            "{passage}"
+        );
+        assert!(
+            passage.starts_with("… ") && passage.ends_with(" …"),
+            "{passage}"
+        );
+        assert!(passage.len() < long.len());
+    }
+
+    #[test]
+    fn a_passage_is_taken_from_one_field_and_survives_non_ascii_text() {
+        let texts = vec![
+            "Ünïcödé prefix — then storage of files".to_owned(),
+            "storage elsewhere".to_owned(),
+        ];
+        let p = passage(&texts, &["storage".to_owned()]).expect("found");
+        assert!(p.contains("storage of files"), "{p}");
+        assert!(!p.contains("elsewhere"), "{p}");
     }
 
     // ---- the matching rule ----------------------------------------------

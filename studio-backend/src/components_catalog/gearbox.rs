@@ -114,6 +114,9 @@ pub struct EngineGear {
     /// Set on a host: the extension points plugins fill.
     #[serde(default)]
     pub extension_points: Vec<EnginePoint>,
+    /// The contracts it provides, projected from `#[toolkit::provides]`.
+    #[serde(default)]
+    pub provides: Vec<EngineProvide>,
     /// `rest`, `rest_host`, `grpc_hub`, … — projected from `#[toolkit::gear]`.
     #[serde(default)]
     pub runtime_caps: Vec<String>,
@@ -161,6 +164,30 @@ pub struct EnginePackage {
     /// Relative to the corpus root.
     #[serde(default)]
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineProvide {
+    /// The engine's contract id, `<owner gear>/<Trait>@v<major>`.
+    pub contract: String,
+}
+
+impl EngineGear {
+    /// Everything the engine checks that this gear does for others:
+    /// - the contracts it provides;
+    /// - the spec of each extension point it hosts;
+    /// - the spec of the point it implements, when it is a plugin.
+    ///
+    /// The composer matches a capability's contracts against these
+    /// (`cpt-studio-fr-spec-gear-mapping`).
+    pub fn contracts(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.provides.iter().map(|p| p.contract.clone()).collect();
+        out.extend(self.extension_points.iter().filter_map(|p| p.spec.clone()));
+        out.extend(self.fills.as_ref().and_then(|f| f.point.spec.clone()));
+        out.sort();
+        out.dedup();
+        out
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -757,6 +784,7 @@ pub fn gear_facts(catalogue: &EngineCatalogue, corpus: &str) -> BTreeMap<String,
                 "gdl_caps": fact(&list(g.runtime_caps.clone())),
                 "gdl_deps": fact(&list(g.colocated_deps.iter().map(|d| crate_of(d)).collect())),
                 "gdl_role": fact(&role),
+                "gdl_contracts": fact(&list(g.contracts())),
                 "gdl_config": fact(&list(catalogue.unset_config(g))),
                 "gdl_runs": runs,
                 "gdl_corpus": fact(corpus),
@@ -2282,6 +2310,47 @@ mod tests {
         assert!(
             !f.contains_key("cf-gears-ledger"),
             "no descriptor, no facts"
+        );
+        // The fixture's points carry no spec and nothing provides a contract.
+        assert_eq!(get("cf-gears-tenant-resolver", "gdl_contracts"), "—");
+    }
+
+    /// What the composer matches a capability's contracts against, in the
+    /// shape `gearbox catalogue --format json` writes at ea964f9.
+    #[test]
+    fn a_gears_contracts_are_what_it_provides_hosts_and_implements() {
+        let catalogue: EngineCatalogue = serde_json::from_value(json!({"gears": {
+            "authz-resolver": {
+                "id": "authz-resolver",
+                "package": {"crate_name": "cf-authz-resolver"},
+                "provides": [{"contract": "authz-resolver/AuthZResolverApi@v1",
+                              "provider_gear": "authz-resolver", "transports": ["local", "rest"]}],
+                "extension_points": [{"sdk": {"crate_name": "cf-authz-resolver-sdk"},
+                                      "spec": "cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~"}]
+            },
+            "static-authz-plugin": {
+                "id": "static-authz-plugin",
+                "package": {"crate_name": "cf-static-authz-plugin"},
+                "implements": {"point": {"sdk": {"crate_name": "cf-authz-resolver-sdk"},
+                                         "spec": "cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~"}}
+            }
+        }}))
+        .expect("the engine's shape deserializes");
+        assert_eq!(
+            catalogue.gears["authz-resolver"].contracts(),
+            [
+                "authz-resolver/AuthZResolverApi@v1",
+                "cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~",
+            ]
+        );
+        assert_eq!(
+            catalogue.gears["static-authz-plugin"].contracts(),
+            ["cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~"]
+        );
+        let f = gear_facts(&catalogue, "corpus");
+        assert_eq!(
+            f["cf-authz-resolver"]["gdl_contracts"]["v"],
+            "authz-resolver/AuthZResolverApi@v1, cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~"
         );
     }
 

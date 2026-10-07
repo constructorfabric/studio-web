@@ -114,6 +114,8 @@ pub mod capability {
         pub label: String,
         /// JSON array of search terms.
         pub terms: String,
+        /// JSON array of contracts (`m0012`).
+        pub contracts: String,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
         pub created_at: OffsetDateTime,

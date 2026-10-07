@@ -113,6 +113,10 @@ pub struct CapabilityDto {
     pub label: String,
     /// Words that make a component a candidate. Empty means "match the key".
     pub terms: Vec<String>,
+    /// What the Gearbox engine can report a gear as providing, any of which
+    /// satisfies the capability: a contract id with or without its version, or a
+    /// GTS extension-point segment. Matched before `terms`.
+    pub contracts: Vec<String>,
     /// "builtin", "organization" or "workspace".
     pub owner: String,
     pub owner_tenant_id: Option<Uuid>,
@@ -132,6 +136,7 @@ pub struct UpsertCapabilityDto {
     pub key: String,
     pub label: String,
     pub terms: Option<Vec<String>>,
+    pub contracts: Option<Vec<String>>,
     pub hidden: Option<bool>,
 }
 
@@ -567,6 +572,7 @@ impl From<Capability> for CapabilityDto {
             key: c.key,
             label: c.label,
             terms: c.terms,
+            contracts: c.contracts,
             owner,
             owner_tenant_id,
             hidden: c.hidden,
@@ -1146,6 +1152,7 @@ async fn upsert_capability_at(
         key: body.key,
         label: body.label,
         terms: body.terms.unwrap_or_default(),
+        contracts: body.contracts.unwrap_or_default(),
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };

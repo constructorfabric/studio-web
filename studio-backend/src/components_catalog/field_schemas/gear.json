@@ -696,6 +696,16 @@
      "lamp": false
     },
     {
+     "key": "gdl_contracts",
+     "label": "Contracts",
+     "source": {
+      "class": "engine",
+      "ref": "provides, extension points and implements"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
      "key": "gdl_caps",
      "label": "Runtime capabilities",
      "source": {

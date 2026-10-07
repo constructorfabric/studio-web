@@ -317,6 +317,7 @@ fn cap_row(tenant: Uuid, key: &str, label: &str, terms: &str) -> capability::Mod
         key: key.to_string(),
         label: label.to_string(),
         terms: terms.to_string(),
+        contracts: "[]".to_string(),
         hidden: false,
         created_at: now,
         updated_at: now,

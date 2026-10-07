@@ -825,6 +825,14 @@ pub struct PlanRowDto {
 pub struct CandidateDto {
     pub name: String,
     pub kind: String,
+    /// Which step proposed it: `contract` (the engine reports the gear provides
+    /// one of the capability's contracts) or `evidence` (its words were found in
+    /// what the gear says about itself). Every `contract` ranks first.
+    pub step: String,
+    /// The provided contracts that satisfy the capability. Empty for `evidence`.
+    pub contracts: Vec<String>,
+    /// For `evidence`, the text around the first term found. Null otherwise.
+    pub passage: Option<String>,
     /// The gear declares this capability itself, rather than being found by
     /// the words in its name and description.
     pub declared: bool,
@@ -863,6 +871,11 @@ pub struct ComposeRequest {
     /// (ADR-0014 §5).
     #[serde(default)]
     pub terms: std::collections::BTreeMap<String, Vec<String>>,
+    /// Capability key to the contracts that satisfy it, from the same
+    /// vocabulary. Matched before `terms`; a capability absent from it is
+    /// found by its terms alone.
+    #[serde(default)]
+    pub contracts: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// POST /studio-components-catalog/v1/compose — match needs to components.
@@ -916,6 +929,9 @@ pub struct ConformanceRequest {
     /// The workspace's capability vocabulary, as for `/compose`.
     #[serde(default)]
     pub terms: std::collections::BTreeMap<String, Vec<String>>,
+    /// The contracts of the same vocabulary, as for `/compose`.
+    #[serde(default)]
+    pub contracts: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// A component the code depends on.
@@ -1034,7 +1050,15 @@ async fn conformance(
     in_code.sort();
     in_code.dedup();
 
-    let all = super::compose::plan_all(&req.capabilities, &components, &profiles, &req.terms);
+    let all = super::compose::plan_all(
+        &req.capabilities,
+        &components,
+        &profiles,
+        &super::compose::Vocabulary {
+            terms: req.terms,
+            contracts: req.contracts,
+        },
+    );
     let mut explained: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let items: Vec<ConformanceRowDto> = all
         .into_iter()
@@ -1145,7 +1169,15 @@ async fn compose_plan(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let profiles = profiles_by_gear(profile_nodes.into_iter().map(|n| n.value));
 
-    let rows = super::compose::plan(&req.capabilities, &components, &profiles, &req.terms);
+    let rows = super::compose::plan(
+        &req.capabilities,
+        &components,
+        &profiles,
+        &super::compose::Vocabulary {
+            terms: req.terms,
+            contracts: req.contracts,
+        },
+    );
     let items: Vec<PlanRowDto> = rows
         .into_iter()
         .map(|row| PlanRowDto {
@@ -1158,6 +1190,9 @@ async fn compose_plan(
                 .map(|c| CandidateDto {
                     name: c.name,
                     kind: c.kind,
+                    step: c.step.as_str().to_owned(),
+                    contracts: c.contracts,
+                    passage: c.passage,
                     declared: c.declared,
                     score: u32::try_from(c.score).unwrap_or(u32::MAX),
                     why: c.why,
@@ -3039,6 +3074,8 @@ pub fn register_routes(
         .summary("Match what a product needs against the components that exist")
         .description(
             "Answers `what can we build this from?` for a list of capabilities, and answers it              the same way wherever it is asked. The App Spec's Compose button and a project's              Components tab ask it from two directions and must not get two answers.
+
+             CONTRACT MATCHES COME FIRST. A gear the Gearbox engine reports as providing one              of the capability's `contracts` is a `contract` match; a gear whose words mention              the capability's `terms` is an `evidence` match and cites its `passage`. Every              evidence match ranks below every contract match, and the order below applies              within each step.
 
              CANDIDATES COME BACK BUILT FIRST, and the shortlist is cut after that sort rather              than before it — a well-written stub is mostly prose, prose is what keywords              match, and a stub that outranked a shipped component would answer the question              with something nobody can build from. Components that were never built are              LABELLED rather than dropped, because a design may legitimately name a component              that is still only a design.
 

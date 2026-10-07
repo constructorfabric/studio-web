@@ -321,7 +321,7 @@ describe("compose client", () => {
       "/cf/studio-components-catalog/v1/compose",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ capabilities: ["chat"], terms: { chat: ["chat", "messaging"] } }),
+        body: JSON.stringify({ capabilities: ["chat"], terms: { chat: ["chat", "messaging"] }, contracts: {} }),
       }),
     );
   });
@@ -332,7 +332,19 @@ describe("compose client", () => {
     const fetchMock = jsonMock({ items: [], total: 0 });
     await api.composePlan("token", ["billing"], [cap("billing", [])]);
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
-    expect(body).toEqual({ capabilities: ["billing"], terms: {} });
+    expect(body).toEqual({ capabilities: ["billing"], terms: {}, contracts: {} });
+  });
+
+  it("sends the contracts the vocabulary names, and leaves out a capability with none", async () => {
+    // Contracts are matched before terms, so a capability that has them must
+    // carry them to the server; one without them is found by its terms alone.
+    const fetchMock = jsonMock({ items: [], total: 0 });
+    await api.composePlan("token", ["auth", "chat"], [
+      { ...cap("auth", ["login"]), contracts: ["cf.core.authn_resolver.plugin.v1~"] },
+      cap("chat", ["chat"]),
+    ]);
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.contracts).toEqual({ auth: ["cf.core.authn_resolver.plugin.v1~"] });
   });
 
   it("returns the rows the server planned, unedited", async () => {

@@ -39,6 +39,7 @@ import {
   StageStatus,
   WrittenFile,
   findingItems,
+  matchReason,
 } from "./api";
 import {
   collectBatch,
@@ -3116,7 +3117,7 @@ function ComposePlanModal({
                         <span
                           key={c.name}
                           title={
-                            `matched: ${c.why.join(", ")}` +
+                            matchReason(c) +
                             (c.built === "docs-only"
                               ? " · the catalogue found no crate under this component — docs and a manifest only"
                               : "")
@@ -3129,6 +3130,9 @@ function ComposePlanModal({
                         >
                           <span style={{ fontWeight: 600 }}>{shortName(c.name)}</span>
                           <span style={{ opacity: 0.6, marginLeft: 6, fontSize: 10 }}>{c.kind}</span>
+                          {c.step === "contract" && (
+                            <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700 }}>contract</span>
+                          )}
                           {c.built === "docs-only" && (
                             <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700 }}>
                               docs only

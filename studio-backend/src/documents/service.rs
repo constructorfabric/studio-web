@@ -482,6 +482,7 @@ impl DocumentsService {
             key: cap.key.clone(),
             label: cap.label.clone(),
             terms: serde_json::to_string(&cap.terms)?,
+            contracts: serde_json::to_string(&cap.contracts)?,
             hidden: cap.hidden,
             created_at: now,
             updated_at: now,
@@ -1116,10 +1117,13 @@ fn analysis_from_row(row: analysis::Model) -> Result<Analysis> {
 fn capability_from_row(row: capability::Model, workspace_id: Option<Uuid>) -> Result<Capability> {
     let terms: Vec<String> =
         serde_json::from_str(&row.terms).context("capability `terms` is malformed")?;
+    let contracts: Vec<String> =
+        serde_json::from_str(&row.contracts).context("capability `contracts` is malformed")?;
     Ok(Capability {
         key: row.key,
         label: row.label,
         terms,
+        contracts,
         owner: owner_of(row.tenant_id, workspace_id),
         hidden: row.hidden,
     })
@@ -2581,6 +2585,7 @@ mod tests {
             key: key.to_string(),
             label: label.to_string(),
             terms: "[\"custom\"]".to_string(),
+            contracts: "[]".to_string(),
             hidden,
             created_at: now,
             updated_at: now,

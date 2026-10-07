@@ -55,7 +55,7 @@ rules, not rendering, and a second portal would have grown its own copy.
 | `cpt-studio-fr-gear-catalogue` | A `catalog.sync` run reads crates.io, repository sources and roadmap boards into `gear`, `crate_version`, `gear_profile`, `frontx`, `kit` and `roadmap_item` nodes; the read routes serve components, versions, values, history, the reference and activity. |
 | `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
 | `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file. |
-| `cpt-studio-fr-spec-gear-mapping` | Planned: `compose.rs` matches a capability first through the contracts the vocabulary names against the `provide(...)` the engine catalogue reports per gear, then by searching gear documentation, then reports a gap. See `cpt-studio-principle-catalog-contract-first`. |
+| `cpt-studio-fr-spec-gear-mapping` | `compose.rs` matches a capability first through the contracts the vocabulary names against what the engine reports per gear, then by the vocabulary's terms in the catalogue's text with a cited passage, then reports a gap. The catalogue sync writes the engine's report into the profile as `gdl_contracts`: provided contracts, hosted extension points and implemented ones. Searching gear documentation is planned. See `cpt-studio-principle-catalog-contract-first`. |
 | `cpt-studio-fr-mapping-decisions` | Planned: a decision is a graph edge from the specification section through the capability to the gear, carrying who, which step, the gear version and the document revision. |
 
 #### NFR Allocation
@@ -161,11 +161,16 @@ A gear that *declares* a capability's contract is a different kind of answer
 from a gear whose documentation *mentions* the capability, and the mapping
 never mixes the two in one ranking.
 - **Contract matches** come from data the engine checks: the vocabulary's
-  contracts for the capability against each gear's `provide(...)`. The same
-  request gives the same answer every time.
-- **Evidence matches** come from search over gear documentation. Each one cites
-  its passage, and all of them rank below every contract match. They are how a
-  capability nobody has given a contract yet still gets a candidate.
+  contracts for the capability against what the engine reports each gear
+  doing for others. That is a contract it provides (`<gear>/<Trait>@v<N>`,
+  from `#[toolkit::provides]`), the GTS spec of an extension point it hosts,
+  or the spec of the point it implements. A vocabulary entry without a version
+  takes any version, and a GTS segment matches a chain that ends with it. The
+  same request gives the same answer every time.
+- **Evidence matches** come from search: today the vocabulary's terms in the
+  catalogue's text about the gear, with gear documentation planned. Each one
+  cites its passage, and all of them rank below every contract match. They are
+  how a capability nobody has given a contract yet still gets a candidate.
 - **A gap** is reported as a gap, never filled by the nearest keyword. It is
   the input of a new gear.
 

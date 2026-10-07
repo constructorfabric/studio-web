@@ -118,7 +118,7 @@ These terms are used with exactly this meaning in every document under `docs/`.
 | Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
 | Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
 | Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
-| Contract | A GTS id a gear declares with `provide(...)` in its `gear.gdl`: what the gear does for others, stated so the engine can check it. |
+| Contract | What the Gearbox engine reports a gear doing for others, so it is checked rather than read from prose: a contract the gear provides (`<gear>/<Trait>@v<N>`, projected from `#[toolkit::provides]`), the GTS spec of an extension point it hosts, or the spec of the point it implements as a plugin. |
 | Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
 | Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
 | Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
@@ -521,7 +521,7 @@ The system **MUST** compose a `product.gdl` from picked gears, resolve it with t
 - [ ] `p1` - **ID**: `cpt-studio-fr-spec-gear-mapping`
 
 The system **MUST** map every capability a product's specification requires to gears in this order, and **MUST** say for each proposal which step produced it:
-1. **Contract.** A gear that declares the capability's contract with `provide(...)` in its `gear.gdl` is matched. The organization's capability vocabulary translates a capability key into the contracts that satisfy it.
+1. **Contract.** A gear the Gearbox engine reports as providing one of the capability's contracts is matched: a provided contract, a hosted extension point or an implemented one. The organization's capability vocabulary translates a capability key into the contracts that satisfy it.
 2. **Evidence.** A capability no declared contract satisfies is searched for in the gears' documentation. A proposal from search cites the passage that supports it, and ranks below every contract match.
 3. **Gap.** A capability neither step covers is a gap, offered as the starting point of a new gear.
 
@@ -945,7 +945,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
 | `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
-| `cpt-studio-fr-spec-gear-mapping` | planned: `studio-backend/src/components_catalog/compose.rs` (today keyword matching only); #205, #199 |
+| `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/components_catalog/compose.rs` (contract, then evidence from the catalogue's text with a cited passage, then gap); `gearbox.rs` (`gdl_contracts`); `documents/model.rs` (`Capability::contracts`); planned: evidence from gear documentation; #205, #199 |
 | `cpt-studio-fr-mapping-decisions` | planned: #205, #206 |
 | `cpt-studio-fr-nfr-to-profile` | planned: #205 |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |

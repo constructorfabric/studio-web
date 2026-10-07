@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  matchReason,
   type DeclaredCapability,
   type GearConfig,
   type GearboxStatus,
@@ -668,9 +669,7 @@ function SuggestedComponents({
                           <span
                             key={c.name}
                             title={
-                              (c.declared
-                                ? "the gear declares this capability"
-                                : `matched by words: ${c.why.join(", ")}`) +
+                              matchReason(c) +
                               (c.built === "docs-only"
                                 ? " · the catalogue found no crate under this component — docs and a manifest only"
                                 : "")
@@ -693,12 +692,16 @@ function SuggestedComponents({
                             )}
                             <ComponentLink nav={nav} name={c.name} />
                             <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                            {c.declared ? (
+                            {c.step === "contract" ? (
+                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
+                                CONTRACT
+                              </span>
+                            ) : c.declared ? (
                               <span title="The gear declares this capability itself" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>
                                 DECLARED
                               </span>
                             ) : (
-                              <span title={`Found by the words in its name and description: ${c.why.join(", ")}`} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
+                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
                                 by words
                               </span>
                             )}
