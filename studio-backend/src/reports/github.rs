@@ -29,6 +29,17 @@ pub trait PlanReader: Send + Sync {
         connection_id: Option<Uuid>,
         file: &PlanFile,
     ) -> Result<FileText>;
+
+    /// Whether the connection the board is read through resolves in
+    /// `tenant` and its token is readable -- asked before the board sync is
+    /// queued, because that sync reads the board on its own time and treats
+    /// a board it cannot read as one source of many, so it cannot refuse.
+    async fn connection(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+    ) -> Result<()>;
 }
 
 pub struct GitHubPlanReader {
@@ -109,6 +120,19 @@ pub fn decode_contents(body: &Value) -> Result<FileText> {
 
 #[async_trait]
 impl PlanReader for GitHubPlanReader {
+    async fn connection(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+    ) -> Result<()> {
+        self.connectors
+            .named_or_default(ctx, tenant, connection_id, "github")
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow!("the board cannot be read: {e:#}"))
+    }
+
     async fn read(
         &self,
         ctx: &SecurityContext,

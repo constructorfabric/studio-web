@@ -43,10 +43,14 @@ const ATTENTION: CSSProperties = {
   color: "var(--destructive, #dc2626)",
 };
 
-/** Poll a run until it ends. */
-async function finished(token: string, runId: string): Promise<{ ok: boolean; message: string | null }> {
+/** Poll a run until it ends. `org` is the tenant it was queued in. */
+async function finished(
+  token: string,
+  runId: string,
+  org: string | undefined,
+): Promise<{ ok: boolean; message: string | null }> {
   for (let i = 0; i < 120; i++) {
-    const run = await api.taskRun(token, runId);
+    const run = await api.taskRun(token, runId, org);
     if (run.state === "succeeded") return { ok: true, message: run.summary ?? null };
     if (run.state === "failed" || run.state === "cancelled") return { ok: false, message: run.last_error ?? run.state };
     await new Promise((r) => setTimeout(r, 1500));
@@ -59,12 +63,14 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
   const [err, setErr] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
 
+  // The organization on screen, not the caller's home tenant: the connection
+  // list below is this organization's, so the report must be too.
   const load = useCallback(() => {
     api
-      .reports(token)
+      .reports(token, tenantId)
       .then((r) => setReports(r.items))
       .catch((e) => setErr(errText(e)));
-  }, [token]);
+  }, [token, tenantId]);
 
   useEffect(load, [load]);
   useEffect(() => {
@@ -90,6 +96,7 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
         <ReportCard
           key={r.id}
           token={token}
+          org={tenantId}
           report={r}
           connections={connections}
           onChanged={load}
@@ -101,11 +108,13 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
 
 function ReportCard({
   token,
+  org,
   report,
   connections,
   onChanged,
 }: {
   token: string;
+  org: string | undefined;
   report: Report;
   connections: Connection[];
   onChanged: () => void;
@@ -114,10 +123,10 @@ function ReportCard({
   const pick = useRef<HTMLInputElement>(null);
   useEffect(() => {
     api
-      .reportSchedule(token, report.id)
+      .reportSchedule(token, report.id, org)
       .then(setSchedule)
       .catch(() => setSchedule(null));
-  }, [token, report.id]);
+  }, [token, report.id, org]);
   const [draft, setDraft] = useState<SourceDraft>(() => draftOf(report.source));
   const [upload, setUpload] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -145,7 +154,7 @@ function ReportCard({
 
   const save = () =>
     act("save", async () => {
-      await api.updateReportSource(token, report.id, inputOf(draft));
+      await api.updateReportSource(token, report.id, inputOf(draft), org);
       setUpload(null);
       onChanged();
       return "Saved.";
@@ -153,17 +162,27 @@ function ReportCard({
 
   const refresh = () =>
     act("refresh", async () => {
-      await api.updateReportSource(token, report.id, inputOf(draft));
-      const run = await api.syncReport(token, report.id);
-      const done = await finished(token, run.run_id);
+      await api.updateReportSource(token, report.id, inputOf(draft), org);
+      const run = await api.syncReport(token, report.id, org);
+      const done = await finished(token, run.run_id, org);
+      if (!done.ok) {
+        onChanged();
+        return `Refresh failed: ${done.message}`;
+      }
+      // The refresh only queues the board sync; wait for that too, so the
+      // gears below -- or why there are none -- are the ones it read.
+      const after = await api.reports(token, org);
+      const sync = after.items.find((r) => r.id === report.id)?.source.last_refresh?.sync_run;
+      const synced = sync ? await finished(token, sync, org) : null;
       onChanged();
       setVersion((v) => v + 1);
-      return done.ok ? `Refreshed: ${done.message ?? "plan read, board sync queued"}.` : `Refresh failed: ${done.message}`;
+      if (synced && !synced.ok) return `Board sync failed: ${synced.message}`;
+      return `Refreshed: ${synced?.message ?? done.message ?? "plan read, board sync queued"}.`;
     });
 
   const hourly = (on: boolean) =>
     act("schedule", async () => {
-      setSchedule(await api.updateReportSchedule(token, report.id, on));
+      setSchedule(await api.updateReportSchedule(token, report.id, on, org));
       return on ? "Refreshes every hour." : "No longer refreshes on its own.";
     });
 
@@ -184,7 +203,7 @@ function ReportCard({
         <button
           className="iconbtn primary"
           disabled={!!busy}
-          onClick={() => act("download", () => downloadReport(token, report.id))}
+          onClick={() => act("download", () => downloadReport(token, report.id, undefined, org))}
         >
           {busy === "download" ? "Writing…" : "Download .xlsx"}
         </button>
@@ -288,7 +307,7 @@ function ReportCard({
         <code>consumers: {"{ A: Acronis }"}</code>, and <code>report: back_roadmap</code> or a definition of its own.
       </p>
 
-      {report.id === "roadmap" && <RoadmapReportBody token={token} version={version} />}
+      {report.id === "roadmap" && <RoadmapReportBody token={token} org={org} version={version} />}
     </section>
   );
 }

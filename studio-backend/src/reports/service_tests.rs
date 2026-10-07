@@ -39,10 +39,24 @@ impl RoadmapCatalog for FakeCatalog {
 struct FakeRepo {
     text: &'static str,
     asked: Mutex<Vec<String>>,
+    /// The tenant the connection lives in; another tenant does not find it.
+    connection_tenant: Uuid,
 }
 
 #[async_trait]
 impl PlanReader for FakeRepo {
+    async fn connection(
+        &self,
+        _ctx: &SecurityContext,
+        tenant: Uuid,
+        _c: Option<Uuid>,
+    ) -> Result<()> {
+        if tenant != self.connection_tenant {
+            anyhow::bail!("the board cannot be read: connection not found");
+        }
+        Ok(())
+    }
+
     async fn read(
         &self,
         _ctx: &SecurityContext,
@@ -89,6 +103,7 @@ fn repo() -> Arc<FakeRepo> {
     Arc::new(FakeRepo {
         text: PLAN,
         asked: Mutex::new(Vec::new()),
+        connection_tenant: ctx().subject_tenant_id(),
     })
 }
 
@@ -244,6 +259,45 @@ async fn a_refresh_without_a_board_anywhere_says_so() {
     .unwrap();
     let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
     assert!(format!("{err:#}").contains("no board"), "{err:#}");
+}
+
+/// What dev showed: the source was saved with the organization's connection
+/// and refreshed in a tenant that does not hold it. The sync it queued could
+/// not read the board, succeeded anyway, and the report said nothing.
+#[tokio::test]
+async fn a_connection_this_tenant_does_not_hold_fails_the_refresh_before_any_sync() {
+    let catalog = Arc::new(FakeCatalog::default());
+    let elsewhere = Arc::new(FakeRepo {
+        text: PLAN,
+        asked: Mutex::new(Vec::new()),
+        connection_tenant: Uuid::from_u128(0xc31da936),
+    });
+    let s = service(Arc::clone(&catalog), Some(elsewhere));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_yaml: Some(PLAN.into()),
+            connection_id: Some(Uuid::from_u128(0xdd)),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("connection not found"),
+        "{err:#}"
+    );
+    assert!(catalog.synced.lock().unwrap().is_empty(), "no sync queued");
+    let after = s.source(&ctx(), "roadmap").await.unwrap();
+    assert!(
+        after
+            .last_refresh
+            .and_then(|r| r.error)
+            .is_some_and(|e| e.contains("cannot be read")),
+        "the error is on the source, where the screen reads it"
+    );
 }
 
 #[tokio::test]

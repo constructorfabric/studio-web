@@ -1987,6 +1987,11 @@ export interface SpecQualityVerdict {
   findings?: SpecFindingItem[];
 }
 
+/** `?organization_id=` for a reports call, or nothing when no organization is known. */
+export function orgQuery(org: string | undefined, sep: "?" | "&" = "?"): string {
+  return org ? `${sep}organization_id=${encodeURIComponent(org)}` : "";
+}
+
 export const api = {
   /** Login = validate the token by asking the backend who we are. */
   me: (token: string) => request<Me>("/account-management/v1/me", token),
@@ -3744,8 +3749,13 @@ export const api = {
     );
   },
 
-  taskRun: (token: string, runId: string) =>
-    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}`, token),
+  /** One run. `tenant` names where it was queued when that is not the
+   *  caller's home tenant (a report's runs live in its organization). */
+  taskRun: (token: string, runId: string, tenant?: string) =>
+    request<TaskRun>(
+      `/studio-tasks/v1/runs/${encodeURIComponent(runId)}${tenant ? `?tenant=${encodeURIComponent(tenant)}` : ""}`,
+      token,
+    ),
 
   /** What kinds of work this deployment can run at all. */
   taskTypes: (token: string) =>
@@ -3777,42 +3787,48 @@ export const api = {
 
   /* ── studio-reports gear: report definitions, sources and drawing ── */
 
+  /* Every reports call names the organization on screen (`org`): a caller's
+   * home tenant need not be it -- a platform administrator's is the platform
+   * root, where the organization's connection does not exist. Absent, the
+   * server takes the home tenant. */
+
   /** Every report this deployment draws, with this organization's source. */
-  reports: (token: string) => request<{ items: Report[]; total: number }>("/studio-reports/v1/reports", token),
+  reports: (token: string, org?: string) =>
+    request<{ items: Report[]; total: number }>(`/studio-reports/v1/reports${orgQuery(org)}`, token),
 
   /** A report's data as typed JSON (for `roadmap`: one row per planned gear). */
-  reportSummary: (token: string, report: string) =>
-    request<RoadmapReport>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/summary`, token),
+  reportSummary: (token: string, report: string, org?: string) =>
+    request<RoadmapReport>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/summary${orgQuery(org)}`, token),
 
   /** The report as of `date` (`YYYY-MM-DD`), as the `.xlsx` the server draws. */
-  exportReport: (token: string, report: string, date: string) =>
+  exportReport: (token: string, report: string, date: string, org?: string) =>
     requestBlob(
-      `/studio-reports/v1/reports/${encodeURIComponent(report)}/workbook?date=${encodeURIComponent(date)}`,
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/workbook?date=${encodeURIComponent(date)}${orgQuery(org, "&")}`,
       token,
     ),
 
-  updateReportSource: (token: string, report: string, body: ReportSourceInput) =>
-    request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source`, token, {
+  updateReportSource: (token: string, report: string, body: ReportSourceInput, org?: string) =>
+    request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source${orgQuery(org)}`, token, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
 
   /** Whether the report refreshes on its own. */
-  reportSchedule: (token: string, report: string) =>
-    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token),
+  reportSchedule: (token: string, report: string, org?: string) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule${orgQuery(org)}`, token),
 
-  /** Switch the report's own (hourly) refresh on or off. The server names the
-   *  organization in the schedule; the client never does. */
-  updateReportSchedule: (token: string, report: string, enabled: boolean) =>
-    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token, {
+  /** Switch the report's own (hourly) refresh on or off. The server writes the
+   *  organization into the schedule's payload; the client never does. */
+  updateReportSchedule: (token: string, report: string, enabled: boolean, org?: string) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule${orgQuery(org)}`, token, {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),
 
   /** Read the plan again and sync the board: a `reports.refresh` run. */
-  syncReport: (token: string, report: string) =>
+  syncReport: (token: string, report: string, org?: string) =>
     request<{ run_id: string; status: string }>(
-      `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync`,
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync${orgQuery(org)}`,
       token,
       { method: "POST", headers: idempotent() },
     ),

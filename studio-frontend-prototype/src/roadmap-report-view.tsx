@@ -43,8 +43,8 @@ function today(): string {
 }
 
 /** Save the report's workbook as the server draws it. */
-export async function downloadReport(token: string, report = "roadmap", asOf = today()) {
-  const blob = await api.exportReport(token, report, asOf);
+export async function downloadReport(token: string, report = "roadmap", asOf = today(), org?: string) {
+  const blob = await api.exportReport(token, report, asOf, org);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -53,7 +53,15 @@ export async function downloadReport(token: string, report = "roadmap", asOf = t
   URL.revokeObjectURL(url);
 }
 
-export function RoadmapReportDialog({ token, onClose }: { token: string; onClose: () => void }) {
+export function RoadmapReportDialog({
+  token,
+  org,
+  onClose,
+}: {
+  token: string;
+  org?: string;
+  onClose: () => void;
+}) {
   const [total, setTotal] = useState(0);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -66,7 +74,7 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
           disabled={!total || saving}
           onClick={() => {
             setSaving(true);
-            downloadReport(token)
+            downloadReport(token, "roadmap", undefined, org)
               .catch((e) => setErr(errText(e)))
               .finally(() => setSaving(false));
           }}
@@ -81,7 +89,7 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
       <p className="gcat-hint" style={{ margin: 0 }}>
         Where the board and the plan come from is set once for the organization, under Reports.
       </p>
-      <RoadmapReportBody token={token} onLoaded={(r) => setTotal(r.total)} />
+      <RoadmapReportBody token={token} org={org} onLoaded={(r) => setTotal(r.total)} />
     </Modal>
   );
 }
@@ -89,10 +97,13 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
 /** The report's tables, read from `studio-reports`. `version` reloads it. */
 export function RoadmapReportBody({
   token,
+  org,
   version = 0,
   onLoaded,
 }: {
   token: string;
+  /** The organization whose report this is; the caller's home tenant when absent. */
+  org?: string;
   version?: number;
   onLoaded?: (r: RoadmapReport) => void;
 }) {
@@ -102,7 +113,7 @@ export function RoadmapReportBody({
   useEffect(() => {
     let live = true;
     api
-      .reportSummary(token, "roadmap")
+      .reportSummary(token, "roadmap", org)
       .then((r) => {
         if (!live) return;
         setReport(r);
@@ -114,7 +125,7 @@ export function RoadmapReportBody({
     };
     // `onLoaded` is a callback, not an input: a new one must not reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, version]);
+  }, [token, org, version]);
 
   const s = report?.summary;
   return (

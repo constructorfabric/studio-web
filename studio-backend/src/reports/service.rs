@@ -275,6 +275,11 @@ impl ReportsService {
         }
         let (plan, _) = Self::plan_of(source);
         let effective = source.effective(plan.as_ref()).map_err(|e| anyhow!(e))?;
+        // The sync reads the board later and cannot fail the refresh over it,
+        // so a connection that does not resolve here is said here.
+        if let Some(reader) = &self.reader {
+            reader.connection(ctx, tenant, source.connection_id).await?;
+        }
         let catalog = (self.catalog)()?;
         catalog
             .sync_board(ctx, board_source(tenant, source.connection_id, &effective))

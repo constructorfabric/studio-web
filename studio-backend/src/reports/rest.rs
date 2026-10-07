@@ -1,5 +1,9 @@
 //! `/studio-reports/v1/reports` -- every report this deployment draws, its
 //! source in the caller's organization, and the report itself.
+//!
+//! Every route takes `?organization_id=`: the organization on the caller's
+//! screen, which need not be their home tenant (a platform administrator's
+//! home is the platform root). Absent, the home tenant is meant.
 
 use std::sync::Arc;
 
@@ -19,6 +23,9 @@ use super::refresh_task::{RefreshPayload, TASK_TYPE};
 use super::roadmap::summary::RoadmapReportDto;
 use super::service::{REPORTS, ReportKind, ReportsService, kind};
 use super::source::{PlanSnapshot, Refresh, ReportSource};
+use crate::components_catalog::port::unread_boards;
+use crate::studio_session::access::WorkspaceAccess;
+use crate::tasks::{RunState, RunView};
 
 #[resource_error(gts_id!("cf.studio._.reports.v1~"))]
 pub struct StudioReportsError;
@@ -35,9 +42,93 @@ impl LicenseFeature for License {}
 pub struct Reports {
     pub service: Arc<ReportsService>,
     hub: Arc<ClientHub>,
+    access: Arc<dyn WorkspaceAccess>,
+}
+
+/// `?organization_id=`: whose report a request is about.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct OrganizationQuery {
+    #[serde(default)]
+    pub organization_id: Option<Uuid>,
+}
+
+/// The caller, acting in `tenant`: the same person, token and scopes, with
+/// `tenant` as the tenant everything downstream reads and writes in.
+///
+/// Every part of a report -- its source, the board sync it queues, the
+/// catalogue it is drawn from -- keys on the context's tenant. Rebuilding the
+/// context once, after [`Reports::organization`] has checked the caller
+/// reaches `tenant`, keeps that true without threading a tenant through the
+/// service and the catalogue beside the context that already names one.
+pub fn acting_in(ctx: &SecurityContext, tenant: Uuid) -> ApiResult<SecurityContext> {
+    let mut b = SecurityContext::builder()
+        .subject_id(ctx.subject_id())
+        .subject_tenant_id(tenant)
+        .token_scopes(ctx.token_scopes().to_vec());
+    if let Some(t) = ctx.subject_type() {
+        b = b.subject_type(t);
+    }
+    if let Some(t) = ctx.bearer_token() {
+        b = b.bearer_token(t.clone());
+    }
+    b.build().map_err(internal)
 }
 
 impl Reports {
+    /// The context a request works in: the organization it names, once the
+    /// caller is shown to reach it, else the caller's home tenant.
+    ///
+    /// The home tenant used to be the only answer, and it is the wrong one
+    /// for anyone whose home is not the organization on screen -- a platform
+    /// administrator's home is the platform root. Their report was configured
+    /// with the organization's connection and then refreshed in the root,
+    /// where no such connection exists, so the board was never read.
+    ///
+    /// The guard is the one documents, kits and sessions use: resolve the
+    /// tenant under the caller's own context; account-management refuses one
+    /// outside the caller's reach. Refused or absent, the answer is 404, so a
+    /// caller learns nothing about an organization they do not belong to.
+    async fn organization(
+        &self,
+        ctx: &SecurityContext,
+        q: &OrganizationQuery,
+    ) -> ApiResult<SecurityContext> {
+        let Some(org) = q.organization_id else {
+            return Ok(ctx.clone());
+        };
+        if org == ctx.subject_tenant_id() {
+            return Ok(ctx.clone());
+        }
+        if !self.access.may_reach(ctx, org).await {
+            return Err(StudioReportsError::not_found(format!(
+                "there is no organization {org} for this caller"
+            ))
+            .with_resource(org.to_string())
+            .create());
+        }
+        acting_in(ctx, org)
+    }
+
+    /// Why the board the last refresh asked for was not read, once that sync
+    /// has finished. The refresh only queues the sync, so it cannot know; the
+    /// catalogue's run says so in its result.
+    async fn board_error(&self, ctx: &SecurityContext, s: &ReportSource) -> Option<String> {
+        let run = s.last_refresh.as_ref()?.sync_run?;
+        let view = self
+            .queue()
+            .ok()?
+            .run(ctx.subject_tenant_id(), run)
+            .await
+            .ok()??;
+        board_error_of(&view)
+    }
+
+    async fn source_dto(&self, ctx: &SecurityContext, s: &ReportSource) -> ReportSourceDto {
+        let mut dto = source_dto(s);
+        dto.board_error = self.board_error(ctx, s).await;
+        dto
+    }
+
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
         self.hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(crate::tasks::TASK_QUEUE_INSTANCE_ID))
@@ -105,6 +196,10 @@ pub struct ReportSourceDto {
     /// Absent until a plan has been read.
     pub plan: Option<PlanSummaryDto>,
     pub last_refresh: Option<RefreshDto>,
+    /// Why the board the last refresh synced was not read, once that sync
+    /// finished. The refresh itself only queues the sync, so `last_refresh`
+    /// can say nothing about it.
+    pub board_error: Option<String>,
 }
 
 /// What a read plan holds: what the People sheet, the Gantt's lanes and the
@@ -242,6 +337,29 @@ pub fn source_dto(s: &ReportSource) -> ReportSourceDto {
         snapshot: s.snapshot.as_ref().map(snapshot_dto),
         plan: plan_summary(s),
         last_refresh: s.last_refresh.as_ref().map(refresh_dto),
+        board_error: None,
+    }
+}
+
+/// What a finished board sync says about the board: why it was not read, or
+/// nothing when it was (or when the sync has not finished yet).
+pub fn board_error_of(view: &RunView) -> Option<String> {
+    match view.state {
+        RunState::Failed => Some(format!(
+            "the board sync failed: {}",
+            view.last_error.as_deref().unwrap_or("no reason recorded")
+        )),
+        RunState::Succeeded => {
+            let unread = view.result.as_ref().map(unread_boards).unwrap_or_default();
+            (!unread.is_empty()).then(|| {
+                unread
+                    .iter()
+                    .map(|u| format!("board {} was not read: {}", u.board, u.error))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+        }
+        RunState::Queued | RunState::Running | RunState::Cancelled => None,
     }
 }
 
@@ -268,7 +386,7 @@ pub fn apply(prev: &ReportSource, input: ReportSourceInputDto) -> ReportSource {
     }
 }
 
-fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
+fn report_dto(k: &ReportKind, source: &ReportSource, source_dto: ReportSourceDto) -> ReportDto {
     let (plan, _) = ReportsService::plan_of(source);
     let (definition, sheets, definition_error) =
         match ReportsService::definition_of(k, plan.as_ref()) {
@@ -299,7 +417,7 @@ fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
         definition,
         sheets,
         definition_error,
-        source: source_dto(source),
+        source: source_dto,
     }
 }
 
@@ -308,11 +426,14 @@ fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
 async fn list_reports(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<JsonBody<ReportListDto>> {
+    let ctx = reports.organization(&ctx, &org).await?;
     let mut items = Vec::new();
     for k in &REPORTS {
         let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-        items.push(report_dto(k, &source));
+        let dto = reports.source_dto(&ctx, &source).await;
+        items.push(report_dto(k, &source, dto));
     }
     Ok(Json(ReportListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
@@ -324,18 +445,23 @@ async fn get_report(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<JsonBody<ReportDto>> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-    Ok(Json(report_dto(k, &source)))
+    let dto = reports.source_dto(&ctx, &source).await;
+    Ok(Json(report_dto(k, &source, dto)))
 }
 
 async fn get_report_summary(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<JsonBody<RoadmapReportDto>> {
     report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     Ok(Json(
         reports
             .service
@@ -350,8 +476,10 @@ async fn export_report(
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
     Query(query): Query<WorkbookQuery>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<Response> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let today = match query
         .date
         .as_deref()
@@ -390,19 +518,23 @@ async fn get_report_source(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<JsonBody<ReportSourceDto>> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-    Ok(Json(source_dto(&source)))
+    Ok(Json(reports.source_dto(&ctx, &source).await))
 }
 
 async fn update_report_source(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
     Json(input): Json<ReportSourceInputDto>,
 ) -> ApiResult<JsonBody<ReportSourceDto>> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let prev = reports.service.source(&ctx, k.id).await.map_err(internal)?;
     let saved = reports
         .service
@@ -413,18 +545,20 @@ async fn update_report_source(
                 .with_constraint(e)
                 .create()
         })?;
-    Ok(Json(source_dto(&saved)))
+    Ok(Json(reports.source_dto(&ctx, &saved).await))
 }
 
 async fn sync_report(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
     headers: HeaderMap,
 ) -> ApiResult<(StatusCode, JsonBody<ReportSyncEnqueued>)> {
     let idempotency_key = crate::idempotency::key(&headers)?;
     let k = report(&id)?;
-    // Queued in the caller's own tenant: no organization to hand it to.
+    let ctx = reports.organization(&ctx, &org).await?;
+    // Queued in the organization's own tenant: nothing to hand it on to.
     let payload = serde_json::to_value(RefreshPayload {
         report: k.id.to_string(),
         organization_id: None,
@@ -476,8 +610,10 @@ async fn get_report_schedule(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
 ) -> ApiResult<JsonBody<ReportScheduleDto>> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let v = reports
         .service
         .schedule(&ctx, k.id)
@@ -490,9 +626,11 @@ async fn update_report_schedule(
     Extension(ctx): Extension<SecurityContext>,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
+    Query(org): Query<OrganizationQuery>,
     Json(input): Json<ReportScheduleInputDto>,
 ) -> ApiResult<JsonBody<ReportScheduleDto>> {
     let k = report(&id)?;
+    let ctx = reports.organization(&ctx, &org).await?;
     let cron = input
         .cron
         .as_deref()
@@ -517,6 +655,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Arc<ReportsService>,
     hub: Arc<ClientHub>,
+    access: Arc<dyn WorkspaceAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-reports/v1/reports")
         .operation_id("studio_reports.list_reports")
@@ -530,9 +669,15 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .handler(list_reports)
         .json_response_with_schema::<ReportListDto>(openapi, StatusCode::OK, "The reports")
         .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -547,6 +692,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report)
         .json_response_with_schema::<ReportDto>(openapi, StatusCode::OK, "The report")
@@ -570,6 +720,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_summary)
         .json_response_with_schema::<RoadmapReportDto>(openapi, StatusCode::OK, "The report's data")
@@ -593,6 +748,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(export_report)
         .text_response(
@@ -618,6 +778,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_source)
         .json_response_with_schema::<ReportSourceDto>(openapi, StatusCode::OK, "The source")
@@ -641,6 +806,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(update_report_source)
         .json_request::<ReportSourceInputDto>(openapi, "The source")
@@ -669,6 +839,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .param(crate::idempotency::param())
         .handler(sync_report)
@@ -693,6 +868,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_schedule)
         .json_response_with_schema::<ReportScheduleDto>(openapi, StatusCode::OK, "The schedule")
@@ -707,13 +887,18 @@ pub fn register_routes(
         .description(
             "Creates the schedule the first time, then switches it and sets its expression (hourly \
              unless `cron` says otherwise, in UTC). Schedules are platform-level and fire in the \
-             platform tenant, so this gear writes the caller's organization into the schedule's \
-             payload, and the run it fires hands itself to that organization -- a client never \
-             names a tenant.",
+             platform tenant, so this gear writes the organization (`organization_id`, checked \
+             against the caller's reach) into the schedule's payload, and the run it fires hands \
+             itself to that organization -- a client never writes the payload itself.",
         )
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "The organization whose report this is; the caller's home tenant when absent",
+        )
         .path_param("report_id", "The report (`roadmap`)")
         .handler(update_report_schedule)
         .json_request::<ReportScheduleInputDto>(openapi, "On or off, and how often")
@@ -724,7 +909,11 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Reports { service, hub }))
+    router.layer(Extension(Reports {
+        service,
+        hub,
+        access,
+    }))
 }
 
 #[cfg(test)]
@@ -798,13 +987,11 @@ mod tests {
     #[test]
     fn a_report_lists_its_sheets_and_says_when_the_plans_definition_does_not_read() {
         let k = kind("roadmap").unwrap();
-        let dto = report_dto(
-            k,
-            &ReportSource {
-                report: "roadmap".into(),
-                ..ReportSource::default()
-            },
-        );
+        let empty = ReportSource {
+            report: "roadmap".into(),
+            ..ReportSource::default()
+        };
+        let dto = report_dto(k, &empty, source_dto(&empty));
         assert_eq!(dto.definition, "back_roadmap");
         assert_eq!(
             dto.sheets,
@@ -827,7 +1014,7 @@ mod tests {
             }),
             ..ReportSource::default()
         };
-        let dto = report_dto(k, &bad);
+        let dto = report_dto(k, &bad, source_dto(&bad));
         assert!(dto.definition_error.is_some_and(|e| e.contains("weekly")));
     }
 
@@ -880,5 +1067,106 @@ mod tests {
     fn an_unknown_report_is_not_found() {
         assert!(report("roadmap").is_ok());
         assert!(report("weekly").is_err());
+    }
+
+    fn view(state: RunState, result: Option<serde_json::Value>, err: Option<&str>) -> RunView {
+        RunView {
+            state,
+            result,
+            last_error: err.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_finished_sync_says_which_board_it_did_not_read() {
+        let unread = serde_json::json!({
+            "gears": 0, "versions": 0, "stored": 54,
+            "boards_unread": [{ "board": "constructorfabric/48", "error": "connection ddff5557 not found" }],
+        });
+        let e = board_error_of(&view(RunState::Succeeded, Some(unread), None)).expect("said");
+        assert!(
+            e.contains("constructorfabric/48") && e.contains("not found"),
+            "{e}"
+        );
+        // Read, or not finished: nothing to say.
+        let read = serde_json::json!({ "gears": 0, "versions": 0, "stored": 54 });
+        assert!(board_error_of(&view(RunState::Succeeded, Some(read), None)).is_none());
+        assert!(board_error_of(&view(RunState::Running, None, None)).is_none());
+        assert!(board_error_of(&view(RunState::Queued, None, None)).is_none());
+        let failed = board_error_of(&view(RunState::Failed, None, Some("graph-storage down")));
+        assert!(failed.is_some_and(|e| e.contains("graph-storage down")));
+    }
+
+    #[test]
+    fn acting_in_an_organization_is_the_same_caller_in_its_tenant() {
+        let caller = SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0x46ac))
+            .subject_type("user")
+            .subject_tenant_id(Uuid::from_u128(1))
+            .token_scopes(vec!["studio".into()])
+            .bearer_token("t0ken".to_string())
+            .build()
+            .unwrap();
+        let org = Uuid::from_u128(0xc31d);
+        let acting = acting_in(&caller, org).unwrap();
+        assert_eq!(acting.subject_tenant_id(), org);
+        assert_eq!(acting.subject_id(), caller.subject_id());
+        assert_eq!(acting.subject_type(), Some("user"));
+        assert_eq!(acting.token_scopes(), caller.token_scopes());
+        assert!(acting.bearer_token().is_some());
+    }
+
+    struct Reach(Vec<Uuid>);
+
+    #[async_trait::async_trait]
+    impl WorkspaceAccess for Reach {
+        async fn may_reach(&self, _ctx: &SecurityContext, id: Uuid) -> bool {
+            self.0.contains(&id)
+        }
+    }
+
+    fn reports(reachable: Vec<Uuid>) -> Reports {
+        let catalog: super::super::service::CatalogLink =
+            Arc::new(|| anyhow::bail!("no catalogue in this test"));
+        Reports {
+            service: Arc::new(ReportsService::new(
+                Arc::new(super::super::store::MemoryStore::default()),
+                catalog,
+                None,
+            )),
+            hub: Arc::new(ClientHub::new()),
+            access: Arc::new(Reach(reachable)),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_works_in_the_organization_it_names_when_the_caller_reaches_it() {
+        let home = crate::reports::test_ctx(1);
+        let org = Uuid::from_u128(0xc31d);
+        let r = reports(vec![org]);
+        let named = OrganizationQuery {
+            organization_id: Some(org),
+        };
+        assert_eq!(
+            r.organization(&home, &named)
+                .await
+                .unwrap()
+                .subject_tenant_id(),
+            org
+        );
+        // Not named: the home tenant, as before.
+        let unnamed = OrganizationQuery::default();
+        assert_eq!(
+            r.organization(&home, &unnamed)
+                .await
+                .unwrap()
+                .subject_tenant_id(),
+            home.subject_tenant_id()
+        );
+        // Named but out of reach: not found, and no context to act in.
+        let other = OrganizationQuery {
+            organization_id: Some(Uuid::from_u128(0xbad)),
+        };
+        assert!(r.organization(&home, &other).await.is_err());
     }
 }

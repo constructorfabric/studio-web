@@ -127,4 +127,18 @@ describe("a source's state", () => {
     expect(stateText(stateOf(nobody))).toContain("names no people");
     expect(needsAttention(stateOf({ ...empty, snapshot, plan }))).toBe(false);
   });
+
+  // What dev showed: a plan read, a refresh that went through, and no gears,
+  // because the board sync could not reach the connection.
+  it("says the board was not read, even with a plan in hand", () => {
+    const unread = {
+      ...empty,
+      snapshot,
+      plan,
+      board_error: "board constructorfabric/48 was not read: connection ddff5557 not found",
+    };
+    expect(stateOf(unread).kind).toBe("board-unread");
+    expect(stateText(stateOf(unread))).toContain("connection ddff5557 not found");
+    expect(needsAttention(stateOf(unread))).toBe(true);
+  });
 });

@@ -16,7 +16,15 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 pub use super::roadmap::{RoadmapFields, RoadmapSource as BoardSource};
-use super::service::{CatalogService, SyncSources};
+pub use super::service::UnreadBoard;
+use super::service::{CatalogCounts, CatalogService, SyncSources};
+
+/// The boards a finished `catalog.sync` run could not read, from its result.
+pub fn unread_boards(result: &Value) -> Vec<UnreadBoard> {
+    serde_json::from_value::<CatalogCounts>(result.clone())
+        .map(|c| c.boards_unread)
+        .unwrap_or_default()
+}
 
 /// One catalogued component's reconciled values.
 #[derive(Clone, Debug)]

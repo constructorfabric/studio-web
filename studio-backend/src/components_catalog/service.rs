@@ -982,7 +982,7 @@ fn stale_planned<'a>(
 /// run's final result when it finishes — one shape, so a poll of the run
 /// (`GET /studio-tasks/v1/runs/{id}`) reads a half-finished sync and a
 /// completed one the same way.
-#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CatalogCounts {
     /// Gears (crates) discovered so far.
     #[serde(default)]
@@ -993,12 +993,26 @@ pub struct CatalogCounts {
     /// Nodes flushed to the graph store.
     #[serde(default)]
     pub stored: usize,
+    /// Roadmap boards this run was asked to read and could not, with why.
+    /// The sync still succeeds without them -- a board is one source of many
+    /// -- so this is the only place a caller learns that a board it named
+    /// was never read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boards_unread: Vec<UnreadBoard>,
+}
+
+/// A roadmap board a sync could not read.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnreadBoard {
+    /// `owner/number`.
+    pub board: String,
+    pub error: String,
 }
 
 impl CatalogCounts {
-    /// This value as a progress detail. Infallible in practice — three
-    /// integers always serialize.
-    fn as_detail(self) -> Value {
+    /// This value as a progress detail. Infallible in practice — integers
+    /// and strings always serialize.
+    fn as_detail(&self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|_| json!({}))
     }
 }
@@ -1158,7 +1172,8 @@ impl CatalogService {
 
     /// Write what each roadmap board says about a gear into its profile, and
     /// answer every gear each board plans as a `roadmap_item` node -- matched
-    /// to a component or not -- with the ids of the boards actually read.
+    /// to a component or not -- with the ids of the boards actually read, and
+    /// why each of the others was not.
     ///
     /// Best-effort, like the Gearbox facts: a board this connection cannot see
     /// costs the profiles their plan fields, never the sync. Every plan field is
@@ -1170,12 +1185,17 @@ impl CatalogService {
         roadmaps: &[RoadmapSource],
         profiles: &mut [GtsNode],
         progress: &SyncReporter,
-    ) -> (Vec<GtsNode>, Vec<String>) {
+    ) -> (Vec<GtsNode>, Vec<String>, Vec<UnreadBoard>) {
         let mut planned: Vec<GtsNode> = Vec::new();
         let mut boards_read: Vec<String> = Vec::new();
+        let mut unread: Vec<UnreadBoard> = Vec::new();
         let Some(connectors) = self.connectors.clone() else {
             tracing::warn!("components-catalog: no connector service; roadmap boards skipped");
-            return (planned, boards_read);
+            unread.extend(roadmaps.iter().map(|s| UnreadBoard {
+                board: format!("{}/{}", s.owner, s.number),
+                error: "this deployment has no GitHub connector to read a board with".into(),
+            }));
+            return (planned, boards_read, unread);
         };
         let today = time::OffsetDateTime::now_utc().date().to_string();
         for node in profiles.iter_mut() {
@@ -1194,6 +1214,10 @@ impl CatalogService {
                 Ok(board) => board,
                 Err(e) => {
                     tracing::warn!(error = %format!("{e:#}"), owner = %source.owner, number = source.number, "components-catalog: roadmap board unreadable");
+                    unread.push(UnreadBoard {
+                        board: format!("{}/{}", source.owner, source.number),
+                        error: format!("{e:#}"),
+                    });
                     continue;
                 }
             };
@@ -1307,7 +1331,7 @@ impl CatalogService {
                 }
             }
         }
-        (planned, boards_read)
+        (planned, boards_read, unread)
     }
 
     /// Discover gears from a repository source (best-effort at the call site).
@@ -1576,6 +1600,7 @@ impl CatalogService {
         // and refreshing one should not cost a full scan of the other.
         let mut planned_nodes: Vec<GtsNode> = Vec::new();
         let mut boards_read: Vec<String> = Vec::new();
+        let mut boards_unread: Vec<UnreadBoard> = Vec::new();
         if !sources.roadmaps.is_empty() {
             if profile_nodes.is_empty() {
                 profile_nodes = self
@@ -1587,7 +1612,7 @@ impl CatalogService {
                     .filter(|n| n.value.get("gear_name").is_some())
                     .collect();
             }
-            (planned_nodes, boards_read) = self
+            (planned_nodes, boards_read, boards_unread) = self
                 .apply_roadmaps(ctx, &sources.roadmaps, &mut profile_nodes, progress)
                 .await;
         }
@@ -1744,6 +1769,7 @@ impl CatalogService {
             gears: gears_total,
             versions: versions_total,
             stored,
+            boards_unread,
         };
         progress.set_with("done", counts.as_detail());
         Ok(counts)
@@ -2641,6 +2667,7 @@ fn report(progress: &SyncReporter, phase: String, gears: usize, versions: usize,
             gears,
             versions,
             stored,
+            boards_unread: Vec::new(),
         }
         .as_detail(),
     );

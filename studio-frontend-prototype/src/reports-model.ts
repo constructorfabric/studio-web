@@ -45,6 +45,8 @@ export interface ReportSource {
   snapshot: PlanSnapshot | null;
   plan: PlanSummary | null;
   last_refresh: ReportRefresh | null;
+  /** Why the board the last refresh synced was not read, once that sync finished. */
+  board_error?: string | null;
 }
 
 export interface Report {
@@ -127,6 +129,8 @@ export type SourceState =
   | { kind: "empty" }
   | { kind: "unread"; what: string }
   | { kind: "failed"; error: string }
+  /** The refresh went through, but the board sync it queued could not read the board. */
+  | { kind: "board-unread"; error: string }
   /** The board is known, but there is no plan to draw people and teams from. */
   | { kind: "no-plan" }
   /** A plan was read, but it names nobody. */
@@ -136,6 +140,7 @@ export type SourceState =
 /** Where a source stands, in one line's worth. */
 export function stateOf(s: ReportSource): SourceState {
   if (s.last_refresh?.error) return { kind: "failed", error: s.last_refresh.error };
+  if (s.board_error) return { kind: "board-unread", error: s.board_error };
   if (s.snapshot) {
     if (s.plan && s.plan.people === 0) return { kind: "no-people", from: s.snapshot.from };
     return { kind: "ready", from: s.snapshot.from, at: s.snapshot.read_at, plan: s.plan };
@@ -147,7 +152,7 @@ export function stateOf(s: ReportSource): SourceState {
 
 /** Whether the state is one a person has to act on. */
 export function needsAttention(st: SourceState): boolean {
-  return st.kind === "failed" || st.kind === "no-plan" || st.kind === "no-people";
+  return st.kind === "failed" || st.kind === "board-unread" || st.kind === "no-plan" || st.kind === "no-people";
 }
 
 const EMPTY_WITHOUT_PLAN = "People, the Gantt's team lanes and the project columns stay empty without one";
@@ -161,6 +166,8 @@ export function stateText(st: SourceState): string {
       return `${st.what} has not been read yet — refresh to read it and sync the board.`;
     case "failed":
       return `The last refresh failed: ${st.error}`;
+    case "board-unread":
+      return `The board was not read, so the report has no gears: ${st.error}`;
     case "no-plan":
       return `No plan: load gears.yaml or name the plan file. ${EMPTY_WITHOUT_PLAN}.`;
     case "no-people":

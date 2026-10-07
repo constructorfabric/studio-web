@@ -918,7 +918,7 @@ export function ComponentsCatalog({
             </div>
           </div>
 
-          {showReport && <RoadmapReportDialog token={token} onClose={() => setShowReport(false)} />}
+          {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
 
           {showSources && (
             <SourcesPanel

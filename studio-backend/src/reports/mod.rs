@@ -118,7 +118,12 @@ impl RestApiCapability for StudioReportsGear {
             Arc::clone(&hub),
         )))?;
         let _ = self.service.set(Arc::clone(&service));
-        Ok(rest::register_routes(router, openapi, service, hub))
+        // Who reaches an organization: the guard documents, kits and sessions
+        // already put in front of a tenant a request names.
+        let access = Arc::new(crate::studio_session::access::TenantMembership::new(
+            hub.get::<dyn account_management_sdk::AccountManagementClient>()?,
+        ));
+        Ok(rest::register_routes(router, openapi, service, hub, access))
     }
 }
 
