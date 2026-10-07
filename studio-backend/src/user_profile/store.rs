@@ -5,6 +5,7 @@
 //! is scoped to it through toolkit-db's secure runner (the framework never
 //! hands out a raw connection).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -19,7 +20,10 @@ use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{self, ROOT_TENANT};
-use super::service::{AliasRecord, InvitationRecord, LoginView, MembershipView, UserProfile};
+use super::service::{
+    AliasRecord, AvatarRecord, DirectoryProfile, InvitationRecord, LoginView, MembershipView,
+    UserProfile,
+};
 
 fn scope() -> AccessScope {
     AccessScope::for_tenant(ROOT_TENANT)
@@ -94,6 +98,67 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// acceptances racing would both pass the check.
     async fn accept_invitation(&self, id: &str, user_id: &str) -> Result<bool>;
     async fn delete_invitation(&self, id: &str, org_id: &str) -> Result<bool>;
+
+    // The methods below came with `m0005`. Each has a body so a test double
+    // that has no use for them need not spell them out; the Postgres store
+    // overrides every one.
+
+    /// Record what the identity provider said about one sign-in's address.
+    /// Separate from [`Self::upsert_login`], which knows nothing about it.
+    async fn set_login_email(
+        &self,
+        _provider: &str,
+        _subject: &str,
+        _email: Option<&str>,
+        _verified: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+    /// Every sign-in of any of these people, for a listing that would
+    /// otherwise ask once per person.
+    async fn logins_of_many(&self, user_ids: &[String]) -> Result<Vec<LoginView>> {
+        let mut all = Vec::new();
+        for id in user_ids {
+            all.extend(self.logins_of(id).await?);
+        }
+        Ok(all)
+    }
+    /// Every alias of any of these people; see [`Self::logins_of_many`].
+    async fn aliases_of_many(&self, user_ids: &[String]) -> Result<Vec<AliasRecord>> {
+        let mut all = Vec::new();
+        for id in user_ids {
+            all.extend(self.aliases_of(id).await?);
+        }
+        Ok(all)
+    }
+    /// Record that the person made a request at `at_ms`.
+    async fn touch_last_seen(&self, _user_id: &str, _at_ms: i64) -> Result<()> {
+        Ok(())
+    }
+    /// How one organization describes its people, by user id. Members it has
+    /// not described are absent.
+    async fn directory_in_org(&self, _org_id: &str) -> Result<HashMap<String, DirectoryProfile>> {
+        Ok(HashMap::new())
+    }
+    /// Replace how the organization describes one member. `false` when the
+    /// person holds no membership there.
+    async fn set_directory(
+        &self,
+        _user_id: &str,
+        _org_id: &str,
+        _profile: &DirectoryProfile,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+    async fn put_avatar(&self, _user_id: &str, _avatar: &AvatarRecord) -> Result<()> {
+        Err(anyhow!("this store keeps no photos"))
+    }
+    async fn avatar_of(&self, _user_id: &str) -> Result<Option<AvatarRecord>> {
+        Ok(None)
+    }
+    async fn delete_avatar(&self, _user_id: &str) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 // ── conversions (row -> view) ─────────────────────────────────────────────
@@ -108,6 +173,7 @@ fn user_to_view(m: entity::user::Model) -> UserProfile {
         created_at_epoch_ms: to_ms(m.created_at),
         updated_at_epoch_ms: to_ms(m.updated_at),
         merged_into: m.merged_into.map(|u| u.to_string()),
+        last_seen_at_epoch_ms: m.last_seen_at.map(to_ms),
     }
 }
 fn login_to_view(m: entity::login::Model) -> LoginView {
@@ -117,6 +183,8 @@ fn login_to_view(m: entity::login::Model) -> LoginView {
         user_id: m.user_id.to_string(),
         verified: m.verified,
         linked_at_epoch_ms: to_ms(m.linked_at),
+        email: m.email,
+        email_verified: m.email_verified,
     }
 }
 fn membership_to_view(m: entity::membership::Model) -> MembershipView {
@@ -221,6 +289,8 @@ impl IdentityStore for PgStore {
             merged_into: ActiveValue::Set(merged),
             created_at: ActiveValue::Set(from_ms(profile.created_at_epoch_ms)),
             updated_at: ActiveValue::Set(from_ms(profile.updated_at_epoch_ms)),
+            // Written only by `touch_last_seen`, like `ui_preferences`.
+            last_seen_at: ActiveValue::NotSet,
         };
         let on_conflict =
             SecureOnConflict::<entity::user::Entity>::columns([entity::user::Column::Id])
@@ -295,6 +365,10 @@ impl IdentityStore for PgStore {
             user_id: ActiveValue::Set(parse_uuid(&login.user_id)?),
             verified: ActiveValue::Set(login.verified),
             linked_at: ActiveValue::Set(from_ms(login.linked_at_epoch_ms)),
+            // Written only by `set_login_email`: a re-link must not forget
+            // what the provider said.
+            email: ActiveValue::NotSet,
+            email_verified: ActiveValue::NotSet,
         };
         let on_conflict =
             SecureOnConflict::<entity::login::Entity>::columns([entity::login::Column::Id])
@@ -348,6 +422,12 @@ impl IdentityStore for PgStore {
             source: ActiveValue::Set(m.source.clone()),
             created_at: ActiveValue::Set(from_ms(m.created_at_epoch_ms)),
             updated_at: ActiveValue::Set(from_ms(m.updated_at_epoch_ms)),
+            // Written only by `set_directory`: a role change must not erase
+            // how the organization describes the person.
+            affiliation: ActiveValue::NotSet,
+            department: ActiveValue::NotSet,
+            title: ActiveValue::NotSet,
+            reports_to: ActiveValue::NotSet,
         };
         let on_conflict = SecureOnConflict::<entity::membership::Entity>::columns([
             entity::membership::Column::Id,
@@ -672,4 +752,236 @@ impl IdentityStore for PgStore {
             .await?;
         Ok(result.rows_affected > 0)
     }
+
+    async fn set_login_email(
+        &self,
+        provider: &str,
+        subject: &str,
+        email: Option<&str>,
+        verified: bool,
+    ) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        entity::login::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::login::Column::Id.eq(entity::login_id(provider, subject))),
+            )
+            .col_expr(
+                entity::login::Column::Email,
+                sea_orm::sea_query::Expr::value(email.map(str::to_owned)),
+            )
+            .col_expr(
+                entity::login::Column::EmailVerified,
+                sea_orm::sea_query::Expr::value(verified),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn logins_of_many(&self, user_ids: &[String]) -> Result<Vec<LoginView>> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let ids = user_ids
+            .iter()
+            .map(|id| parse_uuid(id))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(entity::login::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::login::Column::UserId.is_in(ids)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(login_to_view)
+            .collect())
+    }
+
+    async fn aliases_of_many(&self, user_ids: &[String]) -> Result<Vec<AliasRecord>> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let ids = user_ids
+            .iter()
+            .map(|id| parse_uuid(id))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(entity::alias::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::alias::Column::UserId.is_in(ids)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(alias_to_record)
+            .collect())
+    }
+
+    async fn touch_last_seen(&self, user_id: &str, at_ms: i64) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        entity::user::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::user::Column::Id.eq(parse_uuid(user_id)?)))
+            .col_expr(
+                entity::user::Column::LastSeenAt,
+                sea_orm::sea_query::Expr::value(Some(from_ms(at_ms))),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn directory_in_org(&self, org_id: &str) -> Result<HashMap<String, DirectoryProfile>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::membership::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::membership::Column::OrgId.eq(parse_uuid(org_id)?)))
+            .all(&conn)
+            .await?
+            .into_iter()
+            .filter_map(|m| {
+                let profile = DirectoryProfile {
+                    affiliation: m.affiliation,
+                    department: m.department,
+                    title: m.title,
+                    reports_to: m.reports_to.map(|u| u.to_string()),
+                };
+                (profile != DirectoryProfile::default()).then(|| (m.user_id.to_string(), profile))
+            })
+            .collect())
+    }
+
+    async fn set_directory(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        profile: &DirectoryProfile,
+    ) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let id = entity::membership_id(parse_uuid(user_id)?, parse_uuid(org_id)?);
+        let reports_to = match profile.reports_to.as_deref() {
+            Some(s) => Some(parse_uuid(s)?),
+            None => None,
+        };
+        let result = entity::membership::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::membership::Column::Id.eq(id)))
+            .col_expr(
+                entity::membership::Column::Affiliation,
+                sea_orm::sea_query::Expr::value(profile.affiliation.clone()),
+            )
+            .col_expr(
+                entity::membership::Column::Department,
+                sea_orm::sea_query::Expr::value(profile.department.clone()),
+            )
+            .col_expr(
+                entity::membership::Column::Title,
+                sea_orm::sea_query::Expr::value(profile.title.clone()),
+            )
+            .col_expr(
+                entity::membership::Column::ReportsTo,
+                sea_orm::sea_query::Expr::value(reports_to),
+            )
+            .col_expr(
+                entity::membership::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(OffsetDateTime::now_utc()),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn put_avatar(&self, user_id: &str, avatar: &AvatarRecord) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let am = entity::avatar::ActiveModel {
+            user_id: ActiveValue::Set(parse_uuid(user_id)?),
+            tenant_id: ActiveValue::Set(ROOT_TENANT),
+            content_type: ActiveValue::Set(avatar.content_type.clone()),
+            bytes: ActiveValue::Set(avatar.bytes.clone()),
+            digest: ActiveValue::Set(avatar.digest.clone()),
+            updated_at: ActiveValue::Set(from_ms(avatar.updated_at_epoch_ms)),
+        };
+        let on_conflict =
+            SecureOnConflict::<entity::avatar::Entity>::columns([entity::avatar::Column::UserId])
+                .update_columns([
+                    entity::avatar::Column::ContentType,
+                    entity::avatar::Column::Bytes,
+                    entity::avatar::Column::Digest,
+                    entity::avatar::Column::UpdatedAt,
+                ])
+                .map_err(|e| anyhow!("avatar upsert conflict: {e}"))?;
+        entity::avatar::Entity::insert(am)
+            .secure()
+            .scope_unchecked(&scope())
+            .map_err(|e| anyhow!("avatar insert scope: {e}"))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn avatar_of(&self, user_id: &str) -> Result<Option<AvatarRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::avatar::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::avatar::Column::UserId.eq(parse_uuid(user_id)?)))
+            .one(&conn)
+            .await?
+            .map(|m| AvatarRecord {
+                content_type: m.content_type,
+                bytes: m.bytes,
+                digest: m.digest,
+                updated_at_epoch_ms: to_ms(m.updated_at),
+            }))
+    }
+
+    async fn delete_avatar(&self, user_id: &str) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let result = entity::avatar::Entity::delete_many()
+            .filter(Condition::all().add(entity::avatar::Column::UserId.eq(parse_uuid(user_id)?)))
+            .secure()
+            .scope_with(&scope())
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod store_tests;

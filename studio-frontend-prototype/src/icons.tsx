@@ -115,3 +115,14 @@ export const BookIcon = icon(
   "Book",
   <path d="M8 4.3C6.3 2.9 4.5 2.7 2.5 3.5v9.2c2-.8 3.8-.6 5.5.8 1.7-1.4 3.5-1.6 5.5-.8V3.5c-2-.8-3.8-.6-5.5.8zM8 4.3v9.2" />,
 );
+
+/** How Studio is built, in the product menu: three stacked layers, as the
+ *  page draws the gears. */
+export const LayersIcon = icon(
+  "Layers",
+  <>
+    <path d="M8 2.2l5.8 2.9L8 8 2.2 5.1z" />
+    <path d="M2.2 8.1L8 11l5.8-2.9" />
+    <path d="M2.2 11.1L8 14l5.8-2.9" />
+  </>,
+);

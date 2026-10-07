@@ -3,7 +3,7 @@
  * a level of its own, which the gateway's /cf/docs (Stoplight Elements) does
  * not. Scalar is loaded by api-docs/index.html, pinned. */
 
-import { groupByComponent } from "./api-docs";
+import { componentTitle, groupByComponent, onlyComponent } from "./api-docs";
 import type { OpenApiDoc } from "./api-docs";
 
 declare global {
@@ -35,6 +35,20 @@ async function main() {
     fail("The API viewer did not load. Check that cdn.jsdelivr.net is reachable.");
     return;
   }
+  // `?component=` narrows the page to one gear's paths: /architecture/ links
+  // here from a gear. A note above the viewer says so and leads back.
+  const component = new URLSearchParams(window.location.search).get("component");
+  if (component) {
+    doc = onlyComponent(doc, component);
+    const note = document.createElement("p");
+    note.className = "api-docs-scope";
+    note.append(`Only ${componentTitle(component)} (${component}). `);
+    const all = document.createElement("a");
+    all.href = "./";
+    all.textContent = "Show every component";
+    note.append(all);
+    document.body.insertBefore(note, document.getElementById("app"));
+  }
   window.Scalar.createApiReference("#app", {
     content: groupByComponent(doc),
     // Collapsed: forty sections open at once is the flat list again.
@@ -45,7 +59,7 @@ async function main() {
     showDeveloperTools: "never",
     agent: { disabled: true },
     mcp: { disabled: true },
-    metaData: { title: "Studio API" },
+    metaData: { title: component ? `Studio API — ${componentTitle(component)}` : "Studio API" },
   });
 }
 

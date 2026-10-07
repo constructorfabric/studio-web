@@ -89,6 +89,7 @@ import {
   type ProjectMode,
   type RemoteRepo,
   type RepoEntry,
+  type StudioProfile,
   type StudioSession,
   type Tenant,
   type WorkspaceSettings,
@@ -113,12 +114,14 @@ import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
+import { MyPersonCard, PersonPhoto } from "./people-profile";
 import {
   BookIcon,
   CheckIcon,
   CloseIcon,
   GearIcon,
   GridIcon,
+  LayersIcon,
   MenuIcon,
   RefreshIcon,
   ShieldIcon,
@@ -1423,6 +1426,20 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // ProfileView only edits it. It is one of the person's preferences
   // (`usePreference`), so it arrives with the rest of them.
   const [savedTheme] = usePreference(PREF_THEME);
+
+  // The photo comes from the Studio person, not the token: a token carries
+  // a name but no picture. Profile updates it when the person changes it.
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .myProfile(token)
+      .then((p) => live && setAvatarUrl(p.avatar_url ?? null))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token]);
   useEffect(() => {
     if (savedTheme) document.documentElement.dataset.theme = savedTheme;
   }, [savedTheme]);
@@ -1450,13 +1467,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   /** Where this deployment's identity provider keeps its console, or nothing
    *  when it has not said. */
   const idpConsole = useMemo(() => idpConsoleUrl(), []);
-
-  const userInitials = userName
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 
   /* Who the IDE should attribute this person's writing to.
    *
@@ -1739,6 +1749,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               </button>
               <button
                 role="menuitem"
+                title="How the running backend and this portal are built"
+                onClick={() => {
+                  // The page has no theme switch of its own: it takes the
+                  // portal's, which is a preference here, not the OS's.
+                  const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+                  window.open(`/architecture/?theme=${theme}`, "_blank", "noopener");
+                  setProductMenu(false);
+                }}
+              >
+                <span className="ico"><LayersIcon /></span> Architecture
+              </button>
+              <button
+                role="menuitem"
                 title="Organizations, members, workspaces administration"
                 onClick={() => {
                   setProductMenu(false);
@@ -1899,7 +1922,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               onClick={() => setAccountMenu((v) => !v)}
               title="Account"
             >
-              <span className="account-avatar">{userInitials}</span>
+              <PersonPhoto name={userName} url={avatarUrl} size="regular" />
               <span className="account-lines">
                 <span className="account-name">{userName}</span>
                 {/* The context lives here, next to the identity — the two
@@ -2565,7 +2588,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {view === "system" && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
         )}
-        {view === "profile" && <ProfileView me={me} home={home} token={token} />}
+        {view === "profile" && (
+          <ProfileView
+            me={me}
+            home={home}
+            token={token}
+            onPerson={(p) => setAvatarUrl(p.avatar_url ?? null)}
+          />
+        )}
           </>
         )}
         {studio && (
@@ -9583,7 +9613,18 @@ function AiKeysCard({ token }: { token: string }) {
   );
 }
 
-function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: string }) {
+function ProfileView({
+  me,
+  home,
+  token,
+  onPerson,
+}: {
+  me: Me;
+  home: Tenant | null;
+  token: string;
+  /** Told about every change to the person, so the account button follows. */
+  onPerson: (profile: StudioProfile) => void;
+}) {
   // Stored with the person's other preferences (`usePreference`); the form
   // edits a draft and Save commits it.
   const [savedTheme, saveTheme] = usePreference(PREF_THEME, "light");
@@ -9682,6 +9723,8 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
           API: <a href="/api-docs/">/api-docs/</a>
         </p>
       </div>
+
+      <MyPersonCard token={token} onChanged={onPerson} />
 
       <AiKeysCard token={token} />
 

@@ -48,6 +48,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0033](0033-a-report-is-a-definition-over-a-source.md) | A report is a definition over a source, and reports are their own gear | accepted | 2026-10-01 |
 | [0034](0034-the-shell-takes-its-tokens-from-the-kit.md) | The shell takes its tokens from the kit | proposed | 2026-10-05 |
 | [0035](0035-domain-objects-are-authorized-through-the-pdp.md) | Domain objects are authorized through the PDP, and the model by its administrators | accepted | 2026-10-07 |
+| [0036](0036-every-member-sees-who-else-is-in-the-organization.md) | Every member sees who else is in the organization | proposed | 2026-10-07 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

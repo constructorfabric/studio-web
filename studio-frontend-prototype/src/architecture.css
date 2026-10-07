@@ -1,0 +1,223 @@
+/* The /architecture/ page (architecture-page.tsx). Everything reads the
+ * portal's tokens from styles.css, so it follows the light and dark themes the
+ * same way the portal does (data-theme on <html>). */
+
+.arch {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+.arch code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.arch a { color: var(--link-foreground); }
+
+.arch-muted { color: var(--muted-foreground); }
+
+.arch-head { display: grid; gap: 0.75rem; margin-bottom: 0.5rem; }
+.arch-lede { margin: 0; max-width: 72ch; font-size: 15px; line-height: 1.5; }
+.arch-counts { margin: 0; }
+
+.arch-build {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+}
+
+.arch-facts { margin: 0; }
+.arch-fact { min-width: 0; margin: 0.5rem 0 0; }
+.arch-fact dt {
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  color: var(--muted-foreground);
+  margin-bottom: 2px;
+}
+.arch-fact dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.arch-image { display: inline-block; max-width: 100%; }
+
+.arch-warn {
+  border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent);
+  background: var(--warning-soft);
+  color: var(--foreground);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+}
+.arch-warn p { margin: 0.25rem 0; }
+
+.arch-section h2 { margin-bottom: 0.25rem; }
+.arch-section > .arch-muted { margin: 0 0 0.75rem; }
+
+/* ── Legend and the gear chip ── */
+
+.arch-legend {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.arch-legend li { display: flex; align-items: center; gap: 6px; }
+.arch-legend .arch-line-key { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+
+.arch-swatch {
+  width: 18px;
+  height: 12px;
+  border-radius: 4px;
+  display: inline-block;
+  border: 1.5px solid;
+}
+
+/* The fill and edge say where a gear comes from; a dashed edge says plugin. */
+.arch-gear,
+.arch-swatch {
+  --gear-edge: color-mix(in oklab, var(--foreground) 22%, transparent);
+  --gear-fill: var(--card);
+}
+.arch-gear.origin-studio,
+.arch-swatch.origin-studio {
+  --gear-edge: var(--primary);
+  --gear-fill: color-mix(in oklab, var(--primary) 12%, var(--card));
+}
+.arch-gear.role-system,
+.arch-swatch.role-system {
+  --gear-fill: color-mix(in oklab, var(--foreground) 9%, var(--card));
+}
+.arch-swatch { background: var(--gear-fill); border-color: var(--gear-edge); }
+.arch-swatch.role-plugin { border-style: dashed; }
+
+.arch-gear {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1.5px solid var(--gear-edge);
+  border-radius: var(--radius-full);
+  background: var(--gear-fill);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity var(--motion-micro) var(--ease-standard),
+    box-shadow var(--motion-micro) var(--ease-standard);
+}
+.arch-gear.role-plugin { border-style: dashed; }
+.arch-gear:hover { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 35%, transparent); }
+.arch-gear:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.arch-gear-name { overflow-wrap: anywhere; }
+
+.arch-gear.is-selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.arch-gear.is-dependency { box-shadow: 0 0 0 2px var(--arch-needs); }
+.arch-gear.is-dependent { box-shadow: 0 0 0 2px var(--arch-needed-by); }
+.arch-gear.is-dim { opacity: 0.35; }
+
+/* The two directions of a line, in the categorical colours the theme keeps
+   legible on both backgrounds. */
+.arch {
+  --arch-needs: var(--chart-category-teal);
+  --arch-needed-by: var(--chart-4);
+}
+
+/* ── The diagram and the detail beside it ── */
+
+.arch-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.arch-diagram { position: relative; min-width: 0; }
+.arch-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+.arch-line { stroke-width: 1.5; opacity: 0.85; }
+.arch-line.dependency { stroke: var(--arch-needs); }
+.arch-line.dependent { stroke: var(--arch-needed-by); }
+
+.arch-layer {
+  position: relative;
+  padding: 0.5rem 0 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+.arch-layer:first-of-type { border-top: none; }
+.arch-layer-title {
+  margin: 0 0 0.4rem;
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  color: var(--muted-foreground);
+}
+.arch-layer-gears {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.arch-detail {
+  position: sticky;
+  top: 1rem;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 1.25rem;
+}
+.arch-detail-title { margin: 0; font-size: 18px; line-height: 1.4; }
+.arch-detail-sub { margin: 0.25rem 0 0.75rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.arch-purpose { line-height: 1.5; margin: 0 0 0.5rem; }
+.arch-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.arch-rest { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.arch-api-link { white-space: nowrap; }
+.arch-screen-list { margin: 0; padding-left: 1.1rem; }
+.arch-screen-list li { margin: 2px 0; overflow-wrap: anywhere; }
+.arch-caps { margin-top: 0.75rem; font-size: 12px; }
+
+/* ── The prototype section ── */
+
+.arch-proto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem 1.5rem;
+}
+.arch-proto-file h3 { margin: 0 0 0.4rem; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.arch-proto-file h3 .arch-muted { font-weight: 400; font-family: var(--font-mono); font-size: 11.5px; }
+.arch-proto-file ul { list-style: none; margin: 0; padding: 0; }
+.arch-proto-screen {
+  display: grid;
+  gap: 4px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.arch-proto-screen:last-child { border-bottom: none; }
+.arch-proto-name { font-weight: 500; }
+
+@media (max-width: 900px) {
+  .arch-main { grid-template-columns: minmax(0, 1fr); }
+  .arch-detail {
+    position: static;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding: 1rem 0 0;
+  }
+  .arch-proto { grid-template-columns: minmax(0, 1fr); }
+}

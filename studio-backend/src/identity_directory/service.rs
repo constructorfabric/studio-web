@@ -132,6 +132,19 @@ pub struct FederatedAccount {
     pub user_name: String,
 }
 
+/// What the realm says about one of its users: enough to name a person whose
+/// Studio profile was never given a name or an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealmPerson {
+    pub username: String,
+    /// First and last name, when the realm has either.
+    pub display_name: Option<String>,
+    /// Lowercased. Present whether or not the realm verified it; see
+    /// `email_verified` before deciding anything from it.
+    pub email: Option<String>,
+    pub email_verified: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KeycloakUser {
@@ -457,6 +470,43 @@ impl IdentityDirectoryService {
             .filter(|_| user.email_verified)
             .map(|e| e.trim().to_lowercase())
             .filter(|e| !e.is_empty()))
+    }
+
+    /// What the realm says about `subject`: its username, name and address.
+    ///
+    /// `None` when the realm has no such user. For naming a person, never for
+    /// deciding anything: an unverified address is reported as such.
+    pub async fn realm_person(&self, subject: &str) -> Result<Option<RealmPerson>> {
+        let token = self.admin_token().await?;
+        let url = format!(
+            "{}/admin/realms/{}/users/{}",
+            self.admin_base_url, self.realm, subject
+        );
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("read the realm user for its name")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let user = response
+            .error_for_status()
+            .context("Keycloak rejected the user read")?
+            .json::<KeycloakUser>()
+            .await
+            .context("decode the realm user")?;
+        Ok(Some(RealmPerson {
+            display_name: full_name(user.first_name.as_deref(), user.last_name.as_deref()),
+            email: user
+                .email
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty()),
+            email_verified: user.email_verified,
+            username: user.username,
+        }))
     }
 
     /// The external accounts brokered onto `subject`, for a caller that already

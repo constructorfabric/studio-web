@@ -228,6 +228,21 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-user/v1/me/avatar",
+      "operation_id": "studio_user.delete_my_avatar",
+      "tag": "StudioUser",
+      "summary": "Remove the caller's stored photo",
+      "authenticated": true,
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-user/v1/me/memberships/{org_id}",
       "operation_id": "studio_user.leave_organization",
       "tag": "StudioUser",
@@ -342,6 +357,21 @@
       ],
       "errors": [
         "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-assembly/v1/manifest",
+      "operation_id": "studio_assembly.get_manifest",
+      "tag": "StudioAssembly",
+      "summary": "What this backend is: the commit it was built from and every gear in it",
+      "authenticated": true,
+      "responses": [
+        "AssemblyManifestDto"
+      ],
+      "errors": [
         "401",
         "500"
       ]
@@ -1784,6 +1814,18 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/avatars/{user_id}/{digest}",
+      "operation_id": "studio_user.get_avatar",
+      "tag": "StudioUser",
+      "summary": "A stored photo",
+      "authenticated": false,
+      "errors": [
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/me",
       "operation_id": "studio_user.get_me",
       "tag": "StudioUser",
@@ -1806,6 +1848,21 @@
       "authenticated": true,
       "responses": [
         "AliasListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/colleagues",
+      "operation_id": "studio_user.list_my_colleagues",
+      "tag": "StudioUser",
+      "summary": "The people the caller shares an organization with",
+      "authenticated": true,
+      "responses": [
+        "ColleagueListDto"
       ],
       "errors": [
         "401",
@@ -3715,6 +3772,23 @@
         "400",
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/me/avatar",
+      "operation_id": "studio_user.upsert_my_avatar",
+      "tag": "StudioUser",
+      "summary": "Store the caller's photo",
+      "authenticated": true,
+      "request": "UploadAvatarRequest",
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },

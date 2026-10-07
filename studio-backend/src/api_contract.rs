@@ -42,6 +42,7 @@ use std::path::{Path, PathBuf};
 /// makes "new domain or typo?" a review question instead of a runtime surprise.
 const DOMAINS: &[&str] = &[
     "studio-artifact-ingest",
+    "studio-assembly",
     "studio-components-catalog",
     "studio-connector",
     "studio-documents",

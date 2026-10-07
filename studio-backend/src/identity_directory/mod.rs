@@ -9,7 +9,7 @@
 mod rest;
 mod service;
 
-pub use service::FederatedAccount;
+pub use service::{FederatedAccount, RealmPerson};
 
 use std::sync::{Arc, OnceLock};
 
@@ -49,6 +49,13 @@ pub trait IdpDirectoryReader: Send + Sync + 'static {
     /// The only address in this system that may be decided from: the profile
     /// e-mail is self-service and therefore a claim, not a fact.
     async fn verified_email(&self, subject: &str) -> anyhow::Result<Option<String>>;
+
+    /// What the realm says about `subject` — username, name and address — for
+    /// naming a person whose profile is blank. `None` when the realm has no
+    /// such user, or when this reader cannot say.
+    async fn realm_person(&self, _subject: &str) -> anyhow::Result<Option<RealmPerson>> {
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -59,6 +66,10 @@ impl IdpDirectoryReader for IdentityDirectoryService {
 
     async fn verified_email(&self, subject: &str) -> anyhow::Result<Option<String>> {
         IdentityDirectoryService::verified_email(self, subject).await
+    }
+
+    async fn realm_person(&self, subject: &str) -> anyhow::Result<Option<RealmPerson>> {
+        IdentityDirectoryService::realm_person(self, subject).await
     }
 }
 
