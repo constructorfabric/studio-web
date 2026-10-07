@@ -620,6 +620,52 @@ export interface RepoActivity {
   days: number[];
 }
 
+/** The one bucket an open pull request is in — see
+ *  `studio-backend/src/artifact_ingest/pull_request_waits.rs` for the rules. */
+export type PullWaiting = "review" | "author" | "merge" | "draft" | "nobody";
+
+/** An account a pull request names, read as a person where it can be. */
+export interface PullPerson {
+  login: string;
+  /** The organization member the account is confirmed as, or null. */
+  user_id: string | null;
+  display_name: string | null;
+  /** `false` = no member of the organization has confirmed this account;
+   *  `null` = the member directory could not be asked. */
+  in_organization: boolean | null;
+}
+
+export interface PullReviewer {
+  person: PullPerson;
+  /** `pending`, `approved`, `changes_requested` or `commented`. */
+  state: string;
+}
+
+/** One open pull request and who it is waiting on. */
+export interface OpenPullRequest {
+  id: string;
+  /** `owner/name`. */
+  repo: string | null;
+  provider: string | null;
+  number: number;
+  title: string;
+  url: string | null;
+  author: PullPerson | null;
+  waiting: PullWaiting;
+  waiting_on: PullPerson[];
+  waiting_on_teams: string[];
+  reason: string;
+  review_decision: string | null;
+  reviewers: PullReviewer[];
+  assignees: PullPerson[];
+  draft: boolean;
+  open_threads: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  days_open: number | null;
+  days_since_update: number | null;
+}
+
 export type ActivityEventKind = "check" | "comment";
 
 /** One thing that happened to a project. */
@@ -2338,6 +2384,18 @@ export const api = {
     request<{ items: RepoActivity[]; total: number; days: number }>(
       `/studio-artifact-ingest/v1/source-activity?scope=${encodeURIComponent(scope)}` +
         (days ? `&days=${days}` : ""),
+      token,
+    ),
+
+  /** A project's open pull requests, each with who it is waiting on.
+   *
+   *  The bucket rules live in `artifact_ingest/pull_request_waits.rs`; the
+   *  answer is as fresh as the project's last sync. One page of up to 200 —
+   *  `pull-request-waits.ts` groups it by person. */
+  openPullRequests: (token: string, projectId: string, offset = 0) =>
+    request<{ items: OpenPullRequest[]; total: number; members_known: boolean }>(
+      `/studio-artifact-ingest/v1/open-pull-requests?project_id=${encodeURIComponent(projectId)}` +
+        `&limit=200&offset=${offset}`,
       token,
     ),
 

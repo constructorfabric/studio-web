@@ -2105,3 +2105,29 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .dt-confirm h3 { margin: 0 0 8px; font-size: 16px; }
 .dt-confirm-body { color: var(--muted-foreground); margin-bottom: 12px; }
 .dt-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* ── Pull requests — who they're waiting on (pull-requests-waiting.tsx) ──
+   One collapsible queue per person. The summary wraps on a phone so the
+   counts drop under the name instead of pushing the card sideways. */
+.prw-totals { margin: 8px 0; }
+.prw-queues { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.prw-queue { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); min-width: 0; }
+.prw-queue.nobody { border-color: color-mix(in oklab, var(--destructive) 40%, var(--border)); }
+.prw-queue > summary {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; cursor: pointer; list-style: none;
+}
+.prw-queue > summary::-webkit-details-marker { display: none; }
+.prw-queue > summary::before { content: "▸"; color: var(--muted-foreground); width: 10px; }
+.prw-queue[open] > summary::before { content: "▾"; }
+.prw-who { display: flex; flex-direction: column; flex: 1 1 140px; min-width: 0; }
+.prw-who .name { font-weight: 600; }
+.prw-who .sub { color: var(--muted-foreground); font-size: 13px; overflow-wrap: anywhere; }
+.prw-counts { display: flex; gap: 4px; flex-wrap: wrap; }
+.prw-queue ul.rows { padding: 0 10px 2px 48px; }
+.prw-queue ul.rows .name { overflow-wrap: anywhere; }
+.prw-queue ul.rows .name a { color: inherit; }
+.prw-quiet { margin-left: 6px; }
+@media (max-width: 600px) {
+  .prw-queue ul.rows { padding-left: 10px; }
+}

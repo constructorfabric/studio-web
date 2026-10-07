@@ -11,6 +11,9 @@
  *               last sync and what it pulled. Sync runs from this screen.
  *   artifacts   studio-artifact-ingest node counts, scoped to this project.
  *   quality     spec_finding nodes the Spec Quality tab wrote back.
+ *   pull requests  who each open one is waiting on, from
+ *               studio-artifact-ingest's /open-pull-requests
+ *               (pull-requests-waiting.tsx).
  *   kits/team/automation — kit installations, tenant users, the trust ramp.
  *   studio      the IDE session for this project — launched from here.
  *
@@ -39,6 +42,7 @@ import { findRepoNode } from "./artifact-sync";
 import { projectRepoRows } from "./project-sources";
 import { errText, initials, relTime } from "./format";
 import { OpenInDesktop } from "./open-in-desktop";
+import { PullRequestsWaiting } from "./pull-requests-waiting";
 
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
@@ -715,6 +719,13 @@ export function ProjectOverview({
             )}
           </div>
 
+          {/* ── Pull requests: who each open one is waiting on. ── */}
+          <PullRequestsWaiting
+            token={token}
+            projectId={project.id}
+            repositories={repos.length}
+            synced={syncedRepos > 0}
+          />
         </div>
 
         <div className="dash-col">
