@@ -150,6 +150,10 @@ pub struct Candidate {
     /// For an evidence match, the text around the first term found, so the
     /// proposal can be checked against its source.
     pub passage: Option<String>,
+    /// The document the passage is quoted from, when the match came from the
+    /// gear's own documentation rather than the catalogue's text about it.
+    /// Ranks after every evidence match from the catalogue's text.
+    pub cites: Option<String>,
     /// The gear itself declares this capability (`gear.toml`, or a person on
     /// its catalogue page) -- a statement, not a guess from its words.
     pub declared: bool,
@@ -264,6 +268,45 @@ fn passage(texts: &[String], words: &[String]) -> Option<String> {
             }
             return Some(out);
         }
+    }
+    None
+}
+
+/// Search the openings of a gear's documents (`auto.doc_text`, written by the
+/// repository scan) for the capability's words.
+///
+/// Returns the first document that mentions any, its link, the words it
+/// mentions and the passage around the first one. Documents are asked in the
+/// order the scan wrote them (PRD before DESIGN).
+fn doc_evidence(
+    profile: Option<&Value>,
+    words: &[String],
+    capability: &str,
+) -> Option<(String, Vec<String>, String)> {
+    let docs = profile?.get("auto")?.get("doc_text")?.as_array()?;
+    let own = capability.to_owned();
+    for doc in docs {
+        let Some(text) = doc.get("t").and_then(Value::as_str) else {
+            continue;
+        };
+        let lower = text.to_lowercase();
+        let mut found: Vec<String> = Vec::new();
+        for word in words.iter().chain(std::iter::once(&own)) {
+            if mentions(&lower, word) && !found.iter().any(|w| w == word) {
+                found.push(word.clone());
+            }
+        }
+        if found.is_empty() {
+            continue;
+        }
+        let link = doc
+            .get("l")
+            .or_else(|| doc.get("path"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let quoted = passage(&[text.to_owned()], &found)?;
+        return Some((link, found, quoted));
     }
     None
 }
@@ -480,6 +523,19 @@ fn plan_with_limit(
                         }
                     }
                     why.extend(found.iter().cloned());
+                    // The gear's own documents are asked only when nothing
+                    // shorter answered: they say more, and so match more.
+                    let mut cites = None;
+                    let mut passage_text = None;
+                    if contracts.is_empty()
+                        && why.is_empty()
+                        && let Some((link, words_found, text)) =
+                            doc_evidence(profile, words, capability)
+                    {
+                        why.extend(words_found);
+                        cites = Some(link);
+                        passage_text = Some(text);
+                    }
                     let step = if !contracts.is_empty() {
                         Step::Contract
                     } else if !why.is_empty() {
@@ -487,14 +543,18 @@ fn plan_with_limit(
                     } else {
                         return None;
                     };
-                    let passage = (step == Step::Evidence)
-                        .then(|| passage(&texts(component, profile), &found))
-                        .flatten();
+                    let passage = match passage_text {
+                        Some(text) => Some(text),
+                        None => (step == Step::Evidence)
+                            .then(|| passage(&texts(component, profile), &found))
+                            .flatten(),
+                    };
                     Some(Candidate {
                         name: name.to_owned(),
                         step,
                         contracts,
                         passage,
+                        cites,
                         declared,
                         kind: component
                             .get("kind")
@@ -524,6 +584,7 @@ fn plan_with_limit(
                 a.step
                     .rank()
                     .cmp(&b.step.rank())
+                    .then(a.cites.is_some().cmp(&b.cites.is_some()))
                     .then(b.declared.cmp(&a.declared))
                     .then(a.built.rank().cmp(&b.built.rank()))
                     .then(a.composable.rank().cmp(&b.composable.rank()))
@@ -819,6 +880,64 @@ mod tests {
             "{passage}"
         );
         assert!(passage.len() < long.len());
+    }
+
+    /// A gear whose catalogue text says nothing is still found by its own
+    /// documents, cites the document, and ranks after every gear whose
+    /// catalogue text matched.
+    #[test]
+    fn a_gear_found_only_in_its_documents_cites_them_and_ranks_last() {
+        let components = vec![
+            component("cf-gears-quiet", "does a thing"),
+            component("cf-gears-loud", "invoice runs"),
+        ];
+        let profiles: serde_json::Map<String, Value> = [(
+            "cf-gears-quiet".to_owned(),
+            json!({ "auto": { "doc_text": [
+                { "path": "gears/quiet/docs/PRD.md", "l": "https://example/PRD.md",
+                  "t": "Quiet. The gear issues every invoice a tenant receives." }
+            ] } }),
+        )]
+        .into_iter()
+        .collect();
+        let rows = plan(
+            &["billing".to_owned()],
+            &components,
+            &profiles,
+            &vocabulary(&[("billing", &["invoice"])]),
+        );
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["cf-gears-loud", "cf-gears-quiet"]);
+        let quiet = &rows[0].candidates[1];
+        assert_eq!(quiet.step, Step::Evidence);
+        assert_eq!(quiet.cites.as_deref(), Some("https://example/PRD.md"));
+        assert!(
+            quiet
+                .passage
+                .as_deref()
+                .unwrap()
+                .contains("issues every invoice")
+        );
+        assert_eq!(rows[0].candidates[0].cites, None);
+    }
+
+    /// The documents are not asked when the catalogue already answered: a
+    /// gear's PRD says more, and would turn every gear into a candidate.
+    #[test]
+    fn documents_are_not_asked_when_the_catalogue_text_matched() {
+        let profiles: serde_json::Map<String, Value> = [(
+            "g".to_owned(),
+            json!({ "auto": { "doc_text": [ { "l": "x", "t": "invoice" } ] } }),
+        )]
+        .into_iter()
+        .collect();
+        let rows = plan(
+            &["billing".to_owned()],
+            &[component("g", "invoice")],
+            &profiles,
+            &vocabulary(&[("billing", &["invoice"])]),
+        );
+        assert_eq!(rows[0].candidates[0].cites, None);
     }
 
     #[test]

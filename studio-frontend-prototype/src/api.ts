@@ -336,6 +336,9 @@ export interface Candidate {
   contracts?: string[];
   /** The text around the first term found (`evidence` only). */
   passage?: string | null;
+  /** The document the passage is quoted from, when it came from the gear's
+   *  own documentation rather than the catalogue's text. */
+  cites?: string | null;
   /** The gear declares this capability itself (gear.toml, or its catalogue
    *  page) -- a statement, not a match on the words it uses. */
   declared?: boolean;
@@ -353,7 +356,8 @@ export interface Candidate {
 export function matchReason(c: Candidate): string {
   if (c.step === "contract") return `provides ${(c.contracts ?? []).join(", ")}`;
   const how = c.declared ? "the gear declares this capability" : `matched by words: ${c.why.join(", ")}`;
-  return c.passage ? `${how} — “${c.passage}”` : how;
+  const quoted = c.passage ? `${how} — “${c.passage}”` : how;
+  return c.cites ? `${quoted} (${c.cites})` : quoted;
 }
 
 /** One capability, and what could fill it. */

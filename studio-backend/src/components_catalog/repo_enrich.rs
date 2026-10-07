@@ -1197,6 +1197,28 @@ impl RepoEnricher {
             f.insert(key.into(), value);
         }
 
+        // What the gear's own documents say it is for, kept for the composer's
+        // evidence step (`cpt-studio-fr-spec-gear-mapping`). Each document
+        // contributes only its opening, the part that states the purpose,
+        // because a full PRD mentions nearly every capability somewhere and
+        // would match everything.
+        let doc_text: Vec<Value> = ["docs/PRD.md", "docs/DESIGN.md"]
+            .iter()
+            .filter_map(|file| {
+                let excerpt = doc_excerpt(docs.get(*file)?, DOC_EXCERPT_CHARS);
+                (!excerpt.is_empty()).then(|| {
+                    json!({
+                        "path": format!("{dir}/{file}"),
+                        "l": format!("https://github.com/{}/blob/{}/{dir}/{file}", self.repo, self.git_ref),
+                        "t": excerpt,
+                    })
+                })
+            })
+            .collect();
+        if !doc_text.is_empty() {
+            f.insert("doc_text".into(), Value::Array(doc_text));
+        }
+
         // No crate yet: the stage is the furthest document written. The rule's
         // enum starts before code, and a gear that is only a design is in
         // design, not "unknown".
@@ -1546,6 +1568,59 @@ fn plugins_status(declared: bool) -> Value {
 }
 
 // ── value builders (the { v, b, n, s, l, u } shape the UI renders) ───────────
+
+/// How much of a document's opening the profile keeps for the composer.
+const DOC_EXCERPT_CHARS: usize = 3000;
+
+/// The opening of a markdown document as plain prose, at most `max` chars.
+///
+/// What is dropped is what is not the author's statement of purpose:
+/// - HTML comments, which is where the spec templates keep their instructions;
+/// - fenced code and diagrams;
+/// - table rows, link-only lines, `- [ ]` ID markers and `<!-- toc -->` output.
+///
+/// Whitespace is collapsed, so offsets in the result are offsets in prose.
+fn doc_excerpt(body: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut rest = body;
+    // Comments first: one can span many lines and contain fences.
+    let mut uncommented = String::with_capacity(body.len());
+    while let Some(start) = rest.find("<!--") {
+        uncommented.push_str(&rest[..start]);
+        rest = match rest[start..].find("-->") {
+            Some(end) => &rest[start + end + 3..],
+            None => "",
+        };
+    }
+    uncommented.push_str(rest);
+    let mut in_fence = false;
+    for line in uncommented.lines() {
+        let line = line.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence
+            || line.is_empty()
+            || line.starts_with('|')
+            || line.starts_with("- [ ]")
+            || line.starts_with("- [x]")
+            || (line.starts_with('[') && line.ends_with(')'))
+        {
+            continue;
+        }
+        let line = line.trim_start_matches('#').trim();
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(line);
+        if out.chars().count() >= max {
+            break;
+        }
+    }
+    let collapsed: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(max).collect()
+}
 
 fn text(v: &str, link: Option<&str>, updated: Option<&str>) -> Value {
     let mut m = serde_json::Map::new();
@@ -2532,6 +2607,28 @@ fn toml_string(body: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shape of a gear PRD written from the spec template: the template's
+    /// instructions sit in a comment, and the purpose follows the title.
+    #[test]
+    fn a_documents_excerpt_is_its_prose_without_the_template() {
+        let body = "# PRD — Billing Ledger\n\
+            <!--\n PURPOSE: say what it is.\n ```\n code in a comment\n ```\n-->\n\
+            - [ ] `p1` - **ID**: `cpt-ledger-prd`\n\
+            ## 1. Overview\n\n\
+            Append-only   double-entry subledger.\n\
+            | Term | Meaning |\n|---|---|\n\
+            ```mermaid\ngraph TD; a-->b\n```\n\
+            [Design](DESIGN.md)\n\
+            It records every financially material movement.\n";
+        assert_eq!(
+            doc_excerpt(body, 1000),
+            "PRD — Billing Ledger 1. Overview Append-only double-entry subledger. \
+             It records every financially material movement."
+        );
+        assert_eq!(doc_excerpt(body, 12), "PRD — Billin");
+        assert_eq!(doc_excerpt("<!-- never closed", 100), "");
+    }
 
     /// `gears/bss/ledger/gear.toml`, verbatim. Every gear in `gears-rust` is
     /// shaped like this -- a `[gear]` table and nothing above it -- which is

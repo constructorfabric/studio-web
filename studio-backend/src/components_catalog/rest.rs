@@ -833,6 +833,10 @@ pub struct CandidateDto {
     pub contracts: Vec<String>,
     /// For `evidence`, the text around the first term found. Null otherwise.
     pub passage: Option<String>,
+    /// The document the passage is quoted from, when the match came from the
+    /// gear's own documentation. Such a match ranks after every evidence match
+    /// from the catalogue's text. Null otherwise.
+    pub cites: Option<String>,
     /// The gear declares this capability itself, rather than being found by
     /// the words in its name and description.
     pub declared: bool,
@@ -1193,6 +1197,7 @@ async fn compose_plan(
                     step: c.step.as_str().to_owned(),
                     contracts: c.contracts,
                     passage: c.passage,
+                    cites: c.cites,
                     declared: c.declared,
                     score: u32::try_from(c.score).unwrap_or(u32::MAX),
                     why: c.why,
