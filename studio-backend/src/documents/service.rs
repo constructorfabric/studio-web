@@ -713,6 +713,8 @@ impl DocumentsService {
         let report = validate(&body, &ty.template);
         let capabilities = serde_json::to_string(&intake::declared_capabilities(&body))?;
         let requirements = serde_json::to_string(&intake::declared_requirements(&body))?;
+        let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
+        let inferred_capabilities = serde_json::to_string(&inferred_for(&body, &vocabulary))?;
         let now = OffsetDateTime::now_utc();
         let model = document::Model {
             id: Uuid::new_v4(),
@@ -726,6 +728,7 @@ impl DocumentsService {
             validation: serde_json::to_string(&report)?,
             capabilities: capabilities.clone(),
             requirements,
+            inferred_capabilities,
             created_by,
             created_at: now,
             updated_at: now,
@@ -756,14 +759,21 @@ impl DocumentsService {
         Ok((documents, u32::try_from(total).unwrap_or(u32::MAX)))
     }
 
-    /// Every capability the project's documents declare, with what declares it.
+    /// Every capability the project's documents need, with what says so.
     ///
-    /// Two kinds of document speak here: the ones Studio holds, and the
-    /// repository files bound to a type -- confirmed by a person, set by hand,
-    /// or declared in their own front matter and found to conform. A proposal
-    /// still in review does not: "what this project needs" is not a guess the
-    /// classifier made about a file nobody has looked at. In the order first
-    /// met, Studio's documents before the repository's.
+    /// The documents are read as they are written; nothing has to be added to
+    /// them. Two kinds of document speak here: the ones Studio holds, and the
+    /// repository files bound to a type. A capability comes from a document's
+    /// front matter when it declares one (`capabilities:`), and otherwise from
+    /// what its functional requirements imply ([`intake::inferred_capabilities`]),
+    /// which the source marks `inferred` with the requirements behind it.
+    ///
+    /// A repository file the classifier proposed and nobody has confirmed yet
+    /// speaks too, marked `confirmed: false`: on a real repository nobody has
+    /// confirmed anything yet, and a project whose specs are all proposals
+    /// would otherwise need nothing (constructorfabric/insight on Dev,
+    /// 2026-10-07). A file ruled not a document, or of no known type, does not.
+    /// In the order first met, Studio's documents before the repository's.
     ///
     /// The same documents' non-functional statements come back beside them,
     /// each with the document that makes it: what the composer reads for the
@@ -783,6 +793,23 @@ impl DocumentsService {
                     sources: vec![source],
                 }),
             };
+        let mut add_all = |source: &CapabilitySource,
+                           declared: &[String],
+                           inferred: &[intake::InferredCapability]| {
+            for key in declared {
+                add(key, source.clone());
+            }
+            for i in inferred {
+                add(
+                    &i.key,
+                    CapabilitySource {
+                        inferred: true,
+                        because: i.because.clone(),
+                        ..source.clone()
+                    },
+                );
+            }
+        };
         for doc in self.all_documents(workspace_id, Some(project_id)).await? {
             let source = CapabilitySource {
                 kind: "document".to_string(),
@@ -790,10 +817,11 @@ impl DocumentsService {
                 label: doc.title.clone(),
                 revision: doc.updated_at.clone(),
                 node_id: None,
+                inferred: false,
+                because: Vec::new(),
+                confirmed: true,
             };
-            for key in &doc.capabilities {
-                add(key, source.clone());
-            }
+            add_all(&source, &doc.capabilities, &doc.inferred_capabilities);
             requirements.extend(doc.requirements.iter().map(|text| DeclaredRequirement {
                 text: text.clone(),
                 source: source.clone(),
@@ -805,22 +833,26 @@ impl DocumentsService {
             .await?;
         for binding in rows.into_iter().map(binding_from_row) {
             let binding = binding?;
-            if !matches!(
-                binding.state,
-                BindingState::Confirmed | BindingState::Manual
-            ) {
-                continue;
-            }
+            let confirmed = match binding.state {
+                BindingState::Confirmed | BindingState::Manual => true,
+                BindingState::Detected if binding.type_key.is_some() => false,
+                _ => continue,
+            };
             let source = CapabilitySource {
                 kind: "file".to_string(),
                 id: binding.id,
                 label: binding.path.clone(),
                 revision: binding.content_sha.clone(),
                 node_id: Some(binding.node_id.clone()),
+                inferred: false,
+                because: Vec::new(),
+                confirmed,
             };
-            for key in &binding.capabilities {
-                add(key, source.clone());
-            }
+            add_all(
+                &source,
+                &binding.capabilities,
+                &binding.inferred_capabilities,
+            );
             requirements.extend(binding.requirements.iter().map(|text| DeclaredRequirement {
                 text: text.clone(),
                 source: source.clone(),
@@ -943,6 +975,9 @@ impl DocumentsService {
         // statement of what it declares, and an edit is allowed to change it.
         row.capabilities = serde_json::to_string(&intake::declared_capabilities(&row.content))?;
         row.requirements = serde_json::to_string(&intake::declared_requirements(&row.content))?;
+        let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
+        row.inferred_capabilities =
+            serde_json::to_string(&inferred_for(&row.content, &vocabulary))?;
         row.updated_at = OffsetDateTime::now_utc();
         self.repo.upsert_doc(row.clone()).await?;
         doc_from_row(row)
@@ -1190,6 +1225,18 @@ fn type_from_row(row: doc_type::Model, workspace_id: Option<Uuid>) -> Result<Doc
     })
 }
 
+/// What a document's functional requirements imply, unless its front matter
+/// already says what it needs: the author's statement stands, and the
+/// inference is only for the documents that make none. The documents are
+/// read as written; nothing has to be added to them for this.
+fn inferred_for(content: &str, vocabulary: &[Capability]) -> Vec<intake::InferredCapability> {
+    if intake::declared_capabilities(content).is_empty() {
+        intake::inferred_capabilities(content, vocabulary)
+    } else {
+        Vec::new()
+    }
+}
+
 fn doc_from_row(row: document::Model) -> Result<Document> {
     // A row written before m0005 carries the column default; parsing it as an
     // empty list is right, and the next write re-indexes it from the content.
@@ -1197,6 +1244,7 @@ fn doc_from_row(row: document::Model) -> Result<Document> {
     Ok(Document {
         capabilities,
         requirements: serde_json::from_str(&row.requirements).unwrap_or_default(),
+        inferred_capabilities: serde_json::from_str(&row.inferred_capabilities).unwrap_or_default(),
         id: row.id,
         tenant_id: row.tenant_id,
         project_id: row.project_id,
@@ -1844,6 +1892,14 @@ pub struct CapabilitySource {
     /// The artifact-graph node of a bound file, which a mapping decision links
     /// to. A Studio document has none.
     pub node_id: Option<String>,
+    /// The capability is implied by the document's functional requirements,
+    /// not declared in its front matter.
+    pub inferred: bool,
+    /// For an inferred capability, the requirements that imply it.
+    pub because: Vec<String>,
+    /// A person confirmed the document is what the classifier says, or Studio
+    /// holds it. `false` for a repository file still awaiting review.
+    pub confirmed: bool,
 }
 
 fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
@@ -1863,6 +1919,7 @@ fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
         validation: serde_json::from_str(&row.validation).ok(),
         capabilities: serde_json::from_str(&row.capabilities).unwrap_or_default(),
         requirements: serde_json::from_str(&row.requirements).unwrap_or_default(),
+        inferred_capabilities: serde_json::from_str(&row.inferred_capabilities).unwrap_or_default(),
         content_sha: row.content_sha,
         created_at: rfc3339(row.created_at),
         updated_at: rfc3339(row.updated_at),
@@ -1885,6 +1942,9 @@ impl DocumentsService {
         files: Vec<IngestedFile>,
     ) -> Result<ClassifyOutcome> {
         let types = self.list_types(ctx, workspace_id).await?;
+        // The vocabulary a file's functional requirements are read against
+        // when its front matter declares no capability.
+        let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
         // Every binding in scope, not a page of them: the run has to know
         // whether each file was already ruled on, and a page would silently
         // re-guess the rest.
@@ -1991,6 +2051,9 @@ impl DocumentsService {
                         requirements: prior
                             .map(|p| p.requirements.clone())
                             .unwrap_or_else(|| "[]".to_string()),
+                        inferred_capabilities: prior
+                            .map(|p| p.inferred_capabilities.clone())
+                            .unwrap_or_else(|| "[]".to_string()),
                         content_sha: prior
                             .map(|p| p.content_sha.clone())
                             .unwrap_or_else(|| sha.clone()),
@@ -2018,6 +2081,7 @@ impl DocumentsService {
                     validation: "{}".to_string(),
                     capabilities: "[]".to_string(),
                     requirements: "[]".to_string(),
+                    inferred_capabilities: "[]".to_string(),
                     content_sha: sha,
                     created_at: prior.map(|p| p.created_at).unwrap_or(now),
                     updated_at: now,
@@ -2058,6 +2122,7 @@ impl DocumentsService {
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
             let capabilities = super::intake::declared_capabilities(&file.content);
             let requirements = super::intake::declared_requirements(&file.content);
+            let inferred = inferred_for(&file.content, &vocabulary);
             if collect
                 && type_key.is_some()
                 && state != BindingState::NotADocument
@@ -2098,6 +2163,7 @@ impl DocumentsService {
                 },
                 capabilities: serde_json::to_string(&capabilities)?,
                 requirements: serde_json::to_string(&requirements)?,
+                inferred_capabilities: serde_json::to_string(&inferred)?,
                 content_sha: sha,
                 created_at: prior.map(|p| p.created_at).unwrap_or(now),
                 updated_at: now,
@@ -2736,6 +2802,7 @@ mod tests {
             conforms,
             capabilities: Vec::new(),
             requirements: Vec::new(),
+            inferred_capabilities: Vec::new(),
             created_by: "someone".to_string(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -2907,6 +2974,7 @@ mod tests {
             validation: None,
             capabilities: Vec::new(),
             requirements: Vec::new(),
+            inferred_capabilities: Vec::new(),
             content_sha: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -3118,6 +3186,7 @@ mod reclassification_tests {
             validation: "{}".into(),
             capabilities: "[]".to_string(),
             requirements: "[]".to_string(),
+            inferred_capabilities: "[]".to_string(),
             content_sha: "sha".into(),
             created_at: now,
             updated_at: now,

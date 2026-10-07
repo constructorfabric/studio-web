@@ -412,6 +412,7 @@ impl DocumentsRepo {
                 document::Column::Validation,
                 document::Column::Capabilities,
                 document::Column::Requirements,
+                document::Column::InferredCapabilities,
                 document::Column::UpdatedAt,
             ])?;
         document::Entity::insert(model.into_active_model())
@@ -567,6 +568,7 @@ impl DocumentsRepo {
                 document_binding::Column::Validation,
                 document_binding::Column::Capabilities,
                 document_binding::Column::Requirements,
+                document_binding::Column::InferredCapabilities,
                 document_binding::Column::ContentSha,
                 document_binding::Column::UpdatedAt,
             ])?;

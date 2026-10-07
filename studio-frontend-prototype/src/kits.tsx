@@ -672,7 +672,7 @@ function SuggestedComponents({
         (plan.length === 0 ? (
           <p className="empty" style={{ fontSize: 13 }}>
             {docCount === 0
-              ? "No document in this project declares a capability yet. Fill a PRD's questionnaire, or put `capabilities: auth, storage` in the front matter of a PRD in the repository and confirm it on the Specs tab — this reads them from there."
+              ? "No specification in this project says what it needs yet. This reads the functional requirements of the project's PRDs, as they are written, and of the documents Studio holds; sync the repository if its specs are not on the Specs tab yet."
               : "The documents declare no capabilities to match."}
           </p>
         ) : (
@@ -711,8 +711,18 @@ function SuggestedComponents({
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
                     {(sources[row.capability] ?? []).length > 0 && (
-                      <span style={{ fontSize: 11, opacity: 0.65 }} title="The documents that declare it">
+                      <span
+                        style={{ fontSize: 11, opacity: 0.65 }}
+                        title={(sources[row.capability] ?? [])
+                          .map(
+                            (src) =>
+                              `${src.label}: ${src.inferred ? `implied by ${src.because?.join("; ") || "its requirements"}` : "declared in its front matter"}${src.confirmed === false ? " (not confirmed on the Specs tab)" : ""}`,
+                          )
+                          .join("\n")}
+                      >
                         from {(sources[row.capability] ?? []).map((src) => src.label).join(", ")}
+                        {(sources[row.capability] ?? []).every((src) => src.inferred) && " · read from the requirements"}
+                        {(sources[row.capability] ?? []).every((src) => src.confirmed === false) && " · unconfirmed"}
                       </span>
                     )}
                     {row.gap && (

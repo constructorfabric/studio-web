@@ -262,6 +262,13 @@ export interface DeclaredCapability {
     revision?: string;
     /** The artifact node of a bound file. */
     node_id?: string | null;
+    /** Implied by the document's functional requirements, not declared in
+     *  its front matter. */
+    inferred?: boolean;
+    /** For an inferred capability, the requirements that imply it. */
+    because?: string[];
+    /** `false` for a repository file nobody has confirmed on the Specs tab. */
+    confirmed?: boolean;
   }[];
 }
 

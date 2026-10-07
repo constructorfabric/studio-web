@@ -527,6 +527,8 @@ The system **MUST** map every capability a product's specification requires to g
 
 The same rules **MUST** apply to every project; nothing in them may name a particular product, repository or corpus.
 
+The system **MUST** read the capabilities a specification requires from the specification as it is written, and **MUST NOT** require it to be changed for the mapping: a `capabilities:` line in its front matter is used when present, and otherwise the capabilities are inferred from its functional requirements, each citing the requirements behind it. A repository document the classifier proposed and nobody has confirmed counts too, marked as unconfirmed.
+
 - **Rationale**: Keyword matching over gear prose (`/compose` today) cannot tell a gear that provides a capability from one that mentions it. Different products bring different specifications, so the mapping must be data-driven (#205, #199).
 - **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-agent`
 

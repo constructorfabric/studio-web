@@ -1336,6 +1336,14 @@ pub struct CapabilitySourceDto {
     pub revision: String,
     /// The artifact-graph node of a bound file. Null for a Studio document.
     pub node_id: Option<String>,
+    /// Implied by the document's functional requirements rather than declared
+    /// in its front matter.
+    pub inferred: bool,
+    /// For an inferred capability, the headings of the requirements that imply it.
+    pub because: Vec<String>,
+    /// `false` for a repository file the classifier proposed and nobody has
+    /// confirmed yet. It still counts, and the screens say it is unconfirmed.
+    pub confirmed: bool,
 }
 
 #[derive(Debug)]
@@ -1377,6 +1385,9 @@ fn capability_source_dto(s: super::service::CapabilitySource) -> CapabilitySourc
         label: s.label,
         revision: s.revision,
         node_id: s.node_id,
+        inferred: s.inferred,
+        because: s.because,
+        confirmed: s.confirmed,
     }
 }
 
@@ -3328,10 +3339,13 @@ pub fn register_routes(
         .operation_id("studio_documents.list_declared_capabilities")
         .summary("The capabilities a project's documents declare")
         .description(
-            "Every capability key declared in the front matter of the project's \
-             documents -- the ones Studio holds and the repository files bound to a \
-             type -- with the documents declaring each. What the Composer composes \
-             from. A repository file still awaiting review does not count.",
+            "Every capability the project's documents need -- the ones Studio holds and \
+             the repository files bound to a type -- with the documents saying so. A \
+             capability comes from a document's front matter when it declares one, and \
+             otherwise from what its functional requirements imply (`inferred`, with \
+             the requirements `because`); the documents are read as written. A \
+             repository file still awaiting review counts, marked `confirmed: false`. \
+             What the Composer composes from.",
         )
         .tag("StudioDocuments")
         .authenticated()

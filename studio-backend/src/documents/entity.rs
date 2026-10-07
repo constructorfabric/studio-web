@@ -201,6 +201,9 @@ pub mod document {
         /// JSON array of the non-functional statements its NFR, operational
         /// and deployment sections make (`m0013`), indexed on every write.
         pub requirements: String,
+        /// JSON array of `InferredCapability`: what its functional requirements
+        /// imply when its front matter declares nothing (`m0014`).
+        pub inferred_capabilities: String,
         /// Creator subject id (string principal).
         pub created_by: String,
         pub created_at: OffsetDateTime,
@@ -261,6 +264,8 @@ pub mod document_binding {
         /// JSON array of the file's non-functional statements (`m0013`),
         /// re-derived on every scan like `capabilities`.
         pub requirements: String,
+        /// JSON array of `InferredCapability`, as for a document (`m0014`).
+        pub inferred_capabilities: String,
         /// Digest of the content the verdicts above were computed from.
         pub content_sha: String,
         pub created_at: OffsetDateTime,
