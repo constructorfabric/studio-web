@@ -107,6 +107,18 @@ describe("queues by person", () => {
     expect(queues.map((q) => q.name)).toEqual(["Zed", "Amy", "Bea"]);
   });
 
+  it("puts somebody owed two reviews before somebody with six drafts", () => {
+    const drafts = [1, 2, 3, 4, 5, 6].map((n) =>
+      pr({ number: n, waiting: "draft", waiting_on: [member("dan", "u-d", "Dan")] }),
+    );
+    const queues = queuesByPerson([
+      ...drafts,
+      pr({ number: 7, waiting_on: [member("eve", "u-e", "Eve")] }),
+      pr({ number: 8, waiting_on: [member("eve", "u-e", "Eve")] }),
+    ]);
+    expect(queues.map((q) => q.name)).toEqual(["Eve", "Dan"]);
+  });
+
   it("says when an account is not one of the organization's people", () => {
     const [q] = queuesByPerson([pr({ waiting_on: [outsider("dependabot")] })]);
     expect(q.kind).toBe("outsider");

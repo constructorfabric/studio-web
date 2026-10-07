@@ -92,7 +92,9 @@ function personSub(p: PullPerson): string {
 
 /** One queue per person (and per team), plus one for the pull requests
  *  nobody was asked to review. That one comes first when it has anything in
- *  it — it is the thing nobody else will notice — then the longest queues. */
+ *  it — it is the thing nobody else will notice — then the people most is
+ *  waiting on. A draft counts last: it is the author's own work in progress,
+ *  and six drafts are less of a queue than two reviews somebody is owed. */
 export function queuesByPerson(items: OpenPullRequest[]): Queue[] {
   const queues = new Map<string, Queue>();
   const queue = (key: string, kind: QueueKind, name: string, sub: string): Queue => {
@@ -129,7 +131,8 @@ export function queuesByPerson(items: OpenPullRequest[]): Queue[] {
 
   return [...queues.values()].sort((a, b) => {
     if (a.kind === "nobody" || b.kind === "nobody") return a.kind === "nobody" ? -1 : 1;
-    return b.total - a.total || a.name.localeCompare(b.name);
+    const owed = (q: Queue) => q.total - q.counts.draft;
+    return owed(b) - owed(a) || b.total - a.total || a.name.localeCompare(b.name);
   });
 }
 
