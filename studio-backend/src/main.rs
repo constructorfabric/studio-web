@@ -7,6 +7,7 @@
 mod access_config; // the Studio access-config document: one shape, one reader, one writer
 mod api_contract; // the mechanical half of docs/api-conventions.md, as a ratchet
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
+mod assembly; // studio-assembly: the gears this process linked, its build, its session image
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
@@ -424,8 +425,9 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 18] = [
+    const REST_MODULES: [(&str, &str); 19] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
+        ("assembly", include_str!("assembly/rest.rs")),
         (
             "components_catalog",
             include_str!("components_catalog/rest.rs"),

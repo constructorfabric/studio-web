@@ -135,3 +135,14 @@ export function groupByComponent(doc: OpenApiDoc): OpenApiDoc {
 
   return { ...doc, paths, tags, "x-tagGroups": ordered };
 }
+
+/** The document narrowed to one component's paths — how /architecture/ opens
+ *  this page on one gear (`/api-docs/?component=studio-tasks`). An unknown
+ *  component leaves an empty document, which the viewer shows as such rather
+ *  than as the whole API under a misleading title. */
+export function onlyComponent(doc: OpenApiDoc, component: string): OpenApiDoc {
+  const paths = Object.fromEntries(
+    Object.entries(doc.paths ?? {}).filter(([path]) => componentOf(path) === component),
+  );
+  return { ...doc, paths };
+}

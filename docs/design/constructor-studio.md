@@ -906,6 +906,30 @@ Does not read the roadmap board; `cpt-studio-component-components-catalog` does,
 - `cpt-studio-component-connector` — reads the plan file through
 - `cpt-studio-component-graph-storage` — owns data in
 
+#### studio-assembly
+
+- [x] `p2` - **ID**: `cpt-studio-component-assembly`
+
+Design: [studio-assembly](studio-assembly.md)
+
+##### Why this component exists
+
+A hand-drawn architecture diagram is out of date the week after it is drawn; the running backend can say what it is made of.
+
+##### Responsibility scope
+
+`studio-backend/src/assembly/`: `GET /studio-assembly/v1/manifest` — every gear the toolkit registry linked, in start order, with dependencies, origin, role and the extension point a plugin fills; a Studio gear's purpose compiled from its design; the build commit and features; the IDE session image. The prototype's `/architecture/` page draws it.
+
+##### Responsibility boundaries
+
+Reads only what the process already knows at start; stores nothing; exposes no config value but the session image.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-platform-system` — reads the gear registry of
+- `cpt-studio-component-session` — reads the session image from the config of
+- `cpt-studio-component-prototype-portal` — is drawn by
+
 #### Access config module
 
 - [x] `p2` - **ID**: `cpt-studio-component-access-config`
@@ -1262,6 +1286,8 @@ The pre-FrontX portal, kept as a playground with the screens FrontX does not hav
 
 It also carries the "Open Studio" launcher (`/studio-session/v1`) and the presence notes (`/studio-presence/v1`).
 
+Beside the portal the same image serves two pages of its own, opened from the product menu: `/api-docs/`, the backend's `/cf/openapi.json` grouped by gear, and `/architecture/`, the running backend's gears from `/studio-assembly/v1/manifest` joined with the calls this prototype makes (a map extracted from `src/` at build time by `scripts/prototype-api-map.mjs`). The table above is written by hand; that page is not.
+
 ##### Responsibility boundaries
 
 Not the product surface going forward; screens move into FrontX MFEs.
@@ -1489,6 +1515,7 @@ Holds no secret values; the Secret contract is in `deploy/README.md`. The kustom
 | `POST` | `/studio-notify/v1/messages` | Queue a notification | unstable |
 | `GET POST` | `/studio-insight/v1/…` | Constructor Insight query, push and component metrics | unstable |
 | `GET POST PUT` | `/studio-reports/v1/…` | Reports, sources, refresh and schedule | unstable |
+| `GET` | `/studio-assembly/v1/manifest` | The running backend: build commit, gears, dependencies, session image | unstable |
 
 Stability is `unstable` except where an ADR fixes the contract (`studio-events`, ADR-0026). Exact methods per path are in `api-contract.json`.
 

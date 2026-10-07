@@ -285,8 +285,9 @@ jobs:
         run: npm ci
       - name: Test
         run: npm test
+      # The commit the /architecture/ page names as the prototype's.
       - name: Build
-        run: npm run build
+        run: STUDIO_BUILD_COMMIT="$(git rev-parse HEAD)" npm run build
       - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-prototype-dist
@@ -339,6 +340,9 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-api-usage.mjs
+      # The reader behind both that check and the /architecture/ page's
+      # prototype map (scripts/prototype-api-map.mjs).
+      - run: node --test scripts/prototype-api-map.test.mjs
       # The other contract both portals owe, and the reason it lives in this
       # job rather than test-frontend: the event stream must not be
       # compressed, and a config change that breaks it is invisible in
@@ -605,7 +609,11 @@ jobs:
         # Keep LLM disabled, but compile graph-storage for the Kubernetes
         # profile. Its database runtime is versioned independently by
         # infra-v* releases and Deploy Infra.
-        run: cargo build --locked --release --no-default-features --features graph,theia-bridge
+        # STUDIO_BUILD_COMMIT is the commit studio-assembly reports
+        # (/studio-assembly/v1/manifest); the checkout's HEAD, because
+        # SOURCE_SHA may be a branch or tag name.
+        run: |
+          STUDIO_BUILD_COMMIT="$(git rev-parse HEAD)"             cargo build --locked --release --no-default-features --features graph,theia-bridge
 
       - uses: actions/upload-artifact@v6
         with:
@@ -760,7 +768,7 @@ jobs:
       - if: steps.test_dist.outcome != 'success'
         run: npm ci
       - if: steps.test_dist.outcome != 'success'
-        run: npm run build
+        run: STUDIO_BUILD_COMMIT="$(git rev-parse HEAD)" npm run build
       - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-prototype-dist
