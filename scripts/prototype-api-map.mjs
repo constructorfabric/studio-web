@@ -161,7 +161,8 @@ export function pathsIn(text, base) {
   return found;
 }
 
-const isComponent = (file, name) => /\.tsx$/.test(file) && /^[A-Z]/.test(name);
+/** A React component: a capitalised name in a `.tsx` file — not a CONSTANT. */
+const isComponent = (file, name) => /\.tsx$/.test(file) && /^[A-Z]/.test(name) && !/^[A-Z0-9_]+$/.test(name);
 
 /**
  * The map for every source file under `srcDir`: one entry per React component

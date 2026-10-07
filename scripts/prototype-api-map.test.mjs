@@ -88,6 +88,23 @@ export function Fake() { return api.presence("t"); }
   }
 });
 
+test('a CONSTANT is not a screen; the component that uses it is', () => {
+  const f = fixture({
+    'page.tsx': `const MANIFEST_URL = "/cf/studio-assembly/v1/manifest";
+async function load() { return fetch(MANIFEST_URL); }
+export function Page() { load(); return null; }
+`,
+  });
+  try {
+    assert.deepEqual(
+      buildPrototypeMap({ srcDir: f.src }).screens.map((s) => [s.name, s.paths]),
+      [['Page', ['/studio-assembly/v1/manifest']]],
+    );
+  } finally {
+    f.done();
+  }
+});
+
 test('file-storage, mounted one level down, keeps its mount', () => {
   const f = fixture({
     'files.tsx': `export function Files() { return fetch("/api/file-storage/v1/files"); }\n`,
