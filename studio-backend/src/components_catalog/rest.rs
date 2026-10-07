@@ -27,6 +27,7 @@ use super::reference::ComponentReferenceListDto;
 use super::roadmap::{RoadmapFields, RoadmapSource};
 use super::service::{CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
+use crate::org_scope::OrgCtx;
 use uuid::Uuid;
 
 /// Errors attributable to a components-catalog resource (e.g. an unknown task).
@@ -684,7 +685,7 @@ pub struct VersionsQuery {
 }
 
 async fn sync(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     headers: HeaderMap,
     body: Option<Json<SyncRequestDto>>,
@@ -747,7 +748,7 @@ fn to_dtos(nodes: Vec<super::gts::GtsNode>) -> Vec<CatalogNodeDto> {
 /// so it belongs to the organization: the list is every node of every type it
 /// marked on the Objects page.
 async fn list_gears(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let (nodes, truncated) = catalog
@@ -970,7 +971,7 @@ pub struct ConformanceDto {
 }
 
 async fn conformance(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Json(req): Json<ConformanceRequest>,
 ) -> ApiResult<JsonBody<ConformanceDto>> {
@@ -1126,7 +1127,7 @@ async fn conformance(
 }
 
 async fn compose_plan(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Json(req): Json<ComposeRequest>,
 ) -> ApiResult<JsonBody<ComposePlanDto>> {
@@ -1281,7 +1282,7 @@ pub struct ActivityQuery {
 /// the collisions — are what this endpoint exists to own, and a caller passing
 /// its own grouping would be keeping a copy of them.
 async fn gear_activity(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Query(query): Query<ActivityQuery>,
 ) -> ApiResult<JsonBody<GearActivityListDto>> {
@@ -1468,7 +1469,7 @@ pub struct ComponentValuesListDto {
 /// table of the whole catalogue: asking per component would be one request per
 /// row for something already read in one.
 async fn component_values(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<ComponentValuesListDto>> {
     let (resolved, truncated) = resolved_components(&ctx, &catalog).await?;
@@ -1533,7 +1534,7 @@ const MAX_HISTORY_DAYS: u32 = 366;
 
 /// GET /studio-components-catalog/v1/component-history — what the fields said before.
 async fn component_history(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Query(query): Query<ComponentHistoryQuery>,
 ) -> ApiResult<JsonBody<ComponentHistoryDto>> {
@@ -1944,7 +1945,7 @@ pub struct ReferenceQuery {
 /// GET /studio-components-catalog/v1/reference — the catalogue and the
 /// Gearbox engine's catalogue as one list (see [`super::reference`]).
 async fn component_reference(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Query(query): Query<ReferenceQuery>,
 ) -> ApiResult<JsonBody<ComponentReferenceListDto>> {
@@ -1988,7 +1989,7 @@ async fn component_reference(
 }
 
 async fn list_profiles(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let nodes = catalog
@@ -2003,7 +2004,7 @@ async fn list_profiles(
 }
 
 async fn save_profile(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(name): Path<String>,
     Json(body): Json<SaveGearProfileRequest>,
@@ -2025,7 +2026,7 @@ async fn save_profile(
 }
 
 async fn list_types(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogTypeListResponse>> {
     let types = catalog
@@ -2054,7 +2055,7 @@ async fn list_types(
 /// `/types` and fills these in after, so a graph with hundreds of types still
 /// renders at once.
 async fn count_types(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<TypeCountListResponse>> {
     let counts = catalog
@@ -2075,7 +2076,7 @@ async fn count_types(
 }
 
 async fn set_type_component(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(type_id): Path<String>,
     Json(body): Json<SetTypeComponentRequest>,
@@ -2101,7 +2102,7 @@ async fn set_type_component(
 }
 
 async fn list_field_schemas(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<FieldSchemaListResponse>> {
     let schemas = catalog
@@ -2118,7 +2119,7 @@ async fn list_field_schemas(
 }
 
 async fn save_field_schema(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(describes): Path<String>,
     Json(body): Json<SaveFieldSchemaRequest>,
@@ -2142,7 +2143,7 @@ async fn save_field_schema(
 }
 
 async fn delete_field_schema(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(describes): Path<String>,
 ) -> ApiResult<StatusCode> {
@@ -2159,7 +2160,7 @@ async fn delete_field_schema(
 }
 
 async fn get_project_repo(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
@@ -2175,7 +2176,7 @@ async fn get_project_repo(
 }
 
 async fn set_project_repo(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<SetProjectRepoRequest>,
@@ -2203,7 +2204,7 @@ async fn set_project_repo(
 }
 
 async fn scaffold_gear(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<ScaffoldRequest>,
@@ -2274,7 +2275,7 @@ async fn scaffold_gear(
 }
 
 async fn get_project_product(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
@@ -2290,7 +2291,7 @@ async fn get_project_product(
 }
 
 async fn save_project_product(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<SaveProjectProductRequest>,
@@ -2706,7 +2707,7 @@ async fn gearbox_status(
 const PRODUCT_GDL_PATH: &str = "product.gdl";
 
 async fn preview_product(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<ProductPreviewRequest>,
@@ -2906,7 +2907,7 @@ async fn preview_product(
 }
 
 async fn create_repo(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<CreateRepoRequest>,
@@ -2940,7 +2941,7 @@ async fn create_repo(
 }
 
 async fn list_versions(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
     Query(q): Query<VersionsQuery>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
@@ -3000,6 +3001,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .param(crate::idempotency::param())
         .json_request::<SyncRequestDto>(openapi, "Sources to sync")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(sync)
         .json_response_with_schema::<CatalogSyncEnqueued>(
             openapi,
@@ -3024,6 +3026,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .json_request::<ConformanceRequest>(openapi, "The project and its declared capabilities")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(conformance)
         .json_response_with_schema::<ConformanceDto>(openapi, StatusCode::OK, "The comparison")
         .error_400(openapi)
@@ -3045,6 +3048,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .json_request::<ComposeRequest>(openapi, "The capabilities to fill")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(compose_plan)
         .json_response_with_schema::<ComposePlanDto>(openapi, StatusCode::OK, "The plan")
         .error_400(openapi)
@@ -3089,6 +3093,7 @@ pub fn register_routes(
             false,
             "`previous` also returns pull requests over the window of the same length just before, as `pull_requests_previous`",
         )
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gear_activity)
         .json_response_with_schema::<GearActivityListDto>(
             openapi,
@@ -3128,6 +3133,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(component_values)
         .json_response_with_schema::<ComponentValuesListDto>(
             openapi,
@@ -3167,6 +3173,7 @@ pub fn register_routes(
             false,
             "One component's every snapshot in the window, instead of each component's earliest",
         )
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(component_history)
         .json_response_with_schema::<ComponentHistoryDto>(
             openapi,
@@ -3218,6 +3225,7 @@ pub fn register_routes(
             false,
             "`components` (default) or `all` (adds non-components and superseded nodes, with reasons)",
         )
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(component_reference)
         .json_response_with_schema::<ComponentReferenceListDto>(
             openapi,
@@ -3240,6 +3248,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_gears)
         .json_response_with_schema::<CatalogNodeListResponse>(openapi, StatusCode::OK, "Components")
         .error_401(openapi)
@@ -3256,6 +3265,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_versions)
         .json_response_with_schema::<CatalogNodeListResponse>(openapi, StatusCode::OK, "Versions")
         .error_401(openapi)
@@ -3273,6 +3283,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_profiles)
         .json_response_with_schema::<CatalogNodeListResponse>(
             openapi,
@@ -3295,6 +3306,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("name", "Crate name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(save_profile)
         .json_request::<SaveGearProfileRequest>(openapi, "Gear profile")
         .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved Gear profile")
@@ -3314,6 +3326,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_types)
         .json_response_with_schema::<CatalogTypeListResponse>(
             openapi,
@@ -3334,6 +3347,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(count_types)
         .json_response_with_schema::<TypeCountListResponse>(
             openapi,
@@ -3355,6 +3369,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("type_id", "GTS type id (the leaf form)")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(set_type_component)
         .json_request::<SetTypeComponentRequest>(openapi, "The mark")
         .json_response_with_schema::<CatalogTypeDto>(
@@ -3377,6 +3392,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_field_schemas)
         .json_response_with_schema::<FieldSchemaListResponse>(
             openapi,
@@ -3399,6 +3415,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("describes", "GTS type id the schema describes")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(save_field_schema)
         .json_request::<SaveFieldSchemaRequest>(openapi, "Field schema")
         .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved field schema")
@@ -3420,6 +3437,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("describes", "GTS type id the schema describes")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(delete_field_schema)
             .no_content_response(StatusCode::NO_CONTENT, "Reverted")
             .error_400(openapi)
@@ -3440,6 +3458,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(get_project_repo)
             .json_response_with_schema::<CatalogNodeListResponse>(
                 openapi,
@@ -3464,6 +3483,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(set_project_repo)
             .json_request::<SetProjectRepoRequest>(openapi, "Gear repository")
             .json_response_with_schema::<CatalogNodeDto>(
@@ -3489,6 +3509,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(scaffold_gear)
             .json_request::<ScaffoldRequest>(openapi, "Gear scaffold")
             .json_response_with_schema::<ScaffoldResultDto>(
@@ -3517,6 +3538,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(create_repo)
             .json_request::<CreateRepoRequest>(openapi, "New repository")
             .json_response_with_schema::<CreateRepoResultDto>(
@@ -3542,6 +3564,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(get_project_product)
             .json_response_with_schema::<CatalogNodeListResponse>(
                 openapi,
@@ -3565,6 +3588,7 @@ pub fn register_routes(
             .authenticated()
             .require_license_features::<License>([])
             .path_param("project_id", "Project tenant id")
+            .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
             .handler(save_project_product)
             .json_request::<SaveProjectProductRequest>(openapi, "Product fields")
             .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved product")
@@ -3716,6 +3740,7 @@ pub fn register_routes(
     .authenticated()
     .require_license_features::<License>([])
     .path_param("project_id", "Project tenant id")
+    .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
     .handler(preview_product)
     .json_request::<ProductPreviewRequest>(openapi, "Picked gears")
     .json_response_with_schema::<ProductPreviewDto>(openapi, StatusCode::OK, "Preview")

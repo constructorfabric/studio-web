@@ -27,6 +27,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
+mod org_scope; // `?organization_id=`: a request acts in the organization it names, once the caller reaches it
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint

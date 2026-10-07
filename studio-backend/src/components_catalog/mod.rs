@@ -177,11 +177,16 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             }
         }
         // A project without a gear repository is compared against its own
-        // sources, which only its config names.
+        // sources, which only its config names. The same client answers
+        // whether a caller reaches the organization a request names.
+        let mut org_access = None;
         if let Ok(am) = ctx
             .client_hub()
             .get::<dyn account_management_sdk::AccountManagementClient>()
         {
+            org_access = Some(crate::org_scope::OrgAccess(Arc::new(
+                crate::studio_session::access::TenantMembership::new(Arc::clone(&am)),
+            )));
             service.set_account_management(am);
         }
 
@@ -193,12 +198,12 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             )));
 
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(
-            router,
-            openapi,
-            service,
-            ctx.client_hub(),
-            gearbox,
-        ))
+        let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
+        // Without it, a request that names an organization is refused rather
+        // than served from the caller's home tenant.
+        Ok(match org_access {
+            Some(access) => router.layer(axum::Extension(access)),
+            None => router,
+        })
     }
 }

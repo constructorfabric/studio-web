@@ -92,6 +92,7 @@ import {
   type Tenant,
   type WorkspaceSettings,
   sessionOrigin,
+  setCurrentOrganization,
   waitForStudioSessionReady,
   uploadProjectArtifact,
 } from "./api";
@@ -1508,6 +1509,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     : home
       ? { ...home, orgId: home.id, orgName: home.name }
       : null;
+  // Set during render, not in an effect: children's effects run before this
+  // component's, and their first catalogue or report fetch must already name
+  // the organization. Assigning the same id again is a no-op.
+  setCurrentOrganization(orgAsSpace?.id);
 
   // The organizations offered in the switcher: every one that holds projects
   // (derived from the loaded workspaces, which carry orgId/orgName) plus any

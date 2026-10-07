@@ -1513,6 +1513,29 @@ export function apiUrl(path: string): string {
   return `/cf${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** The organization on screen, as App resolves it. */
+let currentOrganization: string | undefined;
+
+/** Called by App whenever the organization on screen changes. */
+export function setCurrentOrganization(id: string | undefined): void {
+  currentOrganization = id;
+}
+
+/** Gears that keep their data per organization and take `?organization_id=`. */
+const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/"];
+
+/**
+ * `path` with the organization on screen named, for a gear that keeps its
+ * data per organization. Without it the server takes the caller's home
+ * tenant, and a platform administrator's home is the platform root -- their
+ * catalogue and reports were the root's while the screen showed an
+ * organization's connections. A path that already names one keeps it.
+ */
+export function orgScoped(path: string, org: string | undefined = currentOrganization): string {
+  if (!org || !ORG_SCOPED.some((p) => path.startsWith(p)) || /[?&]organization_id=/.test(path)) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}organization_id=${encodeURIComponent(org)}`;
+}
+
 /** Fired on any 401 so the app can drop a dead session instead of looping. */
 export const UNAUTHENTICATED_EVENT = "studio:unauthenticated";
 
@@ -1535,7 +1558,7 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
       `[api] ${init?.method ?? "GET"} ${path} · auth=${headers.Authorization ? "yes" : "NO"} · token=${token.length}ch ${token.slice(0, 6)}…`,
     );
   }
-  const res = await fetch(apiUrl(path), { ...init, headers });
+  const res = await fetch(apiUrl(orgScoped(path)), { ...init, headers });
   const body = res.status === 204 ? undefined : await res.json().catch(() => undefined);
   if (!res.ok) {
     // 401 = the session is over (SSO access tokens expire; we hold no refresh
@@ -1564,7 +1587,7 @@ async function requestBlob(path: string, token: string): Promise<Blob> {
     window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
   }
-  const res = await fetch(apiUrl(path), { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(apiUrl(orgScoped(path)), { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(res.status, await res.json().catch(() => undefined));

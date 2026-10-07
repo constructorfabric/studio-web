@@ -4,7 +4,9 @@ import {
   api,
   alignSessionHost,
   apiUrl,
+  orgScoped,
   sessionOrigin,
+  setCurrentOrganization,
   sameOriginFileStorageUrl,
   type Capability,
   type StudioSession,
@@ -356,6 +358,40 @@ describe("apiUrl", () => {
   });
   it("normalizes a missing leading slash", () => {
     expect(apiUrl("account-management/v1/me")).toBe("/cf/account-management/v1/me");
+  });
+});
+
+describe("orgScoped", () => {
+  const org = "c31da936-59bd-4e68-92d4-7f1ed6c9e53c";
+  it("names the organization on catalogue and reports calls", () => {
+    expect(orgScoped("/studio-components-catalog/v1/components", org)).toBe(
+      `/studio-components-catalog/v1/components?organization_id=${org}`,
+    );
+    expect(orgScoped("/studio-reports/v1/reports/roadmap/workbook?date=2026-10-07", org)).toBe(
+      `/studio-reports/v1/reports/roadmap/workbook?date=2026-10-07&organization_id=${org}`,
+    );
+  });
+  it("leaves other gears, a path that already names one, and no organization alone", () => {
+    expect(orgScoped("/studio-connector/v1/connections", org)).toBe("/studio-connector/v1/connections");
+    expect(orgScoped("/studio-reports/v1/reports?organization_id=x", org)).toBe(
+      "/studio-reports/v1/reports?organization_id=x",
+    );
+    expect(orgScoped("/studio-reports/v1/reports", undefined)).toBe("/studio-reports/v1/reports");
+  });
+  it("is what request sends once App has set the organization", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setCurrentOrganization(org);
+    try {
+      await api.reports("t0ken");
+      expect(fetchMock.mock.calls[0][0]).toBe(`/cf/studio-reports/v1/reports?organization_id=${org}`);
+    } finally {
+      setCurrentOrganization(undefined);
+      vi.unstubAllGlobals();
+    }
   });
 });
 
