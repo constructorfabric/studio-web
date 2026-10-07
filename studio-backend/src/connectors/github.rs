@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
     OpenedPullRequest, PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList,
-    RemoteIssue, RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry, WrittenFile,
+    RemoteIssue, RemotePullRequest, RemoteRepo, RemoteReview, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -224,6 +224,24 @@ struct GitHubPull {
     created_at: Option<String>,
     #[serde(default)]
     updated_at: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
+    /// Who still owes a review. The listing carries it, so it costs no call.
+    #[serde(default)]
+    requested_reviewers: Vec<GitHubUser>,
+    #[serde(default)]
+    requested_teams: Vec<GitHubTeam>,
+    #[serde(default)]
+    assignees: Vec<GitHubUser>,
+}
+
+/// A team asked to review a pull request.
+#[derive(Deserialize)]
+struct GitHubTeam {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    slug: Option<String>,
 }
 
 /// How many open pull requests one GraphQL page asks about.
@@ -234,17 +252,31 @@ struct GitHubPull {
 /// cheap enough to retry and still walks a busy repository in a few calls.
 const THREAD_PAGE: u32 = 50;
 
-/// Unresolved review threads on the open pull requests of one repository.
+/// Unresolved review threads on the open pull requests of one repository,
+/// and where each reviewer stands.
 ///
 /// `$after` pages; `reviewThreads` is capped at 100 per pull request, and
 /// `totalCount` is asked for alongside so the caller can tell a pull request
 /// whose threads were all read from one whose tail was cut off.
+///
+/// The reviews are two lists because neither says everything.
+/// `latestOpinionatedReviews` is each person's last approval or request for
+/// changes, and survives a later comment from them; `latestReviews` is each
+/// person's last review of any kind, which is the only place a reviewer who
+/// only ever commented appears. The REST API has neither: it would be one
+/// more call per pull request.
 const OPEN_THREADS_QUERY: &str = r"
 query($owner:String!,$name:String!,$pulls:Int!,$after:String){
   repository(owner:$owner,name:$name){
     pullRequests(states:OPEN,first:$pulls,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){
       pageInfo{hasNextPage endCursor}
-      nodes{number reviewThreads(first:100){totalCount nodes{isResolved}}}
+      nodes{
+        number
+        author{login}
+        reviewThreads(first:100){totalCount nodes{isResolved}}
+        latestOpinionatedReviews(first:50){nodes{author{login} state}}
+        latestReviews(first:50){nodes{author{login} state}}
+      }
     }
   }
 }";
@@ -312,8 +344,84 @@ struct ThreadsPageInfo {
 #[derive(Deserialize)]
 struct ThreadsPull {
     number: i64,
+    #[serde(default)]
+    author: Option<GraphQlActor>,
     #[serde(rename = "reviewThreads")]
     review_threads: ReviewThreads,
+    #[serde(rename = "latestOpinionatedReviews", default)]
+    opinionated: Option<ReviewList>,
+    #[serde(rename = "latestReviews", default)]
+    latest: Option<ReviewList>,
+}
+
+/// An author as GraphQL gives it: `null` for an account that was deleted.
+#[derive(Deserialize)]
+struct GraphQlActor {
+    login: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ReviewList {
+    #[serde(default)]
+    nodes: Vec<ReviewNode>,
+}
+
+#[derive(Deserialize)]
+struct ReviewNode {
+    #[serde(default)]
+    author: Option<GraphQlActor>,
+    #[serde(default)]
+    state: String,
+}
+
+/// Each reviewer's last word on one pull request, from the two review lists
+/// [`OPEN_THREADS_QUERY`] reads.
+///
+/// An approval or a request for changes is what a reviewer last *decided*,
+/// and a comment after it does not undo it — GitHub's own page reads it the
+/// same way. A dismissed review decided nothing any more, so it falls through
+/// to whatever else that person said. A pending review is a draft only its
+/// writer can see. The author's own reviews are left out: answering your own
+/// pull request is not reviewing it.
+fn fold_reviews(
+    author: Option<&str>,
+    opinionated: &[ReviewNode],
+    latest: &[ReviewNode],
+) -> Vec<RemoteReview> {
+    let mut by_login: std::collections::BTreeMap<String, &'static str> =
+        std::collections::BTreeMap::new();
+    let login_of = |node: &ReviewNode| {
+        node.author
+            .as_ref()
+            .map(|a| a.login.trim().to_owned())
+            .filter(|login| !login.is_empty())
+            .filter(|login| author.is_none_or(|a| !a.eq_ignore_ascii_case(login)))
+    };
+    for node in opinionated {
+        let state = match node.state.as_str() {
+            "APPROVED" => "approved",
+            "CHANGES_REQUESTED" => "changes_requested",
+            _ => continue,
+        };
+        if let Some(login) = login_of(node) {
+            by_login.insert(login, state);
+        }
+    }
+    for node in latest {
+        if !matches!(node.state.as_str(), "COMMENTED" | "DISMISSED") {
+            continue;
+        }
+        if let Some(login) = login_of(node) {
+            by_login.entry(login).or_insert("commented");
+        }
+    }
+    by_login
+        .into_iter()
+        .map(|(login, state)| RemoteReview {
+            login,
+            state: state.to_owned(),
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -536,6 +644,18 @@ impl ConnectorDriver for GitHubDriver {
                     merged,
                     created_at: p.created_at,
                     updated_at: p.updated_at,
+                    draft: p.draft,
+                    requested_reviewers: p
+                        .requested_reviewers
+                        .into_iter()
+                        .map(|u| u.login)
+                        .collect(),
+                    requested_teams: p
+                        .requested_teams
+                        .into_iter()
+                        .filter_map(|t| t.name.or(t.slug))
+                        .collect(),
+                    assignees: p.assignees.into_iter().map(|u| u.login).collect(),
                 }
             })
             .collect())
@@ -1097,8 +1217,14 @@ impl ConnectorDriver for GitHubDriver {
                 return Ok(Some(out));
             };
             for pull in page.nodes {
+                let reviews = fold_reviews(
+                    pull.author.as_ref().map(|a| a.login.as_str()),
+                    &pull.opinionated.unwrap_or_default().nodes,
+                    &pull.latest.unwrap_or_default().nodes,
+                );
                 out.push(PullRequestThreads {
                     number: pull.number,
+                    reviews,
                     open: pull
                         .review_threads
                         .nodes
@@ -1222,6 +1348,8 @@ mod tests {
         default_branch: &'static str,
         /// Whether `POST /pulls` answers 422 — GitHub's "already open".
         pull_conflict: bool,
+        /// What `GET /pulls` lists when the test is about the listing itself.
+        pull_listing: Option<Value>,
     }
 
     impl Default for Fixture {
@@ -1231,6 +1359,7 @@ mod tests {
                 branches: vec![("main", "sha-main")],
                 default_branch: "main",
                 pull_conflict: false,
+                pull_listing: None,
             }
         }
     }
@@ -1317,6 +1446,9 @@ mod tests {
             RawQuery(query): RawQuery,
         ) -> Json<Value> {
             seen.lock().unwrap().pull_query = query;
+            if let Some(listing) = fx.pull_listing.clone() {
+                return Json(listing);
+            }
             if fx.pull_conflict {
                 Json(json!([{ "number": 9, "html_url": "https://example.test/pull/9" }]))
             } else {
@@ -1363,9 +1495,21 @@ mod tests {
             let (nodes, has_next, cursor) = match after.as_deref() {
                 None => (
                     json!([
-                        { "number": 7, "reviewThreads": { "totalCount": 3, "nodes": [
+                        { "number": 7, "author": { "login": "alice" },
+                          "reviewThreads": { "totalCount": 3, "nodes": [
                             { "isResolved": false }, { "isResolved": true }, { "isResolved": false }
-                        ] } },
+                          ] },
+                          "latestOpinionatedReviews": { "nodes": [
+                            { "author": { "login": "bob" }, "state": "APPROVED" },
+                            { "author": { "login": "carol" }, "state": "CHANGES_REQUESTED" },
+                            { "author": null, "state": "APPROVED" }
+                          ] },
+                          "latestReviews": { "nodes": [
+                            { "author": { "login": "bob" }, "state": "COMMENTED" },
+                            { "author": { "login": "dave" }, "state": "COMMENTED" },
+                            { "author": { "login": "alice" }, "state": "COMMENTED" },
+                            { "author": { "login": "erin" }, "state": "PENDING" }
+                          ] } },
                         { "number": 9, "reviewThreads": { "totalCount": 1, "nodes": [
                             { "isResolved": true }
                         ] } }
@@ -1690,17 +1834,33 @@ mod tests {
                 PullRequestThreads {
                     number: 7,
                     open: 2,
-                    total: 3
+                    total: 3,
+                    reviews: vec![
+                        RemoteReview {
+                            login: "bob".into(),
+                            state: "approved".into()
+                        },
+                        RemoteReview {
+                            login: "carol".into(),
+                            state: "changes_requested".into()
+                        },
+                        RemoteReview {
+                            login: "dave".into(),
+                            state: "commented".into()
+                        },
+                    ],
                 },
                 PullRequestThreads {
                     number: 9,
                     open: 0,
-                    total: 1
+                    total: 1,
+                    reviews: vec![],
                 },
                 PullRequestThreads {
                     number: 11,
                     open: 2,
-                    total: 2
+                    total: 2,
+                    reviews: vec![],
                 },
             ]
         );
@@ -1711,6 +1871,46 @@ mod tests {
         assert_eq!(seen.graphql_bodies[1]["variables"]["after"], "cursor-1");
         assert_eq!(seen.graphql_bodies[0]["variables"]["owner"], "acme");
         assert_eq!(seen.graphql_bodies[0]["variables"]["name"], "specs");
+    }
+
+    /// The listing already says who owes a review, who it is assigned to and
+    /// whether it is a draft, so none of that costs a call of its own.
+    #[tokio::test]
+    async fn the_pull_listing_carries_reviewers_assignees_and_draft() {
+        let (base, _) = fake_github(Fixture {
+            pull_listing: Some(json!([{
+                "id": 70, "number": 7, "title": "Add the thing", "state": "open",
+                "user": { "login": "alice" },
+                "html_url": "https://example.test/pull/7",
+                "draft": true,
+                "requested_reviewers": [{ "login": "bob" }, { "login": "carol" }],
+                "requested_teams": [{ "name": "Backend", "slug": "backend" }, { "slug": "docs" }],
+                "assignees": [{ "login": "alice" }],
+                "merged_at": null
+            }, {
+                "id": 80, "number": 8, "title": "Old one", "state": "closed",
+                "html_url": "https://example.test/pull/8",
+                "merged_at": "2026-01-01T00:00:00Z"
+            }])),
+            ..Fixture::default()
+        })
+        .await;
+        let (driver, auth) = driver_and_auth(base);
+
+        let got = driver
+            .list_pull_requests(&auth, "acme/specs", None, 1, 100)
+            .await
+            .unwrap();
+
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].draft, Some(true));
+        assert_eq!(got[0].requested_reviewers, vec!["bob", "carol"]);
+        assert_eq!(got[0].requested_teams, vec!["Backend", "docs"]);
+        assert_eq!(got[0].assignees, vec!["alice"]);
+        // A listing that says nothing about them says nothing, not "none".
+        assert_eq!(got[1].draft, None);
+        assert!(got[1].requested_reviewers.is_empty());
+        assert_eq!(got[1].state, "merged");
     }
 
     /// `max_pulls` stops the walk rather than being a hint — one page only,

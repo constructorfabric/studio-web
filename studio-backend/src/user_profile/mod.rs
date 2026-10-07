@@ -536,6 +536,81 @@ impl OrganizationRoster for IdentityService {
     }
 }
 
+/// A member of one organization that an external account is attributed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributedMember {
+    /// The canonical person id.
+    pub person: String,
+    /// The name their profile carries, when it carries one.
+    pub display_name: Option<String>,
+}
+
+/// Which accounts on a provider are people of an organization.
+///
+/// What a screen about work in a repository needs to say "Bob" instead of
+/// `bob-gh`: the login a pull request names, read as a member. Narrower than
+/// the members screen on purpose — no address, no role, and only accounts
+/// whose attribution is CONFIRMED (ADR-0012); a claim or a guess names nobody.
+/// An account that belongs to somebody outside `org_id`, or to a suspended
+/// member, is absent, which a caller reads as "not one of ours".
+///
+/// The consumer is expected to have reached `org_id` through its caller's
+/// tenant scope before asking, as [`OrganizationRoster`]'s does.
+#[async_trait]
+pub trait MemberAliases: Send + Sync + 'static {
+    /// Active members of `org_id` owning `external_ids` of `kind` (a provider
+    /// key such as `github`), keyed by the identifier lowercased.
+    async fn members_by_alias(
+        &self,
+        org_id: uuid::Uuid,
+        kind: &str,
+        external_ids: &[String],
+    ) -> anyhow::Result<BTreeMap<String, AttributedMember>>;
+}
+
+#[async_trait]
+impl MemberAliases for IdentityService {
+    async fn members_by_alias(
+        &self,
+        org_id: uuid::Uuid,
+        kind: &str,
+        external_ids: &[String],
+    ) -> anyhow::Result<BTreeMap<String, AttributedMember>> {
+        let owners = self.confirmed_alias_owners(kind, external_ids).await?;
+        let org = org_id.to_string();
+        // One membership and one profile read per PERSON, not per account: a
+        // person with three logins on the provider is asked about once.
+        let mut people: BTreeMap<String, Option<AttributedMember>> = BTreeMap::new();
+        let mut out = BTreeMap::new();
+        for (external_id, person) in owners {
+            if !people.contains_key(&person) {
+                let member = self
+                    .list_memberships(&person)
+                    .await?
+                    .iter()
+                    .any(|m| m.org_id == org && m.status == leaving::STATUS_ACTIVE);
+                let found = if member {
+                    Some(AttributedMember {
+                        person: person.clone(),
+                        display_name: self
+                            .get_profile(&person)
+                            .await?
+                            .and_then(|p| p.display_name)
+                            .filter(|n| !n.trim().is_empty()),
+                    })
+                } else {
+                    None
+                };
+                people.insert(person.clone(), found);
+            }
+            if let Some(Some(member)) = people.get(&person) {
+                out.insert(normalize_key(&external_id), member.clone());
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[toolkit::gear(
     name = "studio-user",
     deps = [account_management],
@@ -605,10 +680,15 @@ impl Gear for StudioUserGear {
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 authority,
             );
-            let roster: Arc<dyn OrganizationRoster> = svc;
+            let roster: Arc<dyn OrganizationRoster> = svc.clone();
             ctx.client_hub().register_scoped::<dyn OrganizationRoster>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 roster,
+            );
+            let aliases: Arc<dyn MemberAliases> = svc;
+            ctx.client_hub().register_scoped::<dyn MemberAliases>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                aliases,
             );
         }
 

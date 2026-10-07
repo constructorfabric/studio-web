@@ -24,6 +24,7 @@ mod ingest_task;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
 pub mod port;
+mod pull_request_waits;
 mod rest;
 mod service;
 

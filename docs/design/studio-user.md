@@ -302,6 +302,7 @@ In process, under the scope `cf.studio._.user_identity.v1~`, published in
 | `MembershipEvictor` | End every membership of an organization being deleted | `cpt-studio-component-organizations` |
 | `OrganizationReader` | A subject's active organizations, all its person's subjects, platform-admin test, membership generation | `cpt-studio-component-authz-plugin`, `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
 | `OrganizationRoster` | An organization's active members and their subjects | `cpt-studio-component-organizations` (rollups) |
+| `MemberAliases` | Which provider accounts belong to an active member of one organization, with the member's id and name; confirmed attributions only, no address or role | `cpt-studio-component-artifact-ingest` (open pull requests) |
 
 ### 3.4 Internal Dependencies
 

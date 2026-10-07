@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::driver::{
-    RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
+    PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
 };
 
 /// Fixed namespace for uuid5 instance ids (studio artifact graph).
@@ -125,9 +125,13 @@ pub const REL_COMMENT_ON: &str = "gts.cf.studio.rel.comment_on.v1~";
 pub const REL_CONTENT_OF: &str = "gts.cf.studio.rel.content_of.v1~";
 /// mapping_decision → document: the document whose capability it decides.
 pub const REL_DECISION_ON: &str = "gts.cf.studio.rel.decision_on.v1~";
+/// pull_request → user: an account asked to review it, or that reviewed it.
+pub const REL_REVIEWED_BY: &str = "gts.cf.studio.rel.reviewed_by.v1~";
+/// pull_request → user: an account it is assigned to.
+pub const REL_ASSIGNED_TO: &str = "gts.cf.studio.rel.assigned_to.v1~";
 
 /// Every relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 10] = [
+pub const ALL_EDGE_TYPES: [&str; 12] = [
     REL_ARTIFACT_OF,
     REL_CONTAINS,
     REL_AUTHORED_BY,
@@ -138,6 +142,8 @@ pub const ALL_EDGE_TYPES: [&str; 10] = [
     REL_COMMENT_ON,
     REL_CONTENT_OF,
     REL_DECISION_ON,
+    REL_REVIEWED_BY,
+    REL_ASSIGNED_TO,
 ];
 
 /// The graph-storage families our types derive from.
@@ -229,7 +235,7 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
 
 /// The relation types, with a title and a description each — the catalog side
 /// of [`ALL_EDGE_TYPES`].
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 10] = [
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 12] = [
     (
         REL_ARTIFACT_OF,
         "ArtifactOf",
@@ -279,6 +285,16 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 10] = [
         REL_DECISION_ON,
         "DecisionOn",
         "A mapping decision and the document whose capability it decides.",
+    ),
+    (
+        REL_REVIEWED_BY,
+        "ReviewedBy",
+        "A pull request and an account asked to review it or that reviewed it.",
+    ),
+    (
+        REL_ASSIGNED_TO,
+        "AssignedTo",
+        "A pull request and an account it is assigned to.",
     ),
 ];
 
@@ -648,17 +664,49 @@ pub fn file_content_node(file: &GtsNode, text: &str) -> Option<GtsNode> {
     })
 }
 
-/// One pull request. `open_threads` is its unresolved review conversations,
-/// or `None` when the provider does not report them and for a pull request
-/// that is no longer open — nothing is waiting on a merged branch.
+/// One pull request.
+///
+/// `review` is what the provider said about an OPEN pull request's review
+/// conversations and reviewers, and `None` for one that is no longer open —
+/// nothing is waiting on a merged branch — or when the provider could not say.
+/// From it come `open_threads`, `reviews` (each reviewer's last word) and
+/// `review_decision`; all three stay null without it, so a reader can tell
+/// "nobody reviewed it" from "nobody knows".
+///
+/// `draft`, `requested_reviewers`, `requested_teams` and `assignees` come from
+/// the listing itself. Added to `pull_request.v1` as optional fields: a node
+/// a sync wrote before them reads as having none, and the type keeps its id
+/// (ADR-0013 §5, "additive field").
 pub fn pull_request_node(
     scope_key: &str,
     repo_id: &str,
     connector_id: &str,
     repo_full_path: &str,
     p: RemotePullRequest,
-    open_threads: Option<usize>,
+    review: Option<&PullRequestThreads>,
 ) -> GtsNode {
+    let open_threads = review.map(|r| r.open);
+    let reviews = review.map(|r| {
+        r.reviews
+            .iter()
+            .map(|rv| json!({ "login": rv.login, "state": rv.state }))
+            .collect::<Vec<_>>()
+    });
+    let review_decision = review.and_then(|r| {
+        let stated: Vec<super::pull_request_waits::Review> = r
+            .reviews
+            .iter()
+            .map(|rv| super::pull_request_waits::Review {
+                login: rv.login.clone(),
+                state: rv.state.clone(),
+            })
+            .collect();
+        super::pull_request_waits::review_decision(
+            &p.requested_reviewers,
+            &p.requested_teams,
+            &stated,
+        )
+    });
     GtsNode {
         type_id: PULL_REQUEST_TYPE,
         instance_id: anon_id(&[
@@ -683,7 +731,31 @@ pub fn pull_request_node(
             "open_threads": open_threads,
             "created_at": p.created_at,
             "updated_at": p.updated_at,
+            "draft": p.draft,
+            "requested_reviewers": p.requested_reviewers,
+            "requested_teams": p.requested_teams,
+            "assignees": p.assignees,
+            "reviews": reviews,
+            "review_decision": review_decision,
         }),
+    }
+}
+
+/// pull_request → user: asked to review it, or reviewed it.
+pub fn reviewed_by_edge(pr_id: &str, user_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_REVIEWED_BY,
+        from: pr_id.to_string(),
+        to: user_id.to_string(),
+    }
+}
+
+/// pull_request → user: assigned to.
+pub fn assigned_to_edge(pr_id: &str, user_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_ASSIGNED_TO,
+        from: pr_id.to_string(),
+        to: user_id.to_string(),
     }
 }
 
@@ -977,6 +1049,75 @@ mod tests {
             node.instance_id,
             file_instance_id("scope", "connector", "acme/specs", "docs/adr/0007.md"),
         );
+    }
+
+    fn pull(state: &str) -> RemotePullRequest {
+        RemotePullRequest {
+            id: "70".into(),
+            number: 7,
+            title: "Add the thing".into(),
+            state: state.into(),
+            author: Some("alice".into()),
+            draft: Some(false),
+            requested_reviewers: vec!["carol".into()],
+            requested_teams: vec!["Backend".into()],
+            assignees: vec!["alice".into()],
+            ..RemotePullRequest::default()
+        }
+    }
+
+    /// An open pull request carries who owes a review, who reviewed and how,
+    /// and the decision that amounts to.
+    #[test]
+    fn an_open_pull_request_carries_its_reviewers_and_their_decision() {
+        let review = PullRequestThreads {
+            number: 7,
+            open: 1,
+            total: 2,
+            reviews: vec![crate::connectors::driver::RemoteReview {
+                login: "bob".into(),
+                state: "approved".into(),
+            }],
+        };
+        let node = pull_request_node(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            pull("open"),
+            Some(&review),
+        );
+        let v = &node.value;
+        assert_eq!(v["draft"], json!(false));
+        assert_eq!(v["requested_reviewers"], json!(["carol"]));
+        assert_eq!(v["requested_teams"], json!(["Backend"]));
+        assert_eq!(v["assignees"], json!(["alice"]));
+        assert_eq!(
+            v["reviews"],
+            json!([{ "login": "bob", "state": "approved" }])
+        );
+        assert_eq!(v["review_decision"], json!("approved"));
+        assert_eq!(v["open_threads"], json!(1));
+    }
+
+    /// Without the review read — a merged pull request, or a provider that
+    /// could not answer — the review fields say nothing rather than "none".
+    #[test]
+    fn without_a_review_read_the_review_fields_are_null() {
+        let node = pull_request_node(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            pull("merged"),
+            None,
+        );
+        let v = &node.value;
+        assert_eq!(v["reviews"], Value::Null);
+        assert_eq!(v["review_decision"], Value::Null);
+        assert_eq!(v["open_threads"], Value::Null);
+        // The listing's own fields are still there.
+        assert_eq!(v["requested_reviewers"], json!(["carol"]));
     }
 
     /// A file nobody has commented on carries no thread keys at all, and one

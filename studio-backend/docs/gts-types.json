@@ -117,6 +117,24 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.assigned_to.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A relation between two artifact nodes.",
+        "title": "Relation",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.assigned_to.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.authored_by.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -255,6 +273,24 @@
         "type": "object"
       },
       "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.modifies.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.reviewed_by.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A relation between two artifact nodes.",
+        "title": "Relation",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.rel.reviewed_by.v1~"
     },
     {
       "gear": "studio-artifact-ingest",
@@ -7460,6 +7496,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.rel.assigned_to.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A pull request and an account it is assigned to.",
+        "title": "AssignedTo",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.rel.assigned_to.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.rel.authored_by.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "An issue or pull request and the account that authored it.",
@@ -7558,6 +7607,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.rel.modifies.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.rel.reviewed_by.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A pull request and an account asked to review it or that reviewed it.",
+        "title": "ReviewedBy",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.rel.reviewed_by.v1~"
     },
     {
       "gear": "studio-artifact-ingest",

@@ -1042,6 +1042,283 @@ async fn activity_feed(
     }))
 }
 
+// ── who the open pull requests are waiting on ────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct OpenPullRequestsQuery {
+    /// The project whose pull requests these are.
+    pub project_id: String,
+    #[serde(flatten)]
+    pub page: PageQuery,
+}
+
+/// An account a pull request names, read as a person where it can be.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestPersonDto {
+    /// The account's login on the provider, as the provider spells it.
+    pub login: String,
+    /// The organization member this account is confirmed as belonging to
+    /// (their canonical person id), or null.
+    pub user_id: Option<String>,
+    /// That member's name, when their profile carries one.
+    pub display_name: Option<String>,
+    /// `true` for a member of the project's organization, `false` for an
+    /// account nobody in it has confirmed as theirs, and null when the member
+    /// directory could not be asked — which says nothing either way.
+    pub in_organization: Option<bool>,
+}
+
+/// One reviewer and where they stand.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestReviewerDto {
+    pub person: PullRequestPersonDto,
+    /// `pending` (asked and not answered, or asked again), `approved`,
+    /// `changes_requested` or `commented`.
+    pub state: String,
+}
+
+/// One open pull request, and who it is waiting on.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OpenPullRequestDto {
+    /// Instance id of the `pull_request` node.
+    pub id: String,
+    /// The repository, as `owner/name`, when its repo node is in the project.
+    pub repo: Option<String>,
+    /// The provider key of that repository (`github`, …).
+    pub provider: Option<String>,
+    pub number: i64,
+    pub title: String,
+    /// The pull request on the provider's site.
+    pub url: Option<String>,
+    pub author: Option<PullRequestPersonDto>,
+    /// The one bucket it is in: `review`, `author`, `merge`, `draft` or
+    /// `nobody`.
+    pub waiting: String,
+    /// Who it is waiting on: the reviewers still owing a review for `review`,
+    /// the author for `author`, `merge` and `draft`, nobody for `nobody`.
+    pub waiting_on: Vec<PullRequestPersonDto>,
+    /// Teams still owing a review, by name (only for `review`).
+    pub waiting_on_teams: Vec<String>,
+    /// Why, in one plain sentence.
+    pub reason: String,
+    /// `approved`, `changes_requested`, `review_required`, or null when the
+    /// reviews were not read or nobody was asked.
+    pub review_decision: Option<String>,
+    /// Everyone asked to review it or who did, with where they stand.
+    pub reviewers: Vec<PullRequestReviewerDto>,
+    pub assignees: Vec<PullRequestPersonDto>,
+    pub draft: bool,
+    /// Unresolved review conversations, or null when the provider cannot say.
+    pub open_threads: Option<u32>,
+    /// RFC 3339, as the provider reported it.
+    pub created_at: Option<String>,
+    /// RFC 3339, the last time anything happened on it.
+    pub updated_at: Option<String>,
+    /// Whole days since it was opened.
+    pub days_open: Option<u32>,
+    /// Whole days since anything happened on it.
+    pub days_since_update: Option<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OpenPullRequestListDto {
+    pub items: Vec<OpenPullRequestDto>,
+    pub total: u32,
+    /// Whether accounts were matched against the organization's members. False
+    /// when the member directory or the project's organization could not be
+    /// read; every `in_organization` is then null.
+    pub members_known: bool,
+}
+
+/// The organization a project hangs under (project → workspace →
+/// organization), read as the caller, so a caller learns nothing about an
+/// organization their scope does not reach. `None` when any step fails or the
+/// grandparent is not an organization.
+async fn organization_of_project(
+    am: &dyn account_management_sdk::AccountManagementClient,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> Option<Uuid> {
+    let project = am.get_tenant(ctx, project_id).await.ok()?;
+    let workspace = am.get_tenant(ctx, project.parent_id?.0).await.ok()?;
+    let org_id = workspace.parent_id?.0;
+    let org = am.get_tenant(ctx, org_id).await.ok()?;
+    (org.tenant_type.as_deref() == Some(crate::organizations::rollups::ORGANIZATION_TENANT_TYPE))
+        .then_some(org_id)
+}
+
+/// GET /studio-artifact-ingest/v1/open-pull-requests — who they wait on.
+async fn open_pull_requests(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Query(query): Query<OpenPullRequestsQuery>,
+) -> ApiResult<JsonBody<OpenPullRequestListDto>> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let project_id = query.project_id.trim();
+    if project_id.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation("project_id", "must name a project".to_owned(), "INVALID")
+            .create());
+    }
+    let service = ingest.get()?;
+
+    let pulls = scoped_entries(service, &ctx, "pull_request", project_id).await?;
+    let repos: BTreeMap<String, (Option<String>, Option<String>)> =
+        scoped_entries(service, &ctx, "repo", project_id)
+            .await?
+            .into_iter()
+            .map(|(id, v)| {
+                let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+                (id, (text("full_path"), text("provider")))
+            })
+            .collect();
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+    )
+    .unwrap_or(0);
+    let waiting = super::pull_request_waits::waiting_pulls(&pulls, now);
+    let provider_of = |repo: &Option<String>| {
+        repo.as_ref()
+            .and_then(|r| repos.get(r))
+            .and_then(|(_, provider)| provider.clone())
+    };
+
+    // Every account named, per provider: a login means something only on the
+    // provider it came from.
+    let mut accounts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for p in &waiting {
+        let Some(provider) = provider_of(&p.repo) else {
+            continue;
+        };
+        let set = accounts.entry(provider).or_default();
+        set.extend(p.facts.author.iter().cloned());
+        set.extend(p.facts.requested_reviewers.iter().cloned());
+        set.extend(p.assignees.iter().cloned());
+        set.extend(p.facts.reviews.iter().flatten().map(|r| r.login.clone()));
+    }
+
+    // Who of them is one of the organization's people. Best-effort: without
+    // the directory every account reads as a bare login and the answer says
+    // so, rather than calling everybody an outsider.
+    let directory = ingest
+        .hub
+        .get_scoped::<dyn crate::user_profile::MemberAliases>(&ClientScope::gts_id(
+            crate::user_profile::IDENTITY_INSTANCE_ID,
+        ))
+        .ok();
+    let am = ingest
+        .hub
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+        .ok();
+    let org = match (am, Uuid::parse_str(project_id)) {
+        (Some(am), Ok(id)) => organization_of_project(am.as_ref(), &ctx, id).await,
+        _ => None,
+    };
+    let mut members: BTreeMap<(String, String), crate::user_profile::AttributedMember> =
+        BTreeMap::new();
+    let mut members_known = false;
+    if let (Some(directory), Some(org)) = (directory, org) {
+        members_known = true;
+        for (provider, logins) in &accounts {
+            let logins: Vec<String> = logins.iter().cloned().collect();
+            match directory.members_by_alias(org, provider, &logins).await {
+                Ok(found) => {
+                    for (login, member) in found {
+                        members.insert((provider.clone(), login), member);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, provider, "studio-artifact-ingest: member lookup failed");
+                    members_known = false;
+                }
+            }
+        }
+    }
+    let person = |provider: Option<&str>, login: &str| {
+        let member = provider
+            .and_then(|p| members.get(&(p.to_owned(), crate::user_profile::normalize_key(login))));
+        PullRequestPersonDto {
+            login: login.to_owned(),
+            user_id: member.map(|m| m.person.clone()),
+            display_name: member.and_then(|m| m.display_name.clone()),
+            in_organization: members_known.then_some(member.is_some()),
+        }
+    };
+
+    let items: Vec<OpenPullRequestDto> = waiting
+        .into_iter()
+        .map(|p| {
+            let provider = provider_of(&p.repo);
+            let provider_ref = provider.as_deref();
+            let requested = &p.facts.requested_reviewers;
+            let mut reviewers: Vec<PullRequestReviewerDto> = requested
+                .iter()
+                .map(|login| PullRequestReviewerDto {
+                    person: person(provider_ref, login),
+                    state: "pending".to_owned(),
+                })
+                .collect();
+            for r in p.facts.reviews.iter().flatten() {
+                if !requested.iter().any(|q| q.eq_ignore_ascii_case(&r.login)) {
+                    reviewers.push(PullRequestReviewerDto {
+                        person: person(provider_ref, &r.login),
+                        state: r.state.clone(),
+                    });
+                }
+            }
+            OpenPullRequestDto {
+                repo: p
+                    .repo
+                    .as_ref()
+                    .and_then(|r| repos.get(r))
+                    .and_then(|(path, _)| path.clone()),
+                number: p.number,
+                title: p.title,
+                url: p.url,
+                author: p.facts.author.as_deref().map(|a| person(provider_ref, a)),
+                waiting: p.verdict.waiting.as_str().to_owned(),
+                waiting_on: p
+                    .verdict
+                    .on
+                    .iter()
+                    .map(|login| person(provider_ref, login))
+                    .collect(),
+                waiting_on_teams: p.verdict.teams,
+                reason: p.verdict.reason,
+                review_decision: p.review_decision.map(str::to_owned),
+                reviewers,
+                assignees: p
+                    .assignees
+                    .iter()
+                    .map(|login| person(provider_ref, login))
+                    .collect(),
+                draft: p.facts.draft,
+                open_threads: p.facts.open_threads.and_then(|n| u32::try_from(n).ok()),
+                created_at: p.created_at,
+                updated_at: p.updated_at,
+                days_open: p.days_open,
+                days_since_update: p.days_since_update,
+                provider,
+                id: p.id,
+            }
+        })
+        .collect();
+    let (items, total) = page_of(items, query.page);
+    Ok(Json(OpenPullRequestListDto {
+        items,
+        total,
+        members_known,
+    }))
+}
+
 /// The payloads of one type that name `scope`, through the same predicate the
 /// listing route applies — not a second spelling of it.
 async fn scoped_values(
@@ -1192,6 +1469,53 @@ pub fn register_routes(
         .query_param("project_id", true, "The project whose feed to read")
         .handler(activity_feed)
         .json_response_with_schema::<ActivityFeedListDto>(openapi, StatusCode::OK, "The feed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/open-pull-requests")
+        .operation_id("studio_artifact_ingest.list_open_pull_requests")
+        .summary("A project's open pull requests, each with who it is waiting on")
+        .description(
+            "Every open pull request of one project, from the `pull_request` nodes the last \
+             sync wrote, each put in exactly one bucket: `review` (somebody asked to review it \
+             has not), `author` (changes were asked for, conversations are open, or it was \
+             only commented on), `merge` (approved, nothing outstanding), `draft`, or `nobody` \
+             (open, not a draft, and nobody was asked — the stuck ones). The rules are in \
+             `artifact_ingest/pull_request_waits.rs`. Longest-quiet first.\n\n\
+             AS FRESH AS THE LAST SYNC, not as the provider: a review given since then is not \
+             here until the project syncs again. Reviews are read for at most 200 open pull \
+             requests per repository; past that, and on a provider whose reviews Studio does \
+             not read, `review_decision` is null and a pull request nobody was asked about \
+             says its reviews could not be read.\n\n\
+             An account is shown as a person only where a member of the project's \
+             organization has CONFIRMED it as theirs; anything less names nobody. \
+             `members_known: false` means the directory could not be asked, and then no \
+             account is called an outsider. Group by `waiting_on` on the client: a pull \
+             request waiting on two reviewers is in both of their queues.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "project_id",
+            true,
+            "The project whose pull requests to read",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first pull request",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(open_pull_requests)
+        .json_response_with_schema::<OpenPullRequestListDto>(
+            openapi,
+            StatusCode::OK,
+            "Open pull requests and who they are waiting on",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

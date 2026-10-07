@@ -332,6 +332,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/open-pull-requests",
+      "operation_id": "studio_artifact_ingest.list_open_pull_requests",
+      "tag": "StudioArtifactIngest",
+      "summary": "A project's open pull requests, each with who it is waiting on",
+      "authenticated": true,
+      "responses": [
+        "OpenPullRequestListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/repo-files",
       "operation_id": "studio_artifact_ingest.repo_files",
       "tag": "StudioArtifactIngest",

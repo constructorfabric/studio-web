@@ -24,7 +24,7 @@ use super::clone;
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
-use crate::connectors::driver::{ConnectionAuth, ConnectorDriver};
+use crate::connectors::driver::{ConnectionAuth, ConnectorDriver, PullRequestThreads};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -482,10 +482,10 @@ impl IngestService {
         let open_review_threads = threads
             .as_ref()
             .map(|list| list.iter().map(|t| t.open).sum::<usize>());
-        let threads_by_number: std::collections::HashMap<i64, usize> = threads
+        let threads_by_number: HashMap<i64, PullRequestThreads> = threads
             .into_iter()
             .flatten()
-            .map(|t| (t.number, t.open))
+            .map(|t| (t.number, t))
             .collect();
 
         progress.set("pulling pull requests…");
@@ -501,21 +501,49 @@ impl IngestService {
             for p in batch {
                 let author = p.author.clone();
                 let number = p.number;
-                // Only an open pull request has threads worth counting; a
-                // merged one is nobody's queue, so its count stays unset
-                // rather than being reported as zero.
-                let open_threads = threads_by_number.get(&number).copied();
+                // Only an open pull request has threads and reviews worth
+                // reading; a merged one is nobody's queue, so they stay unset
+                // rather than being reported as none.
+                let review = threads_by_number.get(&number);
+                // Everyone asked to review it, everyone who did, and everyone
+                // it is assigned to, each as an account in the graph. The edges
+                // only ever accumulate (a re-sync upserts); who is owed what
+                // NOW is on the node.
+                let mut reviewers: Vec<String> = p.requested_reviewers.clone();
+                reviewers.extend(
+                    review
+                        .iter()
+                        .flat_map(|r| r.reviews.iter().map(|rv| rv.login.clone())),
+                );
+                let assignees = p.assignees.clone();
                 let node = gts::pull_request_node(
                     source_scope,
                     &repo_id,
                     connector_id,
                     repo_full_path,
                     p,
-                    open_threads,
+                    review,
                 );
                 let pr_id = node.instance_id.clone();
                 edges.push(gts::artifact_of_edge(&pr_id, &repo_id));
                 author_edge(&mut edges, &mut users, &pr_id, author.as_deref());
+                for (logins, edge) in [
+                    (
+                        reviewers,
+                        gts::reviewed_by_edge as fn(&str, &str) -> GtsEdge,
+                    ),
+                    (assignees, gts::assigned_to_edge),
+                ] {
+                    let mut seen = HashSet::new();
+                    for login in logins.iter().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+                        if !seen.insert(login.to_lowercase()) {
+                            continue;
+                        }
+                        let u = gts::user_node(source_scope, connector_id, provider, login);
+                        edges.push(edge(&pr_id, &u.instance_id));
+                        users.entry(u.instance_id.clone()).or_insert(u);
+                    }
+                }
                 by_number.insert(number, pr_id.clone());
                 pr_refs.push((number, pr_id));
                 nodes.push(node);

@@ -179,7 +179,7 @@ pub struct WrittenFile {
 }
 
 /// One pull/merge request as the provider describes it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RemotePullRequest {
     pub id: String,
     pub number: i64,
@@ -194,6 +194,28 @@ pub struct RemotePullRequest {
     pub merged: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    /// Whether the author marked it as not ready for review, or `None` when
+    /// the provider does not say.
+    pub draft: Option<bool>,
+    /// Logins asked to review it and not yet answered. GitHub drops a login
+    /// from this list when its review arrives and puts it back when review is
+    /// asked for again, so the list is "still owed", not "ever asked".
+    pub requested_reviewers: Vec<String>,
+    /// Teams asked to review it, by name, for the same reason: a team is
+    /// owed a review until one of its members gives it.
+    pub requested_teams: Vec<String>,
+    /// Logins it is assigned to.
+    pub assignees: Vec<String>,
+}
+
+/// One reviewer's standing on a pull request: the last thing they said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteReview {
+    pub login: String,
+    /// `approved`, `changes_requested` or `commented`. An approval or a
+    /// request for changes outweighs a later comment from the same person,
+    /// as it does on the provider's own page.
+    pub state: String,
 }
 
 /// Unresolved review conversations on one open pull request.
@@ -203,7 +225,10 @@ pub struct RemotePullRequest {
 /// unresolved is waiting on no one, and a pull request with one open thread
 /// is blocked — which is why this is counted separately from
 /// [`RemoteComment`] rather than derived from it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The reviews ride on the same query: they are read for the same open pull
+/// requests, and a second walk of them would double the calls for nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequestThreads {
     /// The pull request's number in its repository.
     pub number: i64,
@@ -211,6 +236,9 @@ pub struct PullRequestThreads {
     pub open: usize,
     /// Every thread on the pull request, resolved or not.
     pub total: usize,
+    /// Each reviewer's last word, one entry per login. Empty when nobody has
+    /// reviewed it.
+    pub reviews: Vec<RemoteReview>,
 }
 
 /// One comment on an issue or pull request. GitHub returns comments for both

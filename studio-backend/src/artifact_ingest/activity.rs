@@ -352,7 +352,7 @@ fn leaf(path: &str) -> String {
 /// which is `YYYY-MM-DDTHH:MM:SS` with an optional fraction and an optional
 /// zone. Anything that is not that shape is `None`, and every caller treats
 /// `None` as "no time on this node" rather than as a time.
-fn parse_rfc3339_ms(value: &str) -> Option<i64> {
+pub(super) fn parse_rfc3339_ms(value: &str) -> Option<i64> {
     let bytes = value.as_bytes();
     if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' {
         return None;

@@ -50,7 +50,7 @@ Postgres table of this gear's, and scoped reads are one indexed query each.
 
 | Requirement | Design Response |
 |-------------|------------------|
-| `cpt-studio-fr-artifact-ingest` | `POST /sync` queues an `artifact.ingest` run that upserts nodes keyed on uuid5 instance ids; `/nodes`, `/edges`, `/activity`, `/source-activity`, `/search`, `/quality` and `/files` serve and extend what it wrote. |
+| `cpt-studio-fr-artifact-ingest` | `POST /sync` queues an `artifact.ingest` run that upserts nodes keyed on uuid5 instance ids; `/nodes`, `/edges`, `/activity`, `/source-activity`, `/open-pull-requests`, `/search`, `/quality` and `/files` serve and extend what it wrote. |
 | `cpt-studio-fr-repository-documents` | The run hands each prose file's path and text to `documents::port::DocumentClassifier` and forgets the bindings of files the repository no longer has. |
 
 #### NFR Allocation
@@ -175,7 +175,7 @@ cap closes.
 Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision}.v1~`;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
-`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on}.v1~`.
+`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to}.v1~`.
 Instance ids are uuid5 of a stable key that includes the source scope, so the
 same repository attached to two projects is two sets of nodes. A
 `spec_finding` is keyed on (detector, subject), so re-running a detector
@@ -188,6 +188,37 @@ comment logs under `.studio/comments/` with the ordering rules of
 `theia/product-ext/src/browser/comment-log.js` mirrored; the repository node
 carries `open_document_threads` and, where the provider can say,
 `open_review_threads`. A count is kept, never a message.
+
+A `pull_request` node carries, beside what the listing always gave, `draft`,
+`requested_reviewers` and `requested_teams` (still owed a review: GitHub drops
+a login when its review arrives and puts it back when review is asked for
+again), `assignees`, and, for an open pull request whose reviews were read,
+`reviews` (each reviewer's last word: `approved`, `changes_requested` or
+`commented`, an approval or a request for changes outranking a later comment)
+and `review_decision` (`approved`, `changes_requested`, `review_required`;
+derived here, because GitHub's own is null without branch protection). They
+were added to `pull_request.v1` as optional fields (ADR-0013 §5, additive): a
+node written before them reads as having none, and `reviews: null` means "not
+read", never "nobody reviewed". `reviewed_by` links a pull request to everyone
+asked to review it or who did, and `assigned_to` to its assignees. Edges only
+accumulate, since a sync upserts them; who is owed a review now is on the
+node. Only the GitHub driver lists pull requests at all
+(`cpt-studio-constraint-connector-github-depth`); its listing carries draft,
+reviewers, teams and assignees at no extra cost, and the reviews come in the
+review-threads GraphQL query the sync already ran, so nothing adds a call.
+
+- [x] `p2` - **ID**: `cpt-studio-algo-artifact-ingest-pull-request-waits`
+
+Who an open pull request is waiting on is one bucket, checked in order, in
+`pull_request_waits.rs`: `draft` (the author's); `author` when a request for
+changes stands from somebody not asked to look again; `review` when a login or
+a team still owes a review; `author` when review conversations are open or it
+was only commented on; `merge` when approved with nothing outstanding (the
+author's move); otherwise `nobody`, open and not a draft with nobody asked.
+`/open-pull-requests` reads the project's `pull_request` and `repo` nodes
+through the index and names each login as a member of the project's
+organization through `MemberAliases`, only where the member CONFIRMED the
+account (ADR-0012).
 
 ### 3.2 Component Model
 
@@ -271,6 +302,7 @@ and unscoped listings.
 | `GET` | `/studio-artifact-ingest/v1/edges` | Relations as endpoint pairs, by `scope` | unstable |
 | `GET` | `/studio-artifact-ingest/v1/source-activity` | Pull requests and commits per repository over `days` (default 7, at most 90) | unstable |
 | `GET` | `/studio-artifact-ingest/v1/activity` | One project's checks and comments, newest first | unstable |
+| `GET` | `/studio-artifact-ingest/v1/open-pull-requests` | One project's open pull requests, each in one bucket (`review`, `author`, `merge`, `draft`, `nobody`) with the people it waits on, longest-quiet first; `members_known` says whether accounts were matched to members | unstable |
 | `GET` | `/studio-artifact-ingest/v1/repo-files` | Text files of a session checkout | unstable |
 | `POST` | `/studio-artifact-ingest/v1/quality` | Upsert `spec_finding` nodes and derived `duplicates`/`traces_to` edges | unstable |
 | `POST` | `/studio-artifact-ingest/v1/search` | Hybrid retrieval when embeddings exist, else lexical | unstable |
@@ -295,6 +327,8 @@ member's mapping decisions).
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (feature `graph`), resolved in the REST phase | Nodes and edges; an in-memory store without it |
 | `cpt-studio-component-documents` | `DocumentClassifier`, `BindingNames` from the ClientHub | Classify synced files; name findings in the feed |
 | `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | The `artifact.ingest` task type |
+| `cpt-studio-component-user` | `MemberAliases` from the ClientHub, per request | Name a pull request's accounts as the organization's members; without it every account reads as a bare login and `members_known` is false |
+| `cpt-studio-component-account-management` | SDK client, per request, as the caller | The organization a project hangs under (project → workspace → organization) |
 
 ### 3.5 External Dependencies
 

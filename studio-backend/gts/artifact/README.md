@@ -11,7 +11,7 @@ studio tenant-metadata типов, ограниченных gears issue #4).
 `artifact`; рёбра — namespace `rel`.
 
 Узлы: `gts.cf.studio.artifact.{repo,file,issue,pull_request,user}.v1~`
-Рёбра: `gts.cf.studio.rel.{artifact_of,authored_by,references,contains,labeled,commented_on,modifies}.v1~`
+Рёбра: `gts.cf.studio.rel.{artifact_of,authored_by,references,contains,labeled,commented_on,modifies,reviewed_by,assigned_to}.v1~`
 
 ## Instance id (детерминированно, идемпотентно)
 
@@ -32,6 +32,8 @@ studio tenant-metadata типов, ограниченных gears issue #4).
 | commented_on | comment → issue/pull_request |
 | labeled | issue/pull_request → label |
 | modifies | commit → file |
+| reviewed_by | pull_request → user (просили о ревью или ревьюил) |
+| assigned_to | pull_request → user (назначен) |
 
 ## Регистрация
 

@@ -159,7 +159,12 @@ The GitLab and Bitbucket drivers implement `test` and `list_repositories`
 only. Issues, pull requests, commits, files, the repository tree,
 contributors, file writes, branches and pull-request creation are GitHub's
 alone today, so a repository import or a file publish through any other
-source host answers with that driver's refusal.
+source host answers with that driver's refusal. The pull-request listing
+carries `draft`, the reviewers and teams still owed a review, and the
+assignees, as GitHub's `/pulls` returns them; each reviewer's last word comes
+from the same GraphQL query as the unresolved review threads, so neither costs
+a call of its own. A GitLab or Bitbucket project therefore has no pull
+requests in the artifact graph, and nothing waiting on anybody.
 
 ## 3. Technical Architecture
 

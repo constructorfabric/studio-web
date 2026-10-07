@@ -17,7 +17,48 @@
     "target_branch": { "type": ["string", "null"] },
     "merged": { "type": "boolean" },
     "created_at": { "type": ["string", "null"], "format": "date-time" },
-    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+    "updated_at": { "type": ["string", "null"], "format": "date-time" },
+    "open_threads": {
+      "type": ["integer", "null"],
+      "description": "Unresolved review conversations; null when the pull request is not open or the provider cannot say."
+    },
+    "draft": {
+      "type": ["boolean", "null"],
+      "description": "Marked as not ready for review; null when the provider does not say. Added to v1 as an optional field."
+    },
+    "requested_reviewers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Logins still owing a review. Absent on nodes written before the field existed."
+    },
+    "requested_teams": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Teams still owing a review, by name."
+    },
+    "assignees": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Logins it is assigned to."
+    },
+    "reviews": {
+      "type": ["array", "null"],
+      "description": "Each reviewer's last word on an open pull request; null when it is not open or the reviews could not be read.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "login": { "type": "string" },
+          "state": { "type": "string", "enum": ["approved", "changes_requested", "commented"] }
+        },
+        "required": ["login", "state"],
+        "additionalProperties": false
+      }
+    },
+    "review_decision": {
+      "type": ["string", "null"],
+      "enum": ["approved", "changes_requested", "review_required", null],
+      "description": "What the reviews amount to, derived by Studio (pull_request_waits.rs); null with no reviews read or nothing asked."
+    }
   },
   "required": ["repo", "external_id", "number", "title", "state"],
   "additionalProperties": false
