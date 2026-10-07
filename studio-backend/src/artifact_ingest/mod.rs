@@ -275,6 +275,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // Where a Spec Quality run writes the findings it records itself.
             ctx.client_hub()
                 .register::<dyn port::SpecFindingWriter>(service.clone());
+            // Where the spec-mapping gear keeps a member's mapping decisions.
+            ctx.client_hub()
+                .register::<dyn port::MappingDecisionStore>(service.clone());
         }
 
         // Retain for the process lifetime; the router also owns a clone.

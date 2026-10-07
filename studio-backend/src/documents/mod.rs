@@ -18,7 +18,7 @@ mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
 mod migrations;
-mod model;
+pub(crate) mod model;
 mod paths;
 pub(crate) mod port;
 mod quality;
@@ -148,6 +148,9 @@ impl toolkit::Gear for StudioDocumentsGear {
         // Where a Spec Quality run records the gate verdicts it reads itself.
         ctx.client_hub()
             .register::<dyn port::AnalysisRecorder>(service.clone());
+        // What a project's specifications need, for the spec-mapping gear.
+        ctx.client_hub()
+            .register::<dyn port::SpecNeeds>(service.clone());
 
         self.service
             .set(service)

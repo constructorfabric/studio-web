@@ -70,6 +70,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-studio-fr-repository-documents` | `cpt-studio-component-documents` stores a binding to the graph node `cpt-studio-component-artifact-ingest` wrote, never a copy of the file. |
 | `cpt-studio-fr-push-channel` | `cpt-studio-component-events` is the one push channel; producers publish through the ClientHub. |
 | `cpt-studio-fr-background-runs` | `cpt-studio-component-tasks` writes a run and its queue entry in one transaction; `cpt-studio-component-scheduler` only enqueues. |
+| `cpt-studio-fr-spec-gear-mapping` | `cpt-studio-component-spec-mapping` holds the rules of the path from a specification to gears and reads each kind of data through its owner's port. |
 | `cpt-studio-fr-gearbox-product` | The backend preview (`cpt-studio-component-components-catalog`) and the IDE (`cpt-studio-component-theia-gearbox-studio`) run the Gearbox engine at the same pinned commit. |
 | `cpt-studio-fr-api-contract` | `cpt-studio-component-api-contract` scans the `OperationBuilder` declarations and ratchets them against a committed baseline. |
 
@@ -561,7 +562,7 @@ Design: [studio-components-catalog](studio-components-catalog.md)
 
 ##### Responsibility scope
 
-`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; gear repository, repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); product compose, store and preview with the Gearbox engine (`compose.rs`, `gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set); the roadmap board (`roadmap.rs`), served to `cpt-studio-component-reports` through `port::RoadmapCatalog`. Routes under `/studio-components-catalog/v1`.
+`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; gear repository, repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); product store and preview with the Gearbox engine (`gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set); the components, profiles, code dependencies and engine completion `cpt-studio-component-spec-mapping` matches against, through `port::ComponentCatalog`; the roadmap board (`roadmap.rs`), served to `cpt-studio-component-reports` through `port::RoadmapCatalog`. Routes under `/studio-components-catalog/v1`.
 
 ##### Responsibility boundaries
 
@@ -574,6 +575,31 @@ Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio
 - `cpt-studio-component-insight` — reads component activity through `port::ComponentDelivery`
 - `cpt-studio-component-tasks` — runs its sync as a run
 - `cpt-studio-component-reports` — serves the roadmap board to
+- `cpt-studio-component-spec-mapping` — serves the components a specification is matched against to
+
+#### studio-spec-mapping
+
+- [ ] `p1` - **ID**: `cpt-studio-component-spec-mapping`
+
+Design: [studio-spec-mapping](studio-spec-mapping.md)
+
+##### Why this component exists
+
+The path from a project's specification to the gears that build it had its rules in three gears and its answer assembled by the portal from four calls; one gear holds the rules now.
+
+##### Responsibility scope
+
+`studio-backend/src/spec_mapping/`: reading what a specification needs as it is written (`reading.rs`: capabilities from the front matter or inferred from the functional requirements, and the non-functional statements); the plan (`plan.rs`: contract first, evidence second, gap last, ranked by members' decisions, and the deployment profile); conformance of a project's code; recording decisions. Routes under `/studio-spec-mapping/v1`.
+
+##### Responsibility boundaries
+
+Owns no data. The document index is `cpt-studio-component-documents`', the gears and their engine facts are `cpt-studio-component-components-catalog`'s, and the decisions are stored by `cpt-studio-component-artifact-ingest`; each is read through its owner's port. Resolving a product with the engine stays with the catalogue.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-documents` — reads a project's needs and the vocabulary through `port::SpecNeeds`
+- `cpt-studio-component-components-catalog` — reads the components and a project's code through `port::ComponentCatalog`
+- `cpt-studio-component-artifact-ingest` — keeps decisions through `port::MappingDecisionStore`
 
 #### studio-kits
 

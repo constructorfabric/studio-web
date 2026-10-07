@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   matchReason,
-  pastDecisions,
   type Candidate,
   type DeclaredCapability,
   type GearConfig,
@@ -250,7 +249,6 @@ export function ProjectKits({
       <SuggestedComponents
         token={token}
         projectId={projectId}
-        workspaceId={workspaceId}
         product={product}
         onCapabilities={setCapCount}
       />
@@ -525,13 +523,11 @@ function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; pro
 function SuggestedComponents({
   token,
   projectId,
-  workspaceId,
   product,
   onCapabilities,
 }: {
   token: string;
   projectId: string;
-  workspaceId: string;
   product: ProductState;
   onCapabilities?: (count: number) => void;
 }) {
@@ -549,39 +545,14 @@ function SuggestedComponents({
     setBusy(true);
     setError(null);
     try {
-      // The catalogue and the profiles are read by the server now, which is
-      // also where the matching rules live. What still travels from here is the
-      // workspace's own capability vocabulary.
-      const [declared, vocab, decisions, requirements] = await Promise.all([
-        api.declaredCapabilities(token, projectId),
-        api.capabilities(token, workspaceId),
-        // Past decisions only rank the proposals; without them the plan
-        // still stands, so a failure here is not the page's failure.
-        api.mappingDecisions(token, projectId).then(
-          (d) => d.items,
-          () => [],
-        ),
-        // Likewise the statements that pick the deployment profile.
-        api.declaredRequirements(token, projectId).then(
-          (r) => r.items.map((i) => i.text),
-          () => [] as string[],
-        ),
-      ]);
-      // Every capability the project's documents declare, in the order first
-      // met -- Studio's own documents and the repository files bound to a type
-      // alike. The server indexes these from front matter, so this is a read.
-      const caps = declared.items.map((c) => c.key);
-      setSources(Object.fromEntries(declared.items.map((c) => [c.key, c.sources])));
-      onCapabilities?.(caps.length);
-      setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
-      const answer = await api.composePlan(
-        token,
-        caps,
-        vocab.items ?? [],
-        pastDecisions(decisions, declared.items),
-        requirements,
-      );
+      // One read: the spec-mapping gear assembles what the specifications
+      // need, the vocabulary, the recorded decisions and the catalogue on
+      // the server, where the rules live.
+      const answer = await api.projectPlan(token, projectId);
       const next = answer.items;
+      setSources(Object.fromEntries(next.map((r) => [r.capability, r.sources ?? []])));
+      onCapabilities?.(next.length);
+      setDocCount(new Set(next.flatMap((r) => (r.sources ?? []).map((s) => s.id))).size);
       setPlan(next);
       setAdvice(answer.profile ?? null);
       // A product nobody has picked for yet starts from the best built gear
@@ -598,7 +569,7 @@ function SuggestedComponents({
   };
 
   /** Record a member's decision on one proposal, against the first document
-   *  that declares the capability, then ask again so the ranking shows it. */
+   *  that needs the capability, then read the plan again so the ranking shows it. */
   const decide = async (capability: string, c: Candidate, decision: "confirmed" | "rejected") => {
     const source = (sources[capability] ?? [])[0];
     if (!source) return;
@@ -606,7 +577,6 @@ function SuggestedComponents({
     setError(null);
     try {
       await api.decideMapping(token, {
-        workspace_id: workspaceId,
         project_id: projectId,
         document: source.id,
         document_node: source.node_id ?? null,

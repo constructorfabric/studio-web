@@ -305,8 +305,8 @@ export interface MappingDecision {
 }
 
 export interface MappingDecisionInput {
-  workspace_id: string;
-  project_id?: string;
+  /** The project the deciding document belongs to; the server finds its workspace. */
+  project_id: string;
   document: string;
   document_node?: string | null;
   document_revision: string;
@@ -326,22 +326,6 @@ export interface PastDecision {
   document_changed: boolean;
 }
 
-/** Decisions as the composer takes them: newest first, each marked changed
- *  when its document no longer has the revision it was decided against. */
-export function pastDecisions(
-  decisions: readonly MappingDecision[],
-  declared: readonly DeclaredCapability[],
-): PastDecision[] {
-  const revisionOf = new Map<string, string | undefined>();
-  for (const c of declared) for (const s of c.sources) revisionOf.set(s.id, s.revision);
-  return decisions.map((d) => ({
-    capability: d.capability,
-    gear: d.gear,
-    decision: d.decision,
-    gear_version: d.gear_version ?? null,
-    document_changed: revisionOf.has(d.document) && revisionOf.get(d.document) !== d.document_revision,
-  }));
-}
 
 /** What the project is for, chosen at creation:
  *  - `new_gears`  — build new gears (repo: create new, or an existing gear store);
@@ -461,6 +445,8 @@ export interface PlanRow {
   unbuilt: boolean;
   /** Answered by the deployment profile, not by gears: no candidates, not a gap. */
   nonfunctional?: boolean;
+  /** The documents that need it, when the plan was read for a project. */
+  sources?: DeclaredCapability["sources"];
 }
 
 /** One weekly bar of a gear's churn. */
@@ -1649,7 +1635,7 @@ export function setCurrentOrganization(id: string | undefined): void {
 }
 
 /** Gears that keep their data per organization and take `?organization_id=`. */
-const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/"];
+const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/"];
 
 /**
  * `path` with the organization on screen named, for a gear that keeps its
@@ -2866,14 +2852,14 @@ export const api = {
    *  and the repository files bound to a type -- with what declares each. */
   declaredCapabilities: (token: string, projectId: string) =>
     request<{ items: DeclaredCapability[]; total: number }>(
-      `/studio-documents/v1/declared-capabilities?project_id=${encodeURIComponent(projectId)}`,
+      `/studio-spec-mapping/v1/capabilities?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** The non-functional statements the project's documents make: what the
    *  composer reads for the deployment profile, never for gears. */
   declaredRequirements: (token: string, projectId: string) =>
     request<{ items: DeclaredRequirement[]; total: number }>(
-      `/studio-documents/v1/declared-requirements?project_id=${encodeURIComponent(projectId)}`,
+      `/studio-spec-mapping/v1/requirements?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
 
@@ -3539,7 +3525,7 @@ export const api = {
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
     const contracts = contractsOf(vocabulary);
-    return request<Conformance>("/studio-components-catalog/v1/conformance", token, {
+    return request<Conformance>("/studio-spec-mapping/v1/conformance", token, {
       method: "POST",
       body: JSON.stringify({ project_id: projectId, capabilities, terms, contracts }),
     });
@@ -3569,21 +3555,29 @@ export const api = {
       ...(requirements.length ? { requirements } : {}),
     };
     return request<{ items: PlanRow[]; total: number; profile?: ProfileAdvice | null }>(
-      "/studio-components-catalog/v1/compose",
+      "/studio-spec-mapping/v1/plan",
       token,
       { method: "POST", body: JSON.stringify(body) },
     );
   },
-  /** The mapping decisions recorded in a workspace or project, newest first. */
-  mappingDecisions: (token: string, scope: string) =>
+  /** A project's plan, read on the server: what its specifications need,
+   *  the gears that cover it, ranked by the decisions members recorded, and
+   *  the deployment profile its non-functional statements point to. */
+  projectPlan: (token: string, projectId: string) =>
+    request<{ items: PlanRow[]; total: number; profile?: ProfileAdvice | null }>(
+      `/studio-spec-mapping/v1/plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** The mapping decisions recorded in a project, newest first. */
+  mappingDecisions: (token: string, projectId: string) =>
     request<{ items: MappingDecision[]; total: number }>(
-      `/studio-artifact-ingest/v1/mapping-decisions?scope=${encodeURIComponent(scope)}`,
+      `/studio-spec-mapping/v1/decisions?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** Confirm or reject one proposed mapping. Deciding the same document,
    *  capability and gear again replaces the decision. */
   decideMapping: (token: string, body: MappingDecisionInput) =>
-    request<MappingDecision>("/studio-artifact-ingest/v1/mapping-decisions", token, {
+    request<MappingDecision>("/studio-spec-mapping/v1/decisions", token, {
       method: "POST",
       body: JSON.stringify(body),
     }),

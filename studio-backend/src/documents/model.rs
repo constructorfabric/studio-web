@@ -650,13 +650,13 @@ pub struct Document {
     #[serde(default)]
     pub capabilities: Vec<String>,
     /// The non-functional statements its NFR, operational and deployment
-    /// sections make ([`super::intake::declared_requirements`]).
+    /// sections make ([`crate::spec_mapping::reading::declared_requirements`]).
     #[serde(default)]
     pub requirements: Vec<String>,
     /// What its functional requirements imply when its front matter declares
-    /// no capability ([`super::intake::inferred_capabilities`]).
+    /// no capability ([`crate::spec_mapping::reading::inferred_capabilities`]).
     #[serde(default)]
-    pub inferred_capabilities: Vec<super::intake::InferredCapability>,
+    pub inferred_capabilities: Vec<crate::spec_mapping::reading::InferredCapability>,
     /// Subject id of the creator (as a string principal).
     pub created_by: String,
     /// RFC 3339 UTC timestamps.
@@ -815,7 +815,7 @@ pub struct DocumentBinding {
     pub requirements: Vec<String>,
     /// What the file's functional requirements imply, as for a document.
     #[serde(default)]
-    pub inferred_capabilities: Vec<super::intake::InferredCapability>,
+    pub inferred_capabilities: Vec<crate::spec_mapping::reading::InferredCapability>,
     /// Digest of the content last classified/validated, so the caller can tell
     /// a stale verdict from a current one after a re-sync.
     pub content_sha: String,

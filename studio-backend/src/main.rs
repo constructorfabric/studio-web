@@ -37,6 +37,7 @@ mod registered_gears;
 mod reports; // studio-reports: report definitions, sources and drawing (ADR-0033)
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
+mod spec_mapping; // studio-spec-mapping: from a project's specification to the gears that build it
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0009)
 mod studio_events; // studio-events: the assembly's one push channel to the portal (SSE + replay)

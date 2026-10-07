@@ -30,6 +30,9 @@ keyword on crates.io, and the gears, FrontX packages and kits its repository
 scans find — in the knowledge graph, says how ready each one is and how good,
 scaffolds new ones into a project's repository, and composes products out of
 them with the Gearbox engine.
+It does not decide which components a specification needs: that is
+`cpt-studio-component-spec-mapping`, which reads the catalogue through
+`port::ComponentCatalog`.
 
 The platform is a set of gears, and "what gears are there, at what versions"
 had no answer inside Studio: it lived on crates.io and in people's heads. This
@@ -55,8 +58,6 @@ rules, not rendering, and a second portal would have grown its own copy.
 | `cpt-studio-fr-gear-catalogue` | A `catalog.sync` run reads crates.io, repository sources and roadmap boards into `gear`, `crate_version`, `gear_profile`, `frontx`, `kit` and `roadmap_item` nodes; the read routes serve components, versions, values, history, the reference and activity. |
 | `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
 | `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file. |
-| `cpt-studio-fr-spec-gear-mapping` | `compose.rs` matches a capability first through the contracts the vocabulary names against what the engine reports per gear, then by the vocabulary's terms in the catalogue's text with a cited passage, then reports a gap. The catalogue sync writes the engine's report into the profile as `gdl_contracts`: provided contracts, hosted extension points and implemented ones. Searching gear documentation is planned. See `cpt-studio-principle-catalog-contract-first`. |
-| `cpt-studio-fr-mapping-decisions` | A decision is a `mapping_decision` node in the artifact graph, linked to the declaring file by a `decision_on` edge, carrying who, when, which step, the gear version and the document revision. The composer takes a scope's decisions with the question: a confirmed gear ranks first within its step, a rejected one last, and a decision whose gear version or document revision has moved on is marked as needing review and ranks as undecided. |
 
 #### NFR Allocation
 
@@ -79,7 +80,7 @@ rules, not rendering, and a second portal would have grown its own copy.
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
 | REST | Sync, catalogue reads, profiles, types and field schemas, project repository and product, Gearbox | `OperationBuilder` routes in `rest.rs` |
-| Read model | Values, grade, taxonomy, reference, activity, history, compose, conformance | `values.rs`, `quality.rs`, `taxonomy.rs`, `reference.rs`, `activity.rs`, `history.rs`, `compose.rs` |
+| Read model | Values, grade, taxonomy, reference, activity, history | `values.rs`, `quality.rs`, `taxonomy.rs`, `reference.rs`, `activity.rs`, `history.rs` |
 | Sync | crates.io, repository scans, roadmap boards, upsert and prune | `cratesio.rs`, `repo_enrich.rs`, `repo_facts.rs`, `roadmap.rs`, `service.rs`, `sync_task.rs` |
 | Writing | Repository creation and gear scaffolding | `scaffold.rs`, `skeleton.rs` |
 | Engine | Gearbox CLI over a corpus checkout | `gearbox.rs` |
@@ -141,41 +142,6 @@ The grade is the gear schema's `quality` block — 24 criteria in six areas,
 resolved values on every read, so a correction moves it at once. Every
 criterion is absolute, so a grade cannot move because somebody else shipped
 something. An unknown value fails, with the fix that would answer it.
-
-#### Built first
-
-- [x] `p2` - **ID**: `cpt-studio-principle-catalog-built-first`
-
-`/compose` answers "what can we build this from?" the same way for the App
-Spec's Compose button and a project's Components tab. A well-written stub is
-mostly prose and prose is what keywords match, so candidates are sorted
-built-first and the shortlist is cut after that sort. Components never built
-are labelled rather than dropped, because a design may name a component that is
-still only a design; `why` names the matched terms.
-
-#### Contract first, evidence second, gap last
-
-- [ ] `p1` - **ID**: `cpt-studio-principle-catalog-contract-first`
-
-A gear that *declares* a capability's contract is a different kind of answer
-from a gear whose documentation *mentions* the capability, and the mapping
-never mixes the two in one ranking.
-- **Contract matches** come from data the engine checks: the vocabulary's
-  contracts for the capability against what the engine reports each gear
-  doing for others. That is a contract it provides (`<gear>/<Trait>@v<N>`,
-  from `#[toolkit::provides]`), the GTS spec of an extension point it hosts,
-  or the spec of the point it implements. A vocabulary entry without a version
-  takes any version, and a GTS segment matches a chain that ends with it. The
-  same request gives the same answer every time.
-- **Evidence matches** come from search: today the vocabulary's terms in the
-  catalogue's text about the gear, with gear documentation planned. Each one
-  cites its passage, and all of them rank below every contract match. They are
-  how a capability nobody has given a contract yet still gets a candidate.
-- **A gap** is reported as a gap, never filled by the nearest keyword. It is
-  the input of a new gear.
-
-Built-first (`cpt-studio-principle-catalog-built-first`) still orders the
-candidates within each kind.
 
 #### The portal and the IDE resolve with one engine
 
@@ -471,8 +437,6 @@ Knows nothing about plans, definitions or workbooks.
 | `GET` | `/field-schemas` | The field schema per component type, built-ins overlaid by the tenant's own | unstable |
 | `PUT` | `/field-schemas/{describes}` | Replace the tenant's schema for one type | unstable |
 | `DELETE` | `/field-schemas/{describes}` | Revert to the built-in; reverting an unoverridden type is not an error | unstable |
-| `POST` | `/compose` | Match capabilities against the components that exist, built first | unstable |
-| `POST` | `/conformance` | For a project's declared capabilities, which components its code depends on, what is unaccounted for, and what the engine says | unstable |
 | `GET` | `/projects/{project_id}/gear-repo` | The project's gear repository, 0 or 1 node | unstable |
 | `POST` | `/projects/{project_id}/gear-repo` | Connect or replace it; the branch defaults to `main` | unstable |
 | `POST` | `/projects/{project_id}/create-repo` | Create a repository through the connector and record it | unstable |
@@ -489,9 +453,15 @@ Knows nothing about plans, definitions or workbooks.
 
 The two corpus routes are `.anonymous().exposed()`, because `git` sends Basic
 credentials that the gateway's Bearer-only layer would refuse before they
-arrive; `authenticate_member` is the check. `conformance` reads the project's
-code as the run-time dependencies of every `Cargo.toml` in its gear repository,
-or, without one, in the repositories its project config names.
+arrive; `authenticate_member` is the check.
+
+Matching a specification to these components -- the plan, conformance and the
+decisions -- is `cpt-studio-component-spec-mapping`
+([studio-spec-mapping](studio-spec-mapping.md)). It reads the components, their
+profiles, a project's code dependencies and the engine's completion through
+`port::ComponentCatalog`. A project's code is the run-time dependencies of every
+`Cargo.toml` in its gear repository, or, without one, in the repositories its
+project config names.
 
 ### 3.4 Internal Dependencies
 

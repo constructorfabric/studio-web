@@ -274,7 +274,7 @@ const SHORTLIST: usize = 5;
 /// The boundary is "not a letter or digit" rather than a word boundary, so a
 /// hyphen, a slash and an `@` all start a word: `storage` finds
 /// `cf-gears-file-storage` and `state` finds `@gears-frontx/state`.
-fn mentions(hay: &str, term: &str) -> bool {
+pub(crate) fn mentions(hay: &str, term: &str) -> bool {
     mention_at(hay, term).is_some()
 }
 
@@ -486,8 +486,8 @@ fn texts(component: &Value, profile: Option<&Value>) -> Vec<String> {
 /// The capability keys a component declares: its `capabilities` field as the
 /// catalogue resolves it (`values::resolve` -- a person's entry over the
 /// repository scan over the registry), split on commas.
-fn declared_capabilities(component: &Value, profile: Option<&Value>) -> Vec<String> {
-    let values = super::values::resolve(component, profile);
+pub(crate) fn declared_capabilities(component: &Value, profile: Option<&Value>) -> Vec<String> {
+    let values = crate::components_catalog::values::resolve(component, profile);
     let Some(field) = values.get("capabilities") else {
         return Vec::new();
     };
@@ -522,7 +522,7 @@ fn profile_text(profile: Option<&Value>) -> String {
 }
 
 /// Resolve capabilities to candidate components, contract first, evidence
-/// second, gap last (`cpt-studio-principle-catalog-contract-first`).
+/// second, gap last (`cpt-studio-principle-spec-mapping-contract-first`).
 ///
 /// `vocabulary` is the workspace's effective capability vocabulary. A
 /// capability it invented can give its own contracts and search terms, rather
@@ -957,7 +957,7 @@ mod tests {
         assert!(!satisfies("anything", "  "));
     }
 
-    /// The rule of `cpt-studio-principle-catalog-contract-first`: a gear that
+    /// The rule of `cpt-studio-principle-spec-mapping-contract-first`: a gear that
     /// provides the contract comes first, however few words it shares with
     /// the capability, and however built the word matches are.
     #[test]

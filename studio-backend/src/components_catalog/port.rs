@@ -146,3 +146,136 @@ mod tests {
         );
     }
 }
+
+// ── What the spec-mapping gear reads ─────────────────────────────────────────
+
+/// One change the Gearbox engine would make to a set of gears.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineChange {
+    /// Crate name.
+    pub gear: String,
+    pub added: bool,
+    pub reason: String,
+}
+
+/// What the catalogue offers the spec-mapping gear (`crate::spec_mapping`): the
+/// components a specification is matched against, and the code a project is
+/// made of. The rules of the matching live in that gear; the facts here.
+#[async_trait]
+pub trait ComponentCatalog: Send + Sync {
+    /// Every catalogued component's node, and the profiles by the gear they
+    /// describe (`gear_name`). In the context's tenant, which the caller has
+    /// already scoped to the organization on screen.
+    async fn components(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)>;
+
+    /// The project's code: the repository read, and the crate names every
+    /// `Cargo.toml` in it depends on. `None` when there is no code to read.
+    async fn project_dependencies(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, std::collections::BTreeSet<String>)>>;
+
+    /// What the Gearbox engine would add to `gears` for them to resolve, and
+    /// what it says cannot run. `None` when no engine is configured.
+    async fn engine_completion(
+        &self,
+        gears: &[String],
+    ) -> Option<anyhow::Result<Vec<EngineChange>>>;
+}
+
+/// The catalogue's answer to [`ComponentCatalog`].
+pub struct CatalogComponents {
+    service: Arc<CatalogService>,
+    gearbox: Option<Arc<super::gearbox::Gearbox>>,
+}
+
+impl CatalogComponents {
+    pub fn new(
+        service: Arc<CatalogService>,
+        gearbox: Option<Arc<super::gearbox::Gearbox>>,
+    ) -> Self {
+        Self { service, gearbox }
+    }
+}
+
+/// Gear profiles keyed by the gear they describe.
+///
+/// A profile names its gear `gear_name` (`gts::gear_profile_node`); keying by
+/// `name` -- which no profile has -- left the map empty, so the composer never
+/// saw a gear's build state or what the Gearbox engine knows about it, and
+/// every suggestion read `undescribed`.
+pub fn profiles_by_gear(values: impl IntoIterator<Item = Value>) -> Map<String, Value> {
+    let mut profiles = Map::new();
+    for value in values {
+        if let Some(name) = value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), value);
+        }
+    }
+    profiles
+}
+
+#[async_trait]
+impl ComponentCatalog for CatalogComponents {
+    async fn components(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)> {
+        let (nodes, _truncated) = self.service.list_component_nodes(ctx).await?;
+        let profiles = self.service.list_profiles(ctx).await?;
+        Ok((
+            nodes.into_iter().map(|n| n.value).collect(),
+            profiles_by_gear(profiles.into_iter().map(|n| n.value)),
+        ))
+    }
+
+    async fn project_dependencies(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, std::collections::BTreeSet<String>)>> {
+        self.service.project_dependencies(ctx, project_id).await
+    }
+
+    async fn engine_completion(
+        &self,
+        gears: &[String],
+    ) -> Option<anyhow::Result<Vec<EngineChange>>> {
+        let gearbox = self.gearbox.as_ref()?;
+        Some(
+            gearbox
+                .complete(gears, &super::gearbox::GearConfig::new())
+                .await
+                .map(|done| {
+                    done.changes
+                        .into_iter()
+                        .map(|c| EngineChange {
+                            gear: c.gear,
+                            added: c.added,
+                            reason: c.reason,
+                        })
+                        .collect()
+                }),
+        )
+    }
+}
+
+#[cfg(test)]
+mod profiles_by_gear_tests {
+    use super::profiles_by_gear;
+    use serde_json::json;
+
+    /// The shape the sync writes, read back the way the composer needs it.
+    #[test]
+    fn a_profile_is_found_by_the_gear_it_describes() {
+        let map = profiles_by_gear([
+            json!({ "gear_name": "cf-gears-api-gateway", "auto": { "gdl_runs": { "s": "good" } } }),
+            json!({ "auto": {} }),
+        ]);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["cf-gears-api-gateway"]["auto"]["gdl_runs"]["s"], "good");
+    }
+}

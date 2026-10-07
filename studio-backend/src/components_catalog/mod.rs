@@ -8,7 +8,6 @@
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
 mod activity;
-mod compose;
 mod cratesio;
 pub(crate) mod field_schema;
 mod gearbox;
@@ -26,7 +25,7 @@ mod service;
 mod skeleton;
 mod sync_task;
 mod taxonomy;
-mod values;
+pub(crate) mod values;
 
 use std::sync::Arc;
 
@@ -195,6 +194,12 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .register::<dyn port::RoadmapCatalog>(Arc::new(port::CatalogRoadmaps::new(
                 Arc::clone(&service),
                 ctx.client_hub(),
+            )));
+        // What the spec-mapping gear matches a specification against.
+        ctx.client_hub()
+            .register::<dyn port::ComponentCatalog>(Arc::new(port::CatalogComponents::new(
+                Arc::clone(&service),
+                gearbox.clone(),
             )));
 
         let _ = self.service.set(service.clone());

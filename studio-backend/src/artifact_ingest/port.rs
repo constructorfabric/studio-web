@@ -201,3 +201,27 @@ pub trait SpecFindingWriter: Send + Sync + 'static {
         project_id: Option<&str>,
     ) -> anyhow::Result<(usize, usize)>;
 }
+
+pub use super::service::MappingDecision;
+
+/// Where the spec-mapping gear keeps a member's decisions
+/// (`cpt-studio-fr-mapping-decisions`): `mapping_decision` nodes in this
+/// graph, beside the documents they are about, written through the
+/// `GraphStore` like every other artifact so the index follows them.
+#[async_trait]
+pub trait MappingDecisionStore: Send + Sync + 'static {
+    /// Record one decision, replacing an earlier one on the same document,
+    /// section, capability and gear. Answers the node's id and payload.
+    async fn record_decision(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        decision: &MappingDecision,
+    ) -> anyhow::Result<(String, serde_json::Value)>;
+
+    /// Every decision recorded in a workspace or project, as (id, payload).
+    async fn list_decisions(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<(String, serde_json::Value)>>;
+}

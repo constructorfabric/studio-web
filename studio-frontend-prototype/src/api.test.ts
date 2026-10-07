@@ -5,8 +5,6 @@ import {
   alignSessionHost,
   apiUrl,
   orgScoped,
-  pastDecisions,
-  type MappingDecision,
   sessionOrigin,
   setCurrentOrganization,
   sameOriginFileStorageUrl,
@@ -320,7 +318,7 @@ describe("compose client", () => {
     const fetchMock = jsonMock({ items: [], total: 0 });
     await api.composePlan("token", ["chat"], [cap("chat", ["chat", "messaging"])]);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/cf/studio-components-catalog/v1/compose",
+      "/cf/studio-spec-mapping/v1/plan",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ capabilities: ["chat"], terms: { chat: ["chat", "messaging"] }, contracts: {} }),
@@ -780,39 +778,5 @@ describe("uploadProjectArtifact", () => {
       value: "manual",
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe("https://storage.example/upload/signed");
-  });
-});
-
-describe("pastDecisions", () => {
-  const decision = (document: string, revision: string): MappingDecision => ({
-    id: "d",
-    document,
-    document_revision: revision,
-    section: "front matter",
-    capability: "auth",
-    gear: "cf-gears-authn-resolver",
-    gear_version: "1.0.0",
-    step: "contract",
-    decision: "confirmed",
-    decided_by: "u",
-    decided_at: "2026-10-07T00:00:00Z",
-  });
-
-  it("marks a decision changed only when its document has another revision now", () => {
-    const declared = [
-      {
-        key: "auth",
-        sources: [
-          { kind: "file" as const, id: "same", label: "a.md", revision: "sha1" },
-          { kind: "file" as const, id: "moved", label: "b.md", revision: "sha2" },
-        ],
-      },
-    ];
-    const out = pastDecisions(
-      [decision("same", "sha1"), decision("moved", "sha1"), decision("gone", "sha1")],
-      declared,
-    );
-    expect(out.map((d) => d.document_changed)).toEqual([false, true, false]);
-    expect(out[0]).toMatchObject({ capability: "auth", gear: "cf-gears-authn-resolver", gear_version: "1.0.0" });
   });
 });

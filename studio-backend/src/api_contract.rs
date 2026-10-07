@@ -58,6 +58,7 @@ const DOMAINS: &[&str] = &[
     "studio-reports",
     "studio-scheduler",
     "studio-session",
+    "studio-spec-mapping",
     "studio-spec-quality",
     "studio-tasks",
     "studio-theia",

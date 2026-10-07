@@ -299,7 +299,7 @@ carry authored documents and bindings, and say so through `files_known`.
 | `PUT` `DELETE` | `/workspaces/{workspace_id}/document-bindings/{id}` | Confirm, correct, reject or reset; forget | unstable |
 | `GET` | `/document-bindings/{id}/text?project_id=` | A bound file's text, from the checkout | unstable |
 | `POST` | `/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}` | Queue a detector over named bindings, documents and inline texts | unstable |
-| `GET` | `/spec-rows`, `/spec-pipeline`, `/specs-per-source`, `/declared-capabilities` | The folded spec views | unstable |
+| `GET` | `/spec-rows`, `/spec-pipeline`, `/specs-per-source` | The folded spec views | unstable |
 | `GET` | `/review-criteria?type_key=&project_id=` | The semantic criteria a type is judged by, with ids a verdict can cite | unstable |
 
 A quality request may carry at most 20 inline documents of 256 KiB each and
@@ -318,6 +318,11 @@ Quality run recording its own verdicts.
 | `types_registry` | SDK client | Register the four document GTS types, best-effort |
 | `cpt-studio-component-artifact-ingest` | `RepoFileReader`, `ArtifactFiles` from the ClientHub, resolved per request | A bound file's text; the ingested file list |
 | `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub | Queue Spec Quality batch runs |
+
+It publishes `port::SpecNeeds` for `cpt-studio-component-spec-mapping`: a
+project's workspace, the vocabulary, and what its documents need. What a
+document needs is computed here when it is written or synced, with the rules of
+`spec_mapping::reading`, and stored beside it.
 
 ### 3.5 External Dependencies
 
@@ -388,6 +393,8 @@ the `CHECK` and `UNIQUE` constraints are kept verbatim.
 | `conforms` | BOOLEAN | the validation verdict |
 | `validation` | TEXT | the full validation report |
 | `capabilities` | TEXT | JSON list the file's front matter declares, re-derived on every classification |
+| `requirements` | TEXT | JSON list of the file's non-functional statements (`m0013`) |
+| `inferred_capabilities` | TEXT | JSON list of what its functional requirements imply, with the requirements behind each, when its front matter declares none (`m0014`) |
 | `content_sha` | TEXT | digest, so a stale verdict is distinguishable |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
@@ -480,6 +487,8 @@ type table: the two catalogues share resolution rules, not columns.
 | `tenant_id` | UUID | organization or workspace that defines it |
 | `key`, `label` | TEXT | `key` is 1–80 characters |
 | `terms` | TEXT | JSON list of words that make a component a candidate |
+| `contracts` | TEXT | JSON list of contracts the Gearbox engine can report a gear providing (`m0012`) |
+| `nonfunctional` | BOOLEAN | answered by the deployment profile, never by a gear (`m0013`) |
 | `hidden` | BOOLEAN | tombstone |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
@@ -511,6 +520,8 @@ type table: the two catalogues share resolution rules, not columns.
 | `conforms` | BOOLEAN | the structural verdict |
 | `validation` | TEXT | the full validation report |
 | `capabilities` | TEXT | JSON list the front matter declares, re-derived on every write |
+| `requirements` | TEXT | JSON list of its non-functional statements (`m0013`) |
+| `inferred_capabilities` | TEXT | as for a binding (`m0014`) |
 | `created_by` | TEXT | |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
@@ -520,7 +531,9 @@ type table: the two catalogues share resolution rules, not columns.
 
 **Additional info**: Index on `(tenant_id, project_id)`. `capabilities` is an
 index over the document's own front matter, not a second place to store them,
-so a hand edit cannot drift from it.
+so a hand edit cannot drift from it. `requirements` and `inferred_capabilities` are
+indexes the same way, computed by `spec_mapping::reading` on every write; they
+are read through `port::SpecNeeds` by `cpt-studio-component-spec-mapping`.
 
 **Example**:
 

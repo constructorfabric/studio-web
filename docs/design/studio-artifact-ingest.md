@@ -172,14 +172,17 @@ cap closes.
 
 - [x] `p2` - **ID**: `cpt-studio-entity-artifact-node`
 
-Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content}.v1~`;
+Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision}.v1~`;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
-`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of}.v1~`.
+`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on}.v1~`.
 Instance ids are uuid5 of a stable key that includes the source scope, so the
 same repository attached to two projects is two sets of nodes. A
 `spec_finding` is keyed on (detector, subject), so re-running a detector
-upserts: one current finding per detector per document. A file node carries
+upserts: one current finding per detector per document. A
+`mapping_decision` is keyed on (document, section, capability, gear), so
+deciding again replaces the decision; it is written for
+`cpt-studio-component-spec-mapping` and linked to a bound file by `decision_on`. A file node carries
 `open_threads` and `resolved_threads`, counted from the IDE's append-only
 comment logs under `.studio/comments/` with the ordering rules of
 `theia/product-ext/src/browser/comment-log.js` mirrored; the repository node
@@ -275,10 +278,12 @@ and unscoped listings.
 
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear
-publishes five ports on the ClientHub (`port.rs`): `RepoFileReader` (a
+publishes six ports on the ClientHub (`port.rs`): `RepoFileReader` (a
 checkout's text files), `ArtifactFiles` (a scope's file nodes),
 `ArtifactCounter` and `ProjectSignalSource` (portfolio and projects-table
-rollups), and `SpecFindingWriter` (where a Spec Quality run records findings).
+rollups), `SpecFindingWriter` (where a Spec Quality run records findings), and
+`MappingDecisionStore` (where `cpt-studio-component-spec-mapping` keeps a
+member's mapping decisions).
 
 ### 3.4 Internal Dependencies
 

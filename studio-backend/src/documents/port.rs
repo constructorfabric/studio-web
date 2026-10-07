@@ -185,3 +185,36 @@ pub struct DetectorVerdict {
     pub task_id: Option<String>,
     pub summary: String,
 }
+
+pub use super::model::Capability;
+pub use super::service::{CapabilitySource, DeclaredCapability, DeclaredRequirement};
+
+/// What a project's specifications need, as the documents gear indexes them,
+/// for the spec-mapping gear (`crate::spec_mapping`). The documents are read as
+/// written: front matter when it says, the functional requirements otherwise.
+#[async_trait]
+pub trait SpecNeeds: Send + Sync + 'static {
+    /// The project's parent workspace, after checking the caller reaches both.
+    /// `None` when the caller does not, or there is no such project: one
+    /// answer, so a caller learns nothing about a project not theirs.
+    async fn project_workspace(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<Option<Uuid>>;
+
+    /// The workspace's effective capability vocabulary.
+    async fn vocabulary(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> anyhow::Result<Vec<Capability>>;
+
+    /// The capabilities the project's documents need, and their
+    /// non-functional statements, each with the document that says it.
+    async fn needs(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> anyhow::Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)>;
+}

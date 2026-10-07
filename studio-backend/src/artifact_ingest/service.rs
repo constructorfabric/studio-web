@@ -2615,3 +2615,28 @@ impl super::port::SpecFindingWriter for IngestService {
             .await
     }
 }
+
+#[async_trait::async_trait]
+impl super::port::MappingDecisionStore for IngestService {
+    async fn record_decision(
+        &self,
+        ctx: &SecurityContext,
+        decision: &MappingDecision,
+    ) -> anyhow::Result<(String, serde_json::Value)> {
+        let node = self.record_mapping_decision(ctx, decision).await?;
+        Ok((node.instance_id, node.value))
+    }
+
+    async fn list_decisions(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<(String, serde_json::Value)>> {
+        Ok(self
+            .list_mapping_decisions(ctx, scope)
+            .await?
+            .into_iter()
+            .map(|n| (n.instance_id, n.value))
+            .collect())
+    }
+}

@@ -30,6 +30,7 @@ use super::repo::{
 };
 use super::validate::{ValidationReport, validate};
 use crate::pagination::PageQuery;
+use crate::spec_mapping::reading;
 
 pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
@@ -712,7 +713,7 @@ impl DocumentsService {
         };
         let report = validate(&body, &ty.template);
         let capabilities = serde_json::to_string(&intake::declared_capabilities(&body))?;
-        let requirements = serde_json::to_string(&intake::declared_requirements(&body))?;
+        let requirements = serde_json::to_string(&reading::declared_requirements(&body))?;
         let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
         let inferred_capabilities = serde_json::to_string(&inferred_for(&body, &vocabulary))?;
         let now = OffsetDateTime::now_utc();
@@ -765,7 +766,7 @@ impl DocumentsService {
     /// them. Two kinds of document speak here: the ones Studio holds, and the
     /// repository files bound to a type. A capability comes from a document's
     /// front matter when it declares one (`capabilities:`), and otherwise from
-    /// what its functional requirements imply ([`intake::inferred_capabilities`]),
+    /// what its functional requirements imply ([`reading::inferred_capabilities`]),
     /// which the source marks `inferred` with the requirements behind it.
     ///
     /// A repository file the classifier proposed and nobody has confirmed yet
@@ -795,7 +796,7 @@ impl DocumentsService {
             };
         let mut add_all = |source: &CapabilitySource,
                            declared: &[String],
-                           inferred: &[intake::InferredCapability]| {
+                           inferred: &[reading::InferredCapability]| {
             for key in declared {
                 add(key, source.clone());
             }
@@ -974,7 +975,7 @@ impl DocumentsService {
         // Re-index rather than preserve: the front matter is the document's own
         // statement of what it declares, and an edit is allowed to change it.
         row.capabilities = serde_json::to_string(&intake::declared_capabilities(&row.content))?;
-        row.requirements = serde_json::to_string(&intake::declared_requirements(&row.content))?;
+        row.requirements = serde_json::to_string(&reading::declared_requirements(&row.content))?;
         let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
         row.inferred_capabilities =
             serde_json::to_string(&inferred_for(&row.content, &vocabulary))?;
@@ -1229,9 +1230,9 @@ fn type_from_row(row: doc_type::Model, workspace_id: Option<Uuid>) -> Result<Doc
 /// already says what it needs: the author's statement stands, and the
 /// inference is only for the documents that make none. The documents are
 /// read as written; nothing has to be added to them for this.
-fn inferred_for(content: &str, vocabulary: &[Capability]) -> Vec<intake::InferredCapability> {
+fn inferred_for(content: &str, vocabulary: &[Capability]) -> Vec<reading::InferredCapability> {
     if intake::declared_capabilities(content).is_empty() {
-        intake::inferred_capabilities(content, vocabulary)
+        reading::inferred_capabilities(content, vocabulary)
     } else {
         Vec::new()
     }
@@ -2121,7 +2122,7 @@ impl DocumentsService {
             // the evidence it holds. Either one missing, it stays a proposal.
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
             let capabilities = super::intake::declared_capabilities(&file.content);
-            let requirements = super::intake::declared_requirements(&file.content);
+            let requirements = reading::declared_requirements(&file.content);
             let inferred = inferred_for(&file.content, &vocabulary);
             if collect
                 && type_key.is_some()
@@ -3259,5 +3260,38 @@ impl crate::documents::port::AnalysisRecorder for DocumentsService {
             _ => anyhow::bail!("a verdict names exactly one of a binding and a document"),
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::documents::port::SpecNeeds for DocumentsService {
+    async fn project_workspace(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<Option<Uuid>> {
+        if self.authorize(ctx, project_id).await.is_err() {
+            return Ok(None);
+        }
+        let Some(parent) = self.parent_of(ctx, project_id).await? else {
+            return Ok(None);
+        };
+        Ok(self.authorize(ctx, parent).await.is_ok().then_some(parent))
+    }
+
+    async fn vocabulary(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> anyhow::Result<Vec<Capability>> {
+        self.list_capabilities(ctx, workspace_id).await
+    }
+
+    async fn needs(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> anyhow::Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)> {
+        self.declared_capabilities(workspace_id, project_id).await
     }
 }
