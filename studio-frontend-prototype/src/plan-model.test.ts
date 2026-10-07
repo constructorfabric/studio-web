@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { move, needOf, parseNumber, quarters, sectionBody, teamChoices, withNeed, type Plan } from "./plan-model";
+import { linkOf, move, needOf, parseNumber, quarters, sectionBody, teamChoices, withNeed, type Plan, type PlanPeople } from "./plan-model";
 
 const plan: Plan = {
   revision: 3,
@@ -57,5 +57,29 @@ describe("plan fields", () => {
   it("move a row and refuse to move past an end", () => {
     expect(move(["a", "b", "c"], 2, 0)).toEqual(["c", "a", "b"]);
     expect(move(["a", "b"], 0, -1)).toEqual(["a", "b"]);
+  });
+});
+
+describe("a person's link to Studio", () => {
+  const links: PlanPeople = {
+    people: [
+      { login: "zed-example", alias: null, team: null, person_id: "p-zed", member: true },
+      { login: "out-example", alias: null, team: null, person_id: "p-out", member: false },
+      { login: "nobody-example", alias: null, team: null, person_id: null, member: false },
+    ],
+    unplanned: [],
+    members_without_github: 0,
+    identities_available: true,
+  };
+
+  it("reads the saved match, whatever the case of the login", () => {
+    expect(linkOf(links, "Zed-Example")).toEqual({ kind: "member", personId: "p-zed" });
+    expect(linkOf(links, "out-example")).toEqual({ kind: "outsider", personId: "p-out" });
+    expect(linkOf(links, "nobody-example")).toEqual({ kind: "unknown" });
+  });
+
+  it("has nothing to say about a row typed since the save", () => {
+    expect(linkOf(links, "new-example")).toEqual({ kind: "unsaved" });
+    expect(linkOf(null, "zed-example")).toEqual({ kind: "unsaved" });
   });
 });

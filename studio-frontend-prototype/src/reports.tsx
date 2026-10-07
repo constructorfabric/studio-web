@@ -317,6 +317,7 @@ function ReportCard({
           <PlanEditor
             token={token}
             report={report.id}
+            org={org}
             onSaved={() => {
               onChanged();
               setVersion((v) => v + 1);

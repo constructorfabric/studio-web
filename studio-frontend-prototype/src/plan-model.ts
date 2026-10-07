@@ -154,3 +154,41 @@ export function move<T>(list: T[], from: number, to: number): T[] {
   out.splice(to, 0, x);
   return out;
 }
+
+/** One person in the plan, and who they are in Studio. */
+export interface PlanPersonLink {
+  login: string;
+  alias: string | null;
+  team: string | null;
+  /** The Studio person whose confirmed GitHub account this login is. */
+  person_id: string | null;
+  /** Whether that person is an active member of the organization. */
+  member: boolean;
+}
+
+/** `GET …/plan/people`: the plan's people against the organization's. */
+export interface PlanPeople {
+  /** Every person in the plan, in its order. */
+  people: PlanPersonLink[];
+  /** Members with a confirmed GitHub account the plan does not list. */
+  unplanned: { person_id: string; github: string[] }[];
+  members_without_github: number;
+  /** False when the deployment cannot match anybody. */
+  identities_available: boolean;
+}
+
+/** How a person in the plan stands in Studio, in a few words. */
+export type LinkState =
+  | { kind: "member"; personId: string }
+  | { kind: "outsider"; personId: string }
+  | { kind: "unknown" }
+  | { kind: "unsaved" };
+
+/** A login's link, read from the last saved plan's matches. A row typed since
+ *  the last save has not been matched yet. */
+export function linkOf(people: PlanPeople | null, login: string): LinkState {
+  const l = people?.people.find((i) => i.login.trim().toLowerCase() === login.trim().toLowerCase());
+  if (!l) return { kind: "unsaved" };
+  if (!l.person_id) return { kind: "unknown" };
+  return l.member ? { kind: "member", personId: l.person_id } : { kind: "outsider", personId: l.person_id };
+}

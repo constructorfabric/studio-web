@@ -150,6 +150,12 @@ The plan names people — their emails and how much of each one's time a team
 counts on. For now it is shown to whoever may edit the report's source; who
 may see and edit it is a role question for later (ADR-0019).
 
+A person in the plan is linked to a Studio person by login: the login is
+matched against confirmed GitHub aliases (`user_profile::AliasResolver`), and
+membership is read from `OrganizationRoster`. The match is computed on every
+read and stored nowhere, so it follows a person confirming or revoking an
+account; a claim or a guess links nobody.
+
 #### A client never names a tenant
 
 - [x] `p2` - **ID**: `cpt-studio-principle-reports-org-in-payload`
@@ -315,6 +321,7 @@ would add on top.
 | `POST` | `/studio-reports/v1/reports/{report_id}/sync` | Queue a `reports.refresh` run in the caller's tenant; 503 without `studio-tasks` | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/plan` | The plan in sections — lanes, units and teams, people, projects, needs — with the `revision` a save is made against; revision 0 and empty when there is none | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/plan/{lanes,units,people,projects,needs}` | Save one section against `revision`: 400 lists why the plan would not hold together, 409 when it changed since; the first save makes Studio the plan's home | unstable |
+| `GET` | `/studio-reports/v1/reports/{report_id}/plan/people` | Each person in the plan with the Studio person whose **confirmed** GitHub account their login is (ADR-0012) and whether they are an active member; the members with a confirmed GitHub account the plan does not list; how many members have none. Computed on read, nothing stored | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/plan/yaml` | The plan as `gears.yaml`, for the planning script or a backup; 404 without a plan | unstable |
 | `GET` | `/studio-reports/v1/reports/{report_id}/schedule` | Whether the report refreshes on its own and when next; `enabled: false` with no `cron` when there is none | unstable |
 | `PUT` | `/studio-reports/v1/reports/{report_id}/schedule` | Switch it on or off, creating it the first time | unstable |

@@ -176,6 +176,15 @@ pub trait AliasResolver: Send + Sync + 'static {
         kind: &str,
         external_ids: &[String],
     ) -> anyhow::Result<BTreeMap<String, String>>;
+
+    /// The other way round: the confirmed identities of one `kind` each of
+    /// `people` holds, keyed by person. A person holding none is absent.
+    /// Confirmed only, for the same reason.
+    async fn confirmed_identities(
+        &self,
+        kind: &str,
+        people: &[String],
+    ) -> anyhow::Result<BTreeMap<String, Vec<String>>>;
 }
 
 #[async_trait]
@@ -186,6 +195,31 @@ impl AliasResolver for IdentityService {
         external_ids: &[String],
     ) -> anyhow::Result<BTreeMap<String, String>> {
         self.confirmed_alias_owners(kind, external_ids).await
+    }
+
+    async fn confirmed_identities(
+        &self,
+        kind: &str,
+        people: &[String],
+    ) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+        let mut out = BTreeMap::new();
+        for person in people {
+            let held: Vec<String> = self
+                .list_aliases(person)
+                .await?
+                .into_iter()
+                .filter(|a| {
+                    a.kind.eq_ignore_ascii_case(kind)
+                        && alias_policy::Confidence::parse(&a.confidence)
+                            .is_some_and(alias_policy::Confidence::attributes)
+                })
+                .map(|a| a.external_id)
+                .collect();
+            if !held.is_empty() {
+                out.insert(person.clone(), held);
+            }
+        }
+        Ok(out)
     }
 }
 

@@ -1393,6 +1393,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/plan/people",
+      "operation_id": "studio_reports.get_report_plan_people",
+      "tag": "StudioReports",
+      "summary": "The plan's people matched to Studio's, and the members it misses",
+      "authenticated": true,
+      "responses": [
+        "PlanPeopleDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-reports/v1/reports/{report_id}/plan/yaml",
       "operation_id": "studio_reports.export_report_plan",
       "tag": "StudioReports",

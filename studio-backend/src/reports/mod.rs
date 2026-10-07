@@ -17,6 +17,7 @@
 pub mod definition;
 mod github;
 pub mod gts;
+pub mod people_links;
 pub mod plan_edit;
 pub mod refresh_task;
 mod rest;

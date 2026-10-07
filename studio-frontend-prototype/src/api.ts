@@ -2,7 +2,7 @@ import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
-import { sectionBody, type Plan, type PlanSection } from "./plan-model";
+import { sectionBody, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainQuery, DomainQueryResult } from "./domain-query";
 
@@ -4068,6 +4068,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(sectionBody(section, plan)),
     }),
+
+  /** The plan's people matched to Studio's by confirmed GitHub account, and
+   *  the organization's members the plan does not list. */
+  reportPlanPeople: (token: string, report: string) =>
+    request<PlanPeople>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/plan/people`, token),
 
   /** The plan as `gears.yaml`. */
   exportReportPlan: (token: string, report: string) =>

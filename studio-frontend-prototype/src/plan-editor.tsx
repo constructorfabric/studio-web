@@ -17,8 +17,11 @@ import {
   optional,
   parseNumber,
   quarters,
+  linkOf,
   teamChoices,
   withNeed,
+  type LinkState,
+  type PlanPeople,
   type Plan,
   type PlanSection,
 } from "./plan-model";
@@ -84,7 +87,53 @@ function RowButtons({ onUp, onDown, onRemove }: { onUp?: () => void; onDown?: ()
   );
 }
 
-export function PlanEditor({ token, report, onSaved }: { token: string; report: string; onSaved?: () => void }) {
+/** Who a login is in Studio, in a word or two. */
+function LinkCell({
+  state,
+  nameOf,
+  available,
+}: {
+  state: LinkState;
+  nameOf: (id: string) => string;
+  available: boolean;
+}) {
+  if (!available) return <span style={HINT}>—</span>;
+  switch (state.kind) {
+    case "member":
+      return <span title="An active member, by their confirmed GitHub account">✓ {nameOf(state.personId)}</span>;
+    case "outsider":
+      return (
+        <span style={HINT} title="A Studio person by this GitHub account, but not a member of this organization">
+          {nameOf(state.personId)} · not a member
+        </span>
+      );
+    case "unknown":
+      return (
+        <span style={HINT} title="Nobody in Studio has confirmed this GitHub account">
+          not in Studio
+        </span>
+      );
+    case "unsaved":
+      return (
+        <span style={HINT} title="Matched once the people are saved">
+          …
+        </span>
+      );
+  }
+}
+
+export function PlanEditor({
+  token,
+  report,
+  org,
+  onSaved,
+}: {
+  token: string;
+  report: string;
+  /** The organization on screen: its members name the linked people. */
+  org?: string;
+  onSaved?: () => void;
+}) {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [draft, setDraft] = useState<Plan | null>(null);
   const [tab, setTab] = useState<PlanSection>("units");
@@ -92,6 +141,15 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
   const [note, setNote] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [filter, setFilter] = useState("");
+  const [links, setLinks] = useState<PlanPeople | null>(null);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+
+  const loadLinks = useCallback(() => {
+    api
+      .reportPlanPeople(token, report)
+      .then(setLinks)
+      .catch(() => setLinks(null));
+  }, [token, report]);
 
   const load = useCallback(() => {
     setStale(false);
@@ -102,8 +160,20 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
         setDraft(p);
       })
       .catch((e) => setNote(errText(e)));
-  }, [token, report]);
+    loadLinks();
+  }, [token, report, loadLinks]);
   useEffect(load, [load]);
+
+  // Names come from the members list, which needs `people.view`; without it
+  // a linked person is shown by id.
+  useEffect(() => {
+    if (!org) return;
+    api
+      .orgMembers(token, org)
+      .then((ms) => setNames(new Map(ms.map((m) => [m.user_id, m.display_name || m.email || m.user_id]))))
+      .catch(() => setNames(new Map()));
+  }, [token, org]);
+  const nameOf = (id: string) => names.get(id) ?? `${id.slice(0, 8)}…`;
 
   const suggestions = useMemo(() => [...NEED_SUGGESTIONS, ...quarters(new Date())], []);
 
@@ -138,6 +208,7 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
         return next;
       });
       setNote("Saved.");
+      if (s === "people") loadLinks();
       onSaved?.();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
@@ -275,7 +346,7 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
           <table style={TABLE}>
             <thead>
               <tr>
-                {["GitHub login", "Alias", "Team", "Power", "Email", ""].map((h) => (
+                {["GitHub login", "In Studio", "Alias", "Team", "Power", "Email", ""].map((h) => (
                   <th key={h} style={{ ...CELL, textAlign: "left" }}>
                     {h}
                   </th>
@@ -292,6 +363,9 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
                   <tr key={pi}>
                     <td style={CELL}>
                       <input style={INPUT} value={p.login} onChange={(e) => setPerson({ login: e.target.value })} />
+                    </td>
+                    <td style={{ ...CELL, whiteSpace: "nowrap" }}>
+                      <LinkCell state={linkOf(links, p.login)} nameOf={nameOf} available={links?.identities_available ?? false} />
                     </td>
                     <td style={CELL}>
                       <input style={INPUT} value={p.alias ?? ""} onChange={(e) => setPerson({ alias: optional(e.target.value) })} />
@@ -330,6 +404,51 @@ export function PlanEditor({ token, report, onSaved }: { token: string; report: 
           >
             Add person
           </button>
+          {links && links.identities_available && (links.unplanned.length > 0 || links.members_without_github > 0) && (
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+              {links.unplanned.length > 0 && (
+                <>
+                  <p style={{ ...HINT, marginBottom: 4 }}>Members of the organization the plan does not list:</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {links.unplanned
+                      .filter((u) => !draft.people.some((p) => u.github.some((g) => g.toLowerCase() === p.login.trim().toLowerCase())))
+                      .map((u) => (
+                        <span key={u.person_id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <span>{nameOf(u.person_id)}</span>
+                          <code>{u.github.join(", ")}</code>
+                          <button
+                            className="iconbtn"
+                            onClick={() =>
+                              set({
+                                people: [
+                                  ...draft.people,
+                                  {
+                                    login: u.github[0],
+                                    alias: names.get(u.person_id) ?? null,
+                                    team: null,
+                                    unit: null,
+                                    power: 1,
+                                    email: null,
+                                  },
+                                ],
+                              })
+                            }
+                          >
+                            Add to the plan
+                          </button>
+                        </span>
+                      ))}
+                  </div>
+                </>
+              )}
+              {links.members_without_github > 0 && (
+                <p style={HINT}>
+                  {links.members_without_github} member(s) have no confirmed GitHub account, so the plan cannot name them
+                  until they confirm one.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

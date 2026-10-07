@@ -20,6 +20,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::people_links::{self, PlanPeopleDto};
 use super::plan_edit::{self, LanesDto, NeedDto, PersonDto, ProjectDto, Section, UnitDto};
 use super::refresh_task::{RefreshPayload, TASK_TYPE};
 use super::roadmap::summary::RoadmapReportDto;
@@ -771,6 +772,58 @@ async fn update_report_plan_needs(
     .await
 }
 
+/// The plan's people matched to Studio's, and the members the plan misses.
+async fn get_report_plan_people(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<PlanPeopleDto>> {
+    let k = report(&id)?;
+    let (_, doc) = reports
+        .service
+        .plan_document(&ctx, k.id)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    let people = plan_edit::read(&doc).people;
+    let scope = ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID);
+    let resolver = reports
+        .hub
+        .get_scoped::<dyn crate::user_profile::AliasResolver>(&scope);
+    let roster = reports
+        .hub
+        .get_scoped::<dyn crate::user_profile::OrganizationRoster>(&scope);
+    let (Ok(resolver), Ok(roster)) = (resolver, roster) else {
+        // Without studio-user nobody can be matched; say so rather than
+        // answer every person as unknown.
+        let mut out = people_links::link(
+            &people,
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        );
+        out.identities_available = false;
+        return Ok(Json(out));
+    };
+    let logins: Vec<String> = people.iter().map(|p| people_links::key(&p.login)).collect();
+    let owners = resolver
+        .confirmed_owners("github", &logins)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    let members: std::collections::BTreeSet<String> = roster
+        .active_members(ctx.subject_tenant_id())
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?
+        .into_iter()
+        .map(|m| m.person)
+        .collect();
+    let member_ids: Vec<String> = members.iter().cloned().collect();
+    let held = resolver
+        .confirmed_identities("github", &member_ids)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    Ok(Json(people_links::link(&people, &owners, &members, &held)))
+}
+
 /// The plan as `gears.yaml`, for the planning script or a backup.
 async fn export_report_plan(
     OrgCtx(ctx): OrgCtx,
@@ -1180,6 +1233,30 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/plan/people")
+        .operation_id("studio_reports.get_report_plan_people")
+        .summary("The plan's people matched to Studio's, and the members it misses")
+        .description(
+            "When planning who works on what: each person in the plan with the Studio person \
+             whose confirmed GitHub account their login is, and whether that person is an \
+             active member of this organization; then the members with a confirmed GitHub \
+             account the plan does not list, and how many members have none. Only confirmed \
+             accounts link anybody (ADR-0012), and nothing is stored: a person who confirms \
+             their account is linked from then on. `identities_available` is false when \
+             studio-user is not running, and nobody can be matched.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_plan_people)
+        .json_response_with_schema::<PlanPeopleDto>(openapi, StatusCode::OK, "The plan's people")
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
