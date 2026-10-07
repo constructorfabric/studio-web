@@ -23,8 +23,8 @@ use uuid::Uuid;
 use super::alias_policy::Confidence;
 use super::leaving;
 use super::service::{
-    AliasOutcome, ConfirmReport, DirectoryProfile, IdentityService, LoginView, MembershipView,
-    Offered, PersonEmail, ProfilePatch, UserProfile, check_ui_preferences,
+    AliasOutcome, Colleague, ConfirmReport, DirectoryProfile, IdentityService, LoginView,
+    MembershipView, Offered, PersonEmail, ProfilePatch, UserProfile, check_ui_preferences,
 };
 
 #[resource_error(gts_id!("cf.studio.user.profile.v1~"))]
@@ -186,6 +186,34 @@ pub struct UploadAvatarRequest {
     pub content_type: String,
     /// Standard base64 of the image, at most 1 MiB decoded.
     pub data: String,
+}
+
+/// Somebody the caller shares an organization with, as any member of it
+/// sees them (ADR-0036). No addresses and no sign-ins: those stay with
+/// `people.view`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ColleagueDto {
+    /// The organization this row is about; a person in two shared
+    /// organizations has a row in each, with that organization's description.
+    pub org_id: String,
+    pub user_id: String,
+    /// Absent when the person never gave a name and the realm had none.
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+    pub directory: MemberDirectoryDto,
+    /// When they last made a request, to within five minutes.
+    pub last_seen_at_epoch_ms: Option<i64>,
+}
+
+/// A page of colleagues.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ColleagueListDto {
+    pub items: Vec<ColleagueDto>,
+    pub total: u32,
 }
 
 /// One member of an organization, with who they are: what a members screen
@@ -497,6 +525,36 @@ async fn profile_dto(service: &IdentityService, profile: UserProfile) -> ApiResu
 
 /// How many people a members listing asks the realm about at once.
 const REALM_READ_WINDOW: usize = 4;
+
+fn colleague_dto(c: Colleague) -> ColleagueDto {
+    ColleagueDto {
+        org_id: c.org_id,
+        user_id: c.user_id,
+        display_name: c.display_name,
+        avatar_url: c.avatar_url,
+        role: c.role,
+        directory: directory_dto(c.directory),
+        last_seen_at_epoch_ms: c.last_seen_at_epoch_ms,
+    }
+}
+
+async fn list_my_colleagues(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Query(page): Query<crate::pagination::PageQuery>,
+) -> ApiResult<JsonBody<ColleagueListDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let items = service
+        .colleagues(&user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(colleague_dto)
+        .collect();
+    let (items, total) = crate::pagination::page_of(items, page);
+    Ok(Json(ColleagueListDto { items, total }))
+}
 
 async fn upsert_my_avatar(
     Extension(ctx): Extension<SecurityContext>,
@@ -1931,6 +1989,33 @@ pub fn register_routes(
             "The membership it produced",
         )
         .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-user/v1/me/colleagues")
+        .operation_id("studio_user.list_my_colleagues")
+        .summary("The people the caller shares an organization with")
+        .description(
+            "Everybody in each organization the caller is an active member of, as any member \
+             sees them: name, photo, role, how the organization describes them and when they \
+             were last seen. One row per organization and person, the caller included. \
+             Suspended memberships count on neither side. No addresses and no sign-ins — \
+             those stay with `people.view` on the members listing (ADR-0036). The \
+             organizations come from the caller's own memberships, so none can be named to \
+             look into. Paged with `offset` and `limit`.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("offset", false, "Zero-based index of the first row")
+        .query_param("limit", false, "Rows per page")
+        .handler(list_my_colleagues)
+        .json_response_with_schema::<ColleagueListDto>(
+            openapi,
+            StatusCode::OK,
+            "The caller's colleagues",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

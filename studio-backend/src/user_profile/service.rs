@@ -167,6 +167,21 @@ pub struct PersonEmail {
     pub primary: bool,
 }
 
+/// Somebody the caller shares an organization with, as that organization
+/// shows them to any of its members (ADR-0036): who they are, their photo,
+/// their role and how the organization describes them — never their
+/// addresses or how they sign in.
+#[derive(Clone, Debug)]
+pub struct Colleague {
+    pub org_id: String,
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub role: String,
+    pub directory: DirectoryProfile,
+    pub last_seen_at_epoch_ms: Option<i64>,
+}
+
 /// A stored photo.
 #[derive(Clone, Debug)]
 pub struct AvatarRecord {
@@ -704,6 +719,49 @@ impl IdentityService {
                 )
             })
             .collect())
+    }
+
+    /// Everybody the person shares an organization with, one row per
+    /// organization and person, the person included.
+    ///
+    /// Only active memberships count, on both sides: a suspended member sees
+    /// nobody through that organization, and nobody sees them (ADR-0036).
+    /// The organizations come from the person's own memberships, so there is
+    /// no organization a caller can name to look into.
+    pub async fn colleagues(&self, user_id: &str) -> Result<Vec<Colleague>> {
+        let mut profiles: HashMap<String, Option<UserProfile>> = HashMap::new();
+        let mut out = Vec::new();
+        for room in self.store.memberships_of(user_id).await? {
+            if room.status != leaving::STATUS_ACTIVE {
+                continue;
+            }
+            let directory = self.store.directory_in_org(&room.org_id).await?;
+            let mut members: Vec<MembershipView> = self
+                .store
+                .memberships_in_org(&room.org_id)
+                .await?
+                .into_iter()
+                .filter(|m| m.status == leaving::STATUS_ACTIVE)
+                .collect();
+            members.sort_by(|a, b| a.user_id.cmp(&b.user_id));
+            for member in members {
+                if !profiles.contains_key(&member.user_id) {
+                    let profile = self.store.get_user(&member.user_id).await?;
+                    profiles.insert(member.user_id.clone(), profile);
+                }
+                let profile = profiles.get(&member.user_id).cloned().flatten();
+                out.push(Colleague {
+                    org_id: room.org_id.clone(),
+                    display_name: profile.as_ref().and_then(|p| p.display_name.clone()),
+                    avatar_url: profile.as_ref().and_then(|p| p.avatar_url.clone()),
+                    last_seen_at_epoch_ms: profile.as_ref().and_then(|p| p.last_seen_at_epoch_ms),
+                    directory: directory.get(&member.user_id).cloned().unwrap_or_default(),
+                    role: member.role,
+                    user_id: member.user_id,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// How one organization describes its people, by user id.

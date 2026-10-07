@@ -521,3 +521,71 @@ async fn a_listing_reads_everybody_s_sign_ins_and_aliases_at_once() {
     assert!(store.logins_of_many(&[]).await.unwrap().is_empty());
     assert!(store.aliases_of_many(&ids).await.unwrap().is_empty());
 }
+
+// ── colleagues ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_member_sees_the_active_people_of_their_own_organizations_only() {
+    let (service, store) = service().await;
+    let me = Uuid::new_v4().to_string();
+    let peer = Uuid::new_v4().to_string();
+    let away = Uuid::new_v4().to_string();
+    let stranger = Uuid::new_v4().to_string();
+    let ours = Uuid::new_v4().to_string();
+    let theirs = Uuid::new_v4().to_string();
+    let left = Uuid::new_v4().to_string();
+    for id in [&me, &peer, &away, &stranger] {
+        store.upsert_user(&person(id)).await.unwrap();
+    }
+    store
+        .upsert_membership(&membership(&me, &ours, "member"))
+        .await
+        .unwrap();
+    store
+        .upsert_membership(&membership(&peer, &ours, "owner"))
+        .await
+        .unwrap();
+    let mut suspended = membership(&away, &ours, "member");
+    suspended.status = "suspended".to_owned();
+    store.upsert_membership(&suspended).await.unwrap();
+    store
+        .upsert_membership(&membership(&stranger, &theirs, "owner"))
+        .await
+        .unwrap();
+    // An organization the caller is suspended in shows nobody.
+    let mut mine_suspended = membership(&me, &left, "member");
+    mine_suspended.status = "suspended".to_owned();
+    store.upsert_membership(&mine_suspended).await.unwrap();
+    store
+        .upsert_membership(&membership(&stranger, &left, "member"))
+        .await
+        .unwrap();
+    let titled = DirectoryProfile {
+        title: Some("Head of product".to_owned()),
+        ..DirectoryProfile::default()
+    };
+    store.set_directory(&peer, &ours, &titled).await.unwrap();
+
+    let seen = service.colleagues(&me).await.unwrap();
+
+    let mut people: Vec<(String, String)> = seen
+        .iter()
+        .map(|c| (c.org_id.clone(), c.user_id.clone()))
+        .collect();
+    people.sort();
+    let mut expected = vec![(ours.clone(), me.clone()), (ours.clone(), peer.clone())];
+    expected.sort();
+    assert_eq!(people, expected);
+    let peer_row = seen.iter().find(|c| c.user_id == peer).unwrap();
+    assert_eq!(peer_row.role, "owner");
+    assert_eq!(peer_row.directory, titled);
+    assert_eq!(peer_row.display_name.as_deref(), Some("Ada"));
+}
+
+#[tokio::test]
+async fn somebody_in_no_organization_has_no_colleagues() {
+    let (service, store) = service().await;
+    let loner = Uuid::new_v4().to_string();
+    store.upsert_user(&person(&loner)).await.unwrap();
+    assert!(service.colleagues(&loner).await.unwrap().is_empty());
+}

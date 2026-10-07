@@ -84,6 +84,18 @@ export interface MemberDirectory {
   reports_to?: string | null;
 }
 
+/** Somebody the caller shares an organization with, as any member sees them
+ *  (ADR-0036): no addresses and no sign-ins. One row per organization. */
+export interface Colleague {
+  org_id: string;
+  user_id: string;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  role: MembershipRole | string;
+  directory: MemberDirectory;
+  last_seen_at_epoch_ms?: number | null;
+}
+
 /** The caller's Studio person, from `GET /studio-user/v1/me`. */
 export interface StudioProfile {
   id: string;
@@ -2592,6 +2604,11 @@ export const api = {
 
   /** The caller's Studio person, named from the identity provider when blank. */
   myProfile: (token: string) => request<StudioProfile>("/studio-user/v1/me", token),
+
+  /** Everybody the caller shares an active organization with. Any member may
+   *  read it; addresses and sign-ins stay with `orgMembers` (ADR-0036). */
+  myColleagues: (token: string) =>
+    requestAllPages<Colleague>("/studio-user/v1/me/colleagues", token, "items"),
 
   /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
   uploadMyAvatar: (token: string, contentType: string, base64: string) =>

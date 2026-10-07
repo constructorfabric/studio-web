@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import {
   api,
+  type Colleague,
   type MemberDirectory,
   type MembershipRole,
   type OrgMember,
@@ -310,6 +311,7 @@ export function MemberDirectoryForm({
 
   return (
     <form className="member-directory" onSubmit={(e) => void save(e)}>
+      <p className="hint">Every member of the organization sees this description.</p>
       <label>
         <span className="sub">Title</span>
         <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
@@ -343,5 +345,85 @@ export function MemberDirectoryForm({
       </div>
       {error && <div className="error">{error}</div>}
     </form>
+  );
+}
+
+const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Member" };
+
+/** What a colleague is called: their name, else a short form of their id. */
+export function colleagueName(c: Pick<Colleague, "display_name" | "user_id">): string {
+  return c.display_name?.trim() || `Person ${c.user_id.slice(0, 8)}`;
+}
+
+/** The people of one organization as any member sees them, by name. */
+export function colleaguesIn(all: Colleague[], orgId: string): Colleague[] {
+  return all
+    .filter((c) => c.org_id === orgId)
+    .sort((a, b) => colleagueName(a).localeCompare(colleagueName(b)));
+}
+
+/** Who is in the organization, for every member: name, photo, role, how the
+ *  organization describes them and when they were last seen (ADR-0036). */
+export function ColleaguesCard({ token, orgId }: { token: string; orgId: string | null }) {
+  const [all, setAll] = useState<Colleague[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setAll(null);
+    setError(null);
+    api
+      .myColleagues(token)
+      .then((rows) => live && setAll(rows))
+      .catch((e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  if (!orgId) return null;
+  const people = all ? colleaguesIn(all, orgId) : [];
+  const byId = new Map(people.map((c) => [c.user_id, c]));
+  const nameOf = (id: string) => {
+    const c = byId.get(id);
+    return c ? colleagueName(c) : undefined;
+  };
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>
+          Who is here {all && <span className="dt-count">{people.length}</span>}
+        </h2>
+      </div>
+      {!all && !error && <p className="sub">Reading who is in this organization…</p>}
+      {error && <div className="error">{error}</div>}
+      {all && people.length === 0 && (
+        <p className="sub">You are not an active member of this organization, so nobody is listed.</p>
+      )}
+      {people.length > 0 && (
+        <ul className="colleague-list">
+          {people.map((c) => {
+            const line = directoryLine(c.directory, nameOf);
+            return (
+              <li key={c.user_id}>
+                <PersonPhoto name={colleagueName(c)} url={c.avatar_url} />
+                <div className="grow">
+                  <div className="name">{colleagueName(c)}</div>
+                  <div className="sub">
+                    {[ROLE_LABEL[c.role] ?? c.role, line].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                {c.last_seen_at_epoch_ms != null && (
+                  <span className="sub">
+                    <When iso={new Date(c.last_seen_at_epoch_ms).toISOString()} />
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

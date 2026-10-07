@@ -274,6 +274,7 @@ is configured.
 | `POST` | `/me/aliases/confirm`, `/me/aliases/revoke` | Confirm from the proof channels; withdraw one | stable |
 | `GET` | `/me/invitations` | Invitations waiting for an address the IdP verified for the caller | stable |
 | `POST` | `/me/invitations/accept` | Accept by `token` or by `invitation_id` from that list | stable |
+| `GET` | `/me/colleagues` | Every active member of each organization the caller is active in: name, photo, role, description, last seen — no addresses or sign-ins (ADR-0036) | experimental |
 | `GET` | `/organizations/{org_id}/members` | Members with profiles, every address, photo, last seen and the organization's description of them, paged (`people.view`) | stable |
 | `GET` | `/organizations/{org_id}/members/{user_id}/identities` | One member's logins and aliases; 404 for a non-member (`people.view`) | experimental |
 | `GET` `POST` | `/organizations/{org_id}/invitations` | List (`people.view`); invite, token returned once (`people.invite`) | stable |

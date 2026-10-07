@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { PersonEmail } from "./api";
+import type { Colleague, PersonEmail } from "./api";
 import {
   MAX_AVATAR_BYTES,
+  colleagueName,
+  colleaguesIn,
   directoryLine,
   isStoredPhoto,
   otherEmails,
@@ -73,5 +75,28 @@ describe("a stored photo", () => {
     expect(isStoredPhoto(`/cf/studio-user/v1/avatars/${id}/${"a".repeat(64)}`)).toBe(true);
     expect(isStoredPhoto("https://example.com/me.png")).toBe(false);
     expect(isStoredPhoto(null)).toBe(false);
+  });
+});
+
+describe("colleagues", () => {
+  const colleague = (org_id: string, user_id: string, display_name: string | null): Colleague => ({
+    org_id,
+    user_id,
+    display_name,
+    role: "member",
+    directory: {},
+  });
+
+  it("lists one organization's people by name", () => {
+    const all = [
+      colleague("org-a", "u-2", "Max"),
+      colleague("org-b", "u-3", "Elsewhere"),
+      colleague("org-a", "u-1", "Ada"),
+    ];
+    expect(colleaguesIn(all, "org-a").map((c) => c.display_name)).toEqual(["Ada", "Max"]);
+  });
+
+  it("names somebody without a name by their id", () => {
+    expect(colleagueName(colleague("org-a", "6f1c3a52-1111", null))).toBe("Person 6f1c3a52");
   });
 });

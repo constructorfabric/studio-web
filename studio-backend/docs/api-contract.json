@@ -1811,6 +1811,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/me/colleagues",
+      "operation_id": "studio_user.list_my_colleagues",
+      "tag": "StudioUser",
+      "summary": "The people the caller shares an organization with",
+      "authenticated": true,
+      "responses": [
+        "ColleagueListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/me/invitations",
       "operation_id": "studio_user.my_invitations",
       "tag": "StudioUser",

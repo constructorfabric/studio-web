@@ -2090,10 +2090,14 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
 .file-button { position: relative; }
 .file-button:focus-within { outline: 2px solid var(--ring, var(--primary)); outline-offset: 2px; }
+.colleague-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.colleague-list li { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.colleague-list li:last-child { border-bottom: 0; }
+.colleague-list .grow { flex: 1; min-width: 0; }
 .email-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .member-directory { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 12px; align-items: end; }
 .member-directory label { display: flex; flex-direction: column; gap: 3px; }
-.member-directory .person-actions, .member-directory .error { grid-column: 1 / -1; }
+.member-directory .person-actions, .member-directory .error, .member-directory .hint { grid-column: 1 / -1; }
 .dt-state { padding: 28px 12px; text-align: center; color: var(--muted-foreground); display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .dt-empty-title { color: var(--foreground); font-weight: 500; }
 .dt-empty-body { max-width: 520px; }

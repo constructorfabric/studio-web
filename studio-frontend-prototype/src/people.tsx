@@ -37,6 +37,7 @@ interface Person {
 }
 
 import { OnlineDot, useOnline } from "./presence";
+import { ColleaguesCard } from "./people-profile";
 
 export function PeopleView({
   token,
@@ -252,6 +253,8 @@ export function PeopleView({
             </p>
           </div>
         </div>
+
+        <ColleaguesCard token={token} orgId={orgId} />
 
         {error && <div className="error">{error}</div>}
 
