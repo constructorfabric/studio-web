@@ -92,15 +92,20 @@ fn same_login(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-/// A request for changes still standing: made by somebody who has not been
-/// asked to look again since.
-fn outstanding_changes<'a>(requested: &[String], reviews: &'a [Review]) -> Vec<&'a str> {
+/// Decisions of one kind still standing: made by somebody who has not been
+/// asked to look again since. Asking again is asking for a new decision, so
+/// the old one, approval or request for changes, no longer stands.
+fn standing<'a>(requested: &[String], reviews: &'a [Review], state: &str) -> Vec<&'a str> {
     reviews
         .iter()
-        .filter(|r| r.state == "changes_requested")
+        .filter(|r| r.state == state)
         .filter(|r| !requested.iter().any(|q| same_login(q, &r.login)))
         .map(|r| r.login.as_str())
         .collect()
+}
+
+fn outstanding_changes<'a>(requested: &[String], reviews: &'a [Review]) -> Vec<&'a str> {
+    standing(requested, reviews, "changes_requested")
 }
 
 /// The review decision the stored facts amount to: `changes_requested`,
@@ -116,7 +121,7 @@ pub fn review_decision(
 ) -> Option<&'static str> {
     if !outstanding_changes(requested, reviews).is_empty() {
         Some("changes_requested")
-    } else if reviews.iter().any(|r| r.state == "approved") {
+    } else if !standing(requested, reviews, "approved").is_empty() {
         Some("approved")
     } else if !requested.is_empty() || !teams.is_empty() || !reviews.is_empty() {
         Some("review_required")
@@ -556,6 +561,12 @@ mod tests {
                 ]
             ),
             Some("approved")
+        );
+        // Nor is an approval: the one approver was asked to look again, which
+        // GitHub also reads as "review required" (studio-web#648, 2026-10-07).
+        assert_eq!(
+            review_decision(&logins(&["bob"]), &none, &[review("bob", "approved")]),
+            Some("review_required")
         );
         assert_eq!(
             review_decision(&none, &none, &[review("dave", "commented")]),
