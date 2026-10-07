@@ -50,6 +50,9 @@ pub mod user {
         /// type buys nothing that would pay for dropping the derive.
         pub ui_preferences: Option<String>,
         pub merged_into: Option<Uuid>,
+        /// When the person last made a request, recorded at most every few
+        /// minutes. `None` until they are seen after `m0005`.
+        pub last_seen_at: Option<OffsetDateTime>,
         pub created_at: OffsetDateTime,
         pub updated_at: OffsetDateTime,
     }
@@ -77,6 +80,10 @@ pub mod login {
         pub user_id: Uuid,
         pub verified: bool,
         pub linked_at: OffsetDateTime,
+        /// The address the identity provider holds for this sign-in, as last
+        /// read; `email_verified` says whether the provider vouches for it.
+        pub email: Option<String>,
+        pub email_verified: bool,
     }
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
@@ -107,6 +114,37 @@ pub mod membership {
         pub status: String,
         pub source: String,
         pub created_at: OffsetDateTime,
+        pub updated_at: OffsetDateTime,
+        /// How the organization describes this person (company, department,
+        /// title, manager). Org-scoped on purpose: see `m0005`.
+        pub affiliation: Option<String>,
+        pub department: Option<String>,
+        pub title: Option<String>,
+        pub reports_to: Option<Uuid>,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod avatar {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    /// A person's photo, one per person.
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_avatar")]
+    #[secure(tenant_col = "tenant_id", resource_col = "user_id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub user_id: Uuid,
+        pub tenant_id: Uuid,
+        pub content_type: String,
+        pub bytes: Vec<u8>,
+        /// SHA-256 of `bytes`, hex; names the version a URL points at.
+        pub digest: String,
         pub updated_at: OffsetDateTime,
     }
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

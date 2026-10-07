@@ -23,8 +23,8 @@ use uuid::Uuid;
 use super::alias_policy::Confidence;
 use super::leaving;
 use super::service::{
-    AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, Offered, ProfilePatch,
-    UserProfile, check_ui_preferences,
+    AliasOutcome, ConfirmReport, DirectoryProfile, IdentityService, LoginView, MembershipView,
+    Offered, PersonEmail, ProfilePatch, UserProfile, check_ui_preferences,
 };
 
 #[resource_error(gts_id!("cf.studio.user.profile.v1~"))]
@@ -45,12 +45,19 @@ impl LicenseFeature for License {}
 pub struct UserProfileDto {
     pub id: String,
     pub display_name: Option<String>,
+    /// The address the person typed. `emails` lists every address they hold.
     pub email: Option<String>,
     pub avatar_url: Option<String>,
     pub locale: Option<String>,
     pub created_at_epoch_ms: i64,
     pub updated_at_epoch_ms: i64,
     pub merged_into: Option<String>,
+    /// Every address the person can be reached at: the profile's, each
+    /// sign-in's and each attributed `email` identity, primary first marked.
+    pub emails: Vec<PersonEmailDto>,
+    /// When the person last made a request, to within five minutes; null
+    /// until they are seen.
+    pub last_seen_at_epoch_ms: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -89,6 +96,10 @@ pub struct LoginDto {
     pub subject: String,
     pub verified: bool,
     pub linked_at_epoch_ms: i64,
+    /// The address the identity provider holds for this sign-in, as last read.
+    pub email: Option<String>,
+    /// Whether the identity provider vouches for that address.
+    pub email_verified: bool,
 }
 
 #[derive(Debug)]
@@ -124,6 +135,59 @@ pub struct MembershipListDto {
     pub items: Vec<OrgMembershipDto>,
 }
 
+/// One address a person can be reached at.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PersonEmailDto {
+    /// Lowercased.
+    pub address: String,
+    /// `profile` (typed by the person), `sign_in` (what the identity provider
+    /// holds for one of their logins) or `alias` (an attributed `email`
+    /// identity).
+    pub source: String,
+    /// Whether the identity provider, or a confirmed alias, vouches for it.
+    pub verified: bool,
+    /// The one to show first.
+    pub primary: bool,
+}
+
+/// How an organization describes one of its people. Shown, never decided
+/// from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MemberDirectoryDto {
+    /// The company the person works for.
+    pub affiliation: Option<String>,
+    pub department: Option<String>,
+    /// Job title.
+    pub title: Option<String>,
+    /// The member they report to, as a user id.
+    pub reports_to: Option<String>,
+}
+
+/// How the organization describes one member, sent whole: an absent or
+/// blank field clears it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct UpdateMemberDirectoryRequest {
+    pub affiliation: Option<String>,
+    pub department: Option<String>,
+    pub title: Option<String>,
+    /// A member of the same organization, by user id.
+    pub reports_to: Option<String>,
+}
+
+/// A photo to store, base64-encoded.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct UploadAvatarRequest {
+    /// `image/png`, `image/jpeg`, `image/webp` or `image/gif`; it must match
+    /// the bytes.
+    pub content_type: String,
+    /// Standard base64 of the image, at most 1 MiB decoded.
+    pub data: String,
+}
+
 /// One member of an organization, with who they are: what a members screen
 /// shows. The profile fields are absent when the person's profile cannot be
 /// read (a person merged away, a row older than profiles).
@@ -133,6 +197,13 @@ pub struct OrganizationMemberDto {
     pub user_id: String,
     pub display_name: Option<String>,
     pub email: Option<String>,
+    /// Every address the member holds; see `UserProfileDto.emails`.
+    pub emails: Vec<PersonEmailDto>,
+    pub avatar_url: Option<String>,
+    /// When the member last made a request; null until they are seen.
+    pub last_seen_at_epoch_ms: Option<i64>,
+    /// How the organization describes the member.
+    pub directory: MemberDirectoryDto,
     pub role: String,
     /// `active` or `suspended`.
     pub status: String,
@@ -185,6 +256,11 @@ pub struct PutMembershipRequest {
     pub status: Option<String>,
     /// How the membership was established: "assignment", "grant", "manual".
     pub source: Option<String>,
+    /// How the organization describes the person — company, department,
+    /// title, manager. Absent leaves the description as it is; present
+    /// replaces it whole.
+    #[serde(default)]
+    pub directory: Option<UpdateMemberDirectoryRequest>,
 }
 
 #[derive(Debug)]
@@ -354,7 +430,7 @@ pub struct ResolveResultDto {
     pub user_id: String,
 }
 
-fn to_dto(p: UserProfile) -> UserProfileDto {
+fn to_dto(p: UserProfile, emails: Vec<PersonEmail>) -> UserProfileDto {
     UserProfileDto {
         id: p.id,
         display_name: p.display_name,
@@ -364,6 +440,8 @@ fn to_dto(p: UserProfile) -> UserProfileDto {
         created_at_epoch_ms: p.created_at_epoch_ms,
         updated_at_epoch_ms: p.updated_at_epoch_ms,
         merged_into: p.merged_into,
+        emails: emails.into_iter().map(email_dto).collect(),
+        last_seen_at_epoch_ms: p.last_seen_at_epoch_ms,
     }
 }
 
@@ -373,6 +451,8 @@ fn login_to_dto(l: LoginView) -> LoginDto {
         subject: l.subject,
         verified: l.verified,
         linked_at_epoch_ms: l.linked_at_epoch_ms,
+        email: l.email,
+        email_verified: l.email_verified,
     }
 }
 
@@ -385,6 +465,119 @@ fn membership_to_dto(m: MembershipView) -> OrgMembershipDto {
         source: m.source,
         created_at_epoch_ms: m.created_at_epoch_ms,
         updated_at_epoch_ms: m.updated_at_epoch_ms,
+    }
+}
+
+fn email_dto(e: PersonEmail) -> PersonEmailDto {
+    PersonEmailDto {
+        address: e.address,
+        source: e.source.to_owned(),
+        verified: e.verified,
+        primary: e.primary,
+    }
+}
+
+fn directory_dto(d: DirectoryProfile) -> MemberDirectoryDto {
+    MemberDirectoryDto {
+        affiliation: d.affiliation,
+        department: d.department,
+        title: d.title,
+        reports_to: d.reports_to,
+    }
+}
+
+/// A profile as the API answers it: with every address the person holds.
+async fn profile_dto(service: &IdentityService, profile: UserProfile) -> ApiResult<UserProfileDto> {
+    let emails = service
+        .emails_of(&profile.id, profile.email.as_deref())
+        .await
+        .map_err(internal)?;
+    Ok(to_dto(profile, emails))
+}
+
+/// How many people a members listing asks the realm about at once.
+const REALM_READ_WINDOW: usize = 4;
+
+async fn upsert_my_avatar(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<UploadAvatarRequest>,
+) -> ApiResult<JsonBody<UserProfileDto>> {
+    use base64::Engine as _;
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(req.data.trim())
+        .map_err(|_| {
+            UserProfileError::invalid_argument()
+                .with_constraint("data must be standard base64")
+                .create()
+        })?;
+    let profile = service
+        .set_avatar(&user_id, &req.content_type, bytes)
+        .await
+        .map_err(invalid)?;
+    Ok(Json(profile_dto(&service, profile).await?))
+}
+
+async fn delete_my_avatar(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<UserProfileDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let profile = service.remove_avatar(&user_id).await.map_err(internal)?;
+    Ok(Json(profile_dto(&service, profile).await?))
+}
+
+/// Serve a stored photo. Anonymous because an `<img>` sends no token; the
+/// digest in the path is only learned from a profile read the caller was
+/// allowed to make. The answer for a version is the same forever, so it is
+/// cached as immutable.
+async fn get_avatar(
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Path((user_id, digest)): Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    use axum::response::IntoResponse;
+    let not_found = || (StatusCode::NOT_FOUND, "no such photo").into_response();
+    let Some(service) = service else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "studio-user has no database",
+        )
+            .into_response();
+    };
+    match service.avatar(&user_id, &digest).await {
+        Ok(Some(avatar)) => {
+            let mut response = avatar.bytes.into_response();
+            let headers = response.headers_mut();
+            if let Ok(value) = HeaderValue::from_str(&avatar.content_type) {
+                headers.insert(header::CONTENT_TYPE, value);
+            }
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, max-age=31536000, immutable"),
+            );
+            headers.insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            );
+            headers.insert(
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("default-src 'none'; sandbox"),
+            );
+            response
+        }
+        Ok(None) => not_found(),
+        Err(error) => {
+            tracing::warn!(user = %user_id, "studio-user: could not read a photo: {error:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the photo could not be read",
+            )
+                .into_response()
+        }
     }
 }
 
@@ -518,12 +711,14 @@ async fn get_me(
 ) -> ApiResult<JsonBody<UserProfileDto>> {
     let service = configured(service)?;
     let user_id = caller_user_id(&ctx, &service).await?;
+    // A person first seen through a token has no name yet; the realm has one.
+    service.refresh_from_realm(&user_id).await;
     let profile = service
         .get_profile(&user_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| internal(anyhow::anyhow!("profile missing right after provisioning")))?;
-    Ok(Json(to_dto(profile)))
+    Ok(Json(profile_dto(&service, profile).await?))
 }
 
 async fn update_me(
@@ -543,7 +738,7 @@ async fn update_me(
         .update_profile(&user_id, patch)
         .await
         .map_err(internal)?;
-    Ok(Json(to_dto(updated)))
+    Ok(Json(profile_dto(&service, updated).await?))
 }
 
 async fn get_my_ui_preferences(
@@ -624,7 +819,7 @@ async fn get_user(
                 .with_resource(user_id.clone())
                 .create()
         })?;
-    Ok(Json(to_dto(profile)))
+    Ok(Json(profile_dto(&service, profile).await?))
 }
 
 async fn get_user_memberships(
@@ -653,22 +848,60 @@ async fn list_organization_members(
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org, "people.view").await?;
-    let items = service
-        .members_with_profiles(&org.to_string())
+    let org_key = org.to_string();
+    let mut rows = service
+        .members_with_profiles(&org_key)
         .await
-        .map_err(internal)?
-        .into_iter()
-        .map(|(m, profile)| OrganizationMemberDto {
-            user_id: m.user_id,
+        .map_err(internal)?;
+    // Name the people the realm can name before answering, a few at a time.
+    // Each person is asked once per process, so a later listing pays nothing.
+    let unnamed: Vec<String> = rows
+        .iter()
+        .filter(|(_, p)| {
+            p.as_ref()
+                .is_none_or(|p| p.display_name.is_none() || p.email.is_none())
+        })
+        .map(|(m, _)| m.user_id.clone())
+        .collect();
+    if !unnamed.is_empty() {
+        use futures_util::StreamExt as _;
+        futures_util::stream::iter(unnamed)
+            .for_each_concurrent(REALM_READ_WINDOW, |user_id| {
+                let service = service.clone();
+                async move { service.refresh_from_realm(&user_id).await }
+            })
+            .await;
+        rows = service
+            .members_with_profiles(&org_key)
+            .await
+            .map_err(internal)?;
+    }
+    let directory = service.directory_of(&org_key).await.map_err(internal)?;
+    let mut items = Vec::with_capacity(rows.len());
+    for (m, profile) in rows {
+        let emails = service
+            .emails_of(
+                &m.user_id,
+                profile.as_ref().and_then(|p| p.email.as_deref()),
+            )
+            .await
+            .map_err(internal)?;
+        let described = directory.get(&m.user_id).cloned().unwrap_or_default();
+        items.push(OrganizationMemberDto {
             display_name: profile.as_ref().and_then(|p| p.display_name.clone()),
-            email: profile.and_then(|p| p.email),
+            email: profile.as_ref().and_then(|p| p.email.clone()),
+            emails: emails.into_iter().map(email_dto).collect(),
+            avatar_url: profile.as_ref().and_then(|p| p.avatar_url.clone()),
+            last_seen_at_epoch_ms: profile.as_ref().and_then(|p| p.last_seen_at_epoch_ms),
+            directory: directory_dto(described),
+            user_id: m.user_id,
             role: m.role,
             status: m.status,
             source: m.source,
             created_at_epoch_ms: m.created_at_epoch_ms,
             updated_at_epoch_ms: m.updated_at_epoch_ms,
-        })
-        .collect();
+        });
+    }
     let (items, total) = crate::pagination::page_of(items, page);
     Ok(Json(OrganizationMemberListDto { items, total }))
 }
@@ -723,6 +956,26 @@ async fn put_membership(
             ))
             .create());
     }
+    // Checked before anything is written, so a bad description cannot
+    // leave the role changed and the request refused.
+    let directory = match req.directory {
+        Some(d) => Some(
+            service
+                .checked_directory(
+                    &org.to_string(),
+                    &user_id,
+                    DirectoryProfile {
+                        affiliation: d.affiliation,
+                        department: d.department,
+                        title: d.title,
+                        reports_to: d.reports_to,
+                    },
+                )
+                .await
+                .map_err(invalid)?,
+        ),
+        None => None,
+    };
     let after = leaving::Standing {
         role: req.role.clone(),
         status: status.to_owned(),
@@ -744,6 +997,12 @@ async fn put_membership(
                 .sync_owner_grant(&ctx, &membership.user_id, org, owner)
                 .await
                 .map_err(internal)?;
+            if let Some(directory) = directory {
+                service
+                    .set_member_directory(&org.to_string(), &membership.user_id, directory)
+                    .await
+                    .map_err(internal)?;
+            }
             Ok(Json(membership_to_dto(membership)))
         }
         Err(refusal) => Err(refused(refusal, &user_id, &org_id)),
@@ -1674,6 +1933,61 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-user/v1/me/avatar")
+        .operation_id("studio_user.upsert_my_avatar")
+        .summary("Store the caller's photo")
+        .description(
+            "Stores a PNG, JPEG, WebP or GIF of at most 1 MiB as the caller's photo and points \
+             `avatar_url` at it. The bytes decide the type: a body that is not the image it \
+             declares is refused. The photo is served at the returned `avatar_url`, which \
+             changes with every new photo.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<UploadAvatarRequest>(openapi, "The photo, base64-encoded")
+        .handler(upsert_my_avatar)
+        .json_response_with_schema::<UserProfileDto>(openapi, StatusCode::OK, "The updated profile")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::delete("/studio-user/v1/me/avatar")
+        .operation_id("studio_user.delete_my_avatar")
+        .summary("Remove the caller's stored photo")
+        .description(
+            "Removes the photo stored with `PUT /me/avatar`. An `avatar_url` the person set to \
+             a picture elsewhere is not Studio's and stays.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(delete_my_avatar)
+        .json_response_with_schema::<UserProfileDto>(openapi, StatusCode::OK, "The updated profile")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-user/v1/avatars/{user_id}/{digest}")
+        .operation_id("studio_user.get_avatar")
+        .summary("A stored photo")
+        .description(
+            "Serves one version of a person's photo. Anonymous, because an `<img>` sends no \
+             token: the digest in the path is learned only from a profile the caller may read, \
+             and anything but the current version answers 404. Cached as immutable.",
+        )
+        .tag("StudioUser")
+        .anonymous()
+        .exposed()
+        .path_param("user_id", "The person")
+        .path_param("digest", "The version, as `avatar_url` names it")
+        .handler(get_avatar)
+        .text_response(StatusCode::OK, "The photo", "image/*")
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

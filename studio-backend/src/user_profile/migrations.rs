@@ -24,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0002::Migration),
             Box::new(m0003::Migration),
             Box::new(m0004::Migration),
+            Box::new(m0005::Migration),
         ]
     }
 }
@@ -258,6 +259,87 @@ ALTER TABLE identity_user
                 .get_connection()
                 .execute_unprepared(
                     "ALTER TABLE identity_user DROP COLUMN IF EXISTS ui_preferences;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0005 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0005_people_profile"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    // Every column is nullable or defaulted: an existing row
+                    // has none of these facts recorded, and NULL says so.
+                    //
+                    // - A sign-in's address is what the identity provider said
+                    //   about that login, so one person with several logins has
+                    //   several addresses.
+                    // - The directory fields belong to the membership, not the
+                    //   person: an organization describes its own people and
+                    //   sees no other organization's description (ADR-0023).
+                    // - The photo is stored here rather than linked, so it is
+                    //   served under the same authority as the profile.
+                    r"
+ALTER TABLE identity_login
+    ADD COLUMN IF NOT EXISTS email TEXT,
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE identity_user
+    ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE identity_membership
+    ADD COLUMN IF NOT EXISTS affiliation TEXT,
+    ADD COLUMN IF NOT EXISTS department TEXT,
+    ADD COLUMN IF NOT EXISTS title TEXT,
+    ADD COLUMN IF NOT EXISTS reports_to UUID;
+CREATE TABLE IF NOT EXISTS identity_avatar (
+    user_id      UUID PRIMARY KEY,
+    tenant_id    UUID NOT NULL,
+    content_type TEXT NOT NULL,
+    bytes        BYTEA NOT NULL,
+    digest       TEXT NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL
+);
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+DROP TABLE IF EXISTS identity_avatar;
+ALTER TABLE identity_membership
+    DROP COLUMN IF EXISTS reports_to,
+    DROP COLUMN IF EXISTS title,
+    DROP COLUMN IF EXISTS department,
+    DROP COLUMN IF EXISTS affiliation;
+ALTER TABLE identity_user DROP COLUMN IF EXISTS last_seen_at;
+ALTER TABLE identity_login
+    DROP COLUMN IF EXISTS email_verified,
+    DROP COLUMN IF EXISTS email;
+                    ",
                 )
                 .await?;
             Ok(())

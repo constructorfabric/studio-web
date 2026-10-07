@@ -168,11 +168,20 @@ platform root (`00000000-0000-0000-0000-000000000001`).
 - [x] `p2` - **ID**: `cpt-studio-entity-user-person`
 
 A **person** (`identity_user`) is the profile — name, e-mail, avatar, locale,
-UI preferences — and a `merged_into` pointer once merged away. A **login** is
+UI preferences, when they were last seen — and a `merged_into` pointer once
+merged away. A person who signed in with several logins has several addresses:
+the profile's, the one the identity provider holds for each login, and any
+attributed `email` alias; the API lists all of them as `emails`. A blank
+profile is named from the realm the first time the person, or a members
+listing, reads it. A **photo** is stored with the person and served at a URL
+carrying its digest. A **login** is
 a `(provider, subject)` that resolves to a person; Studio's own realm is
 provider `keycloak`. A **membership** is `(person, organization)` with a role
 (`owner`, `admin`, `member`), a status (`active`, `suspended`) and a source
 (`creation`, `assignment`, `invitation`, `bootstrap`, `first_login`, `manual`).
+It also carries how the organization describes the person — company,
+department, title, manager — so each organization describes its own people
+and sees no other's description (ADR-0023).
 An **alias** is `(kind, external_id)` with a confidence. An **invitation** is
 an address, a role (`member` or `admin`, never `owner`) and a token digest,
 valid for 14 days.
@@ -253,7 +262,9 @@ is configured.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET` `POST` | `/me` | The caller's person, provisioned on first sight; update the profile | stable |
+| `GET` `POST` | `/me` | The caller's person, provisioned on first sight and named from the realm when blank; update the profile. Carries `emails` and `last_seen_at_epoch_ms` | stable |
+| `PUT` `DELETE` | `/me/avatar` | Store the caller's photo (PNG, JPEG, WebP or GIF, at most 1 MiB, base64), or remove it | experimental |
+| `GET` | `/avatars/{user_id}/{digest}` | One version of a stored photo. Anonymous: an `<img>` sends no token, and the digest is learned only from a profile the caller may read | experimental |
 | `GET` `PUT` | `/me/ui-preferences` | Remembered UI choices, replaced whole | stable |
 | `GET` | `/me/logins`, `/me/memberships` | What binds to the caller | stable |
 | `DELETE` | `/me/memberships/{org_id}` | Leave an organization | stable |
@@ -261,11 +272,11 @@ is configured.
 | `POST` | `/me/aliases/confirm`, `/me/aliases/revoke` | Confirm from the proof channels; withdraw one | stable |
 | `GET` | `/me/invitations` | Invitations waiting for an address the IdP verified for the caller | stable |
 | `POST` | `/me/invitations/accept` | Accept by `token` or by `invitation_id` from that list | stable |
-| `GET` | `/organizations/{org_id}/members` | Members with profiles, paged (`people.view`) | stable |
+| `GET` | `/organizations/{org_id}/members` | Members with profiles, every address, photo, last seen and the organization's description of them, paged (`people.view`) | stable |
 | `GET` | `/organizations/{org_id}/members/{user_id}/identities` | One member's logins and aliases; 404 for a non-member (`people.view`) | experimental |
 | `GET` `POST` | `/organizations/{org_id}/invitations` | List (`people.view`); invite, token returned once (`people.invite`) | stable |
 | `DELETE` | `/organizations/{org_id}/invitations/{invitation_id}` | Withdraw (`people.invite`) | stable |
-| `PUT` `DELETE` | `/users/{user_id}/memberships/{org_id}` | Set role and status; remove (`people.manage`) | stable |
+| `PUT` `DELETE` | `/users/{user_id}/memberships/{org_id}` | Set role, status and, optionally, the organization's description of the person; remove (`people.manage`) | stable |
 | `GET` | `/users/{user_id}`, `/users/{user_id}/memberships` | Any person (platform admin) | stable |
 | `POST` | `/users/{user_id}/aliases` | Attribute an identity to a person (platform admin) | stable |
 | `POST` | `/resolve` | `(provider, subject)` to a person, provisioning (platform admin) | stable |
@@ -358,6 +369,7 @@ person's id is a fresh v4.
 | `tenant_id` | UUID | |
 | `display_name`, `email`, `avatar_url`, `locale` | TEXT | profile |
 | `merged_into` | UUID | set when merged into another user |
+| `last_seen_at` | TIMESTAMPTZ | the person's last request, written at most every five minutes; added by `m0005` |
 | `ui_preferences` | TEXT | JSON map of remembered UI choices; `NULL` until the person makes one |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
@@ -387,6 +399,7 @@ person's id is a fresh v4.
 | `user_id` | UUID | the person |
 | `verified` | BOOLEAN | default `FALSE` |
 | `linked_at` | TIMESTAMPTZ | |
+| `email`, `email_verified` | TEXT, BOOLEAN | the address the identity provider holds for this login, as last read, and whether it vouches for it; added by `m0005` |
 
 **PK**: `id`
 
@@ -408,6 +421,8 @@ person's id is a fresh v4.
 | `role` | TEXT | `owner`, `admin` or `member` |
 | `source` | TEXT | how it arose |
 | `status` | TEXT | `active` (default) or `suspended` |
+| `affiliation`, `department`, `title` | TEXT | how the organization describes the person; at most 120 characters each; added by `m0005` |
+| `reports_to` | UUID | a member of the same organization |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
 **PK**: `id`
@@ -438,6 +453,29 @@ active was the only state.
 **Constraints**: `NOT NULL` on every column.
 
 **Additional info**: index on `user_id`. One row per external identity, whoever holds it.
+
+#### Table: identity_avatar
+
+**ID**: `cpt-studio-dbtable-identity-avatar`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | UUID | the person |
+| `tenant_id` | UUID | |
+| `content_type` | TEXT | what the bytes are, sniffed rather than declared |
+| `bytes` | BYTEA | at most 1 MiB |
+| `digest` | TEXT | SHA-256 of `bytes`, hex; the version a URL names |
+| `updated_at` | TIMESTAMPTZ | |
+
+**PK**: `user_id`
+
+**Constraints**: `NOT NULL` on every column.
+
+**Additional info**: added by `m0005`. `avatar_url` on the person points at
+`/cf/studio-user/v1/avatars/{user_id}/{digest}`; a new photo changes the
+digest, so the old URL stops answering and a cached copy is never stale.
 
 #### Table: identity_invitation
 

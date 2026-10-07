@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 233,
+  "open_violations": 234,
   "operations": [
     {
       "method": "DELETE",
@@ -223,6 +223,21 @@
       "errors": [
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-user/v1/me/avatar",
+      "operation_id": "studio_user.delete_my_avatar",
+      "tag": "StudioUser",
+      "summary": "Remove the caller's stored photo",
+      "authenticated": true,
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "401",
         "500"
       ]
     },
@@ -1748,6 +1763,18 @@
       "authenticated": true,
       "errors": [
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/avatars/{user_id}/{digest}",
+      "operation_id": "studio_user.get_avatar",
+      "tag": "StudioUser",
+      "summary": "A stored photo",
+      "authenticated": false,
+      "errors": [
         "404",
         "500"
       ]
@@ -3579,6 +3606,23 @@
         "400",
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/me/avatar",
+      "operation_id": "studio_user.upsert_my_avatar",
+      "tag": "StudioUser",
+      "summary": "Store the caller's photo",
+      "authenticated": true,
+      "request": "UploadAvatarRequest",
+      "responses": [
+        "UserProfileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },
