@@ -90,6 +90,9 @@ pub struct ProjectDto {
     pub name: String,
     /// The column header in the planning team's source sheet.
     pub source_header: Option<String>,
+    /// The Studio project this consumer is, when it is one of this
+    /// organization's: its tenant id. Kept in the plan as `studio_project`.
+    pub studio_project: Option<String>,
 }
 
 /// One gear's needs: when each project needs it.
@@ -235,6 +238,7 @@ pub fn read(doc: &Value) -> Sections {
         .map(|(key, p)| ProjectDto {
             name: field(p, "name").unwrap_or_else(|| key.clone()),
             source_header: field(p, "source_header"),
+            studio_project: field(p, "studio_project"),
             key,
         })
         .collect();
@@ -404,6 +408,7 @@ pub fn apply(doc: &mut Value, section: Section) -> Result<(), String> {
                 let mut m = existing(old.get("gear_projects"), p.key.trim());
                 put(&mut m, "name", Some(s(p.name.trim())));
                 put(&mut m, "source_header", trimmed(&p.source_header));
+                put(&mut m, "studio_project", trimmed(&p.studio_project));
                 out.insert(s(p.key.trim()), Value::Mapping(m));
             }
             root.insert(s("gear_projects"), Value::Mapping(out));
@@ -528,6 +533,14 @@ pub fn validate(doc: &Value) -> Result<(), String> {
             problems.push("projects: a project needs a key and a name".into());
         } else if !keys.insert(pr.key.trim().to_string()) {
             problems.push(format!("projects: `{}` is listed twice", pr.key));
+        }
+        if let Some(id) = pr.studio_project.as_deref()
+            && uuid::Uuid::parse_str(id.trim()).is_err()
+        {
+            problems.push(format!(
+                "project {}: `{id}` is not a Studio project id",
+                pr.key
+            ));
         }
     }
 

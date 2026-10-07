@@ -126,12 +126,15 @@ export function PlanEditor({
   token,
   report,
   org,
+  studioProjects = [],
   onSaved,
 }: {
   token: string;
   report: string;
   /** The organization on screen: its members name the linked people. */
   org?: string;
+  /** The organization's Studio projects, which a consumer project can be. */
+  studioProjects?: { id: string; name: string }[];
   onSaved?: () => void;
 }) {
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -457,7 +460,7 @@ export function PlanEditor({
           <table style={TABLE}>
             <thead>
               <tr>
-                {["Key", "Name", "Source column", ""].map((h) => (
+                {["Key", "Name", "Source column", "Studio project", ""].map((h) => (
                   <th key={h} style={{ ...CELL, textAlign: "left" }}>
                     {h}
                   </th>
@@ -480,6 +483,23 @@ export function PlanEditor({
                       <input style={INPUT} value={p.source_header ?? ""} onChange={(e) => setProject({ source_header: optional(e.target.value) })} />
                     </td>
                     <td style={CELL}>
+                      <select
+                        style={INPUT}
+                        value={p.studio_project ?? ""}
+                        onChange={(e) => setProject({ studio_project: optional(e.target.value) })}
+                      >
+                        <option value="">— outside Studio</option>
+                        {p.studio_project && !studioProjects.some((s) => s.id === p.studio_project) && (
+                          <option value={p.studio_project}>{p.studio_project.slice(0, 8)}… (not in this organization)</option>
+                        )}
+                        {studioProjects.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={CELL}>
                       <RowButtons
                         onUp={pi > 0 ? () => set({ projects: move(projects, pi, pi - 1) }) : undefined}
                         onDown={pi < projects.length - 1 ? () => set({ projects: move(projects, pi, pi + 1) }) : undefined}
@@ -495,7 +515,7 @@ export function PlanEditor({
           <button
             className="iconbtn"
             style={{ alignSelf: "flex-start" }}
-            onClick={() => set({ projects: [...projects, { key: "", name: "", source_header: null }] })}
+            onClick={() => set({ projects: [...projects, { key: "", name: "", source_header: null, studio_project: null }] })}
           >
             Add project
           </button>

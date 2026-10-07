@@ -59,7 +59,16 @@ async function finished(
   return { ok: false, message: "still running — look under Background work" };
 }
 
-export function ReportsScreen({ token, tenantId }: { token: string; tenantId: string | undefined }) {
+export function ReportsScreen({
+  token,
+  tenantId,
+  projects = [],
+}: {
+  token: string;
+  tenantId: string | undefined;
+  /** The organization's Studio projects, for linking the plan's consumers. */
+  projects?: { id: string; name: string }[];
+}) {
   const [reports, setReports] = useState<Report[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -99,6 +108,7 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
           token={token}
           org={tenantId}
           report={r}
+          projects={projects}
           connections={connections}
           onChanged={load}
         />
@@ -110,12 +120,14 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
 function ReportCard({
   token,
   org,
+  projects,
   report,
   connections,
   onChanged,
 }: {
   token: string;
   org: string | undefined;
+  projects: { id: string; name: string }[];
   report: Report;
   connections: Connection[];
   onChanged: () => void;
@@ -318,6 +330,7 @@ function ReportCard({
             token={token}
             report={report.id}
             org={org}
+            studioProjects={projects}
             onSaved={() => {
               onChanged();
               setVersion((v) => v + 1);

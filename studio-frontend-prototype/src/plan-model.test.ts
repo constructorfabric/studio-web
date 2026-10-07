@@ -14,8 +14,8 @@ const plan: Plan = {
   no_unit_color: "595959",
   people: [{ login: "zed-example", alias: "Zed", team: "nw_core", unit: null, power: 0.5, email: null }],
   projects: [
-    { key: "web", name: "Web", source_header: null },
-    { key: "api", name: "API", source_header: null },
+    { key: "web", name: "Web", source_header: null, studio_project: null },
+    { key: "api", name: "API", source_header: null, studio_project: null },
   ],
   needs: [{ number: "20", title: "CORE - Ledger", gear: null, group: "CORE", needs: [{ project: "api", when: "no" }] }],
 };

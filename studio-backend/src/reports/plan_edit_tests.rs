@@ -214,10 +214,37 @@ fn an_empty_plan_takes_a_first_section() {
             key: "web".into(),
             name: "Web".into(),
             source_header: None,
+            studio_project: None,
         }]),
     )
     .unwrap();
     validate(&d).unwrap();
     assert_eq!(read(&d).projects.len(), 1);
     assert!(apply(&mut Value::Null, Section::People(Vec::new())).is_err());
+}
+
+#[test]
+fn a_project_names_its_studio_project_by_id_and_nothing_else() {
+    let mut d = doc();
+    let mut projects = read(&d).projects;
+    projects[0].studio_project = Some("c31da936-59bd-4e68-92d4-7f1ed6c9e53c".into());
+    apply(&mut d, Section::Projects(projects.clone())).unwrap();
+    validate(&d).unwrap();
+    assert_eq!(
+        d["gear_projects"]["web"]["studio_project"],
+        Value::String("c31da936-59bd-4e68-92d4-7f1ed6c9e53c".into())
+    );
+    assert_eq!(
+        read(&d).projects[0].studio_project,
+        projects[0].studio_project
+    );
+    // Another name is kept, and is refused.
+    projects[1].studio_project = Some("Studio Web".into());
+    apply(&mut d, Section::Projects(projects)).unwrap();
+    let err = validate(&d).unwrap_err();
+    assert!(err.contains("is not a Studio project id"), "{err}");
+    assert!(
+        !err.contains("names project"),
+        "the project is still a project: {err}"
+    );
 }

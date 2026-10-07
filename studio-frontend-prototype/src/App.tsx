@@ -2539,7 +2539,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {/* The tenant hierarchy renders only inside the Admin area, under the flag. */}
         {view === "chats" && <ChatsView token={token} filters={filters} />}
         {view === "files" && <FilesView token={token} filters={filters} />}
-        {view === "reports" && <ReportsScreen token={token} tenantId={orgAsSpace?.id} />}
+        {view === "reports" && (
+          <ReportsScreen
+            token={token}
+            tenantId={orgAsSpace?.id}
+            projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
+          />
+        )}
         {view === "gears" && (
           <ComponentsCatalog
             token={token}

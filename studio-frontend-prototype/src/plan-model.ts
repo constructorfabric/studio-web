@@ -39,6 +39,8 @@ export interface PlanProject {
   key: string;
   name: string;
   source_header: string | null;
+  /** The Studio project this consumer is, when it is one of the organization's. */
+  studio_project: string | null;
 }
 
 export interface NeedCell {
