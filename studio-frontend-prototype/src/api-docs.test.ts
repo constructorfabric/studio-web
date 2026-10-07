@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { componentOf, componentTitle, groupByComponent } from "./api-docs";
+import { componentOf, componentTitle, groupByComponent, onlyComponent } from "./api-docs";
 import type { OpenApiDoc } from "./api-docs";
 
 describe("componentOf", () => {
@@ -58,5 +58,22 @@ describe("groupByComponent", () => {
     expect(out.tags!.map((t) => t.name)).toEqual(["Identity", "Tenants", "AuthZ Resolver", "StudioGit", "SpecQuality"]);
     expect((doc.paths!["/authz-resolver/v1/evaluate"].post as { tags?: string[] }).tags).toBeUndefined();
     expect(out.paths!["/studio-git/v1/sources"].parameters).toEqual([]);
+  });
+});
+
+describe("onlyComponent", () => {
+  const doc: OpenApiDoc = {
+    paths: {
+      "/studio-tasks/v1/runs": { get: { tags: ["StudioTasks"] } },
+      "/studio-git/v1/sources": { get: { tags: ["StudioGit"] } },
+      "/api/file-storage/v1/files": { get: { tags: ["Files"] } },
+    },
+  };
+  it("keeps the paths of one component only", () => {
+    expect(Object.keys(onlyComponent(doc, "studio-tasks").paths ?? {})).toEqual(["/studio-tasks/v1/runs"]);
+    expect(Object.keys(onlyComponent(doc, "file-storage").paths ?? {})).toEqual(["/api/file-storage/v1/files"]);
+  });
+  it("answers an empty document for a component that serves nothing", () => {
+    expect(onlyComponent(doc, "nobody").paths).toEqual({});
   });
 });

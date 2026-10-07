@@ -119,6 +119,7 @@ import {
   CloseIcon,
   GearIcon,
   GridIcon,
+  LayersIcon,
   MenuIcon,
   RefreshIcon,
   ShieldIcon,
@@ -1736,6 +1737,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 }}
               >
                 <span className="ico"><BookIcon /></span> Docs &amp; API
+              </button>
+              <button
+                role="menuitem"
+                title="How the running backend and this portal are built"
+                onClick={() => {
+                  // The page has no theme switch of its own: it takes the
+                  // portal's, which is a preference here, not the OS's.
+                  const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+                  window.open(`/architecture/?theme=${theme}`, "_blank", "noopener");
+                  setProductMenu(false);
+                }}
+              >
+                <span className="ico"><LayersIcon /></span> Architecture
               </button>
               <button
                 role="menuitem"

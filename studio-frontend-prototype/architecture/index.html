@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="../constructor-symbol.svg" type="image/svg+xml" sizes="any" />
+    <title>How Studio is built</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- The same runtime environment as the portal (the IdP issuer), so the
+         page can renew the portal's session for its one authenticated read. -->
+    <script src="../env.js"></script>
+    <script type="module" src="../src/architecture-page.tsx"></script>
+  </body>
+</html>

@@ -25,4 +25,23 @@ Start the backend first (`../studio-backend`, `cargo run -- --config config/dev.
 
 The API client (`src/api.ts`) is hand-written for now; the plan is to generate it from the backend's live OpenAPI (`/cf/docs`) once the surface stabilizes.
 
+## The two pages beside the portal
+
+The product menu on the wordmark opens two pages of their own, each a separate
+Vite entry served by the same image:
+
+- **Docs & API** — `/api-docs/` (`api-docs/index.html`, `src/api-docs.ts`): the
+  backend's live `/cf/openapi.json`, grouped by the gear that serves each path.
+  `?component=<gear>` narrows it to one gear.
+- **Architecture** — `/architecture/` (`architecture/index.html`,
+  `src/architecture.ts`): how Studio is built, for people who did not build it.
+  The gears come from the running backend (`GET /cf/studio-assembly/v1/manifest`,
+  [docs/design/studio-assembly.md](../docs/design/studio-assembly.md)), their
+  REST paths from `/cf/openapi.json`, and which screen calls which gear from
+  `architecture/prototype-map.json`, which the build extracts from `src/`
+  (`../scripts/prototype-api-map.mjs`, the same reader as the CI API-usage
+  check). Nothing on it is written by hand, so it cannot drift; the header shows
+  the backend's and the prototype's commits and warns when they differ. It
+  renews the portal's session in this browser for the one authenticated read.
+
 **Product shape.** This app is the **portal** (control plane UI): sign in → pick an organization/workspace → manage members. Selecting a workspace hands off to the **Studio workbench** — a Theia-based per-user session bound to that workspace tenant (the "Open Studio" button stakes out the `/studio/{workspace_id}` contract; the session manager — docker-compose MVP, then theia-cloud on k8s — and the Studio Theia extension are future work). Longer term the portal views converge with the gears-frontx / fabric-poc UI (see `../../fabric-poc`).

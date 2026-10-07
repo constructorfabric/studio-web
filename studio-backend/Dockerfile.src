@@ -46,6 +46,13 @@ COPY --from=planner /src/studio-backend/recipe.json recipe.json
 # therefore resolves the same dependency graph without a separate update step.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY studio-backend/ .
+# The gear designs, for studio-assembly: build.rs compiles each one's purpose
+# into the binary (../docs/design from here). After the cook, so editing a
+# design never invalidates the dependency layer.
+COPY docs/design/ /src/docs/design/
+# The commit, when the caller knows it (`--build-arg STUDIO_BUILD_COMMIT=$(git
+# rev-parse HEAD)`); compose does not pass it, and the manifest then says null.
+ARG STUDIO_BUILD_COMMIT=""
 # CARGO_FEATURES lets the two-step dev bootstrap build a stripped binary
 # (--no-default-features) that reaches the serve phase and seeds the root
 # tenant, without the oagw post_init that deadlocks on an empty DB. Note that
