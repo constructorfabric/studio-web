@@ -338,7 +338,7 @@
       "summary": "A project's open pull requests, each with who it is waiting on",
       "authenticated": true,
       "responses": [
-        "OpenPullRequestListDto"
+        "WaitingPullRequestListDto"
       ],
       "errors": [
         "400",

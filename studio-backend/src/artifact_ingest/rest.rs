@@ -1082,7 +1082,7 @@ pub struct PullRequestReviewerDto {
 /// One open pull request, and who it is waiting on.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct OpenPullRequestDto {
+pub struct WaitingPullRequestDto {
     /// Instance id of the `pull_request` node.
     pub id: String,
     /// The repository, as `owner/name`, when its repo node is in the project.
@@ -1125,8 +1125,8 @@ pub struct OpenPullRequestDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct OpenPullRequestListDto {
-    pub items: Vec<OpenPullRequestDto>,
+pub struct WaitingPullRequestListDto {
+    pub items: Vec<WaitingPullRequestDto>,
     pub total: u32,
     /// Whether accounts were matched against the organization's members. False
     /// when the member directory or the project's organization could not be
@@ -1156,7 +1156,7 @@ async fn open_pull_requests(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
     Query(query): Query<OpenPullRequestsQuery>,
-) -> ApiResult<JsonBody<OpenPullRequestListDto>> {
+) -> ApiResult<JsonBody<WaitingPullRequestListDto>> {
     use std::collections::{BTreeMap, BTreeSet};
 
     let project_id = query.project_id.trim();
@@ -1253,7 +1253,7 @@ async fn open_pull_requests(
         }
     };
 
-    let items: Vec<OpenPullRequestDto> = waiting
+    let items: Vec<WaitingPullRequestDto> = waiting
         .into_iter()
         .map(|p| {
             let provider = provider_of(&p.repo);
@@ -1274,7 +1274,7 @@ async fn open_pull_requests(
                     });
                 }
             }
-            OpenPullRequestDto {
+            WaitingPullRequestDto {
                 repo: p
                     .repo
                     .as_ref()
@@ -1312,7 +1312,7 @@ async fn open_pull_requests(
         })
         .collect();
     let (items, total) = page_of(items, query.page);
-    Ok(Json(OpenPullRequestListDto {
+    Ok(Json(WaitingPullRequestListDto {
         items,
         total,
         members_known,
@@ -1511,7 +1511,7 @@ pub fn register_routes(
         )
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(open_pull_requests)
-        .json_response_with_schema::<OpenPullRequestListDto>(
+        .json_response_with_schema::<WaitingPullRequestListDto>(
             openapi,
             StatusCode::OK,
             "Open pull requests and who they are waiting on",
