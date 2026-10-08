@@ -1168,16 +1168,34 @@ pub struct CorpusPin<'a> {
     pub rev: &'a str,
 }
 
-/// The `product.gdl` for a composition. `default_profile` must be one of
-/// [`PROFILES`].
+/// Where a new product's description goes in its project's repository:
+/// `products/<id>/product.gdl`. The file keeps the name the engine and the IDE
+/// look for, and the product's id names its directory, so a repository shows
+/// which product it holds and can hold more than one. `product_id` must be a
+/// kebab-case id ([`is_kebab_id`]), which keeps the path inside `products/`.
+pub fn product_gdl_path(product_id: &str) -> String {
+    format!("products/{product_id}/product.gdl")
+}
+
+/// The corpus checkout beside the repository, as seen from the description at
+/// `product_path` (relative to the repository root): `../gears-rust` from the
+/// root, `../../../gears-rust` from `products/<id>/`.
+fn sibling_corpus_from(product_path: &str) -> String {
+    let depth = product_path.split('/').filter(|s| !s.is_empty()).count();
+    format!("{}{CORPUS_SOURCE_ID}", "../".repeat(depth.max(1)))
+}
+
+/// The `product.gdl` for a composition, to be saved at `product_path` in the
+/// project's repository. `default_profile` must be one of [`PROFILES`].
 ///
 /// With a `pin`, the corpus is a git source at the commit the composition was
 /// checked against, so the description says by itself what it was built from
-/// and needs no `../gears-rust` beside it; the IDE brings that commit in when
-/// it opens the product. Without one (a corpus whose commit is unknown), the
-/// sibling checkout, as before.
+/// and needs no checkout beside it; the IDE brings that commit in when it opens
+/// the product. Without one (a corpus whose commit is unknown), the sibling
+/// checkout, reached from where the description sits.
 pub fn render_product_gdl(
     product_id: &str,
+    product_path: &str,
     name: &str,
     composition: &Composition,
     default_profile: &str,
@@ -1217,6 +1235,7 @@ pub fn render_product_gdl(
         }
     }
     let id = gdl_string(product_id);
+    let corpus = sibling_corpus_from(product_path);
     let (from, at) = match pin {
         Some(p) => (
             format!(
@@ -1235,7 +1254,7 @@ pub fn render_product_gdl(
                 "# gears come from the `{CORPUS_SOURCE_ID}` checkout beside this repository in a\n\
                  # Studio workspace. Resolve it with"
             ),
-            format!("path({})", gdl_string(&format!("../{CORPUS_SOURCE_ID}"))),
+            format!("path({})", gdl_string(&corpus)),
         ),
     };
     format!(
@@ -1244,7 +1263,7 @@ pub fn render_product_gdl(
          # Written by Constructor Studio from the gears picked for the project. The\n\
          {from}\n\
          #\n\
-         #   gearbox resolve --root ../{src} --product product.gdl --profile dev\n\
+         #   gearbox resolve --root {corpus} --product product.gdl --profile dev\n\
          #\n\
          # Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md\n\
          \n\
@@ -1264,7 +1283,6 @@ pub fn render_product_gdl(
          {gears}\
          \x20   ],\n\
          )\n",
-        src = CORPUS_SOURCE_ID,
         src_s = gdl_string(CORPUS_SOURCE_ID),
         name = gdl_string(name),
         profile = gdl_string(default_profile),
@@ -1466,6 +1484,10 @@ fn reason(r: &Value) -> String {
 
 pub struct PreviewInput {
     pub product_id: String,
+    /// Where the description is saved, relative to the repository root
+    /// ([`product_gdl_path`] for a new one). The engine is run on it laid out
+    /// the same way, so a sibling corpus resolves as it will in the IDE.
+    pub product_path: String,
     pub name: String,
     pub gears: Vec<String>,
     pub profile: String,
@@ -1859,8 +1881,15 @@ impl Gearbox {
             .iter()
             .filter_map(|(k, v)| catalogue.find(k).map(|g| (g.id.clone(), v.clone())))
             .collect();
+        if !is_product_path(&input.product_path) {
+            bail!(
+                "`{}` is not a place for a product description: a relative path to a `product.gdl`",
+                input.product_path
+            );
+        }
         let product_gdl = render_product_gdl(
             &input.product_id,
+            &input.product_path,
             &input.name,
             &composition,
             &input.profile,
@@ -1882,10 +1911,18 @@ impl Gearbox {
         let bin = self.cfg.bin.clone();
         let gdl = product_gdl.clone();
         let product_id = input.product_id.clone();
+        let product_path = input.product_path.clone();
         let profile = input.profile.clone();
         let corpus_dir = corpus.clone();
         let resolution = tokio::task::spawn_blocking(move || {
-            evaluate(&bin, &corpus_dir, &product_id, &gdl, &profile)
+            evaluate(
+                &bin,
+                &corpus_dir,
+                &product_id,
+                &product_path,
+                &gdl,
+                &profile,
+            )
         })
         .await
         .context("engine task")??;
@@ -1898,22 +1935,36 @@ impl Gearbox {
     }
 }
 
-/// Lay the description out the way a session workspace does — the product
-/// beside a `gears-rust` directory — then validate and, if that is clean,
-/// resolve. Blocking.
+/// A relative path to a `product.gdl` that stays inside the repository: no
+/// leading `/`, no `.` or `..` segment, no backslash.
+pub(crate) fn is_product_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').collect();
+    segments.last() == Some(&"product.gdl")
+        && !path.contains('\\')
+        && segments
+            .iter()
+            .all(|s| !s.is_empty() && *s != "." && *s != "..")
+}
+
+/// Lay the description out the way a session workspace does — the project's
+/// repository, with the description at `product_path` in it, beside a
+/// `gears-rust` directory — then validate and, if that is clean, resolve.
+/// Blocking.
 fn evaluate(
     bin: &Path,
     corpus: &Path,
     product_id: &str,
+    product_path: &str,
     gdl: &str,
     profile: &str,
 ) -> anyhow::Result<Resolution> {
     let scratch = std::env::temp_dir().join(format!("studio-gearbox-{}", uuid::Uuid::new_v4()));
     let result = (|| {
-        let product_dir = scratch.join(product_id);
-        std::fs::create_dir_all(&product_dir)?;
+        let product_file = scratch.join(product_id).join(product_path);
+        if let Some(dir) = product_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         link_dir(corpus, &scratch.join(CORPUS_SOURCE_ID))?;
-        let product_file = product_dir.join("product.gdl");
         std::fs::write(&product_file, gdl)?;
         let root = scratch
             .join(CORPUS_SOURCE_ID)
@@ -2424,6 +2475,7 @@ mod tests {
         let c = compose(&catalogue(), &names(&["api-gateway"]));
         let gdl = render_product_gdl(
             "my-shop",
+            "products/my-shop/product.gdl",
             "My Shop",
             &c,
             "dev",
@@ -2443,6 +2495,44 @@ mod tests {
     }
 
     #[test]
+    fn a_new_product_lives_under_products_and_reaches_the_corpus_from_there() {
+        assert_eq!(product_gdl_path("my-shop"), "products/my-shop/product.gdl");
+        let c = compose(&catalogue(), &names(&["api-gateway"]));
+        let gdl = render_product_gdl(
+            "my-shop",
+            &product_gdl_path("my-shop"),
+            "My Shop",
+            &c,
+            "dev",
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            gdl.contains(r#"source(id = "gears-rust", at = path("../../../gears-rust"))"#),
+            "{gdl}"
+        );
+        assert!(gdl.contains("gearbox resolve --root ../../../gears-rust --product product.gdl"));
+    }
+
+    #[test]
+    fn a_product_path_stays_inside_the_repository() {
+        assert!(is_product_path("product.gdl"));
+        assert!(is_product_path("products/my-shop/product.gdl"));
+        for bad in [
+            "",
+            "/product.gdl",
+            "../product.gdl",
+            "products/../../product.gdl",
+            "products/./product.gdl",
+            "products//product.gdl",
+            r"products\my-shop\product.gdl",
+            "products/my-shop/shop.gdl",
+        ] {
+            assert!(!is_product_path(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn the_description_names_every_profile_and_nests_plugins() {
         let c = compose(
             &catalogue(),
@@ -2450,6 +2540,7 @@ mod tests {
         );
         let gdl = render_product_gdl(
             "my-shop",
+            "product.gdl",
             "My \"Shop\"",
             &c,
             "local",
@@ -2744,7 +2835,7 @@ mod tests {
             "account-management".to_string(),
             json!({"strict": true}).as_object().expect("object").clone(),
         );
-        let gdl = render_product_gdl("p", "P", &composition, "dev", None, &config);
+        let gdl = render_product_gdl("p", "product.gdl", "P", &composition, "dev", None, &config);
         assert!(
             gdl.contains(r#"use_gear("account-management", source = "gears-rust", config = {"strict": True}, plugins = [plugin("static-idp-plugin", config = {"priority": 100, "vendor": "constructorfabric"})])"#),
             "{gdl}"

@@ -1170,17 +1170,20 @@ impl RepoEnricher {
             }
         }
 
+        // The gear's principal document of each kind, by name rather than at
+        // one fixed path: `docs/PRD.md`, but also `docs/PERMISSION_PRD.md` or
+        // `docs/prd/overview.md` (`principal_doc`).
+        let prd = principal_doc(&rel, "PRD");
+        let design = principal_doc(&rel, "DESIGN");
+
         // spec docstates (presence + TBD/TODO scan)
-        for (key, file) in [
-            ("prd", "docs/PRD.md"),
-            ("design", "docs/DESIGN.md"),
-            ("decomp", "docs/DECOMPOSITION.md"),
-            ("upstream", "docs/UPSTREAM_REQS.md"),
+        for (key, found) in [
+            ("prd", prd),
+            ("design", design),
+            ("decomp", principal_doc(&rel, "DECOMPOSITION")),
+            ("upstream", principal_doc(&rel, "UPSTREAM_REQS")),
         ] {
-            let present = rel.contains(&file);
-            let value = if !present {
-                docstate("N/A", None)
-            } else {
+            let value = if let Some(file) = found {
                 let full = format!("{dir}/{file}");
                 let link = format!(
                     "https://github.com/{}/blob/{}/{full}",
@@ -1193,6 +1196,8 @@ impl RepoEnricher {
                     "done"
                 };
                 docstate(state, Some(&link))
+            } else {
+                docstate("N/A", None)
             };
             f.insert(key.into(), value);
         }
@@ -1202,10 +1207,11 @@ impl RepoEnricher {
         // contributes only its opening, the part that states the purpose,
         // because a full PRD mentions nearly every capability somewhere and
         // would match everything.
-        let doc_text: Vec<Value> = ["docs/PRD.md", "docs/DESIGN.md"]
-            .iter()
+        let doc_text: Vec<Value> = [prd, design]
+            .into_iter()
+            .flatten()
             .filter_map(|file| {
-                let excerpt = doc_excerpt(docs.get(*file)?, DOC_EXCERPT_CHARS);
+                let excerpt = doc_excerpt(docs.get(file)?, DOC_EXCERPT_CHARS);
                 (!excerpt.is_empty()).then(|| {
                     json!({
                         "path": format!("{dir}/{file}"),
@@ -1223,9 +1229,9 @@ impl RepoEnricher {
         // enum starts before code, and a gear that is only a design is in
         // design, not "unknown".
         if !f.contains_key("lifecycle") {
-            let stage = if rel.contains(&"docs/DESIGN.md") {
+            let stage = if design.is_some() {
                 Some("in design")
-            } else if rel.contains(&"docs/PRD.md") {
+            } else if prd.is_some() {
                 Some("in requirements")
             } else {
                 None
@@ -1235,14 +1241,14 @@ impl RepoEnricher {
             }
         }
 
-        // diagrams + UML: read DESIGN.md once, count mermaid fences and lift them.
-        if rel.contains(&"docs/DESIGN.md") {
-            let full = format!("{dir}/docs/DESIGN.md");
+        // diagrams + UML: read the DESIGN once, count mermaid fences and lift them.
+        if let Some(file) = design {
+            let full = format!("{dir}/{file}");
             let link = format!(
                 "https://github.com/{}/blob/{}/{full}",
                 self.repo, self.git_ref
             );
-            if let Some(content) = docs.get("docs/DESIGN.md") {
+            if let Some(content) = docs.get(file) {
                 let n = content.matches("```mermaid").count();
                 if n > 0 {
                     f.insert("diagrams".into(), metric(n, Some(&link)));
@@ -1571,6 +1577,31 @@ fn plugins_status(declared: bool) -> Value {
 
 /// How much of a document's opening the profile keeps for the composer.
 const DOC_EXCERPT_CHARS: usize = 3000;
+
+/// A gear's principal document of one `kind` (`PRD`, `DESIGN`,
+/// `DECOMPOSITION`, `UPSTREAM_REQS`) among its paths, relative to the gear.
+///
+/// A document is of the kind when it is a `.md` under `docs/` and its name is
+/// the kind (`PRD.md`, `prd.md`), ends with it (`PERMISSION_PRD.md`,
+/// `permission-prd.md`), or it sits in a directory named for it
+/// (`docs/prd/overview.md`). Of several, the one nearest `docs/` wins, then
+/// the one named exactly for the kind, then the first by path: a gear's own
+/// `docs/PRD.md` is chosen over a feature's `docs/specs/alerts/PRD.md`.
+fn principal_doc<'a>(rel: &[&'a str], kind: &str) -> Option<&'a str> {
+    let norm = |s: &str| s.to_ascii_uppercase().replace('-', "_");
+    rel.iter()
+        .copied()
+        .filter(|p| p.starts_with("docs/"))
+        .filter_map(|p| {
+            let stem = norm(p.strip_suffix(".md")?.rsplit('/').next()?);
+            let parent = p.rsplit('/').nth(1).map(norm);
+            let exact = stem == kind;
+            let named = exact || stem.ends_with(&format!("_{kind}"));
+            (named || parent.as_deref() == Some(kind)).then(|| (p.matches('/').count(), !exact, p))
+        })
+        .min()
+        .map(|(_, _, p)| p)
+}
 
 /// The opening of a markdown document as plain prose, at most `max` chars.
 ///
@@ -2619,6 +2650,43 @@ fn toml_string(body: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gears_principal_document_is_found_by_its_name_not_one_path() {
+        // The gears-rust layout: the gear's own pair, beside a feature's.
+        let rel = [
+            "docs/specs/alerts/PRD.md",
+            "docs/PRD.md",
+            "docs/DESIGN.md",
+            "docs/prd-review.md",
+            "src/lib.rs",
+        ];
+        assert_eq!(principal_doc(&rel, "PRD"), Some("docs/PRD.md"));
+        assert_eq!(principal_doc(&rel, "DESIGN"), Some("docs/DESIGN.md"));
+        assert_eq!(principal_doc(&rel, "DECOMPOSITION"), None);
+
+        // Named for the gear, in lower case, or kept in a directory per kind.
+        let rel = ["docs/PERMISSION_PRD.md", "docs/permission-design.md"];
+        assert_eq!(principal_doc(&rel, "PRD"), Some("docs/PERMISSION_PRD.md"));
+        assert_eq!(
+            principal_doc(&rel, "DESIGN"),
+            Some("docs/permission-design.md")
+        );
+        let rel = [
+            "docs/design/storage.md",
+            "docs/design/api.md",
+            "docs/prd.md",
+        ];
+        assert_eq!(principal_doc(&rel, "PRD"), Some("docs/prd.md"));
+        assert_eq!(principal_doc(&rel, "DESIGN"), Some("docs/design/api.md"));
+
+        // At one depth the exact name wins; outside `docs/` nothing counts.
+        let rel = ["docs/AUTHN_PRD.md", "docs/PRD.md"];
+        assert_eq!(principal_doc(&rel, "PRD"), Some("docs/PRD.md"));
+        assert_eq!(principal_doc(&["PRD.md", "notes/DESIGN.md"], "PRD"), None);
+        // A name that only contains the kind is something else.
+        assert_eq!(principal_doc(&["docs/design-led-rules.md"], "DESIGN"), None);
+    }
 
     /// The shape of a gear PRD written from the spec template: the template's
     /// instructions sit in a comment, and the purpose follows the title.

@@ -104,7 +104,10 @@ the two in one ranking.
 - **Evidence matches** come from search: the vocabulary's terms in the
   catalogue's text about the gear, and, only when that finds nothing, in the
   opening of the gear's own PRD and DESIGN, which the match `cites`. Each
-  quotes its passage, and all of them rank below every contract match.
+  quotes its passage, and all of them rank below every contract match. A
+  gear's PRD and DESIGN are found by name under its `docs/`, not at one path:
+  `PRD.md`, `PERMISSION_PRD.md` or `prd/overview.md` (`principal_doc` in
+  the catalogue's repository scan).
 - **A gap** is reported as a gap, never filled by the nearest keyword. It is
   the input of a new gear.
 

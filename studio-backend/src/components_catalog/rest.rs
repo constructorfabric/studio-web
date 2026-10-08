@@ -2333,10 +2333,22 @@ async fn gearbox_status(
     }))
 }
 
-/// Where a project's product description lives in its repository: the root,
-/// which both the portal and the IDE's Gearbox look in first. Recorded with
-/// every write, so a reader follows the record rather than this constant.
-const PRODUCT_GDL_PATH: &str = "product.gdl";
+/// Where a project's product description goes in its repository: where it was
+/// last written, so a project keeps one description however its id changes
+/// (projects created before `products/<id>/` keep theirs at the root), and
+/// otherwise `products/<id>/product.gdl`, the layout the IDE's Gearbox finds
+/// and New Product suggests. Recorded with every write, so a reader follows the
+/// record.
+fn product_path_for(record: Option<&Value>, product_id: &str) -> String {
+    record
+        .and_then(|r| r.pointer("/written/path"))
+        .and_then(Value::as_str)
+        .filter(|p| super::gearbox::is_product_path(p))
+        .map_or_else(
+            || super::gearbox::product_gdl_path(product_id),
+            str::to_owned,
+        )
+}
 
 async fn preview_product(
     OrgCtx(ctx): OrgCtx,
@@ -2364,9 +2376,16 @@ async fn preview_product(
         .unwrap_or_else(|| body.product_id.clone());
     let name_for_record = name.clone();
     let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(invalid)?;
+    let record = catalog
+        .service
+        .get_project_product(&ctx, &project_id.to_string())
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
     let preview = gearbox
         .preview(PreviewInput {
             product_id: body.product_id.clone(),
+            product_path: product_path.clone(),
             name,
             gears: body.gears.clone(),
             profile: profile.clone(),
@@ -2399,7 +2418,7 @@ async fn preview_product(
                 &project_id.to_string(),
                 branch.as_deref(),
                 &[super::scaffold::ScaffoldFile {
-                    path: PRODUCT_GDL_PATH.to_string(),
+                    path: product_path.clone(),
                     content: preview.product_gdl.clone(),
                 }],
                 &format!("product: describe {} for Gearbox", body.product_id),
@@ -2459,7 +2478,7 @@ async fn preview_product(
                 "branch": w.branch,
                 "commit_sha": w.commit_sha,
                 "pr_url": w.pr_url,
-                "path": PRODUCT_GDL_PATH,
+                "path": product_path,
             }),
         );
     }
@@ -3339,4 +3358,34 @@ pub fn register_routes(
     .register(router, openapi);
 
     router.layer(Extension(Catalog::new(service, hub, gearbox)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::product_path_for;
+    use serde_json::json;
+
+    #[test]
+    fn a_new_product_goes_under_products_and_a_written_one_stays_where_it_is() {
+        assert_eq!(product_path_for(None, "shop"), "products/shop/product.gdl");
+        let unwritten = json!({ "product_id": "shop" });
+        assert_eq!(
+            product_path_for(Some(&unwritten), "shop"),
+            "products/shop/product.gdl"
+        );
+        // A project created before `products/<id>/` keeps its root file, and a
+        // renamed product keeps the file it has.
+        let at_root = json!({ "written": { "path": "product.gdl" } });
+        assert_eq!(product_path_for(Some(&at_root), "shop"), "product.gdl");
+        let renamed = json!({ "written": { "path": "products/old/product.gdl" } });
+        assert_eq!(
+            product_path_for(Some(&renamed), "new"),
+            "products/old/product.gdl"
+        );
+        let outside = json!({ "written": { "path": "../product.gdl" } });
+        assert_eq!(
+            product_path_for(Some(&outside), "shop"),
+            "products/shop/product.gdl"
+        );
+    }
 }
