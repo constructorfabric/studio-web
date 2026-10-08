@@ -8,14 +8,35 @@ use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
 use super::config::LlmProxyConfig;
-use super::providers::{CredstoreKeys, Providers};
+use super::port::ModelProviders;
+use super::providers::{CredstoreKeys, KeySource, Providers};
 use super::rest::{self, ProxyState};
+
+/// No credstore: no member's key to find. The provider routes are not mounted
+/// then, so only the port uses a `Providers` built on this, and the port's
+/// callers bring their own key.
+struct NoKeys;
+
+#[async_trait]
+impl KeySource for NoKeys {
+    async fn key_for(
+        &self,
+        _ctx: &toolkit_security::SecurityContext,
+        _secret_ref: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+}
 
 /// OpenAI-compatible LLM proxy for Theia AI inside IDE sessions.
 ///
 /// See the module docs (`super`) for the why; the how is deliberately dumb:
 /// authenticated passthrough with a server-held upstream key. No request
 /// rewriting, no model policy — that stays the mini-chat/oagw chain's job.
+///
+/// Linked into every build, not only with the `llm` feature: it is the one way
+/// out to a provider for the rest of Studio (ADR-0037), and needs nothing the
+/// `llm` chain brings.
 #[toolkit::gear(name = "studio-llm-proxy", deps = [credstore], capabilities = [rest])]
 pub struct LlmProxyGear {
     state: OnceLock<Arc<ProxyState>>,
@@ -60,23 +81,28 @@ impl Gear for LlmProxyGear {
             .build()?;
 
         // The agents' own APIs, each call on the caller's key (ADR-0030).
-        let providers = match ctx
+        let (keys, routes): (Arc<dyn KeySource>, bool) = match ctx
             .client_hub()
-            .get::<dyn credstore_sdk::CredStoreClientV1>()
-        {
-            Ok(credstore) => Some(Arc::new(Providers {
-                client: client.clone(),
-                list: cfg.providers.clone(),
-                keys: Arc::new(CredstoreKeys(credstore)),
-            })),
+            .get::<dyn credstore_sdk::CredStoreClientV1>(
+        ) {
+            Ok(credstore) => (Arc::new(CredstoreKeys(credstore)), true),
             Err(e) => {
                 warn!(
                     "studio-llm-proxy: credstore unavailable ({e}); agents get no provider passthrough"
                 );
-                None
+                (Arc::new(NoKeys), false)
             }
         };
-        let _ = self.providers.set(providers);
+        let providers = Arc::new(Providers {
+            client: client.clone(),
+            list: cfg.providers.clone(),
+            keys,
+        });
+        // Studio's one way out to a provider (ADR-0037): other gears reach one
+        // through this client, with a key they hand it, credstore or not.
+        ctx.client_hub()
+            .register::<dyn ModelProviders>(providers.clone());
+        let _ = self.providers.set(routes.then_some(providers));
 
         let state = Arc::new(ProxyState {
             client,

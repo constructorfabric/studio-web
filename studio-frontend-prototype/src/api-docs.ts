@@ -47,7 +47,7 @@ export function componentOf(path: string): string {
 
 /** Studio's own gears, as opposed to the platform's. */
 export function isStudio(component: string): boolean {
-  return component.startsWith("studio-") || component === "spec-quality";
+  return component.startsWith("studio-");
 }
 
 /** `studio-artifact-ingest` → `Artifact Ingest`, `authz-resolver` → `AuthZ Resolver`. */

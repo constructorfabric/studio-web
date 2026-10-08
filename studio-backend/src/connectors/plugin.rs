@@ -88,9 +88,10 @@ async fn register_driver(
     Ok(())
 }
 
-/// Reused by every plugin: a plain HTTPS client. Source hosts and model
-/// providers are public endpoints with ordinary certificates; a self-hosted
-/// installation behind a private CA is a follow-up (same shape as
+/// Reused by every plugin that calls its provider itself: a plain HTTPS
+/// client. Source hosts and chat platforms are public endpoints with ordinary
+/// certificates (model providers are reached through studio-llm-proxy, not
+/// here); a self-hosted installation behind a private CA is a follow-up (same shape as
 /// keycloak-idp-plugin's `custom_ca_certificate_paths`).
 fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -176,7 +177,8 @@ mod bitbucket_plugin {
     }
 }
 
-/// Anthropic — the credential `@theia/ai-claude-code` authenticates with.
+/// Anthropic — the credential `@theia/ai-claude-code` authenticates with. Its
+/// key test goes out through studio-llm-proxy (ADR-0037), not a client here.
 mod anthropic_plugin {
     use std::sync::Arc;
 
@@ -184,10 +186,10 @@ mod anthropic_plugin {
     use toolkit::Gear;
     use toolkit::context::GearCtx;
 
-    use super::super::ai_providers::AnthropicDriver;
+    use super::super::ai_providers::{AnthropicDriver, hub_link};
     use super::super::driver::ConnectorDriver;
     use super::super::gts::ANTHROPIC_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
+    use super::{ConnectorPluginConfig, register_driver};
 
     #[toolkit::gear(name = "anthropic-connector-plugin", deps = [types_registry])]
     #[derive(Default)]
@@ -197,13 +199,14 @@ mod anthropic_plugin {
     impl Gear for AnthropicConnectorPlugin {
         async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
             let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(AnthropicDriver::new(http_client()?));
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(AnthropicDriver::new(hub_link(ctx.client_hub())));
             register_driver(ctx, ANTHROPIC_INSTANCE_ID, &cfg, driver).await
         }
     }
 }
 
-/// OpenAI — what `@theia/ai-codex` uses, and any OpenAI-compatible endpoint.
+/// OpenAI — what `@theia/ai-codex` uses. Tested through studio-llm-proxy too.
 mod openai_plugin {
     use std::sync::Arc;
 
@@ -211,10 +214,10 @@ mod openai_plugin {
     use toolkit::Gear;
     use toolkit::context::GearCtx;
 
-    use super::super::ai_providers::OpenAiDriver;
+    use super::super::ai_providers::{OpenAiDriver, hub_link};
     use super::super::driver::ConnectorDriver;
     use super::super::gts::OPENAI_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
+    use super::{ConnectorPluginConfig, register_driver};
 
     #[toolkit::gear(name = "openai-connector-plugin", deps = [types_registry])]
     #[derive(Default)]
@@ -224,7 +227,8 @@ mod openai_plugin {
     impl Gear for OpenAiConnectorPlugin {
         async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
             let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(OpenAiDriver::new(http_client()?));
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(OpenAiDriver::new(hub_link(ctx.client_hub())));
             register_driver(ctx, OPENAI_INSTANCE_ID, &cfg, driver).await
         }
     }

@@ -42,6 +42,11 @@ key (ADR-0030).
 Both are passthroughs: bytes in, bytes out, the upstream status preserved,
 streaming responses streamed.
 
+It is also Studio's one way out to a model provider (ADR-0037). No other
+Studio gear calls a provider: one that needs to — the connector gear testing a
+key — takes the gear's port, `ModelProviders`, from the ClientHub, and the
+call goes out through the same provider table and HTTP client as an agent's.
+
 ### 1.2 Architecture Drivers
 
 #### Functional Drivers
@@ -62,6 +67,7 @@ streaming responses streamed.
 |--------|------------------|
 | `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | Agents reach their models through this proxy, each window with its own person's token and key (ADR-0030, proposed). |
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio configures Theia AI from `client-config` exactly as a container session does (ADR-0027 §3). |
+| `cpt-studio-adr-one-way-out-to-llm-providers` | This gear is the only Studio code that calls a model provider; others use its port; it is linked into every build (ADR-0037, proposed). |
 
 ### 1.3 Architecture Layers
 
@@ -70,6 +76,7 @@ streaming responses streamed.
 | REST | The two families of routes | `OperationBuilder` routes in `rest.rs` |
 | Passthrough | Forward and stream back | `ProxyState::forward` in `rest.rs`, `Providers::forward` in `providers.rs`, over `reqwest` with its `stream` feature |
 | Keys | The upstream key from config or environment; a member's key from credstore | `config.rs`, `providers::CredstoreKeys` |
+| Port | Other gears' way to a provider, with a key they hand it | `port::ModelProviders`, implemented by `providers::Providers` |
 
 ## 2. Principles & Constraints
 
@@ -108,11 +115,13 @@ the `mini_chat` and `api_egress` chain's job (`cpt-studio-component-llm-chain`).
 
 ### 2.2 Constraints
 
-#### Not in the Kubernetes release
+#### In every build
 
-The gear is compiled only with the `llm` Cargo feature, on by default and off
-in the release image (`cpt-studio-constraint-llm-off-in-release`). A deployment
-built without it has no in-IDE AI through this proxy.
+The gear is not behind the `llm` Cargo feature (ADR-0037): the connector gear
+tests model-provider keys through it, and the agents' routes are what
+`studio-session` points sessions at, so the release image links it too. `llm`
+gates only the platform's `mini_chat` and `api_egress`
+(`cpt-studio-constraint-llm-off-in-release`).
 
 #### Long requests
 
@@ -132,7 +141,9 @@ A **provider** is one upstream an agent may reach: its path name, base URL,
 the credstore reference of its key, and how the key is sent (`bearer` or
 `x-api-key`). The defaults are `anthropic` (`https://api.anthropic.com`,
 `anthropic-key`, `x-api-key`) and `openai` (`https://api.openai.com/v1`,
-`openai-key`, `bearer`). The **upstream** of the OpenAI-compatible half is a
+`openai-key`, `bearer`). For Studio's own calls a provider also names where its
+model list is under the base URL (`v1/models`, `models`) and the headers those
+calls carry (`anthropic-version` for Anthropic). The **upstream** of the OpenAI-compatible half is a
 base URL up to `/v1`, a model name and a key.
 
 ### 3.2 Component Model
@@ -191,6 +202,35 @@ Mounted only when a credstore client is available. Stores nothing.
 - `cpt-studio-component-session` — points a session's agents at it
 - `cpt-studio-component-platform-feature-gears` — reads the caller's key from credstore
 
+#### Provider port
+
+- [x] `p2` - **ID**: `cpt-studio-component-llm-provider-port`
+
+##### Why this component exists
+
+One way out to a provider (ADR-0037): a gear that needs one should not carry
+its own client and its own copy of the provider's URL conventions.
+
+##### Responsibility scope
+
+`port.rs`: `ModelProviders::list_models(provider, base_url, key)`, published
+on the ClientHub at init whether or not credstore is there. It looks the
+provider up in the table, sends the key the way the provider wants it with the
+provider's `request_headers`, reads `models_path` and answers the model ids and
+names; a refusal is an error carrying the provider's status and the first 200
+characters of its answer. `base_url`, when given, replaces the table's for the
+call; the caller has already checked it may send the key there.
+
+##### Responsibility boundaries
+
+Reads no key itself: the caller hands it the key it is testing. One method,
+because one thing is needed in-process; a completion is added here when a gear
+needs one.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-connector` — the Anthropic and OpenAI drivers test a key through it
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-llm-rest`
@@ -213,6 +253,9 @@ Mounted only when a credstore client is available. Stores nothing.
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
 | `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | The caller's provider key |
+
+It is used in-process by `studio-connector`'s `anthropic-connector-plugin` and
+`openai-connector-plugin`, through `ModelProviders`, resolved on use.
 
 ### 3.5 External Dependencies
 
@@ -258,10 +301,11 @@ None.
 
 ### 3.8 Deployment Topology
 
-In-process in the one `studio-backend` binary, with the `llm` feature: gear
+In-process in the one `studio-backend` binary, every build: gear
 `studio-llm-proxy`, capabilities `[rest]`, deps `credstore`, config section
 `gears.studio-llm-proxy` (`base_url`, `model`, `api_key`, the `*_env` names,
-`developer_message_settings`, `providers`).
+`developer_message_settings`, `providers`). Publishes `ModelProviders` on the
+ClientHub.
 
 ## 4. Additional context
 
