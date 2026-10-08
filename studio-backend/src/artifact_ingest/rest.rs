@@ -1378,7 +1378,11 @@ async fn open_pull_requests(
             .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
         items
             .into_iter()
-            .filter(|p| p.waiting_on.iter().any(|w| w.user_id.as_deref() == Some(me.as_str())))
+            .filter(|p| {
+                p.waiting_on
+                    .iter()
+                    .any(|w| w.user_id.as_deref() == Some(me.as_str()))
+            })
             .collect()
     } else {
         items

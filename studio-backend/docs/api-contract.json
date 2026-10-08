@@ -335,7 +335,7 @@
       "path": "/studio-artifact-ingest/v1/open-pull-requests",
       "operation_id": "studio_artifact_ingest.list_open_pull_requests",
       "tag": "StudioArtifactIngest",
-      "summary": "A project's open pull requests, each with who it is waiting on",
+      "summary": "A project's or workspace's open pull requests, each with who it is waiting on",
       "authenticated": true,
       "responses": [
         "WaitingPullRequestListDto"
