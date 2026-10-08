@@ -35,7 +35,7 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::contracts::RestApiCapability;
 use toolkit::{Gear, GearCtx, GearRegistry};
 
-use crate::studio_session::config::StudioSessionConfig;
+use crate::studio_session::sdk::StudioSessionConfig;
 
 use manifest::Described;
 

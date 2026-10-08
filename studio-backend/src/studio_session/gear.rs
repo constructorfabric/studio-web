@@ -162,13 +162,11 @@ impl Gear for StudioSessionGear {
         // Reaping expired sessions is a `session.reap` run, fired by a
         // schedule — see `super::reap_task` for what that replaced. Registered
         // here because the service it needs is built here.
-        crate::tasks::registry::register(Arc::new(reap_task::SessionReapTask::new(
-            service.clone(),
-        )))?;
+        crate::tasks::sdk::register(Arc::new(reap_task::SessionReapTask::new(service.clone())))?;
 
         // Waiting for a session to answer is also a run — see
         // `super::ready_task` for why the browser could not keep doing it.
-        crate::tasks::registry::register(Arc::new(super::ready_task::SessionReadyTask::new(
+        crate::tasks::sdk::register(Arc::new(super::ready_task::SessionReadyTask::new(
             service.clone(),
         )))?;
 

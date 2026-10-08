@@ -61,9 +61,9 @@ use serde_json::{Map, Value, json};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::connectors::driver::ConnectionAuth;
-use crate::connectors::github::graphql_url;
-use crate::connectors::service::ConnectorService;
+use crate::connectors::sdk::ConnectionAuth;
+use crate::connectors::sdk::ConnectorService;
+use crate::connectors::sdk::graphql_url;
 
 const UA: &str = "constructor-studio-gears-catalog";
 

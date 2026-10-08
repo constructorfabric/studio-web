@@ -35,7 +35,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::service::SessionService;
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "session.await_ready";

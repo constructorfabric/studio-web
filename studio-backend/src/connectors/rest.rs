@@ -1479,7 +1479,7 @@ async fn graph_sync(
     let run_id = queue
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant,
                 task_type: GRAPH_SYNC_TASK_TYPE,
                 payload,

@@ -340,34 +340,18 @@ mod tests {
     }
 
     /// A gear uses another through its `port`/`sdk` module or what its
-    /// `mod.rs` exports; reaching into its other modules ties the two together
-    /// below any contract. The ones that exist are listed in
-    /// `internal_uses.txt`, and the list only shrinks.
+    /// `mod.rs` exports. Reaching into its other modules ties the two together
+    /// below any contract, and none does.
     #[test]
-    fn no_gear_reaches_into_another_beyond_this_baseline() {
-        let baseline: BTreeSet<&str> = include_str!("internal_uses.txt")
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        let found: BTreeSet<String> = GEAR_USES
+    fn no_gear_reaches_into_another_gears_private_modules() {
+        let internal: Vec<String> = GEAR_USES
             .iter()
             .filter(|(_, _, via, _, _)| *via == "internal")
             .map(|(from, to, _, item, _)| format!("{from} -> {to}::{item}"))
             .collect();
-        let new: Vec<&String> = found
-            .iter()
-            .filter(|f| !baseline.contains(f.as_str()))
-            .collect();
         assert!(
-            new.is_empty(),
-            "a gear reaches into another's private module: {new:?}. Use its `port` or `sdk` \
-             module, or an item its mod.rs exports, instead."
-        );
-        let fixed: Vec<&&str> = baseline.iter().filter(|b| !found.contains(**b)).collect();
-        assert!(
-            fixed.is_empty(),
-            "no longer happens, delete from src/assembly/internal_uses.txt: {fixed:?}"
+            internal.is_empty(),
+            "a gear reaches into another's private module: {internal:?}. Use its `port` or              `sdk` module (add what you need there), or an item its mod.rs exports."
         );
     }
 

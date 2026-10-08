@@ -487,7 +487,7 @@ fn texts(component: &Value, profile: Option<&Value>) -> Vec<String> {
 /// catalogue resolves it (`values::resolve` -- a person's entry over the
 /// repository scan over the registry), split on commas.
 pub(crate) fn declared_capabilities(component: &Value, profile: Option<&Value>) -> Vec<String> {
-    let values = crate::components_catalog::values::resolve(component, profile);
+    let values = crate::components_catalog::sdk::resolve(component, profile);
     let Some(field) = values.get("capabilities") else {
         return Vec::new();
     };

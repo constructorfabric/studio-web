@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::plan::mentions;
-use crate::documents::model::Capability;
+use crate::documents::sdk::Capability;
 
 /// A capability a document's requirements imply, and the requirements that
 /// imply it: what a document says it needs when it never says so in its
@@ -225,7 +225,7 @@ mod tests {
     /// 2026-10-07): no `capabilities:` line, requirements under headings.
     #[test]
     fn capabilities_are_inferred_from_the_functional_requirements() {
-        let vocabulary = crate::documents::model::builtin_capabilities();
+        let vocabulary = crate::documents::sdk::builtin_capabilities();
         let body = "# PRD -- Core\n\n## 1. Overview\n\nBilling is out of scope here.\n\n\
                     ## 5. Functional Requirements\n\n\
                     ### 5.1 Data Ingestion\n\n#### First-Class Connectors\n\n\

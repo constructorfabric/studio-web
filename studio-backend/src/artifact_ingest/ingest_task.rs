@@ -29,7 +29,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 use super::service::IngestService;
 

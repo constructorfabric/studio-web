@@ -102,7 +102,7 @@ impl RoadmapCatalog for CatalogRoadmaps {
         queue
             .enqueue(
                 ctx,
-                crate::tasks::service::NewRun {
+                crate::tasks::sdk::NewRun {
                     tenant,
                     task_type: super::sync_task::TASK_TYPE,
                     payload: board_sync_payload(board)?,

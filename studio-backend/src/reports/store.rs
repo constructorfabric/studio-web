@@ -182,7 +182,7 @@ mod graph {
         }
 
         async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()> {
-            use crate::artifact_ingest::graph_backend::without_nul;
+            use crate::artifact_ingest::sdk::without_nul;
             use graph_storage_sdk::models::{IngestOptions, IngestRequest, NodeSpec};
             self.ensure_types(ctx).await?;
             let node = NodeSpec {

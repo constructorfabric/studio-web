@@ -39,7 +39,7 @@ use toolkit_security::{AccessScope, SecurityContext};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::tasks::service::NewRun;
+use crate::tasks::sdk::NewRun;
 use crate::tasks::{TASK_QUEUE_INSTANCE_ID, TaskQueue};
 
 use super::cron::{Expression, check_timezone, format_iso8601_duration};
@@ -120,10 +120,10 @@ impl SchedulerService {
         concurrency: &str,
         missed: &str,
     ) -> anyhow::Result<(Expression, Concurrency, MissedPolicy)> {
-        if crate::tasks::registry::handler(task_type).is_none() {
+        if crate::tasks::sdk::handler(task_type).is_none() {
             return Err(anyhow!(
                 "no handler for task type '{task_type}' in this deployment (known: {})",
-                crate::tasks::registry::known_task_types().join(", ")
+                crate::tasks::sdk::known_task_types().join(", ")
             ));
         }
         check_timezone(timezone)?;

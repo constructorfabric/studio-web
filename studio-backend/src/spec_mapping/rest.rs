@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn the_vocabulary_is_read_into_the_rules_shape() {
-        let caps = crate::documents::model::builtin_capabilities();
+        let caps = crate::documents::sdk::builtin_capabilities();
         let v = vocabulary_of(&caps, Vec::new());
         assert!(v.nonfunctional.contains("deploy"));
         assert!(v.contracts["auth"].contains(&"cf.core.authn_resolver.plugin.v1~".to_owned()));

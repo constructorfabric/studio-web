@@ -25,7 +25,7 @@ use super::alias_policy::{
 use super::invitations;
 use super::leaving;
 use super::store::IdentityStore;
-use crate::connectors::service::ConnectorService;
+use crate::connectors::sdk::{ConnectorService, Connectors};
 use crate::identity_directory::IdpDirectoryReader;
 
 /// A connection whose scope makes it a team or bot credential rather than the
@@ -348,7 +348,7 @@ pub struct IdentityService {
     /// known to have registered. `Some(None)` means no driver at all, which
     /// makes that proof channel unavailable while claims and reads keep
     /// working; `None` means the phase has not run yet.
-    connectors: OnceLock<Option<Arc<ConnectorService>>>,
+    connectors: OnceLock<Connectors>,
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
     federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
@@ -379,7 +379,7 @@ impl IdentityService {
     /// Separate from `new` because the driver plugins are separate gears and the
     /// REST phase is the first point where all of them are known to have
     /// registered. Calling it twice is ignored: the second view is equivalent.
-    pub fn attach_connectors(&self, connectors: Option<Arc<ConnectorService>>) {
+    pub fn attach_connectors(&self, connectors: Connectors) {
         let _ = self.connectors.set(connectors);
     }
 
@@ -1148,7 +1148,7 @@ impl IdentityService {
         user_id: &str,
         tenant: Uuid,
     ) -> Result<ConfirmReport> {
-        let connectors = self.connectors.get().and_then(Option::as_ref);
+        let connectors = self.connectors.get().and_then(Connectors::get);
         let federated = self.federated.get().and_then(Option::as_ref);
         if connectors.is_none() && federated.is_none() {
             return Err(anyhow!(
@@ -1158,7 +1158,7 @@ impl IdentityService {
         }
 
         let mut report = ConfirmReport::default();
-        if let Some(connectors) = connectors {
+        if let Some(connectors) = &connectors {
             self.confirm_from_connections(ctx, user_id, tenant, connectors, &mut report)
                 .await?;
         }
@@ -1845,7 +1845,7 @@ impl IdentityService {
         // After the membership, not before: the credentials are the tidy-up,
         // and leaving somebody a member while their connections disappear would
         // be the worse of the two half-states.
-        let removed = match self.connectors.get().and_then(Option::as_ref) {
+        let removed = match self.connectors.get().and_then(Connectors::get) {
             // This gear *is* the person resolver, so it hands itself over
             // rather than looking one up.
             Some(connectors) => connectors
@@ -1883,7 +1883,7 @@ impl IdentityService {
         for member in self.store.memberships_in_org(&org).await? {
             self.store.delete_membership(&member.user_id, &org).await?;
             evicted.people += 1;
-            if let Some(connectors) = self.connectors.get().and_then(Option::as_ref) {
+            if let Some(connectors) = self.connectors.get().and_then(Connectors::get) {
                 match connectors
                     .delete_personal_of(ctx, org_id, self, &member.user_id)
                     .await

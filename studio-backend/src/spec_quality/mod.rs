@@ -34,6 +34,7 @@ pub mod findings;
 pub mod gear;
 pub mod record;
 pub mod rest;
+pub mod sdk;
 pub mod verdict;
 
 /// Whether this process can reach the upstream: a base URL and a key were

@@ -253,7 +253,7 @@ async fn register_platform_schedules(service: &Arc<SchedulerService>) -> anyhow:
         // honest answer to "is this a deployment where that job exists?" —
         // sessions, for instance, stand down where there is no container
         // runtime to reach.
-        if !crate::tasks::registry::known_task_types().contains(&schedule.task_type) {
+        if !crate::tasks::sdk::known_task_types().contains(&schedule.task_type) {
             info!(
                 schedule = schedule.name,
                 task_type = schedule.task_type,

@@ -17,7 +17,7 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use uuid::Uuid;
 
 use super::service::{ReportsService, kind};
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Task type. A wire contract: stored on every queued run and every schedule.
 pub const TASK_TYPE: &str = "reports.refresh";
@@ -137,7 +137,7 @@ pub async fn hand_to(
     match queue
         .enqueue(
             security,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: org,
                 task_type: TASK_TYPE,
                 payload,
@@ -219,7 +219,7 @@ mod tests {
         async fn enqueue(
             &self,
             _ctx: &toolkit_security::SecurityContext,
-            run: crate::tasks::service::NewRun<'_>,
+            run: crate::tasks::sdk::NewRun<'_>,
         ) -> anyhow::Result<Uuid> {
             if self.fail {
                 anyhow::bail!("queue down");

@@ -722,14 +722,9 @@ impl RestApiCapability for StudioUserGear {
         // credential to confirm an identity against, and /me/aliases/confirm
         // answers 400 while claims and reads keep working.
         if let Some(svc) = service.as_ref() {
-            let connectors = build_connectors(ctx);
-            if connectors.is_none() {
-                warn!(
-                    "studio-user: no connector driver plugin registered — the credential proof \
-                     channel is unavailable"
-                );
-            }
-            svc.attach_connectors(connectors);
+            // The one connector service, resolved when an identity is
+            // confirmed: without it the credential proof channel is closed.
+            svc.attach_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()));
 
             // The IdP proof channel. Same phase and the same reason: the
             // directory is a separate gear. Absent when Keycloak admin is
@@ -826,33 +821,4 @@ impl RestApiCapability for StudioUserGear {
 
         Ok(rest::register_routes(router, openapi, service))
     }
-}
-
-/// Build a connector service for reading the caller's connection catalogue.
-///
-/// The same in-crate construction `studio-components-catalog` uses: the pieces
-/// come from ClientHub, so this is a second view onto the same catalogue rather
-/// than a second copy of its state.
-fn build_connectors(ctx: &GearCtx) -> Option<Arc<crate::connectors::service::ConnectorService>> {
-    use crate::connectors::driver::ConnectorDriver;
-    let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
-    for id in crate::connectors::source_driver_ids() {
-        if let Ok(driver) = ctx
-            .client_hub()
-            .get_scoped::<dyn ConnectorDriver>(&ClientScope::gts_id(id))
-        {
-            drivers.push((id.to_string(), driver));
-        }
-    }
-    if drivers.is_empty() {
-        return None;
-    }
-    let am = ctx.client_hub().get::<dyn AccountManagementClient>().ok()?;
-    let credstore = ctx
-        .client_hub()
-        .get::<dyn credstore_sdk::CredStoreClientV1>()
-        .ok()?;
-    Some(crate::connectors::service::ConnectorService::new(
-        am, credstore, drivers,
-    ))
 }

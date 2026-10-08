@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
-use crate::connectors::driver::{
+use crate::connectors::sdk::{
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
 };
 
@@ -1074,7 +1074,7 @@ mod tests {
             number: 7,
             open: 1,
             total: 2,
-            reviews: vec![crate::connectors::driver::RemoteReview {
+            reviews: vec![crate::connectors::sdk::RemoteReview {
                 login: "bob".into(),
                 state: "approved".into(),
             }],

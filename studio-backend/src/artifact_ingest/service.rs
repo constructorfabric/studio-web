@@ -24,12 +24,12 @@ use super::clone;
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
-use crate::connectors::driver::{ConnectionAuth, ConnectorDriver, PullRequestThreads};
+use crate::connectors::sdk::{ConnectionAuth, ConnectorDriver, PullRequestThreads};
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::documents::port::{DocumentClassifier, IngestedDocument, is_prose_path};
-use crate::tasks::registry::SyncReporter;
+use crate::tasks::sdk::SyncReporter;
 
 /// Hard cap on pages per channel — a runaway loop backstop, not a real limit.
 const MAX_PAGES: u32 = 50;

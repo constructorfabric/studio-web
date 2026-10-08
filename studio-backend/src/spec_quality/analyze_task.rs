@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::rest::ProxyState;
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Stable task type. Stored on every run and every queue payload — renaming it
 /// orphans whatever is already queued.

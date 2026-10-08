@@ -27,6 +27,7 @@ mod repo;
 mod repo_tests;
 mod rest;
 mod review_guide;
+pub mod sdk;
 mod service;
 mod spec_rows;
 #[cfg(test)]

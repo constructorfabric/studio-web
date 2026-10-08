@@ -514,7 +514,7 @@ async fn sync(
     let run_id = queue
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: ctx.subject_tenant_id(),
                 task_type: TASK_TYPE,
                 payload,
@@ -1147,7 +1147,7 @@ async fn organization_of_project(
     let workspace = am.get_tenant(ctx, project.parent_id?.0).await.ok()?;
     let org_id = workspace.parent_id?.0;
     let org = am.get_tenant(ctx, org_id).await.ok()?;
-    (org.tenant_type.as_deref() == Some(crate::organizations::rollups::ORGANIZATION_TENANT_TYPE))
+    (org.tenant_type.as_deref() == Some(crate::organizations::sdk::ORGANIZATION_TENANT_TYPE))
         .then_some(org_id)
 }
 

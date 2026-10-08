@@ -66,12 +66,12 @@ impl Gear for SpecQualityGear {
         // registered even when the upstream is unconfigured: a deployment that
         // gains its key on the next restart should not also need its queue
         // rebuilt, and a handler with nothing to watch is never dispatched.
-        crate::tasks::registry::register(Arc::new(super::analyze_task::AnalyzeTask::new(
-            Arc::clone(&state),
-        )))?;
+        crate::tasks::sdk::register(Arc::new(super::analyze_task::AnalyzeTask::new(Arc::clone(
+            &state,
+        ))))?;
         // A sweep over a document set is one run too — see `super::batch_task`
         // for what it replaced in the browser.
-        crate::tasks::registry::register(Arc::new(super::batch_task::AnalyzeBatchTask::new(
+        crate::tasks::sdk::register(Arc::new(super::batch_task::AnalyzeBatchTask::new(
             Arc::clone(&state),
         )))?;
 

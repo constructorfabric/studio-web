@@ -1618,7 +1618,7 @@ impl Gearbox {
         let workdir = self.cfg.workdir.clone();
         let s = source.clone();
         tokio::task::spawn_blocking(move || {
-            crate::artifact_ingest::clone::clone_or_update(
+            crate::artifact_ingest::sdk::clone_or_update(
                 &workdir,
                 &s.key,
                 &s.repo,
@@ -1707,7 +1707,7 @@ impl Gearbox {
             let workdir = self.cfg.workdir.clone();
             let s = self.current_source();
             let cloned = tokio::task::spawn_blocking(move || {
-                crate::artifact_ingest::clone::clone_or_update(
+                crate::artifact_ingest::sdk::clone_or_update(
                     &workdir,
                     &s.key,
                     &s.repo,

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::connectors::{NOTIFY_SENDER_INSTANCE_ID, NotificationSender};
 #[cfg(feature = "theia-bridge")]
 use crate::studio_theia::sdk::{SessionTarget, TheiaControlClientV1};
-use crate::tasks::service::NewRun;
+use crate::tasks::sdk::NewRun;
 use crate::tasks::{TASK_QUEUE_INSTANCE_ID, TaskQueue};
 
 use super::handler::TASK_TYPE;

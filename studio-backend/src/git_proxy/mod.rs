@@ -21,4 +21,5 @@
 pub mod gear;
 pub mod refresh;
 pub mod rest;
+pub mod sdk;
 pub mod sources;

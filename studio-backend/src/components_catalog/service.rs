@@ -22,8 +22,8 @@ use super::field_schema::{self, TypeFieldSchema};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
 use super::roadmap::{self, RoadmapSource};
-use crate::connectors::service::ConnectorService;
-use crate::tasks::registry::SyncReporter;
+use crate::connectors::sdk::{ConnectorService, Connectors};
+use crate::tasks::sdk::SyncReporter;
 
 /// Pause between crates.io detail calls — crates.io asks callers to stay near
 /// ~1 request/second. One gear = one detail call, so this paces the whole sync.
@@ -454,7 +454,7 @@ impl CatalogSink for GraphSink {
         nodes: &[GtsNode],
         edges: &[GtsEdge],
     ) -> anyhow::Result<()> {
-        use crate::artifact_ingest::graph_backend::{str_without_nul, without_nul};
+        use crate::artifact_ingest::sdk::{str_without_nul, without_nul};
         use graph_storage_sdk::models::{EdgeSpec, IngestOptions, IngestRequest, NodeSpec};
         if nodes.is_empty() && edges.is_empty() {
             return Ok(());
@@ -745,7 +745,7 @@ impl CatalogSink for GraphSink {
         ctx: &SecurityContext,
         nodes: &[GtsNode],
     ) -> anyhow::Result<()> {
-        use crate::artifact_ingest::graph_backend::{str_without_nul, without_nul};
+        use crate::artifact_ingest::sdk::{str_without_nul, without_nul};
         use graph_storage_sdk::models::NodeSpec;
         for chunk in nodes.chunks(NODE_INGEST_CHUNK) {
             let specs: Vec<NodeSpec> = chunk
@@ -1021,7 +1021,7 @@ pub struct CatalogService {
     crates: CratesIoClient,
     sink: Arc<dyn CatalogSink>,
     keyword: String,
-    connectors: Option<Arc<ConnectorService>>,
+    connectors: Option<Connectors>,
     /// The Gearbox engine, when previews are configured: a sync writes what it
     /// knows about each gear into the gear's profile. Set once, after
     /// construction, because the engine is configured separately.
@@ -1046,10 +1046,15 @@ impl Drop for Changed {
 }
 
 impl CatalogService {
+    /// The connector service, when `studio-connector` has published one.
+    fn connector_service(&self) -> Option<Arc<ConnectorService>> {
+        self.connectors.as_ref()?.get()
+    }
+
     pub fn new(
         sink: Arc<dyn CatalogSink>,
         keyword: String,
-        connectors: Option<Arc<ConnectorService>>,
+        connectors: Option<Connectors>,
     ) -> Self {
         Self {
             crates: CratesIoClient::new(),
@@ -1100,7 +1105,7 @@ impl CatalogService {
         ctx: &SecurityContext,
         source: &RepoSource,
     ) -> Option<super::gearbox::CorpusSource> {
-        let connectors = self.connectors.as_ref()?;
+        let connectors = self.connector_service()?;
         let (driver, auth, conn) = connectors
             .named_or_default(ctx, source.tenant, source.connection_id, "github")
             .await
@@ -1189,7 +1194,7 @@ impl CatalogService {
         let mut planned: Vec<GtsNode> = Vec::new();
         let mut boards_read: Vec<String> = Vec::new();
         let mut unread: Vec<UnreadBoard> = Vec::new();
-        let Some(connectors) = self.connectors.clone() else {
+        let Some(connectors) = self.connector_service() else {
             tracing::warn!("components-catalog: no connector service; roadmap boards skipped");
             unread.extend(roadmaps.iter().map(|s| UnreadBoard {
                 board: format!("{}/{}", s.owner, s.number),
@@ -1341,8 +1346,7 @@ impl CatalogService {
         source: &RepoSource,
     ) -> anyhow::Result<Vec<RepoGear>> {
         let connectors = self
-            .connectors
-            .clone()
+            .connector_service()
             .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
         let mode = RepoMode::parse(&source.mode);
         let mut enricher = RepoEnricher::new(
@@ -2326,8 +2330,7 @@ impl CatalogService {
             .map_err(|_| anyhow!("the project's gear repo names no tenant"))?;
         let connection_id = Uuid::parse_str(&text("connection_id")).ok();
         let connectors = self
-            .connectors
-            .clone()
+            .connector_service()
             .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
         let enricher = RepoEnricher::new(
             connectors,
@@ -2351,7 +2354,9 @@ impl CatalogService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
-        let (Some(am), Some(connectors)) = (self.account_management.get(), &self.connectors) else {
+        let (Some(am), Some(connectors)) =
+            (self.account_management.get(), self.connector_service())
+        else {
             return Ok(None);
         };
         let Ok(project) = Uuid::parse_str(project_id) else {
@@ -2390,7 +2395,7 @@ impl CatalogService {
         let mut deps = BTreeSet::new();
         for (tenant, connection_id, repo, branch) in targets {
             let Some(enricher) = RepoEnricher::new(
-                Arc::clone(connectors),
+                Arc::clone(&connectors),
                 tenant,
                 Some(connection_id),
                 repo.clone(),
@@ -2528,8 +2533,7 @@ impl CatalogService {
         let (tenant, connection_id, repo, base_branch) = self.write_target(ctx, project_id).await?;
 
         let connectors = self
-            .connectors
-            .as_ref()
+            .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
         let (_driver, auth, _conn) = connectors
             .named_or_default(ctx, tenant, connection_id, "github")
@@ -2596,7 +2600,9 @@ impl CatalogService {
                 "this project has no repository connected to write to — add one on its Sources tab"
             )
         };
-        let (Some(am), Some(connectors)) = (self.account_management.get(), &self.connectors) else {
+        let (Some(am), Some(connectors)) =
+            (self.account_management.get(), self.connector_service())
+        else {
             return Err(no_repo());
         };
         let project = Uuid::parse_str(project_id).map_err(|_| no_repo())?;
@@ -2633,8 +2639,7 @@ impl CatalogService {
         private: bool,
     ) -> anyhow::Result<super::scaffold::CreatedRepo> {
         let connectors = self
-            .connectors
-            .as_ref()
+            .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
         let (_driver, auth, _conn) = connectors
             .named_or_default(ctx, tenant, connection_id, "github")

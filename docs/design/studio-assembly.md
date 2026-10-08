@@ -92,9 +92,11 @@ instead: every `crate::<gear module>::<item>` outside test code, classified as
 `mod.rs` exports) or `internal` (one of its other modules). Each Studio gear's
 `uses` lists the gears it names and the worst of those ways.
 
-`internal` is a boundary crossed below any contract. The ones that exist are
-listed in `src/assembly/internal_uses.txt`; a test fails on a new one and on a
-listed one that no longer occurs, so the list only shrinks.
+`internal` is a boundary crossed below any contract, and a test fails on any.
+What one gear offers the others is declared in two places: `port`, the clients
+it publishes on the ClientHub (state and behaviour, resolved per use so the
+start order of Studio gears does not matter), and `sdk`, the types and pure
+functions another gear may name. Everything else in a gear is private to it.
 
 ### 2.2 Constraints
 
