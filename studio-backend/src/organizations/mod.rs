@@ -187,9 +187,9 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
             );
         })
         .ok()?;
-    let people = ctx
+    let authority = ctx
         .client_hub()
-        .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+        .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
             crate::user_profile::IDENTITY_INSTANCE_ID,
         ))
         .ok()?;
@@ -197,7 +197,7 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
         am,
         memberships,
         evictions,
-        people,
+        authority,
         PLATFORM_ROOT_TENANT_ID,
     )))
 }

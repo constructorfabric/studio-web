@@ -755,12 +755,17 @@ impl IdentityDirectoryService {
         // guard borrows its resolver: the identity gear already reads this one
         // for its own proof channel, and owning each other would leave the pair
         // unconstructible in either order.
-        memberships: Option<&dyn AssignmentRecorder>,
+        //
+        // Required: the membership is the truth (ADR-0037 §1), so an
+        // assignment with nowhere to record it is refused rather than left as
+        // IdP attributes nothing in Studio reads.
+        memberships: &dyn AssignmentRecorder,
     ) -> Result<()> {
         let identity_id = Uuid::parse_str(identity_id).context("identity id is not a UUID")?;
         let identity_id_string = identity_id.to_string();
-        let tenant = self
-            .account_management
+        // The target must exist and be reachable by the caller before anything
+        // is written about it.
+        self.account_management
             .get_tenant(ctx, tenant_id)
             .await
             .map_err(|error| anyhow::anyhow!("cannot resolve target organization: {error}"))?;
@@ -803,18 +808,10 @@ impl IdentityDirectoryService {
             serde_json::json!([organization_role]),
         );
 
-        // Owner is also a real organization-wide access grant understood by
-        // Studio's PDP. Member is tenant membership without that elevated
-        // grant; project roles can still be assigned independently.
-        crate::access_config::set_owner_grant(
-            self.account_management.as_ref(),
-            ctx,
-            tenant_id,
-            &tenant.name,
-            &identity_id_string,
-            organization_role == crate::access_config::ROLE_OWNER,
-        )
-        .await?;
+        // The owner grant is not written here. It is a projection of the
+        // membership, and studio-user writes it with the membership below
+        // (ADR-0037 §2); the two Keycloak attributes are this gear's own
+        // projection, for the platform, and nothing in Studio reads them back.
 
         self.http
             .put(url)
@@ -841,23 +838,24 @@ impl IdentityDirectoryService {
         // concerned and has no organization as far as Studio is concerned, and
         // reporting that as success would hide it from the only person who
         // could fix it. Every write here is idempotent, so the repair is to
-        // call the assignment again.
-        if let Some(memberships) = memberships {
-            memberships
-                .record_assignment(
-                    &identity_id_string,
-                    tenant_id,
-                    organization_role,
-                    display_name.as_deref(),
-                    email.as_deref(),
+        // call the assignment again. studio-user writes the owner grant with
+        // it (ADR-0037 §2).
+        memberships
+            .record_assignment(
+                ctx,
+                &identity_id_string,
+                tenant_id,
+                organization_role,
+                display_name.as_deref(),
+                email.as_deref(),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "identity {identity_id_string} was assigned in the IdP but recording the \
+                     Studio membership of {tenant_id} failed; re-run the assignment"
                 )
-                .await
-                .with_context(|| {
-                    format!(
-                        "identity {identity_id_string} was assigned in the IdP but recording the                          Studio membership of {tenant_id} failed; re-run the assignment"
-                    )
-                })?;
-        }
+            })?;
         Ok(())
     }
 
@@ -890,6 +888,7 @@ impl IdentityDirectoryService {
             let role = identity.organization_role.as_deref().unwrap_or("member");
             match memberships
                 .record_assignment(
+                    ctx,
                     &identity.id,
                     tenant_id,
                     role,

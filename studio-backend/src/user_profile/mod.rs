@@ -14,6 +14,8 @@
 
 mod alias_policy;
 mod entity;
+#[cfg(test)]
+mod grants_tests;
 mod invitations;
 mod leaving;
 mod migrations;
@@ -150,6 +152,11 @@ mod uuid_text {
 /// or the lookup misses the row.
 pub use service::normalize_key;
 
+/// What emptying an organization took with it ([`MembershipEvictor`]).
+/// Exported because the interface hands it out: a consumer names it from here,
+/// never from this gear's `service` module.
+pub use service::Eviction;
+
 /// ClientHub key under which the alias resolver is published for other gears.
 ///
 /// Not a plugin: nothing selects between implementations, so unlike
@@ -285,8 +292,14 @@ pub trait AssignmentRecorder: Send + Sync + 'static {
     /// person if this login has not been seen before. `display_name` and
     /// `email` are the IdP's: they name a new person and fill a profile's
     /// blanks, never overwrite it.
+    ///
+    /// Writes the organization's owner grant too — given to an `owner`, taken
+    /// from anyone else — because the grant is a projection of the membership
+    /// and this gear is its only writer (ADR-0037 §2). `ctx` is the caller's:
+    /// the grant is an account-management write the PDP decides as them.
     async fn record_assignment(
         &self,
+        ctx: &SecurityContext,
         subject: &str,
         org_id: uuid::Uuid,
         role: &str,
@@ -294,29 +307,42 @@ pub trait AssignmentRecorder: Send + Sync + 'static {
         email: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    /// Record that `subject` created `org_id` and owns it.
+    /// Record that `subject` created `org_id` and owns it — the membership and
+    /// the owner grant, in that order.
     ///
     /// The role is not a parameter: creating an organization makes you its
     /// owner and nothing else, so letting a caller pass a role here would only
     /// create a way to get it wrong.
-    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()>;
+    async fn record_creation(
+        &self,
+        ctx: &SecurityContext,
+        subject: &str,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<()>;
 }
 
 #[async_trait]
 impl AssignmentRecorder for IdentityService {
     async fn record_assignment(
         &self,
+        ctx: &SecurityContext,
         subject: &str,
         org_id: uuid::Uuid,
         role: &str,
         display_name: Option<&str>,
         email: Option<&str>,
     ) -> anyhow::Result<()> {
-        IdentityService::record_assignment(self, subject, org_id, role, display_name, email).await
+        IdentityService::record_assignment(self, ctx, subject, org_id, role, display_name, email)
+            .await
     }
 
-    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()> {
-        IdentityService::record_creation(self, subject, org_id).await
+    async fn record_creation(
+        &self,
+        ctx: &SecurityContext,
+        subject: &str,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        IdentityService::record_creation(self, ctx, subject, org_id).await
     }
 }
 
@@ -339,7 +365,7 @@ pub trait MembershipEvictor: Send + Sync + 'static {
         &self,
         ctx: &SecurityContext,
         org_id: uuid::Uuid,
-    ) -> anyhow::Result<service::Eviction>;
+    ) -> anyhow::Result<Eviction>;
 }
 
 #[async_trait]
@@ -348,7 +374,7 @@ impl MembershipEvictor for IdentityService {
         &self,
         ctx: &SecurityContext,
         org_id: uuid::Uuid,
-    ) -> anyhow::Result<service::Eviction> {
+    ) -> anyhow::Result<Eviction> {
         IdentityService::evict_everybody(self, ctx, org_id).await
     }
 }
@@ -368,23 +394,19 @@ pub trait OrganizationReader: Send + Sync + 'static {
     /// no login knows has none.
     async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>>;
 
-    /// Every sign-in subject belonging to the same person as `subject`,
-    /// including `subject` itself.
+    /// Every key a grant may name this subject's person by: the person id,
+    /// then every sign-in subject of theirs, `subject` itself always included.
     ///
-    /// A grant records the subject of whichever login was in front of whoever
-    /// wrote it, so matching a grant against the caller's subject alone answers
-    /// a question about a *login*. A person with two sign-in methods then holds
-    /// a privilege through one and not the other — the defect ADR-0018 exists
-    /// to end, arriving through the back door of the access config.
-    ///
-    /// Resolving the whole set once and matching against it keeps the document
-    /// as it is: an old grant naming one login is still the person's, whichever
-    /// way they signed in today, without rewriting anything (ADR-0023
-    /// follow-up 2).
+    /// A grant names the person (ADR-0037 §5). One written before that names
+    /// the subject of whichever login was in front of whoever wrote it, and
+    /// matching the caller's subject alone would answer a question about a
+    /// *login* — a person with two sign-in methods holding a privilege through
+    /// one and not the other. Matching against this whole set answers about
+    /// the person, for grants old and new, without rewriting any of them first.
     ///
     /// A subject no login knows answers with just itself, so a caller can
     /// always match against this set alone.
-    async fn subjects_of(&self, subject: &str) -> anyhow::Result<Vec<String>>;
+    async fn grant_keys_of(&self, subject: &str) -> anyhow::Result<Vec<String>>;
 
     /// Does this subject's person hold a membership of the platform root?
     ///
@@ -427,6 +449,12 @@ pub trait OrgAuthority: Send + Sync + 'static {
         org_id: uuid::Uuid,
         privilege: &str,
     ) -> bool;
+
+    /// May the caller dispose of an organization — delete it, or hand it over?
+    /// Its owner, or a platform administrator; never a privilege (ADR-0019
+    /// §2). Asked here so a gear that disposes of organizations does not read
+    /// the access config itself (ADR-0037 §2).
+    async fn may_dispose(&self, ctx: &SecurityContext, org_id: uuid::Uuid) -> bool;
 }
 
 #[async_trait]
@@ -442,6 +470,10 @@ impl OrgAuthority for IdentityService {
             .unwrap_or(false)
             || IdentityService::may_administer(self, ctx, org_id, privilege).await
     }
+
+    async fn may_dispose(&self, ctx: &SecurityContext, org_id: uuid::Uuid) -> bool {
+        IdentityService::may_dispose(self, ctx, org_id).await
+    }
 }
 
 #[async_trait]
@@ -450,8 +482,8 @@ impl OrganizationReader for IdentityService {
         IdentityService::organizations_of(self, subject).await
     }
 
-    async fn subjects_of(&self, subject: &str) -> anyhow::Result<Vec<String>> {
-        IdentityService::subjects_of(self, subject).await
+    async fn grant_keys_of(&self, subject: &str) -> anyhow::Result<Vec<String>> {
+        IdentityService::grant_keys_of(self, subject).await
     }
 
     async fn is_platform_admin(&self, subject: &str) -> anyhow::Result<bool> {

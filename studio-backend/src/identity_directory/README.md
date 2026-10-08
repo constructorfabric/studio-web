@@ -18,8 +18,12 @@ This README is what you need to work in the directory.
   client `studio-admin`). Without either, the routes answer 503 rather than
   failing the boot, and [`../user_profile`](../user_profile) loses its IdP
   proof channel and its verified addresses.
-- Membership is recorded through `studio-user`; without its database the
-  assignment still writes the IdP side and the backfill answers 503.
+- Membership — and the owner grant that follows it — is recorded through
+  `studio-user` (ADR-0037); without its database the assignment and the
+  backfill answer 503 and write nothing. The `tenant_id` and
+  `organization_role` attributes and the tenant group are the IdP's projection
+  for the platform (the token's home tenant, account-management's user
+  listing); nothing in Studio reads them back as membership.
 
 ## Working here
 

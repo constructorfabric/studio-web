@@ -39,3 +39,14 @@ README is what you need to work in the directory.
   list.
 - A DTO name is global across the assembly's OpenAPI registry, which is why the
   membership DTO is `OrgMembershipDto`: a second `MembershipDto` panics the boot.
+- This gear is the only owner of person and membership (ADR-0037). Another
+  gear asks through a trait exported from `mod.rs`, never through `service` or
+  `store`, and never keeps a copy. The owner grant in the access config is
+  written by `sync_owner_grant` and nowhere else; a new path that records a
+  membership calls it, and every grant it writes names the person id.
+- Grant matching uses `grant_keys_of` (person id, then every login). The login
+  arm is the migration seam for grants written before ADR-0037; it can go once
+  `POST /grants/backfill` has run everywhere.
+- `grants_tests.rs` covers the grant projection on Postgres with an in-memory
+  account-management; like `store_tests.rs` it needs Docker
+  (`cargo test user_profile`).

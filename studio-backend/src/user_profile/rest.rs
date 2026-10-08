@@ -436,6 +436,21 @@ pub struct MergeResultDto {
     pub logins_moved: u32,
     pub aliases_moved: u32,
     pub memberships_moved: u32,
+    /// Grants that named the merged-away person and now name the target.
+    pub grants_moved: u32,
+}
+
+/// What a grant rekey did (ADR-0037 §5).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RekeyReportDto {
+    /// Organizations whose access config was read.
+    pub organizations: u32,
+    /// Grants that now name a person rather than a login, plus the duplicates
+    /// the rewrite produced and removed. Zero on a second run.
+    pub rewritten: u32,
+    /// Organizations that could not be read or written; re-run to retry them.
+    pub failed: u32,
 }
 
 #[derive(Debug)]
@@ -1388,13 +1403,28 @@ async fn merge_users(
     let service = configured(service)?;
     require_platform_admin(&ctx, &service).await?;
     let result = service
-        .merge(&req.from_user_id, &req.into_user_id)
+        .merge_with_grants(&ctx, &req.from_user_id, &req.into_user_id)
         .await
         .map_err(internal)?;
     Ok(Json(MergeResultDto {
         logins_moved: result.logins_moved as u32,
         aliases_moved: result.aliases_moved as u32,
         memberships_moved: result.memberships_moved as u32,
+        grants_moved: result.grants_moved as u32,
+    }))
+}
+
+async fn rekey_grants(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<RekeyReportDto>> {
+    let service = configured(service)?;
+    require_platform_admin(&ctx, &service).await?;
+    let report = service.rekey_all_grants(&ctx).await.map_err(internal)?;
+    Ok(Json(RekeyReportDto {
+        organizations: report.organizations as u32,
+        rewritten: report.rewritten as u32,
+        failed: report.failed as u32,
     }))
 }
 
@@ -2075,12 +2105,34 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::post("/studio-user/v1/grants/backfill")
+        .operation_id("studio_user.backfill_grants")
+        .summary("Point every member grant at its person (platform admin)")
+        .description(
+            "A migration step (ADR-0037 §5). In every organization somebody belongs to, each \
+             member grant of the access config that names a known sign-in subject is rewritten \
+             to name the canonical person instead, and the duplicates that produces are dropped. \
+             Grants on a person, team grants and subjects no login knows are left alone. \
+             Idempotent: a second run rewrites nothing.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(rekey_grants)
+        .json_response_with_schema::<RekeyReportDto>(openapi, StatusCode::OK, "What the rekey did")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
     OperationBuilder::post("/studio-user/v1/merge")
         .operation_id("studio_user.merge_users")
         .summary("Merge one user into another (platform admin)")
         .description(
             "Repoints every sign-in method, alias and membership from the source user onto the \
-             target and tombstones the source with a merge pointer, so reads follow it. A \
+             target, carries the grants that named the source in those organizations to the \
+             target, and tombstones the source with a merge pointer, so reads follow it. A \
              cross-organization operation, kept to the platform scope.",
         )
         .tag("StudioUser")

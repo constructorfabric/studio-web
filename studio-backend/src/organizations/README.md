@@ -18,6 +18,10 @@ This README is what you need to work in the directory.
   `studio-user`'s `on_first_login` in an installation inside one company.
 - Needs [`../user_profile`](../user_profile) for creation and deletion; without
   it those routes answer 503 rather than creating an organization nobody owns.
+  The creator's membership and owner grant are one call into it
+  (`AssignmentRecorder::record_creation`), and who may delete is its answer
+  (`OrgAuthority::may_dispose`): this gear writes the tenant and never reads or
+  writes the access config's grants itself (ADR-0037).
 - The rollups read `studio-documents` and `studio-artifact-ingest` through
   their ClientHub ports when present; a missing one leaves its columns null.
 
