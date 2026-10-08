@@ -1,5 +1,5 @@
 //! What another gear may ask of a model provider: Studio's one way out to
-//! them (ADR-0037).
+//! them (ADR-0039).
 //!
 //! `studio-llm-proxy` is the only Studio code that sends a request to a model
 //! provider. A gear that needs one — today the connector gear's "test this

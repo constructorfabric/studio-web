@@ -44,7 +44,7 @@ are where notifications are delivered. The difference between them is only
 which capabilities of the driver contract a driver implements.
 
 A model-provider driver does not call its provider. `studio-llm-proxy` is
-Studio's one way out to a model provider (ADR-0037): the Anthropic and OpenAI
+Studio's one way out to a model provider (ADR-0039): the Anthropic and OpenAI
 drivers test a key through its `ModelProviders` port, and what stays here is
 where the key is stored, which hosts it may be sent to, and the test's verdict.
 
@@ -348,7 +348,7 @@ read credentials or reach a driver.
 | `cpt-studio-component-tasks` | `TaskQueue`, `registry::register` | The `connector.graph_sync` run |
 | `graph_storage` | `GraphStorageClientV1`, resolved in the REST phase | The import's destination |
 | `cpt-studio-component-user` | `PersonResolver`, `AliasResolver` (scope `IDENTITY_INSTANCE_ID`) | The personal-connection edit guard; contributor aliases |
-| `cpt-studio-component-llm-proxy` | `llm_proxy::port::ModelProviders`, resolved when a key is tested | The Anthropic and OpenAI drivers' key test (ADR-0037) |
+| `cpt-studio-component-llm-proxy` | `llm_proxy::port::ModelProviders`, resolved when a key is tested | The Anthropic and OpenAI drivers' key test (ADR-0039) |
 
 Several in-crate gears build their own `ConnectorService` over the drivers
 they resolve rather than calling this gear: `cpt-studio-component-components-catalog`,

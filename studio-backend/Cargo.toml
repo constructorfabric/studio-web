@@ -28,7 +28,7 @@ theia-bridge = []
 theia-event-broker = ["theia-bridge", "dep:event-broker-sdk"]
 # `llm` pulls in the platform's AI chain: mini-chat and oagw (api_egress).
 # The in-crate studio-llm-proxy is NOT behind it any more: it is Studio's one
-# way out to a model provider (ADR-0037), so it is linked into every build,
+# way out to a model provider (ADR-0039), so it is linked into every build,
 # the release included. Default ON so `cargo run` / the docker-compose dev
 # build get Ask AI. The k8s release image drops it: release.yml
 # builds `--no-default-features --features graph,theia-bridge`, so `graph` and

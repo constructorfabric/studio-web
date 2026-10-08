@@ -4,7 +4,7 @@ status: proposed
 date: 2026-10-08
 ---
 
-# ADR-0037: One way out to the model providers
+# ADR-0039: One way out to the model providers
 
 **ID**: `cpt-studio-adr-one-way-out-to-llm-providers`
 

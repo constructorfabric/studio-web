@@ -178,7 +178,7 @@ mod bitbucket_plugin {
 }
 
 /// Anthropic — the credential `@theia/ai-claude-code` authenticates with. Its
-/// key test goes out through studio-llm-proxy (ADR-0037), not a client here.
+/// key test goes out through studio-llm-proxy (ADR-0039), not a client here.
 mod anthropic_plugin {
     use std::sync::Arc;
 

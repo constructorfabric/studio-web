@@ -35,7 +35,7 @@ impl KeySource for NoKeys {
 /// rewriting, no model policy — that stays the mini-chat/oagw chain's job.
 ///
 /// Linked into every build, not only with the `llm` feature: it is the one way
-/// out to a provider for the rest of Studio (ADR-0037), and needs nothing the
+/// out to a provider for the rest of Studio (ADR-0039), and needs nothing the
 /// `llm` chain brings.
 #[toolkit::gear(name = "studio-llm-proxy", deps = [credstore], capabilities = [rest])]
 pub struct LlmProxyGear {
@@ -98,7 +98,7 @@ impl Gear for LlmProxyGear {
             list: cfg.providers.clone(),
             keys,
         });
-        // Studio's one way out to a provider (ADR-0037): other gears reach one
+        // Studio's one way out to a provider (ADR-0039): other gears reach one
         // through this client, with a key they hand it, credstore or not.
         ctx.client_hub()
             .register::<dyn ModelProviders>(providers.clone());

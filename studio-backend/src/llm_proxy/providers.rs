@@ -15,7 +15,7 @@
 //! The same table of providers serves Studio's own calls: [`Providers`]
 //! implements [`super::port::ModelProviders`], so a gear that needs to reach a
 //! provider (the connector gear testing a key) goes out through here too — the
-//! one way out (ADR-0037).
+//! one way out (ADR-0039).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

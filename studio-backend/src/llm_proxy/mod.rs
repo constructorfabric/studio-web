@@ -8,7 +8,7 @@
 //! therefore authenticate with the user's own Studio token — the provider
 //! key never leaves the backend.
 //!
-//! It is also Studio's one way out to a model provider (ADR-0037): another
+//! It is also Studio's one way out to a model provider (ADR-0039): another
 //! gear that needs a provider takes [`port::ModelProviders`] from the
 //! ClientHub rather than calling one itself.
 

@@ -229,7 +229,7 @@ The `graph` feature links a gear that runs only on PostgreSQL 19 with pgvector a
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-llm-off-in-release`
 
-The release image is built `--no-default-features --features graph,theia-bridge`: with `api_egress` linked, a fresh database deadlocks on the root tenant, so `llm` (`mini_chat`, `api_egress`) stays out until that is resolved (`studio-backend/Cargo.toml`). `studio-llm-proxy` is not behind it and is in the release (ADR-0037).
+The release image is built `--no-default-features --features graph,theia-bridge`: with `api_egress` linked, a fresh database deadlocks on the root tenant, so `llm` (`mini_chat`, `api_egress`) stays out until that is resolved (`studio-backend/Cargo.toml`). `studio-llm-proxy` is not behind it and is in the release (ADR-0039).
 
 **ADRs**: none; stated in `studio-backend/Cargo.toml` and `studio-backend/src/registered_gears.rs`.
 
@@ -376,7 +376,7 @@ Theia AI speaks the OpenAI protocol to any base URL; pointing it at a provider d
 
 ##### Responsibility scope
 
-`studio-backend/src/llm_proxy/`: `/studio-llm/v1/chat/completions`, `/studio-llm/v1/models` and `/studio-llm/v1/client-config` forward verbatim to the configured OpenAI-compatible upstream with the key from config, streaming through; `/studio-llm/v1/providers/{provider}/{*rest}` carries the agents' calls (Anthropic, OpenAI) on the caller's own credstore key, private first and shared second (ADR-0030). It is the only Studio code that calls a model provider: other gears use its `ModelProviders` port (ADR-0037). Linked into every build.
+`studio-backend/src/llm_proxy/`: `/studio-llm/v1/chat/completions`, `/studio-llm/v1/models` and `/studio-llm/v1/client-config` forward verbatim to the configured OpenAI-compatible upstream with the key from config, streaming through; `/studio-llm/v1/providers/{provider}/{*rest}` carries the agents' calls (Anthropic, OpenAI) on the caller's own credstore key, private first and shared second (ADR-0030). It is the only Studio code that calls a model provider: other gears use its `ModelProviders` port (ADR-0039). Linked into every build.
 
 ##### Responsibility boundaries
 
@@ -1105,7 +1105,7 @@ Workspace AI chat and LLM egress are platform gears.
 
 ##### Responsibility scope
 
-`mini_chat` (with its static model-policy and audit plugins) and `api_egress` (oagw), linked with the `llm` feature. The portals' and the IDE's Ask AI call mini-chat directly; no Studio gear calls either, and Studio's own calls to a provider go through `cpt-studio-component-llm-proxy` (ADR-0037).
+`mini_chat` (with its static model-policy and audit plugins) and `api_egress` (oagw), linked with the `llm` feature. The portals' and the IDE's Ask AI call mini-chat directly; no Studio gear calls either, and Studio's own calls to a provider go through `cpt-studio-component-llm-proxy` (ADR-0039).
 
 ##### Responsibility boundaries
 

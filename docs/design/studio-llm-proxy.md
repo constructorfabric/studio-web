@@ -42,7 +42,7 @@ key (ADR-0030).
 Both are passthroughs: bytes in, bytes out, the upstream status preserved,
 streaming responses streamed.
 
-It is also Studio's one way out to a model provider (ADR-0037). No other
+It is also Studio's one way out to a model provider (ADR-0039). No other
 Studio gear calls a provider: one that needs to — the connector gear testing a
 key — takes the gear's port, `ModelProviders`, from the ClientHub, and the
 call goes out through the same provider table and HTTP client as an agent's.
@@ -67,7 +67,7 @@ call goes out through the same provider table and HTTP client as an agent's.
 |--------|------------------|
 | `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | Agents reach their models through this proxy, each window with its own person's token and key (ADR-0030, proposed). |
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio configures Theia AI from `client-config` exactly as a container session does (ADR-0027 §3). |
-| `cpt-studio-adr-one-way-out-to-llm-providers` | This gear is the only Studio code that calls a model provider; others use its port; it is linked into every build (ADR-0037, proposed). |
+| `cpt-studio-adr-one-way-out-to-llm-providers` | This gear is the only Studio code that calls a model provider; others use its port; it is linked into every build (ADR-0039, proposed). |
 
 ### 1.3 Architecture Layers
 
@@ -117,7 +117,7 @@ the `mini_chat` and `api_egress` chain's job (`cpt-studio-component-llm-chain`).
 
 #### In every build
 
-The gear is not behind the `llm` Cargo feature (ADR-0037): the connector gear
+The gear is not behind the `llm` Cargo feature (ADR-0039): the connector gear
 tests model-provider keys through it, and the agents' routes are what
 `studio-session` points sessions at, so the release image links it too. `llm`
 gates only the platform's `mini_chat` and `api_egress`
@@ -208,7 +208,7 @@ Mounted only when a credstore client is available. Stores nothing.
 
 ##### Why this component exists
 
-One way out to a provider (ADR-0037): a gear that needs one should not carry
+One way out to a provider (ADR-0039): a gear that needs one should not carry
 its own client and its own copy of the provider's URL conventions.
 
 ##### Responsibility scope

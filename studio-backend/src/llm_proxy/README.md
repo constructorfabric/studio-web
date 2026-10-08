@@ -13,7 +13,7 @@ This README is what you need to work in the directory.
 
 - Gear `studio-llm-proxy`, capabilities `[rest]`, deps `credstore`.
 - Linked into **every build**, the release included — not behind the `llm`
-  feature (ADR-0037).
+  feature (ADR-0039).
 - Studio's one way out to a model provider. Another gear that needs a provider
   takes `port::ModelProviders` from the ClientHub (today: the Anthropic and
   OpenAI connector drivers' key test); do not add a provider HTTP client

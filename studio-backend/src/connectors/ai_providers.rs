@@ -8,7 +8,7 @@
 //! owner can actually manage.
 //!
 //! These drivers do not call the provider themselves. `studio-llm-proxy` is
-//! Studio's one way out to a model provider (ADR-0037); a driver asks it,
+//! Studio's one way out to a model provider (ADR-0039); a driver asks it,
 //! through its port, with the key being tested. What stays here is what a
 //! connection knows: the provider's name, the hosts a key may be sent to, and
 //! how its stored address maps onto the proxy's.
