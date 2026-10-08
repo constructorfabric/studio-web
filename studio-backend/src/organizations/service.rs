@@ -12,7 +12,7 @@
 //! This gear writes the first. The other two are facts about a person, and
 //! studio-user writes them, in one call (`AssignmentRecorder::record_creation`)
 //! — the grant is a projection of the membership, and it has one writer
-//! (ADR-0037 §2).
+//! (ADR-0040 §2).
 //!
 //! There is no transaction across Postgres and account-management, so the
 //! operation is ordered and resumable instead: the writes go in the order above,
@@ -122,7 +122,7 @@ impl OrganizationService {
     ///
     /// studio-user answers (`OrgAuthority::may_dispose`): who owns an
     /// organization is a fact about people, and this gear does not read the
-    /// access config to re-derive it (ADR-0037 §2).
+    /// access config to re-derive it (ADR-0040 §2).
     pub async fn may_delete(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
         self.authority.may_dispose(ctx, org_id).await
     }
@@ -174,7 +174,7 @@ impl OrganizationService {
         };
 
         // The membership, and the owner grant the PDP reads, in one call:
-        // studio-user writes both, the membership first (ADR-0037 §2).
+        // studio-user writes both, the membership first (ADR-0040 §2).
         self.memberships
             .record_creation(ctx, &subject, org.id)
             .await

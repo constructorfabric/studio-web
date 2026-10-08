@@ -267,7 +267,7 @@ No shipped profile sets the section, so the defaults apply.
 Administrative authority — who may change memberships, invite, delete an
 organization — is not asked of this plugin. `cpt-studio-component-user` reads
 the access config itself and answers every other gear through `OrgAuthority`
-(ADR-0037), because for a `tenant`-model organization the clamp admits every
+(ADR-0040), because for a `tenant`-model organization the clamp admits every
 member.
 `cpt-studio-principle-tenant-clamp-first` is the product-level statement of the
 same rule.

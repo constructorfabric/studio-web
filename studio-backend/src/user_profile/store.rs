@@ -63,7 +63,7 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>>;
     /// Every organization at least one person holds a membership of, each
     /// once. For an administrative walk over every organization's access
-    /// config (the grant rekey, ADR-0037 §5), never for a request path.
+    /// config (the grant rekey, ADR-0040 §5), never for a request path.
     async fn organizations_with_members(&self) -> Result<Vec<String>>;
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()>;
     async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()>;

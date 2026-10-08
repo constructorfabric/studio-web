@@ -17,7 +17,7 @@
 //! **Membership is the authority for organization access (ADR-0011 §2); this
 //! document is what the PDP happens to evaluate.** They are written together
 //! and must not drift — which is the other reason for one writer rather than
-//! three. Since ADR-0037 the owner grant has exactly one writer, studio-user,
+//! three. Since ADR-0040 the owner grant has exactly one writer, studio-user,
 //! and every grant it writes names the canonical person.
 
 use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
@@ -137,7 +137,7 @@ impl AccessConfig {
     /// Does the person behind `subjects` hold the organization-wide owner grant?
     ///
     /// `subjects` is every key of one person (`grant_keys_of`): the person id,
-    /// which is what a grant names (ADR-0037 §5), and every sign-in subject of
+    /// which is what a grant names (ADR-0040 §5), and every sign-in subject of
     /// theirs, which is what a grant written before that names. Matching a
     /// single token subject would answer a question about a *login*: the same
     /// human, signed in the other way, would not be the owner.
@@ -262,7 +262,7 @@ pub async fn try_read(
 
 /// Who an owner grant is for.
 pub struct GrantSubject<'a> {
-    /// What the grant names: the canonical person id (ADR-0037 §5).
+    /// What the grant names: the canonical person id (ADR-0040 §5).
     pub key: &'a str,
     /// What a screen shows for it — `subjectName` in the document.
     pub name: &'a str,
@@ -278,7 +278,7 @@ pub struct GrantSubject<'a> {
 /// added back, so calling twice leaves one grant and calling with
 /// `owner = false` leaves none.
 ///
-/// studio-user is the only caller (ADR-0037 §2): the grant is a projection of
+/// studio-user is the only caller (ADR-0040 §2): the grant is a projection of
 /// an active `owner` membership, and a second writer is how the two drifted.
 /// The PDP and `may_administer` match it against the caller's grant keys —
 /// the person id and every login — so a grant on the person is the person's

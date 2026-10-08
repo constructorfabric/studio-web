@@ -9110,7 +9110,7 @@ function AccessView({
   }, [token, org]);
 
   // Grant subjects: the organization's members, by person id — the key every
-  // grant names (ADR-0037 §5) — and teams (RG groups). Best-effort: a failed
+  // grant names (ADR-0040 §5) — and teams (RG groups). Best-effort: a failed
   // load just leaves a picker empty.
   useEffect(() => {
     let live = true;
@@ -9134,7 +9134,7 @@ function AccessView({
     };
   }, [token, org]);
 
-  // The caller as a person: what a grant names (ADR-0037 §5). Until it is
+  // The caller as a person: what a grant names (ADR-0040 §5). Until it is
   // known — or on a backend without studio-user — the sign-in subject stands
   // in, which every grant matcher still accepts.
   const [personId, setPersonId] = useState<string | null>(null);

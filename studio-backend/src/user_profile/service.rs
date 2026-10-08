@@ -415,7 +415,7 @@ impl IdentityService {
     /// Every key a grant may name the person behind `subject` by: the person
     /// id first, then every sign-in subject bound to them.
     ///
-    /// A grant names the person (ADR-0037 §5). Grants written before that
+    /// A grant names the person (ADR-0040 §5). Grants written before that
     /// named whichever login was in front of whoever wrote them, and those keep
     /// matching through the subjects until the rekey has run everywhere — so
     /// the order of deploying and rekeying does not matter. One function, so
@@ -1379,7 +1379,7 @@ impl IdentityService {
     /// screen until they edited their own profile.
     ///
     /// The owner grant follows the row, written here and nowhere else
-    /// (ADR-0037 §2): an `owner` gets it, any other role loses it.
+    /// (ADR-0040 §2): an `owner` gets it, any other role loses it.
     pub async fn record_assignment(
         &self,
         ctx: &SecurityContext,
@@ -1430,7 +1430,7 @@ impl IdentityService {
     /// difference (ADR-0018 §2).
     ///
     /// The membership first, then the owner grant: membership is the
-    /// authority, and the grant is its projection (ADR-0037 §2). Both writes
+    /// authority, and the grant is its projection (ADR-0040 §2). Both writes
     /// are idempotent, so a creation that failed between them is finished by
     /// calling this again.
     pub async fn record_creation(
@@ -1737,11 +1737,11 @@ impl IdentityService {
     /// role is what the last-owner rule counts; the org-scoped `owner` grant in
     /// the access config is what `may_administer` and the PDP read (ADR-0019).
     /// The grant is a projection of the membership, and this is its only
-    /// writer (ADR-0037 §2): creation, assignment and every membership write
+    /// writer (ADR-0040 §2): creation, assignment and every membership write
     /// come through here, or an "owner" in the member list could administer
     /// nothing — and a demoted one still could.
     ///
-    /// The grant names the person (ADR-0037 §5). Grants an older writer left on
+    /// The grant names the person (ADR-0040 §5). Grants an older writer left on
     /// one of the person's logins are taken away in the same write, owner or
     /// not, so a person holds one owner grant, on one key.
     pub async fn sync_owner_grant(
@@ -1792,7 +1792,7 @@ impl IdentityService {
     }
 
     /// Point every member grant that names a known login at its person, in
-    /// every organization somebody belongs to (ADR-0037 §5).
+    /// every organization somebody belongs to (ADR-0040 §5).
     ///
     /// The migration from login-keyed grants. Matching does not depend on it —
     /// `grant_keys_of` matches the person and every login — but a screen that

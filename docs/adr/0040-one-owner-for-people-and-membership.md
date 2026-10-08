@@ -4,7 +4,7 @@ status: proposed
 date: 2026-10-08
 ---
 
-# ADR-0037: One owner for people and membership
+# ADR-0040: One owner for people and membership
 
 **ID**: `cpt-studio-adr-one-owner-for-people-and-membership`
 

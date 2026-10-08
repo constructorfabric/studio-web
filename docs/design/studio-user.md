@@ -46,7 +46,7 @@ an external identity is, read where a subject may go. Each one does one thing,
 so none of them becomes a general way to look up or write somebody else's
 records.
 
-The gear is the one owner of "person and membership" (ADR-0037). Nothing else
+The gear is the one owner of "person and membership" (ADR-0040). Nothing else
 in Studio keeps a copy or derives a second answer: the organization's owner
 grant is a projection of an active `owner` membership that only this gear
 writes, and every grant it writes names the person. The Keycloak home-tenant
@@ -313,7 +313,7 @@ is configured.
 | `POST` | `/users/{user_id}/aliases` | Attribute an identity to a person (platform admin) | stable |
 | `POST` | `/resolve` | `(provider, subject)` to a person, provisioning (platform admin) | stable |
 | `POST` | `/merge` | Fold one person into another, carrying the grants that named them (platform admin) | stable |
-| `POST` | `/grants/backfill` | Point every member grant that names a known login at its person; idempotent, reports `organizations`, `rewritten`, `failed` (platform admin, ADR-0037 migration) | experimental |
+| `POST` | `/grants/backfill` | Point every member grant that names a known login at its person; idempotent, reports `organizations`, `rewritten`, `failed` (platform admin, ADR-0040 migration) | experimental |
 
 An organization route refuses with `ORG_OWNER_REQUIRED`, a platform route with
 `PLATFORM_ADMIN_REQUIRED`. A last-owner refusal is a 400 whose message says what

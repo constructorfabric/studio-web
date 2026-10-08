@@ -756,7 +756,7 @@ impl IdentityDirectoryService {
         // for its own proof channel, and owning each other would leave the pair
         // unconstructible in either order.
         //
-        // Required: the membership is the truth (ADR-0037 §1), so an
+        // Required: the membership is the truth (ADR-0040 §1), so an
         // assignment with nowhere to record it is refused rather than left as
         // IdP attributes nothing in Studio reads.
         memberships: &dyn AssignmentRecorder,
@@ -810,7 +810,7 @@ impl IdentityDirectoryService {
 
         // The owner grant is not written here. It is a projection of the
         // membership, and studio-user writes it with the membership below
-        // (ADR-0037 §2); the two Keycloak attributes are this gear's own
+        // (ADR-0040 §2); the two Keycloak attributes are this gear's own
         // projection, for the platform, and nothing in Studio reads them back.
 
         self.http
@@ -839,7 +839,7 @@ impl IdentityDirectoryService {
         // reporting that as success would hide it from the only person who
         // could fix it. Every write here is idempotent, so the repair is to
         // call the assignment again. studio-user writes the owner grant with
-        // it (ADR-0037 §2).
+        // it (ADR-0040 §2).
         memberships
             .record_assignment(
                 ctx,

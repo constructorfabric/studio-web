@@ -392,7 +392,7 @@ impl Service {
 
     /// Every key a grant may name the caller's person by — the person id and
     /// every sign-in subject of theirs, the caller's own among them
-    /// (`OrganizationReader::grant_keys_of`, ADR-0037 §5).
+    /// (`OrganizationReader::grant_keys_of`, ADR-0040 §5).
     ///
     /// Resolved once per decision and matched as a set, so a grant naming the
     /// person, or one naming any of their logins, is theirs whichever way they

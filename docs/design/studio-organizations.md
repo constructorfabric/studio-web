@@ -36,7 +36,7 @@ and the tenant's access config holds the grant the Studio PDP reads. What it
 adds is that the three are written by one operation, in an order that can be
 resumed. Deletion is the same three in reverse. The membership and the grant
 are facts about a person, so this gear writes neither itself: it asks
-`cpt-studio-component-user`, which writes both in one call (ADR-0037).
+`cpt-studio-component-user`, which writes both in one call (ADR-0040).
 
 It also serves what the portal needs about organizations and the work under
 them in one request each: whether this installation lets people create one, the

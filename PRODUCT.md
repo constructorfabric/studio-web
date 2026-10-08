@@ -67,7 +67,7 @@ plugin cannot claim this; a hosted IDE without the tenant model cannot either.
 - **Authorization is allow-all.** The Studio PDP is a parked milestone (ADR-0004). Roles
   shown in the UI are *derived* from server state (Owner = `created_by`, Editor = an
   access-config grant, otherwise Viewer — resource groups hold no membership anybody
-  reads; who belongs to an organization is studio-user's, ADR-0037); `Admin` is grant-only, and concept-v2
+  reads; who belongs to an organization is studio-user's, ADR-0040); `Admin` is grant-only, and concept-v2
   grants live in `localStorage` (`studio.concept.roleGrants`), never on the backend.
   Every row must say whether its value is `derived` or a `local` grant. Design must not
   present role control as enforcement.

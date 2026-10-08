@@ -103,7 +103,7 @@ Assignment writes three things in order: the realm user's `tenant_id` and
 `/tenants/{tenant_id}` (removing the other tenant groups), and — through
 `AssignmentRecorder::record_assignment` — the Studio membership together with
 the owner grant that follows its role (set for `owner`, cleared otherwise),
-which `cpt-studio-component-user` alone writes (ADR-0037). There is no
+which `cpt-studio-component-user` alone writes (ADR-0040). There is no
 transaction across Keycloak and PostgreSQL, so the last write is not optional:
 a failure there names the identity and tells the administrator to re-run the
 assignment, which is idempotent; without `cpt-studio-component-user` the

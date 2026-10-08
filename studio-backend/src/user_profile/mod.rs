@@ -295,7 +295,7 @@ pub trait AssignmentRecorder: Send + Sync + 'static {
     ///
     /// Writes the organization's owner grant too — given to an `owner`, taken
     /// from anyone else — because the grant is a projection of the membership
-    /// and this gear is its only writer (ADR-0037 §2). `ctx` is the caller's:
+    /// and this gear is its only writer (ADR-0040 §2). `ctx` is the caller's:
     /// the grant is an account-management write the PDP decides as them.
     async fn record_assignment(
         &self,
@@ -397,7 +397,7 @@ pub trait OrganizationReader: Send + Sync + 'static {
     /// Every key a grant may name this subject's person by: the person id,
     /// then every sign-in subject of theirs, `subject` itself always included.
     ///
-    /// A grant names the person (ADR-0037 §5). One written before that names
+    /// A grant names the person (ADR-0040 §5). One written before that names
     /// the subject of whichever login was in front of whoever wrote it, and
     /// matching the caller's subject alone would answer a question about a
     /// *login* — a person with two sign-in methods holding a privilege through
@@ -453,7 +453,7 @@ pub trait OrgAuthority: Send + Sync + 'static {
     /// May the caller dispose of an organization — delete it, or hand it over?
     /// Its owner, or a platform administrator; never a privilege (ADR-0019
     /// §2). Asked here so a gear that disposes of organizations does not read
-    /// the access config itself (ADR-0037 §2).
+    /// the access config itself (ADR-0040 §2).
     async fn may_dispose(&self, ctx: &SecurityContext, org_id: uuid::Uuid) -> bool;
 }
 

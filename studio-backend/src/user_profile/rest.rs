@@ -440,7 +440,7 @@ pub struct MergeResultDto {
     pub grants_moved: u32,
 }
 
-/// What a grant rekey did (ADR-0037 §5).
+/// What a grant rekey did (ADR-0040 §5).
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct RekeyReportDto {
@@ -2109,7 +2109,7 @@ pub fn register_routes(
         .operation_id("studio_user.backfill_grants")
         .summary("Point every member grant at its person (platform admin)")
         .description(
-            "A migration step (ADR-0037 §5). In every organization somebody belongs to, each \
+            "A migration step (ADR-0040 §5). In every organization somebody belongs to, each \
              member grant of the access config that names a known sign-in subject is rewritten \
              to name the canonical person instead, and the duplicates that produces are dropped. \
              Grants on a person, team grants and subjects no login knows are left alone. \

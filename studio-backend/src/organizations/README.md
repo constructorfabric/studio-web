@@ -21,7 +21,7 @@ This README is what you need to work in the directory.
   The creator's membership and owner grant are one call into it
   (`AssignmentRecorder::record_creation`), and who may delete is its answer
   (`OrgAuthority::may_dispose`): this gear writes the tenant and never reads or
-  writes the access config's grants itself (ADR-0037).
+  writes the access config's grants itself (ADR-0040).
 - The rollups read `studio-documents` and `studio-artifact-ingest` through
   their ClientHub ports when present; a missing one leaves its columns null.
 

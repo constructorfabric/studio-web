@@ -1,4 +1,4 @@
-/* ── Who is in an organization, as studio-user answers it (ADR-0037) ────────
+/* ── Who is in an organization, as studio-user answers it (ADR-0040) ────────
  *
  * One answer to "who belongs here": studio-user's memberships. The screens
  * that pick a person for a grant, list an organization's people or a
@@ -7,7 +7,7 @@
  * tenant per account and is not membership.
  *
  * A member is keyed by the canonical person id (`user_id`), which is also what
- * every grant names (ADR-0037 §5), so a grant and a row match by id.
+ * every grant names (ADR-0040 §5), so a grant and a row match by id.
  */
 
 import { api, type Colleague, type OrgMember } from "./api";

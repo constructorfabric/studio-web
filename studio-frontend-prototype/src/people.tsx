@@ -3,7 +3,7 @@
  * Two surfaces, one component:
  *
  *   mode="org"  — the organization's PEOPLE: its members, as studio-user
- *                 records them (ADR-0037 §1). Inviting here creates a Studio
+ *                 records them (ADR-0040 §1). Inviting here creates a Studio
  *                 invitation the person accepts when they sign in with the
  *                 address; nothing is created in the identity provider.
  *
@@ -16,7 +16,7 @@
  *                 can work, so there is no per-project team to manage.
  *
  * Every person here is the canonical person id, and every grant written here
- * names it (ADR-0037 §5). Account-management's `/tenants/{id}/users` is not
+ * names it (ADR-0040 §5). Account-management's `/tenants/{id}/users` is not
  * read: it lists each account's single home tenant in the identity provider,
  * which is not membership.
  */
@@ -161,7 +161,7 @@ export function PeopleView({
     const grant: GrantDef = {
       id: `g_${Date.now().toString(36)}_${cfg.grants.length}`,
       subjectType: "member",
-      // The person id: what every grant names (ADR-0037 §5).
+      // The person id: what every grant names (ADR-0040 §5).
       subjectId: addPick,
       subjectName: subj ? subj.name : addPick.slice(0, 8),
       roleKey: role,

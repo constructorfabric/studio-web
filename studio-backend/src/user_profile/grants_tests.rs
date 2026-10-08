@@ -1,4 +1,4 @@
-//! The owner grant as a projection of membership (ADR-0037), on Postgres.
+//! The owner grant as a projection of membership (ADR-0040), on Postgres.
 //!
 //! What these guard is the seam the two past bugs came through: a grant and a
 //! membership written on different keys, and a grant written by somebody other
