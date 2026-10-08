@@ -1,0 +1,35 @@
+# The product this project ships, as Gearbox composes it.
+#
+# Written by Constructor Studio from the gears picked for the project. The
+# gears come from `gears-rust` at the commit this was checked against;
+# the Studio IDE brings that commit in when it opens the product. From a
+# checkout of `gears-rust` at that commit, resolve it with
+#
+#   gearbox resolve --root ../gears-rust --product product.gdl --profile dev
+#
+# Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
+
+product(
+    id = "studio-web",
+    name = "Studio-web",
+    version = "0.1.0",
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "70a5354d83ed95b84361386f7190b46c5e49c668"))],
+    profiles = [
+        embedded(id = "dev"),
+        self_hosted(id = "local", host = "studio-web", worker_discovery = "directory",
+                    target_dir = "target"),
+        kubernetes(id = "prod", discovery = "static", namespace = "studio-web"),
+    ],
+    default_profile = "prod",
+    gears = [
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("account-management", source = "gears-rust", plugins = [plugin("static-idp-plugin")]),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("static-authn-plugin")]),
+        use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("tr-authz-plugin")]),
+        use_gear("file-storage", source = "gears-rust"),
+        use_gear("api-gateway", source = "gears-rust"),
+        use_gear("nodes-registry", source = "gears-rust"),
+        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
+        use_gear("bss-ledger", source = "gears-rust", plugins = [plugin("bss-rate-provider"), plugin("bss-rate-provider-ecb-plugin")]),
+    ],
+)
