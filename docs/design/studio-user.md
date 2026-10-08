@@ -46,6 +46,14 @@ an external identity is, read where a subject may go. Each one does one thing,
 so none of them becomes a general way to look up or write somebody else's
 records.
 
+The gear is the one owner of "person and membership" (ADR-0037). Nothing else
+in Studio keeps a copy or derives a second answer: the organization's owner
+grant is a projection of an active `owner` membership that only this gear
+writes, and every grant it writes names the person. The Keycloak home-tenant
+attributes the directory writes are the IdP's projection for the platform, and
+no Studio code reads them back as membership; resource groups hold no
+membership at all.
+
 ### 1.2 Architecture Drivers
 
 #### Functional Drivers
@@ -69,6 +77,7 @@ records.
 | `cpt-studio-adr-an-identity-proves-it-is-you-and-decides-nothing-else` | A platform administrator is a member of the platform root; an installation may join every new person to one organization. |
 | `cpt-studio-adr-a-role-narrows-what-a-member-may-do` | Administrative authority is answered in the gear from the access config, not by the PDP. |
 | `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | Studio's service identity is seeded as a person with no membership. |
+| `cpt-studio-adr-one-owner-for-people-and-membership` | This gear is the only owner of person and membership; it alone writes the owner grant, and every grant names the person. |
 
 ### 1.3 Architecture Layers
 
@@ -123,10 +132,30 @@ administrator, or — on the `roles` model — the named privilege (`people.view
 `people.manage`, `people.invite`). For a `tenant`-model organization the PDP
 answers with the tenant clamp, which admits every member, so taking the PDP's
 answer as authority would let any member change memberships. The grant is
-matched against every sign-in subject the person has, so authority does not
-depend on which login they used today.
+matched against the person's grant keys (`grant_keys_of`: the person id, then
+every sign-in subject), so authority does not depend on which login they used
+today, and a grant written before grants named the person still matches.
 
-**ADRs**: `cpt-studio-adr-a-role-narrows-what-a-member-may-do`
+**ADRs**: `cpt-studio-adr-a-role-narrows-what-a-member-may-do`, `cpt-studio-adr-one-owner-for-people-and-membership`
+
+#### The owner grant is a projection of membership, written here only
+
+- [x] `p2` - **ID**: `cpt-studio-principle-user-grant-follows-membership`
+
+An active `owner` membership and the org-scoped `owner` grant in the access
+config say the same thing, so one writer keeps them agreeing:
+`sync_owner_grant`, called by every membership write — the membership routes,
+leaving, `AssignmentRecorder::record_assignment` and `record_creation`. The
+directory and `studio-organizations` no longer touch the access config; they ask
+through `AssignmentRecorder` and `OrgAuthority::may_dispose`. The grant names
+the person, and the write removes any owner grant an older writer left on one of
+the person's logins. The platform root never gets a grant: a platform
+administrator is a membership there, and a document on the root would be
+inherited by every organization without one of its own. A merge carries the
+grants that named the merged-away person (`grants_moved`), and
+`POST /grants/backfill` moves every login-keyed member grant onto its person.
+
+**ADRs**: `cpt-studio-adr-one-owner-for-people-and-membership`
 
 #### Resolve the caller, never an arbitrary subject
 
@@ -283,7 +312,8 @@ is configured.
 | `GET` | `/users/{user_id}`, `/users/{user_id}/memberships` | Any person (platform admin) | stable |
 | `POST` | `/users/{user_id}/aliases` | Attribute an identity to a person (platform admin) | stable |
 | `POST` | `/resolve` | `(provider, subject)` to a person, provisioning (platform admin) | stable |
-| `POST` | `/merge` | Fold one person into another (platform admin) | stable |
+| `POST` | `/merge` | Fold one person into another, carrying the grants that named them (platform admin) | stable |
+| `POST` | `/grants/backfill` | Point every member grant that names a known login at its person; idempotent, reports `organizations`, `rewritten`, `failed` (platform admin, ADR-0037 migration) | experimental |
 
 An organization route refuses with `ORG_OWNER_REQUIRED`, a platform route with
 `PLATFORM_ADMIN_REQUIRED`. A last-owner refusal is a 400 whose message says what
@@ -298,9 +328,10 @@ In process, under the scope `cf.studio._.user_identity.v1~`, published in
 |-----------|------|---------|
 | `PersonResolver` | The caller's person; the person behind a recorded subject | `cpt-studio-component-connector` |
 | `AliasResolver` | Confirmed owners of external identifiers; claims are never returned | `cpt-studio-component-connector` (graph sync) |
-| `AssignmentRecorder` | Record an assignment (naming the person from the IdP's name and e-mail, filling only a profile's blanks), or a creation as owner | `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
+| `AssignmentRecorder` | Record an assignment (naming the person from the IdP's name and e-mail, filling only a profile's blanks), or a creation as owner — each with the owner grant that follows the role, written as the caller | `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
 | `MembershipEvictor` | End every membership of an organization being deleted | `cpt-studio-component-organizations` |
-| `OrganizationReader` | A subject's active organizations, all its person's subjects, platform-admin test, membership generation | `cpt-studio-component-authz-plugin`, `cpt-studio-component-identity-directory`, `cpt-studio-component-organizations` |
+| `OrganizationReader` | A subject's active organizations, its person's grant keys (`grant_keys_of`), platform-admin test, membership generation | `cpt-studio-component-authz-plugin`, `cpt-studio-component-identity-directory` |
+| `OrgAuthority` | May the caller administer an organization (`may_administer`, by privilege), or dispose of it (`may_dispose`: owner or platform administrator) | `cpt-studio-component-domain-model`, `cpt-studio-component-organizations` |
 | `OrganizationRoster` | An organization's active members and their subjects | `cpt-studio-component-organizations` (rollups) |
 | `MemberAliases` | Which provider accounts belong to an active member of one organization, with the member's id and name; confirmed attributions only, no address or role | `cpt-studio-component-artifact-ingest` (open pull requests) |
 

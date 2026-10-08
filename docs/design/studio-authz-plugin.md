@@ -67,6 +67,7 @@ are a member", which is how a member would appoint themselves owner.
 | `cpt-studio-adr-authentication-does-not-grant-organization-membership` | Reach follows recorded membership, not the token alone. |
 | `cpt-studio-adr-an-identity-proves-it-is-you-and-decides-nothing-else` | A platform administrator is a member of the platform root; the token's tenant stays in the clamp until what depends on it is gone. |
 | `cpt-studio-adr-the-person-is-the-key-not-the-login` | A grant is matched against every sign-in subject of the caller's person. |
+| `cpt-studio-adr-one-owner-for-people-and-membership` | A grant names the person; the match set leads with the person id, and the logins stay in it for grants written before the rekey. |
 
 ### 1.3 Architecture Layers
 
@@ -241,7 +242,7 @@ sequenceDiagram
         P-->>R: allow, OWNER_TENANT_ID in reach (+ subtrees)
     else role path or access-config write
         P->>AM: read the access config
-        P->>U: subjects_of(subject)
+        P->>U: grant_keys_of(subject) — the person id and every login
         P-->>R: allow with constraints, or deny
     end
     R-->>PEP: decision + constraints
@@ -264,9 +265,10 @@ No shipped profile sets the section, so the defaults apply.
 ## 4. Additional context
 
 Administrative authority — who may change memberships, invite, delete an
-organization — is not asked of this plugin. `cpt-studio-component-user` and
-`cpt-studio-component-organizations` read the access config themselves, because
-for a `tenant`-model organization the clamp admits every member.
+organization — is not asked of this plugin. `cpt-studio-component-user` reads
+the access config itself and answers every other gear through `OrgAuthority`
+(ADR-0037), because for a `tenant`-model organization the clamp admits every
+member.
 `cpt-studio-principle-tenant-clamp-first` is the product-level statement of the
 same rule.
 

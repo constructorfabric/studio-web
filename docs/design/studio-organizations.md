@@ -34,7 +34,9 @@ The gear owns no storage. It composes: account-management holds the tenant,
 `cpt-studio-component-user` holds the membership that makes somebody its owner,
 and the tenant's access config holds the grant the Studio PDP reads. What it
 adds is that the three are written by one operation, in an order that can be
-resumed. Deletion is the same three in reverse.
+resumed. Deletion is the same three in reverse. The membership and the grant
+are facts about a person, so this gear writes neither itself: it asks
+`cpt-studio-component-user`, which writes both in one call (ADR-0037).
 
 It also serves what the portal needs about organizations and the work under
 them in one request each: whether this installation lets people create one, the
@@ -60,6 +62,7 @@ several requests per row.
 | `cpt-studio-adr-authentication-does-not-grant-organization-membership` | Membership is the authority for access, so it is written before the grant and removed before the tenant. |
 | `cpt-studio-adr-a-role-narrows-what-a-member-may-do` | The privilege catalogue and default role ladder are served from the side that evaluates them. |
 | `cpt-studiofrontend-adr-projects-as-am-tenants` | Workspaces and projects are tenants, so a rollup is a walk of the tenant tree. |
+| `cpt-studio-adr-one-owner-for-people-and-membership` | The creator's membership and owner grant are one call into studio-user, and who may delete is studio-user's answer; this gear does not touch grants. |
 
 ### 1.3 Architecture Layers
 
@@ -119,8 +122,9 @@ tenant, so the other order would strand the credentials in credstore. It refuses
 a tenant that is not of the organization type, and account-management refuses a
 tenant that still has a workspace or a project; that refusal is passed through
 as a 400. The tenant delete is account-management's soft delete. Only the
-organization's owner, read from the access config against every sign-in subject
-of the caller's person, or a platform administrator may delete.
+organization's owner or a platform administrator may delete, and studio-user
+answers which (`OrgAuthority::may_dispose`): this gear does not read ownership
+out of the access config itself.
 
 #### Self-service is a deployment choice
 
@@ -203,8 +207,8 @@ Owns none of the numbers.
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
 | `cpt-studio-component-account-management` | SDK client | Create, read, list and delete tenants |
-| `cpt-studio-component-user` | `AssignmentRecorder`, `MembershipEvictor`, `OrganizationReader`, `OrganizationRoster` | Owner membership, eviction, the deletion gate, the team count |
-| `cpt-studio-component-access-config` | `access_config` module | Write the owner grant; read ownership and the access model |
+| `cpt-studio-component-user` | `AssignmentRecorder`, `MembershipEvictor`, `OrgAuthority`, `OrganizationRoster` | Owner membership and grant, eviction, the deletion gate, the team count |
+| `cpt-studio-component-access-config` | `access_config` module | Read the access model and project grants for the team count; the privilege catalogue |
 | `cpt-studio-component-documents` | `DocumentCounter` (optional) | Rollup counts |
 | `cpt-studio-component-artifact-ingest` | `ArtifactCounter`, `ProjectSignalSource` (optional) | Rollup counts and activity |
 
@@ -231,8 +235,9 @@ sequenceDiagram
     participant U as studio-user
     M->>O: POST /organizations (name[, organization_id])
     O->>AM: create tenant under the platform root (or read it on resume)
-    O->>U: record_creation(subject, org) — owner, source creation
-    O->>AM: owner grant in the access config
+    O->>U: record_creation(ctx, subject, org)
+    U->>U: membership — owner, source creation
+    U->>AM: owner grant on the person, in the access config
     O-->>M: id, name
 ```
 

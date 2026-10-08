@@ -640,7 +640,7 @@ Keycloak authenticates but does not say that two logins are the same person.
 
 ##### Responsibility boundaries
 
-Holds no roles on the person; a role belongs to a membership.
+Holds no roles on the person; a role belongs to a membership. The one owner of person and membership: every other gear reads them through its ClientHub interfaces, and it alone writes the owner grant that follows an `owner` membership, on the person id (ADR-0037).
 
 ##### Related components (by ID)
 
@@ -663,7 +663,7 @@ A person who signed in but belongs to no organization is in no tenant, so no ten
 
 ##### Responsibility boundaries
 
-Not a second user store. It reads the directory, and an assignment writes only the person's tenant and organization role to Keycloak (attributes and the `/tenants/{id}` group) and the owner grant to the access config.
+Not a second user store. It reads the directory, and an assignment writes only the person's tenant and organization role to Keycloak (attributes and the `/tenants/{id}` group) — the IdP's projection for the platform — and hands the membership, with the owner grant that follows it, to `cpt-studio-component-user` (ADR-0037).
 
 ##### Related components (by ID)
 

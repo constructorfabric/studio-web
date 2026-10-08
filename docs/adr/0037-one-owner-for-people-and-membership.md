@@ -47,6 +47,7 @@ Before deciding anything, the map of what the code actually does on `main`
 | **Grant subject key** | `subjectId` in each grant | a Keycloak subject everywhere: the backend writers use the token subject; the prototype picks it from account-management's `/tenants/{id}/users` (AM user id = Keycloak subject) and `me.subject_id` | matched against `subjects_of(subject)` — every login of the person, **never the person id** (rollups alone also match the person id) |
 | **Home tenant** — Keycloak `tenant_id` and `organization_role` attributes, and the per-tenant Keycloak group | Keycloak | the directory's `assign`; account-management's `POST /tenants/{id}/users` (the prototype's People screen "invite") | the platform: the token's `subject_tenant_id` and account-management's `/tenants/{id}/users`. In Studio: the directory's listing (shown as the IdP's attributes) and its one-off membership backfill — **and the prototype**, which reads `/tenants/{id}/users` as "who is in this organization / project" on its People, Team, Access-picker, Projects and Project-overview screens |
 | **Resource-group membership** | platform `resource_group` | **nobody**: no backend code writes or reads it; the prototype's `createGroup`, `addMembership`, `memberships` and `deleteGroup` have no caller | the prototype lists groups (not memberships) as "teams" for a team grant; the PDP's team resolution is a `TODO` that never resolves a team, so a team grant matches nobody |
+| **Team membership in a roadmap plan** — domain-model `person` and `membership` (`scope_kind: team`) objects | the domain model (graph storage) | `studio-reports`, mirroring a plan's units, teams and people (`reports/mirror.rs`) | the domain-model query and its screens. A person in a plan's team, keyed by plan login — a different fact from organization membership, and not read as one |
 | **Platform administrator** | a membership of the platform root, studio-user | studio-user (config seed, backfill) | studio-user, the directory and organizations through `OrganizationReader::is_platform_admin`; the PDP |
 | **Preferences** | `identity_user.ui_preferences`, studio-user | studio-user | the portal. The platform's `simple_user_settings` is registered in the assembly and nothing in Studio reads or writes it any more |
 | **Actor columns** — `created_by`, `requested_by`, `edited_by`, presence ids | each gear's own storage | each gear, from `ctx.subject_id()` | each gear; `connectors` reads its column as a person through `PersonResolver::resolve_recorded_subject` (ADR-0025 §3) |
@@ -160,7 +161,7 @@ invitations instead of creating an IdP user in a home tenant.
   person.
 - The prototype writes grants with the person id (`user_id` from the members
   listing; the caller's own from `/studio-user/v1/me`).
-- `POST /studio-user/v1/grants/rekey` (platform administrator) rewrites the
+- `POST /studio-user/v1/grants/backfill` (platform administrator) rewrites the
   member grants of every organization that has a membership so that each one
   naming a known login names its person instead, dropping the duplicates that
   produces. Idempotent; it reports `(organizations, rewritten, failed)`.
@@ -202,7 +203,7 @@ showed for creation, assignment, a membership change, merge and the rekey.
 
 1. Deploy the backend. Nothing stops matching: old grants match through their
    login.
-2. As a platform administrator, `POST /studio-user/v1/grants/rekey` once per
+2. As a platform administrator, `POST /studio-user/v1/grants/backfill` once per
    environment. Re-running it is a no-op.
 3. Deploy the prototype. Its screens read members and write grants by person.
 
@@ -222,6 +223,10 @@ showed for creation, assignment, a membership change, merge and the rekey.
 5. **The PDP's own access-config parse** duplicates `access_config.rs`; folding
    it in is worth doing with the next change to either.
 6. **`simple_user_settings`** can leave the assembly: nothing reads it.
+7. **The official portal (`studio-frontend`, FrontX) is not changed here.** Its
+   shared accounts service still looks a user up through account-management's
+   `/tenants/{id}/users` (`tenantUserPath`); moving that onto studio-user's
+   members listing is that portal's own change.
 
 ## Traceability
 
