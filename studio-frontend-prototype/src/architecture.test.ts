@@ -47,7 +47,7 @@ describe("domains", () => {
   it("places every gear the brief names, each in one domain", () => {
     const all = DOMAINS.flatMap((d) => d.gears);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(26);
+    expect(all).toHaveLength(27);
   });
 
   it("puts a Studio gear by the table, a plugin with its host, an unknown one in Other", () => {
