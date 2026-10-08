@@ -79,6 +79,23 @@ it was built from — the design text, too, is that commit's. A local build has 
 commit and says `null` rather than guessing from `.git`: an incremental build
 would keep whichever commit last ran the build script.
 
+#### Which Studio gear uses which is read from the code
+
+- [x] `p2` - **ID**: `cpt-studio-principle-assembly-uses-from-code`
+
+The toolkit's `deps` name crates (`deps = [account_management]` expands to a
+`pub use ::account_management`), and every Studio gear lives in the one
+`studio-backend` crate, so no Studio gear can declare that it needs another and
+`depends_on` shows them all as independent. `build.rs` reads it from the code
+instead: every `crate::<gear module>::<item>` outside test code, classified as
+`port` (the other gear's `port` or `sdk` module), `surface` (an item its
+`mod.rs` exports) or `internal` (one of its other modules). Each Studio gear's
+`uses` lists the gears it names and the worst of those ways.
+
+`internal` is a boundary crossed below any contract. The ones that exist are
+listed in `src/assembly/internal_uses.txt`; a test fails on a new one and on a
+listed one that no longer occurs, so the list only shrinks.
+
 ### 2.2 Constraints
 
 #### Names are the only link from a plugin to its host
@@ -115,7 +132,8 @@ starts with `studio-` or it is a plugin of a Studio gear (the connector drivers
 are written here and named after their provider), `platform` otherwise; a
 `role` — `system` when the registry gives it the system capability, `plugin`
 when its name ends in `-plugin`, `gear` otherwise; `extends` for a plugin; the
-`depends_on` it declares; the registry's capability labels; its `order` in the
+`depends_on` it declares; for a Studio gear, the Studio gears it `uses`
+(`gear`, `via`, `items`); the registry's capability labels; its `order` in the
 start sequence; and, for a Studio gear with a design, its `purpose` and
 `design_doc` path.
 

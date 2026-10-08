@@ -1,0 +1,54 @@
+# Studio gears reaching into another gear's private modules: the baseline.
+#
+# `manifest::tests::no_gear_reaches_into_another_beyond_this_baseline` fails
+# when a line appears that is not here (use the other gear's `port` or `sdk`
+# module, or an item its `mod.rs` exports), and when a line here no longer
+# occurs (delete it: the list only shrinks). `from -> to::module`, by module
+# directory under `src/`.
+artifact_ingest -> connectors::driver
+artifact_ingest -> organizations::rollups
+artifact_ingest -> tasks::registry
+artifact_ingest -> tasks::service
+assembly -> studio_session::config
+components_catalog -> artifact_ingest::clone
+components_catalog -> artifact_ingest::graph_backend
+components_catalog -> connectors::driver
+components_catalog -> connectors::github
+components_catalog -> connectors::service
+components_catalog -> documents::gts
+components_catalog -> git_proxy::rest
+components_catalog -> git_proxy::sources
+components_catalog -> studio_session::access
+components_catalog -> tasks::registry
+components_catalog -> tasks::service
+connectors -> tasks::registry
+connectors -> tasks::service
+documents -> spec_mapping::reading
+documents -> spec_quality::batch_task
+documents -> spec_quality::record
+documents -> tasks::service
+git_proxy -> connectors::service
+git_proxy -> tasks::service
+notify -> connectors::driver
+notify -> tasks::registry
+notify -> tasks::service
+reports -> artifact_ingest::graph_backend
+reports -> components_catalog::reference
+reports -> components_catalog::roadmap
+reports -> connectors::service
+reports -> studio_session::access
+reports -> tasks::registry
+reports -> tasks::service
+scheduler -> tasks::registry
+scheduler -> tasks::service
+spec_mapping -> components_catalog::values
+spec_mapping -> documents::model
+spec_mapping -> studio_session::access
+spec_quality -> tasks::registry
+spec_quality -> tasks::service
+studio_session -> git_proxy::sources
+studio_session -> tasks::registry
+studio_session -> tasks::service
+tasks -> notify::service
+user_profile -> connectors::driver
+user_profile -> connectors::service
