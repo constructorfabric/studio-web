@@ -218,7 +218,9 @@ author's move); otherwise `nobody`, open and not a draft with nobody asked.
 `/open-pull-requests` reads the project's `pull_request` and `repo` nodes
 through the index and names each login as a member of the project's
 organization through `MemberAliases`, only where the member CONFIRMED the
-account (ADR-0012).
+account (ADR-0012). Given `workspace_id` instead, it reads every project of the
+workspace and lists a repository two of them sync once; `waiting_on=me` keeps
+what waits on the caller, resolved to a person through `PersonResolver`.
 
 ### 3.2 Component Model
 
@@ -302,7 +304,7 @@ and unscoped listings.
 | `GET` | `/studio-artifact-ingest/v1/edges` | Relations as endpoint pairs, by `scope` | unstable |
 | `GET` | `/studio-artifact-ingest/v1/source-activity` | Pull requests and commits per repository over `days` (default 7, at most 90) | unstable |
 | `GET` | `/studio-artifact-ingest/v1/activity` | One project's checks and comments, newest first | unstable |
-| `GET` | `/studio-artifact-ingest/v1/open-pull-requests` | One project's open pull requests, each in one bucket (`review`, `author`, `merge`, `draft`, `nobody`) with the people it waits on, longest-quiet first; `members_known` says whether accounts were matched to members | unstable |
+| `GET` | `/studio-artifact-ingest/v1/open-pull-requests` | One project's (or, by `workspace_id`, a workspace's) open pull requests, each in one bucket (`review`, `author`, `merge`, `draft`, `nobody`) with the people it waits on, longest-quiet first; `members_known` says whether accounts were matched to members; `waiting_on=me` keeps the caller's | unstable |
 | `GET` | `/studio-artifact-ingest/v1/repo-files` | Text files of a session checkout | unstable |
 | `POST` | `/studio-artifact-ingest/v1/quality` | Upsert `spec_finding` nodes and derived `duplicates`/`traces_to` edges | unstable |
 | `POST` | `/studio-artifact-ingest/v1/search` | Hybrid retrieval when embeddings exist, else lexical | unstable |

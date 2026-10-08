@@ -193,3 +193,33 @@ export function emptyMessage(state: {
   }
   return "No pull requests are open — nothing is waiting on anybody.";
 }
+
+/** The buckets again, said to the person they wait on — the Home page's
+ *  "waiting on you", where every pull request is the reader's own move. */
+export const MY_LABEL: Record<PullWaiting, string> = {
+  review: "your review",
+  author: "yours to rework",
+  merge: "yours to merge",
+  draft: "your draft",
+  nobody: "no reviewer",
+};
+
+/** What waits on the reader, most urgent first: reviews somebody is blocked
+ *  on before their own pull requests, and within each the longest-quiet. */
+export function myPullsInOrder(items: OpenPullRequest[]): OpenPullRequest[] {
+  const rank: Record<PullWaiting, number> = { review: 0, author: 1, merge: 2, nobody: 3, draft: 4 };
+  return [...items].sort(
+    (a, b) =>
+      rank[a.waiting] - rank[b.waiting] ||
+      (b.days_since_update ?? -1) - (a.days_since_update ?? -1),
+  );
+}
+
+/** What the "waiting on you" card says when it has nothing to list. */
+export function myEmptyMessage(state: { membersKnown: boolean; workspaces: number }): string {
+  if (state.workspaces === 0) return "You are in no project yet, so nothing can wait on you.";
+  if (!state.membersKnown) {
+    return "Who is who could not be read from the organization's member list, so Studio cannot tell which pull requests are yours.";
+  }
+  return "Nothing is waiting on you. If you expected something, confirm your GitHub account on your Profile — a pull request reaches you only through an account you confirmed.";
+}

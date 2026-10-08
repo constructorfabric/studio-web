@@ -116,6 +116,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
+import { PullRequestsOnMe } from "./pull-requests-on-me";
 import {
   BookIcon,
   CheckIcon,
@@ -6455,6 +6456,8 @@ function HomeView({
             </ul>
           )}
         </div>
+
+        <PullRequestsOnMe token={token} workspaces={workspaces} onOpenWorkspace={onOpenDashboard} />
 
         <div className="card">
           <h2>Build</h2>

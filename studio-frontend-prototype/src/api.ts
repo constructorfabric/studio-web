@@ -677,6 +677,8 @@ export interface OpenPullRequest {
   /** `owner/name`. */
   repo: string | null;
   provider: string | null;
+  /** The project it was synced for. */
+  project_id: string | null;
   number: number;
   title: string;
   url: string | null;
@@ -2426,6 +2428,15 @@ export const api = {
     request<{ items: OpenPullRequest[]; total: number; members_known: boolean }>(
       `/studio-artifact-ingest/v1/open-pull-requests?project_id=${encodeURIComponent(projectId)}` +
         `&limit=200&offset=${offset}`,
+      token,
+    ),
+
+  /** The open pull requests of every project in a workspace that wait on the
+   *  caller — matched through the accounts they confirmed as theirs. */
+  pullRequestsWaitingOnMe: (token: string, workspaceId: string, offset = 0) =>
+    request<{ items: OpenPullRequest[]; total: number; members_known: boolean }>(
+      `/studio-artifact-ingest/v1/open-pull-requests?workspace_id=${encodeURIComponent(workspaceId)}` +
+        `&waiting_on=me&limit=200&offset=${offset}`,
       token,
     ),
 

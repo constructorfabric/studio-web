@@ -278,6 +278,8 @@ pub struct WaitingPull {
     pub id: String,
     /// Instance id of its repo node.
     pub repo: Option<String>,
+    /// The project whose sync wrote the node.
+    pub project_id: Option<String>,
     pub number: i64,
     pub title: String,
     pub url: Option<String>,
@@ -324,6 +326,7 @@ pub fn waiting_pulls(pulls: &[(String, Value)], now_ms: i64) -> Vec<WaitingPull>
             Some(WaitingPull {
                 id: id.clone(),
                 repo: text("repo"),
+                project_id: text("project_id"),
                 number: value.get("number").and_then(Value::as_i64).unwrap_or(0),
                 title: text("title").unwrap_or_default(),
                 url: text("url"),

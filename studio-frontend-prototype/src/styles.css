@@ -2129,6 +2129,10 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .prw-queue ul.rows .name { overflow-wrap: anywhere; }
 .prw-queue ul.rows .name a { color: inherit; }
 .prw-quiet { margin-left: 6px; }
+/* Home: what waits on the reader, one group per project. */
+.prw-onme + .prw-onme { margin-top: 12px; }
+.prw-onme-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 8px 0 4px; }
+.prw-onme-head .name { font-weight: 600; }
 @media (max-width: 600px) {
   .prw-queue ul.rows { padding-left: 10px; }
 }

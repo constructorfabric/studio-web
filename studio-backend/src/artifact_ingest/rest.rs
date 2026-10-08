@@ -1046,8 +1046,13 @@ async fn activity_feed(
 
 #[derive(Debug, serde::Deserialize)]
 pub struct OpenPullRequestsQuery {
-    /// The project whose pull requests these are.
-    pub project_id: String,
+    /// The project whose pull requests these are. Exactly one of this and
+    /// `workspace_id`.
+    pub project_id: Option<String>,
+    /// Every project of this workspace instead.
+    pub workspace_id: Option<String>,
+    /// `me`: only the pull requests waiting on the caller, as a person.
+    pub waiting_on: Option<String>,
     #[serde(flatten)]
     pub page: PageQuery,
 }
@@ -1089,6 +1094,8 @@ pub struct WaitingPullRequestDto {
     pub repo: Option<String>,
     /// The provider key of that repository (`github`, …).
     pub provider: Option<String>,
+    /// The project it was synced for.
+    pub project_id: Option<String>,
     pub number: i64,
     pub title: String,
     /// The pull request on the provider's site.
@@ -1134,21 +1141,26 @@ pub struct WaitingPullRequestListDto {
     pub members_known: bool,
 }
 
-/// The organization a project hangs under (project → workspace →
+/// The organization a project or workspace hangs under (project → workspace →
 /// organization), read as the caller, so a caller learns nothing about an
-/// organization their scope does not reach. `None` when any step fails or the
-/// grandparent is not an organization.
-async fn organization_of_project(
+/// organization their scope does not reach. `None` when any step fails or no
+/// organization is found within that many steps up.
+async fn organization_of(
     am: &dyn account_management_sdk::AccountManagementClient,
     ctx: &SecurityContext,
-    project_id: Uuid,
+    scope: Uuid,
 ) -> Option<Uuid> {
-    let project = am.get_tenant(ctx, project_id).await.ok()?;
-    let workspace = am.get_tenant(ctx, project.parent_id?.0).await.ok()?;
-    let org_id = workspace.parent_id?.0;
-    let org = am.get_tenant(ctx, org_id).await.ok()?;
-    (org.tenant_type.as_deref() == Some(crate::organizations::sdk::ORGANIZATION_TENANT_TYPE))
-        .then_some(org_id)
+    let mut id = scope;
+    for _ in 0..3 {
+        let tenant = am.get_tenant(ctx, id).await.ok()?;
+        if tenant.tenant_type.as_deref()
+            == Some(crate::organizations::sdk::ORGANIZATION_TENANT_TYPE)
+        {
+            return Some(id);
+        }
+        id = tenant.parent_id?.0;
+    }
+    None
 }
 
 /// GET /studio-artifact-ingest/v1/open-pull-requests — who they wait on.
@@ -1159,17 +1171,42 @@ async fn open_pull_requests(
 ) -> ApiResult<JsonBody<WaitingPullRequestListDto>> {
     use std::collections::{BTreeMap, BTreeSet};
 
-    let project_id = query.project_id.trim();
-    if project_id.is_empty() {
-        return Err(StudioArtifactIngestError::invalid_argument()
-            .with_field_violation("project_id", "must name a project".to_owned(), "INVALID")
-            .create());
-    }
+    let trimmed = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let scope = match (
+        trimmed(query.project_id.as_deref()),
+        trimmed(query.workspace_id.as_deref()),
+    ) {
+        (Some(project), None) => project,
+        (None, Some(workspace)) => workspace,
+        _ => {
+            return Err(StudioArtifactIngestError::invalid_argument()
+                .with_field_violation(
+                    "project_id",
+                    "name exactly one of project_id and workspace_id".to_owned(),
+                    "INVALID",
+                )
+                .create());
+        }
+    };
+    let only_me = match trimmed(query.waiting_on.as_deref()).as_deref() {
+        None => false,
+        Some("me") => true,
+        Some(_) => {
+            return Err(StudioArtifactIngestError::invalid_argument()
+                .with_field_violation("waiting_on", "only `me` is supported".to_owned(), "INVALID")
+                .create());
+        }
+    };
+    let scope = scope.as_str();
     let service = ingest.get()?;
 
-    let pulls = scoped_entries(service, &ctx, "pull_request", project_id).await?;
+    let pulls = scoped_entries(service, &ctx, "pull_request", scope).await?;
     let repos: BTreeMap<String, (Option<String>, Option<String>)> =
-        scoped_entries(service, &ctx, "repo", project_id)
+        scoped_entries(service, &ctx, "repo", scope)
             .await?
             .into_iter()
             .map(|(id, v)| {
@@ -1184,7 +1221,21 @@ async fn open_pull_requests(
             .unwrap_or(0),
     )
     .unwrap_or(0);
-    let waiting = super::pull_request_waits::waiting_pulls(&pulls, now);
+    let mut waiting = super::pull_request_waits::waiting_pulls(&pulls, now);
+    // Two projects of a workspace may sync the same repository; across them a
+    // pull request is still one pull request, shown under the first project.
+    let path_of = |repo: &Option<String>| {
+        repo.as_ref()
+            .and_then(|r| repos.get(r))
+            .and_then(|(path, _)| path.clone())
+    };
+    let mut seen = BTreeSet::new();
+    waiting.retain(|p| match p.repo.as_ref().and_then(|r| repos.get(r)) {
+        Some((Some(path), provider)) => {
+            seen.insert((provider.clone(), path.to_ascii_lowercase(), p.number))
+        }
+        _ => true,
+    });
     let provider_of = |repo: &Option<String>| {
         repo.as_ref()
             .and_then(|r| repos.get(r))
@@ -1218,8 +1269,8 @@ async fn open_pull_requests(
         .hub
         .get::<dyn account_management_sdk::AccountManagementClient>()
         .ok();
-    let org = match (am, Uuid::parse_str(project_id)) {
-        (Some(am), Ok(id)) => organization_of_project(am.as_ref(), &ctx, id).await,
+    let org = match (am, Uuid::parse_str(scope)) {
+        (Some(am), Ok(id)) => organization_of(am.as_ref(), &ctx, id).await,
         _ => None,
     };
     let mut members: BTreeMap<(String, String), crate::user_profile::AttributedMember> =
@@ -1275,11 +1326,8 @@ async fn open_pull_requests(
                 }
             }
             WaitingPullRequestDto {
-                repo: p
-                    .repo
-                    .as_ref()
-                    .and_then(|r| repos.get(r))
-                    .and_then(|(path, _)| path.clone()),
+                repo: path_of(&p.repo),
+                project_id: p.project_id,
                 number: p.number,
                 title: p.title,
                 url: p.url,
@@ -1311,6 +1359,30 @@ async fn open_pull_requests(
             }
         })
         .collect();
+    let items = if only_me {
+        // The caller as a person, not as a sign-in method: an account is
+        // theirs once they confirmed it, whichever way they signed in today.
+        let people = ingest
+            .hub
+            .get_scoped::<dyn crate::user_profile::PersonResolver>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail("studio-user is not available, so nobody can be told apart")
+                    .create()
+            })?;
+        let me = people
+            .resolve_caller(&ctx)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        items
+            .into_iter()
+            .filter(|p| p.waiting_on.iter().any(|w| w.user_id.as_deref() == Some(me.as_str())))
+            .collect()
+    } else {
+        items
+    };
     let (items, total) = page_of(items, query.page);
     Ok(Json(WaitingPullRequestListDto {
         items,
@@ -1476,7 +1548,7 @@ pub fn register_routes(
 
     let router = OperationBuilder::get("/studio-artifact-ingest/v1/open-pull-requests")
         .operation_id("studio_artifact_ingest.list_open_pull_requests")
-        .summary("A project's open pull requests, each with who it is waiting on")
+        .summary("A project's or workspace's open pull requests, each with who it is waiting on")
         .description(
             "Every open pull request of one project, from the `pull_request` nodes the last \
              sync wrote, each put in exactly one bucket: `review` (somebody asked to review it \
@@ -1493,15 +1565,30 @@ pub fn register_routes(
              organization has CONFIRMED it as theirs; anything less names nobody. \
              `members_known: false` means the directory could not be asked, and then no \
              account is called an outsider. Group by `waiting_on` on the client: a pull \
-             request waiting on two reviewers is in both of their queues.",
+             request waiting on two reviewers is in both of their queues.\n\n\
+             `workspace_id` instead of `project_id` reads every project of the workspace; a \
+             repository two of them sync is listed once, under the first. \
+             `waiting_on=me` keeps only what waits on the caller — matched as a person \
+             through the accounts they confirmed, so it is empty while they have confirmed \
+             none.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
         .query_param(
             "project_id",
-            true,
-            "The project whose pull requests to read",
+            false,
+            "The project whose pull requests to read (or give workspace_id)",
+        )
+        .query_param(
+            "workspace_id",
+            false,
+            "Every project of this workspace instead of one project",
+        )
+        .query_param(
+            "waiting_on",
+            false,
+            "`me`: only the pull requests waiting on the caller",
         )
         .query_param_typed(
             "offset",

@@ -500,9 +500,9 @@ export const SURFACES: Surface[] = [
     id: "home",
     area: "portal",
     title: "Home",
-    does: "See your projects and running IDE sessions at a glance.",
-    components: ["HomeView"],
-    gears: ["gear-orchestrator", "studio-session"],
+    does: "See your projects, running IDE sessions and the pull requests waiting on you at a glance.",
+    components: ["HomeView", "PullRequestsOnMe"],
+    gears: ["gear-orchestrator", "studio-artifact-ingest", "studio-session"],
   },
   {
     id: "workspaces",

@@ -7,6 +7,8 @@ import {
   days,
   emptyMessage,
   isQuiet,
+  myEmptyMessage,
+  myPullsInOrder,
   personName,
   prRef,
   queuesByPerson,
@@ -40,6 +42,7 @@ const pr = (over: Partial<OpenPullRequest> = {}): OpenPullRequest => ({
   id: `pr-${over.number ?? 1}`,
   repo: "acme/web",
   provider: "github",
+  project_id: "project-1",
   number: 1,
   title: "Add the thing",
   url: "https://github.com/acme/web/pull/1",
@@ -183,5 +186,23 @@ describe("empty states", () => {
     expect(emptyMessage({ repositories: 2, synced: false, open: 0 })).toMatch(/Sources tab/);
     expect(emptyMessage({ repositories: 2, synced: true, open: 0 })).toMatch(/nothing is waiting/);
     expect(emptyMessage({ repositories: 2, synced: true, open: 3 })).toBeNull();
+  });
+});
+
+describe("what waits on me", () => {
+  it("puts the reviews others wait for first, then the longest-quiet", () => {
+    const mine = myPullsInOrder([
+      pr({ id: "draft", waiting: "draft", days_since_update: 40 }),
+      pr({ id: "merge", waiting: "merge", days_since_update: 1 }),
+      pr({ id: "review-new", waiting: "review", days_since_update: 0 }),
+      pr({ id: "review-old", waiting: "review", days_since_update: 9 }),
+    ]);
+    expect(mine.map((p) => p.id)).toEqual(["review-old", "review-new", "merge", "draft"]);
+  });
+
+  it("says why the list is empty", () => {
+    expect(myEmptyMessage({ membersKnown: true, workspaces: 0 })).toMatch(/no project/);
+    expect(myEmptyMessage({ membersKnown: false, workspaces: 2 })).toMatch(/could not be read/);
+    expect(myEmptyMessage({ membersKnown: true, workspaces: 2 })).toMatch(/confirm your GitHub account/);
   });
 });
