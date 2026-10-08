@@ -190,13 +190,13 @@ pub trait ComponentCatalog: Send + Sync {
 /// The catalogue's answer to [`ComponentCatalog`].
 pub struct CatalogComponents {
     service: Arc<CatalogService>,
-    gearbox: Option<Arc<super::gearbox::Gearbox>>,
+    gearbox: Option<Arc<crate::product::sdk::Gearbox>>,
 }
 
 impl CatalogComponents {
     pub fn new(
         service: Arc<CatalogService>,
-        gearbox: Option<Arc<super::gearbox::Gearbox>>,
+        gearbox: Option<Arc<crate::product::sdk::Gearbox>>,
     ) -> Self {
         Self { service, gearbox }
     }
@@ -247,7 +247,7 @@ impl ComponentCatalog for CatalogComponents {
         let gearbox = self.gearbox.as_ref()?;
         Some(
             gearbox
-                .complete(gears, &super::gearbox::GearConfig::new())
+                .complete(gears, &crate::product::sdk::GearConfig::new())
                 .await
                 .map(|done| {
                     done.changes

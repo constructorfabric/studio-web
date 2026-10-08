@@ -174,14 +174,14 @@ backend:
     sizeLimit: 4Gi
     mountPath: /var/lib/studio/artifact-clones
   # The Gearbox engine: the gear catalogue an IDE lists when its workspace
-  # holds no gear corpus (`/studio-components-catalog/v1/gearbox/catalogue`),
+  # holds no gear corpus (`/studio-product/v1/gearbox/catalogue`),
   # product previews, and the corpus clone relay. Off, those routes do not
   # exist and the IDE's Building mode shows an empty catalogue.
   #
   # The backend keeps one checkout of the corpus under `mountPath`, refreshed
   # at most every `refreshSecs`. `emptyDir` for the reason artifactClone gives:
   # a restart re-clones. Empty `corpusUrl`/`corpusRef` take the code's
-  # defaults (components_catalog/gearbox.rs).
+  # defaults (product/gearbox.rs).
   gearbox:
     enabled: false
     sizeLimit: 2Gi

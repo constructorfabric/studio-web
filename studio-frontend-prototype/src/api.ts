@@ -3888,7 +3888,7 @@ export const api = {
   /** The gear repository connected to a project (0 or 1 node). */
   getProjectGearRepo: (token: string, projectId: string) =>
     request<{ nodes: { value: ProjectGearRepo }[] }>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
       token,
     ),
   /** Connect (or update) the gear repository for a project. */
@@ -3898,7 +3898,7 @@ export const api = {
     body: { tenant: string; connection_id?: string | null; repo: string; branch?: string },
   ) =>
     request<CatalogNode>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/gear-repo`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),
@@ -3941,7 +3941,7 @@ export const api = {
       pr_url?: string | null;
       files: ScaffoldFile[];
     }>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),
@@ -3949,13 +3949,13 @@ export const api = {
    *  can run in a product come first. */
   gearboxExtensionPoints: (token: string) =>
     request<{ items: GearboxExtensionPoint[]; total: number }>(
-      `/studio-components-catalog/v1/gearbox/extension-points`,
+      `/studio-product/v1/gearbox/extension-points`,
       token,
     ),
   /** The product the project is composing, or null before anything is picked. */
   projectProduct: async (token: string, projectId: string): Promise<ProjectProduct | null> => {
     const r = await request<{ nodes: { value: ProjectProduct }[] }>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
       token,
     );
     return r.nodes?.[0]?.value ?? null;
@@ -3967,7 +3967,7 @@ export const api = {
     body: { product_id?: string; name?: string; gears?: string[]; profile?: string; config?: GearConfig },
   ) =>
     request<{ value: ProjectProduct }>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product`,
       token,
       { method: "PUT", body: JSON.stringify(body) },
     ),
@@ -3976,13 +3976,13 @@ export const api = {
    *  each with its reason. Writes nothing. */
   completeProduct: (token: string, gears: string[], config?: GearConfig) =>
     request<{ gears: string[]; changes: ProductChange[]; config: GearConfig }>(
-      `/studio-components-catalog/v1/gearbox/complete`,
+      `/studio-product/v1/gearbox/complete`,
       token,
       { method: "POST", body: JSON.stringify({ gears, config: config ?? {} }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>
-    request<GearboxStatus>(`/studio-components-catalog/v1/gearbox`, token),
+    request<GearboxStatus>(`/studio-product/v1/gearbox`, token),
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
    *  engine. `write` also commits it to the project's gear repo — onto the
    *  base branch, or onto a new branch with a pull request when `open_pr`. */
@@ -4003,7 +4003,7 @@ export const api = {
     },
   ) =>
     request<ProductPreview>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product/preview`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product/preview`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),
@@ -4021,7 +4021,7 @@ export const api = {
     },
   ) =>
     request<{ full_name: string; html_url: string; default_branch: string }>(
-      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/create-repo`,
+      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/create-repo`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),

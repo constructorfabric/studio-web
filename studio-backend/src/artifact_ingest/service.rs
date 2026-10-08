@@ -20,10 +20,10 @@ use anyhow::anyhow;
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use toolkit_security::SecurityContext;
 
-use super::clone;
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
+use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{ConnectionAuth, ConnectorDriver, PullRequestThreads};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -581,7 +581,7 @@ impl IngestService {
         // the project tenant when opened from a project. Prefer `project_id`
         // for the checkout path; fall back to `workspace_id` for a
         // workspace-level open.
-        let on_disk: Option<(PathBuf, clone::Walk, Option<String>)> = if let Some(dir) =
+        let on_disk: Option<(PathBuf, git_checkout::Walk, Option<String>)> = if let Some(dir) =
             self.shared_checkout_dir(project_id.or(workspace_id), repo_dir)
         {
             progress.set("reading workspace files…");
@@ -598,7 +598,7 @@ impl IngestService {
                         "studio-artifact-ingest: reading the workspace checkout failed — skipping files"
                     );
                     // An incomplete walk, so nothing is forgotten over it.
-                    Some((PathBuf::new(), clone::Walk::default(), None))
+                    Some((PathBuf::new(), git_checkout::Walk::default(), None))
                 }
             }
         } else if let Some(work_root) = self.work_root.clone() {
@@ -622,7 +622,7 @@ impl IngestService {
                         "studio-artifact-ingest: clone failed — skipping files"
                     );
                     // An incomplete walk, so nothing is forgotten over it.
-                    Some((PathBuf::new(), clone::Walk::default(), None))
+                    Some((PathBuf::new(), git_checkout::Walk::default(), None))
                 }
             }
         } else {
@@ -1127,7 +1127,7 @@ impl IngestService {
         repo_full_path: &str,
         base_url: &str,
         token: &str,
-    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
         let clone_url = driver.clone_url(base_url, repo_full_path)?;
         let (username, password) = driver.clone_credentials(token);
         let username = username.to_string();
@@ -1136,7 +1136,7 @@ impl IngestService {
         let repo = repo_full_path.to_string();
 
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let res = clone::clone_or_update(
+            let res = git_checkout::clone_or_update(
                 &work_root,
                 &connector_id,
                 &repo,
@@ -1145,7 +1145,7 @@ impl IngestService {
                 &password,
                 None,
             )?;
-            let walked = clone::walk(&res.dir, &synced_text)?;
+            let walked = git_checkout::walk(&res.dir, &synced_text)?;
             Ok((res.dir, walked, res.commit))
         })
         .await
@@ -1181,7 +1181,7 @@ impl IngestService {
     }
 
     /// Re-sync: pull the shared checkout up to the remote
-    /// (`clone::update_shared_checkout`, a fast-forward only when nothing would
+    /// (`git_checkout::update_shared_checkout`, a fast-forward only when nothing would
     /// be lost), then read it. A failed fetch -- no network, no credential --
     /// reads the checkout as it stands and says so, which is no worse than
     /// before.
@@ -1190,25 +1190,25 @@ impl IngestService {
         dir: PathBuf,
         username: String,
         password: String,
-    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            match clone::update_shared_checkout(&dir, &username, &password) {
-                Ok(clone::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
+            match git_checkout::update_shared_checkout(&dir, &username, &password) {
+                Ok(git_checkout::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
                     dir = %dir.display(), %from, %to,
                     "studio-artifact-ingest: pulled the shared checkout up to the remote"
                 ),
-                Ok(clone::CheckoutUpdate::Kept { reason }) => tracing::warn!(
+                Ok(git_checkout::CheckoutUpdate::Kept { reason }) => tracing::warn!(
                     dir = %dir.display(), %reason,
                     "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
                 ),
-                Ok(clone::CheckoutUpdate::Current) => {}
+                Ok(git_checkout::CheckoutUpdate::Current) => {}
                 Err(e) => tracing::warn!(
                     error = %e, dir = %dir.display(),
                     "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
                 ),
             }
-            let commit = clone::head_commit(&dir);
-            let walked = clone::walk(&dir, &synced_text)?;
+            let commit = git_checkout::head_commit(&dir);
+            let walked = git_checkout::walk(&dir, &synced_text)?;
             Ok((dir, walked, commit))
         })
         .await
@@ -1220,10 +1220,10 @@ impl IngestService {
     async fn walk_checkout(
         &self,
         dir: PathBuf,
-    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let commit = clone::head_commit(&dir);
-            let walked = clone::walk(&dir, &|_| true)?;
+            let commit = git_checkout::head_commit(&dir);
+            let walked = git_checkout::walk(&dir, &|_| true)?;
             Ok((dir, walked, commit))
         })
         .await
@@ -1642,7 +1642,7 @@ impl IngestService {
         let Some(root) = self.work_root.as_ref() else {
             return Ok(Vec::new());
         };
-        let dir = root.join(clone::checkout_key(secret_ref, repo_full_path));
+        let dir = root.join(git_checkout::checkout_key(secret_ref, repo_full_path));
         if !dir.join(".git").is_dir() {
             return Ok(Vec::new());
         }
@@ -2020,7 +2020,7 @@ impl super::port::RepoFileReader for IngestService {
         let Some(root) = self.work_root.as_ref() else {
             return Ok(None);
         };
-        let dir = root.join(clone::checkout_key(secret_ref, repo_full_path));
+        let dir = root.join(git_checkout::checkout_key(secret_ref, repo_full_path));
         if !dir.join(".git").is_dir() {
             return Ok(None);
         }
@@ -2028,10 +2028,10 @@ impl super::port::RepoFileReader for IngestService {
     }
 }
 
-/// [`clone::read_text_file`] off the async runtime.
+/// [`git_checkout::read_text_file`] off the async runtime.
 async fn read_one(dir: PathBuf, path: &str) -> anyhow::Result<Option<String>> {
     let path = path.to_owned();
-    tokio::task::spawn_blocking(move || clone::read_text_file(&dir, &path))
+    tokio::task::spawn_blocking(move || git_checkout::read_text_file(&dir, &path))
         .await
         .map_err(|e| anyhow!("file read did not finish: {e}"))
 }
@@ -2574,7 +2574,7 @@ mod prune_tests {
     #[tokio::test]
     async fn the_synced_clone_is_readable_by_the_connection_and_path_it_was_synced_with() {
         let root = std::env::temp_dir().join(format!("studio-clone-{}", Uuid::new_v4()));
-        let dir = root.join(super::clone::checkout_key(
+        let dir = root.join(crate::connectors::sdk::git_checkout::checkout_key(
             "studio-connection-1",
             "org/repo",
         ));

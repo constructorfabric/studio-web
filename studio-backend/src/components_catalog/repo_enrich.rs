@@ -21,18 +21,14 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use reqwest::Client;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::repo_facts::{self, CommitFacts, SpecStats, Version};
-use crate::connectors::sdk::ConnectionAuth;
 use crate::connectors::sdk::ConnectorService;
-
-const UA: &str = "constructor-studio-gears-catalog";
+use crate::connectors::sdk::{RemoteFileList, Repository};
 
 /// One gear discovered in the repository: the directory that carries its
 /// `gear.toml`, the crate name it maps to, and the field map the UI renders.
@@ -113,7 +109,6 @@ const KIT_MANIFEST: &str = ".cf-studio-kit.toml";
 /// Reads gear metadata from a repository, using a Studio GitHub connection for
 /// auth. Constructed per sync from the source the caller chose on the Gears page.
 pub struct RepoEnricher {
-    http: Client,
     connectors: Arc<ConnectorService>,
     tenant: Uuid,
     connection_id: Option<Uuid>,
@@ -142,9 +137,7 @@ impl RepoEnricher {
             return None;
         }
         let git_ref = normalize_ref(&git_ref);
-        let http = Client::builder().user_agent(UA).build().ok()?;
         Some(Self {
-            http,
             connectors,
             tenant,
             connection_id,
@@ -178,7 +171,7 @@ impl RepoEnricher {
     /// `gear.gdl` or a `gear.toml` (Gears), or a `packages/*/package.json`
     /// package (FrontX micro-frontends).
     pub async fn enrich(&self, ctx: &SecurityContext) -> Result<Vec<RepoGear>> {
-        let auth = self.resolve_auth(ctx).await?;
+        let src = self.open(ctx).await?;
         let listing: Vec<String> = match &self.checkout {
             Some(dir) => {
                 let dir = dir.clone();
@@ -187,25 +180,21 @@ impl RepoEnricher {
                     .context("listing the checkout")?
             }
             None => {
-                let tree = self.tree(&auth).await?;
+                let tree = self.tree(&src).await?;
                 if tree.truncated {
                     warn!(
                         repo = %self.repo,
                         "studio-gears-catalog: repository tree was truncated — some counts may be low"
                     );
                 }
-                tree.tree
-                    .into_iter()
-                    .filter(|e| e.kind == "blob" || e.kind == "tree")
-                    .map(|e| e.path)
-                    .collect()
+                tree.files.into_iter().map(|e| e.path).collect()
             }
         };
         let paths: Vec<&str> = listing.iter().map(String::as_str).collect();
         match self.mode {
-            RepoMode::Gears => self.discover_gears(&auth, &paths).await,
-            RepoMode::Frontx => self.discover_frontx(&auth, &paths).await,
-            RepoMode::Kits => self.discover_kits(&auth, &paths).await,
+            RepoMode::Gears => self.discover_gears(&src, &paths).await,
+            RepoMode::Frontx => self.discover_frontx(&src, &paths).await,
+            RepoMode::Kits => self.discover_kits(&src, &paths).await,
         }
     }
 
@@ -222,7 +211,7 @@ impl RepoEnricher {
     /// repository would call it. A manifest that cannot be read is skipped with
     /// a warning rather than failing the sync — one bad kit must not cost the
     /// catalogue the others.
-    async fn discover_kits(&self, auth: &ConnectionAuth, paths: &[&str]) -> Result<Vec<RepoGear>> {
+    async fn discover_kits(&self, src: &Repository, paths: &[&str]) -> Result<Vec<RepoGear>> {
         let manifests: Vec<&str> = paths
             .iter()
             .copied()
@@ -231,7 +220,7 @@ impl RepoEnricher {
 
         let mut out: Vec<RepoGear> = Vec::new();
         for path in manifests {
-            let Some(body) = self.read_file(auth, path).await else {
+            let Some(body) = self.read_file(src, path).await else {
                 warn!(
                     repo = %self.repo, path,
                     "studio-gears-catalog: kit manifest unreadable, skipped"
@@ -281,10 +270,10 @@ impl RepoEnricher {
     }
 
     /// Gears: one component per gear directory, as [`gear_dirs`] finds them.
-    async fn discover_gears(&self, auth: &ConnectionAuth, paths: &[&str]) -> Result<Vec<RepoGear>> {
+    async fn discover_gears(&self, src: &Repository, paths: &[&str]) -> Result<Vec<RepoGear>> {
         let gear_dirs = gear_dirs(paths);
-        let codeowners = self.read_codeowners(auth).await;
-        let wide = self.repo_wide(auth).await;
+        let codeowners = self.read_codeowners(src).await;
+        let wide = self.repo_wide(src).await;
         let mut out: Vec<RepoGear> = Vec::with_capacity(gear_dirs.len());
         // Each gear's own crate names, for the reverse walk below.
         let mut own: Vec<std::collections::BTreeSet<String>> = Vec::with_capacity(gear_dirs.len());
@@ -302,7 +291,7 @@ impl RepoEnricher {
                 .into_iter()
                 .take(self.cap(MAX_GEAR_MANIFESTS))
             {
-                if let Some(body) = self.read_file(auth, &format!("{dir}/{rel}")).await {
+                if let Some(body) = self.read_file(src, &format!("{dir}/{rel}")).await {
                     manifests.push((rel, body));
                 }
             }
@@ -320,7 +309,7 @@ impl RepoEnricher {
             }
             let (fields, uml) = self
                 .gear_fields(
-                    auth,
+                    src,
                     dir,
                     &slug,
                     &crate_name,
@@ -369,7 +358,7 @@ impl RepoEnricher {
         let mut in_crate: Vec<String> = Vec::new();
         for p in in_crate_plugin_gdls(paths) {
             if let Some(spec) = self
-                .read_file(auth, p)
+                .read_file(src, p)
                 .await
                 .and_then(|b| parse_gear_gdl(&b).implements)
             {
@@ -387,39 +376,22 @@ impl RepoEnricher {
     /// Tags are listed rather than searched: gears-rust carries over two
     /// thousand of them, which is two dozen pages read once, against a search
     /// per gear that GitHub rate-limits to thirty a minute.
-    async fn repo_wide(&self, auth: &ConnectionAuth) -> RepoWide {
+    async fn repo_wide(&self, src: &Repository) -> RepoWide {
         const MAX_PAGES: usize = 40;
         let mut tags: Vec<String> = Vec::new();
         for page in 1..=MAX_PAGES {
-            let url = self.api(
-                auth,
-                &format!("/repos/{}/tags?per_page=100&page={page}", self.repo),
-            );
-            let Ok(resp) = self
-                .http
-                .get(&url)
-                .bearer_auth(&auth.token)
-                .header("Accept", "application/vnd.github+json")
-                .send()
-                .await
-            else {
-                break;
-            };
-            if !resp.status().is_success() {
-                break;
-            }
-            let Ok(batch) = resp.json::<Vec<TagEntry>>().await else {
+            let Ok(batch) = src.tags(page as u32, 100).await else {
                 break;
             };
             let n = batch.len();
-            tags.extend(batch.into_iter().map(|t| t.name));
+            tags.extend(batch);
             if n < 100 {
                 break;
             }
         }
-        let root = self.read_file(auth, "Cargo.toml").await.unwrap_or_default();
+        let root = self.read_file(src, "Cargo.toml").await.unwrap_or_default();
         let changelog = self
-            .read_file(auth, "CHANGELOG.md")
+            .read_file(src, "CHANGELOG.md")
             .await
             .map(|b| repo_facts::changelog_releases(&b))
             .unwrap_or_default();
@@ -452,11 +424,7 @@ impl RepoEnricher {
     /// workspaces, which makes those bodies siblings of the container rather
     /// than nested under a component. `src-app` is in [`SKIP_SEGMENTS`] for
     /// exactly that reason — see the note there.
-    async fn discover_frontx(
-        &self,
-        auth: &ConnectionAuth,
-        paths: &[&str],
-    ) -> Result<Vec<RepoGear>> {
+    async fn discover_frontx(&self, src: &Repository, paths: &[&str]) -> Result<Vec<RepoGear>> {
         // Every manifest in the tree, shallowest first, so a container is
         // always seen before the packages it contains.
         let manifests = frontx_manifest_paths(paths);
@@ -478,7 +446,7 @@ impl RepoEnricher {
             }) {
                 continue;
             }
-            let body = self.read_file(auth, p).await;
+            let body = self.read_file(src, p).await;
             // An unreadable manifest tells us nothing — treat it as a
             // container so its children still get their chance.
             let Some(body) = body else {
@@ -499,7 +467,7 @@ impl RepoEnricher {
                 continue;
             }
             claimed.push(dir.clone());
-            out.push(self.frontx_component(auth, &dir, &body, paths).await);
+            out.push(self.frontx_component(src, &dir, &body, paths).await);
         }
 
         info!(
@@ -513,7 +481,7 @@ impl RepoEnricher {
     /// Build one FrontX component from its directory and its package.json.
     async fn frontx_component(
         &self,
-        auth: &ConnectionAuth,
+        src: &Repository,
         dir: &str,
         pkg: &str,
         paths: &[&str],
@@ -595,7 +563,7 @@ impl RepoEnricher {
                     || q.eq_ignore_ascii_case("README.md")
             })),
         );
-        if let Some(date) = self.last_change(auth, dir).await {
+        if let Some(date) = self.last_change(src, dir).await {
             let day = date.get(0..10).unwrap_or(&date).to_string();
             let mut v = text(&day, None, None);
             if let Some(o) = v.as_object_mut() {
@@ -618,41 +586,26 @@ impl RepoEnricher {
         }
     }
 
-    /// Resolve a GitHub connection's `ConnectionAuth` (base_url + token) via the
-    /// connectors service — the token stays in credstore, we only borrow it.
-    async fn resolve_auth(&self, ctx: &SecurityContext) -> Result<ConnectionAuth> {
-        let (_driver, auth, _conn) = self
-            .connectors
-            .named_or_default(ctx, self.tenant, self.connection_id, "github")
-            .await?;
-        Ok(auth)
+    /// The repository through the chosen GitHub connection -- the token stays
+    /// in credstore; the connection's driver speaks to the provider.
+    async fn open(&self, ctx: &SecurityContext) -> Result<Repository> {
+        Repository::open(
+            &self.connectors,
+            ctx,
+            self.tenant,
+            self.connection_id,
+            "github",
+            &self.repo,
+            Some(&self.git_ref),
+        )
+        .await
     }
 
-    // ── GitHub REST ──────────────────────────────────────────────────────────
-
-    fn api(&self, auth: &ConnectionAuth, path: &str) -> String {
-        format!("{}{}", auth.base_url.trim_end_matches('/'), path)
-    }
-
-    async fn tree(&self, auth: &ConnectionAuth) -> Result<GitTree> {
-        let url = self.api(
-            auth,
-            &format!(
-                "/repos/{}/git/trees/{}?recursive=1",
-                self.repo, self.git_ref
-            ),
-        );
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&auth.token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            return Err(anyhow!("git tree {}: HTTP {}", self.repo, resp.status()));
-        }
-        Ok(resp.json::<GitTree>().await?)
+    /// Every blob and tree path at the ref, and whether GitHub cut it short.
+    async fn tree(&self, src: &Repository) -> Result<RemoteFileList> {
+        src.tree()
+            .await
+            .map_err(|e| anyhow!("git tree {}: {e:#}", self.repo))
     }
 
     /// The crate names every `Cargo.toml` in the repository depends on at run
@@ -665,12 +618,12 @@ impl RepoEnricher {
         ctx: &SecurityContext,
     ) -> Result<std::collections::BTreeSet<String>> {
         const MAX_MANIFESTS: usize = 300;
-        let auth = self.resolve_auth(ctx).await?;
-        let tree = self.tree(&auth).await?;
+        let src = self.open(ctx).await?;
+        let tree = self.tree(&src).await?;
         let manifests: Vec<String> = tree
-            .tree
+            .files
             .iter()
-            .filter(|e| e.kind == "blob")
+            .filter(|e| !e.is_dir)
             .filter(|e| e.path == "Cargo.toml" || e.path.ends_with("/Cargo.toml"))
             .filter(|e| {
                 !e.path.split('/').any(|seg| {
@@ -685,7 +638,7 @@ impl RepoEnricher {
             .collect();
         let mut out = std::collections::BTreeSet::new();
         for path in manifests {
-            if let Some(body) = self.read_file(&auth, &path).await {
+            if let Some(body) = self.read_file(&src, &path).await {
                 out.extend(cargo_dependency_names(&body));
             }
         }
@@ -693,34 +646,16 @@ impl RepoEnricher {
     }
 
     /// Fetch one text file's raw content, or `None` when it is absent.
-    async fn read_file(&self, auth: &ConnectionAuth, path: &str) -> Option<String> {
+    async fn read_file(&self, src: &Repository, path: &str) -> Option<String> {
         if let Some(dir) = &self.checkout {
             return tokio::fs::read_to_string(dir.join(path)).await.ok();
         }
-        let url = self.api(
-            auth,
-            &format!(
-                "/repos/{}/contents/{}?ref={}",
-                self.repo, path, self.git_ref
-            ),
-        );
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&auth.token)
-            .header("Accept", "application/vnd.github.raw")
-            .send()
-            .await
-            .ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        resp.text().await.ok()
+        src.read_file(path).await.ok().flatten().map(|f| f.text)
     }
 
-    async fn read_codeowners(&self, auth: &ConnectionAuth) -> Option<String> {
+    async fn read_codeowners(&self, src: &Repository) -> Option<String> {
         for path in [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"] {
-            if let Some(text) = self.read_file(auth, path).await {
+            if let Some(text) = self.read_file(src, path).await {
                 return Some(text);
             }
         }
@@ -728,77 +663,29 @@ impl RepoEnricher {
     }
 
     /// The last commit ISO date that touched a directory.
-    async fn last_change(&self, auth: &ConnectionAuth, dir: &str) -> Option<String> {
-        let url = self.api(
-            auth,
-            &format!(
-                "/repos/{}/commits?path={}&per_page=1&sha={}",
-                self.repo, dir, self.git_ref
-            ),
-        );
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&auth.token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
+    async fn last_change(&self, src: &Repository, dir: &str) -> Option<String> {
+        src.history(dir, 1)
             .await
-            .ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        let commits = resp.json::<Vec<CommitEntry>>().await.ok()?;
-        commits
+            .ok()?
             .into_iter()
             .next()
-            .and_then(|c| c.commit.committer.and_then(|a| a.date))
+            .and_then(|c| c.committed_at)
     }
 
     /// A directory's recent history: the last change, and up to a hundred
     /// commits' authors and messages -- enough to name who works on it and
     /// how much of it is signed off, in the one call the last-change date
     /// already cost.
-    async fn history(
-        &self,
-        auth: &ConnectionAuth,
-        dir: &str,
-    ) -> (Option<String>, Vec<CommitFacts>) {
-        let url = self.api(
-            auth,
-            &format!(
-                "/repos/{}/commits?path={}&per_page=100&sha={}",
-                self.repo, dir, self.git_ref
-            ),
-        );
-        let Ok(resp) = self
-            .http
-            .get(&url)
-            .bearer_auth(&auth.token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-        else {
+    async fn history(&self, src: &Repository, dir: &str) -> (Option<String>, Vec<CommitFacts>) {
+        let Ok(commits) = src.history(dir, 100).await else {
             return (None, Vec::new());
         };
-        if !resp.status().is_success() {
-            return (None, Vec::new());
-        }
-        let Ok(entries) = resp.json::<Vec<HistoryEntry>>().await else {
-            return (None, Vec::new());
-        };
-        let last = entries
-            .first()
-            .and_then(|e| e.commit.committer.as_ref())
-            .and_then(|c| c.date.clone());
-        let facts = entries
+        let last = commits.first().and_then(|c| c.committed_at.clone());
+        let facts = commits
             .into_iter()
-            .map(|e| CommitFacts {
-                author: e
-                    .author
-                    .map(|a| a.login)
-                    .or_else(|| e.commit.author.and_then(|a| a.name))
-                    .unwrap_or_default(),
-                message: e.commit.message,
+            .map(|c| CommitFacts {
+                author: c.author.or(c.author_name).unwrap_or_default(),
+                message: c.message.unwrap_or_default(),
             })
             .collect();
         (last, facts)
@@ -809,7 +696,7 @@ impl RepoEnricher {
     #[allow(clippy::too_many_arguments)]
     async fn gear_fields(
         &self,
-        auth: &ConnectionAuth,
+        src: &Repository,
         dir: &str,
         slug: &str,
         self_crate: &str,
@@ -1084,7 +971,7 @@ impl RepoEnricher {
             .filter(|p| p.starts_with("docs/") && p.ends_with(".md"))
             .take(self.cap(80))
         {
-            if let Some(body) = self.read_file(auth, &format!("{dir}/{p}")).await {
+            if let Some(body) = self.read_file(src, &format!("{dir}/{p}")).await {
                 spec.add(&body);
                 docs.insert(p.to_string(), body);
             }
@@ -1115,14 +1002,14 @@ impl RepoEnricher {
                 .iter()
                 .filter(|p| p.ends_with(".rs") && !p.starts_with("plugins/"))
             {
-                if let Some(body) = self.read_file(auth, &format!("{dir}/{p}")).await {
+                if let Some(body) = self.read_file(src, &format!("{dir}/{p}")).await {
                     code.add(p, &body);
                 }
             }
             let suite = format!("testing/e2e/suites/{}/", slug.replace('-', "_"));
             let mut e2e_lines = 0usize;
             for p in paths.iter().filter(|p| p.starts_with(&suite)) {
-                if let Some(body) = self.read_file(auth, p).await {
+                if let Some(body) = self.read_file(src, p).await {
                     e2e_lines += body.lines().count();
                 }
             }
@@ -1269,11 +1156,11 @@ impl RepoEnricher {
             .into_iter()
             .find(|p| paths.contains(&p.as_str()));
         let gdl = match &gdl_path {
-            Some(p) => self.read_file(auth, p).await.map(|b| parse_gear_gdl(&b)),
+            Some(p) => self.read_file(src, p).await.map(|b| parse_gear_gdl(&b)),
             None => None,
         };
         let toml = self
-            .read_file(auth, &format!("{dir}/gear.toml"))
+            .read_file(src, &format!("{dir}/gear.toml"))
             .await
             .map(|b| parse_gear_toml(&b));
         let manifest = match (&gdl, &toml) {
@@ -1353,7 +1240,7 @@ impl RepoEnricher {
 
         // History: the last change, who writes this gear, and how much of it
         // carries a sign-off.
-        let (last, commits) = self.history(auth, dir).await;
+        let (last, commits) = self.history(src, dir).await;
         if let Some(date) = last {
             let day = date.get(0..10).unwrap_or(&date).to_string();
             let mut v = text(&day, None, None);
@@ -1449,40 +1336,6 @@ struct RepoWide {
     license: Option<String>,
     /// The repository's one changelog, every crate's releases in it.
     changelog: Vec<repo_facts::ChangelogEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TagEntry {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct HistoryEntry {
-    commit: HistoryCommit,
-    /// The GitHub account, when the commit's e-mail maps to one.
-    #[serde(default)]
-    author: Option<HistoryLogin>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HistoryCommit {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
-    author: Option<HistoryName>,
-    #[serde(default)]
-    committer: Option<CommitActor>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HistoryName {
-    #[serde(default)]
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HistoryLogin {
-    login: String,
 }
 
 /// Every gear's dependents, read backwards off every gear's dependencies.
@@ -2478,38 +2331,6 @@ fn uml_kind(code: &str) -> &'static str {
 }
 
 // ── GitHub API DTOs ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct GitTree {
-    #[serde(default)]
-    tree: Vec<TreeEntry>,
-    #[serde(default)]
-    truncated: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct TreeEntry {
-    path: String,
-    #[serde(rename = "type", default)]
-    kind: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommitEntry {
-    commit: CommitBody,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommitBody {
-    #[serde(default)]
-    committer: Option<CommitActor>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommitActor {
-    #[serde(default)]
-    date: Option<String>,
-}
 
 /// One top-level `key = "value"` out of a TOML document.
 ///

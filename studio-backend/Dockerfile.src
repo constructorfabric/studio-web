@@ -84,7 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
  && rm /tmp/onnxruntime.tgz
 
-# The Gearbox engine, for product previews (components_catalog/gearbox.rs).
+# The Gearbox engine, for product previews (product/gearbox.rs).
 # Same repository and commit as the session image's language server
 # (theia/Dockerfile, `gearbox` stage): the portal and the IDE must say the
 # same thing about the same product.gdl, so move both refs together.

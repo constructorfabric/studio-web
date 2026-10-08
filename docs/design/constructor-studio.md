@@ -71,7 +71,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-studio-fr-push-channel` | `cpt-studio-component-events` is the one push channel; producers publish through the ClientHub. |
 | `cpt-studio-fr-background-runs` | `cpt-studio-component-tasks` writes a run and its queue entry in one transaction; `cpt-studio-component-scheduler` only enqueues. |
 | `cpt-studio-fr-spec-gear-mapping` | `cpt-studio-component-spec-mapping` holds the rules of the path from a specification to gears and reads each kind of data through its owner's port. |
-| `cpt-studio-fr-gearbox-product` | The backend preview (`cpt-studio-component-components-catalog`) and the IDE (`cpt-studio-component-theia-gearbox-studio`) run the Gearbox engine at the same pinned commit. |
+| `cpt-studio-fr-gearbox-product` | The backend preview (`cpt-studio-component-product`) and the IDE (`cpt-studio-component-theia-gearbox-studio`) run the Gearbox engine at the same pinned commit. |
 | `cpt-studio-fr-api-contract` | `cpt-studio-component-api-contract` scans the `OperationBuilder` declarations and ratchets them against a committed baseline. |
 
 #### NFR Allocation
@@ -278,7 +278,8 @@ Every IDE capability is hung on a published Theia contribution point so Theia ca
 | Document type, Stage, Capability | The document catalogue | [`documents/migrations.rs`](../../studio-backend/src/documents/migrations.rs) |
 | Document, Analysis, Binding | Authored documents, their quality verdicts, and repository files bound to types | [`documents/migrations.rs`](../../studio-backend/src/documents/migrations.rs) |
 | Artifact node | Issue, pull request, commit, comment, file or author as `gts.cf.studio.artifact.*` | [`studio-backend/gts/artifact/`](../../studio-backend/gts/artifact/) |
-| Gear, Crate version | Catalogue nodes joined by `has_version` | [`components_catalog/gts.rs`](../../studio-backend/src/components_catalog/gts.rs) |
+| Gear, Crate version | Catalogue nodes joined by `has_version` | [`catalog_graph/gts.rs`](../../studio-backend/src/catalog_graph/gts.rs) |
+| Project gear repository, Project product | What a project builds: its gear repository and the product composed from gears, in the same graph | [`catalog_graph/gts.rs`](../../studio-backend/src/catalog_graph/gts.rs) |
 | Model, Object type | The domain model in the graph | [`domain_model/`](../../studio-backend/src/domain_model/) |
 | Kit installation | A project's desired kit and its materializations | [`kit_registry/`](../../studio-backend/src/kit_registry/) |
 | Run, Schedule, Event | Background work, its timing and its announcements | [`tasks/`](../../studio-backend/src/tasks/), [`scheduler/`](../../studio-backend/src/scheduler/), [`studio_events/`](../../studio-backend/src/studio_events/) |
@@ -558,24 +559,50 @@ Design: [studio-components-catalog](studio-components-catalog.md)
 
 ##### Why this component exists
 
-"What gears are there, at what versions" lived on crates.io; the catalogue makes it data and lets Studio scaffold new gears and compose products.
+"What gears are there, at what versions" lived on crates.io; the catalogue makes it data.
 
 ##### Responsibility scope
 
-`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; gear repository, repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); product store and preview with the Gearbox engine (`gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set); the components, profiles, code dependencies and engine completion `cpt-studio-component-spec-mapping` matches against, through `port::ComponentCatalog`; the roadmap board (`roadmap.rs`), served to `cpt-studio-component-reports` through `port::RoadmapCatalog`. Routes under `/studio-components-catalog/v1`.
+`studio-backend/src/components_catalog/`: crates.io sync (`cratesio.rs`, `sync_task.rs`), components, versions, types, field schemas, profiles and activity; what the Gearbox engine knows about each gear, read through `cpt-studio-component-product`'s port; the components, profiles, code dependencies and engine completion `cpt-studio-component-spec-mapping` matches against, through `port::ComponentCatalog`; the roadmap board (`roadmap.rs`), served to `cpt-studio-component-reports` through `port::RoadmapCatalog`. Routes under `/studio-components-catalog/v1`.
 
 ##### Responsibility boundaries
 
-Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio` does, on the same engine commit.
+Does not compose products, scaffold gears or run the Gearbox engine; `cpt-studio-component-product` does, and the catalogue reads the engine and a project's gear repository through its port.
 
 ##### Related components (by ID)
 
 - `cpt-studio-component-graph-storage` — owns data in
-- `cpt-studio-component-connector` — creates repositories through
+- `cpt-studio-component-connector` — reads repositories and boards through
+- `cpt-studio-component-product` — reads the Gearbox engine and a project's gear repository through `product::port`
 - `cpt-studio-component-insight` — reads component activity through `port::ComponentDelivery`
 - `cpt-studio-component-tasks` — runs its sync as a run
 - `cpt-studio-component-reports` — serves the roadmap board to
 - `cpt-studio-component-spec-mapping` — serves the components a specification is matched against to
+
+#### studio-product
+
+- [x] `p2` - **ID**: `cpt-studio-component-product`
+
+Design: [studio-product](studio-product.md)
+
+##### Why this component exists
+
+The catalogue says what gears exist; a project needs a record of what it builds out of them, a repository to write them to and the engine to check the result. That half grew inside the catalogue and became its own gear.
+
+##### Responsibility scope
+
+`studio-backend/src/product/`: a project's gear repository and product (`service.rs`, `project_gear_repo` and `project_product` nodes in the catalogue graph); repository creation and scaffolding (`scaffold.rs`, `skeleton.rs`); the Gearbox engine (`gearbox.rs`, off unless `STUDIO_GEARBOX_WORKDIR` is set): previews, completion, extension points, the engine catalogue and the corpus relay; `port::engine` and `port::ProjectProducts` for the catalogue. Routes under `/studio-product/v1`, with three deprecated aliases under `/studio-components-catalog/v1/gearbox`.
+
+##### Responsibility boundaries
+
+Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio` does, on the same engine commit. Does not read the catalogue.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-graph-storage` — owns data in
+- `cpt-studio-component-connector` — creates repositories and writes through
+- `cpt-studio-component-git-proxy` — reuses the relay of, for the gear corpus
+- `cpt-studio-component-components-catalog` — serves the engine and a project's gear repository to
 
 #### studio-spec-mapping
 
@@ -593,7 +620,7 @@ The path from a project's specification to the gears that build it had its rules
 
 ##### Responsibility boundaries
 
-Owns no data. The document index is `cpt-studio-component-documents`', the gears and their engine facts are `cpt-studio-component-components-catalog`'s, and the decisions are stored by `cpt-studio-component-artifact-ingest`; each is read through its owner's port. Resolving a product with the engine stays with the catalogue.
+Owns no data. The document index is `cpt-studio-component-documents`', the gears and their engine facts are `cpt-studio-component-components-catalog`'s, and the decisions are stored by `cpt-studio-component-artifact-ingest`; each is read through its owner's port. Resolving a product with the engine is `cpt-studio-component-product`'s.
 
 ##### Related components (by ID)
 
@@ -878,7 +905,7 @@ Serves only http(s) sources; decides only who reaches the workspace, never what 
 - `cpt-studio-component-platform-feature-gears` — reads source tokens from credstore
 - `cpt-studio-component-tasks` — enqueues the push re-sync into
 - `cpt-studio-component-artifact-ingest` — queues its run
-- `cpt-studio-component-components-catalog` — lends its relay to, for the gear corpus
+- `cpt-studio-component-product` — lends its relay to, for the gear corpus
 
 #### studio-reports
 
@@ -1276,7 +1303,7 @@ The pre-FrontX portal, kept as a playground with the screens FrontX does not hav
 | Workspace | `process` | Process | `/studio-documents/v1` |
 | Project | `overview` | Overview | `/studio-documents/v1`, `/studio-organizations/v1/rollups` |
 | Project | `specs` | Specs | `/studio-documents/v1`, `/studio-spec-quality/v1` |
-| Project | `components` | Components | `/studio-components-catalog/v1`, `/studio-kits/v1` |
+| Project | `components` | Components | `/studio-components-catalog/v1`, `/studio-product/v1`, `/studio-spec-mapping/v1`, `/studio-kits/v1` |
 | Project | `artifacts` | Artifacts | `/studio-artifact-ingest/v1` |
 | Project | `sources` | Sources | `/studio-connector/v1`, `/studio-artifact-ingest/v1` |
 | Project | `activity` | Activity | `/studio-artifact-ingest/v1` |
@@ -1378,7 +1405,7 @@ Does not hide Studio's views; phases P4 and P6b are not done.
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-components-catalog` — shares the engine commit with
+- `cpt-studio-component-product` — shares the engine commit with
 
 #### theia/drawio-editor
 
@@ -1503,7 +1530,8 @@ Holds no secret values; the Secret contract is in `deploy/README.md`. The kustom
 | `GET POST` | `/studio-spec-quality/v1/…` | Detector passthrough and verdicts | unstable |
 | `GET POST` | `/studio-artifact-ingest/v1/…` | Graph nodes, edges, files, activity, search, sync | unstable |
 | `GET POST PATCH DELETE` | `/studio-domain-model/v1/…` | Model, types, objects, relations | unstable |
-| `GET POST PUT DELETE` | `/studio-components-catalog/v1/…` | Catalogue, scaffolding, products, Gearbox | unstable |
+| `GET POST PUT DELETE` | `/studio-components-catalog/v1/…` | Catalogue, profiles, types, field schemas, activity | unstable |
+| `GET POST PUT` | `/studio-product/v1/…` | A project's gear repository and product, scaffolding, Gearbox and the corpus relay | unstable |
 | `GET POST DELETE` | `/studio-kits/v1/…` | Kit catalogue and installations | unstable |
 | `GET POST PUT DELETE` | `/studio-user/v1/…` | Me, users, logins, aliases, memberships, invitations | unstable |
 | `GET POST` | `/studio-identity/v1/…` | Identity directory and membership backfill | unstable |
@@ -1608,7 +1636,7 @@ All inter-gear communication goes through SDK clients on the ClientHub or plugin
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| `studio-components-catalog`, `theia/gearbox-studio` | The `gearbox` CLI and `gearbox rpc` at `STUDIO_GEARBOX_REF` | Product composition, resolution and the `.gdl` language |
+| `studio-product`, `theia/gearbox-studio` | The `gearbox` CLI and `gearbox rpc` at `STUDIO_GEARBOX_REF` | Product composition, resolution and the `.gdl` language |
 
 #### S3 object storage
 
@@ -1718,9 +1746,9 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     Member ->> Portal: pick gears
-    Portal ->> studio-components-catalog: POST …/projects/{project_id}/product/preview
-    studio-components-catalog ->> Gearbox: resolve product.gdl over the gear corpus
-    studio-components-catalog -->> Portal: resolution and conflicts
+    Portal ->> studio-product: POST …/projects/{project_id}/product/preview
+    studio-product ->> Gearbox: resolve product.gdl over the gear corpus
+    studio-product -->> Portal: resolution and conflicts
     Portal ->> Session: studio.openProduct
 ```
 

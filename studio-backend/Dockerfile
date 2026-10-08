@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm /tmp/onnxruntime.tgz
 
 # The Gearbox engine behind the gear catalogue and product previews
-# (components_catalog/gearbox.rs). The same repository and commit as
+# (product/gearbox.rs). The same repository and commit as
 # Dockerfile.src and the session image's `gearbox` stage (theia/Dockerfile),
 # which the desktop build reads too: the portal, the IDE and the desktop must
 # say the same thing about the same product.gdl, so move all three together.

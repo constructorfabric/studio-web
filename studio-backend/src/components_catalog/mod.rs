@@ -10,8 +10,6 @@
 mod activity;
 mod cratesio;
 pub(crate) mod field_schema;
-mod gearbox;
-pub(crate) mod gts;
 mod history;
 pub mod port;
 mod quality;
@@ -20,13 +18,14 @@ mod repo_enrich;
 mod repo_facts;
 mod rest;
 pub(crate) mod roadmap;
-mod scaffold;
 pub mod sdk;
 mod service;
-mod skeleton;
 mod sync_task;
 mod taxonomy;
 pub(crate) mod values;
+
+/// The catalogue's node vocabulary lives beside the store it is written to.
+pub(crate) use crate::catalog_graph::gts;
 
 use std::sync::Arc;
 
@@ -36,8 +35,6 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::contracts::RestApiCapability;
 use toolkit::{Gear, GearCtx};
 use tracing::info;
-#[cfg(feature = "graph")]
-use tracing::warn;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use service::CatalogService;
@@ -69,32 +66,6 @@ impl Gear for StudioComponentsCatalogGear {
     }
 }
 
-/// Resolve the catalog graph store. Prefers the real graph-storage gear (when
-/// the `graph` feature is on and its client is published); otherwise the
-/// in-memory fallback so the pipeline still runs.
-fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
-    #[cfg(feature = "graph")]
-    {
-        match ctx
-            .client_hub()
-            .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
-        {
-            Ok(client) => {
-                info!(
-                    "studio-components-catalog: using the graph-storage gear as the catalog store"
-                );
-                return Arc::new(service::GraphSink::new(client));
-            }
-            Err(e) => warn!(
-                error = %e,
-                "studio-components-catalog: graph-storage client unavailable — using the in-memory store"
-            ),
-        }
-    }
-    let _ = ctx;
-    Arc::new(service::MemorySink::default())
-}
-
 #[async_trait]
 impl RestApiCapability for StudioComponentsCatalogGear {
     fn register_rest(
@@ -110,7 +81,10 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .unwrap_or_else(|| DEFAULT_KEYWORD.to_string());
         info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
-        let sink = build_sink(ctx);
+        let sink = crate::catalog_graph::build_sink(
+            ctx.client_hub().as_ref(),
+            "studio-components-catalog",
+        );
         // The one connector service, resolved when a sync needs it: without a
         // GitHub connector the catalogue is crates.io only.
         let connectors = Some(crate::connectors::sdk::Connectors::new(ctx.client_hub()));
@@ -124,28 +98,15 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             &service,
         ))))?;
 
-        let gearbox = gearbox::GearboxConfig::from_env().map(|cfg| {
-            info!(
-                workdir = %cfg.workdir.display(),
-                corpus = %cfg.corpus_url,
-                corpus_ref = %cfg.corpus_ref,
-                "studio-components-catalog: product previews through the Gearbox engine"
-            );
-            Arc::new(gearbox::Gearbox::new(cfg))
-        });
+        // The Gearbox engine is studio-product's; the catalogue reads what it
+        // says about each gear, and a sync follows the gears repository with
+        // it. Every gear's `init` has run by now, so it is published if it
+        // is configured at all.
+        let gearbox = crate::product::port::engine(&ctx.client_hub());
         if let Some(g) = &gearbox {
             service.set_gearbox(Arc::clone(g));
-            // Check the corpus out and run the engine once at start, so the
-            // first components reference does not pay for a clone.
-            if let Ok(rt) = tokio::runtime::Handle::try_current() {
-                let g = Arc::clone(g);
-                rt.spawn(async move {
-                    if let Err(e) = g.catalogue_json().await {
-                        tracing::warn!(error = %format!("{e:#}"), "studio-components-catalog: corpus warm-up failed");
-                    }
-                });
-            }
         }
+        service.set_products(crate::product::port::Products::new(ctx.client_hub()));
         // A project without a gear repository is compared against its own
         // sources, which only its config names. The same client answers
         // whether a caller reaches the organization a request names.

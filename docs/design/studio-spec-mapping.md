@@ -53,7 +53,7 @@ the ClientHub.
 | `cpt-studio-fr-spec-gear-mapping` | `reading.rs` reads what a specification needs as it is written; `plan.rs` maps each need contract first, evidence second, gap last (`cpt-studio-principle-spec-mapping-contract-first`). |
 | `cpt-studio-fr-mapping-decisions` | `POST /decisions` records a `mapping_decision` node through `artifact_ingest::port::MappingDecisionStore`; a project's plan ranks its proposals by them. |
 | `cpt-studio-fr-nfr-to-profile` | `reading::declared_requirements` collects the non-functional statements; `plan::deployment_profile` turns them into a profile, and a `nonfunctional` capability is offered no gear. |
-| `cpt-studio-fr-gearbox-product` | The plan is what the Components tab composes `product.gdl` from; resolving it stays with `cpt-studio-component-components-catalog`. |
+| `cpt-studio-fr-gearbox-product` | The plan is what the Components tab composes `product.gdl` from; resolving it is `cpt-studio-component-product`'s. |
 
 ### 1.3 Architecture Layers
 
@@ -234,7 +234,7 @@ the catalogue of `?organization_id=` when one is named. Every list answers
 | Port | Owner | What it answers |
 |------|-------|-----------------|
 | `documents::port::SpecNeeds` | `cpt-studio-component-documents` | The project's workspace after checking the caller reaches it; the workspace's vocabulary; the project's needs and requirements from the document index |
-| `components_catalog::port::ComponentCatalog` | `cpt-studio-component-components-catalog` | Every component and its profile (`gdl_contracts`, `doc_text`, build state); a project's code dependencies; what the engine would change about a set of gears |
+| `components_catalog::port::ComponentCatalog` | `cpt-studio-component-components-catalog` | Every component and its profile (`gdl_contracts`, `doc_text`, build state); a project's code dependencies; what the engine would change about a set of gears (the catalogue asks studio-product's engine; this call is to move to `cpt-studio-component-product`) |
 | `artifact_ingest::port::MappingDecisionStore` | `cpt-studio-component-artifact-ingest` | Record a decision; list a project's decisions |
 
 A port that is not on the ClientHub makes the routes that need it answer 503;

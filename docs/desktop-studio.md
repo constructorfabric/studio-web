@@ -849,7 +849,8 @@ what is ported and how). What is particular to a member's machine:
   there is none, and it reloads by itself once it does.
 - **The gears.** A project opened from the Studio view is often one repository
   with no gears of its own. The Catalogue then lists the backend's corpus
-  (`GET /studio-components-catalog/v1/gearbox/catalogue`, which answers only
+  (`GET /studio-product/v1/gearbox/catalogue`, falling back to the deprecated
+  `/studio-components-catalog/v1/gearbox/catalogue` on 404; it answers only
   where the backend runs Gearbox, as dev does), and **Bring the gears here**
   clones it once per machine into the corpus cache described
   [above](#how-it-connects-and-what-it-never-holds). New Product offers that

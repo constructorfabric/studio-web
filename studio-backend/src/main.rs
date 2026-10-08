@@ -8,6 +8,7 @@ mod access_config; // the Studio access-config document: one shape, one reader, 
 mod api_contract; // the mechanical half of docs/api-conventions.md, as a ratchet
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod assembly; // studio-assembly: the gears this process linked, its build, its session image
+mod catalog_graph; // the catalogue graph: node vocabulary + store, shared by the catalogue and the product
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
@@ -32,6 +33,7 @@ mod organizations; // studio-organizations: a person creates an organization and
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
+mod product; // studio-product: a project's product, its gear repository, and the Gearbox engine
 mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;
 mod reports; // studio-reports: report definitions, sources and drawing (ADR-0033)
@@ -424,7 +426,7 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 19] = [
+    const REST_MODULES: [(&str, &str); 20] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
         ("assembly", include_str!("assembly/rest.rs")),
         (
@@ -443,6 +445,7 @@ mod operation_docs_tests {
         ("kit_registry", include_str!("kit_registry/rest.rs")),
         ("llm_proxy", include_str!("llm_proxy/rest.rs")),
         ("notify", include_str!("notify/rest.rs")),
+        ("product", include_str!("product/rest.rs")),
         ("reports", include_str!("reports/rest.rs")),
         ("scheduler", include_str!("scheduler/rest.rs")),
         ("spec_quality", include_str!("spec_quality/rest.rs")),

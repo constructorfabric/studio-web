@@ -1,4 +1,4 @@
-//! GTS identifiers, type schemas and node/edge model for the gears catalog.
+//! GTS identifiers, type schemas and node/edge model for the catalogue graph.
 //!
 //! The catalog mirrors the artifact-ingest graph model but for a different
 //! domain: published crates ("gears") and their versions, pulled from
@@ -235,23 +235,42 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 1] = [(
     "A version published under a gear crate.",
 )];
 
-/// GTS type schemas registered with the **platform types-registry** at gear
-/// init (free-form `type: object`, same shape the studio types use, so
-/// registration never trips the narrowing check).
+/// The node types `studio-product` owns: a project's product and the gear
+/// repository it is written to. Their ids keep the `catalog` namespace they
+/// were born in, so records written before the gear existed still read.
+pub const PRODUCT_NODE_TYPES: [&str; 2] = [PROJECT_GEAR_REPO_TYPE, PROJECT_PRODUCT_TYPE];
+
+/// One types-registry document (free-form `type: object`, same shape the
+/// studio types use, so registration never trips the narrowing check).
+fn registry_schema((id, title, description): (&str, &str, &str)) -> Value {
+    json!({
+        "$id": format!("gts://{id}"),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": title,
+        "description": description,
+        "type": "object",
+    })
+}
+
+/// GTS type schemas `studio-components-catalog` registers with the
+/// **platform types-registry** at gear init: every catalogue type but the
+/// product's ([`product_type_schemas`]).
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
+        .filter(|(id, _, _)| !PRODUCT_NODE_TYPES.contains(id))
         .chain([SNAPSHOT_DOC])
         .chain(EDGE_TYPE_DOCS)
-        .map(|(id, title, description)| {
-            json!({
-                "$id": format!("gts://{id}"),
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": title,
-                "description": description,
-                "type": "object",
-            })
-        })
+        .map(registry_schema)
+        .collect()
+}
+
+/// GTS type schemas `studio-product` registers with the types-registry.
+pub fn product_type_schemas() -> Vec<Value> {
+    NODE_TYPE_DOCS
+        .into_iter()
+        .filter(|(id, _, _)| PRODUCT_NODE_TYPES.contains(id))
+        .map(registry_schema)
         .collect()
 }
 

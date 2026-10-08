@@ -106,14 +106,23 @@ pub fn schemas() -> Vec<Value> {
 
     // ── studio-components-catalog ─────────────────────────────────────────
     let gear = "studio-components-catalog";
-    for s in crate::components_catalog::gts::type_schemas() {
+    for s in crate::catalog_graph::gts::type_schemas() {
         out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
     }
-    for s in crate::components_catalog::gts::graph_node_type_schemas()
+    for s in crate::catalog_graph::gts::graph_node_type_schemas()
         .into_iter()
-        .chain(crate::components_catalog::gts::graph_edge_type_schemas())
+        .chain(crate::catalog_graph::gts::graph_edge_type_schemas())
     {
         out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
+    }
+
+    // ── studio-product ────────────────────────────────────────────────────
+    // Its node types live in the catalogue graph, which the catalogue's store
+    // registers with graph-storage whole (above); the types-registry entries
+    // are the product's own.
+    let gear = "studio-product";
+    for s in crate::catalog_graph::gts::product_type_schemas() {
+        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
     }
 
     // ── studio-reports ────────────────────────────────────────────────────

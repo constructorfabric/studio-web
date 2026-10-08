@@ -172,7 +172,7 @@ spec:
             {{- end }}
             {{- with .Values.backend.gearbox }}
             {{- if .enabled }}
-            # Turns on the Gearbox engine (components_catalog/gearbox.rs): the
+            # Turns on the Gearbox engine (product/gearbox.rs): the
             # gear catalogue, product previews and the corpus relay.
             - name: STUDIO_GEARBOX_WORKDIR
               value: {{ .mountPath | quote }}

@@ -50,7 +50,7 @@ describe("the corpus as a New Product source", () => {
   });
 
   it("says a private corpus comes through Studio, signed in on the desktop", () => {
-    const privateOrigin = { ...ORIGIN, needsToken: true, clonePath: "/cf/studio-components-catalog/v1/gearbox/corpus" };
+    const privateOrigin = { ...ORIGIN, needsToken: true, clonePath: "/cf/studio-product/v1/gearbox/corpus" };
     const offer = corpusOffer({ toBring: privateOrigin, bringable: true, workspaceRoots: STUDIO_WEB, engineRoots: [] });
     expect(offer.kind).toBe("bring");
     expect(offer.kind === "bring" ? offer.note : undefined).toMatch(/private.*signed in/);

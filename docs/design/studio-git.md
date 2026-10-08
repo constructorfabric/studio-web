@@ -167,7 +167,7 @@ memory.
 
 - `cpt-studio-component-account-management` — reads the project's sources through
 - `cpt-studio-component-platform-feature-gears` — reads source tokens from credstore
-- `cpt-studio-component-components-catalog` — reuses its authentication and relay for the gear corpus
+- `cpt-studio-component-product` — reuses its authentication and relay for the gear corpus
 
 #### Push refresh
 
@@ -285,7 +285,7 @@ In-process in the one `studio-backend` binary, in every build: gear
 ## 4. Additional context
 
 The desktop side is `theia/studio/src/node/desktop-git.ts` and the token
-broker beside it. `components_catalog` serves the gear corpus over the same
+broker beside it. `product` (studio-product) serves the gear corpus over the same
 relay (`authenticate_member`, `send_upstream`, `stream_back`), fetch only.
 
 ## 5. Traceability

@@ -152,7 +152,7 @@ fn is_text_path(path: &Path) -> bool {
 
 /// A filesystem-safe directory name for one connection+repo pair, so two
 /// connections to the same host stay on separate checkouts.
-pub(super) fn checkout_key(connector_id: &str, repo_full_path: &str) -> String {
+pub fn checkout_key(connector_id: &str, repo_full_path: &str) -> String {
     let sanitize = |s: &str| -> String {
         s.chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })

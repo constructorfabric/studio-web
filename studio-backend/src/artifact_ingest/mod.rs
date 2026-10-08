@@ -12,7 +12,6 @@
 //! `hypothesis/graph-storage` adapter lands).
 
 mod activity;
-pub(crate) mod clone;
 mod comment_threads;
 mod entity;
 mod graph;

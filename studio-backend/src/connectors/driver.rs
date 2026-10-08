@@ -178,6 +178,31 @@ pub struct WrittenFile {
     pub updated: bool,
 }
 
+/// One text file read at a ref, and the blob it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFileText {
+    pub text: String,
+    /// Blob sha, when the provider reports it.
+    pub sha: Option<String>,
+}
+
+/// One file of a multi-file commit.
+#[derive(Debug, Clone)]
+pub struct FileToWrite {
+    /// Repo-relative path.
+    pub path: String,
+    pub content: String,
+}
+
+/// A repository created through a connection.
+#[derive(Debug, Clone)]
+pub struct CreatedRepository {
+    /// `owner/name`.
+    pub full_name: String,
+    pub html_url: String,
+    pub default_branch: String,
+}
+
 /// One pull/merge request as the provider describes it.
 #[derive(Debug, Clone, Default)]
 pub struct RemotePullRequest {
@@ -270,6 +295,9 @@ pub struct RemoteCommit {
     pub url: Option<String>,
     /// Authored-at RFC 3339 timestamp from the commit metadata.
     pub created_at: Option<String>,
+    /// Committed-at RFC 3339 timestamp: when the commit landed, which a
+    /// rebase or a squash moves and the authored date does not.
+    pub committed_at: Option<String>,
 }
 
 /// A repository tree read at a ref, for the knowledge-graph sync.
@@ -713,6 +741,106 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         let _ = (auth, repo_full_path, max);
         Err(anyhow::anyhow!(
             "{} does not expose contributors",
+            self.display_name()
+        ))
+    }
+
+    /// One text file at `git_ref` (the default branch when `None`), or `None`
+    /// when the repository has no such file. Defaulted to an error for a
+    /// non-source driver.
+    async fn read_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        path: &str,
+        git_ref: Option<&str>,
+    ) -> anyhow::Result<Option<RemoteFileText>> {
+        let _ = (auth, repo_full_path, path, git_ref);
+        Err(anyhow::anyhow!(
+            "{} does not expose file contents",
+            self.display_name()
+        ))
+    }
+
+    /// The newest commits (up to `limit`) that touched `path` -- a file or a
+    /// directory -- on `git_ref`, newest first. Defaulted to empty.
+    async fn path_history(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        path: &str,
+        git_ref: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<RemoteCommit>> {
+        let _ = (auth, repo_full_path, path, git_ref, limit);
+        Ok(Vec::new())
+    }
+
+    /// One page of the repository's tag names, in the provider's order.
+    /// Defaulted to empty.
+    async fn list_tags(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<String>> {
+        let _ = (auth, repo_full_path, page, per_page);
+        Ok(Vec::new())
+    }
+
+    /// Commit `files` in ONE commit on top of `base_branch`, onto `branch`.
+    /// `branch == base_branch` moves the base (never forced); otherwise the
+    /// branch is created, and a branch already holding exactly these files is
+    /// the answer rather than a conflict. Returns the commit `branch` points
+    /// at. Defaulted to an error: writing is a capability a connection may
+    /// lack.
+    async fn commit_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        let _ = (auth, repo_full_path, base_branch, branch, files, message);
+        Err(anyhow::anyhow!(
+            "{} cannot commit files through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// Create a repository: under organization `owner` when `is_org`,
+    /// otherwise under the connection's own account, with a first commit so a
+    /// base branch exists. Defaulted to an error.
+    async fn create_repository(
+        &self,
+        auth: &ConnectionAuth,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+    ) -> anyhow::Result<CreatedRepository> {
+        let _ = (auth, owner, is_org, name, private);
+        Err(anyhow::anyhow!(
+            "{} cannot create repositories through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// One GraphQL request, answered as the provider sent it. The reply's
+    /// `errors` are the caller's to read: GraphQL answers 200 with them, and
+    /// only the caller knows which ones mean "ask another way". Defaulted to
+    /// an error for a provider without GraphQL.
+    async fn graphql(
+        &self,
+        auth: &ConnectionAuth,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let _ = (auth, body);
+        Err(anyhow::anyhow!(
+            "{} has no GraphQL API",
             self.display_name()
         ))
     }

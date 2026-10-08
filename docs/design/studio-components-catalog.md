@@ -27,12 +27,14 @@ product-level view, and how this gear sits among the others, is in
 
 Catalogues our own gears — every crate published under the `constructorfabric`
 keyword on crates.io, and the gears, FrontX packages and kits its repository
-scans find — in the knowledge graph, says how ready each one is and how good,
-scaffolds new ones into a project's repository, and composes products out of
-them with the Gearbox engine.
+scans find — in the knowledge graph, and says how ready each one is and how
+good.
 It does not decide which components a specification needs: that is
 `cpt-studio-component-spec-mapping`, which reads the catalogue through
-`port::ComponentCatalog`.
+`port::ComponentCatalog`. It does not compose products or scaffold gears: that
+is `cpt-studio-component-product` ([studio-product](studio-product.md)), whose
+port this gear reads the Gearbox engine and a project's gear repository
+through.
 
 The platform is a set of gears, and "what gears are there, at what versions"
 had no answer inside Studio: it lived on crates.io and in people's heads. This
@@ -40,9 +42,9 @@ gear makes it data. It lists every crate under the keyword, pulls each crate's
 detail and version history from the public crates.io API, reads the gears'
 repositories for what each gear actually is, reads the roadmap board for what
 is planned, and stores the result as typed graph nodes the portal reads back.
-Cataloguing led to the second half: once Studio knows what a gear looks like,
+Cataloguing led to a second half — once Studio knows what a gear looks like,
 it can create one, and once it knows the gears, it can put a product together
-from them.
+from them — which grew here and became `studio-product`.
 
 Most of the rules here used to run in the portal, per row, on every render —
 the precedence of a field's sources, the kind of a component, the join with
@@ -56,15 +58,12 @@ rules, not rendering, and a second portal would have grown its own copy.
 | Requirement | Design Response |
 |-------------|------------------|
 | `cpt-studio-fr-gear-catalogue` | A `catalog.sync` run reads crates.io, repository sources and roadmap boards into `gear`, `crate_version`, `gear_profile`, `frontx`, `kit` and `roadmap_item` nodes; the read routes serve components, versions, values, history, the reference and activity. |
-| `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
-| `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file: a new product at `products/<id>/product.gdl`, the layout the IDE's Gearbox finds, and a written one where it already is. |
 
 #### NFR Allocation
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-studio-nfr-durable-work` | Runs survive a restart | `cpt-studio-component-components-catalog` | A sync is a `catalog.sync` run on `studio-tasks`, not an in-memory task map | `components_catalog::sync_task` tests |
-| `cpt-studio-nfr-credential-isolation` | No secret in a session, a browser or a response | `cpt-studio-component-components-catalog-gearbox` | Repository tokens are borrowed from studio-connector per call; the corpus token is held in memory, attached upstream by the Git relay and never returned | `components_catalog::gearbox` tests |
 
 #### Key ADRs
 
@@ -72,19 +71,17 @@ rules, not rendering, and a second portal would have grown its own copy.
 |--------|------------------|
 | `cpt-studio-adr-types-registry-catalogs-meaning-graph-storage-contracts-storage` | Catalogue types are free-form in the types-registry; a field schema is data about a type and lives in graph-storage. |
 | `cpt-studio-adr-document-types-are-components` | A catalogue key is an instance within one kind; a gear and a kit are different kinds, so different node types. |
-| `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A laptop clones a private gear corpus through the backend, which attaches the token. |
 | `cpt-studio-adr-a-report-is-a-definition-over-a-source` | Reports moved to `studio-reports`; this gear keeps reading the board and answers it through `port::RoadmapCatalog`. |
 
 ### 1.3 Architecture Layers
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| REST | Sync, catalogue reads, profiles, types and field schemas, project repository and product, Gearbox | `OperationBuilder` routes in `rest.rs` |
+| REST | Sync, catalogue reads, profiles, types and field schemas | `OperationBuilder` routes in `rest.rs` |
 | Read model | Values, grade, taxonomy, reference, activity, history | `values.rs`, `quality.rs`, `taxonomy.rs`, `reference.rs`, `activity.rs`, `history.rs` |
 | Sync | crates.io, repository scans, roadmap boards, upsert and prune | `cratesio.rs`, `repo_enrich.rs`, `repo_facts.rs`, `roadmap.rs`, `service.rs`, `sync_task.rs` |
-| Writing | Repository creation and gear scaffolding | `scaffold.rs`, `skeleton.rs` |
-| Engine | Gearbox CLI over a corpus checkout | `gearbox.rs` |
-| Storage | Catalogue nodes and one edge type | graph-storage through `GraphSink`; `MemorySink` without the `graph` feature |
+| Engine | What the Gearbox engine knows about each gear, read through studio-product | `product::port::engine`, `product::sdk::Gearbox` |
+| Storage | Catalogue nodes and one edge type | the catalogue graph (`crate::catalog_graph`, shared with studio-product): graph-storage through `GraphSink`; `MemorySink` without the `graph` feature |
 
 ## 2. Principles & Constraints
 
@@ -143,31 +140,22 @@ resolved values on every read, so a correction moves it at once. Every
 criterion is absolute, so a grade cannot move because somebody else shipped
 something. An unknown value fails, with the fix that would answer it.
 
-#### The portal and the IDE resolve with one engine
+#### The engine is read through studio-product
 
-- [x] `p2` - **ID**: `cpt-studio-principle-catalog-one-engine`
+- [x] `p2` - **ID**: `cpt-studio-principle-catalog-engine-through-product`
 
-The backend image, the session image and the desktop's engine extension build
-the Gearbox engine at the same commit (`STUDIO_GEARBOX_REF`), and the preview
-reads the CLI's JSON (`catalogue`, `validate`, `resolve` with `--format json`),
-its stable contract for tooling. The gear holds no composition rule of its own
-beyond one: a plugin is written under the host whose extension point it fills,
-because that is how `product.gdl` spells it.
+The engine the catalogue reads — gear facts from `gear.gdl`, the engine half
+of the reference, completion — is studio-product's, and off unless configured
+(`cpt-studio-constraint-product-gearbox-optional`). Without it the catalogue is
+still served, from crates.io and the repository scans. Once a sync finds
+`gear.gdl` descriptors in the catalogue's own gears repository, it asks the
+engine to adopt that repository as its corpus, so the catalogue, the previews
+and the IDE read one checkout. The engine is `product::port::engine`, resolved
+from the ClientHub; a project's gear repository, for its code dependencies, is
+`product::port::ProjectProducts`. Nothing in studio-product reads the
+catalogue back.
 
 ### 2.2 Constraints
-
-#### Gearbox is off unless configured
-
-- [x] `p2` - **ID**: `cpt-studio-constraint-catalog-gearbox-optional`
-
-Previews, the engine catalogue, extension points, completion, repository facts
-and the corpus relay need `STUDIO_GEARBOX_WORKDIR` (the chart's
-`backend.gearbox`). The default corpus ref is `feature/gearbox`, because
-`gear.gdl` descriptors exist only on that branch until
-constructorfabric/gears-rust#4793 merges. Once a sync finds `gear.gdl`
-descriptors in the catalogue's own gears repository, the engine adopts that
-repository as its corpus, so the catalogue, the previews and the IDE read one
-checkout.
 
 #### Be gentle with crates.io
 
@@ -208,8 +196,6 @@ rather than duplicates.
 | `gts.cf.studio.catalog.kit.v1~` | A kit a repository scan found: a repository, a manifest path and a git ref |
 | `gts.cf.studio.catalog.roadmap_item.v1~` | A gear on a roadmap board, keyed on board and issue, whether or not its code exists |
 | `gts.cf.studio.catalog.field_schema.v1~` | What the organization says about one GTS type: its field schema (with the `quality` block) and whether it counts as a component; built-ins overlaid by the tenant's own |
-| `gts.cf.studio.catalog.project_gear_repo.v1~` | The repository a project's gears live in, keyed on the project id |
-| `gts.cf.studio.catalog.project_product.v1~` | The gears picked for a project's product, its deployment profile and the engine's last answer, keyed on the project id |
 | `gts.cf.studio.catalog.component_snapshot.v1~` | One component's fields on one day: the number `n`, the grade `s` and the badge `b` (cut to 80 characters); kept out of the enumerated catalogue types |
 
 A field value has the shape `{ v, b, n, s, l, u }`. Field schemas and the
@@ -294,7 +280,7 @@ missing.
 
 ##### Related components (by ID)
 
-- `cpt-studio-component-components-catalog-gearbox` — reads the engine catalogue from
+- `cpt-studio-component-product-gearbox` — reads the engine catalogue from, through `product::port::engine`
 - `cpt-studio-component-insight` — reads activity from
 
 #### Gear activity
@@ -322,69 +308,6 @@ not a file.
 ##### Related components (by ID)
 
 - `cpt-studio-component-insight-delivery` — calls
-
-#### Scaffolding
-
-- [x] `p2` - **ID**: `cpt-studio-component-components-catalog-scaffold`
-
-##### Why this component exists
-
-The skeleton lived in the prototype's `scaffold.ts`, so only a browser knew
-what a gear looks like. An agent asked to create a gear without an IDE needs the
-same bytes.
-
-##### Responsibility scope
-
-`skeleton.rs` generates the canonical starter gear (the request's `files` are
-optional; a plugin names its `plugin_host` from `/gearbox/extension-points`);
-`scaffold.rs` creates a branch off the connected base branch named after the
-slug, commits the files through the git-data API as one tree and one commit,
-and optionally opens a pull request. `create-repo` creates the repository
-through the connector and records it as the project's gear repository in one
-step.
-
-##### Responsibility boundaries
-
-The one place in this gear that writes to a repository besides the preview's
-optional commit. The token is borrowed from studio-connector per call and never
-stored here.
-
-##### Related components (by ID)
-
-- `cpt-studio-component-connector` — creates repositories and writes through
-
-#### Gearbox engine
-
-- [x] `p2` - **ID**: `cpt-studio-component-components-catalog-gearbox`
-
-##### Why this component exists
-
-A product is resolved by the engine, not by the portal: which gears a selection
-pulls in, which applications they land in, and what cannot work, as `GBX…`
-diagnostics.
-
-##### Responsibility scope
-
-`gearbox.rs`: a shallow checkout of the gear corpus under the workdir,
-refreshed every `STUDIO_GEARBOX_REFRESH_SECS`; the engine catalogue; the
-extension points a plugin can fill; completion (`/gearbox/complete` drops what
-the catalogue proves cannot run and adds a plugin for a bare host and a REST
-host for REST gears, saying why, writing nothing); the preview, which writes a
-`product.gdl` declaring every deployment profile, validates and resolves it for
-the one asked, and with `write` commits it to the project's gear repository on
-a new branch; and the corpus over Git smart HTTP, fetch only, authenticated as
-a member (`authenticate_member`, Basic or Bearer) and relayed with the corpus's
-own token.
-
-##### Responsibility boundaries
-
-Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio`
-does, on the same engine commit. A push to the corpus relay is refused whatever
-the token upstream would allow.
-
-##### Related components (by ID)
-
-- `cpt-studio-component-theia-gearbox-studio` — shares the engine commit with
 
 #### Roadmap port
 
@@ -437,31 +360,23 @@ Knows nothing about plans, definitions or workbooks.
 | `GET` | `/field-schemas` | The field schema per component type, built-ins overlaid by the tenant's own | unstable |
 | `PUT` | `/field-schemas/{describes}` | Replace the tenant's schema for one type | unstable |
 | `DELETE` | `/field-schemas/{describes}` | Revert to the built-in; reverting an unoverridden type is not an error | unstable |
-| `GET` | `/projects/{project_id}/gear-repo` | The project's gear repository, 0 or 1 node | unstable |
-| `POST` | `/projects/{project_id}/gear-repo` | Connect or replace it; the branch defaults to `main` | unstable |
-| `POST` | `/projects/{project_id}/create-repo` | Create a repository through the connector and record it | unstable |
-| `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request | unstable |
-| `GET` | `/projects/{project_id}/product` | The product being composed | unstable |
-| `PUT` | `/projects/{project_id}/product` | Merge fields into it | unstable |
-| `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl`, resolve it, optionally commit it | unstable |
-| `GET` | `/gearbox` | Engine version and the corpus previews resolve against | unstable |
-| `GET` | `/gearbox/catalogue` | The engine catalogue over the backend's corpus, for an IDE whose workspace has none | unstable |
-| `GET` | `/gearbox/extension-points` | The hosts a new plugin gear can fill | unstable |
-| `POST` | `/gearbox/complete` | Complete picked gears into a resolvable set; writes nothing | unstable |
-| `GET` | `/gearbox/corpus/info/refs` | Git smart-HTTP ref advertisement for the corpus | unstable |
-| `POST` | `/gearbox/corpus/git-upload-pack` | Git smart-HTTP upload-pack, fetch only | unstable |
 
-The two corpus routes are `.anonymous().exposed()`, because `git` sends Basic
-credentials that the gateway's Bearer-only layer would refuse before they
-arrive; `authenticate_member` is the check.
+A project's gear repository and product, scaffolding and the Gearbox routes
+moved to `/studio-product/v1` with `cpt-studio-component-product`
+([studio-product](studio-product.md#33-api-contracts)). Three paths under this
+prefix still answer, registered by studio-product and deprecated:
+`GET /gearbox/catalogue`, `GET /gearbox/corpus/info/refs` and
+`POST /gearbox/corpus/git-upload-pack`.
 
 Matching a specification to these components -- the plan, conformance and the
 decisions -- is `cpt-studio-component-spec-mapping`
 ([studio-spec-mapping](studio-spec-mapping.md)). It reads the components, their
 profiles, a project's code dependencies and the engine's completion through
 `port::ComponentCatalog`. A project's code is the run-time dependencies of every
-`Cargo.toml` in its gear repository, or, without one, in the repositories its
-project config names.
+`Cargo.toml` in its gear repository (read through
+`product::port::ProjectProducts`), or, without one, in the repositories its
+project config names. The engine's completion is still served here, calling
+studio-product's engine; it is to move to studio-product.
 
 ### 3.4 Internal Dependencies
 
@@ -470,11 +385,11 @@ project config names.
 | `types_registry` | `types-registry-sdk` | Register the catalogue types at init |
 | `account_management` | `account-management-sdk` | Read a project's configured sources |
 | `credstore` | `credstore-sdk` | Through `ConnectorService`, the connection tokens |
-| `cpt-studio-component-connector` | `ConnectorService` over the source drivers on the ClientHub | Read repositories and boards, create repositories, write scaffolds |
-| `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature) | The catalogue |
+| `cpt-studio-component-connector` | `ConnectorService` over the source drivers on the ClientHub | Read repositories and boards |
+| `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The catalogue |
 | `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
-| `authn_resolver` | `AuthNResolverClient` | Authenticate a member on the corpus relay |
+| `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository |
 
 `port::RoadmapCatalog` is published for `cpt-studio-component-reports`.
 
@@ -489,14 +404,8 @@ Contract `cpt-studio-contract-crates-io`, defined in
 |-------------------|---------------|---------|
 | `cpt-studio-component-components-catalog-sync` | `https://crates.io/api/v1` (`STUDIO_CRATES_IO_BASE`) | Crates under the keyword, each with its detail and versions |
 
-#### Gearbox engine
-
-Contract `cpt-studio-contract-gearbox-engine`, defined in
-[Constructor Studio's design](constructor-studio.md#gearbox-engine).
-
-| Dependency Gear | Interface Used | Purpose |
-|-------------------|---------------|---------|
-| `cpt-studio-component-components-catalog-gearbox` | The `gearbox` CLI (`STUDIO_GEARBOX_BIN`) with `--format json`; Git for the corpus | Catalogue, validation, resolution |
+The Gearbox engine (`cpt-studio-contract-gearbox-engine`) is run by
+studio-product; this gear reaches it only through that gear's port.
 
 #### GitHub
 
@@ -505,13 +414,12 @@ Contract `cpt-studio-contract-provider-apis`, defined in
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| `cpt-studio-component-components-catalog` | REST and GraphQL through a studio-connector connection | Repository trees, Projects v2 boards, branches, commits, pull requests, repository creation |
+| `cpt-studio-component-components-catalog` | REST and GraphQL through a studio-connector connection | Repository trees and files, Projects v2 boards |
 
 ### 3.6 Interactions & Sequences
 
-Composing a product is `cpt-studio-seq-compose-product` in
-[Constructor Studio's design](constructor-studio.md#compose-a-product), for
-`cpt-studio-usecase-compose-product`.
+Composing a product is studio-product's (`cpt-studio-seq-compose-product` in
+[Constructor Studio's design](constructor-studio.md#compose-a-product)).
 
 #### Sync the catalogue
 
@@ -545,9 +453,11 @@ reference.
 ### 3.7 Database schemas & tables
 
 This gear has no database: the catalogue is the graph (§3.1). Without the
-`graph` feature it is held in memory. With Gearbox configured, the workdir
-holds the corpus checkout and the engine's last catalogue, so a restart does
-not wait for a fetch.
+`graph` feature it is held in memory. The graph code — the node vocabulary
+(`catalog_graph/gts.rs`) and the store (`catalog_graph/sink.rs`) — is a shared
+root module, not part of this gear: studio-product keeps its two records in
+the same graph, each gear building its own sink and touching only its own node
+types.
 
 ### 3.8 Deployment Topology
 
@@ -560,14 +470,9 @@ it is configured by environment.
 |---|---|---|
 | `STUDIO_COMPONENTS_CATALOG_KEYWORD` | `constructorfabric` | The crates.io keyword |
 | `STUDIO_CRATES_IO_BASE` | `https://crates.io/api/v1` | API root, for tests and mirrors |
-| `STUDIO_GEARBOX_WORKDIR` | unset: Gearbox is off | Where the corpus is checked out |
-| `STUDIO_GEARBOX_BIN` | `gearbox` | The engine CLI |
-| `STUDIO_GEARBOX_CORPUS_URL` | `https://github.com/MikeFalcon77/gears-rust.git` | The corpus |
-| `STUDIO_GEARBOX_CORPUS_REF` | `feature/gearbox` | Its ref |
-| `STUDIO_GEARBOX_REFRESH_SECS` | `600` | How often the checkout is refreshed |
 
-On start, with Gearbox configured, the corpus is checked out and the engine run
-once, so the first reference does not pay for a clone.
+The `STUDIO_GEARBOX_*` variables are studio-product's
+([studio-product](studio-product.md#38-deployment-topology)).
 
 ## 4. Additional context
 

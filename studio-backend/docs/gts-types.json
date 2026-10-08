@@ -7743,32 +7743,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.catalog.project_gear_repo.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The gear repository connected to a project (connector, repo, branch).",
-        "title": "ProjectGearRepo",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.catalog.project_gear_repo.v1~"
-    },
-    {
-      "gear": "studio-components-catalog",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.catalog.project_product.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The gears a project composes into a product, and what the Gearbox engine last said about them.",
-        "title": "ProjectProduct",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.catalog.project_product.v1~"
-    },
-    {
-      "gear": "studio-components-catalog",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.catalog.roadmap_item.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A gear a roadmap board plans: its stage, milestone, progress and demand, and the catalogued components that implement it, if any yet.",
@@ -9895,6 +9869,32 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domainrel.references.v1~"
+    },
+    {
+      "gear": "studio-product",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.project_gear_repo.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "The gear repository connected to a project (connector, repo, branch).",
+        "title": "ProjectGearRepo",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.project_gear_repo.v1~"
+    },
+    {
+      "gear": "studio-product",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.project_product.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "The gears a project composes into a product, and what the Gearbox engine last said about them.",
+        "title": "ProjectProduct",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.project_product.v1~"
     },
     {
       "gear": "studio-reports",

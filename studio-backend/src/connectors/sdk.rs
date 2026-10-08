@@ -7,19 +7,27 @@
 //! than at `init` keeps the consumer independent of the order gears start in:
 //! Studio gears share one crate, so the toolkit's `deps` cannot order them.
 //!
+//! A gear that reads or writes a repository opens a [`Repository`] -- the
+//! connection's driver bound to one repository and ref -- instead of speaking
+//! the provider's API itself.
+//!
 //! The drivers, the REST surface and the graph sync stay private to the gear.
 
 use std::sync::Arc;
 
 use toolkit::client_hub::ClientHub;
 
+/// A working copy on disk: shallow clone, fast-forward, walk. Credentials go
+/// to `git` through a helper, never the URL or argv.
+pub(crate) use super::clone as git_checkout;
 #[cfg(test)]
 pub use super::driver::RemoteReview;
 pub use super::driver::{
-    ConnectionAuth, ConnectorDriver, NotifyMessage, PullRequestThreads, RemoteComment,
-    RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
+    ConnectionAuth, ConnectorDriver, CreatedRepository, FileToWrite, NotifyMessage,
+    PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue,
+    RemotePullRequest,
 };
-pub(crate) use super::github::graphql_url;
+pub use super::repository::{Repository, create_repository};
 pub use super::service::{ConnectorService, connection_by_id};
 
 /// The connector service, resolved from the ClientHub when used.

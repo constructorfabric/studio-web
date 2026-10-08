@@ -55,17 +55,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::connectors::sdk::ConnectionAuth;
-use crate::connectors::sdk::ConnectorService;
-use crate::connectors::sdk::graphql_url;
-
-const UA: &str = "constructor-studio-gears-catalog";
+use crate::connectors::sdk::{ConnectionAuth, ConnectorDriver, ConnectorService};
 
 /// Items per GraphQL page — GitHub's maximum.
 const PAGE: u32 = 100;
@@ -301,16 +296,23 @@ fn refused_issue_fields(reply: &Value) -> bool {
 
 /// Resolve the GitHub connection a source names, or the tenant's first one
 /// this sync can read.
-async fn resolve_auth(
+async fn connect(
     connectors: &ConnectorService,
     ctx: &SecurityContext,
     tenant: Uuid,
     connection_id: Option<Uuid>,
-) -> Result<ConnectionAuth> {
-    let (_driver, auth, _conn) = connectors
+) -> Result<Gh> {
+    let (driver, auth, _conn) = connectors
         .named_or_default(ctx, tenant, connection_id, "github")
         .await?;
-    Ok(auth)
+    Ok(Gh { driver, auth })
+}
+
+/// A GitHub connection's driver and credentials: what every GraphQL call of a
+/// board read goes through.
+struct Gh {
+    driver: Arc<dyn ConnectorDriver>,
+    auth: ConnectionAuth,
 }
 
 /// Read a whole board.
@@ -322,14 +324,12 @@ pub async fn fetch(
     ctx: &SecurityContext,
     source: &RoadmapSource,
 ) -> Result<Roadmap> {
-    let auth = resolve_auth(&connectors, ctx, source.tenant, source.connection_id).await?;
-    let http = Client::builder().user_agent(UA).build()?;
-    let url = graphql_url(auth.root());
+    let gh = connect(&connectors, ctx, source.tenant, source.connection_id).await?;
     for issue_fields in [true, false] {
         for owner_kind in ["organization", "user"] {
-            match fetch_as(&http, &url, &auth, owner_kind, source, issue_fields).await? {
+            match fetch_as(&gh, owner_kind, source, issue_fields).await? {
                 Fetched::Board(mut board) => {
-                    add_root_sub_issues(&http, &url, &auth, source, &mut board, issue_fields).await;
+                    add_root_sub_issues(&gh, source, &mut board, issue_fields).await;
                     return Ok(board);
                 }
                 Fetched::NotThisOwner => continue,
@@ -350,34 +350,12 @@ enum Fetched {
     NoIssueFields,
 }
 
-async fn post_graphql(
-    http: &Client,
-    url: &str,
-    auth: &ConnectionAuth,
-    body: &Value,
-) -> Result<Value> {
-    let res = http
-        .post(url)
-        .bearer_auth(&auth.token)
-        .header("Accept", "application/vnd.github+json")
-        .json(body)
-        .send()
-        .await?;
-    let status = res.status();
-    if !status.is_success() {
-        let text = res.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "GitHub GraphQL {status}: {}",
-            text.chars().take(200).collect::<String>()
-        );
-    }
-    Ok(res.json().await?)
+async fn post_graphql(gh: &Gh, body: &Value) -> Result<Value> {
+    gh.driver.graphql(&gh.auth, body).await
 }
 
 async fn fetch_as(
-    http: &Client,
-    url: &str,
-    auth: &ConnectionAuth,
+    gh: &Gh,
     owner_kind: &str,
     source: &RoadmapSource,
     issue_fields: bool,
@@ -395,7 +373,7 @@ async fn fetch_as(
                 "owner": source.owner, "number": source.number, "page": PAGE, "after": after,
             },
         });
-        let reply = post_graphql(http, url, auth, &body).await?;
+        let reply = post_graphql(gh, &body).await?;
         if issue_fields && after.is_none() && refused_issue_fields(&reply) {
             return Ok(Fetched::NoIssueFields);
         }
@@ -457,9 +435,7 @@ pub fn root_numbers(source: &RoadmapSource) -> Vec<u64> {
 /// put on the board yet is still one. Best-effort: a root that cannot be read
 /// costs its off-board sub-issues, never the board.
 async fn add_root_sub_issues(
-    http: &Client,
-    url: &str,
-    auth: &ConnectionAuth,
+    gh: &Gh,
     source: &RoadmapSource,
     board: &mut Roadmap,
     issue_fields: bool,
@@ -479,7 +455,7 @@ async fn add_root_sub_issues(
                 "query": query,
                 "variables": { "owner": owner, "name": name, "number": number, "after": after },
             });
-            let reply = match post_graphql(http, url, auth, &body).await {
+            let reply = match post_graphql(gh, &body).await {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!(error = %format!("{e:#}"), root = %root, "components-catalog: a roadmap root is unreadable");

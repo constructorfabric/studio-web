@@ -33,9 +33,11 @@
 
 mod ai_providers;
 mod bitbucket;
+pub(crate) mod clone;
 mod discord;
 mod driver;
 mod github;
+mod github_write;
 mod gitlab;
 #[cfg(feature = "graph")]
 mod graph_sync;
@@ -44,6 +46,7 @@ mod graph_sync_task;
 pub(crate) mod gts;
 mod notify;
 mod plugin;
+mod repository;
 mod rest;
 pub mod sdk;
 mod service;

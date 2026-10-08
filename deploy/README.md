@@ -60,7 +60,9 @@ One image, any environment:
   off by default). On, the backend keeps a checkout of the gear corpus in an
   `emptyDir` (`sizeLimit: 2Gi`) and serves the gear catalogue an IDE lists when
   its workspace has no gears, product previews, and the corpus clone relay
-  (`/studio-components-catalog/v1/gearbox/*`); off, those routes answer 404 and
+  (`/studio-product/v1/gearbox/*`, run by the `studio-product` gear; three
+  deprecated aliases stay under `/studio-components-catalog/v1/gearbox/`);
+  off, those routes answer 404 and
   Building's catalogue is empty in such a workspace. `corpusUrl`, `corpusRef`
   and `refreshSecs` override the code's defaults. The dev example turns it on
   with `MikeFalcon77/gears-rust` at `feature/gearbox`, the branch that carries

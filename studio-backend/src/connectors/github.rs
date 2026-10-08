@@ -7,9 +7,10 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
 use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
-    OpenedPullRequest, PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList,
-    RemoteIssue, RemotePullRequest, RemoteRepo, RemoteReview, RepoTree, RepoTreeEntry, WrittenFile,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
+    DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads, RemoteComment,
+    RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
+    RemoteRepo, RemoteReview, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -21,6 +22,11 @@ impl GitHubDriver {
         Self { http }
     }
 
+    /// The HTTP client, for the write path in `github_write.rs`.
+    pub(super) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// GitHub rejects requests without a User-Agent, and pins the response
     /// shape to the Accept header.
     fn request(&self, url: &str, auth: &ConnectionAuth) -> reqwest::RequestBuilder {
@@ -28,7 +34,7 @@ impl GitHubDriver {
     }
 
     /// The same headers on any method — the write path needs PUT.
-    fn headers(
+    pub(super) fn headers(
         &self,
         rb: reqwest::RequestBuilder,
         auth: &ConnectionAuth,
@@ -190,6 +196,78 @@ struct GitHubCommitMeta {
     message: Option<String>,
     #[serde(default)]
     author: Option<GitHubCommitAuthor>,
+    #[serde(default)]
+    committer: Option<GitHubCommitAuthor>,
+}
+
+impl From<GitHubCommit> for RemoteCommit {
+    fn from(c: GitHubCommit) -> Self {
+        let author_name = c.commit.author.as_ref().and_then(|a| a.name.clone());
+        let created_at = c.commit.author.as_ref().and_then(|a| a.date.clone());
+        let committed_at = c.commit.committer.as_ref().and_then(|a| a.date.clone());
+        RemoteCommit {
+            sha: c.sha,
+            message: c.commit.message,
+            author: c.author.map(|u| u.login),
+            author_name,
+            url: Some(c.html_url),
+            created_at,
+            committed_at,
+        }
+    }
+}
+
+/// One row of `/repos/{path}/tags`.
+#[derive(Deserialize)]
+struct GitHubTag {
+    name: String,
+}
+
+/// `GET /repos/{path}/contents/{file}` for a file: the body base64-encoded,
+/// unless the file is over 1 MB, when `content` is empty and the raw media
+/// type has to be asked for.
+#[derive(Deserialize)]
+struct GitHubFileContent {
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    encoding: Option<String>,
+    #[serde(default)]
+    sha: Option<String>,
+}
+
+/// The text of a contents-API answer, or `None` when it carries no inline
+/// body (a file over 1 MB). A directory, or a body that is not UTF-8 text, is
+/// an error.
+pub(super) fn decode_file_content(
+    body: &serde_json::Value,
+) -> anyhow::Result<Option<RemoteFileText>> {
+    if body.is_array() {
+        anyhow::bail!("that path is a directory, not a file");
+    }
+    let file: GitHubFileContent = serde_json::from_value(body.clone())?;
+    if file.kind.as_deref().is_some_and(|k| k != "file") {
+        anyhow::bail!("that path is not a file");
+    }
+    let Some(encoded) = file.content.filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+    if file.encoding.as_deref().unwrap_or("base64") != "base64" {
+        return Ok(None);
+    }
+    // GitHub wraps base64 at 60 columns.
+    let compact: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = BASE64
+        .decode(compact)
+        .map_err(|e| anyhow::anyhow!("the file's content is not base64: {e}"))?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("the file is not UTF-8 text"))?;
+    Ok(Some(RemoteFileText {
+        text,
+        sha: file.sha,
+    }))
 }
 
 /// One row of `/repos/{path}/commits`.
@@ -772,21 +850,169 @@ impl ConnectorDriver for GitHubDriver {
             );
         }
         let commits: Vec<GitHubCommit> = res.json().await?;
-        Ok(commits
-            .into_iter()
-            .map(|c| {
-                let author_name = c.commit.author.as_ref().and_then(|a| a.name.clone());
-                let created_at = c.commit.author.as_ref().and_then(|a| a.date.clone());
-                RemoteCommit {
-                    sha: c.sha,
-                    message: c.commit.message,
-                    author: c.author.map(|u| u.login),
-                    author_name,
-                    url: Some(c.html_url),
-                    created_at,
-                }
-            })
-            .collect())
+        Ok(commits.into_iter().map(RemoteCommit::from).collect())
+    }
+
+    async fn read_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        path: &str,
+        git_ref: Option<&str>,
+    ) -> anyhow::Result<Option<RemoteFileText>> {
+        let path = normalize_repo_path(path)?;
+        let url = format!(
+            "{}/repos/{repo_full_path}/contents/{}",
+            auth.root(),
+            encode_path(&path)
+        );
+        let git_ref = git_ref.map(str::trim).filter(|r| !r.is_empty());
+        let with_ref = |rb: reqwest::RequestBuilder| match git_ref {
+            Some(r) => rb.query(&[("ref", r)]),
+            None => rb,
+        };
+        let res = with_ref(self.request(&url, auth)).send().await?;
+        let status = res.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status} reading {path}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let body: serde_json::Value = res.json().await?;
+        if let Some(file) = decode_file_content(&body)? {
+            return Ok(Some(file));
+        }
+        // Over 1 MB: the JSON names the blob but carries no body.
+        let sha = body
+            .get("sha")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let res = with_ref(self.request(&url, auth))
+            .header("Accept", "application/vnd.github.raw")
+            .send()
+            .await?;
+        let status = res.status();
+        if !status.is_success() {
+            anyhow::bail!("GitHub {status} reading {path} raw");
+        }
+        Ok(Some(RemoteFileText {
+            text: res.text().await?,
+            sha,
+        }))
+    }
+
+    async fn path_history(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        path: &str,
+        git_ref: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<RemoteCommit>> {
+        let url = format!("{}/repos/{repo_full_path}/commits", auth.root());
+        let per_page = limit.clamp(1, 100).to_string();
+        let mut rb = self
+            .request(&url, auth)
+            .query(&[("path", path), ("per_page", per_page.as_str())]);
+        if let Some(r) = git_ref.map(str::trim).filter(|r| !r.is_empty()) {
+            rb = rb.query(&[("sha", r)]);
+        }
+        let res = rb.send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let commits: Vec<GitHubCommit> = res.json().await?;
+        Ok(commits.into_iter().map(RemoteCommit::from).collect())
+    }
+
+    async fn list_tags(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<String>> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/tags?per_page={}&page={}",
+            auth.root(),
+            per_page.clamp(1, 100),
+            page.max(1),
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let tags: Vec<GitHubTag> = res.json().await?;
+        Ok(tags.into_iter().map(|t| t.name).collect())
+    }
+
+    async fn graphql(
+        &self,
+        auth: &ConnectionAuth,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let url = graphql_url(auth.root());
+        let res = self
+            .headers(self.http.post(&url), auth)
+            .json(body)
+            .send()
+            .await?;
+        let status = res.status();
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub GraphQL {status}: {}",
+                text.chars().take(200).collect::<String>()
+            );
+        }
+        Ok(res.json().await?)
+    }
+
+    async fn commit_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        super::github_write::commit_files(
+            self,
+            auth,
+            repo_full_path,
+            base_branch,
+            branch,
+            files,
+            message,
+        )
+        .await
+    }
+
+    async fn create_repository(
+        &self,
+        auth: &ConnectionAuth,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+    ) -> anyhow::Result<CreatedRepository> {
+        super::github_write::create_repository(self, auth, owner, is_org, name, private).await
     }
 
     async fn list_files(
@@ -1950,5 +2176,65 @@ mod tests {
             .await
             .expect_err("a GraphQL error is not a successful read");
         assert!(err.to_string().contains("Bad credentials"), "{err}");
+    }
+
+    #[test]
+    fn a_file_is_its_decoded_content() {
+        let encoded = BASE64.encode(
+            "board: o/48
+",
+        );
+        // As GitHub sends it: wrapped.
+        let wrapped = format!(
+            "{}
+{}",
+            &encoded[..8],
+            &encoded[8..]
+        );
+        let body = serde_json::json!({ "type": "file", "encoding": "base64", "content": wrapped, "sha": "abc" });
+        assert_eq!(
+            decode_file_content(&body).expect("decoded"),
+            Some(RemoteFileText {
+                text: "board: o/48
+"
+                .into(),
+                sha: Some("abc".into())
+            })
+        );
+    }
+
+    #[test]
+    fn a_directory_or_a_body_that_is_not_text_is_refused_and_a_big_file_asks_for_raw() {
+        use serde_json::json;
+        assert!(
+            decode_file_content(&json!([{ "name": "a" }]))
+                .unwrap_err()
+                .to_string()
+                .contains("directory")
+        );
+        assert!(
+            decode_file_content(&json!({ "type": "dir" }))
+                .unwrap_err()
+                .to_string()
+                .contains("not a file")
+        );
+        assert!(decode_file_content(&json!({ "type": "file", "content": "!!!" })).is_err());
+        let latin = BASE64.encode([0xff, 0xfe]);
+        assert!(
+            decode_file_content(&json!({ "type": "file", "content": latin }))
+                .unwrap_err()
+                .to_string()
+                .contains("UTF-8")
+        );
+        // Over 1 MB: no inline body, read raw instead.
+        assert_eq!(
+            decode_file_content(&json!({ "type": "file" })).expect("no body"),
+            None
+        );
+        assert_eq!(
+            decode_file_content(&json!({ "type": "file", "encoding": "none", "content": "" }))
+                .expect("no body"),
+            None
+        );
     }
 }

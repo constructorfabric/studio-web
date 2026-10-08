@@ -937,7 +937,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 - **Depends On**: `cpt-studio-feature-knowledge-graph`, `cpt-studio-feature-ide-sessions`
 
 - **Scope**:
-  - `studio-components-catalog`, `studio-insight`, `theia/gearbox-studio`, `theia/gdl-language`
+  - `studio-components-catalog`, `studio-product`, `studio-insight`, `theia/gearbox-studio`, `theia/gdl-language`
 
 - **Out of scope**:
   - Gearbox phases P4 and P6b
@@ -958,17 +958,19 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-constraint-gearbox-licence`
 
 - **Domain Model Entities**:
-  - Gear, Crate version
+  - Gear, Crate version, Project gear repository, Project product
 
 - **Design Components**:
 
   - [x] `p1` - `cpt-studio-component-components-catalog`
+  - [x] `p1` - `cpt-studio-component-product`
   - [x] `p1` - `cpt-studio-component-insight`
   - [x] `p1` - `cpt-studio-component-theia-gearbox-studio`
   - [x] `p1` - `cpt-studio-component-theia-gdl-language`
 
 - **API**:
   - `/studio-components-catalog/v1`
+  - `/studio-product/v1`
   - `/studio-insight/v1`
 
 - **Sequences**:

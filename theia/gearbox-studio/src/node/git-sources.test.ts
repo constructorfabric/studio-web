@@ -150,8 +150,8 @@ describe("commitFromLsRemote", () => {
 describe("corpusRelay", () => {
   it("is there only while the desktop is signed in", () => {
     const env = { STUDIO_DESKTOP_GIT_BASE: "http://127.0.0.1:3000/studio-api/", STUDIO_DESKTOP_GIT_HELPER: "!helper" };
-    expect(corpusRelay("/cf/studio-components-catalog/v1/gearbox/corpus", env)).toEqual({
-      url: "http://127.0.0.1:3000/studio-api/cf/studio-components-catalog/v1/gearbox/corpus",
+    expect(corpusRelay("/cf/studio-product/v1/gearbox/corpus", env)).toEqual({
+      url: "http://127.0.0.1:3000/studio-api/cf/studio-product/v1/gearbox/corpus",
       helper: "!helper",
     });
     expect(corpusRelay("/cf/x", {})).toBeUndefined();

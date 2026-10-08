@@ -21,7 +21,7 @@ describe('loadRemoteGearCatalogue', () => {
 
         const remote = await loadRemoteGearCatalogue(fetchApi);
 
-        expect(fetchApi).toHaveBeenCalledWith('/studio-components-catalog/v1/gearbox/catalogue');
+        expect(fetchApi).toHaveBeenCalledWith('/studio-product/v1/gearbox/catalogue');
         expect(remote).toEqual({ corpus: 'constructorfabric/gears-rust@main', gears: [api, authn] });
     });
 
@@ -46,11 +46,22 @@ describe('loadRemoteGearCatalogue', () => {
             corpus_url: 'https://github.com/o/gears-rust.git',
             corpus_commit: 'c'.repeat(40),
             corpus_needs_token: true,
-            corpus_clone_path: '/studio-components-catalog/v1/gearbox/corpus',
+            corpus_clone_path: '/studio-product/v1/gearbox/corpus',
             catalogue: { gears: { g: { id: 'g' } } },
         }));
 
-        expect(remote?.origin?.clonePath).toBe('/studio-components-catalog/v1/gearbox/corpus');
+        expect(remote?.origin?.clonePath).toBe('/studio-product/v1/gearbox/corpus');
+    });
+
+    it('asks a backend from before studio-product at the catalogue's path', async () => {
+        const fetchApi = jest.fn(async (path: string) => path.startsWith('/studio-product/')
+            ? answer(404, {})()
+            : answer(200, { source_id: 'gears-rust', corpus: 'o/gears-rust@main', catalogue: { gears: { g: { id: 'g' } } } })());
+
+        const remote = await loadRemoteGearCatalogue(fetchApi);
+
+        expect(fetchApi).toHaveBeenLastCalledWith('/studio-components-catalog/v1/gearbox/catalogue');
+        expect(remote?.gears).toEqual([{ id: 'g' }]);
     });
 
     it('offers nothing when the backend has no corpus, so the catalogue stays empty rather than failing', async () => {

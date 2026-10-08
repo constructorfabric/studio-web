@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 235,
+  "open_violations": 237,
   "operations": [
     {
       "method": "DELETE",
@@ -471,25 +471,10 @@
     },
     {
       "method": "GET",
-      "path": "/studio-components-catalog/v1/gearbox",
-      "operation_id": "studio_components_catalog.get_gearbox_status",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Whether product previews can run, and against which gear corpus",
-      "authenticated": true,
-      "responses": [
-        "GearboxStatusDto"
-      ],
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
       "path": "/studio-components-catalog/v1/gearbox/catalogue",
       "operation_id": "studio_components_catalog.get_gearbox_catalogue",
       "tag": "StudioComponentsCatalog",
-      "summary": "The gear corpus's catalogue, as the Gearbox engine reads it",
+      "summary": "Deprecated: the gear corpus's catalogue, now under studio-product",
       "authenticated": true,
       "responses": [
         "GearboxCatalogueDto"
@@ -504,27 +489,12 @@
       "path": "/studio-components-catalog/v1/gearbox/corpus/info/refs",
       "operation_id": "studio_components_catalog.get_corpus_refs",
       "tag": "StudioComponentsCatalog",
-      "summary": "Git smart-HTTP ref advertisement for the gear corpus",
+      "summary": "Deprecated: Git ref advertisement for the gear corpus, now under studio-product",
       "authenticated": false,
       "errors": [
         "400",
         "401",
         "404",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/studio-components-catalog/v1/gearbox/extension-points",
-      "operation_id": "studio_components_catalog.list_extension_points",
-      "tag": "StudioComponentsCatalog",
-      "summary": "The hosts a new plugin gear can fill, from the Gearbox engine's catalogue",
-      "authenticated": true,
-      "responses": [
-        "ExtensionPointListDto"
-      ],
-      "errors": [
-        "401",
         "500"
       ]
     },
@@ -540,37 +510,6 @@
       ],
       "errors": [
         "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/gear-repo",
-      "operation_id": "studio_components_catalog.get_project_repo",
-      "tag": "StudioComponentsCatalog",
-      "summary": "The gear repository connected to a project (0 or 1 node)",
-      "authenticated": true,
-      "responses": [
-        "CatalogNodeListResponse"
-      ],
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/product",
-      "operation_id": "studio_components_catalog.get_project_product",
-      "tag": "StudioComponentsCatalog",
-      "summary": "The product a project is composing out of gears",
-      "authenticated": true,
-      "responses": [
-        "CatalogNodeListResponse"
-      ],
-      "errors": [
-        "401",
-        "404",
         "500"
       ]
     },
@@ -1391,6 +1330,96 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/gearbox",
+      "operation_id": "studio_product.get_gearbox_status",
+      "tag": "StudioProduct",
+      "summary": "Whether product previews can run, and against which gear corpus",
+      "authenticated": true,
+      "responses": [
+        "GearboxStatusDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gearbox/catalogue",
+      "operation_id": "studio_product.get_gearbox_catalogue",
+      "tag": "StudioProduct",
+      "summary": "The gear corpus's catalogue, as the Gearbox engine reads it",
+      "authenticated": true,
+      "responses": [
+        "GearboxCatalogueDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gearbox/corpus/info/refs",
+      "operation_id": "studio_product.get_corpus_refs",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP ref advertisement for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gearbox/extension-points",
+      "operation_id": "studio_product.list_extension_points",
+      "tag": "StudioProduct",
+      "summary": "The hosts a new plugin gear can fill, from the Gearbox engine's catalogue",
+      "authenticated": true,
+      "responses": [
+        "ExtensionPointListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/projects/{project_id}/gear-repo",
+      "operation_id": "studio_product.get_project_repo",
+      "tag": "StudioProduct",
+      "summary": "The gear repository connected to a project (0 or 1 node)",
+      "authenticated": true,
+      "responses": [
+        "ProductRecordListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/projects/{project_id}/product",
+      "operation_id": "studio_product.get_project_product",
+      "tag": "StudioProduct",
+      "summary": "The product a project is composing out of gears",
+      "authenticated": true,
+      "responses": [
+        "ProductRecordListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-reports/v1/reports",
       "operation_id": "studio_reports.list_reports",
       "tag": "StudioReports",
@@ -2197,100 +2226,14 @@
     },
     {
       "method": "POST",
-      "path": "/studio-components-catalog/v1/gearbox/complete",
-      "operation_id": "studio_components_catalog.resolve_product",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Complete picked gears into a set the Gearbox engine can resolve",
-      "authenticated": true,
-      "request": "CompleteProductRequest",
-      "responses": [
-        "CompleteProductDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
       "path": "/studio-components-catalog/v1/gearbox/corpus/git-upload-pack",
       "operation_id": "studio_components_catalog.pull_corpus_pack",
       "tag": "StudioComponentsCatalog",
-      "summary": "Git smart-HTTP upload-pack (clone and fetch) for the gear corpus",
+      "summary": "Deprecated: Git upload-pack for the gear corpus, now under studio-product",
       "authenticated": false,
       "errors": [
         "401",
         "404",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/create-repo",
-      "operation_id": "studio_components_catalog.create_repo",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Create a new repository via the connector and set it as the project's gear repo",
-      "authenticated": true,
-      "request": "CreateRepoRequest",
-      "responses": [
-        "CreateRepoResultDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/gear-repo",
-      "operation_id": "studio_components_catalog.set_project_repo",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Connect (or update) the gear repository for a project",
-      "authenticated": true,
-      "request": "SetProjectRepoRequest",
-      "responses": [
-        "CatalogNodeDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/product/preview",
-      "operation_id": "studio_components_catalog.materialize_product_preview",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Compose a product.gdl from picked gears and resolve it",
-      "authenticated": true,
-      "request": "ProductPreviewRequest",
-      "responses": [
-        "ProductPreviewDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "404",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/scaffold",
-      "operation_id": "studio_components_catalog.scaffold_gear",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Write a scaffolded gear skeleton into the project's connected gear repo",
-      "authenticated": true,
-      "request": "ScaffoldRequest",
-      "responses": [
-        "ScaffoldResultDto"
-      ],
-      "errors": [
-        "400",
-        "401",
         "500"
       ]
     },
@@ -3079,6 +3022,105 @@
     },
     {
       "method": "POST",
+      "path": "/studio-product/v1/gearbox/complete",
+      "operation_id": "studio_product.resolve_product",
+      "tag": "StudioProduct",
+      "summary": "Complete picked gears into a set the Gearbox engine can resolve",
+      "authenticated": true,
+      "request": "CompleteProductRequest",
+      "responses": [
+        "CompleteProductDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gearbox/corpus/git-upload-pack",
+      "operation_id": "studio_product.pull_corpus_pack",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP upload-pack (clone and fetch) for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/projects/{project_id}/create-repo",
+      "operation_id": "studio_product.create_repo",
+      "tag": "StudioProduct",
+      "summary": "Create a new repository via the connector and set it as the project's gear repo",
+      "authenticated": true,
+      "request": "CreateRepoRequest",
+      "responses": [
+        "CreateRepoResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/projects/{project_id}/gear-repo",
+      "operation_id": "studio_product.set_project_repo",
+      "tag": "StudioProduct",
+      "summary": "Connect (or update) the gear repository for a project",
+      "authenticated": true,
+      "request": "SetProjectRepoRequest",
+      "responses": [
+        "ProductRecordDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/projects/{project_id}/product/preview",
+      "operation_id": "studio_product.materialize_product_preview",
+      "tag": "StudioProduct",
+      "summary": "Compose a product.gdl from picked gears and resolve it",
+      "authenticated": true,
+      "request": "ProductPreviewRequest",
+      "responses": [
+        "ProductPreviewDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/projects/{project_id}/scaffold",
+      "operation_id": "studio_product.scaffold_gear",
+      "tag": "StudioProduct",
+      "summary": "Write a scaffolded gear skeleton into the project's connected gear repo",
+      "authenticated": true,
+      "request": "ScaffoldRequest",
+      "responses": [
+        "ScaffoldResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-reports/v1/reports/{report_id}/plan/sync",
       "operation_id": "studio_reports.sync_report_plan",
       "tag": "StudioReports",
@@ -3576,24 +3618,6 @@
     },
     {
       "method": "PUT",
-      "path": "/studio-components-catalog/v1/projects/{project_id}/product",
-      "operation_id": "studio_components_catalog.upsert_project_product",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Save which gears a project's product is made of",
-      "authenticated": true,
-      "request": "SaveProjectProductRequest",
-      "responses": [
-        "CatalogNodeDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "404",
-        "500"
-      ]
-    },
-    {
-      "method": "PUT",
       "path": "/studio-components-catalog/v1/types/{type_id}/component",
       "operation_id": "studio_components_catalog.set_type_component",
       "tag": "StudioComponentsCatalog",
@@ -3678,6 +3702,24 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/projects/{project_id}/product",
+      "operation_id": "studio_product.upsert_project_product",
+      "tag": "StudioProduct",
+      "summary": "Save which gears a project's product is made of",
+      "authenticated": true,
+      "request": "SaveProjectProductRequest",
+      "responses": [
+        "ProductRecordDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

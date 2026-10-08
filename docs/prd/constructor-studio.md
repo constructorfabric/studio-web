@@ -504,7 +504,7 @@ The system **MUST** sync every crate published under the `constructorfabric` key
 
 The system **MUST** record which repository a project's gears live in, create that repository through a connection, and write a gear skeleton into it on a branch, optionally opening a pull request.
 
-- **Rationale**: Once Studio knows what a gear looks like it can create one ([studio-components-catalog](../design/studio-components-catalog.md)).
+- **Rationale**: Once Studio knows what a gear looks like it can create one ([studio-product](../design/studio-product.md)).
 - **Actors**: `cpt-studio-actor-member`
 
 #### Gearbox products
@@ -947,7 +947,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
 | `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
-| `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/spec_mapping/` (`reading.rs`: a specification read as written; `plan.rs`: contract, then evidence with a cited passage, then gap); `/studio-spec-mapping/v1/{plan,capabilities}`; facts from `components_catalog/gearbox.rs` (`gdl_contracts`) and `repo_enrich.rs` (`doc_text`); vocabulary `documents/model.rs` (`Capability::contracts`); prototype project tab `components`; #205, #199 |
+| `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/spec_mapping/` (`reading.rs`: a specification read as written; `plan.rs`: contract, then evidence with a cited passage, then gap); `/studio-spec-mapping/v1/{plan,capabilities}`; facts from `product/gearbox.rs` (`gdl_contracts`) and `repo_enrich.rs` (`doc_text`); vocabulary `documents/model.rs` (`Capability::contracts`); prototype project tab `components`; #205, #199 |
 | `cpt-studio-fr-mapping-decisions` | `studio-backend/src/spec_mapping/` (`/studio-spec-mapping/v1/decisions`, ranking in `plan.rs`); stored as `mapping_decision` nodes with `decision_on` edges by `artifact_ingest` (`port::MappingDecisionStore`); prototype project tab `components` (✓/✗ on a candidate); planned: decisions shared across an organization; #205, #206 |
 | `cpt-studio-fr-nfr-to-profile` | `studio-backend/src/spec_mapping/` (`reading::declared_requirements`, `plan::deployment_profile`, `nonfunctional` capabilities offer no gear); `/studio-spec-mapping/v1/requirements`; indexed by `documents` (`m0013`); prototype project tab `components` ("Use <profile>"); planned: `config` from requirements; #205 |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
@@ -962,8 +962,8 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-artifact-ingest` | `studio-backend/src/artifact_ingest/`, platform `graph_storage`; `/studio-artifact-ingest/v1`; `projects-mfe` project screen; prototype project tabs `artifacts` and `activity`, and the hidden `files` view's repository files |
 | `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
 | `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,types,field-schemas,profiles,activity}`; prototype `gears` |
-| `cpt-studio-fr-gear-scaffold` | `studio-backend/src/components_catalog/{scaffold,skeleton}.rs`; `/studio-components-catalog/v1/projects/{project_id}/{gear-repo,create-repo,scaffold}` |
-| `cpt-studio-fr-gearbox-product` | `studio-backend/src/components_catalog/gearbox.rs`; `/studio-components-catalog/v1/gearbox`, `/studio-spec-mapping/v1/plan`, `…/projects/{project_id}/product`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
+| `cpt-studio-fr-gear-scaffold` | `studio-backend/src/product/{scaffold,skeleton}.rs`; `/studio-product/v1/projects/{project_id}/{gear-repo,create-repo,scaffold}` |
+| `cpt-studio-fr-gearbox-product` | `studio-backend/src/product/` (`gearbox.rs`, `service.rs`); `/studio-product/v1/gearbox`, `/studio-product/v1/projects/{project_id}/product`, `/studio-spec-mapping/v1/plan`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
 | `cpt-studio-fr-delivery-insight` | `studio-backend/src/insight/`; `/studio-insight/v1`; prototype `gears` component page |
 | `cpt-studio-fr-kits` | `studio-backend/src/kit_registry/`; `/studio-kits/v1`; `theia/studio/src/node/kit-installer.ts`; prototype project tab `components` |
 | `cpt-studio-fr-background-runs` | `studio-backend/src/tasks/`; `/studio-tasks/v1`; prototype `tasks` |

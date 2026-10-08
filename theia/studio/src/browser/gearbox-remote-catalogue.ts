@@ -73,7 +73,11 @@ export function remoteGearCatalogueSignedIn(): void {
  * of claiming the workspace simply has no `gear.gdl`.
  */
 export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioApi.fetch(path)): Promise<RemoteGearCatalogue | undefined> {
-    const res = await fetchApi('/studio-components-catalog/v1/gearbox/catalogue');
+    let res = await fetchApi('/studio-product/v1/gearbox/catalogue');
+    // A backend from before studio-product serves it under the catalogue.
+    if (res.status === 404) {
+        res = await fetchApi('/studio-components-catalog/v1/gearbox/catalogue');
+    }
     // Refused, not absent: signed out (401/403) or no Studio behind the proxy
     // yet (503). A 404 is a backend without Gearbox, which signing in does not change.
     refused = res.status === 401 || res.status === 403 || res.status === 503;

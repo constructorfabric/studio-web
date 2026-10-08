@@ -352,6 +352,7 @@ read credentials or reach a driver.
 
 Several in-crate gears build their own `ConnectorService` over the drivers
 they resolve rather than calling this gear: `cpt-studio-component-components-catalog`,
+`cpt-studio-component-product`,
 `cpt-studio-component-user`, the reports gear, and `git_proxy`, which reads
 the catalogue only. `cpt-studio-component-artifact-ingest` resolves source
 drivers through `source_driver_ids()`, and project sources resolve a
