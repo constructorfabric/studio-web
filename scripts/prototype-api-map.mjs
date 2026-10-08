@@ -273,9 +273,14 @@ export function buildPrototypeMap({ srcDir, root = dirname(srcDir), commit = nul
   return { commit, screens };
 }
 
+/** The prototype's sources in this repository (scripts/ and studio-frontend-prototype/ are siblings). */
+export function prototypeSrcDir() {
+  return join(fileURLToPath(new URL('.', import.meta.url)), '..', 'studio-frontend-prototype', 'src');
+}
+
 // CLI: print the map of the prototype in this repository.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const srcDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'studio-frontend-prototype', 'src');
+  const srcDir = prototypeSrcDir();
   if (!existsSync(srcDir)) {
     console.error(`no prototype sources at ${srcDir}`);
     process.exit(2);
