@@ -59,6 +59,7 @@ subject, and the address the realm has verified for it.
 | `cpt-studio-adr-membership-is-recorded-where-assignment-happens` | Assignment writes the Studio membership, not only the IdP attribute; the backfill writes it for earlier assignments. |
 | `cpt-studio-adr-a-brokered-login-is-a-proof-of-control` | Keycloak names the account a brokered login resolved to, and only from the per-user federated-identity endpoint. |
 | `cpt-studio-adr-an-identity-proves-it-is-you-and-decides-nothing-else` | The administrator gate is a membership of the platform root, not the token's tenant. |
+| `cpt-studio-adr-one-owner-for-people-and-membership` | The owner grant is studio-user's to write with the membership; the Keycloak attributes are a projection for the platform, never read back as membership. |
 
 ### 1.3 Architecture Layers
 
@@ -97,15 +98,19 @@ lowercased; an unverified address is a claim by whoever typed it.
 
 - [x] `p2` - **ID**: `cpt-studio-principle-identity-directory-assignment-complete`
 
-Assignment writes four things in order: the owner grant in the organization's
-access config (set for `owner`, cleared for `member`), the realm user's
-`tenant_id` and `studio_organization_role` attributes, the user's group under
-`/tenants/{tenant_id}` (removing the other tenant groups), and the Studio
-membership. There is no transaction across Keycloak and PostgreSQL, so the last
-write is not optional: a failure there names the identity and tells the
-administrator to re-run the assignment, which is idempotent. The attribute and
-the group are both kept because tokens read the attribute while
-account-management lists a tenant's users from the group.
+Assignment writes three things in order: the realm user's `tenant_id` and
+`studio_organization_role` attributes, the user's group under
+`/tenants/{tenant_id}` (removing the other tenant groups), and — through
+`AssignmentRecorder::record_assignment` — the Studio membership together with
+the owner grant that follows its role (set for `owner`, cleared otherwise),
+which `cpt-studio-component-user` alone writes (ADR-0040). There is no
+transaction across Keycloak and PostgreSQL, so the last write is not optional:
+a failure there names the identity and tells the administrator to re-run the
+assignment, which is idempotent; without `cpt-studio-component-user` the
+assignment answers 503 and writes nothing. The attribute and the group are both
+kept because tokens read the attribute while account-management lists a
+tenant's users from the group — they are the IdP's projection for the
+platform, and nothing in Studio reads them back as membership.
 
 The role is `owner`, `admin` or `member`, the set a membership takes; offering
 fewer demoted every `admin` that was re-assigned. A platform administrator is
@@ -194,8 +199,7 @@ A read-only projection plus one write path; not a second user store.
 
 - `cpt-studio-component-keycloak` — reads from and writes assignments to
 - `cpt-studio-component-account-management` — resolves tenants through
-- `cpt-studio-component-access-config` — writes the owner grant through
-- `cpt-studio-component-user` — records memberships through, and serves the proof channel to
+- `cpt-studio-component-user` — records memberships and their owner grant through, and serves the proof channel to
 
 ### 3.3 API Contracts
 
@@ -215,8 +219,8 @@ A read-only projection plus one write path; not a second user store.
 
 Every route is platform-admin only (`PLATFORM_ADMIN_REQUIRED`): a membership of
 the platform root, read through `OrganizationReader`. Without
-`cpt-studio-component-user` the gate refuses. The backfill answers 503 when
-there is nowhere to record memberships.
+`cpt-studio-component-user` the gate refuses. The assignment and the backfill
+answer 503 when there is nowhere to record memberships.
 
 In process, `IdpDirectoryReader` is published under
 `cf.studio._.idp_directory.v1~`.
@@ -225,8 +229,8 @@ In process, `IdpDirectoryReader` is published under
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| `cpt-studio-component-account-management` | SDK client | Resolve home tenants; write the owner grant |
-| `cpt-studio-component-user` | `AssignmentRecorder`, `OrganizationReader` from the ClientHub, resolved in the REST phase | Record memberships; the platform-admin gate |
+| `cpt-studio-component-account-management` | SDK client | Resolve home tenants and the target organization |
+| `cpt-studio-component-user` | `AssignmentRecorder`, `OrganizationReader` from the ClientHub, resolved in the REST phase | Record memberships and their owner grant; the platform-admin gate |
 
 ### 3.5 External Dependencies
 
@@ -256,10 +260,10 @@ sequenceDiagram
     A->>D: POST /users/{id}/assignment (tenant_id, role)
     D->>AM: read the organization
     D->>K: admin token, read the user
-    D->>AM: owner grant set or cleared
     D->>K: write tenant_id and role attributes
     D->>K: move the user to /tenants/{tenant_id}
-    D->>U: record_assignment(subject, org, role)
+    D->>U: record_assignment(ctx, subject, org, role)
+    U->>AM: owner grant on the person, set or cleared
     D-->>A: 204
 ```
 

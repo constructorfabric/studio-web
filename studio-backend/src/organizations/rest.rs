@@ -114,8 +114,7 @@ async fn create_organization(
              Repeat this request with organization_id={id} to finish it.",
             match step {
                 Step::Tenant => "its record",
-                Step::Membership => "your membership of it",
-                Step::Grant => "your owner grant on it",
+                Step::Membership => "your membership of it and your owner grant on it",
             }
         ))
         .create()),

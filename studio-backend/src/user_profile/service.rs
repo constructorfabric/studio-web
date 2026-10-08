@@ -337,6 +337,21 @@ pub struct MergeResult {
     pub logins_moved: usize,
     pub aliases_moved: usize,
     pub memberships_moved: usize,
+    /// Grants that named the merged-away person and now name the survivor.
+    pub grants_moved: usize,
+}
+
+/// Outcome of rekeying every organization's grants onto people.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RekeyReport {
+    /// Organizations whose access config was read.
+    pub organizations: usize,
+    /// Grants that now name a person instead of a login, plus the duplicates
+    /// that rewrite made and removed.
+    pub rewritten: usize,
+    /// Organizations whose document could not be read or written; each is
+    /// logged, and re-running the rekey retries them.
+    pub failed: usize,
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -397,33 +412,41 @@ impl IdentityService {
         let _ = self.federated.set(federated);
     }
 
-    /// Every sign-in subject belonging to the same person as `subject`.
+    /// Every key a grant may name the person behind `subject` by: the person
+    /// id first, then every sign-in subject bound to them.
     ///
-    /// One query behind the scenes and one answer in front: resolve the person
-    /// the subject belongs to, then list the logins bound to them. A subject no
-    /// login knows — a service account, a person not provisioned yet — is its
-    /// own answer, so every caller can match against this set alone without a
-    /// second code path.
+    /// A grant names the person (ADR-0040 §5). Grants written before that
+    /// named whichever login was in front of whoever wrote them, and those keep
+    /// matching through the subjects until the rekey has run everywhere — so
+    /// the order of deploying and rekeying does not matter. One function, so
+    /// no matcher can remember the logins and forget the person, which is how
+    /// a grant on the person used to count somebody onto a team and grant them
+    /// nothing.
+    ///
+    /// A subject no login knows — a service account, a person not provisioned
+    /// yet — is its own answer, so every caller can match against this set
+    /// alone without a second code path.
     ///
     /// Never provisions. Nobody has authenticated a subject read out of a
     /// stored document, which is exactly what a grant's `subjectId` is.
-    pub async fn subjects_of(&self, subject: &str) -> Result<Vec<String>> {
+    pub async fn grant_keys_of(&self, subject: &str) -> Result<Vec<String>> {
         let Some(person) = self.resolve_subject(PROVIDER_KEYCLOAK, subject).await? else {
             return Ok(vec![subject.to_owned()]);
         };
-        let mut subjects: Vec<String> = self
-            .list_logins(&person)
-            .await?
-            .into_iter()
-            .map(|login| login.subject)
-            .collect();
+        let mut keys = vec![person.clone()];
+        keys.extend(
+            self.list_logins(&person)
+                .await?
+                .into_iter()
+                .map(|login| login.subject),
+        );
         // The caller's own subject is in the set whether or not a login row
         // knows it — a matcher fed this list must never be narrower than the
         // one that matched on the bare subject.
-        if !subjects.iter().any(|s| s == subject) {
-            subjects.push(subject.to_owned());
+        if !keys.iter().any(|s| s == subject) {
+            keys.push(subject.to_owned());
         }
-        Ok(subjects)
+        Ok(keys)
     }
 
     /// May the caller administer `org_id` — is one privilege theirs to use?
@@ -453,19 +476,31 @@ impl IdentityService {
         org_id: Uuid,
         privilege: &str,
     ) -> bool {
-        let subject = ctx.subject_id().to_string();
-        // Every way this person signs in, not the one they used today: a grant
-        // records whichever login wrote it, and asking about that login alone
-        // makes authority depend on which door somebody came through
-        // (ADR-0023 follow-up 2). A failed lookup falls back to the bare
-        // subject, which is what this asked before.
-        let subjects = self
-            .subjects_of(&subject)
-            .await
-            .unwrap_or_else(|_| vec![subject.clone()]);
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
-        cfg.grants_ownership_to(&subjects)
-            || (cfg.is_roles_model() && cfg.grants_privilege_to(&subjects, privilege))
+        let keys = self.caller_grant_keys(ctx).await;
+        cfg.grants_ownership_to(&keys)
+            || (cfg.is_roles_model() && cfg.grants_privilege_to(&keys, privilege))
+    }
+
+    /// May the caller dispose of `org_id` — hand it over or delete it?
+    ///
+    /// Its owner may, and a platform administrator may (ADR-0018 §6's
+    /// break-glass, for when the owner is gone). Not a privilege: no role
+    /// confers it, whatever the access model (ADR-0019 §2).
+    pub async fn may_dispose(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
+        let subject = ctx.subject_id().to_string();
+        let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
+        cfg.grants_ownership_to(&self.caller_grant_keys(ctx).await)
+            || self.is_platform_admin(&subject).await.unwrap_or(false)
+    }
+
+    /// The caller's grant keys (`grant_keys_of`), or the bare subject when the
+    /// lookup fails — which is what every matcher asked before people had keys.
+    async fn caller_grant_keys(&self, ctx: &SecurityContext) -> Vec<String> {
+        let subject = ctx.subject_id().to_string();
+        self.grant_keys_of(&subject)
+            .await
+            .unwrap_or_else(|_| vec![subject])
     }
 
     /// The canonical person behind an authenticated caller, provisioning on
@@ -1391,8 +1426,12 @@ impl IdentityService {
     /// never overwrite it, since a profile is the person's own to edit. Without
     /// them every assigned person read as "Person 1a2b3c4d" on the members
     /// screen until they edited their own profile.
+    ///
+    /// The owner grant follows the row, written here and nowhere else
+    /// (ADR-0040 §2): an `owner` gets it, any other role loses it.
     pub async fn record_assignment(
         &self,
+        ctx: &SecurityContext,
         subject: &str,
         org_id: Uuid,
         role: &str,
@@ -1406,7 +1445,13 @@ impl IdentityService {
             .await?;
         self.record_membership(&user_id, &org_id.to_string(), role, SOURCE_ASSIGNMENT)
             .await?;
-        Ok(())
+        self.sync_owner_grant(
+            ctx,
+            &user_id,
+            org_id,
+            role == crate::access_config::ROLE_OWNER,
+        )
+        .await
     }
 
     /// Give a profile the name and address it lacks, leaving any it has.
@@ -1432,7 +1477,17 @@ impl IdentityService {
     /// source: ownership that arises from creating an organization did not come
     /// from an operator, and an owner reading their member list should see the
     /// difference (ADR-0018 §2).
-    pub async fn record_creation(&self, subject: &str, org_id: Uuid) -> Result<()> {
+    ///
+    /// The membership first, then the owner grant: membership is the
+    /// authority, and the grant is its projection (ADR-0040 §2). Both writes
+    /// are idempotent, so a creation that failed between them is finished by
+    /// calling this again.
+    pub async fn record_creation(
+        &self,
+        ctx: &SecurityContext,
+        subject: &str,
+        org_id: Uuid,
+    ) -> Result<()> {
         let user_id = self
             .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
             .await?;
@@ -1443,7 +1498,7 @@ impl IdentityService {
             SOURCE_CREATION,
         )
         .await?;
-        Ok(())
+        self.sync_owner_grant(ctx, &user_id, org_id, true).await
     }
 
     /// Is the person behind `subject` a platform administrator?
@@ -1729,13 +1784,15 @@ impl IdentityService {
     ///
     /// Two records say "owner" and they must not disagree. The membership's
     /// role is what the last-owner rule counts; the org-scoped `owner` grant in
-    /// the access config is what `may_administer` reads (ADR-0019). Creation
-    /// and the identity directory's assignment write both; a membership written
-    /// here must too, or an "owner" in the member list could administer
+    /// the access config is what `may_administer` and the PDP read (ADR-0019).
+    /// The grant is a projection of the membership, and this is its only
+    /// writer (ADR-0040 §2): creation, assignment and every membership write
+    /// come through here, or an "owner" in the member list could administer
     /// nothing — and a demoted one still could.
     ///
-    /// The grant is written for every sign-in of the person, since authority
-    /// is asked about all of them (`subjects_of`), and removed from every one.
+    /// The grant names the person (ADR-0040 §5). Grants an older writer left on
+    /// one of the person's logins are taken away in the same write, owner or
+    /// not, so a person holds one owner grant, on one key.
     pub async fn sync_owner_grant(
         &self,
         ctx: &SecurityContext,
@@ -1743,27 +1800,114 @@ impl IdentityService {
         org_id: Uuid,
         owner: bool,
     ) -> Result<()> {
+        // A membership of the platform root makes a platform administrator,
+        // which is a membership and never a grant (ADR-0018 §3). A document on
+        // the root would also be inherited by every organization that has none
+        // of its own, making its owners everybody's.
+        if org_id == PLATFORM_ROOT_TENANT_ID {
+            return Ok(());
+        }
         let tenant = self
             .am
             .get_tenant(ctx, org_id)
             .await
             .map_err(|error| anyhow!("cannot read organization {org_id}: {error}"))?;
-        let logins = self.list_logins(user_id).await?;
-        for login in logins
-            .iter()
-            .filter(|login| !owner || login.provider == PROVIDER_KEYCLOAK)
-        {
-            crate::access_config::set_owner_grant(
+        let legacy: Vec<String> = self
+            .list_logins(user_id)
+            .await?
+            .into_iter()
+            .map(|login| login.subject)
+            .collect();
+        let name = self
+            .store
+            .get_user(user_id)
+            .await?
+            .and_then(|p| p.display_name)
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| user_id.to_owned());
+        crate::access_config::set_owner_grant(
+            self.am.as_ref(),
+            ctx,
+            org_id,
+            &tenant.name,
+            &crate::access_config::GrantSubject {
+                key: user_id,
+                name: &name,
+                legacy_keys: &legacy,
+            },
+            owner,
+        )
+        .await
+    }
+
+    /// Point every member grant that names a known login at its person, in
+    /// every organization somebody belongs to (ADR-0040 §5).
+    ///
+    /// The migration from login-keyed grants. Matching does not depend on it —
+    /// `grant_keys_of` matches the person and every login — but a screen that
+    /// names a grant's holder from the members listing only knows people.
+    /// Idempotent: a grant already on its person, a team grant and a subject no
+    /// login knows are left as they are, so a second run rewrites nothing. One
+    /// organization's failure is logged and counted, and the walk goes on.
+    pub async fn rekey_all_grants(&self, ctx: &SecurityContext) -> Result<RekeyReport> {
+        let mut report = RekeyReport::default();
+        for org in self.store.organizations_with_members().await? {
+            let Ok(org_id) = Uuid::parse_str(&org) else {
+                continue;
+            };
+            if org_id == PLATFORM_ROOT_TENANT_ID {
+                continue;
+            }
+            report.organizations += 1;
+            let rekeyed = crate::access_config::rekey_grants_in(
                 self.am.as_ref(),
                 ctx,
                 org_id,
-                &tenant.name,
-                &login.subject,
-                owner,
+                |subject| async move { self.resolve_subject(PROVIDER_KEYCLOAK, &subject).await },
             )
-            .await?;
+            .await;
+            match rekeyed {
+                Ok(n) => report.rewritten += n,
+                Err(error) => {
+                    report.failed += 1;
+                    tracing::warn!(organization = %org_id, "studio-user: grant rekey failed: {error:#}");
+                }
+            }
         }
-        Ok(())
+        Ok(report)
+    }
+
+    /// Merge `from_user` into `into_user`, and carry the grants that named
+    /// `from_user` with the memberships the merge moves.
+    ///
+    /// A grant on the merged-away person would otherwise name somebody who no
+    /// longer resolves from any login, and the survivor would hold a
+    /// membership whose authority was left behind. Grants on the moved logins
+    /// need nothing: those logins are the survivor's now.
+    pub async fn merge_with_grants(
+        &self,
+        ctx: &SecurityContext,
+        from_user: &str,
+        into_user: &str,
+    ) -> Result<MergeResult> {
+        let orgs: Vec<Uuid> = self
+            .store
+            .memberships_of(from_user)
+            .await?
+            .iter()
+            .filter_map(|m| Uuid::parse_str(&m.org_id).ok())
+            .filter(|org| *org != PLATFORM_ROOT_TENANT_ID)
+            .collect();
+        let mut result = self.merge(from_user, into_user).await?;
+        for org in orgs {
+            result.grants_moved +=
+                crate::access_config::rekey_grants_in(self.am.as_ref(), ctx, org, |subject| {
+                    let into = (subject == from_user).then(|| into_user.to_owned());
+                    async move { Ok(into) }
+                })
+                .await?;
+        }
+        Ok(result)
     }
 
     /// May this membership end, or become `after`?
@@ -2581,6 +2725,9 @@ mod idp_channel_tests {
         async fn memberships_in_org(&self, _org_id: &str) -> Result<Vec<MembershipView>> {
             unimplemented!("not on the ceremony's path")
         }
+        async fn organizations_with_members(&self) -> Result<Vec<String>> {
+            unimplemented!("not on the ceremony's path")
+        }
         async fn delete_membership(&self, _user_id: &str, _org_id: &str) -> Result<()> {
             unimplemented!("not on the ceremony's path")
         }
@@ -2973,6 +3120,9 @@ mod service_account_tests {
             unimplemented!()
         }
         async fn memberships_in_org(&self, _o: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!()
+        }
+        async fn organizations_with_members(&self) -> Result<Vec<String>> {
             unimplemented!()
         }
         async fn delete_membership(&self, _u: &str, _o: &str) -> Result<()> {

@@ -616,9 +616,9 @@ export const SURFACES: Surface[] = [
     id: "project-team",
     area: "project",
     title: "Team and automation",
-    does: "See who works on the project and who is online; set its automation.",
+    does: "See who works on the project; set its automation.",
     components: ["PeopleView", "AutomationSettings"],
-    gears: ["account-management", "studio-organizations", "studio-presence"],
+    gears: ["account-management", "studio-organizations", "studio-user"],
   },
   {
     id: "connections",

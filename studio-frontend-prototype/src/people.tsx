@@ -2,22 +2,28 @@
  *
  * Two surfaces, one component:
  *
- *   mode="org"  — the organization's PEOPLE. Every account owned by the org
- *                 tenant. Inviting here creates the account IN the organization
- *                 (its home tenant) — real and backend-backed.
+ *   mode="org"  — the organization's PEOPLE: its members, as studio-user
+ *                 records them (ADR-0040 §1). Inviting here creates a Studio
+ *                 invitation the person accepts when they sign in with the
+ *                 address; nothing is created in the identity provider.
  *
- *   mode="team" — a project's TEAM. Membership is now REAL: it is the set of
- *                 role grants in the organization's access config (AM tenant
- *                 metadata) scoped to this project. Adding/removing a member or
- *                 changing their role writes that config — the same store the
- *                 Studio PDP reads to enforce access. Only meaningful when the
- *                 org's access model is "roles"; under "tenant" access everyone
- *                 in scope can work, so there is no per-project team to manage.
+ *   mode="team" — a project's TEAM: the role grants in the organization's
+ *                 access config (AM tenant metadata) scoped to this project.
+ *                 Adding/removing a member or changing their role writes that
+ *                 config — the same store the Studio PDP reads to enforce
+ *                 access. Only meaningful when the org's access model is
+ *                 "roles"; under "tenant" access everyone in the organization
+ *                 can work, so there is no per-project team to manage.
+ *
+ * Every person here is the canonical person id, and every grant written here
+ * names it (ADR-0040 §5). Account-management's `/tenants/{id}/users` is not
+ * read: it lists each account's single home tenant in the identity provider,
+ * which is not membership.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api, type User } from "./api";
+import { api } from "./api";
 import { DataTable } from "./data-table";
 import { errText, initials } from "./format";
 import {
@@ -27,16 +33,7 @@ import {
   type RoleDef,
 } from "./access";
 import type { RootProject } from "./projects";
-
-interface Person {
-  user: User;
-  /** True when this account is owned by the organization tenant itself. */
-  homeIsOrg: boolean;
-  /** Project tenants this person is a member of (AM tenant users). */
-  rootIds: string[];
-}
-
-import { OnlineDot, useOnline } from "./presence";
+import { holderName, orgPeople, projectGrantsOf, type Member } from "./org-people";
 import { ColleaguesCard } from "./people-profile";
 
 export function PeopleView({
@@ -47,7 +44,7 @@ export function PeopleView({
   onOpenProject,
 }: {
   token: string;
-  /** Organization these accounts belong to. */
+  /** Organization these people belong to. */
   org: { id: string; name: string } | null;
   /** Projects in scope. In team mode this is the single current project. */
   roots: RootProject[];
@@ -58,39 +55,23 @@ export function PeopleView({
   query?: string;
   onOpenProject: (rootId: string) => void;
 }) {
-  const online = useOnline(token);
-  const [people, setPeople] = useState<Person[] | null>(null);
+  const [people, setPeople] = useState<Member[] | null>(null);
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [addPick, setAddPick] = useState("");
   const [addRole, setAddRole] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const orgId = org?.id ?? null;
   const teamRoot = mode === "team" ? roots[0] ?? null : null;
-  const ids = roots.map((r) => r.id).join(",");
 
   const load = useCallback(async () => {
     setError(null);
-    const list = ids ? ids.split(",") : [];
     try {
-      const [perRoot, orgUsers, access, catalogue] = await Promise.all([
-        Promise.all(
-          list.map(async (id) => {
-            const users = await api.tenantUsersAll(token, id).then(
-              (p) => p.items ?? [],
-              () => [] as User[],
-            );
-            return { id, users };
-          }),
-        ),
-        orgId
-          ? api.tenantUsersAll(token, orgId).then(
-              (p) => p.items ?? [],
-              () => [] as User[],
-            )
-          : Promise.resolve([] as User[]),
+      const [members, access, catalogue] = await Promise.all([
+        orgId ? orgPeople(token, orgId) : Promise.resolve([] as Member[]),
         orgId
           ? api.accessConfig(token, orgId).then(
               (v) => v,
@@ -105,30 +86,13 @@ export function PeopleView({
           () => [] as RoleDef[],
         ),
       ]);
-
-      const merged = new Map<string, Person>();
-      const upsert = (u: User): Person => {
-        let cur = merged.get(u.id);
-        if (!cur) {
-          cur = { user: u, homeIsOrg: false, rootIds: [] };
-          merged.set(u.id, cur);
-        }
-        return cur;
-      };
-      for (const u of orgUsers) upsert(u).homeIsOrg = true;
-      for (const r of perRoot) {
-        for (const u of r.users) {
-          const person = upsert(u);
-          if (!person.rootIds.includes(r.id)) person.rootIds.push(r.id);
-        }
-      }
-      setPeople([...merged.values()]);
+      setPeople(members);
       setCfg(normalizeAccessConfig(access, catalogue));
     } catch (e) {
       setError(errText(e));
       setPeople([]);
     }
-  }, [token, ids, orgId]);
+  }, [token, orgId]);
 
   useEffect(() => {
     void load();
@@ -147,35 +111,26 @@ export function PeopleView({
     );
   }
 
-  /** Projects a person is on: owning-tenant membership + project role grants. */
-  function projectsOf(p: Person): { id: string; name: string; role?: string }[] {
-    const out: { id: string; name: string; role?: string }[] = p.rootIds.map((id) => ({
-      id,
-      name: rootName(id),
+  /** Projects a member holds a project role on. */
+  function projectsOf(m: Member): { id: string; name: string; role: string }[] {
+    return projectGrantsOf(m.id, cfg?.grants ?? []).map((g) => ({
+      id: g.scopeId,
+      name: g.scopeName || rootName(g.scopeId),
+      role: roleName(g.roleKey),
     }));
-    for (const g of cfg?.grants ?? []) {
-      if (g.subjectType !== "member" || g.subjectId !== p.user.id) continue;
-      if (g.scopeType !== "project") continue;
-      if (out.some((o) => o.id === g.scopeId)) continue;
-      out.push({ id: g.scopeId, name: g.scopeName || rootName(g.scopeId), role: roleName(g.roleKey) });
-    }
-    return out;
   }
 
-  /* ── Organization invite (real) ── */
+  /* ── Organization invite: a Studio invitation, accepted by the person ── */
   async function invite(e: FormEvent) {
     e.preventDefault();
-    if (!orgId || !username.trim()) return;
+    if (!orgId || !email.trim()) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await api.inviteUser(token, orgId, {
-        username: username.trim(),
-        email: `${username.trim()}@example.com`,
-        display_name: username.trim(),
-      });
-      setUsername("");
-      await load();
+      await api.inviteToOrg(token, orgId, { email: email.trim(), role: "member" });
+      setNotice(`Invited ${email.trim()}. They join when they sign in with that address and accept.`);
+      setEmail("");
     } catch (err) {
       setError(errText(err));
     } finally {
@@ -202,12 +157,13 @@ export function PeopleView({
     if (!cfg || !teamRoot || !addPick) return;
     const role = addRole || cfg.roles.find((r) => r.key === "editor")?.key || cfg.roles[0]?.key;
     if (!role) return;
-    const subj = (people ?? []).find((p) => p.user.id === addPick);
+    const subj = (people ?? []).find((p) => p.id === addPick);
     const grant: GrantDef = {
       id: `g_${Date.now().toString(36)}_${cfg.grants.length}`,
       subjectType: "member",
+      // The person id: what every grant names (ADR-0040 §5).
       subjectId: addPick,
-      subjectName: subj ? subj.user.display_name ?? subj.user.username : addPick.slice(0, 8),
+      subjectName: subj ? subj.name : addPick.slice(0, 8),
       roleKey: role,
       scopeType: "project",
       scopeId: teamRoot.id,
@@ -233,12 +189,7 @@ export function PeopleView({
   }
 
   const all = people ?? [];
-  const nameOf = (p: Person) => p.user.display_name ?? p.user.username;
-  const byName = [...all].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-  const personName = (g: GrantDef) => {
-    const person = all.find((p) => p.user.id === g.subjectId);
-    return person ? nameOf(person) : g.subjectName;
-  };
+  const personName = (g: GrantDef) => holderName(g, all);
 
   /* ── Organization People ── */
   if (mode === "org") {
@@ -257,54 +208,41 @@ export function PeopleView({
         <ColleaguesCard token={token} orgId={orgId} />
 
         {error && <div className="error">{error}</div>}
+        {notice && <div className="hint">{notice}</div>}
 
         <div className="card">
           {!org && people !== null ? (
             <p className="empty">No organization in context.</p>
           ) : (
-            <>
-            {/* A dot that never lights cannot be told apart from an empty
-                office, so the one case where the join could be wrong says so
-                rather than showing nothing. */}
-            {online.reported > 0 && !all.some((p) => online.ids.has(p.user.id)) && (
-              <p className="hint">
-                {online.reported} {online.reported === 1 ? "person is" : "people are"} in Studio
-                right now, but none of them matched this list — presence is keyed by the sign-in
-                subject and these rows by account id.
-              </p>
-            )}
-            <DataTable<Person>
+            <DataTable<Member>
               list="people"
-              rows={people === null ? null : byName}
+              rows={people === null ? null : all}
               error={people === null ? error : null}
               onRetry={() => void load()}
-              rowKey={(p) => p.user.id}
-              rowLabel={nameOf}
+              rowKey={(p) => p.id}
+              rowLabel={(p) => p.name}
               search={{ placeholder: "Search people" }}
-              searchText={(p) => [p.user.display_name, p.user.username, p.user.email]}
+              searchText={(p) => [p.name, p.email]}
               empty={{ title: "Nobody here yet.", body: "Invite the first person below." }}
               columns={[
                 {
                   id: "name",
                   header: "Person",
-                  compare: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+                  compare: (a, b) => a.name.localeCompare(b.name),
                   cell: (p) => (
                     <div className="pcell">
-                      <span className="account-avatar small">{initials(nameOf(p))}</span>
+                      <span className="account-avatar small">{initials(p.name)}</span>
                       <div>
-                        <div className="pname plain">
-                          {nameOf(p)}
-                          <OnlineDot online={online.ids.has(p.user.id)} />
-                        </div>
-                        <div className="sub">{p.user.email ?? p.user.username}</div>
+                        <div className="pname plain">{p.name}</div>
+                        {p.email && <div className="sub">{p.email}</div>}
                       </div>
                     </div>
                   ),
                 },
                 {
-                  id: "home",
-                  header: "Belongs to",
-                  cell: (p) => <span className="sub">{p.homeIsOrg ? org?.name : rootName(p.rootIds[0] ?? "")}</span>,
+                  id: "role",
+                  header: "Role",
+                  cell: (p) => <span className="sub">{p.role}</span>,
                 },
                 {
                   id: "projects",
@@ -318,36 +256,40 @@ export function PeopleView({
                             key={o.id}
                             type="button"
                             className="chip on"
-                            title={o.role ? `${o.role} · open` : "Open this project"}
+                            title={`${o.role} · open`}
                             onClick={() => onOpenProject(o.id)}
                           >
-                            {o.name}
-                            {o.role ? ` · ${o.role}` : ""}
+                            {o.name} · {o.role}
                           </button>
                         ))}
-                        {on.length === 0 && <span className="sub">not on a project</span>}
+                        {on.length === 0 && (
+                          <span className="sub">
+                            {cfg?.model === "roles" ? "not on a project" : "every project"}
+                          </span>
+                        )}
                       </div>
                     );
                   },
                 },
               ]}
             />
-            </>
           )}
 
           <form className="inline" onSubmit={invite} style={{ marginTop: 14 }}>
             <input
-              placeholder="username to invite"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              type="email"
+              placeholder="address to invite"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
-            <button className="primary" disabled={busy || !username.trim() || !org}>
+            <button className="primary" disabled={busy || !email.trim() || !org}>
               {busy ? "Inviting…" : "Invite to organization"}
             </button>
           </form>
           <p className="hint">
-            The person is created in {org?.name ?? "the organization"} — that becomes their home
-            tenant. Assign them to projects from each project's Team tab.
+            The person sees the invitation when they sign in with this address, and becomes a
+            member of {org?.name ?? "the organization"} when they accept it. Put them on projects
+            from each project's Team tab.
           </p>
         </div>
       </>
@@ -358,11 +300,7 @@ export function PeopleView({
   const roleBased = cfg?.model === "roles";
   const teamGrants = teamRoot ? grantsForProject(teamRoot.id) : [];
   const grantedIds = new Set(teamGrants.map((g) => g.subjectId));
-  const candidates = all
-    .filter((p) => !grantedIds.has(p.user.id))
-    .sort((a, b) =>
-      (a.user.display_name ?? a.user.username).localeCompare(b.user.display_name ?? b.user.username),
-    );
+  const candidates = all.filter((p) => !grantedIds.has(p.id));
 
   return (
     <>
@@ -404,16 +342,13 @@ export function PeopleView({
                 header: "Person",
                 compare: (a, b) => personName(a).localeCompare(personName(b)),
                 cell: (g) => {
-                  const person = all.find((p) => p.user.id === g.subjectId);
+                  const person = all.find((p) => p.id === g.subjectId);
                   return (
                     <div className="pcell">
                       <span className="account-avatar small">{initials(personName(g))}</span>
                       <div>
-                        <div className="pname plain">
-                          {personName(g)}
-                          <OnlineDot online={online.ids.has(g.subjectId)} />
-                        </div>
-                        <div className="sub">{person?.user.email ?? ""}</div>
+                        <div className="pname plain">{personName(g)}</div>
+                        <div className="sub">{person?.email ?? ""}</div>
                       </div>
                     </div>
                   );
@@ -473,8 +408,8 @@ export function PeopleView({
                 {candidates.length ? "Add from organization…" : "Everyone is already on the team"}
               </option>
               {candidates.map((p) => (
-                <option key={p.user.id} value={p.user.id}>
-                  {p.user.display_name ?? p.user.username}
+                <option key={p.id} value={p.id}>
+                  {p.name}
                 </option>
               ))}
             </select>
@@ -492,7 +427,7 @@ export function PeopleView({
           </div>
           <p className="hint">
             Adding someone writes a role grant to {org?.name ?? "the organization"}'s access config —
-            the same store the Studio PDP enforces. Invite new accounts on the People page first.
+            the same store the Studio PDP enforces. Invite new people on the People page first.
           </p>
         </div>
       )}

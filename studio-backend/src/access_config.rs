@@ -17,7 +17,8 @@
 //! **Membership is the authority for organization access (ADR-0011 §2); this
 //! document is what the PDP happens to evaluate.** They are written together
 //! and must not drift — which is the other reason for one writer rather than
-//! three.
+//! three. Since ADR-0040 the owner grant has exactly one writer, studio-user,
+//! and every grant it writes names the canonical person.
 
 use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
 use anyhow::{Context, Result};
@@ -135,12 +136,11 @@ struct GrantDef {
 impl AccessConfig {
     /// Does the person behind `subjects` hold the organization-wide owner grant?
     ///
-    /// `subjects` is every sign-in subject that belongs to one person
-    /// (`subjects_of`), not one token subject. A grant records whichever login
-    /// was in front of whoever wrote it, so matching a single subject answers a
-    /// question about a *login*: the same human, signed in the other way, would
-    /// not be the owner. Matching the set is what makes the answer about the
-    /// person without rewriting a single grant (ADR-0023 follow-up 2).
+    /// `subjects` is every key of one person (`grant_keys_of`): the person id,
+    /// which is what a grant names (ADR-0040 §5), and every sign-in subject of
+    /// theirs, which is what a grant written before that names. Matching a
+    /// single token subject would answer a question about a *login*: the same
+    /// human, signed in the other way, would not be the owner.
     #[must_use]
     pub fn grants_ownership_to(&self, subjects: &[String]) -> bool {
         self.grants.iter().any(|g| {
@@ -168,7 +168,7 @@ impl AccessConfig {
     /// administering the organization, and reading it as though it did would
     /// let a grant about one project decide who may change memberships.
     ///
-    /// `subjects` is every sign-in subject of one person — see
+    /// `subjects` is every grant key of one person — see
     /// [`Self::grants_ownership_to`] for why that is the unit of the question.
     #[must_use]
     pub fn grants_privilege_to(&self, subjects: &[String], privilege: &str) -> bool {
@@ -260,22 +260,35 @@ pub async fn try_read(
     }
 }
 
-/// Give `subject` the organization-wide owner grant, or take it away.
+/// Who an owner grant is for.
+pub struct GrantSubject<'a> {
+    /// What the grant names: the canonical person id (ADR-0040 §5).
+    pub key: &'a str,
+    /// What a screen shows for it — `subjectName` in the document.
+    pub name: &'a str,
+    /// Keys older writers named the same person by — their sign-in subjects.
+    /// An owner grant on any of them is removed, whatever `owner` says, so the
+    /// person ends up holding at most one, on `key`.
+    pub legacy_keys: &'a [String],
+}
+
+/// Give a person the organization-wide owner grant, or take it away.
 ///
-/// Idempotent: the matching grant is removed and re-added, so calling twice
-/// leaves one grant and calling with `owner = false` leaves none.
+/// Idempotent: every matching grant is removed and, for an owner, one is
+/// added back, so calling twice leaves one grant and calling with
+/// `owner = false` leaves none.
 ///
-/// `subject` is a **token subject**, not a canonical person id. That is what
-/// the PDP matches today (`grant.subjectId == request.subject.id`), so writing
-/// anything else here would produce a grant that never matches. Moving the
-/// grant model onto the person is ADR-0023 follow-up 2, and it has to move on
-/// both sides at once.
+/// studio-user is the only caller (ADR-0040 §2): the grant is a projection of
+/// an active `owner` membership, and a second writer is how the two drifted.
+/// The PDP and `may_administer` match it against the caller's grant keys —
+/// the person id and every login — so a grant on the person is the person's
+/// however they signed in.
 pub async fn set_owner_grant(
     am: &dyn AccountManagementClient,
     ctx: &SecurityContext,
     tenant_id: Uuid,
     tenant_name: &str,
-    subject: &str,
+    subject: &GrantSubject<'_>,
     owner: bool,
 ) -> Result<()> {
     let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
@@ -309,8 +322,10 @@ pub async fn set_owner_grant(
 
     grants.retain(|grant| {
         let field = |name: &str| grant.get(name).and_then(serde_json::Value::as_str);
+        let names_them = field("subjectId")
+            .is_some_and(|id| id == subject.key || subject.legacy_keys.iter().any(|k| k == id));
         field("subjectType") != Some(SUBJECT_MEMBER)
-            || field("subjectId") != Some(subject)
+            || !names_them
             || field("scopeType") != Some(SCOPE_ORG)
             || field("roleKey") != Some(ROLE_OWNER)
     });
@@ -318,8 +333,8 @@ pub async fn set_owner_grant(
         grants.push(serde_json::json!({
             "id": Uuid::new_v4().to_string(),
             "subjectType": SUBJECT_MEMBER,
-            "subjectId": subject,
-            "subjectName": subject,
+            "subjectId": subject.key,
+            "subjectName": subject.name,
             "roleKey": ROLE_OWNER,
             "scopeType": SCOPE_ORG,
             "scopeId": tenant_id.to_string(),
@@ -333,9 +348,157 @@ pub async fn set_owner_grant(
         .map_err(|error| anyhow::anyhow!("cannot update the organization's owner grant: {error}"))
 }
 
+/// Point every member grant of a document at the key `rekey` gives it.
+///
+/// `rekey` answers with the new key for a grant's `subjectId`, or `None` to
+/// leave the grant alone — a subject nobody resolves, a team, a grant already
+/// on its person. Returns how many grants changed, after dropping the
+/// duplicates a rewrite produces (one person granted the same role on the same
+/// scope through two logins is one grant once both name the person). Pure, so
+/// the rule is a test.
+pub fn rekey_member_grants(
+    document: &mut serde_json::Value,
+    rekey: &dyn Fn(&str) -> Option<String>,
+) -> usize {
+    let Some(grants) = document
+        .get_mut("grants")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return 0;
+    };
+    let mut changed = 0;
+    for grant in grants.iter_mut() {
+        let field = |name: &str| grant.get(name).and_then(serde_json::Value::as_str);
+        if field("subjectType") != Some(SUBJECT_MEMBER) {
+            continue;
+        }
+        let Some(new_key) = field("subjectId").and_then(rekey) else {
+            continue;
+        };
+        if field("subjectId") == Some(new_key.as_str()) {
+            continue;
+        }
+        grant["subjectId"] = serde_json::Value::String(new_key);
+        changed += 1;
+    }
+    let before = grants.len();
+    let mut seen = std::collections::HashSet::new();
+    grants.retain(|grant| {
+        let field = |name: &str| {
+            grant
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        seen.insert((
+            field("subjectType"),
+            field("subjectId"),
+            field("roleKey"),
+            field("scopeType"),
+            // An org grant's scope is the document's own organization, whatever
+            // its `scopeId` happens to say.
+            if field("scopeType") == SCOPE_ORG {
+                String::new()
+            } else {
+                field("scopeId")
+            },
+        ))
+    });
+    changed + (before - grants.len())
+}
+
+/// Rewrite one organization's own access config with [`rekey_member_grants`],
+/// and write it back only when something changed.
+///
+/// `resolve` is asked once per distinct member `subjectId` in the document and
+/// answers with the key that grant should carry, or `None` to leave it.
+///
+/// The organization's own document, not the resolved one: rekeying a document
+/// inherited from an ancestor would copy the ancestor's grants into this
+/// organization. An organization with no document of its own has nothing to
+/// rekey.
+pub async fn rekey_grants_in<F, Fut>(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    tenant_id: Uuid,
+    resolve: F,
+) -> Result<usize>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>>>,
+{
+    let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
+    let mut document = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
+        Ok(entry) => entry.value,
+        Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => return Ok(0),
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "cannot read the access config of {tenant_id}: {error}"
+            ));
+        }
+    };
+    let subjects: std::collections::BTreeSet<String> = document
+        .get("grants")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|g| {
+            g.get("subjectType").and_then(serde_json::Value::as_str) == Some(SUBJECT_MEMBER)
+        })
+        .filter_map(|g| g.get("subjectId").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let mut keys = std::collections::HashMap::new();
+    for subject in subjects {
+        if let Some(key) = resolve(subject.clone()).await? {
+            keys.insert(subject, key);
+        }
+    }
+    let changed = rekey_member_grants(&mut document, &|s| keys.get(s).cloned());
+    if changed > 0 {
+        am.upsert_metadata(
+            ctx,
+            tenant_id,
+            UpsertMetadataRequest::new(type_id, document),
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("cannot write the access config of {tenant_id}: {error}")
+        })?;
+    }
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rekey_moves_member_grants_and_folds_what_becomes_the_same() {
+        let mut doc = serde_json::json!({ "grants": [
+            { "subjectType": "member", "subjectId": "login-a", "roleKey": "owner", "scopeType": "org", "scopeId": "x" },
+            { "subjectType": "member", "subjectId": "login-b", "roleKey": "owner", "scopeType": "org", "scopeId": "y" },
+            { "subjectType": "member", "subjectId": "person", "roleKey": "viewer", "scopeType": "org" },
+            { "subjectType": "team", "subjectId": "login-a", "roleKey": "viewer", "scopeType": "org" },
+        ]});
+        let rekey = |s: &str| matches!(s, "login-a" | "login-b").then(|| "person".to_owned());
+        // Two rewritten, and one of them is now the other's duplicate — an org
+        // grant's scope is the document's organization, whatever `scopeId` says.
+        assert_eq!(rekey_member_grants(&mut doc, &rekey), 3);
+        let grants = doc["grants"].as_array().unwrap();
+        assert_eq!(grants.len(), 3);
+        assert_eq!(grants[0]["subjectId"], "person");
+        assert_eq!(grants[1]["roleKey"], "viewer");
+        assert_eq!(grants[2]["subjectType"], "team", "a team is not a person");
+        assert_eq!(rekey_member_grants(&mut doc, &rekey), 0, "idempotent");
+    }
+
+    #[test]
+    fn a_document_without_grants_rekeys_nothing() {
+        let mut doc = serde_json::json!({ "model": "tenant" });
+        assert_eq!(rekey_member_grants(&mut doc, &|_| Some("p".to_owned())), 0);
+    }
 
     /// One login, the way every caller looked before a person could have two.
     fn one(subject: &str) -> Vec<String> {

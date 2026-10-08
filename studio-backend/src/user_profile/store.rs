@@ -61,6 +61,10 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// Everybody in one organization. The last-owner rule needs to see the
     /// whole room, not one person's side of it.
     async fn memberships_in_org(&self, org_id: &str) -> Result<Vec<MembershipView>>;
+    /// Every organization at least one person holds a membership of, each
+    /// once. For an administrative walk over every organization's access
+    /// config (the grant rekey, ADR-0040 §5), never for a request path.
+    async fn organizations_with_members(&self) -> Result<Vec<String>>;
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()>;
     async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()>;
     async fn aliases_of(&self, user_id: &str) -> Result<Vec<AliasRecord>>;
@@ -480,6 +484,24 @@ impl IdentityStore for PgStore {
             .into_iter()
             .map(membership_to_view)
             .collect())
+    }
+
+    async fn organizations_with_members(&self) -> Result<Vec<String>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // The whole table, folded in memory: an administrative walk run once
+        // per environment over a table of one row per person per organization.
+        let orgs: std::collections::BTreeSet<String> = entity::membership::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(|m| m.org_id.to_string())
+            .collect();
+        Ok(orgs.into_iter().collect())
     }
 
     async fn delete_membership(&self, user_id: &str, org_id: &str) -> Result<()> {

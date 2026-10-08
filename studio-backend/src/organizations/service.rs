@@ -9,6 +9,11 @@
 //! 3. the **owner grant** in the tenant's access config, which is what the
 //!    Studio PDP evaluates.
 //!
+//! This gear writes the first. The other two are facts about a person, and
+//! studio-user writes them, in one call (`AssignmentRecorder::record_creation`)
+//! — the grant is a projection of the membership, and it has one writer
+//! (ADR-0040 §2).
+//!
 //! There is no transaction across Postgres and account-management, so the
 //! operation is ordered and resumable instead: the writes go in the order above,
 //! and a failure names the organization it got as far as creating so the same
@@ -16,10 +21,7 @@
 //! idempotent on its own, so resuming is safe however far the first attempt got.
 //!
 //! The order matters. The tenant first, because the other two need its id. The
-//! membership before the grant, because membership is the authority: an
-//! organization the creator can see but cannot yet administer is a worse state
-//! than one they cannot see at all, and the first is what the other order would
-//! produce.
+//! membership before the grant, because membership is the authority.
 
 use std::sync::Arc;
 
@@ -29,8 +31,7 @@ use gts::GtsTypeId;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::access_config;
-use crate::user_profile::{AssignmentRecorder, MembershipEvictor, OrganizationReader};
+use crate::user_profile::{AssignmentRecorder, MembershipEvictor, OrgAuthority};
 
 /// The tenant type an organization has.
 ///
@@ -56,8 +57,8 @@ pub struct Organization {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     Tenant,
+    /// The membership and the owner grant: one call into studio-user.
     Membership,
-    Grant,
 }
 
 /// Trim a submitted name and refuse the ones that are not names.
@@ -90,7 +91,7 @@ pub struct OrganizationService {
     am: Arc<dyn AccountManagementClient>,
     memberships: Arc<dyn AssignmentRecorder>,
     evictions: Arc<dyn MembershipEvictor>,
-    people: Arc<dyn OrganizationReader>,
+    authority: Arc<dyn OrgAuthority>,
     /// The tenant every organization is created under.
     platform_root: Uuid,
 }
@@ -100,14 +101,14 @@ impl OrganizationService {
         am: Arc<dyn AccountManagementClient>,
         memberships: Arc<dyn AssignmentRecorder>,
         evictions: Arc<dyn MembershipEvictor>,
-        people: Arc<dyn OrganizationReader>,
+        authority: Arc<dyn OrgAuthority>,
         platform_root: Uuid,
     ) -> Self {
         Self {
             am,
             memberships,
             evictions,
-            people,
+            authority,
             platform_root,
         }
     }
@@ -119,26 +120,11 @@ impl OrganizationService {
     /// still has to dispose of what they left. Nobody else, whatever they can
     /// otherwise reach inside it.
     ///
-    /// Ownership is read from the access config rather than from the membership
-    /// row because that is the document the authorization policy evaluates, and
-    /// a deletion gate that disagreed with the policy would be a gate in name.
+    /// studio-user answers (`OrgAuthority::may_dispose`): who owns an
+    /// organization is a fact about people, and this gear does not read the
+    /// access config to re-derive it (ADR-0040 §2).
     pub async fn may_delete(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
-        let subject = ctx.subject_id().to_string();
-        // Every way this person signs in, not the one they used today — a grant
-        // records whichever login wrote it (ADR-0023 follow-up 2).
-        let subjects = self
-            .people
-            .subjects_of(&subject)
-            .await
-            .unwrap_or_else(|_| vec![subject.clone()]);
-        access_config::read(self.am.as_ref(), ctx, org_id)
-            .await
-            .grants_ownership_to(&subjects)
-            || self
-                .people
-                .is_platform_admin(&subject)
-                .await
-                .unwrap_or(false)
+        self.authority.may_dispose(ctx, org_id).await
     }
 
     /// Create an organization owned by the caller, or finish creating one.
@@ -187,15 +173,12 @@ impl OrganizationService {
             }
         };
 
-        // The authority for access, before the document the PDP happens to read.
+        // The membership, and the owner grant the PDP reads, in one call:
+        // studio-user writes both, the membership first (ADR-0040 §2).
         self.memberships
-            .record_creation(&subject, org.id)
+            .record_creation(ctx, &subject, org.id)
             .await
             .map_err(|e| (Step::Membership, e, Some(org.id)))?;
-
-        access_config::set_owner_grant(self.am.as_ref(), ctx, org.id, &org.name, &subject, true)
-            .await
-            .map_err(|e| (Step::Grant, e, Some(org.id)))?;
 
         Ok(org)
     }

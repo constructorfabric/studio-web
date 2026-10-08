@@ -390,11 +390,13 @@ impl Service {
         b.build().unwrap_or_else(|_| SecurityContext::anonymous())
     }
 
-    /// Every sign-in subject belonging to the caller's person, the caller's own
-    /// among them.
+    /// Every key a grant may name the caller's person by — the person id and
+    /// every sign-in subject of theirs, the caller's own among them
+    /// (`OrganizationReader::grant_keys_of`, ADR-0040 §5).
     ///
-    /// Resolved once per decision and matched as a set, so a grant naming one
-    /// login is the person's whichever way they signed in today. Without
+    /// Resolved once per decision and matched as a set, so a grant naming the
+    /// person, or one naming any of their logins, is theirs whichever way they
+    /// signed in today. Without
     /// `studio-user`, or when the lookup fails, the caller is their own set —
     /// which is exactly the behaviour that existed before this, so a database
     /// hiccup narrows nothing it did not already narrow.
@@ -403,7 +405,7 @@ impl Service {
         let Some(reader) = self.organization_reader() else {
             return own;
         };
-        match reader.subjects_of(subject).await {
+        match reader.grant_keys_of(subject).await {
             Ok(subjects) if !subjects.is_empty() => subjects,
             Ok(_) => own,
             Err(error) => {

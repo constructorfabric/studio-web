@@ -220,14 +220,17 @@ async fn assign_identity(
             )
             .create());
     }
-    configured_service(service)?
-        .assign(
-            &ctx,
-            &identity_id,
-            req.tenant_id,
-            &role,
-            memberships.0.as_deref(),
-        )
+    let service = configured_service(service)?;
+    let Some(recorder) = memberships.0.as_deref() else {
+        return Err(CanonicalError::service_unavailable()
+            .with_detail(
+                "studio-user has no database configured, so there is nowhere to record the \
+                 membership an assignment makes",
+            )
+            .create());
+    };
+    service
+        .assign(&ctx, &identity_id, req.tenant_id, &role, recorder)
         .await
         .map_err(|error| {
             CanonicalError::internal(format!("identity assignment failed: {error:#}")).create()

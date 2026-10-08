@@ -3366,6 +3366,22 @@
     },
     {
       "method": "POST",
+      "path": "/studio-user/v1/grants/backfill",
+      "operation_id": "studio_user.backfill_grants",
+      "tag": "StudioUser",
+      "summary": "Point every member grant at its person (platform admin)",
+      "authenticated": true,
+      "responses": [
+        "RekeyReportDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-user/v1/me",
       "operation_id": "studio_user.update_me",
       "tag": "StudioUser",
