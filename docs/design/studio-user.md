@@ -202,8 +202,12 @@ merged away. A person who signed in with several logins has several addresses:
 the profile's, the one the identity provider holds for each login, and any
 attributed `email` alias; the API lists all of them as `emails`. A blank
 profile is named from the realm when the person, or a members listing, reads
-it, and the realm is asked again at most once a day. A **photo** is stored with the person and served at a URL
-carrying its digest. A **login** is
+it, and the realm is asked again at most once a day. The same read records every
+account brokered onto a realm login (GitHub) as a `confirmed` alias of the
+person, and gives a person with no photo the GitHub account's picture
+(`avatars.githubusercontent.com/u/{id}`, keyed on the numeric id). A **photo**
+the person uploads is stored with them, served at a URL carrying its digest, and
+always outranks the provider's. A **login** is
 a `(provider, subject)` that resolves to a person; Studio's own realm is
 provider `keycloak`. A **membership** is `(person, organization)` with a role
 (`owner`, `admin`, `member`), a status (`active`, `suspended`) and a source

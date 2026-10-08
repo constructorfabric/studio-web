@@ -15,11 +15,16 @@ import { useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import {
   api,
+  type AliasConfirmReport,
+  type AliasWrite,
   type Colleague,
   type MemberDirectory,
   type MembershipRole,
+  type MyMembership,
   type OrgMember,
+  type PersonAlias,
   type PersonEmail,
+  type PersonLogin,
   type StudioProfile,
 } from "./api";
 import { When } from "./data-table";
@@ -153,18 +158,36 @@ export function EmailList({ emails }: { emails: PersonEmail[] }) {
   );
 }
 
-/** The signed-in person's photo and addresses, on the Profile page. */
+/** Where a linked (not stored) photo comes from, in words, or null when it is
+ *  not one a provider serves. */
+export function photoProvider(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname === "avatars.githubusercontent.com" ? "GitHub" : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The signed-in person: photo, name, and the organizations they are in. What
+ *  the token says about this session is a separate, smaller card — the
+ *  person outlives any one sign-in. */
 export function MyPersonCard({
   token,
+  orgs,
   onChanged,
 }: {
   token: string;
+  /** Organization names, for the memberships. */
+  orgs: { id: string; name: string }[];
   /** Called with the profile after every change, so the account button follows. */
   onChanged?: (profile: StudioProfile) => void;
 }) {
   const [profile, setProfile] = useState<StudioProfile | null>(null);
+  const [memberships, setMemberships] = useState<MyMembership[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -172,6 +195,10 @@ export function MyPersonCard({
       .myProfile(token)
       .then((p) => live && setProfile(p))
       .catch((e) => live && setError(errText(e)));
+    api
+      .myMemberships(token)
+      .then((m) => live && setMemberships(m))
+      .catch(() => live && setMemberships([]));
     return () => {
       live = false;
     };
@@ -201,21 +228,74 @@ export function MyPersonCard({
     });
   };
 
+  const rename = async (event: FormEvent) => {
+    event.preventDefault();
+    const next = editing?.trim();
+    if (!next) return;
+    await apply(() => api.updateMyProfile(token, { display_name: next }));
+    setEditing(null);
+  };
+
   const name = profile?.display_name?.trim() || primaryEmail(profile ?? {}) || "You";
   const stored = isStoredPhoto(profile?.avatar_url);
+  const linkedFrom = stored ? null : photoProvider(profile?.avatar_url);
+  const orgName = (id: string) => orgs.find((o) => o.id === id)?.name ?? `Organization ${id.slice(0, 8)}`;
 
   return (
     <div className="card">
-      <h2>Photo and addresses</h2>
+      <h2>You</h2>
       {!profile && !error && <p className="sub">Reading your Studio profile…</p>}
       {profile && (
         <div className="person-card">
           <PersonPhoto name={name} url={profile.avatar_url} size="large" />
           <div className="grow">
-            <div className="name">{name}</div>
+            {editing === null ? (
+              <div className="name">
+                {name}{" "}
+                <button
+                  type="button"
+                  className="ghost"
+                  title="Change what Studio calls you"
+                  onClick={() => setEditing(profile.display_name ?? "")}
+                >
+                  Rename
+                </button>
+              </div>
+            ) : (
+              <form className="inline" onSubmit={(e) => void rename(e)}>
+                <input
+                  autoFocus
+                  value={editing}
+                  maxLength={200}
+                  aria-label="Your name"
+                  onChange={(e) => setEditing(e.target.value)}
+                />
+                <button className="primary" disabled={busy || !editing.trim()}>
+                  Save
+                </button>
+                <button type="button" className="ghost" onClick={() => setEditing(null)}>
+                  Cancel
+                </button>
+              </form>
+            )}
+            {primaryEmail(profile) && <div className="sub">{primaryEmail(profile)}</div>}
             {profile.last_seen_at_epoch_ms != null && (
               <div className="sub">
                 Last seen <When iso={new Date(profile.last_seen_at_epoch_ms).toISOString()} />
+              </div>
+            )}
+            {memberships && memberships.length > 0 && (
+              <div className="person-orgs">
+                {memberships.map((m) => (
+                  <span
+                    key={m.org_id}
+                    className={`badge ${m.status === "active" ? "info" : "neutral"}`}
+                    title={m.status === "active" ? undefined : "Suspended: grants nothing while it stands"}
+                  >
+                    {orgName(m.org_id)} · {ROLE_LABEL[m.role] ?? m.role}
+                    {m.status === "active" ? "" : " · suspended"}
+                  </span>
+                ))}
               </div>
             )}
             <div className="person-actions">
@@ -238,21 +318,241 @@ export function MyPersonCard({
                   Remove photo
                 </button>
               )}
-              <span className="hint">PNG, JPEG, WebP or GIF, up to 1 MiB.</span>
+              <span className="hint">
+                {linkedFrom
+                  ? `Your ${linkedFrom} picture; an uploaded photo replaces it.`
+                  : "PNG, JPEG, WebP or GIF, up to 1 MiB."}
+              </span>
             </div>
           </div>
         </div>
       )}
-      {profile?.emails && (
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+const ALIAS_KINDS: { value: string; label: string }[] = [
+  { value: "github", label: "GitHub" },
+  { value: "gitlab", label: "GitLab" },
+  { value: "bitbucket", label: "Bitbucket" },
+  { value: "email", label: "E-mail" },
+];
+
+/** What an account kind is called. */
+export function aliasKindLabel(kind: string): string {
+  return ALIAS_KINDS.find((k) => k.value === kind)?.label ?? kind;
+}
+
+const ALIAS_CONFIDENCE: Record<string, { label: string; badge: string; hint: string }> = {
+  confirmed: {
+    label: "Confirmed",
+    badge: "ok",
+    hint: "The provider proved it is yours; activity on it counts as yours",
+  },
+  claimed: {
+    label: "Claimed",
+    badge: "info",
+    hint: "You said it is yours; nothing is attributed until a sign-in or a connection proves it",
+  },
+  suggested: { label: "Suggested", badge: "neutral", hint: "Studio guessed it; nobody has confirmed it" },
+};
+
+/** One line on what a confirmation pass found, in words. */
+export function confirmSummary(report: AliasConfirmReport): string {
+  const found = report.confirmed.length;
+  const parts = [
+    found
+      ? `Confirmed ${report.confirmed.map((a) => `${aliasKindLabel(a.kind)} ${a.external_id}`).join(", ")}.`
+      : "Nothing new to confirm.",
+  ];
+  if (report.already_confirmed) parts.push(`${report.already_confirmed} already confirmed.`);
+  if (report.skipped_shared)
+    parts.push(`${report.skipped_shared} team or bot connection(s) prove nothing about you.`);
+  if (report.refused.length) parts.push(report.refused.join(" "));
+  return parts.join(" ");
+}
+
+/** Everything that identifies the signed-in person — each way they sign in,
+ *  each outside account attributed to them, each address — shown as what it
+ *  is: something attached to the person, not the person. */
+export function MyIdentitiesCard({ token, sessionSubject }: { token: string; sessionSubject: string }) {
+  const [logins, setLogins] = useState<PersonLogin[] | null>(null);
+  const [aliases, setAliases] = useState<PersonAlias[] | null>(null);
+  const [emails, setEmails] = useState<PersonEmail[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [kind, setKind] = useState("github");
+  const [account, setAccount] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([api.myLogins(token), api.myAliases(token), api.myProfile(token)])
+      .then(([l, a, p]) => {
+        if (!live) return;
+        setLogins(l);
+        setAliases(a);
+        setEmails(p.emails ?? null);
+      })
+      .catch((e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  const run = async (write: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      await write();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const written = (w: AliasWrite) => {
+    setAliases(w.aliases);
+    if (w.outcome === "refused") setError(w.reason ?? "Refused.");
+    else if (w.outcome === "written_over_a_proof")
+      setNote("Recorded. It had been proved by somebody else; your proof now holds it.");
+  };
+
+  const claim = (event: FormEvent) => {
+    event.preventDefault();
+    const id = account.trim();
+    if (!id) return;
+    void run(async () => {
+      written(await api.claimMyAlias(token, kind, id));
+      setAccount("");
+    });
+  };
+
+  const confirm = () =>
+    run(async () => {
+      const report = await api.confirmMyAliases(token);
+      setAliases(await api.myAliases(token));
+      setNote(confirmSummary(report));
+    });
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Identities</h2>
+        <button type="button" className="ghost" disabled={busy} onClick={() => void confirm()}>
+          Check my sign-ins and connections
+        </button>
+      </div>
+      <p className="hint">
+        Each of these is attached to you. Several ways to sign in are still one person, and an
+        account counts as yours only once a provider has proved it.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {note && <p className="hint">{note}</p>}
+      {!logins && !error && <p className="sub">Reading your identities…</p>}
+
+      {logins && (
         <>
-          <h4>Addresses</h4>
-          <p className="hint">
-            One for each way you sign in, plus the one you typed and any attributed to you.
-          </p>
-          <EmailList emails={profile.emails} />
+          <h4>
+            How you sign in <span className="dt-count">{logins.length}</span>
+          </h4>
+          <ul className="rows">
+            {logins.map((l) => (
+              <li key={`${l.provider}:${l.subject}`}>
+                <div className="grow">
+                  <div className="name">
+                    {l.provider === "keycloak" ? "Studio sign-in" : l.provider}{" "}
+                    {l.subject === sessionSubject && <span className="badge info">This session</span>}
+                  </div>
+                  <div className="sub">
+                    {[l.email, l.email && (l.email_verified ? "verified" : "not verified")]
+                      .filter(Boolean)
+                      .join(" · ") || "No address from the provider"}
+                    {" · linked "}
+                    <When iso={new Date(l.linked_at_epoch_ms).toISOString()} />
+                  </div>
+                </div>
+                <code className="sub" title="The provider's subject">
+                  {l.subject.slice(0, 8)}
+                </code>
+              </li>
+            ))}
+          </ul>
         </>
       )}
-      {error && <div className="error">{error}</div>}
+
+      {aliases && (
+        <>
+          <h4>
+            Accounts elsewhere <span className="dt-count">{aliases.length}</span>
+          </h4>
+          {aliases.length === 0 && (
+            <p className="sub">
+              None yet. Signing in through GitHub, or connecting a personal GitHub token, records
+              the account here.
+            </p>
+          )}
+          <ul className="rows">
+            {aliases.map((a) => {
+              const c = ALIAS_CONFIDENCE[a.confidence] ?? ALIAS_CONFIDENCE.suggested;
+              return (
+                <li key={`${a.kind}:${a.external_id}`}>
+                  <div className="grow">
+                    <div className="name">
+                      {aliasKindLabel(a.kind)} · {a.external_id}
+                    </div>
+                    <div className="sub">
+                      added <When iso={new Date(a.added_at_epoch_ms).toISOString()} />
+                    </div>
+                  </div>
+                  <span className={`badge ${c.badge}`} title={c.hint}>
+                    {c.label}
+                  </span>
+                  <button
+                    type="button"
+                    className="ghost"
+                    title="Take this account off you"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => written(await api.revokeMyAlias(token, a.kind, a.external_id)))
+                    }
+                  >
+                    ✕
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <form className="inline" onSubmit={claim}>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Account kind">
+              {ALIAS_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+            <input
+              value={account}
+              placeholder={kind === "email" ? "address" : "login"}
+              aria-label="Account"
+              onChange={(e) => setAccount(e.target.value)}
+            />
+            <button disabled={busy || !account.trim()}>Claim</button>
+          </form>
+        </>
+      )}
+
+      {emails && (
+        <>
+          <h4>
+            Addresses <span className="dt-count">{emails.length}</span>
+          </h4>
+          <EmailList emails={emails} />
+        </>
+      )}
     </div>
   );
 }

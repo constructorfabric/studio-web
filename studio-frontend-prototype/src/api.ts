@@ -156,6 +156,36 @@ export interface PersonAlias {
   added_at_epoch_ms: number;
 }
 
+/** The answer to the caller's own alias write. */
+export interface AliasWrite {
+  /** written | written_over_a_proof | already_held | refused */
+  outcome: string;
+  /** Why, when `outcome` is `refused`. */
+  reason?: string | null;
+  /** The caller's accounts after the write. */
+  aliases: PersonAlias[];
+}
+
+/** What one confirmation pass over the caller's proofs did. */
+export interface AliasConfirmReport {
+  confirmed: { kind: string; external_id: string }[];
+  already_confirmed: number;
+  skipped_shared: number;
+  skipped_other_owner: number;
+  skipped_unknown_owner: number;
+  skipped_no_handle: number;
+  refused: string[];
+}
+
+/** One organization the caller belongs to, from `GET /studio-user/v1/me/memberships`. */
+export interface MyMembership {
+  org_id: string;
+  role: MembershipRole | string;
+  status: "active" | "suspended";
+  source: string;
+  created_at_epoch_ms: number;
+}
+
 /** A member's identities, from
  *  `GET /studio-user/v1/organizations/{org}/members/{user}/identities`. */
 export interface MemberIdentities {
@@ -2679,6 +2709,44 @@ export const api = {
   /** Remove the caller's stored photo. */
   deleteMyAvatar: (token: string) =>
     request<StudioProfile>("/studio-user/v1/me/avatar", token, { method: "DELETE" }),
+
+  /** Change what the caller's person is called. A blank field is left as is. */
+  updateMyProfile: (token: string, patch: { display_name?: string }) =>
+    request<StudioProfile>("/studio-user/v1/me", token, {
+      method: "POST",
+      body: JSON.stringify(patch),
+    }),
+
+  /** The sign-ins that resolve to the caller's person. */
+  myLogins: (token: string) =>
+    request<{ items: PersonLogin[] }>("/studio-user/v1/me/logins", token).then((r) => r.items),
+
+  /** The external accounts attributed to the caller's person. */
+  myAliases: (token: string) =>
+    request<{ aliases: PersonAlias[] }>("/studio-user/v1/me/aliases", token).then((r) => r.aliases),
+
+  /** The organizations the caller's person belongs to, with the role in each. */
+  myMemberships: (token: string) =>
+    request<{ items: MyMembership[] }>("/studio-user/v1/me/memberships", token).then((r) => r.items),
+
+  /** Say an account is the caller's. A claim attributes nothing until proved. */
+  claimMyAlias: (token: string, kind: string, externalId: string) =>
+    request<AliasWrite>("/studio-user/v1/me/aliases", token, {
+      method: "POST",
+      body: JSON.stringify({ kind, external_id: externalId }),
+    }),
+
+  /** Take an account off the caller's person. */
+  revokeMyAlias: (token: string, kind: string, externalId: string) =>
+    request<AliasWrite>("/studio-user/v1/me/aliases/revoke", token, {
+      method: "POST",
+      body: JSON.stringify({ kind, external_id: externalId }),
+    }),
+
+  /** Record every account the caller's sign-ins and personal connections
+   *  already proved. Nothing is re-probed. */
+  confirmMyAliases: (token: string) =>
+    request<AliasConfirmReport>("/studio-user/v1/me/aliases/confirm", token, { method: "POST" }),
 
   /** One member's sign-in methods and attributed accounts. `people.view`, and
    *  only for somebody in that organization (404 otherwise). */

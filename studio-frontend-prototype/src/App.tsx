@@ -114,7 +114,7 @@ import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
-import { MyPersonCard, PersonPhoto } from "./people-profile";
+import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
 import {
   BookIcon,
@@ -2593,6 +2593,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           <ProfileView
             me={me}
             home={home}
+            orgs={orgs}
             token={token}
             onPerson={(p) => setAvatarUrl(p.avatar_url ?? null)}
           />
@@ -9629,11 +9630,14 @@ function AiKeysCard({ token }: { token: string }) {
 function ProfileView({
   me,
   home,
+  orgs,
   token,
   onPerson,
 }: {
   me: Me;
   home: Tenant | null;
+  /** The organizations on hand, to name the person's memberships. */
+  orgs: Tenant[];
   token: string;
   /** Told about every change to the person, so the account button follows. */
   onPerson: (profile: StudioProfile) => void;
@@ -9673,57 +9677,40 @@ function ProfileView({
   return (
     <>
       <h1>Profile</h1>
-      <p className="subtitle">Identity as the backend sees it (from the validated token).</p>
+      <p className="subtitle">
+        You as Studio knows you. Every way you sign in and every account of yours elsewhere is
+        attached to this one person.
+      </p>
+
+      <MyPersonCard token={token} orgs={orgs} onChanged={onPerson} />
+
+      <MyIdentitiesCard token={token} sessionSubject={me.subject_id} />
 
       <div className="card">
-        <h2>Signed in as</h2>
+        <h2>This session</h2>
+        <p className="hint">What the token you are signed in with says. It identifies one sign-in, not you.</p>
         <ul className="rows">
           <li>
             <div className="grow">
-              <div className="sub">Name</div>
-              <div className="name">{displayName ?? "— (opaque dev token)"}</div>
+              <div className="sub">Signed in as</div>
+              <div className="name">
+                {[displayName, claim("email")].filter(Boolean).join(" · ") || "— (opaque dev token)"}
+              </div>
             </div>
           </li>
-          {claim("preferred_username") && (
-            <li>
-              <div className="grow">
-                <div className="sub">Username</div>
-                <div className="name">{claim("preferred_username")}</div>
-              </div>
-            </li>
-          )}
-          {claim("email") && (
-            <li>
-              <div className="grow">
-                <div className="sub">Email</div>
-                <div className="name">{claim("email")}</div>
-              </div>
-            </li>
-          )}
           <li>
             <div className="grow">
               <div className="sub">Identity provider</div>
               <div className="name">{claim("iss") ?? "static token (dev profile)"}</div>
             </div>
           </li>
-          {sessionUntil && (
-            <li>
-              <div className="grow">
-                <div className="sub">Session token valid until</div>
-                <div className="name">{sessionUntil} (renewed silently)</div>
+          <li>
+            <div className="grow">
+              <div className="sub">Subject</div>
+              <div className="name">
+                <code>{me.subject_id}</code> {me.subject_type ? `(${me.subject_type})` : ""}
               </div>
-            </li>
-          )}
-        </ul>
-      </div>
-
-      <div className="card">
-        <ul className="rows">
-          <li>
-            <div className="grow"><div className="sub">Subject ID</div><div className="name">{me.subject_id}</div></div>
-          </li>
-          <li>
-            <div className="grow"><div className="sub">Subject type</div><div className="name">{me.subject_type ?? "—"}</div></div>
+            </div>
           </li>
           <li>
             <div className="grow">
@@ -9731,13 +9718,19 @@ function ProfileView({
               <div className="name">{home ? `${home.name} (${shortTypeName(home.tenant_type)})` : me.subject_tenant_id}</div>
             </div>
           </li>
+          {sessionUntil && (
+            <li>
+              <div className="grow">
+                <div className="sub">Token valid until</div>
+                <div className="name">{sessionUntil} (renewed silently)</div>
+              </div>
+            </li>
+          )}
         </ul>
         <p className="hint" style={{ marginTop: 12 }}>
           API: <a href="/api-docs/">/api-docs/</a>
         </p>
       </div>
-
-      <MyPersonCard token={token} onChanged={onPerson} />
 
       <AiKeysCard token={token} />
 
