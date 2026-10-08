@@ -151,7 +151,7 @@ pub struct CandidateDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct PlanDto {
+pub struct MappingPlanDto {
     pub items: Vec<PlanRowDto>,
     pub total: u32,
     /// The deployment profile the project's non-functional statements point
@@ -506,7 +506,7 @@ fn declared_dto(c: DeclaredCapability) -> DeclaredCapabilityDto {
     }
 }
 
-fn plan_dto(rows: Vec<plan::PlanRow>, profile: Option<plan::ProfileAdvice>) -> PlanDto {
+fn plan_dto(rows: Vec<plan::PlanRow>, profile: Option<plan::ProfileAdvice>) -> MappingPlanDto {
     let items: Vec<PlanRowDto> = rows
         .into_iter()
         .map(|row| PlanRowDto {
@@ -540,7 +540,7 @@ fn plan_dto(rows: Vec<plan::PlanRow>, profile: Option<plan::ProfileAdvice>) -> P
                 .collect(),
         })
         .collect();
-    PlanDto {
+    MappingPlanDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         profile: profile.map(|a| ProfileAdviceDto {
@@ -558,7 +558,7 @@ async fn create_plan(
     OrgCtx(org): OrgCtx,
     Extension(ports): Extension<Ports>,
     Json(req): Json<PlanRequest>,
-) -> ApiResult<JsonBody<PlanDto>> {
+) -> ApiResult<JsonBody<MappingPlanDto>> {
     let (components, profiles) = ports.catalog()?.components(&org).await.map_err(internal)?;
     let vocabulary = Vocabulary {
         terms: req.terms,
@@ -659,7 +659,7 @@ async fn get_project_plan(
     OrgCtx(org): OrgCtx,
     Extension(ports): Extension<Ports>,
     Query(q): Query<ProjectQuery>,
-) -> ApiResult<JsonBody<PlanDto>> {
+) -> ApiResult<JsonBody<MappingPlanDto>> {
     let project_id = parse_project(&q.project_id)?;
     let docs = ports.documents()?;
     let workspace_id = project_workspace(&docs, &ctx, project_id).await?;
@@ -990,7 +990,7 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
         .query_param("project_id", true, "The project")
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(get_project_plan)
-        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The plan")
+        .json_response_with_schema::<MappingPlanDto>(openapi, StatusCode::OK, "The plan")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1013,7 +1013,7 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
         .json_request::<PlanRequest>(openapi, "The capabilities to fill")
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(create_plan)
-        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The plan")
+        .json_response_with_schema::<MappingPlanDto>(openapi, StatusCode::OK, "The plan")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

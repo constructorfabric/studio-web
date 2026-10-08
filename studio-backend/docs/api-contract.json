@@ -1631,7 +1631,7 @@
       "summary": "What a project's specifications need, and the gears that cover it",
       "authenticated": true,
       "responses": [
-        "PlanDto"
+        "MappingPlanDto"
       ],
       "errors": [
         "401",
@@ -3205,7 +3205,7 @@
       "authenticated": true,
       "request": "PlanRequest",
       "responses": [
-        "PlanDto"
+        "MappingPlanDto"
       ],
       "errors": [
         "400",
