@@ -357,12 +357,12 @@ mod tests {
 
     #[test]
     fn a_gear_says_which_studio_gears_it_uses_and_how() {
-        // Read from the code: the documents gear names the spec-quality gear's
-        // `record` module, and the tasks gear's exported `TaskQueue`.
+        // Read from the code: the documents gear records a document for
+        // analysis through the spec-quality gear's `sdk`.
         let uses = uses_of("studio-documents");
         let quality = uses.iter().find(|u| u.gear == "studio-spec-quality");
         assert!(
-            quality.is_some_and(|u| u.items.iter().any(|i| i == "record")),
+            quality.is_some_and(|u| u.items.iter().any(|i| i == "sdk")),
             "{uses:?}"
         );
         assert!(
