@@ -11,7 +11,13 @@
 //!
 //! So several people can run agents in one IDE container, each on their own
 //! key, and no key ever enters the container (ADR-0030).
+//!
+//! The same table of providers serves Studio's own calls: [`Providers`]
+//! implements [`super::port::ModelProviders`], so a gear that needs to reach a
+//! provider (the connector gear testing a key) goes out through here too — the
+//! one way out (ADR-0039).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -22,6 +28,8 @@ use axum::response::{IntoResponse, Response};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use serde::Deserialize;
 use toolkit_security::SecurityContext;
+
+use super::port::{ModelInfo, ModelProviders};
 
 /// How a provider wants its key.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -42,7 +50,23 @@ pub struct ProviderConfig {
     /// The credstore reference holding the key, resolved under the caller.
     pub secret_ref: String,
     pub key_header: KeyHeader,
+    /// Where the model list is, under `base_url`: what Studio's own key test
+    /// reads ([`super::port::ModelProviders::list_models`]).
+    #[serde(default = "default_models_path")]
+    pub models_path: String,
+    /// Headers Studio's own calls carry. An agent brings its own; a key test
+    /// has nobody to bring them (Anthropic refuses a call without
+    /// `anthropic-version`).
+    #[serde(default)]
+    pub request_headers: BTreeMap<String, String>,
 }
+
+fn default_models_path() -> String {
+    "models".into()
+}
+
+/// The Messages API version Studio's own Anthropic calls declare.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 pub fn default_providers() -> Vec<ProviderConfig> {
     vec![
@@ -51,12 +75,19 @@ pub fn default_providers() -> Vec<ProviderConfig> {
             base_url: "https://api.anthropic.com".into(),
             secret_ref: "anthropic-key".into(),
             key_header: KeyHeader::XApiKey,
+            models_path: "v1/models".into(),
+            request_headers: BTreeMap::from([(
+                "anthropic-version".to_owned(),
+                ANTHROPIC_VERSION.to_owned(),
+            )]),
         },
         ProviderConfig {
             name: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             secret_ref: "openai-key".into(),
             key_header: KeyHeader::Bearer,
+            models_path: default_models_path(),
+            request_headers: BTreeMap::new(),
         },
     ]
 }
@@ -250,6 +281,69 @@ impl Providers {
     }
 }
 
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// Both providers answer `{ "data": [ { "id", … } ] }`.
+#[derive(Deserialize)]
+struct ModelList {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+#[async_trait]
+impl ModelProviders for Providers {
+    async fn list_models(
+        &self,
+        provider: &str,
+        base_url: Option<&str>,
+        key: &str,
+    ) -> anyhow::Result<Vec<ModelInfo>> {
+        let config = self
+            .list
+            .iter()
+            .find(|p| p.name == provider)
+            .ok_or_else(|| anyhow::anyhow!("Studio has no model provider named {provider:?}"))?;
+        let url = upstream_url(
+            base_url.unwrap_or(&config.base_url),
+            &config.models_path,
+            None,
+        );
+        let mut request = self.client.get(url);
+        for (name, value) in &config.request_headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        for (name, value) in upstream_headers(&HeaderMap::new(), &config.key_header, key) {
+            request = request.header(name.as_str(), value);
+        }
+        let answer = request
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("{provider} could not be reached: {}", e.without_url()))?;
+        let status = answer.status();
+        if !status.is_success() {
+            let body = answer.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "{provider} {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let list: ModelList = answer.json().await?;
+        Ok(list
+            .data
+            .into_iter()
+            .map(|m| ModelInfo {
+                id: m.id,
+                display_name: m.display_name,
+            })
+            .collect())
+    }
+}
+
 /// `GET|POST /studio-llm/v1/providers/{provider}/{*rest}`.
 pub async fn stream_provider(
     axum::Extension(ctx): axum::Extension<SecurityContext>,
@@ -434,6 +528,8 @@ mod tests {
                 base_url: format!("http://{address}"),
                 secret_ref: "anthropic-key".into(),
                 key_header: KeyHeader::XApiKey,
+                models_path: "v1/models".into(),
+                request_headers: BTreeMap::new(),
             }],
             keys: Arc::new(Keys {
                 keys: HashMap::from([
@@ -492,5 +588,111 @@ mod tests {
             .forward(&person(1), "gemini", "v1/x", Request::new(Body::empty()))
             .await;
         assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// What the stand-in provider saw of a key test: `x-api-key`,
+    /// `anthropic-version`, `authorization`.
+    type SeenProbe = Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>;
+
+    /// A stand-in provider whose `/v1/models` accepts only `sk-good`.
+    async fn models_stub(seen: SeenProbe) -> String {
+        let upstream = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(move |headers: HeaderMap| {
+                let seen = seen.clone();
+                async move {
+                    let h = |n: &str| {
+                        headers
+                            .get(n)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned)
+                    };
+                    let key = h("x-api-key");
+                    seen.lock().unwrap().push((
+                        key.clone(),
+                        h("anthropic-version"),
+                        h("authorization"),
+                    ));
+                    if key.as_deref() == Some("sk-good") {
+                        (
+                            StatusCode::OK,
+                            r#"{"data":[{"id":"claude-x","display_name":"Claude X"},{"id":"claude-y"}]}"#,
+                        )
+                    } else {
+                        (StatusCode::UNAUTHORIZED, r#"{"error":"invalid x-api-key"}"#)
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        format!("http://{address}")
+    }
+
+    fn no_keys() -> Arc<Keys> {
+        Arc::new(Keys {
+            keys: HashMap::new(),
+            asked: Mutex::new(vec![]),
+        })
+    }
+
+    /// The connector gear's "test connection" goes out here: the key it is
+    /// testing, sent the way the provider wants it, with the headers Studio's
+    /// own calls carry — and the answer read as a model list.
+    #[tokio::test]
+    async fn a_key_test_reaches_the_provider_through_the_one_way_out() {
+        let seen: SeenProbe = Arc::new(Mutex::new(vec![]));
+        let base = models_stub(seen.clone()).await;
+        let providers = Providers {
+            client: reqwest::Client::new(),
+            list: default_providers(),
+            keys: no_keys(),
+        };
+
+        let models = providers
+            .list_models("anthropic", Some(&base), "sk-good")
+            .await
+            .expect("an accepted key lists models");
+        assert_eq!(
+            models,
+            [
+                ModelInfo {
+                    id: "claude-x".into(),
+                    display_name: Some("Claude X".into())
+                },
+                ModelInfo {
+                    id: "claude-y".into(),
+                    display_name: None
+                },
+            ]
+        );
+
+        let refused = providers
+            .list_models("anthropic", Some(&base), "sk-bad")
+            .await
+            .expect_err("a refused key is an error");
+        assert!(refused.to_string().contains("401"), "{refused}");
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen[0],
+            (Some("sk-good".into()), Some(ANTHROPIC_VERSION.into()), None)
+        );
+        assert_eq!(seen[1].0.as_deref(), Some("sk-bad"));
+    }
+
+    #[tokio::test]
+    async fn a_key_test_for_an_unknown_provider_goes_nowhere() {
+        let providers = Providers {
+            client: reqwest::Client::new(),
+            list: default_providers(),
+            keys: no_keys(),
+        };
+        let error = providers
+            .list_models("gemini", Some("http://127.0.0.1:9"), "sk")
+            .await
+            .expect_err("no such provider");
+        assert!(error.to_string().contains("gemini"), "{error}");
     }
 }

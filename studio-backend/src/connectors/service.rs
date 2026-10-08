@@ -1471,11 +1471,16 @@ mod base_url_rule_tests {
     //! API key be sent to an address somebody typed.
 
     use super::{address_change_needs_token, resolve_base_url};
-    use crate::connectors::ai_providers::{AnthropicDriver, OpenAiDriver};
+    use crate::connectors::ai_providers::{AnthropicDriver, OpenAiDriver, ProviderLink};
     use crate::connectors::bitbucket::BitbucketDriver;
     use crate::connectors::driver::ConnectorDriver;
     use crate::connectors::github::GitHubDriver;
     use crate::connectors::gitlab::GitLabDriver;
+
+    /// Base-URL rules never reach the provider layer.
+    fn no_proxy() -> ProviderLink {
+        std::sync::Arc::new(|| anyhow::bail!("not in this test"))
+    }
 
     fn http() -> reqwest::Client {
         reqwest::Client::new()
@@ -1486,8 +1491,8 @@ mod base_url_rule_tests {
             Box::new(GitHubDriver::new(http())),
             Box::new(GitLabDriver::new(http())),
             Box::new(BitbucketDriver::new(http())),
-            Box::new(AnthropicDriver::new(http())),
-            Box::new(OpenAiDriver::new(http())),
+            Box::new(AnthropicDriver::new(no_proxy())),
+            Box::new(OpenAiDriver::new(no_proxy())),
         ]
     }
 
@@ -1584,8 +1589,8 @@ mod base_url_rule_tests {
     #[test]
     fn a_model_provider_is_pinned_to_its_own_hosts() {
         for driver in [
-            Box::new(AnthropicDriver::new(http())) as Box<dyn ConnectorDriver>,
-            Box::new(OpenAiDriver::new(http())),
+            Box::new(AnthropicDriver::new(no_proxy())) as Box<dyn ConnectorDriver>,
+            Box::new(OpenAiDriver::new(no_proxy())),
         ] {
             assert!(
                 resolve_base_url(driver.as_ref(), Some("https://api.example.org")).is_err(),
@@ -1594,7 +1599,7 @@ mod base_url_rule_tests {
             );
         }
         // Their own hosts, and subdomains of them, stay usable.
-        let anthropic: Box<dyn ConnectorDriver> = Box::new(AnthropicDriver::new(http()));
+        let anthropic: Box<dyn ConnectorDriver> = Box::new(AnthropicDriver::new(no_proxy()));
         assert!(resolve_base_url(anthropic.as_ref(), Some("https://api.anthropic.com/v1")).is_ok());
     }
 }

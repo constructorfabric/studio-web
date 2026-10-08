@@ -196,7 +196,7 @@ These terms are used with exactly this meaning in every document under `docs/`.
 ### 3.1 Gear-Specific Environment Constraints
 
 - The graph-storage gear runs only on PostgreSQL 19 with pgvector, and its migrations run at boot (`studio-backend/Cargo.toml`, feature `graph`).
-- The `llm` feature (mini-chat, `api_egress`, `studio-llm-proxy`) is left out of the Kubernetes release image because of a fresh-boot root-tenant deadlock (`studio-backend/Cargo.toml`, feature `llm`).
+- The `llm` feature (mini-chat, `api_egress`) is left out of the Kubernetes release image because of a fresh-boot root-tenant deadlock (`studio-backend/Cargo.toml`, feature `llm`).
 - Cloning into a session is HTTPS-only; the session container has no SSH key or agent (`PRODUCT.md`, Capabilities and Constraints).
 - Docker Compose launches sessions through the host Docker daemon and requires the same host path `/srv/cf-studio-workspaces` on both sides of the mount (`README.md`).
 - While IDE sessions are enabled on Kubernetes, the Helm chart refuses more than one backend replica (`deploy/helm/studio-web/values.yaml`).
@@ -958,7 +958,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-document-catalogue` | `studio-backend/src/documents/`; `/studio-documents/v1/{organizations,workspaces}/{id}/{types,stages,capabilities}`; prototype workspace tabs `types` and `process` |
 | `cpt-studio-fr-documents` | `studio-backend/src/documents/`; `/studio-documents/v1/workspaces/{workspace_id}/documents`, `…/projects/{project_id}/stage-status`; prototype project tabs `overview` and `specs` |
 | `cpt-studio-fr-repository-documents` | `studio-backend/src/documents/{classify,validate,intake}.rs`; `/studio-documents/v1/workspaces/{workspace_id}/document-bindings`, `/studio-documents/v1/{spec-rows,spec-pipeline,specs-per-source}`; prototype project tab `specs` |
-| `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/spec-quality/v1`, `/studio-spec-quality/v1`; `studio-frontend-prototype/src/spec-quality.tsx` |
+| `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/studio-spec-quality/v1`; `studio-frontend-prototype/src/spec-quality.tsx` |
 | `cpt-studio-fr-artifact-ingest` | `studio-backend/src/artifact_ingest/`, platform `graph_storage`; `/studio-artifact-ingest/v1`; `projects-mfe` project screen; prototype project tabs `artifacts` and `activity`, and the hidden `files` view's repository files |
 | `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
 | `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,types,field-schemas,profiles,activity}`; prototype `gears` |
