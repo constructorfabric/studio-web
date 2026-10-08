@@ -3,7 +3,11 @@
  * same way the portal does (data-theme on <html>). */
 
 .arch {
-  max-width: 1280px;
+  --arch-detail-w: 380px;
+  --arch-port: var(--chart-category-teal);
+  --arch-surface: var(--chart-category-blue);
+  --arch-internal: var(--destructive);
+  max-width: 1480px;
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
 }
@@ -13,135 +17,282 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-
 .arch a { color: var(--link-foreground); }
-
 .arch-muted { color: var(--muted-foreground); }
+.arch-small { font-size: 12.5px; }
+.arch-bad { color: var(--destructive); font-weight: 600; }
 
-.arch-head { display: grid; gap: 0.75rem; margin-bottom: 0.5rem; }
-.arch-lede { margin: 0; max-width: 72ch; font-size: 15px; line-height: 1.5; }
-.arch-counts { margin: 0; }
+.arch-link-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--link-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+.arch-link-button:hover { text-decoration: underline; }
 
-.arch-build {
+/* ── Header ── */
+
+.arch-head { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
+.arch-head h1 { margin: 0; }
+.arch-lede { margin: 0; max-width: 90ch; font-size: 15px; line-height: 1.5; }
+
+.arch-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.75rem 1.5rem;
-  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
 }
-
-.arch-facts { margin: 0; }
-.arch-fact { min-width: 0; margin: 0.5rem 0 0; }
-.arch-fact dt {
-  font-size: var(--text-label-size);
-  font-weight: var(--text-label-weight);
-  color: var(--muted-foreground);
-  margin-bottom: 2px;
+.arch-stat {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
 }
-.arch-fact dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.arch-image { display: inline-block; max-width: 100%; }
+.arch-stat-value { font-size: 26px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.arch-stat-label { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.35; }
+.arch-stat.is-bad {
+  border-color: color-mix(in oklab, var(--destructive) 45%, var(--border));
+  background: var(--destructive-soft);
+}
+.arch-stat.is-bad .arch-stat-value { color: var(--destructive); }
+.arch-stat.is-bad .arch-stat-label { color: var(--foreground); }
+.arch-stat.is-bad .arch-stat-value::before { content: "⚠ "; font-size: 20px; }
+.arch-headline-problem { margin: 0; font-size: 13.5px; }
 
 .arch-warn {
   border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent);
   background: var(--warning-soft);
   color: var(--foreground);
   border-radius: var(--radius-lg);
-  padding: 0.75rem 1rem;
+  padding: 0.6rem 0.9rem;
+  margin: 0 0 0.75rem;
 }
 .arch-warn p { margin: 0.25rem 0; }
 
-.arch-section h2 { margin-bottom: 0.25rem; }
-.arch-section > .arch-muted { margin: 0 0 0.75rem; }
+/* ── Layout: the views, and the detail beside them ── */
 
-/* ── Legend and the gear chip ── */
+.arch-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--arch-detail-w);
+  gap: 1.25rem;
+  align-items: start;
+}
+.arch-views { display: grid; gap: 1.25rem; min-width: 0; }
+.arch-section { min-width: 0; }
+.arch-section h2 { margin: 0 0 0.25rem; }
+.arch-intro { margin: 0 0 0.75rem; max-width: 95ch; }
+.arch-subtitle { margin: 0 0 0.5rem; font-size: 14px; }
 
-.arch-legend {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-  font-size: 12.5px;
+.arch-detail {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  padding: 1rem 1.1rem;
+}
+.arch-detail-empty p { margin: 0; color: var(--muted-foreground); line-height: 1.5; }
+.arch-detail-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.arch-detail-title { margin: 0; font-size: 18px; line-height: 1.35; }
+.arch-close {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  border-radius: var(--radius-md);
+  width: 28px;
+  height: 28px;
+  flex: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.arch-detail-sub { margin: 0.35rem 0 0.75rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.arch-purpose { line-height: 1.5; margin: 0 0 0.5rem; }
+.arch-facts { margin: 0; }
+.arch-fact { min-width: 0; margin: 0.75rem 0 0; }
+.arch-fact dt {
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
   color: var(--muted-foreground);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
-.arch-legend li { display: flex; align-items: center; gap: 6px; }
-.arch-legend .arch-line-key { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+.arch-fact dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.arch-plain-list { margin: 0; padding-left: 1.1rem; }
+.arch-plain-list li { margin: 2px 0; }
+.arch-rest { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 
-.arch-swatch {
-  width: 18px;
-  height: 12px;
-  border-radius: 4px;
-  display: inline-block;
-  border: 1.5px solid;
-}
+.arch-edges { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.arch-edges li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.arch-items { color: var(--muted-foreground); }
 
-/* The fill and edge say where a gear comes from; a dashed edge says plugin. */
+/* ── Gear chips ── */
+
 .arch-gear,
 .arch-swatch {
   --gear-edge: color-mix(in oklab, var(--foreground) 22%, transparent);
   --gear-fill: var(--card);
 }
-.arch-gear.origin-studio,
-.arch-swatch.origin-studio {
-  --gear-edge: var(--primary);
-  --gear-fill: color-mix(in oklab, var(--primary) 12%, var(--card));
+.arch-gear.origin-studio {
+  --gear-edge: color-mix(in oklab, var(--primary) 70%, transparent);
+  --gear-fill: color-mix(in oklab, var(--primary) 10%, var(--card));
 }
-.arch-gear.role-system,
-.arch-swatch.role-system {
-  --gear-fill: color-mix(in oklab, var(--foreground) 9%, var(--card));
-}
-.arch-swatch { background: var(--gear-fill); border-color: var(--gear-edge); }
-.arch-swatch.role-plugin { border-style: dashed; }
+.arch-gear.role-system { --gear-fill: color-mix(in oklab, var(--foreground) 7%, var(--card)); }
 
 .arch-gear {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   max-width: 100%;
-  min-height: 28px;
-  padding: 3px 10px;
+  min-height: 26px;
+  padding: 2px 9px;
   border: 1.5px solid var(--gear-edge);
   border-radius: var(--radius-full);
   background: var(--gear-fill);
   color: var(--foreground);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.2;
   cursor: pointer;
   text-align: left;
-  transition: opacity var(--motion-micro) var(--ease-standard),
-    box-shadow var(--motion-micro) var(--ease-standard);
+  transition: opacity var(--motion-micro) var(--ease-standard), box-shadow var(--motion-micro) var(--ease-standard);
 }
 .arch-gear.role-plugin { border-style: dashed; }
+.arch-gear.is-absent { border-style: dotted; opacity: 0.8; }
 .arch-gear:hover { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 35%, transparent); }
 .arch-gear:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .arch-gear-name { overflow-wrap: anywhere; }
-
-.arch-gear.is-selected {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--primary-foreground);
+.arch-gear.is-selected { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.arch-gear.is-related { box-shadow: 0 0 0 2px var(--primary); font-weight: 600; }
+.arch-gear.is-dim { opacity: 0.3; }
+.arch-chip-note {
+  font-family: var(--font-sans, inherit);
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  color: inherit;
 }
-.arch-gear.is-dependency { box-shadow: 0 0 0 2px var(--arch-needs); }
-.arch-gear.is-dependent { box-shadow: 0 0 0 2px var(--arch-needed-by); }
-.arch-gear.is-dim { opacity: 0.35; }
+.arch-chips { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 
-/* The two directions of a line, in the categorical colours the theme keeps
-   legible on both backgrounds. */
-.arch {
-  --arch-needs: var(--chart-category-teal);
-  --arch-needed-by: var(--chart-4);
+.arch-via {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  line-height: 16px;
+  white-space: nowrap;
 }
+.arch-via.via-port { color: var(--success-foreground); border-color: color-mix(in oklab, var(--success) 45%, transparent); }
+.arch-via.via-surface { color: var(--muted-foreground); border-color: var(--border); }
+.arch-via.via-internal { color: var(--destructive); border-color: color-mix(in oklab, var(--destructive) 50%, transparent); background: var(--destructive-soft); }
 
-/* ── The diagram and the detail beside it ── */
+/* ── View 1: places and gears ── */
 
-.arch-main {
+.arch-map {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
   gap: 1.25rem;
   align-items: start;
 }
+.arch-area + .arch-area { margin-top: 0.75rem; }
+.arch-area-title {
+  margin: 0 0 0.25rem;
+  font-size: var(--text-label-size);
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.arch-area ul { list-style: none; margin: 0; padding: 0; }
+.arch-surface {
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: opacity var(--motion-micro) var(--ease-standard);
+}
+.arch-surface.is-dim { opacity: 0.38; }
+.arch-surface.is-selected { border-color: var(--primary); background: color-mix(in oklab, var(--primary) 6%, var(--card)); }
+.arch-surface.is-related { border-color: color-mix(in oklab, var(--primary) 50%, transparent); }
+.arch-surface-head {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.arch-surface-title { font-weight: 600; font-size: 13.5px; }
+.arch-surface-head:hover .arch-surface-title { color: var(--primary); }
+.arch-surface-count { font-size: 11.5px; color: var(--muted-foreground); white-space: nowrap; }
+.arch-surface-does { margin: 1px 0 0; font-size: 12.5px; color: var(--muted-foreground); line-height: 1.4; }
+.arch-surface-gears { margin-top: 6px; }
+.arch-surface-why { margin: 2px 0 0; font-size: 11.5px; color: var(--primary); }
 
-.arch-diagram { position: relative; min-width: 0; }
+.arch-mapboard { position: sticky; top: 1rem; display: grid; gap: 0.6rem; }
+
+/* ── Domain blocks (both views) ── */
+
+.arch-domains {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.75rem;
+  position: relative;
+  z-index: 1;
+}
+.arch-domains.compact { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; }
+.arch-domain {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.6rem 0.7rem 0.7rem;
+  background: var(--card);
+  min-width: 0;
+}
+.arch-domain-title {
+  margin: 0 0 0.35rem;
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.arch-domain-blurb { margin: 0 0 0.5rem; font-size: 12px; color: var(--muted-foreground); line-height: 1.4; }
+.arch-domain-bad { font-size: 11.5px; font-weight: 600; color: var(--destructive); }
+
+.arch-platform {
+  margin-top: 0.75rem;
+  border: 1px dashed color-mix(in oklab, var(--foreground) 25%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 0.6rem 0.7rem 0.7rem;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--card));
+  position: relative;
+  z-index: 1;
+}
+.arch-platform.compact { margin-top: 0; }
+.arch-platform-rows { display: grid; gap: 6px; }
+.arch-platform-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; align-items: start; }
+.arch-platform-title { font-size: 12px; color: var(--muted-foreground); padding-top: 4px; }
+
+/* ── View 2: rows with counts, and lines for the chosen one ── */
+
+.arch-depboard { position: relative; }
 .arch-lines {
   position: absolute;
   inset: 0;
@@ -151,73 +302,117 @@
   pointer-events: none;
   z-index: 0;
 }
-.arch-line { stroke-width: 1.5; opacity: 0.85; }
-.arch-line.dependency { stroke: var(--arch-needs); }
-.arch-line.dependent { stroke: var(--arch-needed-by); }
+.arch-line { fill: none; stroke-width: 1.6; opacity: 0.75; }
+.arch-line.via-port { stroke: var(--arch-port); }
+.arch-line.via-surface { stroke: var(--arch-surface); stroke-dasharray: 5 4; }
+.arch-line.via-internal { stroke: var(--arch-internal); stroke-width: 2.2; stroke-dasharray: 2 3; }
 
-.arch-layer {
-  position: relative;
-  padding: 0.5rem 0 0.75rem;
-  border-top: 1px dashed var(--border);
-}
-.arch-layer:first-of-type { border-top: none; }
-.arch-layer-title {
-  margin: 0 0 0.4rem;
-  font-size: var(--text-label-size);
-  font-weight: var(--text-label-weight);
-  color: var(--muted-foreground);
-}
-.arch-layer-gears {
+.arch-legend {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  position: relative;
-  z-index: 1;
+  gap: 0.4rem 1.25rem;
+  font-size: 12.5px;
 }
+.arch-legend li { display: flex; align-items: center; gap: 6px; }
+.arch-line-key { width: 22px; height: 0; border-top: 2px solid; display: inline-block; }
+.arch-line-key.via-port { border-color: var(--arch-port); }
+.arch-line-key.via-surface { border-color: var(--arch-surface); border-top-style: dashed; }
+.arch-line-key.via-internal { border-color: var(--arch-internal); border-top-style: dotted; border-top-width: 3px; }
 
-.arch-detail {
-  position: sticky;
-  top: 1rem;
-  min-width: 0;
-  border-left: 1px solid var(--border);
-  padding-left: 1.25rem;
-}
-.arch-detail-title { margin: 0; font-size: 18px; line-height: 1.4; }
-.arch-detail-sub { margin: 0.25rem 0 0.75rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.arch-purpose { line-height: 1.5; margin: 0 0 0.5rem; }
-.arch-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.arch-rest { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
-.arch-api-link { white-space: nowrap; }
-.arch-screen-list { margin: 0; padding-left: 1.1rem; }
-.arch-screen-list li { margin: 2px 0; overflow-wrap: anywhere; }
-.arch-caps { margin-top: 0.75rem; font-size: 12px; }
-
-/* ── The prototype section ── */
-
-.arch-proto {
+.arch-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.arch-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1rem 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  width: 100%;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--primary) 5%, var(--card));
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity var(--motion-micro) var(--ease-standard);
 }
-.arch-proto-file h3 { margin: 0 0 0.4rem; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-.arch-proto-file h3 .arch-muted { font-weight: 400; font-family: var(--font-mono); font-size: 11.5px; }
-.arch-proto-file ul { list-style: none; margin: 0; padding: 0; }
-.arch-proto-screen {
+.arch-row:hover { border-color: color-mix(in oklab, var(--primary) 45%, transparent); }
+.arch-row:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.arch-row-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.arch-row-counts,
+.arch-row-rel { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; color: var(--muted-foreground); }
+.arch-row-rel { color: var(--foreground); flex-direction: column; }
+.arch-row.is-selected { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.arch-row.is-selected .arch-row-counts,
+.arch-row.is-selected .arch-bad { color: var(--primary-foreground); }
+.arch-row.is-related { border-color: var(--primary); background: var(--card); }
+.arch-row.is-dim { opacity: 0.35; }
+/* In the dependency view the lines run behind the gears: the cards let them
+   through, the rows (opaque) keep their words clean. */
+.arch-depboard .arch-domain { background: transparent; }
+
+.arch-plugins-note { margin: 2px 0 0 8px; font-size: 11.5px; color: var(--muted-foreground); }
+
+/* ── View 3: leaks ── */
+
+.arch-leaks-grid {
   display: grid;
-  gap: 4px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: start;
 }
-.arch-proto-screen:last-child { border-bottom: none; }
-.arch-proto-name { font-weight: 500; }
+.arch-leaks { margin: 0; padding-left: 1.4rem; display: grid; gap: 0.6rem; }
+.arch-leak-head { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+.arch-leak-head .arch-link-button { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+.arch-leak-modules { margin: 2px 0 0; padding-left: 1rem; font-size: 12.5px; }
+.arch-leak-modules li { margin: 2px 0; }
+.arch-leak-modules code { color: var(--destructive); }
+
+.arch-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.arch-table th,
+.arch-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+.arch-table th { font-weight: 600; color: var(--muted-foreground); font-size: 11.5px; }
+.arch-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ── Build facts ── */
+
+.arch-build {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  padding: 0 0.25rem;
+}
+.arch-build code { font-size: 11.5px; }
+
+/* ── Narrower screens: the detail becomes a drawer ── */
+
+@media (max-width: 1279px) {
+  .arch-layout { grid-template-columns: minmax(0, 1fr); }
+  .arch-detail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 100vw);
+    max-height: none;
+    border-radius: 0;
+    border-width: 0 0 0 1px;
+    box-shadow: -12px 0 32px rgb(0 0 0 / 0.18);
+    z-index: 20;
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform var(--motion-micro) var(--ease-standard);
+  }
+  .arch-detail.is-open { transform: none; visibility: visible; }
+}
 
 @media (max-width: 900px) {
-  .arch-main { grid-template-columns: minmax(0, 1fr); }
-  .arch-detail {
-    position: static;
-    border-left: none;
-    border-top: 1px solid var(--border);
-    padding: 1rem 0 0;
-  }
-  .arch-proto { grid-template-columns: minmax(0, 1fr); }
+  .arch-map,
+  .arch-leaks-grid { grid-template-columns: minmax(0, 1fr); }
+  .arch-mapboard { position: static; }
+  .arch-platform-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }

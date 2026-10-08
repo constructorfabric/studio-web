@@ -52,6 +52,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0037](0037-one-model-for-a-project.md) | One model for a project: every fact has one owner, and the graph holds the links | proposed | 2026-10-08 |
 | [0038](0038-one-story-for-async-work.md) | One story for async work: a run does the work, an event says it happened | proposed | 2026-10-08 |
 | [0040](0040-one-owner-for-people-and-membership.md) | One owner for people and membership | proposed | 2026-10-08 |
+| [0039](0039-one-way-out-to-llm-providers.md) | One way out to the model providers | proposed | 2026-10-08 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

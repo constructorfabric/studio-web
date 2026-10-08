@@ -866,7 +866,6 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - **API**:
   - `/studio-documents/v1`
-  - `/spec-quality/v1`
   - `/studio-spec-quality/v1`
 
 - **Sequences**:

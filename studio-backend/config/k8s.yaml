@@ -565,8 +565,8 @@ gears:
         - key: "openai-key"
           value: "${STUDIO_LLM_API_KEY:-}"
         # Anthropic key for the Claude Code agent in IDE sessions.
-        # Not OpenAI-compatible: the agent calls Anthropic directly,
-        # it never goes through studio-llm-proxy. Unset = agent off.
+        # The agent reaches Anthropic through studio-llm-proxy's provider
+        # half on the member's key, this one when they keep none. Unset = agent off.
         - key: "anthropic-key"
           value: "${STUDIO_ANTHROPIC_API_KEY:-}"
 
