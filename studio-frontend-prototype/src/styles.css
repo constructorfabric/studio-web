@@ -2081,6 +2081,7 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .account-avatar.large { width: 56px; height: 56px; border-radius: var(--radius-xl, 14px); font-size: 20px; }
 .person-card { display: flex; gap: 14px; align-items: flex-start; }
 .person-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.person-orgs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .file-button {
   font-size: 13.5px; font-weight: 600; border-radius: var(--radius-lg); border: 1px solid var(--border);
   background: var(--card); color: var(--foreground); padding: 7px 14px; cursor: pointer;

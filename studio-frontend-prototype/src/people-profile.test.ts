@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import type { Colleague, PersonEmail } from "./api";
+import type { AliasConfirmReport, Colleague, PersonEmail } from "./api";
 import {
   MAX_AVATAR_BYTES,
+  aliasKindLabel,
   colleagueName,
   colleaguesIn,
+  confirmSummary,
   directoryLine,
   isStoredPhoto,
   otherEmails,
+  photoProvider,
   primaryEmail,
   readAvatarFile,
 } from "./people-profile";
@@ -98,5 +101,41 @@ describe("colleagues", () => {
 
   it("names somebody without a name by their id", () => {
     expect(colleagueName(colleague("org-a", "6f1c3a52-1111", null))).toBe("Person 6f1c3a52");
+  });
+});
+
+describe("a picture linked from a provider", () => {
+  it("is named after the provider that serves it", () => {
+    expect(photoProvider("https://avatars.githubusercontent.com/u/583231?v=4")).toBe("GitHub");
+    expect(photoProvider("https://example.com/me.png")).toBeNull();
+    expect(photoProvider("/cf/studio-user/v1/avatars/x/y")).toBeNull();
+    expect(photoProvider(null)).toBeNull();
+  });
+});
+
+describe("accounts attributed to the person", () => {
+  const report = (over: Partial<AliasConfirmReport> = {}): AliasConfirmReport => ({
+    confirmed: [],
+    already_confirmed: 0,
+    skipped_shared: 0,
+    skipped_other_owner: 0,
+    skipped_unknown_owner: 0,
+    skipped_no_handle: 0,
+    refused: [],
+    ...over,
+  });
+
+  it("names a kind it knows and passes through one it does not", () => {
+    expect(aliasKindLabel("github")).toBe("GitHub");
+    expect(aliasKindLabel("jira")).toBe("jira");
+  });
+
+  it("says what a confirmation found", () => {
+    expect(confirmSummary(report({ confirmed: [{ kind: "github", external_id: "alice" }] }))).toBe(
+      "Confirmed GitHub alice.",
+    );
+    expect(confirmSummary(report({ already_confirmed: 1, skipped_shared: 2 }))).toBe(
+      "Nothing new to confirm. 1 already confirmed. 2 team or bot connection(s) prove nothing about you.",
+    );
   });
 });

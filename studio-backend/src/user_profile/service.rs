@@ -591,8 +591,9 @@ impl IdentityService {
     }
 
     /// Ask the identity provider about each of the person's realm sign-ins:
-    /// record the address it holds for each, and give a blank profile the
-    /// name and address it lacks.
+    /// record the address it holds for each, give a blank profile the name,
+    /// address and photo it lacks, and record every brokered login (GitHub)
+    /// as a confirmed identity of the person.
     ///
     /// A person first seen through a token carries no name in Studio — the
     /// token's subject is all `resolve_caller` has — so without this a
@@ -623,7 +624,15 @@ impl IdentityService {
             }
         };
         let mut people = Vec::new();
+        let mut brokered = Vec::new();
         for login in logins.iter().filter(|l| l.provider == PROVIDER_KEYCLOAK) {
+            match directory.federated_accounts(&login.subject).await {
+                Ok(accounts) => brokered.extend(accounts),
+                Err(error) => {
+                    self.forget_realm_read(user_id);
+                    tracing::debug!(user = %user_id, "studio-user: the realm could not list brokered logins: {error:#}");
+                }
+            }
             match directory.realm_person(&login.subject).await {
                 Ok(Some(person)) => {
                     if let Err(error) = self
@@ -668,6 +677,46 @@ impl IdentityService {
         {
             tracing::warn!(user = %user_id, "studio-user: could not name a person: {error:#}");
         }
+
+        // Signing in through GitHub proved the account (ADR-0015), so it is
+        // recorded on the person now rather than when somebody presses
+        // "confirm": the identity hangs off the person from the first sign-in.
+        for account in brokered.iter().filter(|a| !a.user_name.trim().is_empty()) {
+            if let Err(error) = attribute_alias_in(
+                self.store.as_ref(),
+                user_id,
+                &account.provider,
+                &account.user_name,
+                Confidence::Confirmed,
+            )
+            .await
+            {
+                tracing::warn!(user = %user_id, "studio-user: could not record a brokered login: {error:#}");
+            }
+        }
+        if let Some(url) = brokered.iter().find_map(brokered_avatar_url)
+            && let Err(error) = self.fill_blank_avatar(user_id, &url).await
+        {
+            tracing::warn!(user = %user_id, "studio-user: could not take a photo from a brokered login: {error:#}");
+        }
+    }
+
+    /// Give a profile with no photo this one, leaving a photo it has — one the
+    /// person uploaded or linked always wins over the provider's.
+    async fn fill_blank_avatar(&self, user_id: &str, url: &str) -> Result<()> {
+        let Some(mut profile) = self.store.get_user(user_id).await? else {
+            return Ok(());
+        };
+        if profile
+            .avatar_url
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            return Ok(());
+        }
+        profile.avatar_url = Some(url.to_owned());
+        profile.updated_at_epoch_ms = now_ms();
+        self.store.upsert_user(&profile).await
     }
 
     fn forget_realm_read(&self, user_id: &str) {
@@ -2375,6 +2424,22 @@ pub fn normalize_key(value: &str) -> String {
 
 /// Set the profile's name and address where it has none; `true` when either
 /// changed. A value the profile already holds is the person's, and stays.
+/// The photo a brokered account already has at its provider, when the
+/// provider serves one by account id.
+///
+/// GitHub does: `avatars.githubusercontent.com/u/{id}` is the account's
+/// picture, public, and follows a change the person makes there. Keyed on the
+/// numeric id rather than the handle, which can be renamed and then taken by
+/// somebody else. The realm keeps no picture of its own, so this is read off
+/// the brokered link rather than off the token.
+fn brokered_avatar_url(account: &crate::identity_directory::FederatedAccount) -> Option<String> {
+    let id = account.user_id.trim();
+    (account.provider.eq_ignore_ascii_case("github")
+        && !id.is_empty()
+        && id.bytes().all(|b| b.is_ascii_digit()))
+    .then(|| format!("https://avatars.githubusercontent.com/u/{id}?v=4"))
+}
+
 fn fill_blanks(profile: &mut UserProfile, display_name: Option<&str>, email: Option<&str>) -> bool {
     let given = |v: Option<&str>| {
         v.map(str::trim)
@@ -2722,6 +2787,36 @@ mod tests {
         assert_eq!(p.display_name.as_deref(), Some("Den"));
         assert_eq!(p.email.as_deref(), Some("mine@example.com"));
         assert!(!fill_blanks(&mut profile(None, None), Some(" "), None));
+    }
+
+    fn brokered(provider: &str, user_id: &str) -> crate::identity_directory::FederatedAccount {
+        crate::identity_directory::FederatedAccount {
+            provider: provider.to_owned(),
+            user_id: user_id.to_owned(),
+            user_name: "alice".to_owned(),
+        }
+    }
+
+    /// A GitHub sign-in brings the account's picture, keyed on the id that
+    /// survives a rename.
+    #[test]
+    fn a_github_login_brings_its_picture() {
+        assert_eq!(
+            brokered_avatar_url(&brokered("GitHub", " 583231 ")).as_deref(),
+            Some("https://avatars.githubusercontent.com/u/583231?v=4")
+        );
+    }
+
+    /// Nothing is guessed: another provider, or an id that is not GitHub's
+    /// numeric one, brings no picture rather than a URL somebody shaped.
+    #[test]
+    fn no_picture_is_made_up() {
+        assert_eq!(brokered_avatar_url(&brokered("gitlab", "583231")), None);
+        assert_eq!(brokered_avatar_url(&brokered("github", "")), None);
+        assert_eq!(
+            brokered_avatar_url(&brokered("github", "1/../../evil")),
+            None
+        );
     }
 
     fn prefs(pairs: &[(&str, &str)]) -> UiPreferences {
