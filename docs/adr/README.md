@@ -49,6 +49,8 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0034](0034-the-shell-takes-its-tokens-from-the-kit.md) | The shell takes its tokens from the kit | proposed | 2026-10-05 |
 | [0035](0035-domain-objects-are-authorized-through-the-pdp.md) | Domain objects are authorized through the PDP, and the model by its administrators | accepted | 2026-10-07 |
 | [0036](0036-every-member-sees-who-else-is-in-the-organization.md) | Every member sees who else is in the organization | proposed | 2026-10-07 |
+| [0037](0037-one-model-for-a-project.md) | One model for a project: every fact has one owner, and the graph holds the links | proposed | 2026-10-08 |
+| [0038](0038-one-story-for-async-work.md) | One story for async work: a run does the work, an event says it happened | proposed | 2026-10-08 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
