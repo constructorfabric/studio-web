@@ -53,7 +53,7 @@ describe('loadRemoteGearCatalogue', () => {
         expect(remote?.origin?.clonePath).toBe('/studio-product/v1/gearbox/corpus');
     });
 
-    it('asks a backend from before studio-product at the catalogue's path', async () => {
+    it('asks a backend from before studio-product at the catalogue\'s path', async () => {
         const fetchApi = jest.fn(async (path: string) => path.startsWith('/studio-product/')
             ? answer(404, {})()
             : answer(200, { source_id: 'gears-rust', corpus: 'o/gears-rust@main', catalogue: { gears: { g: { id: 'g' } } } })());
