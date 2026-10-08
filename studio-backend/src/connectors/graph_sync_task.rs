@@ -28,7 +28,7 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 use crate::user_profile::{AliasResolver, IDENTITY_INSTANCE_ID};
 
 use super::graph_sync::{SyncRequest, sync_repository};

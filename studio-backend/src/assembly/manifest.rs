@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 include!(concat!(env!("OUT_DIR"), "/design_docs.rs"));
+include!(concat!(env!("OUT_DIR"), "/gear_uses.rs"));
 
 /// One gear as the toolkit registry knows it.
 #[derive(Debug, Clone)]
@@ -64,12 +65,66 @@ pub struct Described {
     /// For a plugin: the gear whose extension point it fills, when its name says.
     pub extends: Option<String>,
     pub depends_on: Vec<String>,
+    /// The other Studio gears this one names in its code, read at build time
+    /// (`build.rs`): the toolkit's `deps` name crates, so they cannot say it.
+    pub uses: Vec<Use>,
     pub capabilities: Vec<String>,
     /// Position in the order the runtime initialises gears (dependencies first).
     pub order: u32,
     pub purpose: Option<String>,
     /// Repository path of the gear's design, when there is one.
     pub design_doc: Option<String>,
+}
+
+/// One Studio gear another one uses, and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Use {
+    pub gear: String,
+    /// The worst way it reaches the other gear: `port` (its `port` or `sdk`
+    /// module), `surface` (an item its `mod.rs` exports) or `internal` (one of
+    /// its other modules, which is a boundary to fix).
+    pub via: &'static str,
+    /// The first segment of each name it uses there (`registry`, `TaskQueue`).
+    pub items: Vec<String>,
+}
+
+const VIA_ORDER: [&str; 3] = ["port", "surface", "internal"];
+
+/// The Studio gears `gear` uses, by gear name, from [`GEAR_USES`].
+pub fn uses_of(gear: &str) -> Vec<Use> {
+    let gear_of = |module: &str| {
+        GEAR_MODULES
+            .iter()
+            .find(|(m, _)| *m == module)
+            .map(|(_, g)| *g)
+    };
+    let Some((module, _)) = GEAR_MODULES.iter().find(|(_, g)| *g == gear) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Use> = Vec::new();
+    for (from, to, via, item, _) in GEAR_USES {
+        if from != module {
+            continue;
+        }
+        let Some(to) = gear_of(to) else { continue };
+        let rank = |v: &str| VIA_ORDER.iter().position(|o| *o == v).unwrap_or(0);
+        match out.iter_mut().find(|u| u.gear == to) {
+            Some(u) => {
+                if rank(via) > rank(u.via) {
+                    u.via = via;
+                }
+                if !u.items.iter().any(|i| i == item) {
+                    u.items.push((*item).to_owned());
+                }
+            }
+            None => out.push(Use {
+                gear: to.to_owned(),
+                via,
+                items: vec![(*item).to_owned()],
+            }),
+        }
+    }
+    out
 }
 
 /// `docs/design/<name>.md`'s first paragraph of section 1.1, when it exists.
@@ -158,6 +213,7 @@ pub fn describe(linked: &[Linked]) -> Vec<Described> {
                 role,
                 extends,
                 depends_on: gear.deps.clone(),
+                uses: uses_of(&gear.name),
                 capabilities: capabilities.into_iter().map(str::to_owned).collect(),
                 order: u32::try_from(order).unwrap_or(u32::MAX),
                 purpose: purpose.map(str::to_owned),
@@ -281,6 +337,43 @@ mod tests {
         assert_eq!(by("static-authn-plugin").origin, Origin::Platform);
         assert_eq!(by("static-authn-plugin").order, 3);
         assert_eq!(by("studio-connector").capabilities, ["db", "rest"]);
+    }
+
+    /// A gear uses another through its `port`/`sdk` module or what its
+    /// `mod.rs` exports. Reaching into its other modules ties the two together
+    /// below any contract, and none does.
+    #[test]
+    fn no_gear_reaches_into_another_gears_private_modules() {
+        let internal: Vec<String> = GEAR_USES
+            .iter()
+            .filter(|(_, _, via, _, _)| *via == "internal")
+            .map(|(from, to, _, item, _)| format!("{from} -> {to}::{item}"))
+            .collect();
+        assert!(
+            internal.is_empty(),
+            "a gear reaches into another's private module: {internal:?}. Use its `port` or              `sdk` module (add what you need there), or an item its mod.rs exports."
+        );
+    }
+
+    #[test]
+    fn a_gear_says_which_studio_gears_it_uses_and_how() {
+        // Read from the code: the documents gear records a document for
+        // analysis through the spec-quality gear's `sdk`.
+        let uses = uses_of("studio-documents");
+        let quality = uses.iter().find(|u| u.gear == "studio-spec-quality");
+        assert!(
+            quality.is_some_and(|u| u.items.iter().any(|i| i == "sdk")),
+            "{uses:?}"
+        );
+        assert!(
+            uses.iter()
+                .all(|u| ["port", "surface", "internal"].contains(&u.via))
+        );
+        assert!(
+            uses.iter()
+                .all(|u| u.gear.starts_with("studio-") && u.gear != "studio-documents")
+        );
+        assert!(uses_of("account-management").is_empty());
     }
 
     /// The table is built from `docs/design/` at compile time; every gear

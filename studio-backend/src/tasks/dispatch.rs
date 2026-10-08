@@ -383,10 +383,14 @@ impl TaskDispatcher {
                 return;
             }
         };
-        let notify = crate::notify::service::NotifyService::new(Arc::clone(&self.hub));
-        let delivery = crate::notify::service::NewDelivery {
+        use crate::notify::port::{Destination, NewDelivery, Notifications};
+        let Ok(notify) = self.hub.get::<dyn Notifications>() else {
+            // An assembly without studio-notify: the run's row says it ended.
+            return;
+        };
+        let delivery = NewDelivery {
             tenant,
-            to: crate::notify::service::Destination::Editor {
+            to: Destination::Editor {
                 workspace_id,
                 level,
             },

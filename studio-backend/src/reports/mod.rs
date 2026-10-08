@@ -97,13 +97,11 @@ impl RestApiCapability for StudioReportsGear {
                 })
             })
         };
-        let reader = crate::components_catalog::build_connectors(ctx)
-            .map(|c| Arc::new(github::GitHubPlanReader::new(c)) as Arc<dyn github::PlanReader>);
-        if reader.is_none() {
-            info!(
-                "studio-reports: no GitHub connector -- plans can be uploaded, not read from a repository"
-            );
-        }
+        // Resolved per read: without a GitHub connector a plan can still be
+        // uploaded, and reading one from a repository says why it cannot.
+        let reader = Some(Arc::new(github::GitHubPlanReader::new(
+            crate::connectors::sdk::Connectors::new(Arc::clone(&hub)),
+        )) as Arc<dyn github::PlanReader>);
         let schedules: service::SchedulesLink = {
             let hub = Arc::clone(&hub);
             Arc::new(move || {
@@ -125,14 +123,14 @@ impl RestApiCapability for StudioReportsGear {
                 .with_schedules(schedules)
                 .with_domain(domain),
         );
-        crate::tasks::registry::register(Arc::new(refresh_task::RefreshTask::new(
+        crate::tasks::sdk::register(Arc::new(refresh_task::RefreshTask::new(
             Arc::clone(&service),
             Arc::clone(&hub),
         )))?;
         let _ = self.service.set(Arc::clone(&service));
         // Who reaches an organization: the guard documents, kits and sessions
         // already put in front of a tenant a request names.
-        let access = Arc::new(crate::studio_session::access::TenantMembership::new(
+        let access = Arc::new(crate::studio_session::sdk::TenantMembership::new(
             hub.get::<dyn account_management_sdk::AccountManagementClient>()?,
         ));
         Ok(rest::register_routes(router, openapi, service, hub, access))

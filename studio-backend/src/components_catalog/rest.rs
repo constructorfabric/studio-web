@@ -705,7 +705,7 @@ async fn sync(
     let run_id = queue
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: ctx.subject_tenant_id(),
                 task_type: TASK_TYPE,
                 payload,
@@ -2226,11 +2226,11 @@ fn corpus_client() -> &'static reqwest::Client {
 async fn corpus_git(
     catalog: &Catalog,
     protocol_path: &str,
-    service: crate::git_proxy::sources::Service,
+    service: crate::git_proxy::sdk::Service,
     request: Request,
 ) -> Response {
-    use crate::git_proxy::rest::{authenticate_member, refuse, send_upstream, stream_back};
-    use crate::git_proxy::sources::{Service, upstream_url};
+    use crate::git_proxy::sdk::{Service, upstream_url};
+    use crate::git_proxy::sdk::{authenticate_member, refuse, send_upstream, stream_back};
 
     let Ok(authn) = catalog
         .hub
@@ -2283,9 +2283,9 @@ async fn corpus_refs(
     Query(query): Query<CorpusRefsQuery>,
     request: Request,
 ) -> Response {
-    use crate::git_proxy::sources::Service;
+    use crate::git_proxy::sdk::Service;
     let Some(service) = query.service.as_deref().and_then(Service::parse) else {
-        return crate::git_proxy::rest::refuse(
+        return crate::git_proxy::sdk::refuse(
             StatusCode::BAD_REQUEST,
             "Only the smart HTTP protocol is served (service=git-upload-pack).",
         );
@@ -2298,7 +2298,7 @@ async fn corpus_pack(Extension(catalog): Extension<Catalog>, request: Request) -
     corpus_git(
         &catalog,
         "git-upload-pack",
-        crate::git_proxy::sources::Service::UploadPack,
+        crate::git_proxy::sdk::Service::UploadPack,
         request,
     )
     .await

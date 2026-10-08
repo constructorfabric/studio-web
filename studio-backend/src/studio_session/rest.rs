@@ -63,7 +63,7 @@ impl Sessions {
         match queue
             .enqueue(
                 ctx,
-                crate::tasks::service::NewRun {
+                crate::tasks::sdk::NewRun {
                     tenant: ctx.subject_tenant_id(),
                     task_type: super::ready_task::TASK_TYPE,
                     payload,

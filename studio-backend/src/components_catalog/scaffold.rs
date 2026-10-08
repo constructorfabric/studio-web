@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::connectors::driver::ConnectionAuth;
+use crate::connectors::sdk::ConnectionAuth;
 
 /// One file to write into the repository.
 #[derive(Clone, Debug)]

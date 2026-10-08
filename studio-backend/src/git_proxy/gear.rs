@@ -43,12 +43,8 @@ impl Gear for GitProxyGear {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .build()?;
-        // Only the catalogue is read, never a provider, so no driver is linked.
-        let connectors = crate::connectors::service::ConnectorService::new(
-            Arc::clone(&account_management),
-            Arc::clone(&credstore),
-            Vec::new(),
-        );
+        // The one connector service; only its catalogue is read here.
+        let connectors = crate::connectors::sdk::Connectors::new(ctx.client_hub());
         self.proxy
             .set(Arc::new(GitProxy {
                 client,

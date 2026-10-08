@@ -11,7 +11,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::source::PlanFile;
-use crate::connectors::service::ConnectorService;
+use crate::connectors::sdk::{ConnectorService, Connectors};
 
 /// A file's text and the blob it was.
 #[derive(Clone, Debug, PartialEq)]
@@ -43,12 +43,18 @@ pub trait PlanReader: Send + Sync {
 }
 
 pub struct GitHubPlanReader {
-    connectors: Arc<ConnectorService>,
+    connectors: Connectors,
 }
 
 impl GitHubPlanReader {
-    pub fn new(connectors: Arc<ConnectorService>) -> Self {
+    pub fn new(connectors: Connectors) -> Self {
         Self { connectors }
+    }
+
+    fn service(&self) -> Result<Arc<ConnectorService>> {
+        self.connectors.get().ok_or_else(|| {
+            anyhow!("this deployment has no GitHub connector: upload the plan instead")
+        })
     }
 }
 
@@ -126,7 +132,7 @@ impl PlanReader for GitHubPlanReader {
         tenant: Uuid,
         connection_id: Option<Uuid>,
     ) -> Result<()> {
-        self.connectors
+        self.service()?
             .named_or_default(ctx, tenant, connection_id, "github")
             .await
             .map(|_| ())
@@ -141,7 +147,7 @@ impl PlanReader for GitHubPlanReader {
         file: &PlanFile,
     ) -> Result<FileText> {
         let (_driver, auth, _conn) = self
-            .connectors
+            .service()?
             .named_or_default(ctx, tenant, connection_id, "github")
             .await?;
         let http = reqwest::Client::builder()

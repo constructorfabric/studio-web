@@ -38,9 +38,10 @@
 mod dispatch;
 mod entity;
 mod migrations;
-pub mod registry;
+mod registry;
 mod rest;
-pub mod service;
+pub mod sdk;
+mod service;
 mod sweep;
 
 use std::sync::atomic::{AtomicBool, Ordering};

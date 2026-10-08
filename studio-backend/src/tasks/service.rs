@@ -2,7 +2,7 @@
 //!
 //! The enqueue is one transaction — the run row and its queue entry commit
 //! together or not at all, for the reason spelled out in
-//! [`crate::notify::service`]: a queue the business transaction cannot commit
+//! `studio-notify`'s design: a queue the business transaction cannot commit
 //! *with* disagrees with the database every time one of the two writes fails.
 //!
 //! Note what is deliberately absent: there is no REST route that enqueues an

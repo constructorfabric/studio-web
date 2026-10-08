@@ -49,11 +49,11 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::connectors::driver::NotifyMessage;
+use crate::connectors::sdk::NotifyMessage;
 use crate::connectors::{NOTIFY_SENDER_INSTANCE_ID, NotificationSender};
 #[cfg(feature = "theia-bridge")]
 use crate::studio_theia::sdk::{NotifyEditor, SessionTarget, TheiaControlClientV1};
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Task type. A wire contract: it is stored on every queued run, so renaming
 /// it orphans the notifications already in flight.

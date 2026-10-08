@@ -35,7 +35,7 @@ use serde_json::Value;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::connectors::service::connection_by_id;
+use crate::connectors::sdk::connection_by_id;
 use crate::git_proxy::sources::Source;
 
 /// Project attributes, including the repositories it is made of.

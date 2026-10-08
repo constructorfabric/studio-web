@@ -29,8 +29,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::repo_facts::{self, CommitFacts, SpecStats, Version};
-use crate::connectors::driver::ConnectionAuth;
-use crate::connectors::service::ConnectorService;
+use crate::connectors::sdk::ConnectionAuth;
+use crate::connectors::sdk::ConnectorService;
 
 const UA: &str = "constructor-studio-gears-catalog";
 

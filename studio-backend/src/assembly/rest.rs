@@ -46,6 +46,10 @@ pub struct AssemblyGearDto {
     pub extends: Option<String>,
     /// The gears this one declares it needs; they start before it.
     pub depends_on: Vec<String>,
+    /// For a Studio gear, the other Studio gears it uses, read from its code
+    /// at build time. The toolkit's `depends_on` cannot name them: it lists
+    /// crates, and every Studio gear lives in one crate.
+    pub uses: Vec<AssemblyUseDto>,
     /// The toolkit registry's labels: `rest`, `db`, `stateful`, `system`,
     /// `rest_host`, `grpc`, `grpc_hub`.
     pub capabilities: Vec<String>,
@@ -58,6 +62,19 @@ pub struct AssemblyGearDto {
     /// Repository path of that design (`docs/design/<name>.md`), to be read at
     /// `build.commit`.
     pub design_doc: Option<String>,
+}
+
+/// One Studio gear another one uses.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AssemblyUseDto {
+    pub gear: String,
+    /// `port`: through the other gear's `port` or `sdk` module, as intended.
+    /// `surface`: an item its `mod.rs` exports at the top. `internal`: one of
+    /// its private modules, a boundary to fix. The worst of the ways used.
+    pub via: String,
+    /// The first segment of each name used there, e.g. `registry`, `TaskQueue`.
+    pub items: Vec<String>,
 }
 
 /// The backend as it is running: its build and its gears.
@@ -91,6 +108,15 @@ fn manifest_of(snapshot: &Snapshot) -> AssemblyManifestDto {
                 role: g.role.as_str().to_owned(),
                 extends: g.extends.clone(),
                 depends_on: g.depends_on.clone(),
+                uses: g
+                    .uses
+                    .iter()
+                    .map(|u| AssemblyUseDto {
+                        gear: u.gear.clone(),
+                        via: u.via.to_owned(),
+                        items: u.items.clone(),
+                    })
+                    .collect(),
                 capabilities: g.capabilities.clone(),
                 order: g.order,
                 purpose: g.purpose.clone(),

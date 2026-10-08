@@ -490,7 +490,7 @@ impl SessionService {
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Vec<crate::git_proxy::sources::Source> {
+    ) -> Vec<crate::git_proxy::sdk::Source> {
         let client = {
             let guard = self.account_management.read().await;
             match guard.as_ref() {

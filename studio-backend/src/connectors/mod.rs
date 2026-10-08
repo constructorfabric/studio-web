@@ -34,8 +34,8 @@
 mod ai_providers;
 mod bitbucket;
 mod discord;
-pub mod driver;
-pub(crate) mod github;
+mod driver;
+mod github;
 mod gitlab;
 #[cfg(feature = "graph")]
 mod graph_sync;
@@ -45,7 +45,8 @@ pub(crate) mod gts;
 mod notify;
 mod plugin;
 mod rest;
-pub(crate) mod service;
+pub mod sdk;
+mod service;
 mod slack;
 mod url_guard; // the guard every driver's configured address passes
 mod zulip;
@@ -202,17 +203,31 @@ impl Gear for StudioConnectorGear {
         }
         if drivers.is_empty() {
             // Not fatal: the REST surface answers 503 with the reason, which
-            // beats failing a boot over an optional feature.
+            // beats failing a boot over an optional feature. The catalogue of
+            // connections is still readable, and `studio-git` reads only that,
+            // so a service with no driver is still published for the others.
             warn!(
                 "studio-connector: no connector driver plugins registered — \
                  connection APIs will answer 503"
             );
+            if let (Ok(am), Ok(credstore)) = (
+                ctx.client_hub().get::<dyn AccountManagementClient>(),
+                ctx.client_hub().get::<dyn CredStoreClientV1>(),
+            ) {
+                ctx.client_hub()
+                    .register::<ConnectorService>(ConnectorService::new(am, credstore, drivers));
+            }
             return Ok(());
         }
 
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
+        // The one connector service of the process: the other gears hold a
+        // `sdk::Connectors` handle and resolve it here when they need it,
+        // rather than each building its own from the same parts.
+        ctx.client_hub()
+            .register::<ConnectorService>(Arc::clone(&service));
 
         // Published in `init` so a consumer resolving it in its own `init` or
         // later cannot lose a race with us. `studio-notify` resolves it lazily
@@ -224,7 +239,7 @@ impl Gear for StudioConnectorGear {
         // service it needs is built here; the graph client and the alias
         // resolver are resolved per run, inside the handler.
         #[cfg(feature = "graph")]
-        crate::tasks::registry::register(Arc::new(graph_sync_task::GraphSyncTask::new(
+        crate::tasks::sdk::register(Arc::new(graph_sync_task::GraphSyncTask::new(
             Arc::clone(&service),
             ctx.client_hub(),
         )))?;

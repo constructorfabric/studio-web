@@ -327,7 +327,7 @@ async fn enqueue_analysis(
     let run_id = queue
         .enqueue(
             ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant,
                 task_type: ANALYZE_TASK_TYPE,
                 payload: run_payload,
@@ -447,7 +447,7 @@ async fn analyze_batch(
     let run_id = queue
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: ctx.subject_tenant_id(),
                 task_type: BATCH_TASK_TYPE,
                 payload: run_payload,

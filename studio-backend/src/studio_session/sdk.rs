@@ -94,3 +94,6 @@ impl StudioSessionDiscoveryClientV1 for StudioSessionDiscoveryLocalClient {
         Ok(self.service.resolve_control_token(token).await)
     }
 }
+
+pub(crate) use super::access::{TenantMembership, WorkspaceAccess};
+pub(crate) use super::config::StudioSessionConfig;

@@ -282,7 +282,7 @@ pub fn batch_payload(
     detector: Detector,
     docs: &[SpecDoc],
     set_id: &str,
-    record: Option<&crate::spec_quality::record::RecordSpec>,
+    record: Option<&crate::spec_quality::sdk::RecordSpec>,
 ) -> Value {
     let items = build_items(detector, docs, set_id);
     json!({

@@ -46,7 +46,7 @@ use serde_json::Value;
 use super::gts::{FRONTX_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE};
 /// A document type is a component, but studio-documents owns it and keeps its
 /// identity: the catalogue lists it, it does not annex it (see ADR-0014).
-use crate::documents::gts::DOCUMENT_TYPE;
+use crate::documents::sdk::DOCUMENT_TYPE;
 
 /// The gear schema: sixty-two fields across nine groups, the delivery model the
 /// gears-catalog playground argues over. It moved here from the prototype so

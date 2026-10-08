@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::components_catalog::reference::{ReferenceReadinessDto, readiness_of};
+use crate::components_catalog::sdk::{ReferenceReadinessDto, readiness_of};
 
 /// One gear on the board.
 #[derive(Debug, Clone, PartialEq)]
@@ -194,7 +194,7 @@ fn component_rows(components: &[ComponentValues<'_>]) -> Vec<RoadmapRowDto> {
                 c.name.to_string(),
                 title.clone(),
                 None,
-                crate::components_catalog::roadmap::group_of(
+                crate::components_catalog::sdk::group_of(
                     title.split_once(' ').map_or(&title[..], |(_, t)| t),
                 ),
                 vec![c.name.to_string()],

@@ -21,6 +21,7 @@ pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
 mod ingest_task;
+pub mod sdk;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
 pub mod port;
@@ -42,7 +43,7 @@ use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
-use crate::connectors::driver::ConnectorDriver;
+use crate::connectors::sdk::ConnectorDriver;
 use graph::InMemoryGraphStore;
 use service::IngestService;
 
@@ -249,7 +250,7 @@ impl RestApiCapability for StudioArtifactIngestGear {
         // service it needs is built here, and refused loudly if something else
         // has claimed the task type.
         if let Some(service) = &service {
-            crate::tasks::registry::register(Arc::new(ingest_task::IngestTask::new(Arc::clone(
+            crate::tasks::sdk::register(Arc::new(ingest_task::IngestTask::new(Arc::clone(
                 service,
             ))))?;
         }

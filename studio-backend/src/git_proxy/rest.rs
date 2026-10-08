@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::refresh::{self, Upstream};
 use super::sources::{self, Service, Source};
-use crate::connectors::service::ConnectorService;
+use crate::connectors::sdk::Connectors;
 use crate::pagination::{PageQuery, page_of};
 
 struct License;
@@ -60,7 +60,7 @@ pub struct GitProxy {
     pub credstore: Arc<dyn CredStoreClientV1>,
     /// The connection catalogue, read (never written) to find what a pushed
     /// repository syncs through.
-    pub connectors: Arc<ConnectorService>,
+    pub connectors: Connectors,
     /// Where the task queue is found when a push has a sync to queue — per
     /// push, so this gear does not care whether `studio-tasks` booted first.
     pub hub: Arc<ClientHub>,
@@ -115,8 +115,10 @@ impl GitProxy {
                 let Some(connection_id) = source.connection_id else {
                     continue;
                 };
-                if let Some((_, c)) = self
-                    .connectors
+                let Some(connectors) = self.connectors.get() else {
+                    continue;
+                };
+                if let Some((_, c)) = connectors
                     .nearest_by_id(ctx, project_id, connection_id)
                     .await
                 {
@@ -164,7 +166,7 @@ impl GitProxy {
             let queued = queue
                 .enqueue(
                     ctx,
-                    crate::tasks::service::NewRun {
+                    crate::tasks::sdk::NewRun {
                         tenant: ctx.subject_tenant_id(),
                         task_type: crate::artifact_ingest::INGEST_TASK_TYPE,
                         payload,

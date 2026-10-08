@@ -41,7 +41,7 @@ use tracing::warn;
 use super::analyze_task::{Watched, watch_upstream};
 use super::record::{RecordSpec, readings};
 use super::rest::{ProxyState, accepted_doc_types};
-use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
+use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Stable task type. A wire contract: stored on every queued run.
 pub const BATCH_TASK_TYPE: &str = "spec_quality.analyze_batch";

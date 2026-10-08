@@ -30,7 +30,7 @@ use super::repo::{
 };
 use super::validate::{ValidationReport, validate};
 use crate::pagination::PageQuery;
-use crate::spec_mapping::reading;
+use crate::spec_mapping::sdk as reading;
 
 pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
@@ -87,8 +87,8 @@ impl DocumentsService {
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
-        changed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)>,
-        typed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)>,
+        changed: Vec<(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)>,
+        typed: Vec<(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)>,
     ) -> usize {
         let Some(sync) = &self.sync_analysis else {
             return 0;
@@ -112,8 +112,8 @@ impl DocumentsService {
             );
         }
         let set_id = project_id.unwrap_or(workspace_id).to_string();
-        let spec = |docs: &[(quality::SpecDoc, crate::spec_quality::record::RecordSubject)]| {
-            crate::spec_quality::record::RecordSpec {
+        let spec = |docs: &[(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)]| {
+            crate::spec_quality::sdk::RecordSpec {
                 workspace_id,
                 project_id,
                 subjects: docs
@@ -142,9 +142,9 @@ impl DocumentsService {
             match queue
                 .enqueue(
                     ctx,
-                    crate::tasks::service::NewRun {
+                    crate::tasks::sdk::NewRun {
                         tenant: ctx.subject_tenant_id(),
-                        task_type: crate::spec_quality::batch_task::BATCH_TASK_TYPE,
+                        task_type: crate::spec_quality::sdk::BATCH_TASK_TYPE,
                         payload,
                         partition_key: None,
                         idempotency_key: None,
@@ -1528,8 +1528,8 @@ impl DocumentsService {
         binding_ids: &[Uuid],
         document_ids: &[Uuid],
         paths: &[String],
-    ) -> Result<crate::spec_quality::record::RecordSpec> {
-        use crate::spec_quality::record::{RecordSpec, RecordSubject};
+    ) -> Result<crate::spec_quality::sdk::RecordSpec> {
+        use crate::spec_quality::sdk::{RecordSpec, RecordSubject};
         let mut subjects = std::collections::BTreeMap::new();
         // A repository path sent inline is that file's binding: the IDE sends
         // the document on screen as text alone, without naming its binding.
@@ -1983,14 +1983,12 @@ impl DocumentsService {
         // only when there is analysis to start, so a deployment without it
         // copies no text.
         let collect = self.sync_analysis.is_some();
-        let mut changed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)> =
+        let mut changed: Vec<(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)> =
             Vec::new();
-        let mut typed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)> =
+        let mut typed: Vec<(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)> =
             Vec::new();
-        let mut never_analysed: Vec<(
-            quality::SpecDoc,
-            crate::spec_quality::record::RecordSubject,
-        )> = Vec::new();
+        let mut never_analysed: Vec<(quality::SpecDoc, crate::spec_quality::sdk::RecordSubject)> =
+            Vec::new();
 
         for file in files {
             let id = binding_row_id(workspace_id, project_id, &file.node_id);
@@ -2134,7 +2132,7 @@ impl DocumentsService {
                     text: file.content.clone(),
                     doc_type: type_key.clone(),
                 };
-                let subject = crate::spec_quality::record::RecordSubject {
+                let subject = crate::spec_quality::sdk::RecordSubject {
                     node: file.node_id.clone(),
                     binding_id: Some(id),
                     document_id: None,

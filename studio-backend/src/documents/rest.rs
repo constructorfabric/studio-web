@@ -1808,9 +1808,9 @@ async fn analyze_project_documents(
         .queue()?
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: ctx.subject_tenant_id(),
-                task_type: crate::spec_quality::batch_task::BATCH_TASK_TYPE,
+                task_type: crate::spec_quality::sdk::BATCH_TASK_TYPE,
                 payload,
                 partition_key: None,
                 idempotency_key: idempotency_key.as_deref(),

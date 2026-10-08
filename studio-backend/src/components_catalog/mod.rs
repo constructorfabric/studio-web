@@ -21,6 +21,7 @@ mod repo_facts;
 mod rest;
 pub(crate) mod roadmap;
 mod scaffold;
+pub mod sdk;
 mod service;
 mod skeleton;
 mod sync_task;
@@ -94,38 +95,6 @@ fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
     Arc::new(service::MemorySink::default())
 }
 
-/// Build the repository enricher when a GitHub connector is linked and the
-/// catalogue tenant is configured (see [`repo_enrich`]). Best-effort: any
-/// missing piece disables enrichment, leaving a crates.io-only catalogue.
-pub(crate) fn build_connectors(
-    ctx: &GearCtx,
-) -> Option<Arc<crate::connectors::service::ConnectorService>> {
-    use crate::connectors::driver::ConnectorDriver;
-    let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
-    for id in crate::connectors::source_driver_ids() {
-        if let Ok(d) = ctx
-            .client_hub()
-            .get_scoped::<dyn ConnectorDriver>(&toolkit::client_hub::ClientScope::gts_id(id))
-        {
-            drivers.push((id.to_string(), d));
-        }
-    }
-    if drivers.is_empty() {
-        return None;
-    }
-    let am = ctx
-        .client_hub()
-        .get::<dyn account_management_sdk::AccountManagementClient>()
-        .ok()?;
-    let credstore = ctx
-        .client_hub()
-        .get::<dyn credstore_sdk::CredStoreClientV1>()
-        .ok()?;
-    Some(crate::connectors::service::ConnectorService::new(
-        am, credstore, drivers,
-    ))
-}
-
 #[async_trait]
 impl RestApiCapability for StudioComponentsCatalogGear {
     fn register_rest(
@@ -142,14 +111,16 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
         let sink = build_sink(ctx);
-        let connectors = build_connectors(ctx);
+        // The one connector service, resolved when a sync needs it: without a
+        // GitHub connector the catalogue is crates.io only.
+        let connectors = Some(crate::connectors::sdk::Connectors::new(ctx.client_hub()));
         let service = Arc::new(CatalogService::new(sink, keyword, connectors));
 
         // A sync is a `catalog.sync` run on studio-tasks — durable,
         // cancellable, retried with backoff. Registered here because the
         // service it needs is built here, and refused loudly if something else
         // has claimed the task type.
-        crate::tasks::registry::register(Arc::new(sync_task::CatalogSyncTask::new(Arc::clone(
+        crate::tasks::sdk::register(Arc::new(sync_task::CatalogSyncTask::new(Arc::clone(
             &service,
         ))))?;
 
@@ -184,7 +155,7 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .get::<dyn account_management_sdk::AccountManagementClient>()
         {
             org_access = Some(crate::org_scope::OrgAccess(Arc::new(
-                crate::studio_session::access::TenantMembership::new(Arc::clone(&am)),
+                crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am)),
             )));
             service.set_account_management(am);
         }

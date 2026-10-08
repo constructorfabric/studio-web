@@ -45,8 +45,9 @@
 //!   platform's refusal and decide whether it is worth another attempt.
 
 mod handler;
+pub mod port;
 mod rest;
-pub mod service;
+mod service;
 
 use std::sync::{Arc, OnceLock};
 
@@ -74,10 +75,14 @@ impl Gear for StudioNotifyGear {
         // The task type this gear owns. Registered in `init` because the
         // registry is a process-global — no ordering constraint against
         // `studio-tasks`, which resolves handlers per message.
-        crate::tasks::registry::register(Arc::new(handler::DeliveryTask::new(ctx.client_hub())))?;
+        crate::tasks::sdk::register(Arc::new(handler::DeliveryTask::new(ctx.client_hub())))?;
 
+        let service = NotifyService::new(ctx.client_hub());
+        ctx.client_hub().register::<dyn port::Notifications>(
+            Arc::clone(&service) as Arc<dyn port::Notifications>
+        );
         self.service
-            .set(NotifyService::new(ctx.client_hub()))
+            .set(service)
             .map_err(|_| anyhow::anyhow!("studio-notify already initialized"))?;
 
         info!(

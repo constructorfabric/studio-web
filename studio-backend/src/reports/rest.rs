@@ -29,7 +29,7 @@ use super::service::{PlanEditError, REPORTS, ReportKind, ReportsService, kind};
 use super::source::{PlanSnapshot, Refresh, ReportSource};
 use crate::components_catalog::port::unread_boards;
 use crate::org_scope::{OrgAccess, OrgCtx};
-use crate::studio_session::access::WorkspaceAccess;
+use crate::studio_session::sdk::WorkspaceAccess;
 use crate::tasks::{RunState, RunView};
 
 #[resource_error(gts_id!("cf.studio._.reports.v1~"))]
@@ -502,7 +502,7 @@ async fn sync_report(
         .queue()?
         .enqueue(
             &ctx,
-            crate::tasks::service::NewRun {
+            crate::tasks::sdk::NewRun {
                 tenant: ctx.subject_tenant_id(),
                 task_type: TASK_TYPE,
                 payload,

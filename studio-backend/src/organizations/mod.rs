@@ -13,6 +13,7 @@
 
 mod rest;
 pub mod rollups;
+pub mod sdk;
 mod service;
 
 use std::sync::{Arc, OnceLock};

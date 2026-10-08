@@ -18,6 +18,7 @@
 pub(crate) mod plan;
 pub(crate) mod reading;
 mod rest;
+pub mod sdk;
 
 use std::sync::Arc;
 
@@ -55,7 +56,7 @@ impl RestApiCapability for SpecMappingGear {
                 .get::<dyn account_management_sdk::AccountManagementClient>()
             {
                 Ok(am) => router.layer(axum::Extension(crate::org_scope::OrgAccess(Arc::new(
-                    crate::studio_session::access::TenantMembership::new(am),
+                    crate::studio_session::sdk::TenantMembership::new(am),
                 )))),
                 Err(_) => router,
             },

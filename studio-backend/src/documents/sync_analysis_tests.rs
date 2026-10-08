@@ -40,7 +40,7 @@ use super::port::AnalysisRecorder;
 use super::repo::binding_row_id;
 use super::service::{DocumentsService, IngestedFile, SyncAnalysis};
 use crate::documents::port::DetectorVerdict;
-use crate::tasks::service::NewRun;
+use crate::tasks::sdk::NewRun;
 use crate::tasks::{RunView, TASK_QUEUE_INSTANCE_ID, TaskQueue};
 
 // ── fakes ────────────────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ impl Rig {
         let runs = std::mem::take(&mut *self.queue.0.lock().unwrap());
         assert!(
             runs.iter()
-                .all(|(t, _)| t == crate::spec_quality::batch_task::BATCH_TASK_TYPE),
+                .all(|(t, _)| t == crate::spec_quality::sdk::BATCH_TASK_TYPE),
             "a sync queues batch runs only: {runs:?}"
         );
         runs.into_iter().map(|(_, payload)| payload).collect()

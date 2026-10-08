@@ -10,7 +10,7 @@
 //! A plain function, so the rule has its tests; `rest::create_session`
 //! resolves the tokens and hands the result to the service.
 
-use crate::git_proxy::sources::Source;
+use crate::git_proxy::sdk::Source;
 use crate::project_sources::same_repository;
 
 /// One source to launch with, before its token is resolved.
