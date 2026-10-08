@@ -65,8 +65,9 @@ plugin cannot claim this; a hosted IDE without the tenant model cannot either.
 - **Organizations are hidden, not removed.** They still own the shared connector
   catalogue and anchor the admin hierarchy; they lost navigation only.
 - **Authorization is allow-all.** The Studio PDP is a parked milestone (ADR-0004). Roles
-  shown in the UI are *derived* from server state (Owner = `created_by`, Editor =
-  Resource Group membership, otherwise Viewer); `Admin` is grant-only, and concept-v2
+  shown in the UI are *derived* from server state (Owner = `created_by`, Editor = an
+  access-config grant, otherwise Viewer — resource groups hold no membership anybody
+  reads; who belongs to an organization is studio-user's, ADR-0037); `Admin` is grant-only, and concept-v2
   grants live in `localStorage` (`studio.concept.roleGrants`), never on the backend.
   Every row must say whether its value is `derived` or a `local` grant. Design must not
   present role control as enforcement.
