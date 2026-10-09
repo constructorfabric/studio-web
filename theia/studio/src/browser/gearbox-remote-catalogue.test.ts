@@ -69,6 +69,16 @@ describe('loadRemoteGearCatalogue', () => {
         expect(await loadRemoteGearCatalogue(answer(200, { corpus: 'x', catalogue: { gears: {} } }))).toBeUndefined();
     });
 
+    it('offers nothing when the backend runs no Gearbox: its 503 is an answer, not an outage', async () => {
+        const fetchApi = jest.fn(async (path: string) => path === '/studio-product/v1/gearbox'
+            ? answer(200, { enabled: false, problem: 'STUDIO_GEARBOX_WORKDIR is not set' })()
+            : answer(503, {})());
+
+        expect(await loadRemoteGearCatalogue(fetchApi)).toBeUndefined();
+        expect(remoteGearCatalogueRefused()).toBe(false);
+        expect(fetchApi).toHaveBeenLastCalledWith('/studio-product/v1/gearbox');
+    });
+
     it('fails, saying why, when the backend could not be asked: that is not "no corpus"', async () => {
         await expect(loadRemoteGearCatalogue(answer(503, {}))).rejects.toThrow('the Studio backend is not answering (HTTP 503)');
         await expect(loadRemoteGearCatalogue(answer(500, {}))).rejects.toThrow('HTTP 500');

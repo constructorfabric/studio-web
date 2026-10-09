@@ -64,22 +64,43 @@ export function remoteGearCatalogueSignedIn(): void {
  * A workspace that holds no gear corpus -- a desktop project whose only
  * repository is its own -- lists the gears from here instead of cloning the
  * corpus into every project. Undefined when the backend offers no corpus
- * (Gearbox off: a 404, or a corpus with no gears), so the catalogue falls
- * back to the empty engine answer.
+ * (Gearbox off, or a corpus with no gears), so the catalogue falls back to the
+ * empty engine answer. Gearbox off answers 503 -- the same status as no Studio
+ * behind the proxy yet -- so a 503 is told apart by the Gearbox status, which
+ * says `enabled: false` (a backend from before studio-product answered 404).
  *
  * Rejects when the backend could not be asked at all -- signed out, no Studio
  * behind the proxy yet, or a backend that failed. That is not "no corpus": the
  * catalogue says the backend is unavailable and offers to ask again, instead
  * of claiming the workspace simply has no `gear.gdl`.
  */
+/** Whether the backend says it runs no Gearbox; false when it cannot say. */
+async function gearboxIsOff(fetchApi: Fetch): Promise<boolean> {
+    try {
+        const status = await fetchApi('/studio-product/v1/gearbox');
+        if (!status.ok) {
+            return false;
+        }
+        const body = await status.json() as { enabled?: boolean };
+        return body.enabled === false;
+    } catch {
+        return false;
+    }
+}
+
 export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioApi.fetch(path)): Promise<RemoteGearCatalogue | undefined> {
     let res = await fetchApi('/studio-product/v1/gearbox/catalogue');
     // A backend from before studio-product serves it under the catalogue.
     if (res.status === 404) {
         res = await fetchApi('/studio-components-catalog/v1/gearbox/catalogue');
     }
+    if (res.status === 503 && await gearboxIsOff(fetchApi)) {
+        refused = false;
+        return undefined;
+    }
     // Refused, not absent: signed out (401/403) or no Studio behind the proxy
-    // yet (503). A 404 is a backend without Gearbox, which signing in does not change.
+    // yet (503). A backend without Gearbox is an answer, which signing in does
+    // not change.
     refused = res.status === 401 || res.status === 403 || res.status === 503;
     if (res.status === 401 || res.status === 403) {
         throw new Error(`not signed in to Studio (HTTP ${res.status})`);
