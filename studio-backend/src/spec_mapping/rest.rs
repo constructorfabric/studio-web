@@ -114,13 +114,13 @@ pub struct PlanRowDto {
     pub contracts: Vec<String>,
     /// Every component that fills it, past the shortlist in `candidates`:
     /// what a product's picks are checked against. Rejected gears are left out.
-    pub providers: Vec<ProviderDto>,
+    pub providers: Vec<CapabilityProviderDto>,
 }
 
 /// A component that fills a capability.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct ProviderDto {
+pub struct CapabilityProviderDto {
     pub name: String,
     /// It provides one of the capability's contracts, declares the capability,
     /// or a member confirmed it. `false`: only its words were found, which
@@ -568,7 +568,7 @@ fn plan_dto(
             providers: row
                 .providers
                 .into_iter()
-                .map(|p| ProviderDto {
+                .map(|p| CapabilityProviderDto {
                     name: p.name,
                     strong: p.strong,
                 })
