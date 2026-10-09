@@ -1,6 +1,6 @@
 <mxfile host="Electron">
   <diagram name="1 · Контекст" id="ctx">
-    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="980" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -25,32 +25,32 @@
         </mxCell>
 
         <mxCell id="p1-be" value="&lt;b&gt;BACKEND STUDIO WEB&lt;/b&gt; — cf-studio-backend&lt;br&gt;&lt;i&gt;один бинарь, ассамбля CF/Gears (состав — стр. 2)&lt;/i&gt;" style="swimlane;whiteSpace=wrap;html=1;startSize=50;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
-          <mxGeometry x="320" y="150" width="440" height="530" as="geometry" />
+          <mxGeometry x="320" y="150" width="440" height="635" as="geometry" />
         </mxCell>
         <mxCell id="p1-be-entry" value="&lt;b&gt;api-gateway&lt;/b&gt; · :8090 · префикс /cf · OpenAPI /cf/docs&lt;br&gt;&lt;i&gt;единый axum-роутер; политика аутентификации выводится из деклараций операций&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="p1-be">
           <mxGeometry x="20" y="60" width="400" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-id" value="&lt;b&gt;Идентичность и доступ&lt;/b&gt;&lt;br&gt;account-management (тенанты · пользователи · conversions) · resource-group&lt;br&gt;studio-user · studio-identity-directory · studio-authz-plugin (PDP)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="125" width="400" height="70" as="geometry" />
+        <mxCell id="p1-be-id" value="&lt;b&gt;Идентичность и доступ&lt;/b&gt;&lt;br&gt;account-management (тенанты · пользователи · conversions) · resource-group&lt;br&gt;studio-user · studio-identity-directory · studio-authz-plugin (PDP)&lt;br&gt;studio-organizations (владелец орг.) · studio-presence (кто онлайн)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="120" width="400" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-know" value="&lt;b&gt;Знание (граф)&lt;/b&gt;&lt;br&gt;graph-storage · studio-connector (+5 плагинов-драйверов)&lt;br&gt;studio-artifact-ingest · studio-components-catalog · studio-domain-model" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="205" width="400" height="70" as="geometry" />
+        <mxCell id="p1-be-know" value="&lt;b&gt;Знание (граф)&lt;/b&gt;&lt;br&gt;graph-storage · studio-connector (+11 плагинов-драйверов)&lt;br&gt;studio-artifact-ingest · studio-components-catalog · studio-domain-model&lt;br&gt;studio-spec-mapping (спецификация → гиры)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="215" width="400" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-prod" value="&lt;b&gt;Продукт и фон&lt;/b&gt;&lt;br&gt;studio-documents · studio-kits · studio-insight · studio-spec-quality&lt;br&gt;studio-tasks (очередь) · studio-scheduler (расписания) · studio-notify" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="285" width="400" height="55" as="geometry" />
+        <mxCell id="p1-be-prod" value="&lt;b&gt;Продукт и фон&lt;/b&gt;&lt;br&gt;studio-product (Gearbox) · studio-documents · studio-kits&lt;br&gt;studio-insight · studio-spec-quality · studio-reports&lt;br&gt;studio-tasks (очередь) · studio-scheduler (расписания) · studio-notify&lt;br&gt;studio-events (push в портал, SSE)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="310" width="400" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-exec" value="&lt;b&gt;Исполнение и AI&lt;/b&gt;&lt;br&gt;studio-session (драйверы docker · k8s) · studio-theia (мост, ADR-0022)&lt;br&gt;mini-chat · oagw (egress) · studio-llm-proxy" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="350" width="400" height="70" as="geometry" />
+        <mxCell id="p1-be-exec" value="&lt;b&gt;Исполнение и AI&lt;/b&gt;&lt;br&gt;studio-session (драйверы docker · k8s) · studio-theia (мост, ADR-0022)&lt;br&gt;studio-git (Git-ремоут desktop) · studio-llm-proxy (всегда, ADR-0039)&lt;br&gt;mini-chat · oagw (egress) — только с *llm" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="420" width="400" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-infra" value="&lt;b&gt;Платформа и инфраструктура&lt;/b&gt;&lt;br&gt;types-registry · nodes-registry · grpc-hub · gear-orchestrator&lt;br&gt;tenant/authn/authz-resolver · credstore (+ studio-credstore-pg)&lt;br&gt;file-storage · simple-user-settings · studio-secrets-bootstrap" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="430" width="400" height="80" as="geometry" />
+        <mxCell id="p1-be-infra" value="&lt;b&gt;Платформа и инфраструктура&lt;/b&gt;&lt;br&gt;types-registry · nodes-registry · grpc-hub · gear-orchestrator&lt;br&gt;tenant/authn/authz-resolver · credstore (+ studio-credstore-pg)&lt;br&gt;file-storage · simple-user-settings · studio-secrets-bootstrap&lt;br&gt;studio-assembly (манифест сборки)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="515" width="400" height="100" as="geometry" />
         </mxCell>
 
         <mxCell id="p1-kc" value="&lt;b&gt;Keycloak 26&lt;/b&gt;&lt;br&gt;&lt;i&gt;OIDC-логин (JWT · claim tenant_id)&lt;br&gt;Admin API — провижининг пользователей&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="830" y="160" width="230" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p1-llm" value="&lt;b&gt;LLM-провайдер&lt;/b&gt;&lt;br&gt;&lt;i&gt;любой OpenAI-совместимый&lt;br&gt;(+ /embeddings для графа)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="830" y="270" width="230" height="80" as="geometry" />
+        <mxCell id="p1-llm" value="&lt;b&gt;LLM-провайдер&lt;/b&gt;&lt;br&gt;&lt;i&gt;любой OpenAI-совместимый&lt;br&gt;(+ /embeddings для графа)&lt;/i&gt;&lt;br&gt;ключ участника из профиля,&lt;br&gt;иначе общий ключ воркспейса" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="830" y="270" width="230" height="100" as="geometry" />
         </mxCell>
         <mxCell id="p1-insight" value="&lt;b&gt;Constructor Insight&lt;/b&gt;&lt;br&gt;&lt;i&gt;внешний decision-intelligence сервис&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="830" y="380" width="230" height="60" as="geometry" />
@@ -64,10 +64,10 @@
         </mxCell>
 
         <mxCell id="p1-pg" value="&lt;b&gt;PostgreSQL 19 + pgvector&lt;/b&gt;&lt;br&gt;&lt;br&gt;одна БД на каждый гир,&lt;br&gt;граф в том же сервере&lt;br&gt;&lt;i&gt;миграции на старте&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="330" y="730" width="240" height="130" as="geometry" />
+          <mxGeometry x="330" y="810" width="240" height="130" as="geometry" />
         </mxCell>
         <mxCell id="p1-s3" value="&lt;b&gt;S3 · Virtuozzo&lt;/b&gt;&lt;br&gt;&lt;br&gt;file-storage&lt;br&gt;&lt;i&gt;org / workspace / project&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="750" y="730" width="180" height="130" as="geometry" />
+          <mxGeometry x="750" y="810" width="180" height="130" as="geometry" />
         </mxCell>
 
         <mxCell id="p1-e-front" value="REST /cf · SSE · Bearer (OIDC)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="p1-front" target="p1-be">
@@ -91,7 +91,7 @@
         <mxCell id="p1-e-kc" value="JWKS · Admin API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-kc">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-llm" value="oagw egress (SSRF-guard)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-llm">
+        <mxCell id="p1-e-llm" value="studio-llm-proxy (ADR-0039)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-llm">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p1-e-insight" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-insight">
@@ -115,7 +115,7 @@
   </diagram>
 
   <diagram name="2 · Сборка бинаря" id="assembly">
-    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1180" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -146,29 +146,36 @@
         <mxCell id="p2-plat-5" value="simple-user-settings" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="150" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-6" value="mini-chat &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="180" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-7" value="oagw &lt;i&gt;(LLM egress)&lt;/i&gt; &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="210" width="240" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-plat-8" value="graph-storage &lt;b&gt;*graph&lt;/b&gt; &lt;i&gt;(пока с форка)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="240" width="240" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-plat-8" value="graph-storage &lt;b&gt;*graph&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="240" width="240" height="30" as="geometry" /></mxCell>
 
-        <mxCell id="p2-own" value="Наши гиры — in-crate (src/, ~52 600 LOC)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="560" y="90" width="290" height="540" as="geometry" />
+        <mxCell id="p2-own" value="Наши гиры — in-crate (src/, 25 + 2 плагина, ~134 000 LOC)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="560" y="90" width="300" height="780" as="geometry" />
         </mxCell>
-        <mxCell id="p2-own-1" value="studio-session &lt;i&gt;— IDE-контейнеры (ADR-0003)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="30" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-2" value="studio-theia &lt;i&gt;— мост в Theia&lt;/i&gt; &lt;b&gt;*theia-bridge&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-own"><mxGeometry y="60" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-3" value="studio-user &lt;i&gt;— канонический юзер (ADR-0023)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="90" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-4" value="studio-identity-directory" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="120" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-5" value="studio-connector &lt;i&gt;— источники + каталог связей&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="150" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-6" value="studio-artifact-ingest &lt;i&gt;— issues/PR в граф&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="180" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-7" value="studio-components-catalog &lt;i&gt;— crates.io&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="210" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-8" value="studio-domain-model &lt;i&gt;— онтология в графе&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="240" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-9" value="studio-documents &lt;i&gt;— типы, шаблоны, чек-листы&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="270" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-10" value="studio-kits &lt;i&gt;— git-каталог китов&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="300" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-11" value="studio-insight &lt;i&gt;— шов к Constructor Insight&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="330" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-12" value="studio-spec-quality" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="360" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-13" value="studio-llm-proxy &lt;i&gt;— для Theia AI&lt;/i&gt; &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-own"><mxGeometry y="390" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-14" value="studio-secrets-bootstrap &lt;i&gt;— самолечение секретов&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="420" width="290" height="30" as="geometry" /></mxCell>
-
-        <mxCell id="p2-own-15" value="studio-tasks &lt;i&gt;— durable-очередь фоновых работ&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="450" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-16" value="studio-scheduler &lt;i&gt;— расписания, ставит в очередь&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="480" width="290" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-17" value="studio-notify &lt;i&gt;— доставка в чат-платформы&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="510" width="290" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-1" value="studio-session &lt;i&gt;— IDE-контейнеры (ADR-0003)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="30" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-2" value="studio-theia &lt;i&gt;— мост в Theia&lt;/i&gt; &lt;b&gt;*theia-bridge&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-own"><mxGeometry y="60" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-3" value="studio-git &lt;i&gt;— Git-ремоут desktop (ADR-0027)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="90" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-4" value="studio-user &lt;i&gt;— канонический юзер (ADR-0023)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="120" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-5" value="studio-identity-directory" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="150" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-6" value="studio-organizations &lt;i&gt;— организации, владелец&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="180" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-7" value="studio-presence &lt;i&gt;— кто сейчас в Studio&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="210" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-8" value="studio-connector &lt;i&gt;— источники + каталог связей&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="240" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-9" value="studio-artifact-ingest &lt;i&gt;— issues/PR в граф&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="270" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-10" value="studio-components-catalog &lt;i&gt;— наши гиры с crates.io&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="300" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-11" value="studio-product &lt;i&gt;— продукт проекта, Gearbox&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="330" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-12" value="studio-domain-model &lt;i&gt;— онтология в графе&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="360" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-13" value="studio-spec-mapping &lt;i&gt;— спецификация → гиры&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="390" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-14" value="studio-documents &lt;i&gt;— типы, шаблоны, чек-листы&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="420" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-15" value="studio-kits &lt;i&gt;— git-каталог китов&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="450" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-16" value="studio-insight &lt;i&gt;— шов к Constructor Insight&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="480" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-17" value="studio-spec-quality" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="510" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-18" value="studio-reports &lt;i&gt;— отчёты и источники (ADR-0033)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="540" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-19" value="studio-llm-proxy &lt;i&gt;— один выход к LLM (ADR-0039)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="570" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-20" value="studio-events &lt;i&gt;— push-канал в портал (SSE)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="600" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-21" value="studio-tasks &lt;i&gt;— durable-очередь фоновых работ&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="630" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-22" value="studio-scheduler &lt;i&gt;— расписания, ставит в очередь&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="660" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-23" value="studio-notify &lt;i&gt;— доставка в чат-платформы&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="690" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-24" value="studio-secrets-bootstrap &lt;i&gt;— самолечение секретов&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="720" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-25" value="studio-assembly &lt;i&gt;— манифест сборки, границы гиров&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="750" width="300" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plug" value="Плагины: выбор по vendor + priority&lt;br&gt;(МЕНЬШЕ ЧИСЛО = ВЫИГРЫВАЕТ)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=45;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
           <mxGeometry x="880" y="90" width="250" height="405" as="geometry" />
         </mxCell>
@@ -182,16 +189,20 @@
         <mxCell id="p2-plug-8" value="&lt;b&gt;model policy · audit&lt;/b&gt;: static (в mini-chat)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="295" width="250" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plug-9" value="&lt;i&gt;Выключить плагин можно только проиграв&lt;br&gt;по priority — линковка и есть активация.&lt;br&gt;Конвенция: победитель 40–100,&lt;br&gt;проигравший 1000+&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="325" width="250" height="70" as="geometry" /></mxCell>
 
-        <mxCell id="p2-feat" value="&lt;b&gt;Feature-флаги (Cargo.toml)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;default = [llm, graph]&lt;/b&gt; — cargo run и docker compose&lt;br&gt;&lt;b&gt;llm&lt;/b&gt; → mini-chat + oagw (и studio-llm-proxy)&lt;br&gt;&lt;b&gt;graph&lt;/b&gt; → graph-storage (эмбеддинги onnx и remote)&lt;br&gt;&lt;b&gt;theia-bridge&lt;/b&gt; → studio-theia (opt-in)&lt;br&gt;&lt;b&gt;theia-event-broker&lt;/b&gt; ⊃ theia-bridge&lt;br&gt;&lt;br&gt;&lt;b&gt;Релизный образ (studio-delivery.yml:461):&lt;/b&gt;&lt;br&gt;--no-default-features --features graph,theia-bridge&lt;br&gt;&lt;font color=&quot;#B85450&quot;&gt;⇒ в проде НЕТ mini-chat / oagw / llm-proxy.&lt;br&gt;Причина: post_init у oagw провижинит upstream под root-тенантом,&lt;br&gt;а root создаёт сага account-management в run-фазе → на свежей БД дедлок.&lt;/font&gt;&lt;br&gt;&lt;br&gt;CI компилирует обе комбинации отдельно (:166-167):&lt;br&gt;--features theia-bridge и --no-default-features." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="390" width="490" height="230" as="geometry" />
+        <mxCell id="p2-bound" value="&lt;b&gt;Граница гира (#680)&lt;/b&gt;&lt;br&gt;гир ходит к другому только через port / sdk / экспорт mod.rs — проверяет assembly::manifest" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=14;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="880" y="520" width="250" height="90" as="geometry" />
         </mxCell>
 
-        <mxCell id="p2-patch" value="&lt;b&gt;Откуда берутся зависимости&lt;/b&gt;&lt;br&gt;&lt;br&gt;Все cf-gears-* объявлены на constructorfabric/gears-rust @ main,&lt;br&gt;но блок &lt;b&gt;[patch]&lt;/b&gt; в конце Cargo.toml уводит КАЖДЫЙ из них&lt;br&gt;на форк vasylcf/gears-rust, тег cf-gears-graph-storage-v0.1.1 —&lt;br&gt;иначе в бинаре окажутся две копии toolkit, и он не слинкуется.&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#B85450&quot;&gt;Пока патч висит, платформу нельзя двигать по main.&lt;br&gt;Снимаем, когда graph-storage уедет в upstream (нужен PR #4639).&lt;/font&gt;&lt;br&gt;&lt;br&gt;Точные коммиты фиксирует Cargo.lock; сборки идут с --locked." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="650" width="490" height="200" as="geometry" />
+        <mxCell id="p2-feat" value="&lt;b&gt;Feature-флаги (Cargo.toml)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;default = [llm, graph]&lt;/b&gt; — cargo run и docker compose&lt;br&gt;&lt;b&gt;llm&lt;/b&gt; → mini-chat + oagw&lt;br&gt;&lt;b&gt;graph&lt;/b&gt; → graph-storage (эмбеддинги onnx и remote)&lt;br&gt;&lt;b&gt;theia-bridge&lt;/b&gt; → studio-theia (opt-in)&lt;br&gt;&lt;b&gt;theia-event-broker&lt;/b&gt; ⊃ theia-bridge&lt;br&gt;studio-llm-proxy — в КАЖДОЙ сборке, не за флагом (ADR-0039)&lt;br&gt;&lt;br&gt;&lt;b&gt;Релизный образ (studio-delivery.yml:616):&lt;/b&gt;&lt;br&gt;--no-default-features --features graph,theia-bridge&lt;br&gt;&lt;font color=&quot;#B85450&quot;&gt;⇒ в проде НЕТ mini-chat / oagw; studio-llm-proxy есть.&lt;br&gt;Причина: post_init у oagw провижинит upstream под root-тенантом,&lt;br&gt;а root создаёт сага account-management в run-фазе → на свежей БД дедлок.&lt;/font&gt;&lt;br&gt;&lt;br&gt;CI компилирует обе комбинации отдельно (:209, :221):&lt;br&gt;--features theia-bridge и --no-default-features." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="390" width="490" height="250" as="geometry" />
+        </mxCell>
+
+        <mxCell id="p2-patch" value="&lt;b&gt;Откуда берутся зависимости&lt;/b&gt;&lt;br&gt;&lt;br&gt;Все cf-gears-* — с crates.io, в версиях, которые release-plz&lt;br&gt;опубликовал вместе; graph-storage тоже (cf-gears-graph-storage).&lt;br&gt;Блока [patch] нет — в бинаре один toolkit.&lt;br&gt;&lt;br&gt;Точные версии фиксирует Cargo.lock; сборки идут с --locked.&lt;br&gt;Гиры двигаем осознанно: cargo update → тесты → коммит Cargo.lock." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="670" width="490" height="150" as="geometry" />
         </mxCell>
 
         <mxCell id="p2-gts" value="&lt;b&gt;Два реестра смысла (ADR-0013)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;types-registry&lt;/b&gt; — каталог: что вообще существует.&lt;br&gt;&lt;b&gt;graph-storage&lt;/b&gt; — контракты: схемы узлов и рёбер графа.&lt;br&gt;&lt;br&gt;Согласованность держится тремя вещами:&lt;br&gt;• &lt;b&gt;gts-types&lt;/b&gt; — офлайн-инвентарь из кода → docs/gts-types.json&lt;br&gt;• &lt;b&gt;cargo test gts_inventory&lt;/b&gt; — дрейф снапшота, полнота профилей,&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;грамматика идентификаторов, отсутствие расхождений реестров&lt;br&gt;• &lt;b&gt;gts-audit --base-url …&lt;/b&gt; — диф живого стенда с инвентарём;&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;ненулевой код выхода ⇒ годится в гейт деплоя&lt;br&gt;&lt;br&gt;Схема зарегистрированного типа неизменяема: правка = миграция графа.&lt;br&gt;Исключения (живут только в таблицах гира): gts.cf.studio.doc.*" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="560" y="660" width="570" height="250" as="geometry" />
+          <mxGeometry x="560" y="900" width="570" height="250" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
