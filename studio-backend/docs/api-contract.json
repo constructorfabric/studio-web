@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 237,
+  "open_violations": 246,
   "operations": [
     {
       "method": "DELETE",
@@ -1232,7 +1232,7 @@
       "path": "/studio-llm/v1/client-config",
       "operation_id": "studio_llm.client_config",
       "tag": "StudioLlm",
-      "summary": "Client settings for the proxied LLM (model, prompt-role handling)",
+      "summary": "Client settings for the IDE's chat, for this caller",
       "authenticated": true,
       "responses": [
         "LlmClientConfigDto"
@@ -1247,7 +1247,7 @@
       "path": "/studio-llm/v1/models",
       "operation_id": "studio_llm.list_models",
       "tag": "StudioLlm",
-      "summary": "OpenAI-compatible model list (proxied)",
+      "summary": "OpenAI-compatible model list: the chat model this caller gets",
       "authenticated": true,
       "errors": [
         "401",
@@ -1260,6 +1260,49 @@
       "operation_id": "studio_llm.stream_provider_get",
       "tag": "StudioLlm",
       "summary": "A read from the caller's model provider, on the caller's own key",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/workspaces/{workspace_id}/client-config",
+      "operation_id": "studio_llm.get_workspace_client_config",
+      "tag": "StudioLlm",
+      "summary": "Client settings for the IDE's chat in a workspace, for this caller",
+      "authenticated": true,
+      "responses": [
+        "LlmClientConfigDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/workspaces/{workspace_id}/models",
+      "operation_id": "studio_llm.list_workspace_models",
+      "tag": "StudioLlm",
+      "summary": "OpenAI-compatible model list from a workspace",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}",
+      "operation_id": "studio_llm.stream_workspace_provider_get",
+      "tag": "StudioLlm",
+      "summary": "A read from the caller's model provider from a workspace",
       "authenticated": true,
       "errors": [
         "401",
@@ -2932,10 +2975,11 @@
       "path": "/studio-llm/v1/chat/completions",
       "operation_id": "studio_llm.chat_completions",
       "tag": "StudioLlm",
-      "summary": "OpenAI-compatible chat completions (proxied to the configured LLM upstream)",
+      "summary": "OpenAI-compatible chat completions, on the caller's key",
       "authenticated": true,
       "errors": [
         "401",
+        "403",
         "500"
       ]
     },
@@ -2945,6 +2989,34 @@
       "operation_id": "studio_llm.stream_provider_post",
       "tag": "StudioLlm",
       "summary": "An agent's call to its model provider, on the caller's own key",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-llm/v1/workspaces/{workspace_id}/chat/completions",
+      "operation_id": "studio_llm.stream_workspace_chat_completions",
+      "tag": "StudioLlm",
+      "summary": "OpenAI-compatible chat completions from a workspace, on the caller's key",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}",
+      "operation_id": "studio_llm.stream_workspace_provider_post",
+      "tag": "StudioLlm",
+      "summary": "An agent's call to its model provider from a workspace, on the caller's key",
       "authenticated": true,
       "errors": [
         "401",

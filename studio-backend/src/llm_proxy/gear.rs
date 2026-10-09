@@ -4,51 +4,63 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
+use toolkit::client_hub::ClientHub;
 use toolkit::{Gear, GearCtx};
+use toolkit_security::SecurityContext;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use super::config::LlmProxyConfig;
+use super::keys::{ConnectorKeys, CredstoreProfile, PeopleKeys, ProfileKeys};
 use super::port::ModelProviders;
-use super::providers::{CredstoreKeys, KeySource, Providers};
-use super::rest::{self, ProxyState};
+use super::providers::Providers;
+use super::rest;
+use crate::connectors::sdk::Connectors;
+use crate::studio_session::sdk::{TenantMembership, WorkspaceAccess};
 
-/// No credstore: no member's key to find. The provider routes are not mounted
-/// then, so only the port uses a `Providers` built on this, and the port's
-/// callers bring their own key.
-struct NoKeys;
+/// Workspace membership, asked of account-management when a request names a
+/// workspace. Resolved per use: Studio gears share one crate, so `deps` cannot
+/// order this gear after account-management's client is published. No client
+/// is no answer, and no answer is a refusal.
+struct HubMembership(Arc<ClientHub>);
 
 #[async_trait]
-impl KeySource for NoKeys {
-    async fn key_for(
-        &self,
-        _ctx: &toolkit_security::SecurityContext,
-        _secret_ref: &str,
-    ) -> anyhow::Result<Option<String>> {
-        Ok(None)
+impl WorkspaceAccess for HubMembership {
+    async fn may_reach(&self, ctx: &SecurityContext, workspace_id: Uuid) -> bool {
+        match self
+            .0
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            Ok(am) => TenantMembership::new(am).may_reach(ctx, workspace_id).await,
+            Err(_) => {
+                warn!(
+                    "studio-llm-proxy: no account-management client — a request naming a workspace is refused"
+                );
+                false
+            }
+        }
     }
 }
 
-/// OpenAI-compatible LLM proxy for Theia AI inside IDE sessions.
+/// Studio's one way out to a model provider (ADR-0039), and the IDE's way to
+/// its agents' and chat's providers, each call on a person's key.
 ///
 /// See the module docs (`super`) for the why; the how is deliberately dumb:
-/// authenticated passthrough with a server-held upstream key. No request
-/// rewriting, no model policy — that stays the mini-chat/oagw chain's job.
+/// authenticated passthrough with the caller's key ([`super::keys`]). No model
+/// policy beyond "the chat uses the provider's chat model" — that stays the
+/// mini-chat/oagw chain's job.
 ///
 /// Linked into every build, not only with the `llm` feature: it is the one way
 /// out to a provider for the rest of Studio (ADR-0039), and needs nothing the
 /// `llm` chain brings.
 #[toolkit::gear(name = "studio-llm-proxy", deps = [credstore], capabilities = [rest])]
 pub struct LlmProxyGear {
-    state: OnceLock<Arc<ProxyState>>,
-    /// `None` when there is no credstore to ask for the caller's key: the
-    /// provider routes are then not mounted at all.
-    providers: OnceLock<Option<Arc<Providers>>>,
+    providers: OnceLock<Arc<Providers>>,
 }
 
 impl Default for LlmProxyGear {
     fn default() -> Self {
         Self {
-            state: OnceLock::new(),
             providers: OnceLock::new(),
         }
     }
@@ -58,20 +70,6 @@ impl Default for LlmProxyGear {
 impl Gear for LlmProxyGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: LlmProxyConfig = ctx.config_or_default()?;
-        let api_key = cfg.resolve_api_key();
-        let base_url = cfg.resolve_base_url();
-        let model = cfg.resolve_model();
-        if base_url.is_empty() || model.is_empty() || api_key.is_none() {
-            warn!(
-                base_url_set = !base_url.is_empty(),
-                model_set = !model.is_empty(),
-                key_set = api_key.is_some(),
-                "studio-llm-proxy: upstream not (fully) configured — in-IDE AI stays off. \
-                 Set STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL / STUDIO_LLM_API_KEY (or the YAML equivalents)"
-            );
-        } else {
-            info!(base_url = %base_url, model = %model, "studio-llm-proxy: configured");
-        }
 
         // Long timeout: chat completions stream for minutes. connect_timeout
         // still keeps dead upstreams from hanging the handler.
@@ -80,39 +78,41 @@ impl Gear for LlmProxyGear {
             .timeout(Duration::from_secs(600))
             .build()?;
 
-        // The agents' own APIs, each call on the caller's key (ADR-0030).
-        let (keys, routes): (Arc<dyn KeySource>, bool) = match ctx
+        // A person's profile key lives in credstore; without one, only their
+        // AI connections can answer (and those need credstore too).
+        let profile: Option<Arc<dyn ProfileKeys>> = match ctx
             .client_hub()
             .get::<dyn credstore_sdk::CredStoreClientV1>(
         ) {
-            Ok(credstore) => (Arc::new(CredstoreKeys(credstore)), true),
+            Ok(credstore) => Some(Arc::new(CredstoreProfile(credstore))),
             Err(e) => {
-                warn!(
-                    "studio-llm-proxy: credstore unavailable ({e}); agents get no provider passthrough"
-                );
-                (Arc::new(NoKeys), false)
+                warn!("studio-llm-proxy: credstore unavailable ({e}); nobody has a profile key");
+                None
             }
         };
+        let keys = Arc::new(PeopleKeys {
+            profile,
+            connections: Arc::new(ConnectorKeys(Connectors::new(ctx.client_hub()))),
+        });
+        let chat: Vec<String> = cfg
+            .providers
+            .iter()
+            .filter_map(|p| p.chat_model.as_ref().map(|m| format!("{}:{m}", p.name)))
+            .collect();
+        info!(chat = ?chat, "studio-llm-proxy: providers configured; every call goes out on the caller's key");
+
         let providers = Arc::new(Providers {
-            client: client.clone(),
+            client,
             list: cfg.providers.clone(),
             keys,
+            access: Arc::new(HubMembership(ctx.client_hub())),
         });
         // Studio's one way out to a provider (ADR-0039): other gears reach one
-        // through this client, with a key they hand it, credstore or not.
+        // through this client, with a key they hand it.
         ctx.client_hub()
             .register::<dyn ModelProviders>(providers.clone());
-        let _ = self.providers.set(routes.then_some(providers));
-
-        let state = Arc::new(ProxyState {
-            client,
-            base_url,
-            api_key,
-            model,
-            developer_message_settings: cfg.developer_message_settings.clone(),
-        });
-        self.state
-            .set(state)
+        self.providers
+            .set(providers)
             .map_err(|_| anyhow::anyhow!("studio-llm-proxy gear already initialized"))?;
         Ok(())
     }
@@ -126,12 +126,11 @@ impl toolkit::contracts::RestApiCapability for LlmProxyGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
-        let state = self
-            .state
+        let providers = self
+            .providers
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-llm-proxy not initialized"))?
             .clone();
-        let providers = self.providers.get().cloned().flatten();
-        Ok(rest::register_routes(router, openapi, state, providers))
+        Ok(rest::register_routes(router, openapi, providers))
     }
 }

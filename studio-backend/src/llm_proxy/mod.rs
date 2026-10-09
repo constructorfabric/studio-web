@@ -1,12 +1,12 @@
-//! studio-llm-proxy — OpenAI-compatible LLM proxy for in-IDE AI (Theia AI).
+//! studio-llm-proxy — Studio's one way out to a model provider, on a person's
+//! key.
 //!
-//! Theia AI's `ai-openai` provider speaks the OpenAI chat-completions
-//! protocol against any base URL. This gear exposes that protocol under the
-//! Studio gateway (`/studio-llm/v1/*`) and forwards verbatim to whatever
-//! OpenAI-compatible upstream is configured (no default provider — see
-//! `config`), attaching the server-held API key. The IDE containers
-//! therefore authenticate with the user's own Studio token — the provider
-//! key never leaves the backend.
+//! The agents in an IDE session (Claude Code, Codex) and the IDE's built-in
+//! chat (Theia AI) reach their providers through this gear, under the Studio
+//! gateway (`/studio-llm/v1/*`), authenticated with the member's own Studio
+//! token. The call leaves with that member's key — their profile key, else an
+//! AI connection they reach ([`keys`]) — so no provider key ever enters the
+//! IDE container, and Studio holds none of its own.
 //!
 //! It is also Studio's one way out to a model provider (ADR-0039): another
 //! gear that needs a provider takes [`port::ModelProviders`] from the
@@ -14,6 +14,7 @@
 
 pub mod config;
 pub mod gear;
+pub mod keys;
 pub mod port;
 pub mod providers;
 pub mod rest;

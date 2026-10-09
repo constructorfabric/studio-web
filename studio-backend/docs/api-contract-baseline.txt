@@ -195,6 +195,10 @@ path-literal	POST <dynamic@src/studio_theia/rest.rs>
 # clone URL itself, so a query parameter cannot carry the scope. The handler
 # reads the workspace's settings under the caller's own context, which is the
 # access decision; the path names the workspace, it does not grant it.
+# studio-llm (agents and the IDE chat on a person's key): Claude Code, Codex and
+# the OpenAI client append their own paths to a base URL, so the workspace —
+# whose AI connections count — cannot be a query parameter either. The handler
+# asks account-management, as the caller, whether they reach it, first.
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/capabilities/{key}
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/stages/{key}
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/types/{key}
@@ -224,6 +228,9 @@ scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{proje
 scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/stages
 scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/types
 scope-in-path	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
+scope-in-path	GET /studio-llm/v1/workspaces/{workspace_id}/client-config
+scope-in-path	GET /studio-llm/v1/workspaces/{workspace_id}/models
+scope-in-path	GET /studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}
 scope-in-path	GET /studio-kits/v1/projects/{project_id}/installations
 scope-in-path	GET /studio-kits/v1/projects/{project_id}/repositories
 scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/operations
@@ -251,6 +258,8 @@ scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/stages
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/types
 scope-in-path	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
 scope-in-path	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
+scope-in-path	POST /studio-llm/v1/workspaces/{workspace_id}/chat/completions
+scope-in-path	POST /studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations
@@ -289,6 +298,8 @@ typed-response	GET /studio-reports/v1/reports/{report_id}/plan/yaml
 typed-response	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
 typed-response	GET /studio-llm/v1/models
 typed-response	GET /studio-llm/v1/providers/{provider}/{*rest}
+typed-response	GET /studio-llm/v1/workspaces/{workspace_id}/models
+typed-response	GET /studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/operations
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/session
@@ -304,6 +315,8 @@ typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/gi
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
 typed-response	POST /studio-llm/v1/chat/completions
 typed-response	POST /studio-llm/v1/providers/{provider}/{*rest}
+typed-response	POST /studio-llm/v1/workspaces/{workspace_id}/chat/completions
+typed-response	POST /studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}
 typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/open
 typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/operations
 typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry

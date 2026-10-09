@@ -847,6 +847,39 @@ impl ConnectorService {
         Err(anyhow!(no_default_connection(provider, &tried)))
     }
 
+    /// The model-provider key this caller may use for `provider` (`anthropic`,
+    /// `openai`) from the AI connections they reach, or `None`.
+    ///
+    /// Read by `studio-llm-proxy` after the caller's own profile key, so an
+    /// agent or the IDE's chat runs on a key a person or an owner put there --
+    /// never on one seeded from the environment. The order is the opposite of
+    /// [`Self::named_or_default`]'s, on purpose: there a background job wants
+    /// a key everyone can read, here a person wants their own first.
+    ///
+    /// 1. the caller's **personal** connection;
+    /// 2. a **workspace** connection, only when the request names `workspace`
+    ///    (the caller has already been shown to reach it);
+    /// 3. an **organization** connection.
+    ///
+    /// Connections are collected from `workspace` -- or the caller's own
+    /// tenant when none is named -- and its ancestors, nearest first. One
+    /// whose token the caller cannot read (somebody else's personal one, a
+    /// removed secret) is skipped; it never fails the lookup.
+    pub async fn model_key_for(
+        &self,
+        ctx: &SecurityContext,
+        workspace: Option<Uuid>,
+        provider: &str,
+    ) -> Option<String> {
+        let from = workspace.unwrap_or_else(|| ctx.subject_tenant_id());
+        let reachable = reachable_connections(self.am.as_ref(), ctx, from).await;
+        let candidates = model_key_candidates(reachable, provider, workspace.is_some());
+        first_readable(candidates, |c| async move {
+            self.auth(ctx, &c).await.map(|auth| auth.token)
+        })
+        .await
+    }
+
     pub async fn repositories(
         &self,
         ctx: &SecurityContext,
@@ -1104,6 +1137,83 @@ async fn nearest_in(
             .ok()
             .and_then(|t| t.parent_id)
             .map(|p| p.0);
+    }
+    None
+}
+
+/// Every connection `from` and its ancestors list, nearest tenant first, each
+/// once. [`ConnectorService::list`] stops at the nearest tenant with a
+/// catalogue of its own; a key lookup has to see past a workspace's catalogue
+/// to its organization's.
+async fn reachable_connections(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: Uuid,
+) -> Vec<Connection> {
+    let mut out: Vec<Connection> = Vec::new();
+    let mut tenant = Some(from);
+    // Project → workspace → organization; nothing Studio keeps is deeper.
+    for _ in 0..3 {
+        let Some(current) = tenant else { break };
+        if let Ok(catalogue) = load_catalogue(am, ctx, current).await {
+            for c in catalogue.items {
+                if !out.iter().any(|seen| seen.id == c.id) {
+                    out.push(c);
+                }
+            }
+        }
+        tenant = am
+            .get_tenant(ctx, current)
+            .await
+            .ok()
+            .and_then(|t| t.parent_id)
+            .map(|p| p.0);
+    }
+    out
+}
+
+/// The `provider` connections a model key may come from, in the order to try
+/// them: personal, then workspace (only when the request named a workspace),
+/// then organization -- nearest tenant first within each.
+fn model_key_candidates(
+    connections: Vec<Connection>,
+    provider: &str,
+    workspace_named: bool,
+) -> Vec<Connection> {
+    let of = |wanted: ConnectionScope| {
+        connections
+            .iter()
+            .filter(|c| c.provider == provider)
+            .filter(move |c| ConnectionScope::parse(&c.scope).ok() == Some(wanted))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut out = of(ConnectionScope::Personal);
+    if workspace_named {
+        out.extend(of(ConnectionScope::Workspace));
+    }
+    out.extend(of(ConnectionScope::Organization));
+    out
+}
+
+/// The first candidate whose token `read` returns, non-blank. A candidate
+/// that cannot be read is skipped, not fatal.
+async fn first_readable<F, Fut>(candidates: Vec<Connection>, read: F) -> Option<String>
+where
+    F: Fn(Connection) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    for c in candidates {
+        let (label, scope) = (c.label.clone(), c.scope.clone());
+        match read(c).await {
+            Ok(token) if !token.trim().is_empty() => return Some(token.trim().to_owned()),
+            Ok(_) => {}
+            Err(error) => tracing::debug!(
+                connection = %label,
+                scope = %scope,
+                "connectors: an AI connection's key is not readable by this caller ({error:#})"
+            ),
+        }
     }
     None
 }
@@ -1437,6 +1547,61 @@ mod default_connection_tests {
         .map(|c| c.label)
         .collect();
         assert_eq!(order, ["org", "ws", "mine"]);
+    }
+
+    /// A model key is a person's: their own connection first, then the
+    /// workspace's (only when the request names one), then the organization's.
+    /// Other providers' connections are never candidates.
+    #[test]
+    fn a_model_key_is_looked_for_personal_then_workspace_then_organization() {
+        let reachable = || {
+            vec![
+                conn("org", "anthropic", "organization"),
+                conn("ws", "anthropic", "workspace"),
+                conn("openai-mine", "openai", "personal"),
+                conn("mine", "anthropic", "personal"),
+                conn("github-org", "github", "organization"),
+            ]
+        };
+        let labels = |cs: Vec<Connection>| cs.into_iter().map(|c| c.label).collect::<Vec<_>>();
+        for (workspace_named, expected) in [
+            (true, vec!["mine", "ws", "org"]),
+            (false, vec!["mine", "org"]),
+        ] {
+            assert_eq!(
+                labels(model_key_candidates(
+                    reachable(),
+                    "anthropic",
+                    workspace_named
+                )),
+                expected,
+                "workspace named: {workspace_named}"
+            );
+        }
+    }
+
+    /// A connection whose token this caller cannot read -- a colleague's
+    /// personal one -- is skipped, and the next one answers.
+    #[tokio::test]
+    async fn an_unreadable_connection_is_skipped_not_fatal() {
+        let readable: std::collections::HashMap<&str, &str> =
+            [("ws", "sk-ws"), ("org", "sk-org"), ("blank", "  ")].into();
+        let read = |c: Connection| {
+            let token = readable.get(c.label.as_str()).map(|t| (*t).to_owned());
+            async move { token.ok_or_else(|| anyhow!("not readable")) }
+        };
+        for (candidates, expected) in [
+            (vec!["colleagues", "ws", "org"], Some("sk-ws")),
+            (vec!["colleagues", "blank", "org"], Some("sk-org")),
+            (vec!["colleagues"], None),
+            (vec![], None),
+        ] {
+            let candidates = candidates
+                .iter()
+                .map(|l| conn(l, "anthropic", "workspace"))
+                .collect();
+            assert_eq!(first_readable(candidates, &read).await.as_deref(), expected);
+        }
     }
 
     #[test]

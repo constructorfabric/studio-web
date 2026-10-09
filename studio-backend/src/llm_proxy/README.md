@@ -18,12 +18,19 @@ This README is what you need to work in the directory.
   takes `port::ModelProviders` from the ClientHub (today: the Anthropic and
   OpenAI connector drivers' key test); do not add a provider HTTP client
   anywhere else.
-- Config section `gears.studio-llm-proxy`. The upstream comes from
-  `STUDIO_LLM_BASE_URL`, `STUDIO_LLM_MODEL` and `STUDIO_LLM_API_KEY` (or the YAML
-  equivalents); unset, the gear boots and in-IDE AI stays off. `providers` lists
-  the agents' upstreams and the credstore references of their keys
-  (`anthropic-key`, `openai-key` by default), with `models_path` and
-  `request_headers` for Studio's own calls.
-- The provider routes are mounted only when a credstore client is available.
+- No Studio key and no server upstream. Every call goes out on the caller's
+  key (`keys.rs`): their private profile key (`anthropic-key`, `openai-key`;
+  a shared value under the same reference is ignored), else their personal AI
+  connection, else the workspace's (workspace routes only), else the
+  organization's — the last three from the connector gear's
+  `ConnectorService::model_key_for` via `connectors::sdk`.
+- Workspace routes (`/studio-llm/v1/workspaces/{workspace_id}/…`) check
+  membership first (`studio_session::sdk::TenantMembership`, account-management
+  resolved per use): a stranger gets 404 and no key is looked for.
+- Config section `gears.studio-llm-proxy`: `providers` only — base URL,
+  profile-key reference, `key_header`, `models_path` and `request_headers`
+  for Studio's own calls, and `chat_model` / `chat_path` /
+  `developer_message_settings` for the IDE's chat (defaults: Anthropic
+  `claude-sonnet-5-5`, then OpenAI `gpt-4.1-mini`).
 - Same shape as [`../spec_quality`](../spec_quality): bytes in, bytes out,
   upstream status preserved, credential server-side.

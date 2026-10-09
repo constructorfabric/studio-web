@@ -432,16 +432,20 @@ impl SessionService {
     }
 
     /// Where a session's agents reach their models: Studio's provider proxy,
-    /// under the gateway as the container sees it (ADR-0030). No key: each
-    /// window hands its agents its own person's token, and the proxy answers
-    /// with that person's key. `STUDIO_LLM_AUTH=bearer` is what the patched
-    /// Claude Code and Codex services read to send that token as a bearer.
-    fn agent_proxy_env(&self) -> Vec<String> {
+    /// under the gateway as the container sees it (ADR-0030), on this
+    /// session's workspace. No key: each window hands its agents its own
+    /// person's token, and the proxy answers with that person's key — their
+    /// profile key, else an AI connection they reach, the workspace's among
+    /// them (which is why the workspace is in the URL).
+    /// `STUDIO_LLM_AUTH=bearer` is what the patched Claude Code and Codex
+    /// services read to send that token as a bearer.
+    fn agent_proxy_env(&self, workspace_id: Uuid) -> Vec<String> {
         let gateway = self.cfg.gateway_url.trim_end_matches('/');
+        let proxy = format!("{gateway}/studio-llm/v1/workspaces/{workspace_id}/providers");
         vec![
             "STUDIO_LLM_AUTH=bearer".to_owned(),
-            format!("ANTHROPIC_BASE_URL={gateway}/studio-llm/v1/providers/anthropic"),
-            format!("OPENAI_BASE_URL={gateway}/studio-llm/v1/providers/openai"),
+            format!("ANTHROPIC_BASE_URL={proxy}/anthropic"),
+            format!("OPENAI_BASE_URL={proxy}/openai"),
         ]
     }
 
@@ -900,7 +904,7 @@ impl SessionService {
         // proxy uses that person's key. What goes here is only where the proxy
         // is. Commits carry the entrypoint's neutral author until the author
         // comes from the connection.
-        env.extend(self.agent_proxy_env());
+        env.extend(self.agent_proxy_env(workspace_id));
         // Orca runtime for the IDE's Agents panel. Container-local: the
         // entrypoint starts `orca serve` beside Theia and the panel's backend
         // shells out to `orca` in the same container, so nothing is published
@@ -1910,8 +1914,10 @@ mod tests {
         }
         for wanted in [
             "STUDIO_LLM_AUTH=bearer",
-            "ANTHROPIC_BASE_URL=http://gateway.test/cf/studio-llm/v1/providers/anthropic",
-            "OPENAI_BASE_URL=http://gateway.test/cf/studio-llm/v1/providers/openai",
+            // On the session's workspace: the proxy may answer with the
+            // workspace's AI connection when the person keeps no key.
+            "ANTHROPIC_BASE_URL=http://gateway.test/cf/studio-llm/v1/workspaces/00000000-0000-0000-0000-0000000000d2/providers/anthropic",
+            "OPENAI_BASE_URL=http://gateway.test/cf/studio-llm/v1/workspaces/00000000-0000-0000-0000-0000000000d2/providers/openai",
         ] {
             assert!(env.iter().any(|v| v == wanted), "missing {wanted}");
         }
