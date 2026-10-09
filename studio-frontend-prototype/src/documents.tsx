@@ -2862,7 +2862,7 @@ function kindColor(kind: string): string {
 
 // ── Scaffolding: a starter gear for a capability gap ──────────────────────
 //
-// The skeleton is generated server-side (components_catalog/skeleton.rs). This
+// The skeleton is generated server-side (product/skeleton.rs). This
 // screen asks for it with `dry_run` to show it, then asks again to write it --
 // rather than composing the files here and posting them, which is what made the
 // browser the only thing that knew what a gear looks like.

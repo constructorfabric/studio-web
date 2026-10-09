@@ -194,8 +194,11 @@ through the person.
 
 ### Confirmation
 
-Filled in by the PR that implements this ADR: the gates, and what a local stand
-showed for creation, assignment, a membership change, merge and the rekey.
+Implemented in #682 (first opened as #679). The backend gates passed on the
+combined tree, and `user_profile/grants_tests.rs` covers the writes, the merge
+and the rekey. A stand has not yet shown creation, assignment, a membership
+change, merge and the rekey end to end. That check comes with the first Dev
+deploy and its `grants/backfill` run, and this ADR stays proposed until then.
 
 ## More Information
 

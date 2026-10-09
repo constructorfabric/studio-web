@@ -692,6 +692,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - **Scope**:
   - `studio-session` with its Docker and Kubernetes drivers
+  - `studio-git`, the Git remote a desktop session clones from and pushes to
   - the session image and the `theia/studio`, `theia/product-ext` and `theia/drawio-editor` extensions
 
 - **Out of scope**:
@@ -722,9 +723,11 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-component-theia-studio`
   - [x] `p1` - `cpt-studio-component-theia-product-ext`
   - [x] `p1` - `cpt-studio-component-theia-drawio-editor`
+  - [x] `p1` - `cpt-studio-component-git-proxy`
 
 - **API**:
   - `/studio-session/v1`
+  - `/studio-git/v1`
 
 - **Sequences**:
 
@@ -835,6 +838,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - **Scope**:
   - `studio-documents` and `studio-spec-quality`
+  - `studio-spec-mapping`: from a project's specification to the gears that build it
   - editing documents in the IDE's markdown editor
 
 - **Out of scope**:
@@ -846,6 +850,8 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-fr-documents`
   - [x] `p1` - `cpt-studio-fr-repository-documents`
   - [x] `p1` - `cpt-studio-fr-spec-quality`
+  - [ ] `p1` - `cpt-studio-fr-spec-gear-mapping`
+  - [ ] `p1` - `cpt-studio-fr-mapping-decisions`
 
 - **Design Principles Covered**:
 
@@ -862,11 +868,13 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
   - [x] `p1` - `cpt-studio-component-documents`
   - [x] `p1` - `cpt-studio-component-spec-quality`
+  - [ ] `p1` - `cpt-studio-component-spec-mapping`
   - [x] `p1` - `cpt-studio-component-theia-product-ext`
 
 - **API**:
   - `/studio-documents/v1`
   - `/studio-spec-quality/v1`
+  - `/studio-spec-mapping/v1`
 
 - **Sequences**:
 
@@ -937,7 +945,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 - **Depends On**: `cpt-studio-feature-knowledge-graph`, `cpt-studio-feature-ide-sessions`
 
 - **Scope**:
-  - `studio-components-catalog`, `studio-product`, `studio-insight`, `theia/gearbox-studio`, `theia/gdl-language`
+  - `studio-components-catalog`, `studio-product`, `studio-insight`, `studio-reports`, `theia/gearbox-studio`, `theia/gdl-language`
 
 - **Out of scope**:
   - Gearbox phases P4 and P6b
@@ -965,6 +973,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-component-components-catalog`
   - [x] `p1` - `cpt-studio-component-product`
   - [x] `p1` - `cpt-studio-component-insight`
+  - [x] `p1` - `cpt-studio-component-reports`
   - [x] `p1` - `cpt-studio-component-theia-gearbox-studio`
   - [x] `p1` - `cpt-studio-component-theia-gdl-language`
 
@@ -972,6 +981,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - `/studio-components-catalog/v1`
   - `/studio-product/v1`
   - `/studio-insight/v1`
+  - `/studio-reports/v1`
 
 - **Sequences**:
 
@@ -1139,7 +1149,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 - **Depends On**: None
 
 - **Scope**:
-  - `api_contract.rs`, `pagination.rs`, `gts_inventory.rs`, `gts_audit.rs`, `database_bootstrap.rs`, the platform system gears
+  - `api_contract.rs`, `pagination.rs`, `gts_inventory.rs`, `gts_audit.rs`, `database_bootstrap.rs`, `studio-assembly`, the platform system gears
 
 - **Out of scope**:
   - the OpenAPI document, which a booted assembly serves at `/cf/docs`
@@ -1167,8 +1177,10 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-component-gts-inventory`
   - [x] `p1` - `cpt-studio-component-database-bootstrap`
   - [x] `p1` - `cpt-studio-component-platform-system`
+  - [x] `p1` - `cpt-studio-component-assembly`
 
 - **API**:
+  - `/studio-assembly/v1`
   - `studio-backend api-contract`, `gts-types`, `gts-audit`, `bootstrap`, `migrate`
 
 - **Sequences**:

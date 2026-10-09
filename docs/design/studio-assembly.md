@@ -96,7 +96,9 @@ instead: every `crate::<gear module>::<item>` outside test code, classified as
 What one gear offers the others is declared in two places: `port`, the clients
 it publishes on the ClientHub (state and behaviour, resolved per use so the
 start order of Studio gears does not matter), and `sdk`, the types and pure
-functions another gear may name. Everything else in a gear is private to it.
+functions another gear may name. Items its `mod.rs` exports are allowed too
+(`surface`); everything else is private to it, and only an `internal` use fails
+the test.
 
 ### 2.2 Constraints
 
@@ -163,8 +165,8 @@ data, no secret and no config value but the session image reference.
 
 ### 3.4 Internal Dependencies
 
-None declared. It reads the toolkit's gear registry and the config provider
-every gear is given.
+None declared. It uses `studio_session::sdk::StudioSessionConfig` to parse the
+session image, and reads the toolkit's gear registry and the config provider.
 
 ### 3.5 External Dependencies
 

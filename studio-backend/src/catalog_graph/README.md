@@ -25,5 +25,6 @@ Their designs list the node types:
 - A type id is data: stored nodes carry it. The product's types keep the
   `gts.cf.studio.catalog.` prefix they had before studio-product split out;
   renaming one needs a migration of the stored nodes.
-- A gear that adds a node type registers it from its own `init`, not the other
-  gear's.
+- A gear that adds a node type registers it in the types-registry from its own
+  `init`, not the other gear's. In graph-storage, `GraphSink::register_types`
+  registers the whole vocabulary, both gears' types, before each write.

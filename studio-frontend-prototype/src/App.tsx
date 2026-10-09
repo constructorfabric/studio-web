@@ -3466,7 +3466,7 @@ interface CreateCtx {
    *
    *  Unlike every other step, this one cannot probe its own result: writing a
    *  scaffold ends in `POST /git/refs`, which fails outright when the branch is
-   *  already there (components_catalog/scaffold.rs). So Retry reads the flag
+   *  already there (product/scaffold.rs). So Retry reads the flag
    *  rather than re-creating the branch — and a genuinely re-run creation gets
    *  the connector's own "does it already exist?" instead of a silent no-op. */
   scaffolded: boolean;
@@ -3718,7 +3718,7 @@ function WorkspaceProjects({
   const isGearProject = newKind === "new_gears";
   // GitHub only, and not as a shortcut: creating a repository resolves "the
   // first GitHub connection" server-side, and the scaffold writer speaks
-  // GitHub's git API directly (components_catalog/scaffold.rs). Offering a
+  // GitHub's git API directly (product/scaffold.rs). Offering a
   // connection neither of them can use would only fail later.
   const gitConnections = connections.filter((c) => c.provider === "github");
   const gearSlugValue = gearSlug(gearName.trim() || newName.trim() || "gear");
@@ -5108,7 +5108,7 @@ function PinnedSection({
  *
  *  GitHub only, and not as a shortcut: creating a repository resolves "the
  *  first GitHub connection" server-side, and the scaffold writer speaks
- *  GitHub's git API directly (components_catalog/scaffold.rs). Offering a
+ *  GitHub's git API directly (product/scaffold.rs). Offering a
  *  connection neither of them can use would only fail later. */
 function ConnectionField({
   connections,

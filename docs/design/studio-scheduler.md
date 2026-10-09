@@ -288,7 +288,7 @@ Without a database every route answers 503.
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
 | `account_management` | declared gear dependency | The platform tenant the schedules belong to |
-| `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub, resolved per use; `registry` | Enqueue, read a previous run's state, request its cancellation; validate task types |
+| `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub, resolved per use; `sdk::known_task_types` | Enqueue, read a previous run's state, request its cancellation; validate task types |
 
 ### 3.5 External Dependencies
 

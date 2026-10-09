@@ -189,11 +189,13 @@ speak in `user_id`.
    `DirectoryIdentity.identity_provider` had always been `None`. The data is only
    behind a dedicated per-user endpoint. ADR-0015 wires it as a second proof
    channel for the alias ceremony and fixes the empty column.
-3. **PDP dual-key match** (ADR-0023 follow-up 2): a grant matches on the subject
-   **or** the `user_id`, so grants migrate lane by lane.
+3. ~~**PDP dual-key match**~~ **Done — ADR-0040 §5.** A grant names the person;
+   every matcher uses `grant_keys_of` (person id, then the person's logins), and
+   `POST /studio-user/v1/grants/backfill` rekeys the old grants.
 4. **`SecurityContext.person_id` upstream**, per §4.
 5. **Migrate the remaining actor columns** (`documents`, `kit_registry`,
-   `studio_session`) as each is next touched.
+   `studio_session`) as each is next touched — the full list is in ADR-0040
+   FU2 (`reports`, `domain_model`, `scheduler`, `tasks`, presence too).
 6. **Naming.** The module is `user_profile` but owns logins, memberships and
    aliases; the IdP projection occupies `/studio-identity/v1` while the canonical
    gear sits at `/studio-user/v1`. Rename to `studio_user` and

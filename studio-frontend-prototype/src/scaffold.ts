@@ -1,7 +1,7 @@
 //! What the browser still needs to know about a scaffolded gear: its path.
 //!
 //! The skeleton itself is generated server-side now
-//! (`components_catalog/skeleton.rs`), and this file used to hold it. That was
+//! (`product/skeleton.rs`), and this file used to hold it. That was
 //! not a duplicate for tidiness' sake — it was the ONLY place the layout
 //! existed, so `POST /projects/{id}/scaffold` took a list of files, and
 //! anything asking for a gear without a browser had to invent one.

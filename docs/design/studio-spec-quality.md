@@ -243,7 +243,7 @@ the whole document set in one body.
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | The two task types; enqueue the run a submit creates |
+| `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | The two task types; enqueue the run a submit creates |
 | `cpt-studio-component-documents` | `port::AnalysisRecorder` from the ClientHub, resolved per run | Gate verdicts a stage reads |
 | `cpt-studio-component-artifact-ingest` | `port::SpecFindingWriter` from the ClientHub, resolved per run | `spec_finding` nodes and `duplicates` edges |
 

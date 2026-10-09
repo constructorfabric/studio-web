@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-10-08
 ---
 
@@ -8,7 +8,7 @@ date: 2026-10-08
 
 **ID**: `cpt-studio-adr-one-way-out-to-llm-providers`
 
-Status: **proposed** · Date: 2026-10-08 · Builds on ADR-0030 (each agent call on its own person's key) and ADR-0027 §3 (the desktop session keeps the secrets on the server)
+Status: **accepted** (implemented in #678) · Date: 2026-10-08 · Builds on ADR-0030 (each agent call on its own person's key) and ADR-0027 §3 (the desktop session keeps the secrets on the server)
 
 ## Table of Contents
 

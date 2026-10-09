@@ -2098,7 +2098,7 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
-/** Whether product previews run here (`components_catalog/gearbox.rs`), and
+/** Whether product previews run here (`product/gearbox.rs`), and
  *  the gear corpus they resolve against — which a product project's IDE
  *  session checks out beside the project under `source_id`. */
 export interface GearboxStatus {
@@ -3906,7 +3906,7 @@ export const api = {
    *  (branch off the connected base branch, one commit, optional PR). */
   /** Scaffold a starter gear into the project's connected gear repo.
    *
-   *  The skeleton is generated SERVER-side (`components_catalog/skeleton.rs`).
+   *  The skeleton is generated SERVER-side (`product/skeleton.rs`).
    *  This used to send the files, which made the browser the only thing that
    *  knew what a gear looks like — so the same request could not be made
    *  without one, and any other caller had to reinvent the layout. `files` is

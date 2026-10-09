@@ -87,7 +87,7 @@ text, no catalogue, no validation. Its only consumer is `composePlan`
 to candidate components through `CAP_KEYWORDS`, a hardcoded keyword table,
 scoring by matched words. A workspace that invents a capability gets zero
 candidates and no explanation — while the component catalogue already computes
-embeddings for exactly this kind of lookup (`src/components_catalog/gts.rs:143`).
+embeddings for exactly this kind of lookup (`src/catalog_graph/gts.rs`).
 
 ### Defect 4 — editing a type rewrites the past
 
@@ -197,7 +197,7 @@ bytes in Git behind a connection, which is what `visibility` is for.
 An installed type may be adjusted in place — a section added, a rule relaxed, a
 question reworded — without forking its repository. The precedent is
 `gear_profile`, *"editable Studio metadata for one gear, kept separately from
-crates.io sync data"* (`src/components_catalog/gts.rs:21`): synchronized content
+crates.io sync data"* (`src/catalog_graph/gts.rs:189`): synchronized content
 and local edits are separate rows, and the effective value is their overlay.
 
 - An override records the component **version it was written against**, so a
@@ -395,7 +395,7 @@ Two consequences of stopping here, recorded so they are not rediscovered:
    the vocabulary decision ADR-0013 defers in its follow-up 3 — the namespace is
    part of the id, so changing it later changes the type.
 6. **Semantic component matching.** `terms` is lexical. The component catalogue
-   already computes embeddings (`src/components_catalog/gts.rs:143`), and
+   already computes embeddings (`src/catalog_graph/gts.rs`), and
    `rel.realizes` is what would carry the result. Lexical terms should stay
    alongside it: a term match is explainable ("matched because the component
    mentions `keycloak`"), a vector score is not.

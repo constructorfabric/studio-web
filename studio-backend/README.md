@@ -4,7 +4,7 @@ The Constructor Studio backend service, assembled from [CF/Gears](https://github
 
 **What it is.** A single HTTP API service — the CF/Gears analogue of an ASP.NET Core WebAPI host. It contains almost no code of its own (~150 lines): gears are linked in as library crates and discovered at link time (`src/registered_gears.rs`); `main.rs` only loads layered configuration and hands control to the toolkit bootstrap. All functionality comes from the gears. The frontend consumes it via REST + OpenAPI (`/cf/docs`, ready for TS client codegen) and SSE for streaming.
 
-## Assembly (20 gears, fixed set — no feature flags)
+## Assembly (fixed at link time; optional parts are Cargo features `llm`, `graph`, `theia-bridge`, `theia-event-broker`)
 
 | Layer | Gears |
 |---|---|
@@ -13,6 +13,8 @@ The Constructor Studio backend service, assembled from [CF/Gears](https://github
 | Platform | grpc-hub, gear-orchestrator, nodes-registry, types-registry (GTS), tenant-resolver |
 | Domain | **account-management** (tenants, users, conversions, metadata) + its co-located TR plugin + IdP plugins (**keycloak-idp** for real Keycloak provisioning in docker/oidc/k8s; **static-idp** echo for the Keycloak-less dev/postgres profiles), resource-group (group hierarchies, memberships) |
 | Features | **mini-chat** (workspace AI chat, SSE) + static model-policy plugin, **oagw** (LLM egress) + **credstore** + static secrets plugin, **simple-user-settings** (per-user theme/language), **file-storage** |
+
+Plus Studio's own gears in `src/` (26 by default, 27 with `theia-bridge`) and the 11 connector plugin gears in `src/connectors/plugin.rs`. The live list is `GET /cf/studio-assembly/v1/manifest`.
 
 Ask AI needs a real provider key: put your OpenAI API key into
 `static-credstore-plugin.config.secrets[key=openai-key]` (both profiles ship
@@ -30,7 +32,7 @@ Production swaps are config + imports: static-authn → OIDC plugin, static-auth
 
 ## Data
 
-SQLite, one database per gear, under `~/.cf-studio-backend/<gear>/`: `account_management.db` (tenants, `tenant_closure`, conversion requests, metadata), `resource_group.db` (groups, memberships, closure), `types_registry.db`, `nodes_registry.db`. Migrations run automatically at startup. Logs: `~/.cf-studio-backend/logs/`. Postgres is a config-only switch (sea-orm/sqlx underneath).
+PostgreSQL: one server, one database per gear (`studio_account_management`, `studio_resource_group`, `studio_types_registry`, …) in the `postgres`, `docker`, `oidc` and `k8s` profiles. Only `dev.yaml` still keeps most gears on SQLite, one file per gear under `~/.cf-studio-backend/<gear>/`; Studio's own tests run on Postgres only. Migrations run automatically at startup. Logs: `~/.cf-studio-backend/logs/`.
 
 ## Running (Windows + WSL2, no repo copies)
 
@@ -45,7 +47,7 @@ System packages: `sudo apt install -y build-essential pkg-config cmake protobuf-
 
 ```bash
 cd /mnt/c/Repos/CFS/studio-web/studio-backend
-cargo run -- --config config/dev.yaml --list-gears   # verify the assembly (20 gears)
+cargo run -- --config config/dev.yaml --list-gears   # verify the assembly
 cargo run -- --config config/dev.yaml run            # migrations apply on start
 ./demo/demo.sh                                       # in a second terminal
 ./demo/demo-groups.sh <user-id>                      # user-groups scenario

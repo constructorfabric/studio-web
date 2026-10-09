@@ -8,7 +8,7 @@ date: 2026-10-08
 
 **ID**: `cpt-studio-adr-one-story-for-async-work`
 
-Status: proposed · 2026-10-08 · Builds on ADR-0026 · Companion to [ADR-0037](0037-one-model-for-a-project.md)
+Status: proposed · 2026-10-08 · Builds on ADR-0026 · Companion to [ADR-0037](0037-one-model-for-a-project.md) · Step 4 (the notify port) done in #680
 
 ## Table of Contents
 

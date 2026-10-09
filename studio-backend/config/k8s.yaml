@@ -556,9 +556,9 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       secrets:
-        # Shared secret (no tenant_id) with the LLM provider key for the
-        # Ask AI feature; without it chats are created but streaming replies
-        # fail at the provider with 401.
+        # Shared `openai-key` (no tenant_id): Codex's fallback key through
+        # studio-llm-proxy's `openai` provider, and mini-chat's upstream when
+        # built with `llm`. NB: seeded from the Groq key, which OpenAI rejects.
         # The key comes from the environment, never from the file. Free
         # default is Groq: console.groq.com → API Keys (no card needed):
         #   export STUDIO_LLM_API_KEY=gsk_...  (before cargo run)

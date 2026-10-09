@@ -235,13 +235,13 @@ subject=?`; the full scans disappear; uniqueness and FK integrity become real.
    barrier both read them, so keying on a login meant authority depended on
    which door somebody came through.
 
-   It landed as one key rather than two. `subjects_of` resolves a caller to the
-   person behind them and lists every sign-in subject bound to that person, and
-   the matchers take that set. An old grant naming one login is the person's
-   whichever way they signed in today — so no document is rewritten, and the
-   `user_id`-keyed grants this note anticipated turned out not to be needed at
-   all. A subject no login knows is its own set, which is exactly the behaviour
-   that existed before, so nothing narrowed.
+   It landed as one key set. `OrganizationReader::grant_keys_of` (ADR-0040 §5)
+   answers the person id, then every sign-in subject bound to that person, and
+   every matcher takes that set. Grants are now written on the person id, and
+   `POST /studio-user/v1/grants/backfill` moves the login-keyed ones onto it.
+   The login arm stays until every environment has run it (ADR-0040 FU1). A
+   subject no login knows is its own set, which is exactly the behaviour that
+   existed before, so nothing narrowed.
 3. **Active-organization context.** Carry the person in the token and make the
    active org a session context the PDP clamps to, replacing the single-home
    `tenant_id` assumption.

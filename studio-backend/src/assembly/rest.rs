@@ -26,7 +26,8 @@ pub struct AssemblyBuildDto {
     pub commit: Option<String>,
     /// The cargo features that decide what is linked (`llm`, `graph`,
     /// `theia-bridge`, `theia-event-broker`). A release image builds without
-    /// `llm`, which is why it has no `studio-llm-proxy`.
+    /// `llm`, so it has no `mini-chat` or `oagw`; `studio-llm-proxy` is in
+    /// every build (ADR-0039).
     pub features: Vec<String>,
 }
 

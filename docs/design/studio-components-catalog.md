@@ -385,9 +385,9 @@ studio-product's engine; it is to move to studio-product.
 | `types_registry` | `types-registry-sdk` | Register the catalogue types at init |
 | `account_management` | `account-management-sdk` | Read a project's configured sources |
 | `credstore` | `credstore-sdk` | Through `ConnectorService`, the connection tokens |
-| `cpt-studio-component-connector` | `ConnectorService` over the source drivers on the ClientHub | Read repositories and boards |
+| `cpt-studio-component-connector` | `connectors::sdk::Connectors`: a `Repository` per source (tree, files, path history, tags, clone source for the corpus) and `ConnectorDriver::graphql` for boards (`roadmap.rs`) | Read repositories and boards |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The catalogue |
-| `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | Run `catalog.sync` |
+| `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
 | `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository |
 

@@ -14,11 +14,11 @@ is what you need to work in the directory.
 - Gear `studio-git`, capabilities `[rest]`, deps `account_management`,
   `credstore`, `authn_resolver`; all three clients are required at init.
 - No Cargo feature and no config section.
-- `sources::Source` is also the source type of
+- `sdk::Source` is also the source type of
   [`../studio_session`](../studio_session) and
   [`../project_sources.rs`](../project_sources.rs);
-  [`../components_catalog`](../components_catalog) reuses `rest.rs`'s
-  authentication and relay for the gear corpus.
+  [`../product`](../product) (studio-product) reuses `rest.rs`'s
+  authentication and relay, through [`sdk.rs`](sdk.rs), for the gear corpus.
 
 ## Working here
 

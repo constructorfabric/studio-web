@@ -67,7 +67,7 @@ call goes out through the same provider table and HTTP client as an agent's.
 |--------|------------------|
 | `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | Agents reach their models through this proxy, each window with its own person's token and key (ADR-0030, proposed). |
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio configures Theia AI from `client-config` exactly as a container session does (ADR-0027 §3). |
-| `cpt-studio-adr-one-way-out-to-llm-providers` | This gear is the only Studio code that calls a model provider; others use its port; it is linked into every build (ADR-0039, proposed). |
+| `cpt-studio-adr-one-way-out-to-llm-providers` | This gear is the only Studio code that calls a model provider; others use its port; it is linked into every build (ADR-0039). |
 
 ### 1.3 Architecture Layers
 

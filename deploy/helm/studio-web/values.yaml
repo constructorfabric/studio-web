@@ -175,8 +175,8 @@ backend:
     mountPath: /var/lib/studio/artifact-clones
   # The Gearbox engine: the gear catalogue an IDE lists when its workspace
   # holds no gear corpus (`/studio-product/v1/gearbox/catalogue`),
-  # product previews, and the corpus clone relay. Off, those routes do not
-  # exist and the IDE's Building mode shows an empty catalogue.
+  # product previews, and the corpus clone relay. Off, those routes answer
+  # 503 and the IDE's Building mode has no backend corpus to list.
   #
   # The backend keeps one checkout of the corpus under `mountPath`, refreshed
   # at most every `refreshSecs`. `emptyDir` for the reason artifactClone gives:
@@ -233,11 +233,11 @@ backend:
       # exist — and in a namespace whose quota counts limits, that is a quarter
       # of an IDE session spent on nothing.
       limits: { cpu: "200m", memory: 512Mi }
-  # LLM egress endpoint (non-secret half; the key lives in appSecrets).
+  # Theia AI's upstream for studio-llm-proxy (non-secret half; key in appSecrets).
   # Any OpenAI-compatible provider; defaults = Groq free tier.
   llm:
     baseUrl: "https://api.groq.com/openai/v1"  # Theia AI proxy upstream
-    host: "api.groq.com"                       # mini-chat/OAGW upstream host
+    host: "api.groq.com"                       # mini-chat/OAGW host; unused in the release
     model: "llama-3.3-70b-versatile"
   # Keycloak Admin API base URL for user invites (keycloak-idp-plugin).
   # Empty = invites disabled (plugin self-deprioritizes).

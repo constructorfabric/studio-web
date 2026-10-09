@@ -58,6 +58,13 @@ delete the index rather than keep two mirrors in step.
   unless it needs more, and update the arithmetic in `config/k8s.yaml` and
   `deploy/k8s/cloudnative-pg/README.md`.
 
+## Between gears
+
+A gear uses another only through its `port`, its `sdk` or an item its `mod.rs`
+exports. Never `crate::<gear>::<private module>`:
+`assembly::manifest::tests::no_gear_reaches_into_another_gears_private_modules`
+fails. Need more? Add it to the owner's `sdk` or `port`.
+
 ## Gates that pass when they should not
 
 - A build through the Windows bind mount can reuse a stale binary. Run

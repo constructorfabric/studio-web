@@ -2,8 +2,8 @@
 //!
 //! CF/Gears discovers gears via `inventory` at link time — importing a gear
 //! crate is what registers it. This file pins the exact assembly of the
-//! Studio backend. Unlike `cf-gears-example-server`, nothing is behind
-//! feature flags: the Studio assembly is a deliberate, fixed set.
+//! Studio backend. Unlike `cf-gears-example-server`, the set is fixed;
+//! optional parts are Cargo features (`llm`, `graph`), never runtime plugins.
 #![allow(unused_imports)]
 #![allow(clippy::single_component_path_imports)]
 
@@ -48,7 +48,8 @@ use static_credstore_plugin as _;
 // oagw's post_init provisions its upstream under the root tenant, which does
 // not exist on a fresh database until account-management's run-phase saga
 // seeds it — so with oagw present the first boot deadlocks. Off in the k8s
-// release image (no LLM key, no IDE sessions). mini_chat also brings its
+// release image because of that deadlock; Studio's own provider calls go
+// through studio-llm-proxy, which is always linked (ADR-0039). mini_chat also brings its
 // in-crate static model-policy + audit plugins.
 #[cfg(feature = "llm")]
 use api_egress as _;

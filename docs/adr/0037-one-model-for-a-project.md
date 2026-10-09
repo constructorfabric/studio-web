@@ -27,7 +27,7 @@ Status: proposed · 2026-10-08 · Builds on ADR-0013, ADR-0014 and ADR-0024 · K
 A project is a set of documents, the repositories and files they live in, the
 capabilities the documents ask for, the gears that provide them and the product
 those gears are put together into. Every one of these is stored today. They are
-stored by five gears, in two kinds of store, under different keys, and the only
+stored by six gears (studio-product split out of the catalogue in #682), in two kinds of store, under different keys, and the only
 thing that connects most of them is a string somebody copied.
 
 ### What is stored where
@@ -38,10 +38,10 @@ thing that connects most of them is a string somebody copied.
 | graph-storage, `gts.cf.studio.artifact.*` | ten node types (`repo`, `issue`, `pull_request`, `file`, `user`, `spec_finding`, `comment`, `commit`, `file_content`, `mapping_decision`) and twelve edge types | `studio-artifact-ingest` (`src/artifact_ingest/gts.rs`) | its own REST; `studio-spec-quality` writes findings through `port::SpecFindingWriter`; `studio-spec-mapping` writes and reads decisions through `port::MappingDecisionStore`; the projects table through `port::ProjectSignalSource` |
 | PostgreSQL database `studio_artifact_index` | `studio_artifact_index`, a mirror of the artifact nodes with their whole payload, and `studio_artifact_index_fill` | `studio-artifact-ingest` (`src/artifact_ingest/index.rs`) | every scoped artifact listing. It exists because graph-storage cannot filter, count or page on a payload field (`studio-backend/AGENTS.md`) |
 | graph-storage, `gts.cf.studio.domain.*` and `domainrel.*` | the organization's model (139 entities in the seed, `src/domain_model/ontology.core.json`) and objects of those types | `studio-domain-model` (`src/domain_model/store.rs`) | the prototype's model screens and saved views; `studio-reports` writes `org-unit`, `team`, `person` and `membership` objects into it (`src/reports/mirror.rs`) |
-| graph-storage, `gts.cf.studio.catalog.*` | `gear`, `crate_version`, `gear_profile`, `frontx`, `kit`, `roadmap_item`, `field_schema`, `component_snapshot`, and per project `project_gear_repo` and `project_product` | `studio-components-catalog`, through `CatalogSink` / `GraphSink` (`src/components_catalog/service.rs`) | its own REST; `studio-spec-mapping` through `components_catalog::port::ComponentCatalog` |
+| graph-storage, `gts.cf.studio.catalog.*` | `gear`, `crate_version`, `gear_profile`, `frontx`, `kit`, `roadmap_item`, `field_schema`, `component_snapshot`, and per project `project_gear_repo` and `project_product` | `studio-components-catalog` (gear, crate_version, gear_profile, frontx, kit, roadmap_item, field_schema, component_snapshot) and `studio-product` (`project_gear_repo`, `project_product`), each through its own `CatalogSink` / `GraphSink` (`src/catalog_graph/sink.rs`) | their own REST; `studio-spec-mapping` through `components_catalog::port::ComponentCatalog`; `studio-components-catalog` reads a project's gear repository through `product::port::ProjectProducts` |
 | graph-storage, `cf.studio.kg.*` | `project`, `repository`, `directory`, `file`, `person` | `studio-connector`, the `connector.graph_sync` task (`src/connectors/graph_sync.rs`) | nothing in either portal starts it; the prototype names the task type only in comments and a sample notification |
 
-Two more records belong to the same project and are outside the five gears: the
+Two more records belong to the same project and are outside the six gears: the
 project itself is an account-management tenant (ADR-0010), and its repositories
 are the `sources[]` of its `project.config` setting (`src/project_sources.rs`).
 The person behind a login is `identity_user` in `studio-user` (ADR-0025).
@@ -88,8 +88,8 @@ documents written in Studio.
   spaces in one field.
 - `MappingDecision.gear` is a catalogue name, and a project's product lists its
   gears as "crate names or engine ids" (`SaveProjectProductRequest` in
-  `src/components_catalog/rest.rs`). Neither is an edge to the `catalog.gear`
-  node, although `gear_instance_id(name)` (`src/components_catalog/gts.rs`)
+  `src/product/rest.rs`). Neither is an edge to the `catalog.gear`
+  node, although `gear_instance_id(name)` (`src/catalog_graph/gts.rs`)
   would give its id without a read.
 - `studio_document_analyses.task_id` names a run in `studio-tasks`.
 
@@ -171,7 +171,7 @@ made and kept true, and what stops being stored twice.
 | document | `studio_documents` (authored) or the checkout (bound) | `artifact.file` for a bound file; **`doc.document` for an authored one (new)** | `studio-documents` | separate domain `document` and `markdown-document` |
 | capability | `studio_process_capabilities` | **`process.capability` (new)**, ADR-0014 §6 | `studio-documents` | a string in a decision |
 | gear | crates.io and the gear repositories, read by `catalog.sync` | `catalog.gear` | `studio-components-catalog` | a separate domain `gears`; a name in a decision or a product |
-| product | open question 2 | `catalog.project_product` | `studio-components-catalog` | |
+| product | open question 2 | `catalog.project_product` | `studio-product` | |
 | person | `identity_user` (ADR-0025) | the domain `person`, one per Studio person | `studio-user` truth, `studio-domain-model` node | `kg.person`; a `person` keyed on a login |
 | finding | the detector's run | `artifact.spec_finding` | `studio-artifact-ingest`, written for `studio-spec-quality` | a second verdict written beside it (§4) |
 | decision | the member | `artifact.mapping_decision` | `studio-artifact-ingest`, written for `studio-spec-mapping` | |

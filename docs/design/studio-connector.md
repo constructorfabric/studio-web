@@ -77,7 +77,8 @@ where the key is stored, which hosts it may be sent to, and the test's verdict.
 |-------|---------------|------------|
 | REST | Catalogue, probe, and each provider capability through a connection | `OperationBuilder` routes in `rest.rs` |
 | Service | The catalogue, credstore, driver dispatch, the write composition | `service.rs` |
-| Drivers | One provider's API each | `ConnectorDriver` in `driver.rs`; `github.rs`, `gitlab.rs`, `bitbucket.rs`, `ai_providers.rs`, `slack.rs`, `zulip.rs`, `discord.rs` |
+| Drivers | One provider's API each | `ConnectorDriver` in `driver.rs`; `github.rs`, `github_write.rs`, `gitlab.rs`, `bitbucket.rs`, `ai_providers.rs`, `slack.rs`, `zulip.rs`, `discord.rs` |
+| SDK | What other gears use: a repository bound to a connection, a git checkout | `sdk.rs`, `repository.rs` (`Repository`), `clone.rs` (`git_checkout`) |
 | Plugins | Make a driver present in the assembly | `plugin.rs`, one gear per provider |
 | Background | Repository import into the knowledge graph | `graph_sync.rs`, `graph_sync_task.rs` (`graph` feature) |
 | Storage | None of its own: account-management tenant metadata and credstore | `account-management-sdk`, `credstore-sdk` |
@@ -135,7 +136,8 @@ delete and a recreate.
 - [x] `p2` - **ID**: `cpt-studio-principle-connector-address-needs-token`
 
 The token is never returned, but it is used: a sync clones from
-`{base_url}/{repo}.git`, and git hands the credential to whatever host that
+the git host the driver derives from `base_url` (`ConnectorDriver::clone_url`:
+`api.github.com` → `github.com`, `<host>/api/v3` → `<host>`), and git hands the credential to whatever host that
 names. A patch that changes `base_url` is refused unless the token comes with
 it, so a tenant member cannot point an organization's connection at a host of
 their own and read the token out of their access log. Whoever supplies the
@@ -161,10 +163,12 @@ egress policy on the deployment.
 - [x] `p2` - **ID**: `cpt-studio-constraint-connector-github-depth`
 
 The GitLab and Bitbucket drivers implement `test` and `list_repositories`
-only. Issues, pull requests, commits, files, the repository tree,
-contributors, file writes, branches and pull-request creation are GitHub's
-alone today, so a repository import or a file publish through any other
-source host answers with that driver's refusal. The pull-request listing
+only. Issues, pull requests, commits, files, the repository tree, a path's
+history, tags, contributors, file writes, multi-file commits, branches,
+pull-request creation, repository creation, GraphQL and the clone URL are
+GitHub's alone today, so a repository import, a catalogue scan, a scaffold, a
+checkout or a file publish through any other source host answers with that
+driver's refusal. The pull-request listing
 carries `draft`, the reviewers and teams still owed a review, and the
 assignees, as GitHub's `/pulls` returns them; each reviewer's last word comes
 from the same GraphQL query as the unresolved review threads, so neither costs
@@ -338,6 +342,24 @@ Two methods: `preflight` (can this connection deliver, what is its scope, is
 its channel fixed) and `deliver`. A consumer may not enumerate connections,
 read credentials or reach a driver.
 
+- [x] `p2` - **ID**: `cpt-studio-interface-connector-repository`
+
+- **Contracts**: none external
+- **Technology**: in-crate SDK, `connectors::sdk` (`Connectors`, `Repository`, `create_repository`, `git_checkout`)
+- **Location**: [`connectors/repository.rs`](../../studio-backend/src/connectors/repository.rs), [`connectors/clone.rs`](../../studio-backend/src/connectors/clone.rs)
+
+A gear that reads or writes a repository does not speak a provider's API. It
+opens a `Repository`: the connection's driver bound to one `owner/name` and
+ref, through the connection named or the tenant's first one of that provider
+(`named_or_default`). It offers the tree, one file, a path's history, tags, a
+multi-file commit on a branch, opening or reusing a pull request, and
+`clone_source` (URL plus credential pair). `git_checkout` makes a shallow,
+fast-forwarded working copy and walks it; the token reaches `git` only through
+a one-shot credential helper. Readers: the catalogue scan and corpus source,
+the reports plan file, the product's scaffold and `product.gdl` writes;
+artifact ingest and Gearbox use `git_checkout`. Only the GitHub driver
+implements these today.
+
 ### 3.4 Internal Dependencies
 
 | Dependency Gear | Interface Used | Purpose |
@@ -345,18 +367,20 @@ read credentials or reach a driver.
 | `types_registry` | `TypesRegistryClient` | Catalog the knowledge-graph types; each plugin registers its instance |
 | `account_management` | `AccountManagementClient` | The catalogue as tenant metadata, with inheritance |
 | `credstore` | `CredStoreClientV1` | Store, read and delete tokens under the scope's sharing mode |
-| `cpt-studio-component-tasks` | `TaskQueue`, `registry::register` | The `connector.graph_sync` run |
+| `cpt-studio-component-tasks` | `TaskQueue`, `sdk::register` | The `connector.graph_sync` run |
 | `graph_storage` | `GraphStorageClientV1`, resolved in the REST phase | The import's destination |
 | `cpt-studio-component-user` | `PersonResolver`, `AliasResolver` (scope `IDENTITY_INSTANCE_ID`) | The personal-connection edit guard; contributor aliases |
 | `cpt-studio-component-llm-proxy` | `llm_proxy::port::ModelProviders`, resolved when a key is tested | The Anthropic and OpenAI drivers' key test (ADR-0039) |
 
-Several in-crate gears build their own `ConnectorService` over the drivers
-they resolve rather than calling this gear: `cpt-studio-component-components-catalog`,
-`cpt-studio-component-product`,
-`cpt-studio-component-user`, the reports gear, and `git_proxy`, which reads
-the catalogue only. `cpt-studio-component-artifact-ingest` resolves source
-drivers through `source_driver_ids()`, and project sources resolve a
-connection with `service::connection_by_id`.
+There is one `ConnectorService` in the process: this gear builds it at `init`
+and publishes it on the ClientHub. `cpt-studio-component-components-catalog`,
+`cpt-studio-component-product`, `cpt-studio-component-user`, the reports gear
+and `git_proxy` (catalogue reads only) hold a `connectors::sdk::Connectors`
+handle and resolve it per use. A gear that reads or writes a repository opens
+a `connectors::sdk::Repository`. `cpt-studio-component-artifact-ingest`
+resolves source drivers through `source_driver_ids()` and checks out with
+`connectors::sdk::git_checkout`. Project sources resolve a connection with
+`service::connection_by_id`.
 
 ### 3.5 External Dependencies
 

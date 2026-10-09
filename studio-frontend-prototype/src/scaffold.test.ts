@@ -2,7 +2,7 @@
  * functions a form needs to show the path it is about to write.
  *
  * The generator's own tests went with it, to
- * `components_catalog::skeleton::tests` — testing a preview of someone else's
+ * `product::skeleton::tests` — testing a preview of someone else's
  * output in two places is how the preview and the output start disagreeing.
  * These pin the halves that must match the server's, which is why each one
  * names the server rule it mirrors.

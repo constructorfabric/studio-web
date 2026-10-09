@@ -29,8 +29,9 @@ This README is what you need to work in the directory.
   `ProjectProducts` / `Products`, a project's gear repository.
   [`sdk.rs`](sdk.rs) names the engine's types. Nothing here reads the
   catalogue.
-- Repository writes go through a connection from
-  [`../connectors`](../connectors); the corpus relay reuses
+- Repository writes go through a `connectors::sdk::Repository` opened on a
+  connection from [`../connectors`](../connectors); the corpus checkout is
+  `connectors::sdk::git_checkout`; the corpus relay reuses
   [`../git_proxy`](../git_proxy)'s `authenticate_member` and streaming.
 
 ## The files
@@ -39,7 +40,9 @@ This README is what you need to work in the directory.
   product, write files into the project's repository (the gear repository, or
   the one its project config names), create a repository.
 - `skeleton.rs` — the canonical starter gear. `scaffold.rs` — one branch, one
-  tree, one commit, and optionally a pull request, through the git-data API.
+  commit, and optionally a pull request, through the connection's
+  `connectors::sdk::Repository`; the provider API is the driver's
+  (`connectors/github_write.rs`).
 - `gearbox.rs` — the corpus checkout, the engine catalogue, extension points,
   completion, the preview, the corpus relay's upstream.
 - `rest.rs` — the routes, including where a new `product.gdl` is written

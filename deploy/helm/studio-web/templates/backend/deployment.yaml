@@ -244,8 +244,8 @@ spec:
             # default applies when the key is absent.
             - name: STUDIO_OIDC_S2S_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: s2s_client_secret, optional: true } }
-            # LLM egress (Theia AI proxy + mini-chat). Key is secret; provider
-            # endpoint/model are plain values (see backend.llm).
+            # Theia AI's upstream key in studio-llm-proxy, also the shared
+            # `openai-key`. Endpoint/model are plain values (backend.llm).
             - name: STUDIO_LLM_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: llm_api_key } }
             # External spec-quality detector bearer secret. Optional keeps the

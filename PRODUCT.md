@@ -64,7 +64,8 @@ plugin cannot claim this; a hosted IDE without the tenant model cannot either.
   `Workspace` all stay, so the seam stays visible in code.
 - **Organizations are hidden, not removed.** They still own the shared connector
   catalogue and anchor the admin hierarchy; they lost navigation only.
-- **Authorization is allow-all.** The Studio PDP is a parked milestone (ADR-0004). Roles
+- **Authorization is enforced by the Studio PDP** (tenant clamp from studio-user
+  membership, role grants from the access config, ADR-0019/0040). Roles
   shown in the UI are *derived* from server state (Owner = `created_by`, Editor = an
   access-config grant, otherwise Viewer — resource groups hold no membership anybody
   reads; who belongs to an organization is studio-user's, ADR-0040); `Admin` is grant-only, and concept-v2

@@ -58,7 +58,7 @@ Postgres table of this gear's, and scoped reads are one indexed query each.
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-studio-nfr-durable-work` | Runs survive a restart | `ingest_task.rs` | A sync is a `studio-tasks` run, partitioned by provider, credential, scope and repository so two syncs of the same keys never run at once | `service.rs` unit tests |
-| `cpt-studio-nfr-credential-isolation` | No secret in a session, a browser or a response | `ingest_task.rs`, `clone.rs` | The run payload carries the credstore reference, not the token; the token reaches `git` through a one-shot credential helper reading an environment variable, never the URL, arguments or a log line | `clone.rs` unit tests |
+| `cpt-studio-nfr-credential-isolation` | No secret in a session, a browser or a response | `ingest_task.rs`, `connectors::sdk::git_checkout` (`connectors/clone.rs`) | The run payload carries the credstore reference, not the token; the token reaches `git` through a one-shot credential helper reading an environment variable, never the URL, arguments or a log line | `connectors/clone.rs` unit tests |
 | `cpt-studio-nfr-list-pagination` | One paging contract | `/nodes`, `/edges` | `offset` and `limit` (1–200, default 50) | `index_tests.rs` checks the index against the in-process listing over a query matrix |
 
 #### Key ADRs
@@ -74,7 +74,7 @@ Postgres table of this gear's, and scoped reads are one indexed query each.
 |-------|---------------|------------|
 | REST | Sync, reconcile, listings, activity, search, findings, files | `OperationBuilder` routes in `rest.rs` |
 | Run | One repository into the graph | `ingest_task.rs` over `service.rs` |
-| Channels | Connector API, checkout, tree API | `connectors::driver::ConnectorDriver`, `clone.rs` |
+| Channels | Connector API, checkout, tree API | `connectors::sdk::ConnectorDriver`, `connectors::sdk::git_checkout` (`connectors/clone.rs`) |
 | Normalization | Type ids, instance ids, schemas | `gts.rs`, schemas in [`studio-backend/gts/artifact/`](../../studio-backend/gts/artifact/) |
 | Store | Graph writes and reads, the index in step | `graph.rs` (contract and in-memory fallback), `graph_backend.rs`, `index.rs` |
 | Storage | Nodes and edges; the listing mirror | graph-storage; PostgreSQL database `studio_artifact_index` |
@@ -325,10 +325,10 @@ member's mapping decisions).
 |-------------------|----------------|----------|
 | `types_registry` | SDK client | Register the artifact types at init |
 | `credstore` | `CredStoreClientV1` | Resolve the connector token per attempt |
-| `cpt-studio-component-connector` | `ConnectorDriver` per provider, from the ClientHub | Issues, pull requests, tree listings |
+| `cpt-studio-component-connector` | `ConnectorDriver` per provider, from the ClientHub; `connectors::sdk::git_checkout` | Issues, pull requests, tree listings; the opt-in shallow clone, its fast-forward and the walk of a checkout |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (feature `graph`), resolved in the REST phase | Nodes and edges; an in-memory store without it |
 | `cpt-studio-component-documents` | `DocumentClassifier`, `BindingNames` from the ClientHub | Classify synced files; name findings in the feed |
-| `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | The `artifact.ingest` task type |
+| `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | The `artifact.ingest` task type |
 | `cpt-studio-component-user` | `MemberAliases` from the ClientHub, per request | Name a pull request's accounts as the organization's members; without it every account reads as a bare login and `members_known` is false |
 | `cpt-studio-component-account-management` | SDK client, per request, as the caller | The organization a project hangs under (project → workspace → organization) |
 

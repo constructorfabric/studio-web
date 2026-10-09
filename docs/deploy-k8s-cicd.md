@@ -93,6 +93,9 @@ Notes:
 
 ## CI/CD
 
+After some deploys a platform administrator runs a one-off data step; the list
+is in [`deploy/PIPELINES.md`](../deploy/PIPELINES.md#one-off-data-steps-after-a-deploy).
+
 Already in the repo:
 
 - `ci.yml` — push/PR: backend `cargo build+test` (checks out gears-rust as sibling),

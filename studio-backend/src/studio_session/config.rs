@@ -181,14 +181,9 @@ pub struct StudioSessionConfig {
     /// STUDIO_GIT_MODE passed to the container: disabled | commit | push.
     #[serde(default = "default_git_mode")]
     pub git_mode: String,
-    /// Provider credentials handed to a session container. Each entry
-    /// binds a credstore secret to an environment variable inside the
-    /// IDE, which is how the native Theia agents authenticate:
-    /// `@theia/ai-codex` reads OPENAI_API_KEY, `@theia/ai-claude-code`
-    /// reads ANTHROPIC_API_KEY. Resolved per launch under the caller's
-    /// identity, so a workspace only receives keys its tenant may read.
-    /// A missing or unreadable reference is a warning, not an error: the
-    /// session still starts, that agent just stays unauthenticated.
+    /// Unused since ADR-0030: the agents reach their providers through
+    /// studio-llm-proxy on the caller's token. Kept only for `agent_env`,
+    /// which is dead code (ADR-0039 follow-up: remove both).
     #[serde(default = "default_agent_secrets")]
     pub agent_secrets: Vec<AgentSecret>,
     /// Run an Orca runtime (github.com/stablyai/orca) inside each session, so
@@ -196,9 +191,9 @@ pub struct StudioSessionConfig {
     ///
     /// Off by default, and deliberately: the runtime is only present in images
     /// built with the Orca layer, and a session without it degrades to "not
-    /// reachable" in the panel rather than failing to start. The keys the
-    /// agents need are the ones [`Self::agent_secrets`] already provisions —
-    /// Orca runs the same `codex` / `claude` CLIs.
+    /// reachable" in the panel rather than failing to start. Orca runs the
+    /// same `codex` / `claude` CLIs, which reach their providers through
+    /// studio-llm-proxy.
     #[serde(default)]
     pub orca_enabled: bool,
     /// Port the in-container Orca runtime binds. Container-local and never

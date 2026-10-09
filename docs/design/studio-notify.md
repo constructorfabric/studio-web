@@ -246,7 +246,7 @@ pressing "send a test message" who wants the platform's answer now.
 |-------------------|----------------|----------|
 | `account_management` | declared gear dependency | Tenant scope of the caller |
 | `cpt-studio-component-connector` | `NotificationSender` from the ClientHub, scope `cf.studio._.notification_sender.v1~` | `preflight` and `deliver` for chat destinations |
-| `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub; `registry::register` | Enqueue the run; register `notify.deliver` |
+| `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub; `sdk::register` | Enqueue the run; register `notify.deliver` |
 | `cpt-studio-component-theia-bridge` | `TheiaControlClientV1` (`theia-bridge` feature) | Session status at accept; `notify_editor` at delivery |
 
 ### 3.5 External Dependencies

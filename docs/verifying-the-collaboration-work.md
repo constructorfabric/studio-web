@@ -78,7 +78,7 @@ scripts/backend-check.sh                        # fmt, clippy, build, features, 
 ```
 
 **If the counts come back zero on a real repository**, check `TEXT_EXT` in
-`artifact_ingest/clone.rs` includes `"jsonl"` before looking anywhere else. The
+`connectors/clone.rs` includes `"jsonl"` before looking anywhere else. The
 fold is correct whatever that list says, and silently useless without it — which
 is exactly why the test for the extension lives next to the fold.
 

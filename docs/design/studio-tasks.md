@@ -204,8 +204,8 @@ not touched. Deliberately not worked around.
 | `POST` | `/studio-tasks/v1/runs/{id}/retry` | Run a failed or cancelled one again | stable |
 | `GET` | `/studio-tasks/v1/task-types` | Which handlers this deployment registered | stable |
 
-In process, gears enqueue through `service::TaskService` and register handlers
-through `registry::TaskHandler`.
+In process, gears enqueue through the `TaskQueue` client on the ClientHub and
+register a `sdk::TaskHandler` through `sdk::register`.
 
 ### 3.4 Internal Dependencies
 
@@ -213,6 +213,7 @@ through `registry::TaskHandler`.
 |-------------------|----------------|----------|
 | `account_management` | SDK client | Tenant scope of a run |
 | `cpt-studio-component-events` | `StudioEventPublisher` from the ClientHub, resolved per event | Announce run state changes |
+| `cpt-studio-component-notify` | `port::Notifications` from the ClientHub, resolved per use | The completion notice to the IDE |
 
 ### 3.5 External Dependencies
 

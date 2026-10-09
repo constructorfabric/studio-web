@@ -318,11 +318,12 @@ Quality run recording its own verdicts.
 | `types_registry` | SDK client | Register the four document GTS types, best-effort |
 | `cpt-studio-component-artifact-ingest` | `RepoFileReader`, `ArtifactFiles` from the ClientHub, resolved per request | A bound file's text; the ingested file list |
 | `cpt-studio-component-tasks` | `TaskQueue` from the ClientHub | Queue Spec Quality batch runs |
+| `cpt-studio-component-spec-quality` | `spec_quality::sdk` | Queue and read analyses |
 
 It publishes `port::SpecNeeds` for `cpt-studio-component-spec-mapping`: a
 project's workspace, the vocabulary, and what its documents need. What a
 document needs is computed here when it is written or synced, with the rules of
-`spec_mapping::reading`, and stored beside it.
+`spec_mapping::sdk`, and stored beside it.
 
 ### 3.5 External Dependencies
 
@@ -532,7 +533,7 @@ type table: the two catalogues share resolution rules, not columns.
 **Additional info**: Index on `(tenant_id, project_id)`. `capabilities` is an
 index over the document's own front matter, not a second place to store them,
 so a hand edit cannot drift from it. `requirements` and `inferred_capabilities` are
-indexes the same way, computed by `spec_mapping::reading` on every write; they
+indexes the same way, computed by `spec_mapping::sdk` on every write; they
 are read through `port::SpecNeeds` by `cpt-studio-component-spec-mapping`.
 
 **Example**:

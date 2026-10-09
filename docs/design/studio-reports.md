@@ -367,9 +367,9 @@ An unknown `report_id` is a 404.
 |-------------------|----------------|----------|
 | `types_registry` | `types-registry-sdk` | Register `gts.cf.studio.reports.report_source.v1~` at init |
 | `cpt-studio-component-components-catalog` | `port::RoadmapCatalog` from the ClientHub | Planned gears, component values, queue a board sync |
-| `cpt-studio-component-tasks` | `TaskQueue` (scoped `TASK_QUEUE_INSTANCE_ID`), `registry::register` | Queue refreshes; run them |
+| `cpt-studio-component-tasks` | `TaskQueue` (scoped `TASK_QUEUE_INSTANCE_ID`), `sdk::register` | Queue refreshes; run them |
 | `cpt-studio-component-scheduler` | `scheduler::port::Schedules` from the ClientHub | Find and ensure the refresh schedule |
-| `cpt-studio-component-connector` | `ConnectorService` built from the GitHub drivers, `account_management` and `credstore` | Read the plan file (`GET /repos/{owner}/{repo}/contents/{path}?ref=`) |
+| `cpt-studio-component-connector` | `connectors::sdk::Connectors`, resolved per read; a `Repository` opened on the GitHub connection | Read the plan file and its blob sha (`Repository::read_file`; GitHub's contents API in the driver) |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature) | Keep the sources |
 
 ### 3.5 External Dependencies

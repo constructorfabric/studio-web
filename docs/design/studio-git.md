@@ -224,7 +224,7 @@ to the platform and authenticated by the gear.
 | `authn_resolver` (`cpt-studio-component-platform-system`) | `AuthNResolverClient` | Authenticate the token `git` presents |
 | `cpt-studio-component-account-management` | `AccountManagementClient` | The project's sources and its parent workspace |
 | `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | Source tokens, as the caller |
-| `cpt-studio-component-connector` | `ConnectorService`, built in process with no drivers | The connection a pushed source syncs through |
+| `cpt-studio-component-connector` | `connectors::sdk::Connectors` (the one `ConnectorService`, resolved from the ClientHub; only its catalogue is read) | The connection a pushed source syncs through |
 | `cpt-studio-component-tasks` | `TaskQueue`, resolved per push | The `artifact.ingest` run |
 
 All three gear clients are required: the gear fails the boot rather than answer

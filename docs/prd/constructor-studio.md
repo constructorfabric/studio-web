@@ -961,7 +961,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/studio-spec-quality/v1`; `studio-frontend-prototype/src/spec-quality.tsx` |
 | `cpt-studio-fr-artifact-ingest` | `studio-backend/src/artifact_ingest/`, platform `graph_storage`; `/studio-artifact-ingest/v1`; `projects-mfe` project screen; prototype project tabs `artifacts` and `activity`, and the hidden `files` view's repository files |
 | `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
-| `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,types,field-schemas,profiles,activity}`; prototype `gears` |
+| `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,reference,component-values,component-history,types,field-schemas,profiles,activity}`; prototype `gears` |
 | `cpt-studio-fr-gear-scaffold` | `studio-backend/src/product/{scaffold,skeleton}.rs`; `/studio-product/v1/projects/{project_id}/{gear-repo,create-repo,scaffold}` |
 | `cpt-studio-fr-gearbox-product` | `studio-backend/src/product/` (`gearbox.rs`, `service.rs`); `/studio-product/v1/gearbox`, `/studio-product/v1/projects/{project_id}/product`, `/studio-spec-mapping/v1/plan`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
 | `cpt-studio-fr-delivery-insight` | `studio-backend/src/insight/`; `/studio-insight/v1`; prototype `gears` component page |

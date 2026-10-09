@@ -137,9 +137,9 @@ keys are not injected: the agents reach their models through
 `studio-llm-proxy` (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` under
 `gateway_url`, with `STUDIO_LLM_AUTH=bearer`), each window with its own
 person's token. The launcher's git author is not injected either; commits
-carry the entrypoint's neutral author. `agent_env` and `git_identity_env` stay
-in the code for the one-person desktop and the connection-scoped path that
-replaces them.
+carry the entrypoint's neutral author. `agent_env` and `git_identity_env` are no
+longer called and are dead code (ADR-0039 follow-up: remove them with
+`agent_secrets`).
 
 What still enters the container is the repository tokens of the workspace's
 sources (`STUDIO_SOURCES`, `STUDIO_ROOT_TOKEN`), resolved from credstore under
@@ -394,7 +394,7 @@ caller's identity, and resolves an S2S token back to the session's
 |-------------------|----------------|----------|
 | `cpt-studio-component-account-management` | `AccountManagementClient` | Workspace access; the project's sources from its config |
 | `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | Repository tokens, under the caller's identity |
-| `cpt-studio-component-tasks` | `TaskQueue` (resolved per request), task registry | `session.await_ready` and `session.reap` |
+| `cpt-studio-component-tasks` | `TaskQueue` (resolved per request), `sdk::register` | `session.await_ready` and `session.reap` |
 | `cpt-studio-component-scheduler` | `platform_schedules()` | The `session-reaper` schedule |
 | `cpt-studio-component-theia-bridge` | consumes `StudioSessionDiscoveryClientV1` | Control endpoint and token discovery |
 

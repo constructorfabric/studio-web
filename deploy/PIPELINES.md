@@ -148,6 +148,18 @@ image tags before upgrading the shared `studio` release. After the chart split,
 each component will have an independent Helm release and this preservation step
 will no longer be necessary.
 
+## One-off data steps after a deploy
+
+Run each once per environment, as a platform administrator, after the backend
+that carries it is up. Each is idempotent, so a second run is harmless.
+
+- **ADR-0040, since #682:** `POST /cf/studio-user/v1/grants/backfill` answers
+  `{organizations, rewritten, failed}`. Deploy the backend and the prototype
+  together, then run it. `failed > 0` means read the backend log
+  (`studio-user: grant rekey failed`) and run it again. Skipping it does not
+  change who has access, because login-keyed grants still match, but the
+  prototype cannot name the grants written before it.
+
 ## Helm release migration
 
 Target ownership:

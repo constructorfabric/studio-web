@@ -37,10 +37,13 @@ owner: studio-team
 
 Constructor Studio Web is one backend binary, two portals and one IDE session
 image. The backend, `studio-backend`, is a modular monolith assembled from
-CF/Gears: platform gears come from gears-rust by Git dependency, Studio's own
+CF/Gears: platform gears come from crates.io (`cf-gears-*`), Studio's own
 gears live in `studio-backend/src/`, and every gear is registered at link time
-through `inventory` (`studio-backend/src/registered_gears.rs`). Gears call one
-another in-process through the ClientHub; the outside world reaches them only
+through `inventory` (`studio-backend/src/registered_gears.rs`). A Studio gear
+reaches another only through that gear's `port` (clients on the ClientHub), its
+`sdk` (types and pure functions) or an item its `mod.rs` exports; never a
+private module (enforced in `assembly/manifest.rs`,
+`cpt-studio-principle-assembly-uses-from-code`). The outside world reaches them only
 through the platform API gateway under `/cf/`, authenticated by an authn plugin,
 authorized by the Studio PDP and scoped to the caller's tenant.
 
@@ -189,7 +192,7 @@ A surface the model anticipates but does not have shows as reserved, never as fa
 
 Every gear is linked into `studio-backend` and discovered through `inventory`; optional parts are Cargo features (`llm`, `graph`, `theia-bridge`, `theia-event-broker`), not runtime plugins loaded from disk.
 
-**ADRs**: none; the assembly is fixed in `studio-backend/src/registered_gears.rs`.
+**ADRs**: none; the assembly is fixed in `registered_gears.rs` (platform) and the `mod` declarations in `main.rs` (Studio).
 
 #### One push channel, no producer's protocol
 
@@ -334,7 +337,8 @@ Does not talk to the Theia node's control API (`cpt-studio-component-theia-bridg
 ##### Related components (by ID)
 
 - `cpt-studio-component-session-image` — launches it
-- `cpt-studio-component-connector` — depends on, for source credentials
+- `cpt-studio-component-git-proxy` — names a source through its `sdk::Source`
+- `cpt-studio-component-platform-feature-gears` — reads repository tokens from credstore
 - `cpt-studio-component-theia-bridge` — serves endpoint discovery to
 - `cpt-studio-component-tasks` — runs its reaping and readiness waits as runs
 - `cpt-studio-component-scheduler` — fires its reaping
@@ -387,6 +391,8 @@ Picks no default provider and stores no conversations.
 
 - `cpt-studio-component-theia-studio` — is called by its portal bridge configuration
 - `cpt-studio-component-platform-feature-gears` — reads provider keys from credstore, for the provider routes
+- `cpt-studio-component-connector` — is used by, for model-provider key tests
+- `cpt-studio-component-session` — points session agents at it
 
 #### studio-connector
 
@@ -411,6 +417,7 @@ Returns credstore references, never tokens; does not queue notifications (`cpt-s
 - `cpt-studio-component-platform-feature-gears` — stores credentials in credstore
 - `cpt-studio-component-artifact-ingest` — is read by, for repository content
 - `cpt-studio-component-tasks` — runs graph sync as a run
+- `cpt-studio-component-llm-proxy` — tests model-provider keys through its port
 
 #### studio-credstore-pg
 
@@ -503,6 +510,7 @@ Judges nothing itself; the service does.
 
 - `cpt-studio-component-tasks` — runs its waits
 - `cpt-studio-component-documents` — records analyses from
+- `cpt-studio-component-artifact-ingest` — writes findings through `port::SpecFindingWriter`
 
 #### studio-artifact-ingest
 
@@ -578,6 +586,7 @@ Does not compose products, scaffold gears or run the Gearbox engine; `cpt-studio
 - `cpt-studio-component-tasks` — runs its sync as a run
 - `cpt-studio-component-reports` — serves the roadmap board to
 - `cpt-studio-component-spec-mapping` — serves the components a specification is matched against to
+- `cpt-studio-component-session` — whether the caller reaches the workspace, through `sdk::TenantMembership`
 
 #### studio-product
 
@@ -603,6 +612,7 @@ Does not run the IDE's Gearbox views; `cpt-studio-component-theia-gearbox-studio
 - `cpt-studio-component-connector` — creates repositories and writes through
 - `cpt-studio-component-git-proxy` — reuses the relay of, for the gear corpus
 - `cpt-studio-component-components-catalog` — serves the engine and a project's gear repository to
+- `cpt-studio-component-session` — whether the caller reaches the workspace, through `sdk::TenantMembership`
 
 #### studio-spec-mapping
 
@@ -627,6 +637,7 @@ Owns no data. The document index is `cpt-studio-component-documents`', the gears
 - `cpt-studio-component-documents` — reads a project's needs and the vocabulary through `port::SpecNeeds`
 - `cpt-studio-component-components-catalog` — reads the components and a project's code through `port::ComponentCatalog`
 - `cpt-studio-component-artifact-ingest` — keeps decisions through `port::MappingDecisionStore`
+- `cpt-studio-component-session` — whether the caller reaches the workspace, through `sdk::TenantMembership`
 
 #### studio-kits
 
@@ -663,7 +674,7 @@ Keycloak authenticates but does not say that two logins are the same person.
 
 ##### Responsibility scope
 
-`studio-backend/src/user_profile/`: the `identity_*` tables, `PersonResolver`, `/studio-user/v1/{me,resolve,merge,users,organizations}` including logins, aliases, memberships, invitations and UI preferences.
+`studio-backend/src/user_profile/`: the `identity_*` tables, `PersonResolver`, `/studio-user/v1/{me,resolve,merge,users,organizations,avatars,grants/backfill}` including logins, aliases, memberships, invitations and UI preferences.
 
 ##### Responsibility boundaries
 
@@ -906,6 +917,7 @@ Serves only http(s) sources; decides only who reaches the workspace, never what 
 - `cpt-studio-component-tasks` — enqueues the push re-sync into
 - `cpt-studio-component-artifact-ingest` — queues its run
 - `cpt-studio-component-product` — lends its relay to, for the gear corpus
+- `cpt-studio-component-connector` — resolves a pushed source's connection through `sdk::Connectors`
 
 #### studio-reports
 
@@ -932,6 +944,8 @@ Does not read the roadmap board; `cpt-studio-component-components-catalog` does,
 - `cpt-studio-component-scheduler` — manages its refresh schedule on
 - `cpt-studio-component-connector` — reads the plan file through
 - `cpt-studio-component-graph-storage` — owns data in
+- `cpt-studio-component-domain-model` — mirrors the plan's teams through `port::DomainObjects`
+- `cpt-studio-component-session` — whether the caller reaches the workspace, through `sdk::TenantMembership`
 
 #### studio-assembly
 
@@ -1293,7 +1307,7 @@ The pre-FrontX portal, kept as a playground with the screens FrontX does not hav
 | Platform | `objects` | Objects | `/studio-domain-model/v1` |
 | Platform | `tasks` | Background work | `/studio-tasks/v1`, `/studio-scheduler/v1` |
 | Platform | `system` | System | `/types-registry/v1`, `/oagw/v1`, `/studio-notify/v1` |
-| Top | `profile` | Profile | `/studio-user/v1`, `/simple-user-settings/v1` |
+| Top | `profile` | Profile | `/studio-user/v1` |
 | Admin | `tenants` | Organizations | `/studio-organizations/v1` |
 | Admin | `access` | Access | `/studio-organizations/v1/access-catalogue`, access config |
 | Admin | `secrets` | Secrets | `/credstore/v1` |
@@ -1533,7 +1547,7 @@ Holds no secret values; the Secret contract is in `deploy/README.md`. The kustom
 | `GET POST PUT DELETE` | `/studio-components-catalog/v1/…` | Catalogue, profiles, types, field schemas, activity | unstable |
 | `GET POST PUT` | `/studio-product/v1/…` | A project's gear repository and product, scaffolding, Gearbox and the corpus relay | unstable |
 | `GET POST DELETE` | `/studio-kits/v1/…` | Kit catalogue and installations | unstable |
-| `GET POST PUT DELETE` | `/studio-user/v1/…` | Me, users, logins, aliases, memberships, invitations | unstable |
+| `GET POST PUT DELETE` | `/studio-user/v1/…` | Me, users, logins, aliases, memberships, invitations, avatars, grant backfill | unstable |
 | `GET POST` | `/studio-identity/v1/…` | Identity directory and membership backfill | unstable |
 | `GET POST DELETE` | `/studio-organizations/v1/…` | Organizations, rollups, capabilities, access catalogue | unstable |
 | `GET POST` | `/studio-presence/v1/{me,online,messages}` | Presence and direct messages | unstable |
@@ -1580,6 +1594,7 @@ All inter-gear communication goes through SDK clients on the ClientHub or plugin
 | `studio-session` | `StudioSessionDiscoveryClientV1` | Endpoint and token discovery for the Theia bridge |
 | `studio-theia` | `TheiaControlClientV1` | Control calls into a session, including kit installs |
 | `event-broker` | `event-broker-sdk` | Forwarded Theia events, only with the `theia-event-broker` feature |
+| `studio-llm-proxy` | `llm_proxy::port::ModelProviders` | The Anthropic and OpenAI connector drivers' key test (ADR-0039) |
 
 **Dependency Rules** (per project conventions):
 - No circular dependencies
@@ -1604,7 +1619,7 @@ All inter-gear communication goes through SDK clients on the ClientHub or plugin
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| `studio-connector` plugins, `studio-llm-proxy` | Each provider's REST API; OpenAI-compatible chat completions | Repositories, credential probes, models, message delivery |
+| `studio-connector` plugins, `studio-llm-proxy` | Each provider's REST API; OpenAI-compatible chat completions | Repositories, source-host and chat-platform credential probes and message delivery (connector plugins); completions, model lists and model-provider key tests (studio-llm-proxy) |
 
 #### Spec-quality service
 
@@ -1768,7 +1783,7 @@ Each Studio gear with state has its own database on the one PostgreSQL server; c
 | `studio_credstore_values` | studio-credstore-pg | `studio_credstore_values` | [studio-credstore-pg](studio-credstore-pg.md#37-database-schemas--tables) |
 | `studio_artifact_index` | studio-artifact-ingest | `studio_artifact_index`, `studio_artifact_index_fill` | [studio-artifact-ingest](studio-artifact-ingest.md#37-database-schemas--tables) |
 
-The database names are set in `studio-backend/config/docker.yaml`. Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`). The component catalogue, kits and reports keep their state in graph-storage or account-management tenant metadata rather than a database of their own.
+The database names are set in `studio-backend/config/docker.yaml`. Platform gears keep their own databases (`studio_account_management`, `studio_types_registry`, `studio_resource_group`, `studio_nodes_registry`, `studio_credstore`, `studio_file_storage`, `studio_settings`, `studio_mini_chat`, `graph_storage`). The component catalogue, the product, kits and reports keep their state in graph-storage or account-management tenant metadata rather than a database of their own.
 
 ### 3.8 Deployment Topology
 

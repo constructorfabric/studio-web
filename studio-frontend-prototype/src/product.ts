@@ -2,7 +2,7 @@
 //
 // The composing itself is the Gearbox engine's, behind
 // `POST /projects/{id}/product/preview` (studio-backend
-// components_catalog/gearbox.rs): which gears a pick really pulls in, where
+// product/gearbox.rs): which gears a pick really pulls in, where
 // they land, what cannot work. This module only decides what can be offered
 // for picking and how the picks and the session are spelled.
 

@@ -8,7 +8,7 @@ date: 2026-09-10
 
 **ID**: `cpt-studio-adr-membership-is-recorded-where-assignment-happens`
 
-Status: **proposed** · Date: 2026-09-10 · Implements ADR-0023 follow-up 1 · Phase 0 of ADR-0011 §2
+Status: **proposed** · Date: 2026-09-10 · Implements ADR-0023 follow-up 1 · Phase 0 of ADR-0011 §2 · Narrowed by ADR-0040
 
 ## Table of Contents
 
@@ -61,6 +61,10 @@ call needs.
 record_assignment(subject, org_id, role)
 ```
 
+*(ADR-0040: it is now `record_assignment(ctx, subject, org_id, role,
+display_name, email)`, with `record_creation` beside it, and it writes the owner
+grant too.)*
+
 `identity_directory` hands over the Keycloak subject it already holds and never
 learns what a person id is; `studio-user` resolves the subject to its canonical
 person and upserts the membership with `source = "assignment"` (as against
@@ -81,6 +85,10 @@ The membership write happens after the three IdP-side writes (`tenant_id`
 attribute, owner grant, tenant group). Recording a membership when those failed
 would leave the new authority saying "member" while everything else says
 otherwise — a half-assignment in the direction that grants access.
+
+*(ADR-0040: the owner grant is no longer an IdP-side write. studio-user writes
+it together with the membership inside `record_assignment`, which now takes the
+caller's `SecurityContext`.)*
 
 It is not optional, though. Since §5 the portal reads this row to build a
 person's organization list, so an assignment that writes the Keycloak
@@ -238,8 +246,10 @@ generated MFE manifest. None of these are touched by this change.
 1. **Decide how a platform administrator is recognised without `tenant_id`**
    (§5). Until then the attribute cannot be retired, whatever else stops reading
    it.
-2. **Retire the `tenant_id` attribute** for organization access (ADR-0011 §1,
-   Phase 0 item 1), gated on the above.
+2. **Stop reading the `tenant_id` attribute as membership.** Done — ADR-0040
+   §4: Studio never reads it back; it stays written as the IdP's projection for
+   the platform (token `subject_tenant_id`, account-management's tenant user
+   listing).
 3. **Enforcement** — ADR-0023 follow-up 2, gated on a Studio resource actually
    being role-mapped in `privilege_for`.
 4. **`assign` needs the tenant group to exist**; either provision it or stop

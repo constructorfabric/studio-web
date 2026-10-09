@@ -62,8 +62,8 @@ One image, any environment:
   its workspace has no gears, product previews, and the corpus clone relay
   (`/studio-product/v1/gearbox/*`, run by the `studio-product` gear; three
   deprecated aliases stay under `/studio-components-catalog/v1/gearbox/`);
-  off, those routes answer 404 and
-  Building's catalogue is empty in such a workspace. `corpusUrl`, `corpusRef`
+  off, those routes answer 503
+  (`STUDIO_GEARBOX_WORKDIR is not set`) and Building's catalogue is empty in such a workspace. `corpusUrl`, `corpusRef`
   and `refreshSecs` override the code's defaults. The dev example turns it on
   with `MikeFalcon77/gears-rust` at `feature/gearbox`, the branch that carries
   `gear.gdl` until constructorfabric/gears-rust#4793 merges. The published

@@ -29,9 +29,8 @@ config, DB, HTTP hosting, service discovery, security. Platform gears
 (`gears-rust/gears/…`) provide accounts, groups, secrets, LLM egress, etc.
 
 `studio-backend` (in `studio-web/studio-backend`) is our assembly: platform
-gears consumed as **path dependencies** on the sibling `gears-rust`
-checkout, plus gears we wrote in-crate (`src/studio_session`,
-`src/keycloak_idp_plugin`).
+gears from crates.io (`cf-gears-*`), plus Studio's own gears, modules under
+`src/` (27; see the manifest).
 
 **The number one thing to internalize:** gears activate at **link time**,
 not from config. `src/registered_gears.rs` is a list of `use some_gear as _;`
@@ -195,15 +194,9 @@ streaming; any OpenAI-compatible provider via `openai_chat_completions` —
 host from `STUDIO_LLM_HOST`, key from `STUDIO_LLM_API_KEY`),
 `file-storage`, `simple-user-settings`.
 
-Ours (in-crate): **`studio_session`** — per-workspace Theia IDE containers
-via bollard: mints a session gate token, injects env (repos, PATs resolved
-from credstore, gateway URL), binds ports 41000-41099 on loopback, reaps
-expired sessions (ADR-0003); **`studio_events`** — the assembly's one push
-channel to the portal: `GET /studio-events/v1/stream` (SSE, per-tenant) plus a
-cursor-replay endpoint, fed by any gear through `dyn StudioEventPublisher` in
-the ClientHub — studio-tasks announces every run transition on it (ADR-0026);
-**`keycloak_idp_plugin`** — real user
-provisioning over the Keycloak Admin API.
+Ours (in-crate): one entry per gear in
+[`docs/design/constructor-studio.md`](design/constructor-studio.md) §3.2; the
+live list, with who uses whom, is `GET /cf/studio-assembly/v1/manifest`.
 
 ## 8. Day-to-day development
 
@@ -226,11 +219,16 @@ Profiles: `dev.yaml` (static tokens), `postgres.yaml` (same + PG),
 **Adding a new gear to the assembly**, in order:
 1. module in `src/<name>/` (gear.rs + service.rs + rest.rs is our layout —
    `simple-user-settings` in gears-rust is the canonical small example);
-2. `mod <name>;` in `main.rs` (in-crate) or a path dep in `Cargo.toml` +
-   `use <crate> as _;` in `registered_gears.rs` (external);
+2. `mod <name>;` in `main.rs` (in-crate) or a crates.io dependency in
+   `Cargo.toml` + `use <crate> as _;` in `registered_gears.rs` (external);
 3. `gears.<name>` section in EVERY config profile (a linked gear with a
    broken/missing required config fails the whole boot);
-4. if it's a plugin — vendor/priority story of §5.
+4. if it's a plugin — vendor/priority story of §5;
+5. what other gears may use goes in its `port` (ClientHub clients) or `sdk`
+   (types, pure functions); use another gear only through those or its
+   `mod.rs` exports — `assembly::manifest` tests fail on an `internal` use;
+6. `docs/design/<gear>.md`, an entry in `constructor-studio.md` §3.2, and the
+   gear in a DOMAINS entry of `studio-frontend-prototype/src/architecture.ts`.
 
 CI/CD: GitHub Actions — `ci.yml` (build+test on PR), `release.yml` (tag
 `v*` → ghcr images). K8s: `deploy/helm/studio-web` per the Helm policy

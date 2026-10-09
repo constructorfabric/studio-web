@@ -144,14 +144,13 @@ cached for 10 seconds and dropped as soon as `studio-user`'s membership
 generation moves, which every membership write bumps. The age is only a
 backstop; the generation is what makes a write visible at once.
 
-#### Nothing is role-gated yet
+#### Only domain objects are role-gated
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-authz-plugin-no-mapping`
 
-`privilege_for` returns `None` for every resource type: `studio-project` was
-retired when projects became tenants, and no gear asks for row-level access
-yet. Every request is answered by the clamp or the ownership gate, and the role
-evaluation is reachable only from its tests. Team grants are matched against an
+`privilege_for` maps one resource type: domain objects (`read` →
+`domain.view`, `write` → `domain.edit`, ADR-0035). Every other request is
+answered by the clamp or the ownership gate. Team grants are matched against an
 empty team list until teams are resolved.
 
 ## 3. Technical Architecture
