@@ -245,6 +245,17 @@ malformed reference is a 400 there, but a reference that resolves to nothing
 is not refused: a public repository syncs without credentials. Queued syncs of
 the same partition coalesce.
 
+A sync reads only with the organization's own token
+(`cpt-studio-constraint-connector-own-connections`): the connection holding
+its `secret_ref`, found from the project (else the workspace, else the
+caller's tenant), must be held by that organization, one of its workspaces or
+one of its projects. The route answers 400 `CONNECTION_NOT_OWNED` otherwise,
+and so does a reference no such connection holds; the run checks again per
+attempt and fails for good, so a push-triggered sync is held to the same
+rule. Credstore lends a token to every tenant below its holder, so without
+this check an organization's sync could read a repository with the platform's
+token.
+
 ##### Responsibility boundaries
 
 Does not decide what a file is; `cpt-studio-component-documents` does.

@@ -9,6 +9,6 @@
 pub(crate) mod gts;
 mod sink;
 
-pub(crate) use sink::{CatalogNodeView, CatalogSink, build_sink};
+pub(crate) use sink::{CatalogNodeView, CatalogSink, build_sink, build_sink_own_tenant};
 #[cfg(test)]
 pub(crate) use sink::{GraphNodeType, MemorySink};

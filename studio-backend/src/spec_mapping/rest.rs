@@ -63,6 +63,14 @@ impl Ports {
             .map_err(|_| Self::unavailable("the components catalogue"))
     }
 
+    /// The organization's registry, when the catalogue publishes one. Its
+    /// absence only means the project's gears are read on demand.
+    fn registry(&self) -> Option<Arc<dyn crate::components_catalog::port::Registry>> {
+        self.hub
+            .get::<dyn crate::components_catalog::port::Registry>()
+            .ok()
+    }
+
     fn documents(&self) -> ApiResult<Arc<dyn SpecNeeds>> {
         self.hub
             .get::<dyn SpecNeeds>()
@@ -174,6 +182,18 @@ pub struct CandidateDto {
     pub origin: String,
     /// For a `project` gear, where it lives in the repository. Null otherwise.
     pub path: Option<String>,
+    /// For a gear the organization's registry backs, its lifecycle state
+    /// there (`declared`, `registered`, `published`, `deprecated`, …). Null
+    /// for every other candidate. A `deprecated` one is still offered.
+    pub registry_state: Option<String>,
+    /// For a `deprecated` registry gear, the entry to use instead, when the
+    /// decision named one.
+    pub replaced_by: Option<String>,
+    /// Whose component it is (ADR-0042): `project` (declared in this
+    /// project's own repositories), `organization` (the organization's
+    /// catalogue or registry) or `platform` (the shared set). On otherwise
+    /// equal ranking, the project's and the organization's come first.
+    pub tier: String,
 }
 
 #[derive(Debug)]
@@ -596,6 +616,9 @@ fn plan_dto(
                     composable_why: c.composable_why,
                     origin: "catalogue".to_owned(),
                     path: None,
+                    registry_state: None,
+                    replaced_by: None,
+                    tier: c.tier,
                 })
                 .collect(),
         })
@@ -743,7 +766,9 @@ async fn get_project_plan(
     };
     let catalog = ports.catalog()?;
     let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
-    let own = local::project_gears(catalog.as_ref(), &org, project_id).await;
+    let registry = ports.registry();
+    let (own, registry_states) =
+        local::project_gears(catalog.as_ref(), registry.as_deref(), &org, project_id).await;
     let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));
@@ -753,6 +778,11 @@ async fn get_project_plan(
     local::mark_in_repo(
         dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
         &in_repo,
+    );
+    local::mark_registry_state(
+        dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
+        &in_repo,
+        &registry_states,
     );
     let mut sources: BTreeMap<String, Vec<CapabilitySource>> =
         needs.into_iter().map(|c| (c.key, c.sources)).collect();

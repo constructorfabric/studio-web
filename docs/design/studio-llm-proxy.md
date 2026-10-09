@@ -242,15 +242,24 @@ names; a refusal is an error carrying the provider's status and the first 200
 characters of its answer. `base_url`, when given, replaces the table's for the
 call; the caller has already checked it may send the key there.
 
+`ModelProviders::complete(ctx, {system, prompt, max_tokens})`: one answer, not
+streamed, on the caller's own key -- the provider the IDE's chat would pick for
+them (`chat_choice`: the first with a chat model they have a key for), at its
+OpenAI-compatible chat endpoint, `temperature: 0`. It answers the provider,
+the model and the first choice's text; a caller with no key gets
+`CompletionError::NoKey` with the words the chat shows, and a failure carries
+the provider's status and the start of its answer.
+
 ##### Responsibility boundaries
 
-Reads no key itself: the caller hands it the key it is testing. One method,
-because one thing is needed in-process; a completion is added here when a gear
-needs one.
+`list_models` reads no key itself: the caller hands it the key it is testing.
+`complete` finds the caller's key exactly as the routes do, never a key Studio
+holds. Two methods, because two things are needed in-process.
 
 ##### Related components (by ID)
 
 - `cpt-studio-component-connector` — the Anthropic and OpenAI drivers test a key through it
+- `cpt-studio-component-components-catalog` — the registry's suggestions ask `complete` (ADR-0041 P4)
 
 ### 3.3 API Contracts
 

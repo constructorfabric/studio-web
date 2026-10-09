@@ -53,6 +53,8 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0038](0038-one-story-for-async-work.md) | One story for async work: a run does the work, an event says it happened | proposed | 2026-10-08 |
 | [0039](0039-one-way-out-to-llm-providers.md) | One way out to the model providers | accepted | 2026-10-08 |
 | [0040](0040-one-owner-for-people-and-membership.md) | One owner for people and membership | proposed | 2026-10-08 |
+| [0041](0041-an-organization-registry-of-its-components.md) | An organization keeps a registry of the components its projects build | proposed | 2026-10-09 |
+| [0042](0042-platform-and-organization-component-tiers.md) | Components come in two tiers, the platform's and the organization's | proposed | 2026-10-09 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

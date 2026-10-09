@@ -39,6 +39,7 @@ export const VIEW_PATHS = {
   files: "files",
   connectors: "connections",
   gears: "components",
+  platform: "platform",
   reports: "reports",
   objects: "objects",
   views: "views",

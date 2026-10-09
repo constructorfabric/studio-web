@@ -8,13 +8,22 @@
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
 mod activity;
+mod candidates;
 mod cratesio;
 pub(crate) mod field_schema;
 mod history;
+mod ownership;
 pub mod port;
 mod project_gears;
 mod quality;
 pub(crate) mod reference;
+mod registry;
+mod registry_consumers;
+mod registry_decisions;
+mod registry_declare;
+mod registry_publish;
+mod registry_suggest;
+mod registry_task;
 mod repo_enrich;
 mod repo_facts;
 mod rest;
@@ -23,6 +32,7 @@ pub mod sdk;
 mod service;
 mod sync_task;
 mod taxonomy;
+mod tiers;
 pub(crate) mod values;
 
 /// The catalogue's node vocabulary lives beside the store it is written to.
@@ -82,7 +92,7 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .unwrap_or_else(|| DEFAULT_KEYWORD.to_string());
         info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
-        let sink = crate::catalog_graph::build_sink(
+        let sink = crate::catalog_graph::build_sink_own_tenant(
             ctx.client_hub().as_ref(),
             "studio-components-catalog",
         );
@@ -98,6 +108,13 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         crate::tasks::sdk::register(Arc::new(sync_task::CatalogSyncTask::new(Arc::clone(
             &service,
         ))))?;
+        // The registry walk (ADR-0041): an organization's projects, read for
+        // the components they declare. Resolved through the hub when it runs.
+        service.set_hub(ctx.client_hub());
+        crate::tasks::sdk::register(Arc::new(registry_task::RegistryTask::new(
+            Arc::clone(&service),
+            ctx.client_hub(),
+        )))?;
 
         // The Gearbox engine is studio-product's; the catalogue reads what it
         // says about each gear, and a sync follows the gears repository with
@@ -133,6 +150,12 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .register::<dyn port::ComponentCatalog>(Arc::new(port::CatalogComponents::new(
                 Arc::clone(&service),
                 gearbox.clone(),
+            )));
+        // The organization's registry, for spec-mapping and studio-git.
+        ctx.client_hub()
+            .register::<dyn port::Registry>(Arc::new(port::CatalogRegistry::new(
+                Arc::clone(&service),
+                ctx.client_hub(),
             )));
 
         let _ = self.service.set(service.clone());

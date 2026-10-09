@@ -302,19 +302,9 @@ impl Sources {
         parent: Uuid,
         tenant_type: &str,
     ) -> Vec<(Uuid, String)> {
-        match self
-            .am
-            .list_children(ctx, parent, &ODataQuery::default())
+        children_of(self.am.as_ref(), ctx, parent, tenant_type)
             .await
-        {
-            Ok(page) => page
-                .items
-                .into_iter()
-                .filter(|t| t.tenant_type.as_deref() == Some(tenant_type))
-                .map(|t| (t.id.0, t.name))
-                .collect(),
-            Err(_) => Vec::new(),
-        }
+            .unwrap_or_default()
     }
 
     /// One project's row, every part settled on its own.
@@ -475,10 +465,116 @@ fn repos_in(config: Option<&serde_json::Value>) -> Option<u32> {
     Some(u32::try_from(repos).unwrap_or(u32::MAX))
 }
 
+/// The children of `parent` of one tenant type, every page of them.
+///
+/// The one place the tenant tree is listed: the rollups walk it, and
+/// [`super::port::ProjectsOf`] answers another gear from it. A listing that
+/// fails is an error here, so a caller that must not mistake "could not tell"
+/// for "none" (a registry that would drop every project's components) can
+/// tell; the rollups settle it as empty, their rule for a subtree they cannot
+/// see.
+pub(crate) async fn children_of(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    parent: Uuid,
+    tenant_type: &str,
+) -> anyhow::Result<Vec<(Uuid, String)>> {
+    use toolkit_odata::CursorV1;
+    /// A tree deeper than this many pages of children is not walked further.
+    const MAX_PAGES: usize = 50;
+    let mut out = Vec::new();
+    let mut query = ODataQuery::default();
+    for _ in 0..MAX_PAGES {
+        let page = am
+            .list_children(ctx, parent, &query)
+            .await
+            .map_err(|e| anyhow::anyhow!("listing the children of {parent}: {e}"))?;
+        out.extend(
+            page.items
+                .into_iter()
+                .filter(|t| t.tenant_type.as_deref() == Some(tenant_type))
+                .map(|t| (t.id.0, t.name)),
+        );
+        let Some(next) = page.page_info.next_cursor else {
+            return Ok(out);
+        };
+        let cursor = CursorV1::decode(&next).map_err(|e| {
+            anyhow::anyhow!("account-management returned an undecodable cursor: {e}")
+        })?;
+        query = ODataQuery::default().with_cursor(cursor);
+    }
+    Ok(out)
+}
+
+/// One project of an organization, with the workspace it sits in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgProject {
+    pub id: Uuid,
+    pub name: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+}
+
+/// Every project tenant under the organization `org`: its workspaces, then
+/// each workspace's projects -- the same two levels the portfolio walks.
+pub(crate) async fn projects_of(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    org: Uuid,
+) -> anyhow::Result<Vec<OrgProject>> {
+    let workspaces = children_of(am, ctx, org, WORKSPACE_TENANT_TYPE).await?;
+    let mut tree = Vec::with_capacity(workspaces.len());
+    for workspace in workspaces {
+        let projects = children_of(am, ctx, workspace.0, PROJECT_TENANT_TYPE).await?;
+        tree.push((workspace, projects));
+    }
+    Ok(flatten_projects(tree))
+}
+
+/// A tenant as the walk lists it: its id and name.
+type Tenant = (Uuid, String);
+
+/// The walked tree as a list, in the order it was walked.
+fn flatten_projects(tree: Vec<(Tenant, Vec<Tenant>)>) -> Vec<OrgProject> {
+    tree.into_iter()
+        .flat_map(|((workspace_id, workspace_name), projects)| {
+            projects.into_iter().map(move |(id, name)| OrgProject {
+                id,
+                name,
+                workspace_id,
+                workspace_name: workspace_name.clone(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn projects_are_listed_per_workspace_in_tree_order() {
+        let ws = |n: u128| (Uuid::from_u128(n), format!("w{n}"));
+        let found = flatten_projects(vec![
+            (ws(1), vec![(Uuid::from_u128(11), "b".to_string())]),
+            (ws(2), Vec::new()),
+            (
+                ws(3),
+                vec![
+                    (Uuid::from_u128(31), "c".to_string()),
+                    (Uuid::from_u128(32), "d".to_string()),
+                ],
+            ),
+        ]);
+        let ids: Vec<(u128, u128)> = found
+            .iter()
+            .map(|p| (p.workspace_id.as_u128(), p.id.as_u128()))
+            .collect();
+        assert_eq!(ids, vec![(1, 11), (3, 31), (3, 32)]);
+        assert_eq!(found[0].name, "b");
+        assert_eq!(found[0].workspace_name, "w1");
+    }
 
     /// The distinction the whole file turns on, at the one place it is decided.
     #[test]

@@ -265,6 +265,9 @@ pub struct ComponentReferenceDto {
     /// Every engine gear this component is, usually one.
     pub engine: Vec<ReferenceEngineGearDto>,
     pub related: Vec<ReferenceRelatedCrateDto>,
+    /// Whose catalogue it is in (ADR-0042): `platform` or `organization`.
+    /// Null for a gear only the engine knows.
+    pub tier: Option<String>,
 }
 
 /// What the entries were built from, and what could not be read.
@@ -985,6 +988,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             readiness: readiness_of(&values),
             engine,
             related,
+            tier: text(v, "tier").map(str::to_string),
         });
     }
 

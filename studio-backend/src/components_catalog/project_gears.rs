@@ -24,7 +24,6 @@
 //! The rules here are pure; `RepoEnricher::project_gears` does the reading.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
@@ -143,6 +142,15 @@ pub struct CodeGear {
 /// generated into a string (`product::skeleton`) does not. Reading stops at
 /// the file's `#[cfg(test)]`: a gear a test declares is not the project's.
 /// An attribute without a `name` names no gear and is skipped.
+/// Whether the item after a `#[cfg(test)]` ends on its own line (`mod x;`,
+/// `use y;`), rather than opening a body.
+fn cfg_test_item_is_one_line(rest: &str) -> bool {
+    rest.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
+        .is_some_and(|l| l.ends_with(';'))
+}
+
 pub fn code_declarations(body: &str) -> Vec<CodeGear> {
     let mut out = Vec::new();
     let mut offset = 0;
@@ -151,6 +159,13 @@ pub fn code_declarations(body: &str) -> Vec<CodeGear> {
         offset += line.len();
         let trimmed = line.trim_start();
         if trimmed.starts_with("#[cfg(test)]") {
+            // `#[cfg(test)] mod repo_tests;` only names a test file, and a
+            // gear's own `mod.rs` usually has a few of them above its
+            // attribute (studio-documents does). Only an item with a body --
+            // the inline `mod tests { … }` -- is where the tests begin.
+            if cfg_test_item_is_one_line(&body[offset..]) {
+                continue;
+            }
             break;
         }
         if !ATTRIBUTES.iter().any(|a| {
@@ -309,7 +324,7 @@ fn strip_name_prefix(text: &str) -> &str {
     text
 }
 
-fn skipped(path: &str) -> bool {
+pub(super) fn skipped(path: &str) -> bool {
     path.split('/').any(|seg| SKIP.contains(&seg))
 }
 
@@ -319,6 +334,12 @@ fn file_name(path: &str) -> &str {
 
 fn parent(path: &str) -> &str {
     path.rfind('/').map_or("", |i| &path[..i])
+}
+
+/// A Rust file that holds tests rather than a gear: `tests.rs`, `*_tests.rs`,
+/// `*_test.rs`.
+fn is_test_file(name: &str) -> bool {
+    name == "tests.rs" || name.ends_with("_tests.rs") || name.ends_with("_test.rs")
 }
 
 /// The Rust files a gear is declared in by convention, shallowest first and
@@ -331,6 +352,11 @@ pub fn rust_candidates<'a>(paths: &[&'a str]) -> Vec<&'a str> {
         .iter()
         .copied()
         .filter(|p| p.ends_with(".rs") && !skipped(p))
+        // A test module's fixtures write gear attributes into string
+        // literals, at the start of a line: read, they declare the gears
+        // under test, and the first finding wins over the real `mod.rs`
+        // (seen on studio-web's own `project_gears_tests.rs`).
+        .filter(|p| !is_test_file(file_name(p)))
         .filter(|p| {
             let name = file_name(p);
             matches!(name, "lib.rs" | "mod.rs" | "module.rs")
@@ -411,48 +437,99 @@ pub fn absorb(gears: &mut Vec<LocalGear>, found: LocalGear) {
 }
 
 /// The files the answer is read from: what a cached answer is checked against.
-fn relevant(path: &str) -> bool {
+pub(super) fn relevant(path: &str) -> bool {
     matches!(
         file_name(path),
         "gear.toml" | "gear.gdl" | "Cargo.toml" | "README.md"
     ) || (path.ends_with(".rs") && !rust_candidates(&[path]).is_empty())
 }
 
+/// What discovery is: moved whenever the rules here change what a repository
+/// is read as, so a stored fingerprint from the old rules no longer matches
+/// and every repository is read again once.
+///
+/// `/4`: the candidate detectors (`candidates.rs`) read the presence of
+/// signal files too, so every repository is read once more to find them.
+///
+/// `/5`: the registry keeps each repository's Cargo dependencies on its
+/// read (the consumer graph, ADR-0041 P4), so every repository is read once
+/// more to record them.
+pub const DISCOVERY_VERSION: &str = "project-gears/5";
+
 /// A fingerprint of the files the answer depends on, from the tree listing's
-/// `(path, blob sha)` pairs: equal while none of them changed.
-pub fn fingerprint(files: &[(String, String)]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (path, sha) in files.iter().filter(|(p, _)| relevant(p)) {
-        path.hash(&mut hasher);
-        sha.hash(&mut hasher);
+/// `(path, blob sha)` pairs: equal while none of them changed. The files the
+/// candidate detectors only look for ([`super::candidates::signal_file`])
+/// count by path: adding a `rest.rs` moves it, editing one does not.
+///
+/// Stable across builds and restarts (a uuid5 of the pairs and
+/// [`DISCOVERY_VERSION`]), because the registry stores it: the standard
+/// library's hasher promises no such thing.
+pub fn fingerprint(files: &[(String, String)]) -> String {
+    let mut text = String::from(DISCOVERY_VERSION);
+    for (path, sha) in files {
+        if relevant(path) {
+            text.push('\n');
+            text.push_str(path);
+            text.push('\0');
+            text.push_str(sha);
+        } else if super::candidates::signal_file(path) {
+            text.push('\n');
+            text.push_str(path);
+        }
     }
-    hasher.finish()
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, text.as_bytes()).to_string()
+}
+
+/// Whether a repository need not be read again: a fingerprint was stored and
+/// the files have it still.
+pub fn unchanged(known: Option<&str>, print: &str) -> bool {
+    known == Some(print)
 }
 
 /// What was read per repository, kept while its fingerprint holds.
 #[derive(Default)]
 pub struct Cache(Mutex<HashMap<String, Cached>>);
 
-/// One repository's answer, and the fingerprint it was read under.
-type Cached = (u64, Arc<Vec<LocalGear>>);
+/// One repository's answer, the candidates when they were looked for, and
+/// the fingerprint it was read under.
+type Cached = (
+    String,
+    Arc<Vec<LocalGear>>,
+    Option<Arc<Vec<super::candidates::Candidate>>>,
+);
+
+/// What a cached read found: the gears, and the candidates.
+pub type Found = (Arc<Vec<LocalGear>>, Arc<Vec<super::candidates::Candidate>>);
 
 impl Cache {
     /// Repositories remembered at most; past it, the cache starts over.
     const CAPACITY: usize = 64;
 
-    pub fn get(&self, key: &str, print: u64) -> Option<Arc<Vec<LocalGear>>> {
+    /// The gears and the candidates, when both were read under `print`. A
+    /// read that did not look for candidates answers `None` when they are
+    /// asked for.
+    pub fn get_found(&self, key: &str, print: &str, candidates: bool) -> Option<Found> {
         let map = self.0.lock().ok()?;
-        map.get(key)
-            .filter(|(p, _)| *p == print)
-            .map(|(_, gears)| Arc::clone(gears))
+        let (_, gears, found) = map.get(key).filter(|(p, _, _)| p == print)?;
+        match found {
+            Some(c) => Some((Arc::clone(gears), Arc::clone(c))),
+            None if !candidates => Some((Arc::clone(gears), Arc::new(Vec::new()))),
+            None => None,
+        }
     }
 
-    pub fn put(&self, key: String, print: u64, gears: Arc<Vec<LocalGear>>) {
+    pub fn put_found(
+        &self,
+        key: String,
+        print: String,
+        gears: Arc<Vec<LocalGear>>,
+        candidates: Option<Arc<Vec<super::candidates::Candidate>>>,
+    ) {
         if let Ok(mut map) = self.0.lock() {
             if map.len() >= Self::CAPACITY && !map.contains_key(&key) {
                 map.clear();
             }
-            map.insert(key, (print, gears));
+            map.insert(key, (print, gears, candidates));
         }
     }
 }

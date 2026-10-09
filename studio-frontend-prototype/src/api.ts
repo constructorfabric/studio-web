@@ -343,6 +343,266 @@ export interface Conformance {
   gearbox: ProductChange[];
 }
 
+/** One catalogue source, as the sync takes it and the server keeps it. */
+export interface CatalogRepoSource {
+  tenant: string;
+  connection_id: string | null;
+  repo: string;
+  git_ref: string | null;
+  mode: string;
+  /** In an answer: the platform's catalogue already reads this repository in
+   *  this mode (ADR-0042), so the organization's copy can be removed. */
+  shadowed_by_platform?: boolean | null;
+}
+
+/** A source as a request sends it: without what only an answer carries. */
+export function bareSource(s: CatalogRepoSource): CatalogRepoSource {
+  const out = { ...s };
+  delete out.shadowed_by_platform;
+  return out;
+}
+
+/** The platform's catalogue sources (ADR-0042): a platform administrator's. */
+export interface PlatformSources {
+  items: CatalogRepoSource[];
+  total: number;
+  /** The crates.io keyword; null for none. */
+  crates_io: string | null;
+}
+
+/** Where a registry entry was found. */
+export interface RegistryOccurrence {
+  project_id?: string | null;
+  project_name?: string | null;
+  repo: string;
+  git_ref?: string | null;
+  path: string;
+  commit?: string | null;
+  /** `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
+   *  where a candidate detector found it and nothing declares it. */
+  declared_in: string;
+  /** `project`, or `organization` for the organization's gear repository
+   *  (ADR-0042): then `project_id` is null and `project_name` is the
+   *  organization's. Absent from a server older than it. */
+  scope?: "project" | "organization" | string;
+}
+
+/** The organization's gear repository (ADR-0042 §2): where "Create a gear"
+ *  writes for a project without one of its own. */
+export interface OrgGearRepository {
+  /** The tenant whose catalogue holds the connection. */
+  tenant: string;
+  connection_id: string;
+  connection_label?: string | null;
+  /** `owner/name`. */
+  repo: string;
+  /** The branch new gears go back to. */
+  branch: string;
+  set_by?: string | null;
+  set_at?: string | null;
+}
+
+/** `GET /registry/gear-repository`: the setting, and whether the caller may
+ *  change it (`component.registry`). */
+export interface OrgGearRepositoryState {
+  gear_repository: OrgGearRepository | null;
+  may_manage: boolean;
+}
+
+/** What a scaffold wrote (or, on a dry run, would write), and where. */
+export interface ScaffoldResult {
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+  files: ScaffoldFile[];
+  /** `owner/name` written into; absent when there is nowhere to write. */
+  repo?: string | null;
+  /** Project scaffolds: which repository it is, in the order they are
+   *  chosen — `project`, `organization` or `sources`. The organization
+   *  route answers `organization`. */
+  target?: "project" | "organization" | "sources" | string | null;
+}
+
+/** What the last registry walk saw of one project. */
+export interface RegistryProjectWalk {
+  project_id: string;
+  project_name: string;
+  at: string;
+  /** Its repositories could not be listed at all. */
+  error?: string | null;
+  repos: {
+    repo: string;
+    /** `read`, `unchanged` or `failed`. */
+    status: string;
+    components: number;
+    error?: string | null;
+    /** What to do about `error`, when the walk knows. */
+    hint?: string | null;
+  }[];
+}
+
+/** Who answers for a registry entry. */
+export interface RegistryOwner {
+  kind: "person" | "team";
+  /** The person's Studio id, or the team's key, when known. */
+  id?: string | null;
+  name: string;
+}
+
+/** One decision a person made about a registry entry (ADR-0041 P2). */
+export interface RegistryDecision {
+  /** `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`,
+   *  `merge` or `edit`; also `declare` and `published` (by `platform-sync`). */
+  action: string;
+  from: string;
+  to: string;
+  /** The person's Studio id, else the token's subject. */
+  by: string;
+  by_name?: string | null;
+  at: string;
+  reason?: string | null;
+  /** The fields it set: `owner`, `replaced_by`, `merge_into`, `version`, `merged_from`, … */
+  details?: Record<string, unknown> | null;
+}
+
+/** What `POST /registry/{name}/decisions` takes. */
+export interface RegistryDecisionInput {
+  action: string;
+  reason?: string;
+  owner?: RegistryOwner;
+  kind?: string;
+  category?: string | null;
+  capabilities?: string[];
+  description?: string | null;
+  replaced_by?: string;
+  merge_into?: string;
+  version?: string;
+  /** For `publish` only: answer `publish_preview`, write and record nothing. */
+  dry_run?: boolean;
+}
+
+/** What a `publish` would write into the platform's gear repository: the
+ *  answer of a dry run. */
+export interface RegistryPublishPreview {
+  /** The platform's gear repository, `owner/name`. */
+  repo: string;
+  /** The branch the pull request goes back to. */
+  base_branch: string;
+  /** `contribute/<organization>/<name>`. */
+  branch: string;
+  /** Where the gear's files go there. */
+  path: string;
+  files: string[];
+  /** Not copied (not text), relative to the gear's directory. */
+  skipped: string[];
+  title: string;
+}
+
+/** One component of the organization's registry (ADR-0041). */
+export interface RegistryEntry {
+  name: string;
+  kind: string;
+  /** `candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated` or `merged`. */
+  state: string;
+  description?: string | null;
+  category?: string | null;
+  owner?: RegistryOwner | null;
+  capabilities: string[];
+  /** Names merged into this entry. */
+  aliases?: string[];
+  /** For a `merged` entry, the entry it was folded into. */
+  merged_into?: string | null;
+  /** For a `deprecated` entry, the entry to use instead. */
+  replaced_by?: string | null;
+  /** For a `published` entry, the platform's version of it when known. */
+  version?: string | null;
+  /** The pull request that gave it to the platform (ADR-0042 §4); the entry
+   *  stays `registered` until the platform's catalogue has it. */
+  contribution?: RegistryContribution | null;
+  /** The projects that use it without declaring it (ADR-0041 P4). */
+  consumers?: RegistryConsumer[];
+  /** What a model last proposed for it; never a state change. */
+  suggestion?: RegistrySuggestion | null;
+  /** Only on the single-entry read and a decision's answer, newest first. */
+  decisions?: RegistryDecision[] | null;
+  /** No repository declares it any more; kept because it was the organization's. */
+  orphaned: boolean;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  /** For a `candidate`: the sum of its evidence's weights (P3). */
+  score?: number | null;
+  /** For a `candidate`: why it looks like a gear, signal by signal. */
+  evidence?: RegistryEvidence[];
+  occurrences: RegistryOccurrence[];
+  /** What a `publish` with `dry_run` would write; absent otherwise. */
+  publish_preview?: RegistryPublishPreview | null;
+}
+
+/** A gear given to the platform: the pull request into its gear repository. */
+export interface RegistryContribution {
+  repo: string;
+  /** `contribute/<organization>/<name>`. */
+  branch: string;
+  pr_url?: string | null;
+  /** Where the files went in the platform's repository. */
+  path: string;
+  files: number;
+  at: string;
+  by: string;
+  by_name?: string | null;
+}
+
+/** A project that uses a registry entry it does not declare. */
+export interface RegistryConsumer {
+  project_id: string;
+  project_name: string;
+  /** `cargo`, `product`, or both. */
+  via: string[];
+}
+
+/** What `POST /registry/{name}/suggest` proposed. */
+export interface RegistrySuggestion {
+  description?: string | null;
+  category?: string | null;
+  /** Keys of the organization's capability vocabulary only. */
+  capabilities: string[];
+  at: string;
+  /** `provider:model`. */
+  model: string;
+}
+
+/** One signal a candidate detector found (ADR-0041 P3). */
+export interface RegistryEvidence {
+  /** `rest`, `persistence`, `types`, `boundary`, `docs`, `consumers` or `copied`. */
+  signal: string;
+  /** "own REST surface: rest.rs", "used by 3 modules", "copied in insight". */
+  detail: string;
+  weight: number;
+}
+
+/** What `POST /registry/{name}/declare` takes; all optional. */
+export interface RegistryDeclareInput {
+  description?: string;
+  capabilities?: string[];
+  category?: string;
+  dry_run?: boolean;
+  project_id?: string;
+}
+
+/** What Declare it did, or would do on a dry run. */
+export interface RegistryDeclareResult {
+  branch: string;
+  pr_url?: string | null;
+  files: { path: string; content: string }[];
+  repo: string;
+  path: string;
+  dry_run: boolean;
+  /** `gear.gdl` (the Gearbox engine's description) or `gear.toml` -- the
+   *  latter without an engine, or inside a crate's `src/`. Absent from an
+   *  older backend. */
+  manifest?: string;
+}
+
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
   key: string;
@@ -529,7 +789,20 @@ export interface Candidate {
   origin?: "catalogue" | "project";
   /** For a `project` gear, where it lives in the repository. */
   path?: string | null;
+  /** For a gear the organization's registry backs, its state there. */
+  registry_state?: string | null;
+  /** For a `deprecated` registry gear, the entry to use instead. */
+  replaced_by?: string | null;
+  /** Whose component it is (ADR-0042): the shared set, the organization's
+   *  own, or this project's. Absent from a server older than the tiers. */
+  tier?: ComponentTier;
 }
+
+/** Where a component comes from (ADR-0042): `platform` -- the shared set,
+ *  synced once for every organization; `organization` -- the organization's
+ *  own catalogue and registry; `project` -- declared in this project's own
+ *  repositories. */
+export type ComponentTier = "platform" | "organization" | "project";
 
 /** Why a candidate was offered, in the words of the step that offered it. */
 export function matchReason(c: Candidate): string {
@@ -782,6 +1055,8 @@ export interface ComponentValues {
   sources?: ComponentSource[];
   /** Known from a roadmap board alone: planned, no code catalogued yet. */
   planned?: boolean;
+  /** Whose catalogue it is in (ADR-0042). */
+  tier?: ComponentTier;
 }
 
 /** One place a component's facts came from. */
@@ -1202,6 +1477,12 @@ export interface CatalogNode {
   type_id: string;
   instance_id: string;
   value: {
+    /** Whose catalogue it is in (ADR-0042): the platform's, read-only to an
+     *  organization, or the organization's own. */
+    tier?: ComponentTier;
+    /** On a profile: the platform's, with this organization's annotation
+     *  laid over it. */
+    annotated?: boolean;
     // Gear nodes:
     name?: string;
     kind?: string;
@@ -3759,6 +4040,119 @@ export const api = {
       headers: idempotent(),
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
+  /** The organization's catalogue sources kept on the server (ADR-0041): what
+   *  a scheduled sync reads when nobody names the sources. */
+  catalogSources: (token: string) =>
+    request<{ items: CatalogRepoSource[]; total: number }>("/studio-components-catalog/v1/sources", token),
+  saveCatalogSources: (token: string, items: CatalogRepoSource[]) =>
+    request<{ items: CatalogRepoSource[]; total: number }>("/studio-components-catalog/v1/sources", token, {
+      method: "PUT",
+      body: JSON.stringify({ items: items.map(bareSource) }),
+    }),
+  /** The platform's catalogue sources (ADR-0042). A platform administrator
+   *  only: anyone else gets a 403 problem. */
+  platformSources: (token: string) =>
+    request<PlatformSources>("/studio-components-catalog/v1/platform/sources", token),
+  savePlatformSources: (token: string, items: CatalogRepoSource[], crates_io: string | null) =>
+    request<PlatformSources>("/studio-components-catalog/v1/platform/sources", token, {
+      method: "PUT",
+      body: JSON.stringify({ items: items.map(bareSource), crates_io }),
+    }),
+  /** Queue a sync of the platform's catalogue from its stored sources. */
+  syncPlatform: (token: string) =>
+    request<{ run_id: string; status: string }>("/studio-components-catalog/v1/platform/sync", token, {
+      method: "POST",
+      headers: idempotent(),
+    }),
+  /** The organization's component registry (ADR-0041): every component its
+   *  projects declare, with where each was found. */
+  componentRegistry: (token: string, params: { state?: string; project_id?: string; q?: string } = {}) => {
+    const qs = new URLSearchParams({ limit: "500" });
+    for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+    return request<{ items: RegistryEntry[]; total: number }>(`/studio-components-catalog/v1/registry?${qs}`, token);
+  },
+  /** One registry entry with its decisions, newest first. */
+  registryEntry: (token: string, name: string) =>
+    request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}`, token),
+  /** Move a registry entry through its lifecycle (ADR-0041 P2). An
+   *  organization administrator only: anyone else gets a 403 problem. */
+  decideRegistry: (token: string, name: string, decision: RegistryDecisionInput) =>
+    request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/decisions`, token, {
+      method: "POST",
+      body: JSON.stringify(decision),
+    }),
+  /** A model's description, category and capabilities for an entry, on the
+   *  caller's own key (ADR-0041 P4). Stored on the entry; never a state
+   *  change. 400 `PROVIDER_KEY_REQUIRED` without a model key. */
+  suggestRegistry: (token: string, name: string) =>
+    request<RegistrySuggestion>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/suggest`, token, {
+      method: "POST",
+    }),
+  /** What the last registry walk saw of each project: read, unchanged, or
+   *  not readable and why. */
+  registryProjects: (token: string) =>
+    request<{ items: RegistryProjectWalk[]; total: number }>("/studio-components-catalog/v1/registry/projects", token),
+  registryExcludedProjects: (token: string) =>
+    request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token),
+  saveRegistryExcludedProjects: (token: string, projectIds: string[]) =>
+    request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token, {
+      method: "PUT",
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+  /** Declare a candidate a gear (ADR-0041 P3): a pull request adding its
+   *  `gear.toml` (and `gear.gdl`) in the repository it was found in. With
+   *  `dry_run`, only the files. An organization administrator only. */
+  declareRegistry: (token: string, name: string, input: RegistryDeclareInput = {}) =>
+    request<RegistryDeclareResult>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/declare`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  /** The organization's gear repository (ADR-0042 §2). Every member reads it. */
+  orgGearRepository: (token: string) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token),
+  /** Set it. The connection must be organization-scoped; anything else is a
+   *  400 saying why. An organization administrator only. */
+  setOrgGearRepository: (token: string, body: { connection_id: string; repo: string; branch?: string }) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** Unset it; the repository itself is not touched. */
+  deleteOrgGearRepository: (token: string) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token, {
+      method: "DELETE",
+    }),
+  /** Create a repository through an organization-scoped connection and set it. */
+  createOrgGearRepository: (
+    token: string,
+    body: { connection_id: string; name: string; owner?: string; is_org?: boolean; private?: boolean },
+  ) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository/create", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** Create a gear in the organization's gear repository: the same skeleton
+   *  a project's scaffold writes, with a pull request by default. `dry_run`
+   *  answers the files only. An organization administrator only. */
+  scaffoldOrgGear: (
+    token: string,
+    body: {
+      slug: string;
+      problem?: string;
+      capabilities?: string[];
+      gear_kind?: GearKind;
+      plugin_host?: string;
+      plugin_spec?: string;
+      parent_dir?: string;
+      app_title?: string;
+      open_pr?: boolean;
+      dry_run?: boolean;
+    },
+  ) =>
+    request<ScaffoldResult & { dry_run: boolean }>("/studio-components-catalog/v1/registry/scaffold", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).then((r) => ({ ...r, target: "organization" as const })),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
    * read through `taskRun`; the counts are the run's `result`. */
   componentsCatalogTask: async (token: string, taskId: string) => {
@@ -3892,7 +4286,7 @@ export const api = {
 
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
-    request<{ nodes: CatalogNode[]; truncated?: boolean }>(
+    request<{ nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] }>(
       "/studio-components-catalog/v1/components",
       token,
     ),
@@ -3978,12 +4372,7 @@ export const api = {
       open_pr?: boolean;
     },
   ) =>
-    request<{
-      branch: string;
-      commit_sha: string;
-      pr_url?: string | null;
-      files: ScaffoldFile[];
-    }>(
+    request<ScaffoldResult>(
       `/studio-product/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },

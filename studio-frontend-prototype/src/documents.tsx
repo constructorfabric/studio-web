@@ -34,6 +34,7 @@ import {
   SpecRow,
   RemoteRepo,
   ScaffoldFile,
+  type ScaffoldResult,
   SpecFinding,
   type SpecFindingItem,
   StageStatus,
@@ -52,6 +53,7 @@ import { findingBreakdown, findingCount, findingDotTone, findingLabel } from "./
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
+import { scaffoldTargetLine } from "./org-gear-repository";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
@@ -2867,22 +2869,31 @@ function kindColor(kind: string): string {
 // rather than composing the files here and posting them, which is what made the
 // browser the only thing that knew what a gear looks like.
 
+/** What a scaffold is sent: the project's route or the organization's. */
+type ScaffoldBody = { slug: string; problem?: string; capabilities?: string[]; dry_run?: boolean; open_pr?: boolean };
+
 export function ScaffoldModal({
   capability,
   token,
   projectTenantId,
   problem,
   declares,
+  send,
   onBack,
   onClose,
 }: {
   capability: string;
   token: string;
-  projectTenantId: string;
+  /** The project the gear is for: its route picks the repository (its own
+   *  gear repository, else the organization's, else its sources). */
+  projectTenantId?: string;
   /** The PRD's opening sentence: what the specs ask of the gear. */
   problem?: string;
   /** Capability keys written into its gear.toml, so it declares them. */
   declares?: string[];
+  /** Where the request goes instead of the project's route: the
+   *  organization's Components page sends it to its gear repository. */
+  send?: (body: ScaffoldBody) => Promise<ScaffoldResult>;
   onBack?: () => void;
   onClose: () => void;
 }) {
@@ -2892,18 +2903,24 @@ export function ScaffoldModal({
   const [pushErr, setPushErr] = useState<string | null>(null);
   const [result, setResult] = useState<{ branch: string; pr_url?: string | null } | null>(null);
   const [files, setFiles] = useState<ScaffoldFile[] | null>(null);
+  /** Where it goes, as the server's dry run answered. */
+  const [where, setWhere] = useState<{ target?: string | null; repo?: string | null } | null>(null);
   const slug = gearSlug(capability);
+  const post = (body: ScaffoldBody): Promise<ScaffoldResult> =>
+    send ? send(body) : api.scaffoldGearToRepo(token, projectTenantId ?? "", body);
 
   // The preview is the server's own answer, asked for with nothing written.
   // A preview composed here would be a second generator, and a second
-  // generator is a promise the write does not have to keep.
+  // generator is a promise the write does not have to keep. It also says
+  // which repository the write would go to.
   useEffect(() => {
     let alive = true;
     setPushErr(null);
-    api
-      .scaffoldGearToRepo(token, projectTenantId, { slug: capability, problem, capabilities: declares, dry_run: true })
+    post({ slug: capability, problem, capabilities: declares, dry_run: true })
       .then((r) => {
-        if (alive) setFiles(r.files);
+        if (!alive) return;
+        setFiles(r.files);
+        setWhere({ target: r.target, repo: r.repo });
       })
       .catch((e) => {
         if (alive) setPushErr(errText(e));
@@ -2924,13 +2941,14 @@ export function ScaffoldModal({
     setPushing(true);
     setPushErr(null);
     try {
-      const r = await api.scaffoldGearToRepo(token, projectTenantId, {
+      const r = await post({
         slug: capability,
         problem,
         capabilities: declares,
         open_pr: openPr,
       });
       setResult({ branch: r.branch, pr_url: r.pr_url });
+      if (r.repo) setWhere({ target: r.target, repo: r.repo });
     } catch (e) {
       setPushErr(errText(e));
     } finally {
@@ -2946,10 +2964,13 @@ export function ScaffoldModal({
           <code style={{ fontSize: 12 }}>cf-gears-{slug}</code>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">✕</button>
         </div>
-        <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
-          Starter skeleton for the <code>{capability}</code> gap. Review, then push it to the
-          project's connected gear repo on a <code>scaffold/{slug}</code> branch — the session
-          agent fills it in, and a re-sync registers it in the catalog.
+        <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 6px" }}>
+          Starter skeleton for <code>{capability}</code>. Review, then push it on a{" "}
+          <code>scaffold/{slug}</code> branch — the session agent fills it in, and the registry finds
+          it once it is merged.
+        </p>
+        <p data-scaffold-target style={{ fontSize: 12, margin: "0 0 12px" }}>
+          <b>Where:</b> {where ? scaffoldTargetLine(where.target, where.repo) : "asking the server…"}
         </p>
         <div
           style={{
@@ -2985,9 +3006,12 @@ export function ScaffoldModal({
                 <input type="checkbox" checked={openPr} onChange={(e) => setOpenPr(e.target.checked)} />
                 open a pull request
               </label>
-              <span style={{ fontSize: 11, opacity: 0.6 }}>
-                needs a connected gear repository (card at the top of Documents)
-              </span>
+              {where && !where.repo && (
+                <span style={{ fontSize: 11, opacity: 0.6 }}>
+                  needs a gear repository: the project's (card at the top of Documents) or the
+                  organization's (Components → Ours)
+                </span>
+              )}
             </>
           )}
           {pushErr && (

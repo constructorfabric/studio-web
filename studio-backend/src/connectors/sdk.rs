@@ -28,7 +28,15 @@ pub use super::driver::{
     RemotePullRequest,
 };
 pub use super::repository::{Repository, create_repository};
-pub use super::service::{ConnectorService, connection_by_id};
+pub use super::service::{ConnectorService, check_owned, connection_by_id, holder_of_row};
+
+/// Whose connection a tenant may use: an organization, and anything under
+/// it, only one held by itself, one of its workspaces or one of its
+/// projects. The pure rule; [`ConnectorService::ensure_owned`] applies it
+/// over the real tree and catalogue.
+pub mod ownership {
+    pub use super::super::ownership::*;
+}
 
 /// The connector service, resolved from the ClientHub when used.
 #[derive(Clone)]

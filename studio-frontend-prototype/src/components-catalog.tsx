@@ -1,6 +1,26 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api } from "./api";
-import type { ComponentSource, ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
+import { ComponentRegistry } from "./component-registry";
+import { OrgGearRepositoryCard } from "./org-gear-repository-card";
+import { ApiError, api, PLATFORM_ROOT_TENANT_ID } from "./api";
+import type {
+  CatalogRepoSource,
+  ComponentSource,
+  ComponentValues,
+  CatalogNode,
+  Connection,
+  FieldSchema,
+  StudioKit,
+} from "./api";
+import {
+  annotationNote,
+  inTierTab,
+  shadowedNote,
+  shadowedSources,
+  sourceShadowHint,
+  tierCounts,
+  withoutSource,
+  type TierTab,
+} from "./component-tiers";
 import { errText } from "./format";
 import { fieldTrend, type ComponentSnapshot, type FieldTrend } from "./field-trend";
 import { readinessOf } from "./readiness";
@@ -407,6 +427,8 @@ function kitAsNode(kit: StudioKit): CatalogNode {
     type_id: KIT_TYPE,
     instance_id: `kit:${kit.slug}`,
     value: {
+      // A built-in kit ships with the platform (ADR-0042).
+      tier: "platform",
       name: kit.slug,
       kind: "kit",
       description: kit.description,
@@ -424,9 +446,24 @@ export function ComponentsCatalog({
   tenantId,
   onCategories,
   focus = null,
+  projects = [],
+  isPlatformAdmin = false,
+  tier = "organization",
+  orgName,
 }: {
   token: string;
   tenantId?: string;
+  /** Which level this page is (ADR-0042): the platform's components, shared
+   *  by every organization, or the organization's own. Two places in the
+   *  navigation -- the platform above the organizations -- never a toggle. */
+  tier?: "platform" | "organization";
+  /** The organization's name, for the organization level's heading. */
+  orgName?: string;
+  /** Whether the caller is a platform administrator: the one who names the
+   *  platform's catalogue sources (ADR-0042). */
+  isPlatformAdmin?: boolean;
+  /** The organization's projects: which ones the registry reads. */
+  projects?: { id: string; name: string }[];
   /** The shell's filter rail. Not read: the catalogue's search, kind,
    *  category, SDK switch and sort are its own, above the list and in the
    *  address (docs/list-standard.md). */
@@ -447,6 +484,19 @@ export function ComponentsCatalog({
    *  the editor writes them — this is what the table reads. */
   const [resolved, setResolved] = useState<Record<string, ComponentValues>>({});
   const [selected, setSelected] = useSelectedComponent(focus?.name ?? null);
+  /** The catalogue (what the sources list) or the registry (what the
+   *  organization's projects declare, ADR-0041). */
+  const [pane, setPane] = useState<"catalogue" | "registry">("registry");
+  /** Which tier the catalogue shows (ADR-0042), fixed by the level the page
+   *  was opened at. */
+  const tierTab: TierTab = tier;
+  const platformLevel = tier === "platform";
+  /** The organization's components the platform shadows, by name. */
+  const [shadowed, setShadowed] = useState<string[]>([]);
+  /** The organization's sources as the server keeps them, each marked
+   *  whether the platform already reads it. */
+  const [serverSources, setServerSources] = useState<CatalogRepoSource[] | null>(null);
+  const [showPlatformSources, setShowPlatformSources] = useState(false);
   useEffect(() => {
     if (focus) setSelected(focus.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -571,6 +621,7 @@ export function ComponentsCatalog({
       // deployment which has never run a kit sync still shows them.
       const nodes = componentResponse.nodes ?? [];
       setTruncated(Boolean(componentResponse.truncated));
+      setShadowed(componentResponse.shadowed ?? []);
       const registry = new Map((kitResponse.items ?? []).map((k) => [k.slug, k]));
       const synced = new Set(
         nodes
@@ -662,6 +713,9 @@ export function ComponentsCatalog({
     setSync("queued…");
     try {
       const { run_id } = await api.syncComponents(token, body);
+      // Kept on the server too, so the scheduled sync reads the same sources
+      // (ADR-0041); a backend without the route keeps working as before.
+      void api.saveCatalogSources(token, body.repositories).catch(() => undefined);
       const deadline = Date.now() + 10 * 60 * 1000;
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
@@ -711,6 +765,7 @@ export function ComponentsCatalog({
       // already applied the marks to what it sent -- but applying it in one
       // place is what keeps the two agreeing.
       .filter((g) => componentTypes === null || componentTypes.has(g.type_id))
+      .filter((g) => inTierTab(g, tierTab))
       .filter((g) => !hideSdk || componentKind(g) !== "sdk")
       .filter((g) => !cat || categoryOf(g).toLowerCase().includes(cat))
       .filter((g) => {
@@ -728,7 +783,44 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes]);
+  }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes, tierTab]);
+  const tiers = useMemo(() => tierCounts(gears ?? []), [gears]);
+  const levelNodes = useMemo(() => (gears ?? []).filter((g) => inTierTab(g, tierTab)), [gears, tierTab]);
+
+  // The organization's sources as the server keeps them, read when the
+  // Sources panel opens: which of them the platform already provides.
+  useEffect(() => {
+    if (!showSources) return;
+    let live = true;
+    api
+      .catalogSources(token)
+      .then(({ items }) => {
+        if (live) setServerSources(items ?? []);
+      })
+      .catch(() => {
+        if (live) setServerSources(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, showSources]);
+
+  const removeServerSource = async (gone: CatalogRepoSource) => {
+    if (!serverSources) return;
+    try {
+      const { items } = await api.saveCatalogSources(token, withoutSource(serverSources, gone));
+      // Saved without it; the server answers what it now keeps, unmarked.
+      setServerSources(items.map((i) => ({ ...i, shadowed_by_platform: false })));
+      // This browser's picker for the next sync stops naming it too.
+      const sameRepo = (sel: RepoSel) => sel.repo.trim().toLowerCase() === gone.repo.trim().toLowerCase();
+      for (const which of ["gears", "frontx", "kits", "kitsPm"] as const) {
+        const mode = which === "kitsPm" ? "kits" : which;
+        if (mode === (gone.mode || "gears") && sameRepo(sources[which])) setRepo(which, { enabled: false });
+      }
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
 
   /* The chip above the table wins over the filter rail's kind; either way it
      is one value, applied by the same predicate the chips counted with. */
@@ -848,7 +940,7 @@ export function ComponentsCatalog({
   const syncing = sync.endsWith("…");
   /* What filled the catalogue, read off the nodes -- the picker below is only
      this browser's choice for the NEXT sync. */
-  const filledFrom = useMemo(() => syncedSources(gears ?? [], profiles).join(" + "), [gears, profiles]);
+  const filledFrom = useMemo(() => syncedSources(levelNodes, profiles).join(" + "), [levelNodes, profiles]);
   const sourceSummary = [
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
@@ -880,8 +972,31 @@ export function ComponentsCatalog({
         <>
           <div className="gcat-topbar">
             <div className="crumb">
-              <h1>Components</h1>
-              <span className="asof">{filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}</span>
+              <span
+                className={`gcat-level gcat-level-${tier}`}
+                data-level={tier}
+                title={
+                  platformLevel
+                    ? "The platform: above every organization, shared by all of them"
+                    : "This organization: what its projects build"
+                }
+              >
+                {platformLevel ? "Platform" : orgName ? `Organization · ${orgName}` : "Organization"}
+              </span>
+              <h1>{platformLevel ? "Platform components" : "Our components"}</h1>
+              <span className="asof">
+                {tiers[tier]} · {filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}
+              </span>
+              {!platformLevel && (
+                <span className="chips" role="tablist" aria-label="Our components" style={{ margin: "0 0 0 12px" }}>
+                  <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                    Registry
+                  </button>
+                  <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
+                    Catalogue <span className="n">{tiers.organization}</span>
+                  </button>
+                </span>
+              )}
             </div>
             <div className="tools">
               <div className="seg" role="tablist" aria-label="View mode">
@@ -902,25 +1017,57 @@ export function ComponentsCatalog({
                   </button>
                 ))}
               </div>
-              <button
-                className={`iconbtn${showSources ? " active" : ""}`}
-                onClick={() => setShowSources((v) => !v)}
-                aria-expanded={showSources}
-              >
-                Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
-              </button>
-              <button className="iconbtn" onClick={() => setShowReport(true)}>
-                Roadmap report
-              </button>
-              <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
-                {syncing ? "Syncing…" : "Sync"}
-              </button>
+              {!platformLevel && (
+                <>
+                  <button
+                    className={`iconbtn${showSources ? " active" : ""}`}
+                    onClick={() => setShowSources((v) => !v)}
+                    aria-expanded={showSources}
+                    title="The repositories this organization's catalogue reads, besides its projects"
+                  >
+                    Our sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
+                  </button>
+                  <button className="iconbtn" onClick={() => setShowReport(true)}>
+                    Roadmap report
+                  </button>
+                  <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
+                    {syncing ? "Syncing…" : "Sync"}
+                  </button>
+                </>
+              )}
+              {platformLevel && isPlatformAdmin && (
+                <button
+                  className={`iconbtn primary${showPlatformSources ? " active" : ""}`}
+                  onClick={() => setShowPlatformSources((v) => !v)}
+                  aria-expanded={showPlatformSources}
+                  title="What the platform's components are read from. Only a platform administrator changes it."
+                >
+                  Platform sources &amp; sync
+                </button>
+              )}
             </div>
           </div>
 
           {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
 
-          {showSources && (
+          {platformLevel && isPlatformAdmin && showPlatformSources && (
+            <PlatformSourcesPanel token={token} onSynced={() => void reload()} />
+          )}
+
+          {!platformLevel && serverSources && shadowedSources(serverSources).length > 0 && (
+            <div className="gcat-hint" data-shadowed-sources>
+              {shadowedSources(serverSources).map((s) => (
+                <p key={`${s.repo}|${s.mode}|${s.git_ref ?? ""}`}>
+                  {sourceShadowHint(s)}{" "}
+                  <button className="ghost" onClick={() => void removeServerSource(s)}>
+                    Remove
+                  </button>
+                </p>
+              ))}
+            </div>
+          )}
+
+          {!platformLevel && showSources && (
             <SourcesPanel
               sources={sources}
               setSrc={setSrc}
@@ -930,12 +1077,26 @@ export function ComponentsCatalog({
             />
           )}
 
-          <p className="gcat-sub">
-            A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
-            repository, micro-frontends from FrontX, and kits — read through a connector, with
-            crates.io adding published versions. Each component opens a page of grouped fields,
-            traffic lights and sources; an empty cell is a finding, not an omission.
-          </p>
+          {platformLevel ? (
+            <p className="gcat-sub" data-level-note>
+              <strong>The common set every organization builds on.</strong> Gears, tools and SDKs from the
+              platform's Gears repository, micro-frontends from FrontX and kits, synced once for all
+              organizations, with crates.io adding published versions. Every organization sees the same list;
+              a field you edit is kept as your organization's annotation, over the platform's facts. A gear an
+              organization publishes joins this set once the platform merges it.
+            </p>
+          ) : (
+            <>
+              <p className="gcat-sub" data-level-note>
+                <strong>Built by this organization.</strong> Every component its projects declare, the code
+                that could become one, and the gears it keeps in its own gear repository. Only this
+                organization's members see them; publishing one gives it to the platform. The common set is
+                one level up, under <em>Platform</em> — a product draws on both.
+              </p>
+              <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
+              {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
+            </>
+          )}
 
           {truncated && (
             <p className="gcat-hint">
@@ -948,7 +1109,14 @@ export function ComponentsCatalog({
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {viewMode === "graph" ? (
+          {!platformLevel && pane === "registry" ? (
+            <ComponentRegistry
+              token={token}
+              projects={projects}
+              isPlatformAdmin={isPlatformAdmin}
+              onOpenComponent={(name) => { setPane("catalogue"); setSelected(name); }}
+            />
+          ) : viewMode === "graph" ? (
             <>
               <div className="dt-toolbar">
                 <div className="dt-toolbar-left">{filterControls}</div>
@@ -1132,6 +1300,175 @@ function KindPicker({
           <span className="gcat-type-n">{c.count}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** The platform's catalogue sources (ADR-0042), for a platform administrator:
+ *  the repositories and the crates.io keyword every organization's catalogue
+ *  reads, saved in the platform's tenant, and a sync of them. */
+function PlatformSourcesPanel({ token, onSynced }: { token: string; onSynced: () => void }) {
+  const [items, setItems] = useState<CatalogRepoSource[] | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .platformSources(token)
+      .then((s) => {
+        if (!live) return;
+        setItems(s.items ?? []);
+        setKeyword(s.crates_io ?? "");
+      })
+      .catch((e) => {
+        if (live) setStatus(errText(e));
+      });
+    api
+      .connections(token, PLATFORM_ROOT_TENANT_ID)
+      .then(({ items: found }) => {
+        if (live) setConnections(found.filter((c) => c.provider === "github"));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  const patch = (i: number, change: Partial<CatalogRepoSource>) =>
+    setItems((cur) => (cur ?? []).map((s, j) => (j === i ? { ...s, ...change } : s)));
+
+  const save = async (): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const saved = await api.savePlatformSources(
+        token,
+        (items ?? []).filter((s) => s.repo.trim()),
+        keyword.trim() || null,
+      );
+      setItems(saved.items);
+      setKeyword(saved.crates_io ?? "");
+      setStatus("Saved. The platform's catalogue is synced daily from these.");
+      return true;
+    } catch (e) {
+      setStatus(errText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sync = async () => {
+    if (!(await save())) return;
+    setBusy(true);
+    try {
+      const { run_id } = await api.syncPlatform(token);
+      setStatus("Platform sync queued…");
+      const deadline = Date.now() + 10 * 60 * 1000;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const t = await api.componentsCatalogTask(token, run_id);
+        if (t.status === "succeeded") {
+          setStatus(`Platform synced: ${t.gears} gears · ${t.versions} versions`);
+          onSynced();
+          break;
+        }
+        if (t.status === "failed" || t.status === "cancelled") {
+          setStatus(t.message || `sync ${t.status}`);
+          break;
+        }
+        setStatus(`${(t.message || t.status).replace(/…$/, "")} — ${t.gears} gears…`);
+        if (Date.now() > deadline) {
+          setStatus("timed out — still running server-side");
+          break;
+        }
+      }
+    } catch (e) {
+      setStatus(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sources" data-platform-sources>
+      <p className="gcat-hint">
+        <strong>Platform sources.</strong> What the platform's catalogue reads — the shared components every
+        organization sees under Platform. Only a platform administrator sees and changes this.
+      </p>
+      {items === null ? (
+        <p className="gcat-hint">{status || "Loading…"}</p>
+      ) : (
+        <>
+          {items.map((s, i) => (
+            <div key={i} className="editrow">
+              <input
+                aria-label="Repository (owner/name)"
+                placeholder="owner/name"
+                value={s.repo}
+                onChange={(e) => patch(i, { repo: e.target.value })}
+              />
+              <select aria-label="Mode" value={s.mode || "gears"} onChange={(e) => patch(i, { mode: e.target.value })}>
+                <option value="gears">gears</option>
+                <option value="frontx">frontx</option>
+                <option value="kits">kits</option>
+              </select>
+              <input
+                aria-label="Ref"
+                placeholder="HEAD"
+                value={s.git_ref ?? ""}
+                onChange={(e) => patch(i, { git_ref: e.target.value || null })}
+              />
+              <select
+                aria-label="Connection"
+                value={s.connection_id ?? ""}
+                onChange={(e) => patch(i, { connection_id: e.target.value || null })}
+              >
+                <option value="">First GitHub connection</option>
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label || c.account || c.id}
+                  </option>
+                ))}
+              </select>
+              <button className="ghost" onClick={() => setItems(items.filter((_, j) => j !== i))}>
+                Remove
+              </button>
+            </div>
+          ))}
+          <div className="editrow">
+            <button
+              className="ghost"
+              onClick={() =>
+                setItems([
+                  ...items,
+                  { tenant: PLATFORM_ROOT_TENANT_ID, connection_id: null, repo: "", git_ref: null, mode: "gears" },
+                ])
+              }
+            >
+              Add repository
+            </button>
+            <label>
+              crates.io keyword{" "}
+              <input
+                aria-label="crates.io keyword"
+                placeholder="none"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </label>
+            <button className="iconbtn" disabled={busy} onClick={() => void save()}>
+              Save
+            </button>
+            <button className="iconbtn primary" disabled={busy} onClick={() => void sync()}>
+              Save and sync
+            </button>
+          </div>
+          {status && <p className="gcat-hint">{status}</p>}
+        </>
+      )}
     </div>
   );
 }
@@ -2085,9 +2422,14 @@ function GearDetail({
 
       <Versions name={name} rows={versions} repository={gear.value.repository as string | undefined} />
 
+      {annotationNote(gear) && <p className="gcat-hint">{annotationNote(gear)}</p>}
       <div className="editrow">
         <button className="iconbtn" onClick={() => setEditing((e) => !e)}>
-          {editing ? "Close editor" : "Edit Gear profile"}
+          {editing
+            ? "Close editor"
+            : annotationNote(gear)
+              ? "Edit our annotation"
+              : "Edit Gear profile"}
         </button>
         {gear.value.repository && (
           <a href={String(gear.value.repository)} target="_blank" rel="noreferrer">
@@ -3250,6 +3592,9 @@ const GCAT_CSS = `
 .gcat * { box-sizing:border-box; }
 
 .gcat .gcat-topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+.gcat .gcat-level { display:inline-block; font:600 11px/1 var(--mono, monospace); letter-spacing:.06em; text-transform:uppercase; padding:4px 8px; border-radius:6px; margin-right:10px; vertical-align:middle; }
+.gcat .gcat-level-platform { background:#dbeafe; color:#1d4ed8; }
+.gcat .gcat-level-organization { background:#dcfce7; color:#15803d; }
 .gcat .crumb { display:flex; align-items:center; gap:10px; min-width:0; }
 .gcat .crumb h1 { font-size:20px; font-weight:600; letter-spacing:-.015em; margin:0; }
 .gcat .crumb .sep { color:var(--studio-edge); }

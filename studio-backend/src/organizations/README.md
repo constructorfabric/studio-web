@@ -24,6 +24,11 @@ This README is what you need to work in the directory.
   writes the access config's grants itself (ADR-0040).
 - The rollups read `studio-documents` and `studio-artifact-ingest` through
   their ClientHub ports when present; a missing one leaves its columns null.
+- [`port.rs`](port.rs) publishes `ProjectsOf` at init: an organization's
+  project tenants with their workspaces, for the components registry. It is
+  the rollups' walk (`rollups::children_of`, every page), and a listing that
+  fails is an error there, not an empty organization. No other gear walks
+  the tenant tree itself.
 
 ## Working here
 

@@ -26,12 +26,30 @@ use super::gts::{self, GtsEdge, GtsNode};
 /// `graph` feature is on and its client is published); otherwise the in-memory
 /// fallback, so the gear still runs.
 pub(crate) fn build_sink(hub: &ClientHub, gear: &str) -> Arc<dyn CatalogSink> {
+    build(hub, gear, false)
+}
+
+/// [`build_sink`], answering every read with the context tenant's own nodes
+/// alone.
+///
+/// graph-storage keeps the scope the PDP returned on a read, and Studio's
+/// PDP admits the context tenant AND every organization the caller is a
+/// member of (with their subtrees, where the hierarchy is asked for). That is
+/// visibility, not ownership: a catalogue read in one tenant must not list a
+/// node another tenant wrote under the same deterministic key. The
+/// components catalogue keeps one catalogue per tenant and reads the
+/// platform's beside an organization's (ADR-0042), so it asks for this.
+pub(crate) fn build_sink_own_tenant(hub: &ClientHub, gear: &str) -> Arc<dyn CatalogSink> {
+    build(hub, gear, true)
+}
+
+fn build(hub: &ClientHub, gear: &str, own_tenant_only: bool) -> Arc<dyn CatalogSink> {
     #[cfg(feature = "graph")]
     {
         match hub.get::<dyn graph_storage_sdk::GraphStorageClientV1>() {
             Ok(client) => {
                 tracing::info!("{gear}: using the graph-storage gear as the catalog store");
-                return Arc::new(GraphSink::new(client));
+                return Arc::new(GraphSink::new(client, own_tenant_only));
             }
             Err(e) => tracing::warn!(
                 error = %e,
@@ -39,7 +57,7 @@ pub(crate) fn build_sink(hub: &ClientHub, gear: &str) -> Arc<dyn CatalogSink> {
             ),
         }
     }
-    let _ = (hub, gear);
+    let _ = (hub, gear, own_tenant_only);
     Arc::new(MemorySink::default())
 }
 
@@ -48,6 +66,13 @@ pub(crate) fn build_sink(hub: &ClientHub, gear: &str) -> Arc<dyn CatalogSink> {
 #[async_trait]
 pub(crate) trait CatalogSink: Send + Sync {
     async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()>;
+    /// Whether what one tenant writes is invisible to another, as in
+    /// graph-storage. Only then can the catalogue read the platform's tier
+    /// (ADR-0042) beside an organization's: a store that holds every tenant's
+    /// nodes in one place would answer both reads with the same nodes.
+    fn tenant_scoped(&self) -> bool {
+        false
+    }
     async fn upsert(
         &self,
         ctx: &SecurityContext,
@@ -148,10 +173,41 @@ pub struct GraphNodeType {
 
 /// In-memory store, keyed by instance id so a re-sync upserts. Resets on
 /// restart; the catalog is cheap to re-sync.
+///
+/// One map for every tenant by default -- the fallback a deployment without
+/// graph-storage runs on. [`MemorySink::tenant_scoped`] keeps each tenant's
+/// nodes apart, as graph-storage does, for what has to tell them apart (the
+/// platform's tier beside an organization's, ADR-0042).
 #[derive(Default)]
 pub(crate) struct MemorySink {
     nodes: Mutex<HashMap<String, GtsNode>>,
     snapshots: Mutex<HashMap<String, Value>>,
+    scoped: bool,
+}
+
+impl MemorySink {
+    /// A store that keeps each tenant's nodes apart.
+    #[allow(dead_code)]
+    pub(crate) fn tenant_scoped() -> Self {
+        Self {
+            scoped: true,
+            ..Self::default()
+        }
+    }
+
+    /// The map key of `instance_id` written in `ctx`'s tenant.
+    fn key(&self, ctx: &SecurityContext, instance_id: &str) -> String {
+        if self.scoped {
+            format!("{}/{instance_id}", ctx.subject_tenant_id())
+        } else {
+            instance_id.to_owned()
+        }
+    }
+
+    /// Whether a stored key is `ctx`'s tenant's.
+    fn mine(&self, ctx: &SecurityContext, key: &str) -> bool {
+        !self.scoped || key.starts_with(&format!("{}/", ctx.subject_tenant_id()))
+    }
 }
 
 #[async_trait]
@@ -160,9 +216,13 @@ impl CatalogSink for MemorySink {
         Ok(())
     }
 
+    fn tenant_scoped(&self) -> bool {
+        self.scoped
+    }
+
     async fn upsert(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         nodes: &[GtsNode],
         _edges: &[GtsEdge],
     ) -> anyhow::Result<()> {
@@ -171,14 +231,14 @@ impl CatalogSink for MemorySink {
             .lock()
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
         for n in nodes {
-            map.insert(n.instance_id.clone(), n.clone());
+            map.insert(self.key(ctx, &n.instance_id), n.clone());
         }
         Ok(())
     }
 
     async fn list(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>> {
         let map = self
@@ -186,31 +246,37 @@ impl CatalogSink for MemorySink {
             .lock()
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
         Ok(map
-            .values()
+            .iter()
+            .filter(|(k, _)| self.mine(ctx, k))
+            .map(|(_, n)| n)
             .filter(|n| type_filter.is_none_or(|t| n.type_id.contains(t)))
             .cloned()
             .collect())
     }
 
-    async fn delete(&self, _ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
+    async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
         let mut map = self
             .nodes
             .lock()
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
-        map.remove(instance_id);
+        map.remove(&self.key(ctx, instance_id));
         Ok(())
     }
 
     /// The types this store has actually seen. It has no ontology of its own,
     /// so "registered" and "has a node" are the same question here — which is
     /// the honest answer for a fallback store, not a smaller one.
-    async fn node_types(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
+    async fn node_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
         let map = self
             .nodes
             .lock()
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
         let mut seen: BTreeMap<String, GraphNodeType> = BTreeMap::new();
-        for node in map.values() {
+        for node in map
+            .iter()
+            .filter(|(k, _)| self.mine(ctx, k))
+            .map(|(_, n)| n)
+        {
             let type_id = gts::graph_type_id(node.type_id);
             seen.entry(type_id.clone()).or_insert(GraphNodeType {
                 leaf_id: gts::leaf_type_id(&type_id),
@@ -223,7 +289,7 @@ impl CatalogSink for MemorySink {
 
     async fn list_of_types(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         graph_types: &[String],
         limit: usize,
     ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
@@ -234,7 +300,9 @@ impl CatalogSink for MemorySink {
         let wanted: std::collections::HashSet<&str> =
             graph_types.iter().map(String::as_str).collect();
         let mut out: Vec<CatalogNodeView> = map
-            .values()
+            .iter()
+            .filter(|(k, _)| self.mine(ctx, k))
+            .map(|(_, n)| n)
             .filter(|n| wanted.contains(gts::graph_type_id(n.type_id).as_str()))
             .map(|n| CatalogNodeView {
                 type_id: n.type_id.to_string(),
@@ -250,7 +318,7 @@ impl CatalogSink for MemorySink {
 
     async fn count_of_type(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         graph_type: &str,
         cap: usize,
     ) -> anyhow::Result<(usize, bool)> {
@@ -259,7 +327,9 @@ impl CatalogSink for MemorySink {
             .lock()
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
         let total = map
-            .values()
+            .iter()
+            .filter(|(k, _)| self.mine(ctx, k))
+            .map(|(_, n)| n)
             .filter(|n| gts::graph_type_id(n.type_id) == graph_type)
             .count();
         Ok((total.min(cap), total > cap))
@@ -326,12 +396,25 @@ fn node_name(value: &Value) -> String {
 #[cfg(feature = "graph")]
 pub(crate) struct GraphSink {
     client: Arc<dyn graph_storage_sdk::GraphStorageClientV1>,
+    /// Keep only the rows the context tenant owns (`build_sink_own_tenant`).
+    own_tenant_only: bool,
 }
 
 #[cfg(feature = "graph")]
 impl GraphSink {
-    pub(crate) fn new(client: Arc<dyn graph_storage_sdk::GraphStorageClientV1>) -> Self {
-        Self { client }
+    pub(crate) fn new(
+        client: Arc<dyn graph_storage_sdk::GraphStorageClientV1>,
+        own_tenant_only: bool,
+    ) -> Self {
+        Self {
+            client,
+            own_tenant_only,
+        }
+    }
+
+    /// Whether a row a read returned is one this read should answer with.
+    fn owned(&self, ctx: &SecurityContext, row: &graph_storage_sdk::models::NodeRow) -> bool {
+        !self.own_tenant_only || row.envelope.tenant_id == ctx.subject_tenant_id()
     }
 }
 
@@ -433,6 +516,10 @@ fn node_batch(
 #[cfg(feature = "graph")]
 #[async_trait]
 impl CatalogSink for GraphSink {
+    fn tenant_scoped(&self) -> bool {
+        self.own_tenant_only
+    }
+
     /// One atomic batch, idempotent: a byte-identical re-registration
     /// converges. Each type derives from a graph-storage family — a free-form
     /// type has no chain to validate against and is refused.
@@ -581,7 +668,7 @@ impl CatalogSink for GraphSink {
                 .await
                 .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
             for row in page.items {
-                if is_retired(row.payload.as_ref()) {
+                if is_retired(row.payload.as_ref()) || !self.owned(ctx, &row) {
                     continue;
                 }
                 let Some(type_id) = gts::our_type_from_graph(&row.type_id) else {
@@ -694,7 +781,7 @@ impl CatalogSink for GraphSink {
                 .await
                 .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
             for row in page.items {
-                if is_retired(row.payload.as_ref()) {
+                if is_retired(row.payload.as_ref()) || !self.owned(ctx, &row) {
                     continue;
                 }
                 out.push(CatalogNodeView {
@@ -737,7 +824,7 @@ impl CatalogSink for GraphSink {
             total += page
                 .items
                 .iter()
-                .filter(|row| !is_retired(row.payload.as_ref()))
+                .filter(|row| !is_retired(row.payload.as_ref()) && self.owned(ctx, row))
                 .count();
             if total >= cap {
                 return Ok((cap, true));
@@ -857,6 +944,8 @@ mod graph_sink_tests {
         type_id: String,
         payload: Value,
         tombstoned: bool,
+        /// The tenant that wrote it, as the gear's envelope records it.
+        tenant: Uuid,
     }
 
     #[derive(Default)]
@@ -874,18 +963,19 @@ mod graph_sink_tests {
                     type_id: type_id.to_owned(),
                     payload: json!({}),
                     tombstoned: true,
+                    tenant: Uuid::nil(),
                 },
             );
         }
     }
 
-    fn envelope(key: &str) -> ElementEnvelope {
+    fn envelope(key: &str, tenant: Uuid) -> ElementEnvelope {
         let subject = Subject {
             subject_id: Uuid::nil(),
             subject_type: None,
         };
         ElementEnvelope {
-            tenant_id: Uuid::nil(),
+            tenant_id: tenant,
             key: key.to_owned(),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             created_by: subject.clone(),
@@ -940,7 +1030,7 @@ mod graph_sink_tests {
         /// Atomic like the gear: one tombstoned key and nothing is written.
         async fn ingest(
             &self,
-            _ctx: &SecurityContext,
+            ctx: &SecurityContext,
             request: IngestRequest,
         ) -> Result<IngestOutcome, CanonicalError> {
             let mut nodes = self.nodes.lock().unwrap();
@@ -978,6 +1068,7 @@ mod graph_sink_tests {
                         type_id: spec.type_id,
                         payload: spec.payload.unwrap_or_else(|| json!({})),
                         tombstoned: false,
+                        tenant: ctx.subject_tenant_id(),
                     },
                 );
             }
@@ -1039,7 +1130,7 @@ mod graph_sink_tests {
                 labels: Vec::new(),
                 adjacency: Vec::new(),
                 adjacency_truncated: false,
-                envelope: envelope(node_key),
+                envelope: envelope(node_key, row.tenant),
             })
         }
 
@@ -1058,7 +1149,7 @@ mod graph_sink_tests {
                     type_id: r.type_id.clone(),
                     name: None,
                     payload: Some(r.payload.clone()),
-                    envelope: envelope(k),
+                    envelope: envelope(k, r.tenant),
                 })
                 .collect();
             Ok(toolkit_odata::Page::new(
@@ -1108,7 +1199,61 @@ mod graph_sink_tests {
 
     fn sink() -> (Arc<FakeGraph>, GraphSink) {
         let fake = Arc::new(FakeGraph::default());
-        (fake.clone(), GraphSink::new(fake))
+        (fake.clone(), GraphSink::new(fake, false))
+    }
+
+    fn in_tenant(tenant: u128) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca9))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(tenant))
+            .build()
+            .expect("security context")
+    }
+
+    /// The PDP admits more than the context tenant on a read -- every
+    /// organization the caller is a member of -- and the fake answers every
+    /// row, as such a scope would. A sink asked for its own tenant's nodes
+    /// lists those alone; the shared one keeps what the scope admitted.
+    #[tokio::test]
+    async fn an_own_tenant_sink_lists_only_what_its_tenant_wrote() {
+        let fake = Arc::new(FakeGraph::default());
+        let own = GraphSink::new(fake.clone(), true);
+        let shared = GraphSink::new(fake.clone(), false);
+        assert!(own.tenant_scoped() && !shared.tenant_scoped());
+        let (root, org) = (in_tenant(1), in_tenant(0xc31));
+        own.upsert(&root, &[gear("cf-gears-ledger")], &[])
+            .await
+            .unwrap();
+        own.upsert(&org, &[gear("acme-billing")], &[])
+            .await
+            .unwrap();
+
+        async fn listed(sink: &GraphSink, ctx: &SecurityContext) -> Vec<String> {
+            let mut names: Vec<String> = sink
+                .list(ctx, Some(gts::GEAR_TYPE))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|n| n.value["name"].as_str().unwrap_or_default().to_owned())
+                .collect();
+            names.sort();
+            names
+        }
+        assert_eq!(listed(&own, &root).await, vec!["cf-gears-ledger"]);
+        assert_eq!(listed(&own, &org).await, vec!["acme-billing"]);
+        assert_eq!(
+            listed(&shared, &org).await,
+            vec!["acme-billing", "cf-gears-ledger"]
+        );
+        let types = [gts::graph_type_id(gts::GEAR_TYPE)];
+        let (of_type, _) = own.list_of_types(&org, &types, 10).await.unwrap();
+        assert_eq!(of_type.len(), 1);
+        assert_eq!(of_type[0].value["name"], "acme-billing");
+        assert_eq!(
+            own.count_of_type(&root, &types[0], 10).await.unwrap(),
+            (1, false)
+        );
     }
 
     fn gear(name: &str) -> GtsNode {

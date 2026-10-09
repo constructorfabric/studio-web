@@ -231,6 +231,31 @@ pub struct IngestService {
     /// Fallback own-clone volume (`STUDIO_ARTIFACT_WORKDIR`). `None` = no
     /// fallback clone → tree-API metadata when no workspace checkout exists.
     work_root: Option<PathBuf>,
+    /// The connector service, asked whose connection holds the token a sync
+    /// reads with (`connectors::sdk::ownership`). `None` refuses every
+    /// sync that names a token: nothing could say it is the organization's.
+    connectors: Option<crate::connectors::sdk::Connectors>,
+}
+
+/// Why a sync may not read with the token it names.
+#[derive(Debug)]
+pub enum TokenRefused {
+    /// The connection holding it is held outside the organization the sync
+    /// is for -- the platform's root, or another organization.
+    NotOwned(crate::connectors::sdk::ownership::NotOwned),
+    /// No connection the sync's tenant can see holds that reference.
+    Unknown,
+}
+
+impl std::fmt::Display for TokenRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotOwned(refused) => refused.fmt(f),
+            Self::Unknown => f.write_str(
+                "no connection of this organization holds that token reference: a repository is read only through a connection held by the organization, one of its workspaces or one of its projects",
+            ),
+        }
+    }
 }
 
 /// One spec-quality finding to persist. Built by the portal from a detector
@@ -282,6 +307,43 @@ impl IngestService {
             classifier,
             workspaces_root,
             work_root,
+            connectors: None,
+        }
+    }
+
+    /// Ask `connectors` whose token a sync reads with.
+    pub fn with_connectors(mut self, connectors: crate::connectors::sdk::Connectors) -> Self {
+        self.connectors = Some(connectors);
+        self
+    }
+
+    /// Refuse a sync, asked by `caller`, for `tenant` (its project, else
+    /// its workspace, else the caller's own tenant), that reads with a
+    /// token the organization does not hold. Credstore lends a token to
+    /// every tenant below its holder, so without this an organization's
+    /// sync could name the platform's token and read a repository with the
+    /// platform's rights (`cpt-studio-constraint-connector-own-connections`).
+    /// An empty reference reads nothing and passes.
+    pub async fn ensure_token_owned(
+        &self,
+        ctx: &SecurityContext,
+        caller: Uuid,
+        tenant: Uuid,
+        secret_ref: &str,
+    ) -> Result<(), TokenRefused> {
+        if secret_ref.trim().is_empty() {
+            return Ok(());
+        }
+        let Some(connectors) = self.connectors.as_ref().and_then(|c| c.get()) else {
+            return Err(TokenRefused::Unknown);
+        };
+        match connectors
+            .ensure_secret_owned(ctx, caller, tenant, secret_ref)
+            .await
+        {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(TokenRefused::Unknown),
+            Err(refused) => Err(TokenRefused::NotOwned(refused)),
         }
     }
 
@@ -2328,6 +2390,42 @@ mod prune_tests {
     /// A flush stores what it was given and lets it go: the sync used to keep
     /// every node it had stored until it ended, a whole repository's files and
     /// their text at once (studio-web#561).
+    #[tokio::test]
+    async fn a_token_nobody_can_vouch_for_is_refused_and_no_token_passes() {
+        // Without the connector service nothing can say whose connection holds
+        // the reference, and credstore would lend it anyway: refuse.
+        let (svc, _, _) = service();
+        let tenant = Uuid::from_u128(7);
+        assert!(matches!(
+            svc.ensure_token_owned(&ctx(), tenant, tenant, "secret://root/github")
+                .await,
+            Err(TokenRefused::Unknown)
+        ));
+        // A public repository synced without a token reads with nobody's.
+        assert!(
+            svc.ensure_token_owned(&ctx(), tenant, tenant, "  ")
+                .await
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_whose_connection_it_was() {
+        let refused = TokenRefused::NotOwned(crate::connectors::sdk::ownership::NotOwned {
+            holder: crate::connectors::sdk::ownership::PLATFORM_ROOT_TENANT,
+            organization: Uuid::from_u128(7),
+        });
+        assert!(
+            refused.to_string().contains("the platform's root"),
+            "{refused}"
+        );
+        assert!(
+            TokenRefused::Unknown
+                .to_string()
+                .contains("no connection of this organization")
+        );
+    }
+
     #[tokio::test]
     async fn a_flush_stores_the_nodes_and_keeps_none_of_them() {
         let (svc, graph, _) = service();

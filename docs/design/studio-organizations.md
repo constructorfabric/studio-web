@@ -71,6 +71,7 @@ several requests per row.
 | REST | Create, delete, capabilities, access catalogue, rollups | `OperationBuilder` routes in `rest.rs` |
 | Service | The ordered, resumable writes and the deletion gate | `service.rs` |
 | Rollups | One row per workspace and project, every count settled on its own | `rollups.rs` |
+| Port | An organization's projects for another gear (`ProjectsOf`) | `port.rs`, ClientHub |
 | Sources | Tenants, memberships, documents, artifacts | account-management SDK and ClientHub interfaces of other gears |
 
 ## 2. Principles & Constraints
@@ -183,6 +184,35 @@ Owns none of the numbers.
 - `cpt-studio-component-documents` — counts documents and specs through `DocumentCounter`
 - `cpt-studio-component-artifact-ingest` — counts findings and reads pull requests and events through `ArtifactCounter` and `ProjectSignalSource`
 - `cpt-studio-component-user` — reads the roster through `OrganizationRoster`
+
+#### Projects of an organization
+
+- [x] `p2` - **ID**: `cpt-studio-component-organizations-projects-of`
+
+##### Why this component exists
+
+The components registry (ADR-0041) reads every project of an organization. A
+second gear walking the tenant tree would grow its own idea of where projects
+sit, and the two walks would disagree on the first change to the tree.
+
+##### Responsibility scope
+
+`port.rs`, `ProjectsOf` on the ClientHub, published at init:
+`projects_of(ctx, org)` answers every project tenant under the organization's
+workspaces, with its workspace, in tree order. It is `rollups::projects_of`,
+built on the same `children_of` listing the rollups walk, which follows every
+page of children.
+
+##### Responsibility boundaries
+
+A listing that fails is an error, never an empty list: a caller that prunes by
+what it was told (the registry) must not read "could not tell" as "none". The
+rollups keep their own rule and settle the same failure as an empty subtree.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-account-management` — lists tenants in
+- `cpt-studio-component-components-catalog-registry` — is called by
 
 ### 3.3 API Contracts
 

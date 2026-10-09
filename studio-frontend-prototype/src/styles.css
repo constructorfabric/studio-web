@@ -816,6 +816,8 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .path-bar .org-select-name { flex: 0 1 auto; max-width: 220px; font-weight: 600; }
 .path-bar .org-menu { left: 0; right: auto; min-width: 220px; }
 .path-sep { color: var(--muted-foreground); font-size: 14px; }
+.path-bar .path-platform .org-select-name { font-weight: 500; color: var(--muted-foreground); }
+.path-bar .path-platform.on .org-select-name { font-weight: 600; color: inherit; }
 
 /* The path in the bar takes the product's ContextSwitcher treatment: no box of
    its own, a 36px hit area that tints on hover, and the name at the same

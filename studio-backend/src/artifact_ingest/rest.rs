@@ -465,6 +465,27 @@ async fn sync(
             .with_constraint("repo_full_path must not be empty")
             .create());
     }
+    let trimmed = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let workspace_id = trimmed(req.workspace_id.as_deref());
+    let project_id = trimmed(req.project_id.as_deref());
+
+    // Only the organization's own token reads its repositories
+    // (`connectors::sdk::ownership`): refused here, with the reason, rather
+    // than in a run nobody is watching. The run checks again per attempt.
+    let caller = ctx.subject_tenant_id();
+    let tenant = sync_tenant(project_id.as_deref(), workspace_id.as_deref(), caller)?;
+    if let Err(refused) = svc
+        .ensure_token_owned(&ctx, caller, tenant, &secret_ref)
+        .await
+    {
+        tracing::warn!(%tenant, repo = %repo_full_path, %refused, "studio-artifact-ingest: a sync named a token the organization does not hold; refused");
+        return Err(token_refused(&refused));
+    }
+
     // Resolved here and thrown away: the run resolves its own token per attempt
     // (a queue row is no place for one). What this call is for is the errors —
     // a malformed reference, or a credstore that cannot answer — which belong
@@ -490,13 +511,6 @@ async fn sync(
         );
     }
 
-    let trimmed = |v: Option<&str>| {
-        v.map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    };
-    let workspace_id = trimmed(req.workspace_id.as_deref());
-    let project_id = trimmed(req.project_id.as_deref());
     let run = IngestPayload {
         provider,
         base_url: trimmed(req.base_url.as_deref()),
@@ -539,6 +553,36 @@ async fn sync(
             status: "queued".to_string(),
         }),
     ))
+}
+
+/// The tenant a sync is for: its project, else its workspace, else the
+/// caller's own tenant.
+fn sync_tenant(
+    project_id: Option<&str>,
+    workspace_id: Option<&str>,
+    caller: Uuid,
+) -> Result<Uuid, CanonicalError> {
+    match project_id.or(workspace_id) {
+        None => Ok(caller),
+        Some(id) => Uuid::parse_str(id).map_err(|_| {
+            StudioArtifactIngestError::invalid_argument()
+                .with_constraint("project_id and workspace_id are tenant ids")
+                .create()
+        }),
+    }
+}
+
+/// A sync refused for its token, as the API says it (400
+/// `CONNECTION_NOT_OWNED`).
+fn token_refused(refused: &super::service::TokenRefused) -> CanonicalError {
+    use crate::connectors::sdk::ownership::CONNECTION_NOT_OWNED;
+    let subject = match refused {
+        super::service::TokenRefused::NotOwned(n) => format!("connection:{}", n.holder),
+        super::service::TokenRefused::Unknown => "secret_ref".to_owned(),
+    };
+    StudioArtifactIngestError::failed_precondition()
+        .with_precondition_violation(subject, refused.to_string(), CONNECTION_NOT_OWNED)
+        .create()
 }
 
 async fn reconcile(
@@ -1141,27 +1185,7 @@ pub struct WaitingPullRequestListDto {
     pub members_known: bool,
 }
 
-/// The organization a project or workspace hangs under (project → workspace →
-/// organization), read as the caller, so a caller learns nothing about an
-/// organization their scope does not reach. `None` when any step fails or no
-/// organization is found within that many steps up.
-async fn organization_of(
-    am: &dyn account_management_sdk::AccountManagementClient,
-    ctx: &SecurityContext,
-    scope: Uuid,
-) -> Option<Uuid> {
-    let mut id = scope;
-    for _ in 0..3 {
-        let tenant = am.get_tenant(ctx, id).await.ok()?;
-        if tenant.tenant_type.as_deref()
-            == Some(crate::organizations::sdk::ORGANIZATION_TENANT_TYPE)
-        {
-            return Some(id);
-        }
-        id = tenant.parent_id?.0;
-    }
-    None
-}
+use crate::organizations::sdk::organization_of;
 
 /// GET /studio-artifact-ingest/v1/open-pull-requests — who they wait on.
 async fn open_pull_requests(
@@ -1438,7 +1462,7 @@ pub fn register_routes(
         .operation_id("studio_artifact_ingest.sync")
         .summary("Enqueue a background sync of a connector source into the graph")
         .description(
-            "Checks the connector token, then queues a durable `artifact.ingest` \
+            "Checks the connector token -- it must be held by a connection of the              organization the sync is for, its workspaces or projects, else 400              `CONNECTION_NOT_OWNED` -- then queues a durable `artifact.ingest` \
              run: issues and pull requests from the API, and files from a \
              shallow git clone (or the tree API when no volume is mounted). \
              Answers 202 with the `run_id`: follow it at \

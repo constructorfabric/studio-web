@@ -35,6 +35,7 @@ use super::driver::{
     NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
+use super::ownership::{NotOwned, Tree, within};
 use super::url_guard::check_url;
 use crate::project_sources::{self, ProjectSource, ShareMode};
 use crate::user_profile::PersonResolver;
@@ -404,6 +405,82 @@ impl ConnectorService {
         id: Uuid,
     ) -> Option<(Uuid, Connection)> {
         self.nearest(ctx, from, |c| c.id == id).await
+    }
+
+    /// The tenant whose catalogue row holds the connection a use from
+    /// `tenant` takes -- `connection_id`, or the default `provider`
+    /// connection when none is named. Not [`Self::locate`]: catalogues are
+    /// inherited whole, so a project without one of its own lists the
+    /// root's connections as if they were its own; the row's
+    /// `owner_tenant_id` says where it really is. `None` when there is none.
+    pub async fn holder_of(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+        provider: &str,
+    ) -> Option<Uuid> {
+        match connection_id {
+            Some(id) => self
+                .nearest_by_id(ctx, tenant, id)
+                .await
+                .map(|(found, c)| holder_of_row(&c, found)),
+            None => {
+                let (_, _, c) = self
+                    .named_or_default(ctx, tenant, None, provider)
+                    .await
+                    .ok()?;
+                if c.owner_tenant_id.is_nil() {
+                    self.locate(ctx, tenant, c.id).await
+                } else {
+                    Some(c.owner_tenant_id)
+                }
+            }
+        }
+    }
+
+    /// Refuse a use, for `scope` (a project, workspace or organization -- or
+    /// the root, for itself), of a connection the organization `scope` is in
+    /// does not own ([`super::ownership`]): the use starts from `tenant`
+    /// through `connection_id`, or the default `provider` connection when
+    /// none is named. A connection that cannot be found is let through: the
+    /// use fails on its own, saying so.
+    pub async fn ensure_owned(
+        &self,
+        ctx: &SecurityContext,
+        scope: Uuid,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+        provider: &str,
+    ) -> Result<(), NotOwned> {
+        let holder = self.holder_of(ctx, tenant, connection_id, provider).await;
+        check_owned(self.am.as_ref(), ctx, scope, tenant, holder).await
+    }
+
+    /// The same rule for a use that names a token rather than a connection
+    /// (a repository sync carries the `secret_ref` it reads with): `caller`
+    /// may act for `tenant`, and the connection holding `secret_ref`, found
+    /// from `tenant`, is held within `tenant`'s organization. `Ok(None)` when
+    /// no connection reachable from `tenant` holds that reference -- the
+    /// caller decides; credstore would still read it, so a reader of
+    /// repositories refuses it.
+    pub async fn ensure_secret_owned(
+        &self,
+        ctx: &SecurityContext,
+        caller: Uuid,
+        tenant: Uuid,
+        secret_ref: &str,
+    ) -> Result<Option<Uuid>, NotOwned> {
+        check_owned(self.am.as_ref(), ctx, caller, tenant, None).await?;
+        let Some((at, c)) = self
+            .nearest(ctx, tenant, |c| c.secret_ref == secret_ref)
+            .await
+        else {
+            return Ok(None);
+        };
+        let holder = holder_of_row(&c, at);
+        check_owned(self.am.as_ref(), ctx, tenant, tenant, Some(holder)).await?;
+        Ok(Some(holder))
     }
 
     async fn nearest(
@@ -1228,6 +1305,72 @@ pub async fn connection_by_id(
     id: Uuid,
 ) -> Option<(Uuid, Connection)> {
     nearest_in(am, ctx, from, |c| c.id == id).await
+}
+
+/// The tenant whose catalogue row holds `c`, found from `located` (the
+/// tenant whose -- possibly inherited -- catalogue listed it): its
+/// `owner_tenant_id`, or `located` for a row without one.
+pub fn holder_of_row(c: &Connection, located: Uuid) -> Uuid {
+    if c.owner_tenant_id.is_nil() {
+        located
+    } else {
+        c.owner_tenant_id
+    }
+}
+
+#[async_trait::async_trait]
+impl super::ownership::Ownership for ConnectorService {
+    async fn ensure_owned(
+        &self,
+        ctx: &SecurityContext,
+        scope: Uuid,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+        provider: &str,
+    ) -> Result<(), NotOwned> {
+        ConnectorService::ensure_owned(self, ctx, scope, tenant, connection_id, provider).await
+    }
+}
+
+/// The tenant tree as `ctx` reads it from account-management.
+struct TreeIn<'a>(&'a dyn AccountManagementClient, &'a SecurityContext);
+
+#[async_trait::async_trait]
+impl Tree for TreeIn<'_> {
+    async fn parent_of(&self, tenant: Uuid) -> Option<Option<Uuid>> {
+        self.0
+            .get_tenant(self.1, tenant)
+            .await
+            .ok()
+            .map(|t| t.parent_id.map(|p| p.0))
+    }
+}
+
+/// [`super::ownership`] over the real tree: a use, for `scope`, starting
+/// from `tenant` through a connection `holder` holds, is refused unless both
+/// are within the organization `scope` is in -- `scope`'s organization, or
+/// `scope` itself when it has none (the root, for itself). `holder: None`
+/// (the connection was not found) checks `tenant` alone.
+pub async fn check_owned(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    scope: Uuid,
+    tenant: Uuid,
+    holder: Option<Uuid>,
+) -> Result<(), NotOwned> {
+    let organization = crate::organizations::sdk::organization_of(am, ctx, scope)
+        .await
+        .unwrap_or(scope);
+    let tree = TreeIn(am, ctx);
+    for held in [Some(tenant), holder].into_iter().flatten() {
+        if !within(organization, held, &tree).await {
+            return Err(NotOwned {
+                holder: held,
+                organization,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// What a caller wants published, and how.

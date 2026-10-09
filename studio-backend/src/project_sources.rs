@@ -35,7 +35,7 @@ use serde_json::Value;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::connectors::sdk::connection_by_id;
+use crate::connectors::sdk::{check_owned, connection_by_id, holder_of_row};
 use crate::git_proxy::sources::Source;
 
 /// Project attributes, including the repositories it is made of.
@@ -216,6 +216,14 @@ pub struct Resolved {
     pub secret_ref: Option<String>,
     /// The connection is one person's: its token is theirs alone.
     pub personal: bool,
+    /// The tenant whose catalogue row holds the connection -- possibly
+    /// above the project, which sees its ancestors' connections.
+    pub holder: Option<Uuid>,
+    /// Set by [`git_sources`] when that holder is outside the project's
+    /// organization (the platform's root, another organization): the
+    /// connection is not the organization's to clone or push with
+    /// (`cpt-studio-constraint-connector-own-connections`).
+    pub held_outside: Option<Uuid>,
 }
 
 /// The project's sources, each with its connection's reference.
@@ -227,15 +235,19 @@ pub async fn resolve(
     let sources = read(am, ctx, project).await?;
     let mut out = Vec::with_capacity(sources.len());
     for source in sources {
-        let connection = match source.connection_id {
-            Some(id) => connection_by_id(am, ctx, project, id).await.map(|(_, c)| c),
+        let found = match source.connection_id {
+            Some(id) => connection_by_id(am, ctx, project, id).await,
             None => None,
         };
+        let holder = found.as_ref().map(|(at, c)| holder_of_row(c, *at));
+        let connection = found.map(|(_, c)| c);
         out.push(Resolved {
             secret_ref: connection.as_ref().map(|c| c.secret_ref.clone()),
             personal: connection
                 .as_ref()
                 .is_some_and(|c| c.scope == PERSONAL_SCOPE),
+            holder,
+            held_outside: None,
             source,
         });
     }
@@ -244,30 +256,39 @@ pub async fn resolve(
 
 /// A resolved source as a Git source to clone: named by its directory, with
 /// the connection's token reference — unless the connection is personal,
-/// whose token a session several people share must not carry.
+/// whose token a session several people share must not carry, or held
+/// outside the project's organization, whose token is not the
+/// organization's to use.
 pub fn to_git_source(resolved: Resolved) -> Source {
+    let lends = !resolved.personal && resolved.held_outside.is_none();
     Source {
         name: resolved.source.dir,
         url: resolved.source.clone_url,
         branch: resolved.source.branch,
         target: None,
-        token_ref: resolved.secret_ref.filter(|_| !resolved.personal),
+        token_ref: resolved.secret_ref.filter(|_| lends),
+        held_outside: resolved.held_outside,
     }
 }
 
 /// The project's sources as Git sources to clone (see [`to_git_source`]).
+/// A source whose connection is held outside the project's organization
+/// carries no token and says whose it was ([`Source::held_outside`]).
 pub async fn git_sources(
     am: &dyn AccountManagementClient,
     ctx: &SecurityContext,
     project: Uuid,
 ) -> Option<Vec<Source>> {
-    Some(
-        resolve(am, ctx, project)
-            .await?
-            .into_iter()
-            .map(to_git_source)
-            .collect(),
-    )
+    let mut resolved = resolve(am, ctx, project).await?;
+    for r in &mut resolved {
+        if let Some(holder) = r.holder
+            && let Err(refused) = check_owned(am, ctx, project, project, Some(holder)).await
+        {
+            tracing::warn!(%project, repo = %r.source.full_path, holder = %refused.holder, "a project source's connection is held outside its organization; its token is not used");
+            r.held_outside = Some(refused.holder);
+        }
+    }
+    Some(resolved.into_iter().map(to_git_source).collect())
 }
 
 #[cfg(test)]

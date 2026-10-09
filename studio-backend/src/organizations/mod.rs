@@ -11,6 +11,7 @@
 //! that those three are written by one operation, in an order that can be
 //! resumed (see `service`).
 
+pub mod port;
 mod rest;
 pub mod rollups;
 pub mod sdk;
@@ -89,6 +90,18 @@ impl Gear for StudioOrganizationsGear {
             );
         }
         let _ = self.self_service.set(cfg.self_service);
+        // An organization's projects, for a gear that needs every one of them
+        // (the components registry): published at init so it is there for
+        // every gear's REST phase, whatever the order.
+        match ctx.client_hub().get::<dyn AccountManagementClient>() {
+            Ok(am) => ctx
+                .client_hub()
+                .register::<dyn port::ProjectsOf>(Arc::new(port::TenantTreeProjects::new(am))),
+            Err(_) => warn!(
+                "studio-organizations: account-management is not available — no gear can list an \
+                 organization's projects"
+            ),
+        }
         Ok(())
     }
 }

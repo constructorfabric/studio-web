@@ -35,7 +35,7 @@ use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::port::{ModelInfo, ModelProviders};
+use super::port::{Completion, CompletionError, CompletionRequest, ModelInfo, ModelProviders};
 use crate::studio_session::sdk::WorkspaceAccess;
 
 /// How a provider wants its key.
@@ -560,6 +560,92 @@ impl ModelProviders for Providers {
                 display_name: m.display_name,
             })
             .collect())
+    }
+
+    async fn complete(
+        &self,
+        ctx: &SecurityContext,
+        request: &CompletionRequest,
+    ) -> Result<Completion, CompletionError> {
+        let Some(choice) = self.chat_choice(ctx, None).await else {
+            return Err(CompletionError::NoKey(no_key_message(
+                &self.chat_provider_names(),
+            )));
+        };
+        let provider = choice.provider.name.clone();
+        let url = upstream_url(&choice.provider.base_url, &choice.provider.chat_path, None);
+        let body = completion_body(&choice.model, request);
+        let mut upstream = self.client.post(url);
+        for (name, value) in upstream_headers(&HeaderMap::new(), &KeyHeader::Bearer, &choice.key) {
+            upstream = upstream.header(name.as_str(), value);
+        }
+        let answer = upstream
+            .header(header::CONTENT_TYPE.as_str(), "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| {
+                CompletionError::Failed(anyhow::anyhow!(
+                    "{provider} could not be reached: {}",
+                    e.without_url()
+                ))
+            })?;
+        let status = answer.status();
+        let text = answer
+            .text()
+            .await
+            .map_err(|e| CompletionError::Failed(anyhow::anyhow!("{provider}: {e}")))?;
+        if !status.is_success() {
+            return Err(CompletionError::Failed(anyhow::anyhow!(
+                "{provider} {status}: {}",
+                text.chars().take(200).collect::<String>()
+            )));
+        }
+        let content = completion_text(&text).ok_or_else(|| {
+            CompletionError::Failed(anyhow::anyhow!("{provider} answered no message content"))
+        })?;
+        Ok(Completion {
+            provider,
+            model: choice.model,
+            text: content,
+        })
+    }
+}
+
+/// An OpenAI chat-completions body for one question, not streamed.
+pub fn completion_body(model: &str, request: &CompletionRequest) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "max_tokens": request.max_tokens,
+        "temperature": 0,
+        "stream": false,
+        "messages": [
+            { "role": "system", "content": request.system },
+            { "role": "user", "content": request.prompt },
+        ],
+    })
+}
+
+/// The first choice's message content of an OpenAI chat-completions answer.
+pub fn completion_text(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let content = value
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("content")?;
+    match content {
+        serde_json::Value::String(s) => Some(s.clone()),
+        // Some providers answer content as parts.
+        serde_json::Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+                .join(""),
+        ),
+        _ => None,
     }
 }
 
@@ -1096,5 +1182,63 @@ mod tests {
             .await
             .expect_err("no such provider");
         assert!(error.to_string().contains("gemini"), "{error}");
+    }
+
+    /// A gear's in-process completion goes out on the caller's key, as the
+    /// chat does, and answers the first choice's text.
+    #[tokio::test]
+    async fn a_completion_goes_out_on_the_callers_key() {
+        let seen: Seen = Arc::new(Mutex::new(vec![]));
+        let address = serve(stand_in(
+            seen.clone(),
+            "/v1/chat/completions",
+            r#"{"choices":[{"message":{"role":"assistant","content":"{\"description\":\"d\"}"}}]}"#,
+        ))
+        .await;
+        let providers = providers_with(
+            vec![stand_in_provider("anthropic", address)],
+            Keys::of(&[(0x7A5, "anthropic", None, "sk-ant-vasil")]),
+            true,
+        );
+        let request = CompletionRequest {
+            system: "answer JSON".into(),
+            prompt: "describe it".into(),
+            max_tokens: 100,
+        };
+        let done = providers
+            .complete(&person(0x7A5), &request)
+            .await
+            .expect("an answer");
+        assert_eq!(done.text, r#"{"description":"d"}"#);
+        assert_eq!(done.provider, "anthropic");
+        assert_eq!(done.model, "claude-sonnet-5-5");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen[0].1.as_deref(), Some("Bearer sk-ant-vasil"));
+        let body: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][1]["content"], "describe it");
+
+        // Nobody else's key stands in for a caller without one.
+        match providers.complete(&person(0xC011), &request).await {
+            Err(CompletionError::NoKey(message)) => assert!(message.contains("anthropic")),
+            other => panic!("expected no key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_completions_text_is_its_first_choices_content() {
+        assert_eq!(
+            completion_text(r#"{"choices":[{"message":{"content":"hi"}}]}"#).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            completion_text(
+                r#"{"choices":[{"message":{"content":[{"type":"text","text":"a"},{"text":"b"}]}}]}"#
+            )
+            .as_deref(),
+            Some("ab")
+        );
+        assert_eq!(completion_text(r#"{"choices":[]}"#), None);
+        assert_eq!(completion_text("nope"), None);
     }
 }

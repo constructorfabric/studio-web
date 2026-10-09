@@ -80,6 +80,8 @@ const PRIVILEGE_LABELS: Record<string, { group: string; label: string }> = {
   "domain.view": { group: "Domain model", label: "View domain objects" },
   "domain.edit": { group: "Domain model", label: "Create and edit domain objects" },
   "domain.model": { group: "Domain model", label: "Change the domain model" },
+
+  "component.registry": { group: "Components", label: "Decide about the component registry" },
 };
 
 /** Name one privilege id for the screen.

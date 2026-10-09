@@ -28,7 +28,8 @@ pub struct ScaffoldWrite {
 
 /// Commit `files` onto `branch` off `base_branch` in one commit, and -- when
 /// `pr_title` is set and the branch is not the base -- open a pull request
-/// back into `base_branch`, or return the one already open.
+/// back into `base_branch`, or return the one already open. `pr_body` is the
+/// pull request's text; `None` is the scaffold's.
 pub async fn write_scaffold(
     repo: &Repository,
     base_branch: &str,
@@ -36,6 +37,7 @@ pub async fn write_scaffold(
     files: &[ScaffoldFile],
     message: &str,
     pr_title: Option<&str>,
+    pr_body: Option<&str>,
 ) -> Result<ScaffoldWrite> {
     let files: Vec<FileToWrite> = files
         .iter()
@@ -54,7 +56,9 @@ pub async fn write_scaffold(
                 branch,
                 base_branch,
                 title,
-                Some("Scaffolded gear skeleton from an App Spec gap. Fill in the service, then review."),
+                Some(pr_body.unwrap_or(
+                    "Scaffolded gear skeleton from an App Spec gap. Fill in the service, then review.",
+                )),
             )
             .await?
             .url

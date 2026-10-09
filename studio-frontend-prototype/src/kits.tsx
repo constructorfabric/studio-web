@@ -31,9 +31,14 @@ import {
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
 import { ScaffoldModal } from "./documents";
+import { ProjectCandidate } from "./component-registry";
 import {
   candidateReasons,
+  candidateTier,
+  tierReason,
+  tierTag,
   candidateStrength,
+  couldBecomeGear,
   coverageSummary,
   gearProblem,
   lookingFor,
@@ -826,7 +831,7 @@ function SuggestedComponents({
                           type="button"
                           className="linklike"
                           style={{ marginLeft: "auto", fontSize: 12 }}
-                          title="Scaffold a gear for it in the project's gear repository, with the specs' requirements as its PRD"
+                          title="Scaffold a gear for it, with the specs' requirements as its PRD: into the project's gear repository, else the organization's — the dialog says which"
                           onClick={() => setScaffoldFor(row)}
                         >
                           Create a gear for it
@@ -898,13 +903,36 @@ function SuggestedComponents({
                               )}
                               <ComponentLink nav={c.origin === "project" ? null : nav} name={c.name} />
                               <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                              {c.origin === "project" && (
+                              {couldBecomeGear(c) ? (
                                 <span
-                                  title={`Declared in this project's own repository${c.path ? `: ${c.path}` : ""}`}
+                                  title={`This project's own code${c.path ? ` at ${c.path}` : ""} looks like a gear and is not declared one: it could become a gear`}
                                   style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}
+                                  data-could-become-gear
                                 >
-                                  THIS REPO
+                                  COULD BE A GEAR
                                 </span>
+                              ) : (
+                                (() => {
+                                  // Whose gear it is (ADR-0042): the platform's,
+                                  // the organization's, or this project's own.
+                                  const tier = candidateTier(c);
+                                  if (!tier) return null;
+                                  const where = tier === "project" && c.path ? ` (${c.path})` : "";
+                                  return (
+                                    <span
+                                      title={`${tierReason(tier)}${where}`}
+                                      style={{
+                                        marginLeft: 5,
+                                        fontSize: 9,
+                                        fontWeight: tier === "platform" ? 400 : 700,
+                                        opacity: tier === "platform" ? 0.6 : 1,
+                                      }}
+                                      data-tier={tier}
+                                    >
+                                      {tierTag(tier)}
+                                    </span>
+                                  );
+                                })()
                               )}
                               <span
                                 style={{
@@ -982,6 +1010,7 @@ function SuggestedComponents({
                         {candidateReasons(shown, row.capability).map((l) => (
                           <div key={l}>{l}</div>
                         ))}
+                        {couldBecomeGear(shown) && <ProjectCandidate token={token} name={shown.name} projectId={projectId} />}
                         {rowSources.length > 0 && (
                           <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <button type="button" disabled={busy} onClick={() => void decide(row.capability, shown, "confirmed")}>

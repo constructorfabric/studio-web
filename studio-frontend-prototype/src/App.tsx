@@ -245,6 +245,7 @@ const LISTS_WITH_OWN_FILTERS: ReadonlySet<PanelView> = new Set<PanelView>([
   "connectors",
   "tasks",
   "gears",
+  "platform",
   "chats",
   "files",
 ]);
@@ -497,6 +498,7 @@ type View =
   | "files"
   | "connectors"
   | "gears"
+  | "platform"
   | "reports"
   | "objects"
   | "views"
@@ -512,6 +514,12 @@ function NavIcon({ name }: { name: string }) {
       <>
         <path d="m3 11 9-8 9 8" />
         <path d="M5 10v11h14V10" />
+      </>
+    ),
+    layers: (
+      <>
+        <path d="m12 3 9 5-9 5-9-5z" />
+        <path d="m3 13 9 5 9-5" />
       </>
     ),
     shield: (
@@ -650,11 +658,22 @@ const NAV_SECTIONS: {
   // page (the "Analyze" project tab), where it runs over that project's
   // ingested artifacts.
   {
+    // The level above every organization (ADR-0042): the common set of
+    // components all of them build on. Everyone reads it; only a platform
+    // administrator changes its sources. First, because it is the top of the
+    // path (Platform › organization › workspace › project).
     title: "Platform",
+    items: [{ id: "platform", icon: "layers", label: "Components" }],
+  },
+  {
+    // This organization's own surfaces. The section used to be called
+    // "Platform", which named the level above for things that are the
+    // organization's.
+    title: "Organization",
     items: [
-      // Our published gears (crates.io → graph), and the system observability
-      // surface.
-      { id: "gears", icon: "package", label: "Components" },
+      // What this organization's projects build: the registry, candidates,
+      // its gear repository and its own catalogue sources.
+      { id: "gears", icon: "package", label: "Our components" },
       // Every report the Studio draws, configured once for the organization
       // (studio-reports): the roadmap workbook is the first.
       { id: "reports", icon: "activity", label: "Reports" },
@@ -1785,6 +1804,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             <PathBar
               orgs={orgOptions}
               activeOrg={activeOrg}
+              platformOpen={view === "platform" && !activeSpace}
+              onOpenPlatform={() => {
+                setCrumb({});
+                setView("platform");
+                setActiveSpace(null);
+              }}
               onPickOrg={(id) => {
                 setActiveOrgId(id);
                 setCrumb({});
@@ -2571,10 +2596,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
-        {view === "gears" && (
+        {(view === "gears" || view === "platform") && (
           <ComponentsCatalog
+            // Remounted when the organization resolves: the registry and the
+            // catalogue read it once, and a page opened straight from its
+            // address mounts before the organization is known.
+            key={`${view}:${orgAsSpace?.id ?? ""}`}
+            tier={view === "platform" ? "platform" : "organization"}
+            orgName={orgAsSpace?.name}
             token={token}
             tenantId={orgAsSpace?.id}
+            isPlatformAdmin={showPlatform}
             query={filters.query}
             kindFilter={filters.gearKind}
             sortMode={filters.gearSort}
@@ -2582,6 +2614,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             categoryFilter={filters.gearCategory}
             onCategories={setComponentCategories}
             focus={componentFocus}
+            projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
@@ -3101,6 +3134,8 @@ interface Crumb {
 function PathBar({
   orgs,
   activeOrg,
+  platformOpen,
+  onOpenPlatform,
   onPickOrg,
   workspaces,
   currentWorkspaceId,
@@ -3112,6 +3147,10 @@ function PathBar({
 }: {
   orgs: { id: string; name: string }[];
   activeOrg: { id: string; name: string } | null;
+  /** Whether the platform level itself is open (its common components). */
+  platformOpen: boolean;
+  /** Open the platform level: the top of the path, above every organization. */
+  onOpenPlatform: () => void;
   onPickOrg: (id: string) => void;
   workspaces: { id: string; name: string }[];
   currentWorkspaceId?: string;
@@ -3127,6 +3166,23 @@ function PathBar({
 
   return (
     <div className="path-bar" onMouseLeave={() => setOpen(null)}>
+      {/* The platform: the level above every organization, holding the
+          components they all share (ADR-0042). Not a picker -- there is one. */}
+      <div className="path-seg">
+        <button
+          type="button"
+          className={`org-select path-platform${platformOpen ? " on" : ""}`}
+          aria-current={platformOpen ? "page" : undefined}
+          title="The platform: the components every organization shares"
+          onClick={onOpenPlatform}
+        >
+          <span className="account-avatar small">P</span>
+          <span className="org-select-name">Platform</span>
+        </button>
+      </div>
+
+      <span className="path-sep">›</span>
+
       {/* Organization */}
       <div className="path-seg org-select-wrap">
         <button

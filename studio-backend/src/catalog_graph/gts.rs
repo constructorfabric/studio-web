@@ -82,8 +82,36 @@ pub const COMPONENT_SNAPSHOT_TYPE: &str = "gts.cf.studio.catalog.component_snaps
 /// component carries the plan and this node stops being listed as one.
 pub const ROADMAP_ITEM_TYPE: &str = "gts.cf.studio.catalog.roadmap_item.v1~";
 
+/// One catalogue source of an organization, kept on the server (ADR-0041):
+/// a repository, its ref and the mode it is scanned in. Keyed on the
+/// organization, the repository, the ref and the mode.
+pub const SOURCE_TYPE: &str = "gts.cf.studio.catalog.source.v1~";
+
+/// One component of the organization's registry (ADR-0041), keyed on the
+/// organization and the component's name. Its `state` is the lifecycle; a
+/// discovery creates an entry `declared` and never moves it.
+pub const REGISTRY_ENTRY_TYPE: &str = "gts.cf.studio.catalog.registry_entry.v1~";
+
+/// Where a registry entry was found: a project, a repository, a ref and a
+/// path. Keyed on the entry, the project, the repository and the path.
+pub const OCCURRENCE_TYPE: &str = "gts.cf.studio.catalog.occurrence.v1~";
+
+/// One repository the registry walk read for one project: the fingerprint of
+/// the files discovery reads, so an unchanged repository is not read again
+/// after a restart either.
+pub const REGISTRY_READ_TYPE: &str = "gts.cf.studio.catalog.registry_read.v1~";
+
+/// The organization's registry settings: the projects the walk skips. One
+/// per organization.
+pub const REGISTRY_SETTINGS_TYPE: &str = "gts.cf.studio.catalog.registry_settings.v1~";
+
+/// One decision a person made about a registry entry (ADR-0041 P2): the
+/// action, the state it moved the entry from and to, who, when and why.
+/// Joined to its entry by [`REL_DECIDED`].
+pub const REGISTRY_DECISION_TYPE: &str = "gts.cf.studio.catalog.registry_decision.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 9] = [
+pub const ALL_NODE_TYPES: [&str; 15] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
@@ -93,6 +121,12 @@ pub const ALL_NODE_TYPES: [&str; 9] = [
     FRONTX_TYPE,
     FIELD_SCHEMA_TYPE,
     ROADMAP_ITEM_TYPE,
+    SOURCE_TYPE,
+    REGISTRY_ENTRY_TYPE,
+    OCCURRENCE_TYPE,
+    REGISTRY_READ_TYPE,
+    REGISTRY_SETTINGS_TYPE,
+    REGISTRY_DECISION_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -102,8 +136,14 @@ pub const ALL_NODE_TYPES: [&str; 9] = [
 /// platform's GTS grammar and refused `cf.studio.catalog.rel.has_version`.
 pub const REL_HAS_VERSION: &str = "gts.cf.studio.catalog.has_version.v1~";
 
+/// registry_entry → occurrence — a place the entry was found.
+pub const REL_FOUND_IN: &str = "gts.cf.studio.catalog.found_in.v1~";
+
+/// registry_entry → registry_decision — a decision made about the entry.
+pub const REL_DECIDED: &str = "gts.cf.studio.catalog.decided.v1~";
+
 /// Every catalog relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 1] = [REL_HAS_VERSION];
+pub const ALL_EDGE_TYPES: [&str; 3] = [REL_HAS_VERSION, REL_FOUND_IN, REL_DECIDED];
 
 /// The graph-storage families the catalog's types derive from. Catalog rows
 /// are *owned* nodes (the graph is where they live) joined by *static* edges
@@ -172,7 +212,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 15] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -218,6 +258,36 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
         "Planned gear",
         "A gear a roadmap board plans: its stage, milestone, progress and demand, and the catalogued components that implement it, if any yet.",
     ),
+    (
+        SOURCE_TYPE,
+        "Catalogue source",
+        "One repository the organization's catalogue reads: its ref and the mode it is scanned in.",
+    ),
+    (
+        REGISTRY_ENTRY_TYPE,
+        "Registry entry",
+        "One component of the organization's registry: its name, kind, lifecycle state, owner and capabilities.",
+    ),
+    (
+        OCCURRENCE_TYPE,
+        "Registry occurrence",
+        "Where a registry entry was found: the project, repository, ref, path and commit.",
+    ),
+    (
+        REGISTRY_READ_TYPE,
+        "Registry read",
+        "One repository the registry walk read for a project, with the fingerprint of the files it read.",
+    ),
+    (
+        REGISTRY_SETTINGS_TYPE,
+        "Registry settings",
+        "The organization's registry settings: the projects its walk skips.",
+    ),
+    (
+        REGISTRY_DECISION_TYPE,
+        "Registry decision",
+        "One decision a person made about a registry entry: the action, the states it moved between, who, when and why.",
+    ),
 ];
 
 const SNAPSHOT_DOC: (&str, &str, &str) = (
@@ -229,11 +299,23 @@ const SNAPSHOT_DOC: (&str, &str, &str) = (
 /// The relation types as catalog entries. Registered alongside the nodes so
 /// the platform registry catalogs everything this gear puts in the graph (see
 /// `crate::gts_inventory`).
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 1] = [(
-    REL_HAS_VERSION,
-    "HasVersion",
-    "A version published under a gear crate.",
-)];
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 3] = [
+    (
+        REL_HAS_VERSION,
+        "HasVersion",
+        "A version published under a gear crate.",
+    ),
+    (
+        REL_FOUND_IN,
+        "FoundIn",
+        "A place a registry entry was found.",
+    ),
+    (
+        REL_DECIDED,
+        "Decided",
+        "A decision a person made about a registry entry.",
+    ),
+];
 
 /// The node types `studio-product` owns: a project's product and the gear
 /// repository it is written to. Their ids keep the `catalog` namespace they
@@ -346,14 +428,14 @@ pub fn graph_snapshot_type_schema() -> Value {
 
 /// The relation types as graph-storage ontology entries.
 pub fn graph_edge_type_schemas() -> Vec<Value> {
-    ALL_EDGE_TYPES
+    EDGE_TYPE_DOCS
         .into_iter()
-        .map(|id| {
+        .map(|(id, title, description)| {
             json!({
                 "$id": format!("gts://{}", graph_type_id(id)),
                 "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": "HasVersion",
-                "description": "A version published under a gear crate.",
+                "title": title,
+                "description": description,
                 "type": "object",
                 "allOf": [{ "$ref": format!("gts://{STATIC_EDGE_FAMILY}") }],
             })
@@ -522,9 +604,146 @@ pub fn has_version_edge(gear_id: &str, version_id: &str) -> GtsEdge {
     }
 }
 
+/// Instance id of one catalogue source: the organization, the repository
+/// (case-folded, as GitHub folds it), the ref and the mode. Saving the same
+/// source twice is one source.
+pub fn source_instance_id(org: &str, repo: &str, git_ref: &str, mode: &str) -> String {
+    anon_id(&[
+        "source",
+        org,
+        &repo.trim().to_ascii_lowercase(),
+        git_ref.trim(),
+        mode.trim(),
+    ])
+}
+
+/// A catalogue source node.
+pub fn source_node(instance_id: String, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: SOURCE_TYPE,
+        instance_id,
+        value,
+    }
+}
+
+/// Instance id of a registry entry: the organization and the component's
+/// name, case-folded, so `Studio-Tasks` and `studio-tasks` are one entry.
+pub fn registry_entry_instance_id(org: &str, name: &str) -> String {
+    anon_id(&["registry_entry", org, &name.trim().to_ascii_lowercase()])
+}
+
+/// A registry entry node.
+pub fn registry_entry_node(org: &str, name: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: REGISTRY_ENTRY_TYPE,
+        instance_id: registry_entry_instance_id(org, name),
+        value,
+    }
+}
+
+/// Instance id of an occurrence: the entry it belongs to, the project, the
+/// repository and the path in it.
+pub fn occurrence_instance_id(entry_id: &str, project: &str, repo: &str, path: &str) -> String {
+    anon_id(&[
+        "occurrence",
+        entry_id,
+        project,
+        &repo.trim().to_ascii_lowercase(),
+        path,
+    ])
+}
+
+/// An occurrence node.
+pub fn occurrence_node(instance_id: String, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: OCCURRENCE_TYPE,
+        instance_id,
+        value,
+    }
+}
+
+/// Instance id of a registry read: one repository of one project, through
+/// one connection, at one ref.
+pub fn registry_read_instance_id(org: &str, project: &str, repo_key: &str) -> String {
+    anon_id(&["registry_read", org, project, repo_key])
+}
+
+/// A registry read node.
+pub fn registry_read_node(instance_id: String, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: REGISTRY_READ_TYPE,
+        instance_id,
+        value,
+    }
+}
+
+/// Instance id of an organization's registry settings.
+pub fn registry_settings_instance_id(org: &str) -> String {
+    anon_id(&["registry_settings", org])
+}
+
+/// The organization's registry settings node.
+pub fn registry_settings_node(org: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: REGISTRY_SETTINGS_TYPE,
+        instance_id: registry_settings_instance_id(org),
+        value,
+    }
+}
+
+/// A registry decision node. Its id is drawn fresh: every decision is its own.
+pub fn registry_decision_node(instance_id: String, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: REGISTRY_DECISION_TYPE,
+        instance_id,
+        value,
+    }
+}
+
+/// registry_entry → registry_decision.
+pub fn decided_edge(entry_id: &str, decision_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_DECIDED,
+        from: entry_id.to_string(),
+        to: decision_id.to_string(),
+    }
+}
+
+/// registry_entry → occurrence.
+pub fn found_in_edge(entry_id: &str, occurrence_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_FOUND_IN,
+        from: entry_id.to_string(),
+        to: occurrence_id.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The registry's keys are deterministic and case-blind where GitHub is.
+    #[test]
+    fn registry_keys_are_stable_and_fold_case() {
+        assert_eq!(
+            registry_entry_instance_id("o", "Studio-Tasks"),
+            registry_entry_instance_id("o", "studio-tasks")
+        );
+        assert_ne!(
+            registry_entry_instance_id("o1", "a"),
+            registry_entry_instance_id("o2", "a")
+        );
+        assert_eq!(
+            source_instance_id("o", "Acme/Gears", "main", "gears"),
+            source_instance_id("o", "acme/gears", "main", "gears")
+        );
+        assert_ne!(
+            source_instance_id("o", "acme/gears", "main", "gears"),
+            source_instance_id("o", "acme/gears", "main", "frontx")
+        );
+        assert_eq!(graph_edge_type_schemas().len(), ALL_EDGE_TYPES.len());
+        assert_eq!(graph_edge_type_schemas()[1]["title"], "FoundIn");
+    }
 
     /// The GTS grammar allows exactly four name tokens before the version in
     /// each `~`-segment; the v2 gear enforces it where the v1 gear did not.

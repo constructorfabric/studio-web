@@ -240,6 +240,37 @@ pub struct Candidate {
     pub version: Option<String>,
     /// A member's earlier decision on this gear for this capability.
     pub decision: Option<DecisionMark>,
+    /// Whose component it is (ADR-0042): `project`, `organization` or
+    /// `platform`.
+    pub tier: String,
+}
+
+/// Whose component `component` is (ADR-0042): `project` for one the
+/// project's own repositories declare, else the tier the catalogue marked it
+/// with, `organization` when it says none.
+pub fn tier_of(component: &Value) -> String {
+    use crate::components_catalog::port::{TIER_ORGANIZATION, TIER_PROJECT};
+    if component.get("origin").and_then(Value::as_str) == Some(TIER_PROJECT) {
+        return TIER_PROJECT.to_owned();
+    }
+    component
+        .get("tier")
+        .and_then(Value::as_str)
+        .unwrap_or(TIER_ORGANIZATION)
+        .to_owned()
+}
+
+/// The last tie-breaker of the candidates' order: when everything else is
+/// equal, the project's and the organization's own gear come before the
+/// platform's -- it was written for them (ADR-0042 §3).
+fn tier_rank(tier: &str) -> u8 {
+    use crate::components_catalog::port::{TIER_ORGANIZATION, TIER_PLATFORM, TIER_PROJECT};
+    match tier {
+        TIER_PROJECT => 0,
+        TIER_ORGANIZATION => 1,
+        TIER_PLATFORM => 2,
+        _ => 1,
+    }
 }
 
 /// One capability, and what could fill it.
@@ -693,6 +724,7 @@ fn plan_with_limit(
                             name,
                             current_version(component),
                         ),
+                        tier: tier_of(component),
                     })
                 })
                 .collect();
@@ -720,6 +752,7 @@ fn plan_with_limit(
                     .then(a.built.rank().cmp(&b.built.rank()))
                     .then(a.composable.rank().cmp(&b.composable.rank()))
                     .then(b.score.cmp(&a.score))
+                    .then(tier_rank(&a.tier).cmp(&tier_rank(&b.tier)))
                     .then(a.name.cmp(&b.name))
             });
             // One component, one candidate. Sixteen of the 118 names on the
@@ -1474,6 +1507,59 @@ mod tests {
         );
         assert_eq!(rows[0].candidates[0].name, "billing-engine");
         assert_eq!(rows[0].candidates[0].why, vec!["billing".to_owned()]);
+    }
+
+    /// ADR-0042 §3: equally strong, the organization's own gear (and the
+    /// project's) comes before the platform's, whatever the names say.
+    #[test]
+    fn on_equal_keys_the_organizations_gear_comes_before_the_platforms() {
+        let tiered = |name: &str, tier: &str| {
+            let mut c = component(name, "chat");
+            c["tier"] = json!(tier);
+            c
+        };
+        let mut project = component("mm-chat", "chat");
+        project["origin"] = json!("project");
+        let components = vec![
+            tiered("aa-chat", "platform"),
+            tiered("zz-chat", "organization"),
+            project,
+        ];
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &serde_json::Map::new(),
+            &vocabulary(&[]),
+        );
+        let order: Vec<(&str, &str)> = rows[0]
+            .candidates
+            .iter()
+            .map(|c| (c.name.as_str(), c.tier.as_str()))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                ("mm-chat", "project"),
+                ("zz-chat", "organization"),
+                ("aa-chat", "platform"),
+            ]
+        );
+        // A stronger platform gear still wins: the tier only breaks ties.
+        let mut profiles = serde_json::Map::new();
+        profiles.insert(
+            "aa-chat".to_owned(),
+            json!({ "auto": { "crates": { "n": 2 } } }),
+        );
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &profiles,
+            &vocabulary(&[]),
+        );
+        assert_eq!(rows[0].candidates[0].name, "aa-chat");
+        // Untiered (a catalogue read before the tiers) reads as the
+        // organization's.
+        assert_eq!(tier_of(&component("x", "chat")), "organization");
     }
 
     #[test]

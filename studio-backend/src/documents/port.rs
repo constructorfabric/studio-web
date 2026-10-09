@@ -187,6 +187,24 @@ pub struct DetectorVerdict {
 }
 
 pub use super::model::Capability;
+
+/// The capability vocabulary an organization publishes: the platform's, with
+/// the organization's own over it. The catalogue's registry passes it to a
+/// model so a suggested capability is always one of these keys (ADR-0041 P4).
+#[async_trait]
+pub trait CapabilityVocabulary: Send + Sync + 'static {
+    async fn organization_vocabulary(
+        &self,
+        ctx: &SecurityContext,
+        organization_id: Uuid,
+    ) -> anyhow::Result<Vec<Capability>>;
+}
+
+/// The platform's built-in vocabulary, for a reader without the documents
+/// gear.
+pub fn builtin_vocabulary() -> Vec<Capability> {
+    super::model::builtin_capabilities()
+}
 pub use super::service::{CapabilitySource, DeclaredCapability, DeclaredRequirement};
 
 /// What a project's specifications need, as the documents gear indexes them,

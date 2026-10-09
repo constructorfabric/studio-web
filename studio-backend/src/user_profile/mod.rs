@@ -261,12 +261,37 @@ pub trait PersonResolver: Send + Sync + 'static {
     /// without being rewritten. Never provisions — nobody has authenticated a
     /// subject read out of storage.
     async fn resolve_recorded_subject(&self, subject: &str) -> anyhow::Result<Option<String>>;
+
+    /// The caller as [`Self::resolve_caller`] answers them, with the name
+    /// their profile carries (`None` when it carries none): what a record of
+    /// "who did this" shows a person instead of an id. Still the caller
+    /// only, never a lookup of somebody else.
+    async fn resolve_caller_named(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        Ok((self.resolve_caller(ctx).await?, None))
+    }
 }
 
 #[async_trait]
 impl PersonResolver for IdentityService {
     async fn resolve_caller(&self, ctx: &SecurityContext) -> anyhow::Result<String> {
         IdentityService::resolve_caller(self, ctx).await
+    }
+
+    async fn resolve_caller_named(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        let person = IdentityService::resolve_caller(self, ctx).await?;
+        let name = self
+            .get_profile(&person)
+            .await?
+            .and_then(|p| p.display_name)
+            .map(|n| n.trim().to_owned())
+            .filter(|n| !n.is_empty());
+        Ok((person, name))
     }
 
     async fn resolve_recorded_subject(&self, subject: &str) -> anyhow::Result<Option<String>> {

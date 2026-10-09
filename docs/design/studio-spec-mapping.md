@@ -213,7 +213,12 @@ organization. A project the caller cannot reach answers 404.
   `evidence`), the `contracts` it provides or the `passage` it was found by
   (and the document it `cites`), its build state, what the engine says, its
   `version`, an earlier `decision`, and its `origin` — `catalogue`, or
-  `project` with its `path` when the project's repository declares it.
+  `project` with its `path` when the project's repository declares it — and
+  its `tier` (ADR-0042): `project` (declared in the project's own
+  repositories, a catalogued gear included), `organization` (the
+  organization's catalogue or registry) or `platform` (the shared set). On
+  otherwise equal ranking keys, the project's and the organization's come
+  before the platform's: the last tie-breaker before the name.
 - **Decision**: (document, section, capability, gear) → `confirmed` or
   `rejected`, with who, when, the step, the gear version and the document
   revision.

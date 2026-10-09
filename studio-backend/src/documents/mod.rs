@@ -152,6 +152,10 @@ impl toolkit::Gear for StudioDocumentsGear {
         // What a project's specifications need, for the spec-mapping gear.
         ctx.client_hub()
             .register::<dyn port::SpecNeeds>(service.clone());
+        // The organization's capability vocabulary, for the catalogue's
+        // registry to bound a model's suggestion by.
+        ctx.client_hub()
+            .register::<dyn port::CapabilityVocabulary>(service.clone());
 
         self.service
             .set(service)

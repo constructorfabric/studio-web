@@ -117,6 +117,10 @@ fn only_the_files_a_gear_is_declared_in_are_read() {
         "studio-backend/target/debug/build/x/out/mod.rs",
         "studio-backend/tests/common/mod.rs",
         "crates/foo/src/lib.rs",
+        // Test modules: their fixtures write gear attributes in strings.
+        "studio-backend/src/components_catalog/project_gears_tests.rs",
+        "studio-backend/src/plugin_test.rs",
+        "studio-backend/src/gearbox/tests.rs",
     ];
     assert_eq!(
         rust_candidates(&paths),
@@ -248,13 +252,57 @@ fn the_fingerprint_moves_only_with_the_files_read() {
     };
     assert_eq!(fingerprint(&files("r", "x")), fingerprint(&files("r", "y")));
     assert_ne!(fingerprint(&files("r", "x")), fingerprint(&files("q", "x")));
+    // Stored by the registry, so it must not depend on the build: a uuid5 of
+    // the pairs, the same string every time.
+    assert_eq!(fingerprint(&files("r", "x")).len(), 36);
+    assert_ne!(fingerprint(&[]), fingerprint(&files("r", "x")));
 }
 
 #[test]
 fn a_cached_answer_is_served_only_for_the_same_files() {
     let cache = Cache::default();
-    cache.put("k".into(), 1, Arc::new(vec![gear("a", "a", "a/mod.rs")]));
-    assert!(cache.get("k", 1).is_some());
-    assert!(cache.get("k", 2).is_none());
-    assert!(cache.get("other", 1).is_none());
+    cache.put_found(
+        "k".into(),
+        "1".into(),
+        Arc::new(vec![gear("a", "a", "a/mod.rs")]),
+        None,
+    );
+    assert!(cache.get_found("k", "1", false).is_some());
+    assert!(cache.get_found("k", "2", false).is_none());
+    assert!(cache.get_found("other", "1", false).is_none());
+    // Read without candidates: a walk that wants them reads again.
+    assert!(cache.get_found("k", "1", true).is_none());
+    cache.put_found(
+        "k".into(),
+        "1".into(),
+        Arc::new(Vec::new()),
+        Some(Arc::new(Vec::new())),
+    );
+    assert!(cache.get_found("k", "1", true).is_some());
+}
+
+/// studio-documents' own `mod.rs` names its test files above its attribute
+/// (`#[cfg(test)] mod repo_tests;`). Those lines are not where the tests
+/// begin: stopping there lost the gear on the local stand.
+#[test]
+fn a_test_file_named_above_the_attribute_does_not_hide_the_gear() {
+    let body = "mod repo;\n\
+                #[cfg(test)]\n\
+                mod repo_tests;\n\
+                #[cfg(test)]\n\
+                // a comment\n\
+                mod sync_analysis_tests;\n\
+                \n\
+                #[toolkit::gear(\n    name = \"studio-documents\",\n    deps = [types_registry]\n)]\n\
+                pub struct Documents;\n\
+                #[cfg(test)]\n\
+                mod tests {\n\
+                #[toolkit::gear(name = \"a-test-gear\")]\n\
+                struct T;\n\
+                }\n";
+    let names: Vec<String> = code_declarations(body)
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
+    assert_eq!(names, vec!["studio-documents"]);
 }

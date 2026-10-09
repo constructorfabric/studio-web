@@ -30,6 +30,26 @@ use crate::org_scope::OrgCtx;
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
 
+/// A write that did not happen, as a problem: 400 `failed_precondition`
+/// `CONNECTION_NOT_OWNED` when its connection is not the organization's
+/// (`cpt-studio-constraint-connector-own-connections`), else 400 with `what`
+/// and the cause.
+pub(super) fn write_problem(what: &str, e: &anyhow::Error) -> CanonicalError {
+    use crate::connectors::sdk::ownership::{CONNECTION_NOT_OWNED, NotOwned};
+    if let Some(refused) = e.downcast_ref::<NotOwned>() {
+        return StudioProductError::failed_precondition()
+            .with_precondition_violation(
+                format!("connection:{}", refused.holder),
+                format!("{what}: {refused}"),
+                CONNECTION_NOT_OWNED,
+            )
+            .create();
+    }
+    StudioProductError::invalid_argument()
+        .with_constraint(format!("{what}: {e:#}"))
+        .create()
+}
+
 /// Service handle, injected into the handlers.
 #[derive(Clone)]
 pub struct Product {
@@ -431,6 +451,13 @@ pub struct ScaffoldResultDto {
     /// The files written, or — on a dry run — the ones that would be. Always
     /// returned, so a caller never has to guess what it just asked for.
     pub files: Vec<ScaffoldFileDto>,
+    /// `owner/name` of the repository written into, or — on a dry run — the
+    /// one it would be; absent when the project has nowhere to write.
+    pub repo: Option<String>,
+    /// Why that repository (ADR-0042 §2): `project` (the project's gear
+    /// repository), `organization` (the organization's gear repository) or
+    /// `sources` (the project's own repository from its sources).
+    pub target: Option<String>,
 }
 
 /// Create a new repository via the connector and set it as the project's gear repo.
@@ -497,6 +524,22 @@ async fn set_project_repo(
     Path(project_id): Path<Uuid>,
     Json(body): Json<SetProjectRepoRequest>,
 ) -> ApiResult<JsonBody<ProductRecordDto>> {
+    // Every write to it would go through this connection: refuse one the
+    // organization does not own before it is recorded.
+    product
+        .service
+        .ensure_owned(
+            &ctx,
+            project_id,
+            &super::port::RepositoryTarget {
+                tenant: body.tenant,
+                connection_id: body.connection_id,
+                repo: body.repo.clone(),
+                base_branch: String::new(),
+            },
+        )
+        .await
+        .map_err(|e| write_problem("invalid gear repo", &e))?;
     let repo = serde_json::json!({
         "tenant": body.tenant,
         "connection_id": body.connection_id,
@@ -519,14 +562,112 @@ async fn set_project_repo(
     Ok(Json(dto))
 }
 
+/// The organization's gear repository, as the catalogue keeps it, for the
+/// organization `project_id` hangs under: the second place a project's new
+/// gear may go (ADR-0042 §2). Best effort -- an assembly without the
+/// catalogue, or an organization that cannot be read, has none -- and
+/// answered with the caller acting in the organization, where its
+/// connection is readable.
+async fn organization_gear_repo(
+    ctx: &SecurityContext,
+    product: &Product,
+    project_id: Uuid,
+) -> Option<(SecurityContext, super::port::RepositoryTarget)> {
+    let registry = product
+        .hub
+        .get::<dyn crate::components_catalog::port::Registry>()
+        .ok()?;
+    let org = product
+        .service
+        .organization_of_project(ctx, project_id)
+        .await
+        .unwrap_or_else(|| ctx.subject_tenant_id());
+    let repo = match registry.gear_repository(ctx, org).await {
+        Ok(repo) => repo?,
+        Err(e) => {
+            tracing::warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repository could not be read");
+            return None;
+        }
+    };
+    let octx = crate::org_scope::acting_in(ctx, org).ok()?;
+    Some((
+        octx,
+        super::port::RepositoryTarget {
+            tenant: repo.tenant,
+            connection_id: Some(repo.connection_id),
+            repo: repo.repo,
+            base_branch: repo.branch,
+        },
+    ))
+}
+
+/// The request's gear, in the port's terms.
+fn new_gear_of(body: &ScaffoldRequest) -> super::port::NewGear {
+    super::port::NewGear {
+        slug: body.slug.clone(),
+        app_title: body.app_title.clone(),
+        problem: body.problem.clone(),
+        origin: body.origin.clone(),
+        parent_dir: body.parent_dir.clone(),
+        gear_kind: body.gear_kind.clone(),
+        plugin_host: body.plugin_host.clone(),
+        plugin_spec: body.plugin_spec.clone(),
+        capabilities: body.capabilities.clone().unwrap_or_default(),
+        open_pr: body.open_pr.unwrap_or(false),
+        dry_run: body.dry_run.unwrap_or(false),
+    }
+}
+
+/// A scaffold that did not happen, as a problem.
+fn scaffold_problem(e: super::port::ScaffoldFailure) -> CanonicalError {
+    match e {
+        super::port::ScaffoldFailure::Invalid(msg) => StudioProductError::invalid_argument()
+            .with_constraint(msg)
+            .create(),
+        super::port::ScaffoldFailure::Failed(e) => {
+            CanonicalError::internal(format!("{e:#}")).create()
+        }
+    }
+}
+
 async fn scaffold_gear(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<ScaffoldRequest>,
 ) -> ApiResult<JsonBody<ScaffoldResultDto>> {
+    let dry_run = body.dry_run.unwrap_or(false);
+    // Where it goes: the project's gear repository, else the organization's,
+    // else the project's sources (ADR-0042 §2). Asked of the catalogue only
+    // when the project has none of its own.
+    let has_own = product
+        .service
+        .get_project_repo(&ctx, &project_id.to_string())
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .is_some();
+    let org = if has_own {
+        None
+    } else {
+        organization_gear_repo(&ctx, &product, project_id).await
+    };
+    let (org_ctx, org_target) = match org {
+        Some((octx, target)) => (Some(octx), Some(target)),
+        None => (None, None),
+    };
+    let target = product
+        .service
+        .scaffold_target(&ctx, &project_id.to_string(), org_target)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let target_repo = target
+        .as_ref()
+        .map(|t| t.target.repo.clone())
+        .unwrap_or_default();
+
     // Explicit files win, because a caller that has already decided what to
     // write is not asking for a skeleton. Everything else is generated here.
+    let gear = new_gear_of(&body);
     let files: Vec<super::scaffold::ScaffoldFile> = match body.files {
         Some(files) => files
             .into_iter()
@@ -535,23 +676,9 @@ async fn scaffold_gear(
                 content: f.content,
             })
             .collect(),
-        None => {
-            let parent_dir = body.parent_dir.clone().unwrap_or_default();
-            let (gear_gdl, plugin) =
-                describe_new_gear(&ctx, &project_id.to_string(), &product, &body, &parent_dir)
-                    .await?;
-            super::skeleton::generate(&super::skeleton::SkeletonSpec {
-                capability: body.slug.clone(),
-                app_title: body.app_title.clone().unwrap_or_default(),
-                problem: body.problem.clone().unwrap_or_default(),
-                origin: body.origin.clone().unwrap_or_default(),
-                parent_dir,
-                gear_gdl,
-                plugin,
-                capabilities: body.capabilities.clone().unwrap_or_default(),
-            })
-            .1
-        }
+        None => super::new_gear::files(product.gearbox.as_deref(), &target_repo, &gear)
+            .await
+            .map_err(scaffold_problem)?,
     };
     let written: Vec<ScaffoldFileDto> = files
         .iter()
@@ -560,34 +687,54 @@ async fn scaffold_gear(
             content: f.content.clone(),
         })
         .collect();
-    if body.dry_run.unwrap_or(false) {
+    let repo = target.as_ref().map(|t| t.target.repo.clone());
+    let into = target.as_ref().map(|t| t.origin.as_str().to_owned());
+    if dry_run {
         return Ok(Json(ScaffoldResultDto {
             branch: format!("scaffold/{}", super::skeleton::gear_slug(&body.slug)),
             commit_sha: String::new(),
             pr_url: None,
             files: written,
+            repo,
+            target: into,
         }));
     }
+    let Some(target) = target else {
+        return Err(StudioProductError::invalid_argument()
+            .with_constraint(format!(
+                "scaffold failed: {}",
+                super::service::no_repo_text()
+            ))
+            .create());
+    };
+    // The organization's repository is written as the organization, where
+    // its connection is readable; the project's as before.
+    let wctx = match (target.origin, &org_ctx) {
+        (super::service::TargetOrigin::Organization, Some(octx)) => octx,
+        _ => &ctx,
+    };
+    // Only through a connection the project's organization owns: a source
+    // or gear repository connected through the platform's (inherited)
+    // connection is refused, CONNECTION_NOT_OWNED.
     let w = product
         .service
-        .scaffold_into_repo(
-            &ctx,
-            &project_id.to_string(),
+        .scaffold_into_target(
+            wctx,
+            project_id,
+            &target.target,
             &body.slug,
-            files,
-            body.open_pr.unwrap_or(false),
+            &files,
+            gear.open_pr,
         )
         .await
-        .map_err(|e| {
-            StudioProductError::invalid_argument()
-                .with_constraint(format!("scaffold failed: {e:#}"))
-                .create()
-        })?;
+        .map_err(|e| write_problem("scaffold failed", &e))?;
     Ok(Json(ScaffoldResultDto {
         branch: w.branch,
         commit_sha: w.commit_sha,
         pr_url: w.pr_url,
         files: written,
+        repo,
+        target: into,
     }))
 }
 
@@ -663,120 +810,6 @@ async fn save_project_product(
         .next()
         .expect("one node converts to one DTO");
     Ok(Json(dto))
-}
-
-/// The `gear.gdl` for a gear the scaffold is about to write, from the engine's
-/// own scaffold, and whether it is a plugin. `(None, false)` when the engine
-/// is not configured: the skeleton is then what it always was. A kind the
-/// engine does not know, or a plugin host it does not describe, is the
-/// caller's mistake and says so.
-async fn describe_new_gear(
-    ctx: &SecurityContext,
-    project_id: &str,
-    product: &Product,
-    body: &ScaffoldRequest,
-    parent_dir: &str,
-) -> ApiResult<(Option<String>, bool)> {
-    let invalid = |msg: String| {
-        StudioProductError::invalid_argument()
-            .with_constraint(msg)
-            .create()
-    };
-    let Some(gearbox) = product.gearbox.as_ref() else {
-        return Ok((None, false));
-    };
-    let kind_text = body.gear_kind.clone().unwrap_or_default();
-    let kind = super::gearbox::GearKind::parse(&kind_text).ok_or_else(|| {
-        invalid(format!(
-            "gear kind `{kind_text}` is not one of minimal, service, plugin"
-        ))
-    })?;
-    let plugin = if kind == super::gearbox::GearKind::Plugin {
-        let host = body
-            .plugin_host
-            .as_deref()
-            .map(str::trim)
-            .filter(|h| !h.is_empty())
-            .ok_or_else(|| {
-                invalid(
-                    "a plugin needs `plugin_host`, the gear whose extension point it fills".into(),
-                )
-            })?;
-        // Which repository the gear goes into decides how the SDK is reached
-        // from it: inside the corpus, a path within the repository; in the
-        // project's own, the `gears-rust` checkout beside it. The plugin's
-        // `gear.gdl` names its point by spec (`fills = "..."`), which the
-        // engine joins across sources, so either validates.
-        let project_repo = product
-            .service
-            .get_project_repo(ctx, project_id)
-            .await
-            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-            .and_then(|n| {
-                n.value
-                    .get("repo")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-        let in_corpus = super::gearbox::repo_key(&project_repo) == gearbox.corpus_repo();
-        let points = gearbox
-            .extension_points()
-            .await
-            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-        let wanted_spec = body
-            .plugin_spec
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let mut of_host: Vec<_> = points
-            .into_iter()
-            .filter(|p| p.host_crate == host || p.host_id == host)
-            .filter(|p| wanted_spec.is_none_or(|s| p.spec == s))
-            .collect();
-        if of_host.len() > 1 {
-            let specs: Vec<&str> = of_host.iter().map(|p| p.spec.as_str()).collect();
-            return Err(invalid(format!(
-                "`{host}` declares several extension points; name one as `plugin_spec`: {}",
-                specs.join(", ")
-            )));
-        }
-        let point = of_host.pop().ok_or_else(|| {
-            invalid(format!(
-                "`{host}` has no such extension point the Gearbox engine knows of"
-            ))
-        })?;
-        Some(super::gearbox::SdkLocator {
-            spec: super::gearbox::spec_segment(&point.spec).to_string(),
-            trait_ident: point.trait_ident,
-            crate_name: point.sdk_crate,
-            lib_ident: point.sdk_lib,
-            path: if in_corpus {
-                super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path)
-            } else {
-                super::gearbox::sdk_path_beside(parent_dir, &point.sdk_path)
-            },
-        })
-    } else {
-        None
-    };
-    let slug = super::skeleton::gear_slug(&body.slug);
-    let spec = super::gearbox::GearScaffold {
-        crate_name: format!("cf-gears-{slug}"),
-        name: super::skeleton::title_case(&slug),
-        kind,
-        plugin,
-    };
-    let is_plugin = spec.plugin.is_some();
-    match gearbox.scaffold_gdl(spec).await {
-        Ok(gdl) => Ok((Some(gdl), is_plugin)),
-        // The skeleton is still worth writing; the description can be added
-        // in the IDE, where the engine's New Gear wizard writes the same file.
-        Err(e) => {
-            tracing::warn!(error = %format!("{e:#}"), "gearbox: no gear.gdl for the scaffold");
-            Ok((None, is_plugin))
-        }
-    }
 }
 
 /// A host a new plugin can fill.
@@ -1148,11 +1181,7 @@ async fn preview_product(
                 pr_title.as_deref(),
             )
             .await
-            .map_err(|e| {
-                StudioProductError::invalid_argument()
-                    .with_constraint(format!("writing product.gdl failed: {e:#}"))
-                    .create()
-            })?;
+            .map_err(|e| write_problem("writing product.gdl failed", &e))?;
         Some(ProductWriteDto {
             branch: w.branch,
             commit_sha: w.commit_sha,
@@ -1299,11 +1328,7 @@ async fn create_repo(
             body.private.unwrap_or(true),
         )
         .await
-        .map_err(|e| {
-            StudioProductError::invalid_argument()
-                .with_constraint(format!("create repo failed: {e:#}"))
-                .create()
-        })?;
+        .map_err(|e| write_problem("create repo failed", &e))?;
     Ok((
         StatusCode::CREATED,
         Json(CreateRepoResultDto {
@@ -1351,7 +1376,10 @@ pub fn register_routes(
             "Connects a project to the repository its gears are scaffolded \
                  into, or replaces that connection. The branch defaults to \
                  `main`. The repository is reached through a studio-connector \
-                 connection, so its credential stays in credstore.",
+                 connection, so its credential stays in credstore. The \
+                 connection must be the organization's own -- held by it, a \
+                 workspace or a project of it; one inherited from the platform \
+                 or held by another organization is a 400 `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1374,9 +1402,15 @@ pub fn register_routes(
         .operation_id("studio_product.scaffold_gear")
         .summary("Write a scaffolded gear skeleton into the project's connected gear repo")
         .description(
-            "Writes a gear skeleton into the project's connected repository, \
-                 on a branch named after the slug, and opens a pull request when \
-                 asked to. Returns what was written and where.",
+            "Writes a gear skeleton on a branch named after the slug, and opens \
+                 a pull request when asked to. The repository is the project's \
+                 gear repository; without one, the organization's gear repository \
+                 (ADR-0042); without that, the project's own repository from its \
+                 sources. Returns what was written, the repository (`repo`) and \
+                 which of the three it was (`target`: `project`, `organization` \
+                 or `sources`); a dry run says the same of where it would go. \
+                 Written only through a connection the organization owns: one \
+                 inherited from the platform is a 400 `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1398,7 +1432,9 @@ pub fn register_routes(
             "Creates a repository through the project's connector and records \
                  it as that project's gear repository in one step, so a new \
                  project does not need the repository to exist first. Answers 201; \
-                 `GET …/projects/{project_id}/gear-repo` reads the record back.",
+                 `GET …/projects/{project_id}/gear-repo` reads the record back. \
+                 A connection the organization does not own (the platform's, \
+                 inherited) is a 400 `CONNECTION_NOT_OWNED`; nothing is created.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1620,7 +1656,9 @@ pub fn register_routes(
          description, the engine's diagnostics, and the applications and gears \
          the resolution arrived at. With `write`, also commits product.gdl to \
          the project's gear repo on a new branch. `write` with no gears commits \
-         the description a new product project starts from, without resolving it.",
+         the description a new product project starts from, without resolving it. \
+         A write through a connection the organization does not own is a 400 \
+         `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()

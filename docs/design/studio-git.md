@@ -126,6 +126,21 @@ could fetch the tree from before. By then the push has succeeded, so a sync
 that cannot be queued is logged, never answered. A push to a repository through
 a connection the member cannot see re-syncs nothing.
 
+#### Never upstream as the platform
+
+- [x] `p1` - **ID**: `cpt-studio-constraint-git-own-connections`
+
+The token the proxy attaches is a connection's, and a project sees the
+platform root's connections because they are inherited. Under the connectors'
+rule (`cpt-studio-constraint-connector-own-connections`) only a connection
+held by the project's organization, a workspace or project of it lends its
+token: `project_sources::git_sources` marks any other source `held_outside`
+and gives it no token, so neither the proxy nor an IDE session (which clones
+from the same list) reaches the host with the platform's rights. The proxy
+refuses such a source outright -- 403 with `CONNECTION_NOT_OWNED` and what to
+do, on `info/refs` and both pack routes -- rather than relay it anonymously,
+and the push refresh never syncs through such a connection.
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model

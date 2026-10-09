@@ -16,7 +16,8 @@ This README is what you need to work in the directory.
   feature (ADR-0039).
 - Studio's one way out to a model provider. Another gear that needs a provider
   takes `port::ModelProviders` from the ClientHub (today: the Anthropic and
-  OpenAI connector drivers' key test); do not add a provider HTTP client
+  OpenAI connector drivers' key test, and the component registry's
+  suggestions through `complete`, on the caller's key); do not add a provider HTTP client
   anywhere else.
 - No Studio key and no server upstream. Every call goes out on the caller's
   key (`keys.rs`): their private profile key (`anthropic-key`, `openai-key`;

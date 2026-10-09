@@ -739,6 +739,42 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.catalog.decided.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A decision a person made about a registry entry.",
+        "title": "Decided",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.catalog.decided.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.catalog.found_in.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "description": "A place a registry entry was found.",
+        "title": "FoundIn",
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.catalog.found_in.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.catalog.has_version.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -1019,6 +1055,42 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.occurrence.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "Where a registry entry was found: the project, repository, ref, path and commit.",
+        "title": "Registry occurrence",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.occurrence.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.project_gear_repo.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -1091,6 +1163,150 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_decision.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "One decision a person made about a registry entry: the action, the states it moved between, who, when and why.",
+        "title": "Registry decision",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_decision.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_entry.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "One component of the organization's registry: its name, kind, lifecycle state, owner and capabilities.",
+        "title": "Registry entry",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_entry.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_read.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "One repository the registry walk read for a project, with the fingerprint of the files it read.",
+        "title": "Registry read",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_read.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_settings.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "The organization's registry settings: the projects its walk skips.",
+        "title": "Registry settings",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.registry_settings.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.roadmap_item.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -1121,6 +1337,42 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.roadmap_item.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.source.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "One repository the organization's catalogue reads: its ref and the mode it is scanned in.",
+        "title": "Catalogue source",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.source.v1~"
     },
     {
       "gear": "studio-connector",
@@ -7665,6 +7917,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.catalog.decided.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A decision a person made about a registry entry.",
+        "title": "Decided",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.decided.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.catalog.field_schema.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "The fields a component page shows for one component type, grouped, with the source of each.",
@@ -7672,6 +7937,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.catalog.field_schema.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.found_in.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A place a registry entry was found.",
+        "title": "FoundIn",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.found_in.v1~"
     },
     {
       "gear": "studio-components-catalog",
@@ -7743,6 +8021,71 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.catalog.occurrence.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Where a registry entry was found: the project, repository, ref, path and commit.",
+        "title": "Registry occurrence",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.occurrence.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.registry_decision.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "One decision a person made about a registry entry: the action, the states it moved between, who, when and why.",
+        "title": "Registry decision",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.registry_decision.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.registry_entry.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "One component of the organization's registry: its name, kind, lifecycle state, owner and capabilities.",
+        "title": "Registry entry",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.registry_entry.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.registry_read.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "One repository the registry walk read for a project, with the fingerprint of the files it read.",
+        "title": "Registry read",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.registry_read.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.registry_settings.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "The organization's registry settings: the projects its walk skips.",
+        "title": "Registry settings",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.registry_settings.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.catalog.roadmap_item.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A gear a roadmap board plans: its stage, milestone, progress and demand, and the catalogued components that implement it, if any yet.",
@@ -7750,6 +8093,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.catalog.roadmap_item.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.source.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "One repository the organization's catalogue reads: its ref and the mode it is scanned in.",
+        "title": "Catalogue source",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.source.v1~"
     },
     {
       "gear": "studio-connector",

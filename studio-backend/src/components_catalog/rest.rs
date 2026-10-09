@@ -135,6 +135,11 @@ pub struct CatalogNodeListResponse {
     /// without saying so is worse than a page that admits it.
     #[serde(default)]
     pub truncated: bool,
+    /// The organization's components left out because the platform has one
+    /// of the same name (ADR-0042): the platform's is listed, the
+    /// organization's annotations over it. Empty outside `/components`.
+    #[serde(default)]
+    pub shadowed: Vec<String>,
 }
 
 /// Open, Studio-owned metadata for a gear. The payload is intentionally
@@ -222,11 +227,15 @@ pub struct SaveFieldSchemaRequest {
     pub schema: Value,
 }
 
-/// A repository source picked on the Gears page.
+/// A repository source picked on the Gears page, and one the organization
+/// keeps on the server (`GET`/`PUT /sources`).
 #[derive(Debug)]
-#[toolkit_macros::api_dto(request)]
+#[toolkit_macros::api_dto(request, response)]
 pub struct RepoSourceDto {
-    /// Tenant that owns the connection (usually the workspace/organization).
+    /// Tenant whose connections the source reads through (usually the
+    /// organization). On an organization's routes it must be the
+    /// organization or within it (the nil id stands for the organization);
+    /// the platform's sources read through the root's.
     pub tenant: Uuid,
     /// Connection to use; when omitted the first GitHub connection is taken.
     pub connection_id: Option<Uuid>,
@@ -241,13 +250,18 @@ pub struct RepoSourceDto {
     /// or a `.cf-studio-kit.toml` manifest. Kits land as their own node type
     /// rather than as gears wearing a label.
     pub mode: Option<String>,
+    /// In an answer of `GET /sources`: the platform's catalogue already reads
+    /// this repository in this mode (ADR-0042), so the organization's copy is
+    /// shadowed and can be removed. Ignored in a request.
+    pub shadowed_by_platform: Option<bool>,
 }
 
 /// A roadmap board: a GitHub Project whose items plan the gears.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct RoadmapSourceDto {
-    /// Tenant that owns the GitHub connection.
+    /// Tenant that owns the GitHub connection: the organization or within it
+    /// (the nil id stands for the organization).
     pub tenant: Uuid,
     /// Connection to use; when omitted the first GitHub connection is taken.
     /// It needs to read organization projects (`read:project`).
@@ -348,6 +362,8 @@ impl SyncRequestDto {
             crates_io,
             repos,
             roadmaps,
+            registry: false,
+            platform: false,
         }
     }
 }
@@ -366,17 +382,39 @@ async fn sync(
     body: Option<Json<SyncRequestDto>>,
 ) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
     let idempotency_key = crate::idempotency::key(&headers)?;
-    let queue = catalog.queue()?;
-    let sources = match body {
-        Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
-        None => SyncSources {
-            crates_io: Some(catalog.service.default_keyword().to_string()),
-            ..SyncSources::default()
-        },
+    let (mut sources, names_repositories) = match body {
+        Some(Json(req)) => {
+            let names = req.repositories.is_some();
+            (req.into_sources(catalog.service.default_keyword()), names)
+        }
+        None => (
+            SyncSources {
+                crates_io: Some(catalog.service.default_keyword().to_string()),
+                ..SyncSources::default()
+            },
+            false,
+        ),
     };
+    // What the body names reads only through the organization's own
+    // connections; the run checks each connection again (`retain_owned_sources`).
+    sources.repos = owned_sources(&catalog, &ctx, std::mem::take(&mut sources.repos)).await?;
+    sources.roadmaps =
+        owned_roadmaps(&catalog, &ctx, std::mem::take(&mut sources.roadmaps)).await?;
+    // A body that names no repositories syncs the ones the organization keeps
+    // on the server, and walks its projects into the registry after them
+    // (ADR-0041). One that names them is read as it always was.
+    if !names_repositories {
+        sources.repos = catalog
+            .service
+            .list_sources(&ctx)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        sources.registry = true;
+    }
     let payload = serde_json::to_value(&sources)
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
+    let queue = catalog.queue()?;
     let run_id = queue
         .enqueue(
             &ctx,
@@ -426,9 +464,13 @@ async fn list_gears(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
-    let (nodes, truncated) = catalog
+    let super::service::TieredNodes {
+        nodes,
+        truncated,
+        shadowed,
+    } = catalog
         .service
-        .list_component_nodes(&ctx)
+        .list_component_nodes_tiered(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     // The reference's classification, laid onto each node: what it is, what
@@ -478,6 +520,7 @@ async fn list_gears(
             })
             .collect(),
         truncated,
+        shadowed,
     }))
 }
 
@@ -748,6 +791,8 @@ pub struct ComponentValuesDto {
     pub sources: Vec<ComponentSourceDto>,
     /// Known from a roadmap board alone: planned, no code catalogued yet.
     pub planned: bool,
+    /// Whose catalogue it is in (ADR-0042): `platform` or `organization`.
+    pub tier: String,
 }
 
 /// One place a component's facts came from.
@@ -795,6 +840,7 @@ async fn component_values(
                 })
                 .collect(),
             planned: c.planned,
+            tier: c.tier,
         })
         .collect();
 
@@ -1307,6 +1353,7 @@ async fn list_profiles(
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,
+        shadowed: Vec::new(),
     }))
 }
 
@@ -1500,7 +1547,1533 @@ async fn list_versions(
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,
+        shadowed: Vec::new(),
     }))
+}
+
+// ── Sources and the registry (ADR-0041) ──────────────────────────────────────
+
+/// The organization's catalogue sources.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RepoSourceListDto {
+    pub items: Vec<RepoSourceDto>,
+    pub total: u32,
+}
+
+/// The sources that replace the organization's.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReplaceSourcesRequest {
+    pub items: Vec<RepoSourceDto>,
+}
+
+/// The projects the registry walk skips.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct ExcludedProjectsDto {
+    pub project_ids: Vec<Uuid>,
+}
+
+/// What the last registry walk saw of one project.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryProjectDto {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// When the walk read it, RFC 3339.
+    pub at: String,
+    /// The project's repositories could not be listed at all.
+    pub error: Option<String>,
+    pub repos: Vec<RegistryRepoStatusDto>,
+}
+
+/// What the last registry walk did with one repository of a project.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryRepoStatusDto {
+    pub repo: String,
+    /// `read` (read anew), `unchanged` (nothing it reads changed) or `failed`.
+    pub status: String,
+    /// Components found in it: read now, or still recorded for it.
+    pub components: u32,
+    pub error: Option<String>,
+    /// What a person can do about `error`, when the walk knows -- for a
+    /// repository connected with a personal token, share the connection.
+    pub hint: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryProjectListDto {
+    pub items: Vec<RegistryProjectDto>,
+    pub total: u32,
+}
+
+/// One place a registry entry was found.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct OccurrenceDto {
+    pub project_id: Option<Uuid>,
+    pub project_name: Option<String>,
+    /// `owner/name`.
+    pub repo: String,
+    pub git_ref: Option<String>,
+    /// The component's directory, or the file when several share one.
+    pub path: String,
+    /// The newest commit on the ref when the repository was read.
+    pub commit: Option<String>,
+    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
+    /// where a candidate detector found it and nothing declares it.
+    pub declared_in: String,
+    /// `project`, or `organization` for the organization's gear repository
+    /// (ADR-0042), which belongs to no project: `project_id` is then null and
+    /// `project_name` is the organization's.
+    pub scope: String,
+}
+
+/// Who answers for a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct RegistryOwnerDto {
+    /// `person` or `team`.
+    pub kind: String,
+    /// The person's Studio id, or the team's key, when known.
+    pub id: Option<String>,
+    pub name: String,
+}
+
+/// One decision a person made about a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryDecisionDto {
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`,
+    /// `mark_published`, `merge` or `edit`; `declare` (Declare it) and
+    /// `published` (by `platform-sync`, when the platform's catalogue has a
+    /// contributed gear) are recorded too.
+    pub action: String,
+    /// The state before; equal to `to` for an edit.
+    pub from: String,
+    pub to: String,
+    /// The person who decided: their Studio id, else the token's subject.
+    pub by: String,
+    pub by_name: Option<String>,
+    /// RFC 3339.
+    pub at: String,
+    pub reason: Option<String>,
+    /// The fields the decision set (`owner`, `replaced_by`, `merge_into`,
+    /// `version`, `merged_from`, …).
+    pub details: Value,
+}
+
+/// A decision about a registry entry.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RegistryDecisionRequest {
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`,
+    /// `mark_published`, `merge` or `edit`.
+    pub action: String,
+    /// Why. Required to reject; for `publish`, said in the pull request.
+    pub reason: Option<String>,
+    /// Required to register (unless the entry has one); set by an edit.
+    pub owner: Option<RegistryOwnerDto>,
+    pub kind: Option<String>,
+    pub category: Option<String>,
+    pub capabilities: Option<Vec<String>>,
+    pub description: Option<String>,
+    /// For `deprecate`: an existing entry to use instead.
+    pub replaced_by: Option<String>,
+    /// For `merge`: the existing entry to fold this one into.
+    pub merge_into: Option<String>,
+    /// For `mark_published`: the version the platform published.
+    pub version: Option<String>,
+    /// For `publish` only: answer the target repository, branch, path and
+    /// files in `publish_preview`, writing and recording nothing.
+    pub dry_run: Option<bool>,
+}
+
+/// One component of the organization's registry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryEntryDto {
+    pub name: String,
+    /// `gear`, `plugin`, `frontx` or `kit`.
+    pub kind: String,
+    /// `candidate`, `declared`, `registered`, `published`, `rejected`,
+    /// `deprecated` or `merged`. A walk writes `declared` and never moves it;
+    /// the rest are people's decisions.
+    pub state: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub owner: Option<RegistryOwnerDto>,
+    pub capabilities: Vec<String>,
+    /// Names merged into this entry; a walk finding any of them puts it here.
+    pub aliases: Vec<String>,
+    /// For a `merged` entry, the entry it was folded into.
+    pub merged_into: Option<String>,
+    /// For a `deprecated` entry, the entry to use instead.
+    pub replaced_by: Option<String>,
+    /// For a `published` entry, the platform's version of it when known.
+    pub version: Option<String>,
+    /// The pull request that gave it to the platform (ADR-0042 §4), once a
+    /// `publish` decision opened one; it stays `registered` until the
+    /// platform's catalogue has it.
+    pub contribution: Option<RegistryContributionDto>,
+    /// The projects that use it without declaring it (P4): by a Cargo
+    /// dependency of their code, by their product's picks, or both.
+    pub consumers: Vec<RegistryConsumerDto>,
+    /// What a model last proposed for it (`POST /registry/{name}/suggest`);
+    /// never a state change.
+    pub suggestion: Option<RegistrySuggestionDto>,
+    /// No occurrence is left; the entry is kept with its state.
+    pub orphaned: bool,
+    /// RFC 3339.
+    pub first_seen: Option<String>,
+    /// RFC 3339: the last walk that read a repository declaring it.
+    pub last_seen: Option<String>,
+    /// For a `candidate`: the sum of its evidence's weights (P3).
+    pub score: Option<u32>,
+    /// For a `candidate`: why it looks like a gear, signal by signal.
+    pub evidence: Vec<EvidenceDto>,
+    pub occurrences: Vec<OccurrenceDto>,
+    /// The decisions made about it, newest first. Only on the single-entry
+    /// read and a decision's answer; null in the list.
+    pub decisions: Option<Vec<RegistryDecisionDto>>,
+    /// What a `publish` with `dry_run: true` would write; null otherwise.
+    pub publish_preview: Option<RegistryPublishPreviewDto>,
+}
+
+/// What publishing would write into the platform's gear repository: the
+/// answer of a `publish` decision with `dry_run: true`.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryPublishPreviewDto {
+    /// The platform's gear repository, `owner/name`.
+    pub repo: String,
+    /// The branch the pull request goes back to.
+    pub base_branch: String,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    /// Where the gear's files go in the platform's repository.
+    pub path: String,
+    /// The files, at their places there.
+    pub files: Vec<String>,
+    /// What is not copied (not text), relative to the gear's directory.
+    pub skipped: Vec<String>,
+    /// The pull request's title.
+    pub title: String,
+}
+
+/// A gear given to the platform: the pull request into the platform's gear
+/// repository.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryContributionDto {
+    /// The platform's gear repository, `owner/name`.
+    pub repo: String,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    pub pr_url: Option<String>,
+    /// Where the gear's files went in the platform's repository.
+    pub path: String,
+    pub files: u32,
+    /// RFC 3339.
+    pub at: String,
+    pub by: String,
+    pub by_name: Option<String>,
+}
+
+/// A project that uses a registry entry it does not declare.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryConsumerDto {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// `cargo`, `product`, or both.
+    pub via: Vec<String>,
+}
+
+/// What a model proposed for a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistrySuggestionDto {
+    pub description: Option<String>,
+    /// One of the platform's categories, or null.
+    pub category: Option<String>,
+    /// Keys of the organization's capability vocabulary only.
+    pub capabilities: Vec<String>,
+    /// RFC 3339.
+    pub at: String,
+    /// `provider:model`.
+    pub model: String,
+}
+
+/// One signal a candidate detector found (ADR-0041 P3).
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct EvidenceDto {
+    /// `rest`, `persistence`, `types`, `boundary`, `docs`, `consumers` or
+    /// `copied`.
+    pub signal: String,
+    /// What it fired on: "own REST surface: rest.rs", "used by 3 modules",
+    /// "copied in insight".
+    pub detail: String,
+    pub weight: u32,
+}
+
+/// What Declare it takes. Every field is optional; the entry's own facts
+/// fill what is left out.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RegistryDeclareRequest {
+    pub description: Option<String>,
+    pub capabilities: Option<Vec<String>>,
+    pub category: Option<String>,
+    /// Answer the files only: nothing is written or recorded.
+    pub dry_run: Option<bool>,
+    /// The project whose occurrence to declare, when the candidate was found
+    /// in several; else its highest-scoring one.
+    pub project_id: Option<Uuid>,
+}
+
+/// One file Declare it writes.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredFileDto {
+    pub path: String,
+    pub content: String,
+}
+
+/// What Declare it did, or -- for a dry run -- would do.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryDeclareResultDto {
+    /// `declare/<name>`.
+    pub branch: String,
+    /// The pull request; null for a dry run.
+    pub pr_url: Option<String>,
+    pub files: Vec<DeclaredFileDto>,
+    /// `owner/name` written into, and the module's directory there.
+    pub repo: String,
+    pub path: String,
+    pub dry_run: bool,
+    /// The manifest written: `gear.gdl` (the Gearbox engine's description)
+    /// when the engine is configured, else `gear.toml` -- and always
+    /// `gear.toml` inside a crate's `src/`.
+    pub manifest: String,
+}
+
+/// The registry, narrowed and paged.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryEntryListDto {
+    pub items: Vec<RegistryEntryDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct RegistryQuery {
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(flatten)]
+    pub page: crate::pagination::PageQuery,
+}
+
+fn source_dto(s: RepoSource) -> RepoSourceDto {
+    RepoSourceDto {
+        tenant: s.tenant,
+        connection_id: s.connection_id,
+        repo: s.repo,
+        git_ref: Some(s.git_ref).filter(|r| !r.is_empty()),
+        mode: Some(s.mode).filter(|m| !m.is_empty()),
+        shadowed_by_platform: None,
+    }
+}
+
+/// The organization's sources as `GET /sources` answers them: each marked
+/// whether the platform already reads it (ADR-0042). The platform's own
+/// sources, read as the platform, are never marked.
+async fn marked_sources(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    sources: Vec<RepoSource>,
+) -> Vec<RepoSourceDto> {
+    let platform = match catalog.service.platform_ctx(ctx) {
+        Some(p) => catalog
+            .service
+            .list_sources(&p)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's sources unreadable");
+            })
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    sources
+        .into_iter()
+        .map(|s| {
+            let shadowed = super::tiers::shadowed_by_platform(&s, &platform);
+            let mut dto = source_dto(s);
+            dto.shadowed_by_platform = Some(shadowed);
+            dto
+        })
+        .collect()
+}
+
+fn source_of(d: RepoSourceDto) -> RepoSource {
+    RepoSource {
+        tenant: d.tenant,
+        connection_id: d.connection_id,
+        repo: d.repo,
+        git_ref: d.git_ref.unwrap_or_default(),
+        mode: d.mode.unwrap_or_else(|| "gears".to_string()),
+    }
+}
+
+/// An entry as the registry routes answer it.
+pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryEntryDto {
+    RegistryEntryDto {
+        name: e.entry.name,
+        kind: e.entry.kind,
+        state: e.entry.state,
+        description: e.entry.description,
+        category: e.entry.category,
+        owner: e.entry.owner.map(|o| RegistryOwnerDto {
+            kind: o.kind,
+            id: o.id,
+            name: o.name,
+        }),
+        capabilities: e.entry.capabilities,
+        aliases: e.entry.aliases,
+        merged_into: e.entry.merged_into,
+        replaced_by: e.entry.replaced_by,
+        version: e.entry.version,
+        contribution: e.entry.contribution.map(|c| RegistryContributionDto {
+            repo: c.repo,
+            branch: c.branch,
+            pr_url: c.pr_url,
+            path: c.path,
+            files: u32::try_from(c.files).unwrap_or(u32::MAX),
+            at: c.at,
+            by: c.by,
+            by_name: c.by_name,
+        }),
+        consumers: e
+            .entry
+            .consumers
+            .into_iter()
+            .map(|c| RegistryConsumerDto {
+                project_id: c.project_id,
+                project_name: c.project_name,
+                via: c.via,
+            })
+            .collect(),
+        suggestion: e.entry.suggestion.map(suggestion_dto),
+        orphaned: e.entry.orphaned,
+        first_seen: e.entry.first_seen,
+        last_seen: e.entry.last_seen,
+        score: e.entry.score,
+        evidence: e
+            .entry
+            .evidence
+            .into_iter()
+            .map(|v| EvidenceDto {
+                signal: v.signal,
+                detail: v.detail,
+                weight: v.weight,
+            })
+            .collect(),
+        occurrences: e
+            .occurrences
+            .into_iter()
+            .map(|o| OccurrenceDto {
+                scope: o.scope_name().to_owned(),
+                project_id: o.project_id,
+                project_name: o.project_name,
+                repo: o.repo,
+                git_ref: o.git_ref,
+                path: o.path,
+                commit: o.commit,
+                declared_in: o.declared_in,
+            })
+            .collect(),
+        decisions: None,
+        publish_preview: None,
+    }
+}
+
+/// A publish's plan as a dry run answers it.
+pub(crate) fn publish_preview_dto(
+    p: super::registry_publish::PublishPlan,
+) -> RegistryPublishPreviewDto {
+    RegistryPublishPreviewDto {
+        repo: p.target.repo,
+        base_branch: p.target.base_branch,
+        branch: p.branch,
+        path: p.path,
+        files: p.files.into_iter().map(|f| f.path).collect(),
+        skipped: p.skipped,
+        title: p.text.title,
+    }
+}
+
+/// A suggestion as the registry routes answer it.
+pub(crate) fn suggestion_dto(s: super::registry::Suggestion) -> RegistrySuggestionDto {
+    RegistrySuggestionDto {
+        description: s.description,
+        category: s.category,
+        capabilities: s.capabilities,
+        at: s.at,
+        model: s.model,
+    }
+}
+
+/// A decision as the registry routes answer it.
+pub(crate) fn registry_decision_dto(
+    d: super::registry_decisions::DecisionRecord,
+) -> RegistryDecisionDto {
+    RegistryDecisionDto {
+        action: d.action,
+        from: d.from,
+        to: d.to,
+        by: d.by,
+        by_name: d.by_name,
+        at: d.at,
+        reason: d.reason,
+        details: d.details,
+    }
+}
+
+/// An entry with its decisions, as the single-entry read answers it.
+pub(crate) fn registry_entry_detail_dto(
+    e: super::registry::RegistryEntry,
+    decisions: Vec<super::registry_decisions::DecisionRecord>,
+) -> RegistryEntryDto {
+    RegistryEntryDto {
+        decisions: Some(decisions.into_iter().map(registry_decision_dto).collect()),
+        ..registry_entry_dto(e)
+    }
+}
+
+/// The decision a request carries, in the service's terms.
+fn decision_input(body: RegistryDecisionRequest) -> super::registry_decisions::DecisionInput {
+    super::registry_decisions::DecisionInput {
+        action: body.action,
+        reason: body.reason,
+        owner: body.owner.map(|o| super::registry::Owner {
+            kind: o.kind,
+            id: o.id,
+            name: o.name,
+        }),
+        kind: body.kind,
+        category: body.category,
+        capabilities: body.capabilities,
+        description: body.description,
+        replaced_by: body.replaced_by,
+        merge_into: body.merge_into,
+        version: body.version,
+        contribution: None,
+        dry_run: body.dry_run.unwrap_or(false),
+    }
+}
+
+/// The privilege that moves a registry entry's lifecycle (ADR-0041 P2).
+///
+/// Deciding what is the organization's component is administration: one
+/// answer per organization, asked of studio-user (ADR-0040), never of the
+/// PDP, whose clamp would admit every member.
+pub(crate) const REGISTRY_PRIVILEGE: &str = "component.registry";
+
+/// May the caller decide about the organization's registry? Its owner or a
+/// platform administrator may; on the roles model, so may whoever holds
+/// [`REGISTRY_PRIVILEGE`]. Without studio-user nobody can be shown to hold
+/// it, so nobody does.
+pub(crate) async fn may_decide(
+    authority: Option<&dyn crate::user_profile::OrgAuthority>,
+    ctx: &SecurityContext,
+) -> bool {
+    match authority {
+        Some(authority) => {
+            authority
+                .may_administer(ctx, ctx.subject_tenant_id(), REGISTRY_PRIVILEGE)
+                .await
+        }
+        None => false,
+    }
+}
+
+/// A refused decision as a problem: 404 for an entry that is not there, 400
+/// `failed_precondition` for a move its state does not allow, 400
+/// `invalid_argument` for an incomplete request.
+fn decision_problem(e: super::registry_decisions::DecisionError) -> CanonicalError {
+    use super::registry_decisions::DecisionError as E;
+    let message = e.to_string();
+    match e {
+        E::NotFound(name) => StudioComponentsCatalogError::not_found(message)
+            .with_resource(name)
+            .create(),
+        E::Illegal { action, from } => StudioComponentsCatalogError::failed_precondition()
+            .with_precondition_violation(
+                format!("state:{from}"),
+                format!("{message}; `{action}` applies to {}", allowed_from(&action)),
+                "REGISTRY_TRANSITION_NOT_ALLOWED",
+            )
+            .create(),
+        E::UnknownAction(_) => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation("action", message, "INVALID")
+            .create(),
+        E::Invalid { field, .. } => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(field, message, "INVALID")
+            .create(),
+        E::UnknownEntry { field, .. } => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(field, message, "UNKNOWN_ENTRY")
+            .create(),
+    }
+}
+
+/// The states an action applies to, for the refusal's words.
+fn allowed_from(action: &str) -> String {
+    use super::registry_decisions::{Action, transition};
+    let Some(action) = Action::parse(action) else {
+        return "nothing".to_owned();
+    };
+    let from: Vec<&str> = super::registry::STATES
+        .into_iter()
+        .filter(|s| transition(action, s, true).is_some())
+        .collect();
+    from.join(", ")
+}
+
+fn internal(e: anyhow::Error) -> CanonicalError {
+    CanonicalError::internal(format!("{e:#}")).create()
+}
+
+impl Catalog {
+    /// Make sure the organization's registry is walked every hour: a
+    /// platform-level schedule naming it (see `registry_task`). Best effort --
+    /// without a scheduler the registry is still walked by a sync and a push.
+    async fn ensure_registry_schedule(&self, ctx: &SecurityContext) {
+        let Ok(schedules) = self.hub.get::<dyn crate::scheduler::port::Schedules>() else {
+            tracing::info!(
+                "components-catalog: no scheduler; the registry is walked on sync and push only"
+            );
+            return;
+        };
+        let spec = super::registry_task::schedule_spec(ctx.subject_tenant_id());
+        if let Err(e) = schedules.ensure(ctx, spec).await {
+            tracing::warn!(error = %format!("{e:#}"), "components-catalog: the registry schedule could not be ensured");
+        }
+    }
+}
+
+async fn list_sources(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<RepoSourceListDto>> {
+    let stored = catalog.service.list_sources(&ctx).await.map_err(internal)?;
+    let items = marked_sources(&catalog, &ctx, stored).await;
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(RepoSourceListDto { items, total }))
+}
+
+async fn update_sources(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ReplaceSourcesRequest>,
+) -> ApiResult<JsonBody<RepoSourceListDto>> {
+    let sources = owned_sources(
+        &catalog,
+        &ctx,
+        body.items.into_iter().map(source_of).collect(),
+    )
+    .await?;
+    let stored = catalog
+        .service
+        .replace_sources(&ctx, sources)
+        .await
+        .map_err(internal)?;
+    let items = marked_sources(&catalog, &ctx, stored).await;
+    catalog.ensure_registry_schedule(&ctx).await;
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(RepoSourceListDto { items, total }))
+}
+
+/// An organization's sources, each naming the tenant its connection is read
+/// from: the organization when none is named (the nil id), else one within
+/// it. One naming a tenant outside it -- the platform's root, whose
+/// connections the organization only inherits -- is a 400
+/// (`SOURCE_TENANT_NOT_OWNED`). See [`super::ownership`].
+async fn owned_sources(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    sources: Vec<RepoSource>,
+) -> ApiResult<Vec<RepoSource>> {
+    let org = ctx.subject_tenant_id();
+    let mut out = Vec::with_capacity(sources.len());
+    for s in sources {
+        let tree = super::service::TreeAs(catalog.service.as_ref(), ctx);
+        let owned = super::ownership::owned_source(org, s, &tree)
+            .await
+            .map_err(source_tenant_refusal)?;
+        out.push(owned);
+    }
+    Ok(out)
+}
+
+/// [`owned_sources`] for the roadmap boards a sync body names.
+async fn owned_roadmaps(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    roadmaps: Vec<RoadmapSource>,
+) -> ApiResult<Vec<RoadmapSource>> {
+    let org = ctx.subject_tenant_id();
+    let mut out = Vec::with_capacity(roadmaps.len());
+    for mut r in roadmaps {
+        let tree = super::service::TreeAs(catalog.service.as_ref(), ctx);
+        r.tenant = super::ownership::source_tenant(org, r.tenant, &tree)
+            .await
+            .map_err(source_tenant_refusal)?;
+        out.push(r);
+    }
+    Ok(out)
+}
+
+fn source_tenant_refusal(tenant: Uuid) -> CanonicalError {
+    StudioComponentsCatalogError::failed_precondition()
+        .with_precondition_violation(
+            format!("tenant:{tenant}"),
+            format!(
+                "the source names tenant {tenant}, which is not this organization nor within \
+                 it; a source reads only through a connection of the organization's own"
+            ),
+            super::ownership::SOURCE_TENANT_NOT_OWNED,
+        )
+        .create()
+}
+
+// ── the platform's catalogue (ADR-0042) ─────────────────────────────────────
+
+/// The platform's catalogue sources and crates.io keyword.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlatformSourcesDto {
+    pub items: Vec<RepoSourceDto>,
+    pub total: u32,
+    /// The crates.io keyword the platform's catalogue syncs; null for none.
+    pub crates_io: Option<String>,
+}
+
+/// What replaces the platform's catalogue sources.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReplacePlatformSourcesRequest {
+    pub items: Vec<RepoSourceDto>,
+    /// The crates.io keyword; null or blank for no crates.io source.
+    pub crates_io: Option<String>,
+}
+
+/// May the caller run the platform's catalogue? Only a platform
+/// administrator, as studio-user answers it; without studio-user nobody can
+/// be shown to be one, so nobody is.
+pub(crate) async fn may_run_platform(
+    reader: Option<&dyn crate::user_profile::OrganizationReader>,
+    ctx: &SecurityContext,
+) -> bool {
+    match reader {
+        Some(reader) => reader
+            .is_platform_admin(&ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+fn platform_refusal() -> CanonicalError {
+    StudioComponentsCatalogError::permission_denied()
+        .with_reason("PLATFORM_ADMIN_REQUIRED")
+        .create()
+}
+
+impl Catalog {
+    /// studio-user's reader, resolved per request like every other port.
+    fn organizations(&self) -> Option<Arc<dyn crate::user_profile::OrganizationReader>> {
+        self.hub
+            .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .ok()
+    }
+
+    /// The caller acting in the platform's tenant, once shown to be a
+    /// platform administrator; 403 otherwise.
+    async fn as_platform(&self, ctx: &SecurityContext) -> ApiResult<SecurityContext> {
+        if !may_run_platform(self.organizations().as_deref(), ctx).await {
+            return Err(platform_refusal());
+        }
+        super::registry::in_tenant(ctx, super::tiers::PLATFORM_TENANT).map_err(internal)
+    }
+
+    /// Make sure the platform's catalogue is synced daily. Best effort, like
+    /// the registry's schedule.
+    async fn ensure_platform_schedule(&self, pctx: &SecurityContext) {
+        let Ok(schedules) = self.hub.get::<dyn crate::scheduler::port::Schedules>() else {
+            tracing::info!(
+                "components-catalog: no scheduler; the platform's catalogue syncs when asked"
+            );
+            return;
+        };
+        if let Err(e) = schedules
+            .ensure(pctx, super::sync_task::platform_schedule_spec())
+            .await
+        {
+            tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's schedule could not be ensured");
+        }
+    }
+}
+
+async fn list_platform_sources(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<PlatformSourcesDto>> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .list_sources(&pctx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(source_dto)
+        .collect();
+    let crates_io = catalog
+        .service
+        .stored_keyword(&pctx)
+        .await
+        .map_err(internal)?;
+    Ok(Json(PlatformSourcesDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        crates_io,
+    }))
+}
+
+async fn update_platform_sources(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ReplacePlatformSourcesRequest>,
+) -> ApiResult<JsonBody<PlatformSourcesDto>> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .replace_sources(&pctx, body.items.into_iter().map(source_of).collect())
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(source_dto)
+        .collect();
+    let crates_io = catalog
+        .service
+        .set_stored_keyword(&pctx, body.crates_io)
+        .await
+        .map_err(internal)?;
+    catalog.ensure_platform_schedule(&pctx).await;
+    Ok(Json(PlatformSourcesDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        crates_io,
+    }))
+}
+
+async fn sync_platform(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    headers: HeaderMap,
+) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let idempotency_key = crate::idempotency::key(&headers)?;
+    let queue = catalog.queue()?;
+    let run_id = queue
+        .enqueue(
+            &pctx,
+            crate::tasks::sdk::NewRun {
+                tenant: super::tiers::PLATFORM_TENANT,
+                task_type: TASK_TYPE,
+                payload: super::sync_task::platform_payload(),
+                partition_key: Some("catalog"),
+                idempotency_key: idempotency_key.as_deref(),
+                coalesce_queued: true,
+                notify_workspace_id: None,
+            },
+        )
+        .await
+        .map_err(internal)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CatalogSyncEnqueued {
+            run_id: run_id.to_string(),
+            status: "queued".to_string(),
+        }),
+    ))
+}
+
+async fn list_registry_entries(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Query(q): Query<RegistryQuery>,
+) -> ApiResult<JsonBody<RegistryEntryListDto>> {
+    let project_id = match q.project_id.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Some(Uuid::parse_str(raw).map_err(|_| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("project_id `{raw}` is not a UUID"))
+                .create()
+        })?),
+    };
+    let state = q.state.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(s) = state
+        && !super::registry::STATES.contains(&s)
+    {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(format!(
+                "state `{s}` is not one of {:?}",
+                super::registry::STATES
+            ))
+            .create());
+    }
+    let entries = catalog
+        .service
+        .registry_entries(&ctx)
+        .await
+        .map_err(internal)?;
+    let matched = super::registry::filter_entries(entries, state, project_id, q.q.as_deref());
+    let (page, total) = crate::pagination::page_of(matched, q.page);
+    Ok(Json(RegistryEntryListDto {
+        items: page.into_iter().map(registry_entry_dto).collect(),
+        total,
+    }))
+}
+
+async fn get_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+) -> ApiResult<JsonBody<RegistryEntryDto>> {
+    match catalog
+        .service
+        .registry_entry_with_decisions(&ctx, &name)
+        .await
+        .map_err(internal)?
+    {
+        Some((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
+        None => Err(StudioComponentsCatalogError::not_found(format!(
+            "the registry has no component `{name}`"
+        ))
+        .with_resource(name)
+        .create()),
+    }
+}
+
+impl Catalog {
+    /// Who may decide about the registry: studio-user's answer, resolved per
+    /// request like every other port.
+    fn authority(&self) -> Option<Arc<dyn crate::user_profile::OrgAuthority>> {
+        self.hub
+            .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .ok()
+    }
+
+    /// The caller as a person with the name their profile carries, when
+    /// studio-user can say; else the token's subject and no name, which is
+    /// what a decision records then. The name is stored on the decision
+    /// (`by_name`), so the page shows a person, not an id.
+    async fn decider(&self, ctx: &SecurityContext) -> super::registry_decisions::Decider {
+        let person = match self
+            .hub
+            .get_scoped::<dyn crate::user_profile::PersonResolver>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            )) {
+            Ok(people) => match people.resolve_caller_named(ctx).await {
+                Ok(named) => Some(named),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "components-catalog: the decider could not be resolved as a person; the token's subject is recorded");
+                    None
+                }
+            },
+            Err(_) => None,
+        };
+        match person {
+            Some((id, name)) => super::registry_decisions::Decider { id, name },
+            None => super::registry_decisions::Decider {
+                id: ctx.subject_id().to_string(),
+                name: None,
+            },
+        }
+    }
+}
+
+async fn decide_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+    Json(body): Json<RegistryDecisionRequest>,
+) -> ApiResult<JsonBody<RegistryEntryDto>> {
+    if !may_decide(catalog.authority().as_deref(), &ctx).await {
+        return Err(StudioComponentsCatalogError::permission_denied()
+            .with_reason("REGISTRY_ADMIN_REQUIRED")
+            .create());
+    }
+    let input = decision_input(body);
+    let action = super::registry_decisions::Action::parse(&input.action);
+    if input.dry_run && action != Some(super::registry_decisions::Action::Publish) {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "dry_run",
+                "only a publish has a dry run; every other decision is recorded as made",
+                "INVALID",
+            )
+            .create());
+    }
+    match action {
+        // Publishing opens a pull request into the platform (ADR-0042 §4).
+        Some(super::registry_decisions::Action::Publish) => {
+            return publish::publish(&catalog, &ctx, &name, &input).await;
+        }
+        // The platform says what it has: only its administrator marks it.
+        Some(super::registry_decisions::Action::MarkPublished)
+            if !may_run_platform(catalog.organizations().as_deref(), &ctx).await =>
+        {
+            return Err(platform_refusal());
+        }
+        _ => {}
+    }
+    let by = catalog.decider(&ctx).await;
+    match catalog
+        .service
+        .decide_registry(&ctx, &name, &input, &by)
+        .await
+    {
+        Ok((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
+        Err(super::registry_decisions::DecideFailure::Refused(e)) => Err(decision_problem(e)),
+        Err(super::registry_decisions::DecideFailure::Failed(e)) => Err(internal(e)),
+    }
+}
+
+impl Catalog {
+    /// Declare it's writer, studio-product's, resolved per request: a 503
+    /// in an assembly without it.
+    fn declarations(&self) -> ApiResult<Arc<dyn crate::product::port::GearDeclarations>> {
+        self.hub
+            .get::<dyn crate::product::port::GearDeclarations>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "declaring a gear is not available in this deployment \
+                         (studio-product is not part of it)",
+                    )
+                    .create()
+            })
+    }
+}
+
+/// The request in the service's terms; no body is an empty one.
+fn declare_input(body: Option<RegistryDeclareRequest>) -> super::registry_declare::DeclareInput {
+    match body {
+        Some(b) => super::registry_declare::DeclareInput {
+            description: b.description,
+            capabilities: b.capabilities,
+            category: b.category,
+            dry_run: b.dry_run.unwrap_or(false),
+            project_id: b.project_id,
+        },
+        None => super::registry_declare::DeclareInput::default(),
+    }
+}
+
+/// A refused Declare it as a problem: 404 for no such entry, 400
+/// `failed_precondition` for an entry that is not a candidate or cannot be
+/// written to yet.
+fn declare_problem(e: super::registry_declare::DeclareError) -> CanonicalError {
+    use super::registry_declare::DeclareError as E;
+    let message = e.to_string();
+    let precondition = |subject: String, kind: &str| {
+        StudioComponentsCatalogError::failed_precondition()
+            .with_precondition_violation(subject, message.clone(), kind)
+            .create()
+    };
+    match e {
+        E::NotFound(name) => StudioComponentsCatalogError::not_found(message.clone())
+            .with_resource(name)
+            .create(),
+        E::NotCandidate { state } => {
+            precondition(format!("state:{state}"), "REGISTRY_NOT_A_CANDIDATE")
+        }
+        E::NoOccurrence => precondition("occurrence".to_owned(), "REGISTRY_NO_OCCURRENCE"),
+        E::NoConnection => precondition("connection".to_owned(), "REGISTRY_CONNECTION_UNKNOWN"),
+        E::NotOwnConnection { tenant } => {
+            precondition(format!("connection:{tenant}"), "CONNECTION_NOT_OWNED")
+        }
+    }
+}
+
+fn declared_dto(d: super::registry_declare::Declared, dry_run: bool) -> RegistryDeclareResultDto {
+    RegistryDeclareResultDto {
+        branch: d.branch,
+        pr_url: d.pr_url,
+        files: d
+            .files
+            .into_iter()
+            .map(|f| DeclaredFileDto {
+                path: f.path,
+                content: f.content,
+            })
+            .collect(),
+        repo: d.repo,
+        path: d.path,
+        dry_run,
+        manifest: d.manifest,
+    }
+}
+
+async fn declare_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+    body: Option<Json<RegistryDeclareRequest>>,
+) -> ApiResult<JsonBody<RegistryDeclareResultDto>> {
+    if !may_decide(catalog.authority().as_deref(), &ctx).await {
+        return Err(StudioComponentsCatalogError::permission_denied()
+            .with_reason("REGISTRY_ADMIN_REQUIRED")
+            .create());
+    }
+    let declarations = catalog.declarations()?;
+    let by = catalog.decider(&ctx).await;
+    let input = declare_input(body.map(|Json(b)| b));
+    match catalog
+        .service
+        .declare_candidate(&ctx, &name, &input, &by, declarations.as_ref())
+        .await
+    {
+        Ok(done) => Ok(Json(declared_dto(done, input.dry_run))),
+        Err(super::registry_declare::DeclareFailure::Refused(e)) => Err(declare_problem(e)),
+        Err(super::registry_declare::DeclareFailure::Failed(e)) => Err(internal(e)),
+    }
+}
+
+async fn list_registry_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<RegistryProjectListDto>> {
+    let walked = catalog.service.last_walk(&ctx).await.map_err(internal)?;
+    let items: Vec<RegistryProjectDto> = walked
+        .into_iter()
+        .map(|p| RegistryProjectDto {
+            project_id: p.project_id,
+            project_name: p.project_name,
+            at: p.at,
+            error: p.error,
+            repos: p
+                .repos
+                .into_iter()
+                .map(|r| RegistryRepoStatusDto {
+                    repo: r.repo,
+                    status: r.status,
+                    components: u32::try_from(r.components).unwrap_or(u32::MAX),
+                    error: r.error,
+                    hint: r.hint,
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Json(RegistryProjectListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+async fn get_registry_excluded_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<ExcludedProjectsDto>> {
+    let project_ids = catalog
+        .service
+        .excluded_projects(&ctx)
+        .await
+        .map_err(internal)?;
+    Ok(Json(ExcludedProjectsDto { project_ids }))
+}
+
+async fn update_registry_excluded_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ExcludedProjectsDto>,
+) -> ApiResult<JsonBody<ExcludedProjectsDto>> {
+    let project_ids = catalog
+        .service
+        .set_excluded_projects(&ctx, body.project_ids)
+        .await
+        .map_err(internal)?;
+    catalog.ensure_registry_schedule(&ctx).await;
+    Ok(Json(ExcludedProjectsDto { project_ids }))
+}
+
+fn register_platform_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = OperationBuilder::get("/studio-components-catalog/v1/platform/sources")
+        .operation_id("studio_components_catalog.list_platform_sources")
+        .summary("The platform's catalogue sources")
+        .description(
+            "The repositories and the crates.io keyword the platform's catalogue \
+             reads (ADR-0042), stored in the platform's tenant. Every \
+             organization's catalogue reads the platform's beside its own. 403 \
+             for anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_platform_sources)
+        .json_response_with_schema::<PlatformSourcesDto>(openapi, StatusCode::OK, "Sources")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/platform/sources")
+        .operation_id("studio_components_catalog.update_platform_sources")
+        .summary("Replace the platform's catalogue sources")
+        .description(
+            "Replaces the platform's catalogue sources and crates.io keyword \
+             (ADR-0042), normalized as `PUT /sources` normalizes an \
+             organization's. Also makes sure the platform's catalogue is synced \
+             daily (a `catalog.sync` schedule with `{\"platform\": true}`). 403 \
+             for anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(update_platform_sources)
+        .json_request::<ReplacePlatformSourcesRequest>(openapi, "The sources")
+        .json_response_with_schema::<PlatformSourcesDto>(openapi, StatusCode::OK, "Stored sources")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::post("/studio-components-catalog/v1/platform/sync")
+        .operation_id("studio_components_catalog.sync_platform")
+        .summary("Enqueue a sync of the platform's catalogue")
+        .description(
+            "Queues a `catalog.sync` run in the platform's tenant that reads the \
+             platform's stored sources when it starts (ADR-0042). Answers 202 \
+             with the `run_id` to follow at `GET /studio-tasks/v1/runs/{run_id}`. \
+             Send an `Idempotency-Key` header to make a retry safe. 403 for \
+             anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .param(crate::idempotency::param())
+        .handler(sync_platform)
+        .json_response_with_schema::<CatalogSyncEnqueued>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Sync enqueued",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+}
+
+#[path = "registry_gear_repository_rest.rs"]
+mod gear_repository;
+
+#[path = "registry_publish_rest.rs"]
+mod publish;
+
+#[cfg(test)]
+#[path = "sources_rest_tests.rs"]
+mod sources_tests;
+
+fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = register_platform_routes(router, openapi);
+    // Before `/registry/{name}`'s routes, though axum prefers the literal
+    // segment either way.
+    let router = gear_repository::register(router, openapi);
+    let router = publish::register(router, openapi);
+    let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
+        .operation_id("studio_components_catalog.list_sources")
+        .summary("The organization's catalogue sources, kept on the server")
+        .description(
+            "The repositories the organization's catalogue reads, each with its \
+             connection, ref and mode, in the order they were saved. A sync whose \
+             body names no `repositories` reads these (ADR-0041); they replace the \
+             browser's `cf.components.sources`.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_sources)
+        .json_response_with_schema::<RepoSourceListDto>(openapi, StatusCode::OK, "Sources")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/sources")
+        .operation_id("studio_components_catalog.update_sources")
+        .summary("Replace the organization's catalogue sources")
+        .description(
+            "Replaces the organization's catalogue sources with the ones sent: a \
+             blank repository is dropped, one named twice (same ref and mode) is \
+             kept once, a missing mode is `gears`. A source's `tenant` (whose \
+             connection it reads through) is the organization when nil, else must \
+             be the organization or within it: one outside it, such as the \
+             platform's root, is a 400 `SOURCE_TENANT_NOT_OWNED`. Answers what was stored. Also \
+             makes sure the organization's registry is walked hourly (a \
+             platform-level `catalog.registry` schedule naming it).",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(update_sources)
+        .json_request::<ReplaceSourcesRequest>(openapi, "The sources")
+        .json_response_with_schema::<RepoSourceListDto>(openapi, StatusCode::OK, "Stored sources")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry")
+        .operation_id("studio_components_catalog.list_registry_entries")
+        .summary("The organization's registry of components, each with where it was found")
+        .description(
+            "Every component the organization's projects declare (ADR-0041): one \
+             entry per name, with its lifecycle `state` and its occurrences \
+             (project, repository, ref, path, commit and what declares it). \
+             Filled by the `catalog.registry` walk -- hourly, after a push through \
+             studio-git, and as the last phase of a sync of the stored sources. \
+             `state`, `project_id` and `q` (name or description) narrow it; \
+             sorted by name; `offset`/`limit` page it. An entry with no \
+             occurrence left is `orphaned` and kept.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "state",
+            false,
+            "candidate, declared, registered, published, rejected, deprecated or merged",
+        )
+        .query_param("project_id", false, "Only entries found in this project")
+        .query_param("q", false, "Text in the name or the description")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first entry",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_registry_entries)
+        .json_response_with_schema::<RegistryEntryListDto>(openapi, StatusCode::OK, "Entries")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/{name}")
+        .operation_id("studio_components_catalog.get_registry_entry")
+        .summary("One component of the organization's registry, with its occurrences")
+        .description(
+            "One registry entry by name (case-blind), with every place it was \
+             found and the decisions people made about it, newest first. 404 \
+             when the registry has no such component.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_registry_entry)
+        .json_response_with_schema::<RegistryEntryDto>(openapi, StatusCode::OK, "The entry")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/registry/{name}/decisions")
+        .operation_id("studio_components_catalog.decide_registry_entry")
+        .summary("Move a registry entry through its lifecycle, as a recorded decision")
+        .description(
+            "An organization administrator's decision about one entry (ADR-0041 \
+             P2): `register` (candidate or declared, with an `owner`), `reject` \
+             (candidate or declared, with a `reason`), `deprecate` (registered or \
+             published, optionally `replaced_by` an existing entry), `restore` \
+             (rejected back to declared, or candidate when nothing declares it; \
+             deprecated back to registered), `publish` (registered: opens a \
+             pull request into the platform's gear repository -- the platform's \
+             catalogue source in mode `gears` -- copying the directory the entry \
+             is declared in, at most 200 files and 2 MiB, under the platform's \
+             parent directory for gears, on `contribute/<organization>/<name>`; \
+             the entry stays registered with its `contribution`, and becomes \
+             `published` when the platform's catalogue has it; 400 \
+             `failed_precondition` when the platform has no gear repository, \
+             nothing declares the entry, the directory is larger, or the \
+             entry's repository is read through a connection the organization \
+             only inherits (`CONNECTION_NOT_OWNED`); 503 without \
+             studio-product; with `dry_run: true` it writes and records \
+             nothing and answers the target repository, branches, path and \
+             files in `publish_preview` -- a dry run is a publish's only), \
+             `mark_published` (registered to \
+             published, optionally with the platform's `version`; a platform \
+             administrator only, for when the names differ), `merge` (into the \
+             existing entry `merge_into`, \
+             which takes this one's occurrences and its name as an alias, so a \
+             later walk puts what it finds under that name there) and `edit` \
+             (owner, kind, category, capabilities, description; no state move). \
+             Every decision is recorded with who, when, the states and why. \
+             A move the entry's state does not allow is `failed_precondition`; \
+             403 for anyone but the organization's owner, a platform \
+             administrator, or a holder of `component.registry`. Answers the \
+             entry with its decisions and its `consumers`.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(decide_registry_entry)
+        .json_request::<RegistryDecisionRequest>(openapi, "The decision")
+        .json_response_with_schema::<RegistryEntryDto>(
+            openapi,
+            StatusCode::OK,
+            "The entry after it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/registry/{name}/declare")
+        .operation_id("studio_components_catalog.open_registry_declaration")
+        .summary("Declare a candidate a gear, by a pull request in its repository")
+        .description(
+            "Declare it (ADR-0041 P3), for a `candidate` entry: opens a pull request \
+             in the repository the candidate was detected in, through that \
+             repository's connection and in its project's tenant, adding the \
+             module's manifest in its directory on the branch `declare/<name>`: \
+             the Gearbox engine's `gear.gdl` when the engine is configured, else \
+             a `gear.toml` -- and always a `gear.toml` inside a crate's `src/`, \
+             where the catalogue skips a `gear.gdl`. `manifest` says which. A \
+             repository read through a connection the organization only \
+             inherits (the platform's) is refused (400 `CONNECTION_NOT_OWNED`). \
+             The body is optional: `description`, \
+             `capabilities` and `category` override the entry's own; `project_id` \
+             picks the occurrence when the candidate was found in several; \
+             `dry_run` answers the files and writes nothing. A `declare` decision \
+             is recorded; the entry stays a candidate until a walk reads the merged \
+             declaration and makes it `declared`. 403 for anyone but an \
+             organization administrator (`component.registry`); 400 \
+             `failed_precondition` for an entry that is not a candidate; 503 \
+             without studio-product.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(declare_registry_entry)
+        .json_request::<RegistryDeclareRequest>(openapi, "What to declare it with (optional)")
+        .json_response_with_schema::<RegistryDeclareResultDto>(
+            openapi,
+            StatusCode::OK,
+            "The branch, the pull request and the files",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/projects")
+        .operation_id("studio_components_catalog.list_registry_projects")
+        .summary("What the last registry walk saw of each project")
+        .description(
+            "Per project the last walk read: when, and per repository whether it was \
+             read anew, unchanged or not readable, how many components it holds, and \
+             for a failure what a person can do. A repository connected with a \
+             personal token is not readable to the walk, which runs as the service.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_registry_projects)
+        .json_response_with_schema::<RegistryProjectListDto>(
+            openapi,
+            StatusCode::OK,
+            "The last walk, per project",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/excluded-projects")
+        .operation_id("studio_components_catalog.get_registry_excluded_projects")
+        .summary("The projects the registry walk skips")
+        .description(
+            "The projects of the organization the registry walk leaves out. Every \
+             other project is walked: a project is excluded, never opted in.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_registry_excluded_projects)
+        .json_response_with_schema::<ExcludedProjectsDto>(
+            openapi,
+            StatusCode::OK,
+            "Excluded projects",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::put("/studio-components-catalog/v1/registry/excluded-projects")
+        .operation_id("studio_components_catalog.update_registry_excluded_projects")
+        .summary("Replace the projects the registry walk skips")
+        .description(
+            "Replaces the projects the registry walk leaves out, deduplicated. The \
+             next full walk retires the occurrences found in them; their entries \
+             stay, `orphaned` when nothing else declares them. Also makes sure the \
+             organization's registry is walked hourly.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(update_registry_excluded_projects)
+        .json_request::<ExcludedProjectsDto>(openapi, "The excluded projects")
+        .json_response_with_schema::<ExcludedProjectsDto>(
+            openapi,
+            StatusCode::OK,
+            "Excluded projects",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
 }
 
 pub fn register_routes(
@@ -1510,6 +3083,7 @@ pub fn register_routes(
     hub: Arc<ClientHub>,
     gearbox: Option<Arc<Gearbox>>,
 ) -> Router {
+    let router = register_registry_routes(router, openapi);
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
         .summary("Enqueue a background sync of the crates.io keyword into the graph")
@@ -1520,7 +3094,14 @@ pub fn register_routes(
              graph. Answers 202 with the `run_id` to follow at \
              `GET /studio-tasks/v1/runs/{run_id}`. Send an `Idempotency-Key` header \
              to make a retry of this request safe: a repeat with the same key \
-             answers the same run.",
+             answers the same run. A body that names no `repositories` (or no \
+             body) reads the organization's stored sources (`GET /sources`) and \
+             then walks its projects into the registry; the run's result carries \
+             `registry` counts, or `registry_error`. A repository or board in the \
+             body naming a tenant outside the organization is a 400 \
+             `SOURCE_TENANT_NOT_OWNED` (nil is the organization); the run reads no \
+             source whose connection is held outside the organization and names \
+             those in `not_owned`.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -1534,6 +3115,7 @@ pub fn register_routes(
             StatusCode::ACCEPTED,
             "Sync enqueued",
         )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1928,4 +3510,279 @@ pub fn register_routes(
             .register(router, openapi);
 
     router.layer(Extension(Catalog::new(service, hub, gearbox)))
+}
+
+#[cfg(test)]
+mod registry_dto_tests {
+    use super::*;
+    use crate::components_catalog::registry::{EntryRecord, OccurrenceRecord, RegistryEntry};
+
+    #[test]
+    fn an_entry_is_answered_in_the_shape_the_portal_reads() {
+        let project = Uuid::from_u128(5);
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                organization_id: Uuid::from_u128(1),
+                name: "studio-tasks".into(),
+                kind: "gear".into(),
+                state: "declared".into(),
+                description: Some("durable runs".into()),
+                category: None,
+                owner: None,
+                capabilities: vec!["tasks".into()],
+                aliases: vec!["tasks".into()],
+                merged_into: None,
+                replaced_by: None,
+                version: None,
+                orphaned: false,
+                first_seen: Some("2026-10-09T10:00:00Z".into()),
+                last_seen: Some("2026-10-09T11:00:00Z".into()),
+                fingerprint: Some("f".into()),
+                ..EntryRecord::default()
+            },
+            occurrences: vec![OccurrenceRecord {
+                organization_id: Uuid::from_u128(1),
+                entry: "studio-tasks".into(),
+                entry_id: "e".into(),
+                project_id: Some(project),
+                project_name: Some("Studio".into()),
+                repo: "acme/studio".into(),
+                repo_key: "k".into(),
+                git_ref: Some("main".into()),
+                path: "studio-backend/src/tasks".into(),
+                commit: Some("abc".into()),
+                declared_in: "attribute".into(),
+                declared_file: "studio-backend/src/tasks/mod.rs".into(),
+                kind: "gear".into(),
+                description: None,
+                category: None,
+                capabilities: Vec::new(),
+                runtime: vec!["rest".into()],
+                built: true,
+                doc_path: None,
+                doc_text: None,
+                fingerprint: "f".into(),
+                seen_at: "2026-10-09T11:00:00Z".into(),
+                ..OccurrenceRecord::default()
+            }],
+        };
+        let json = serde_json::to_value(registry_entry_dto(entry)).unwrap();
+        for (key, want) in [
+            ("name", serde_json::json!("studio-tasks")),
+            ("kind", serde_json::json!("gear")),
+            ("state", serde_json::json!("declared")),
+            ("description", serde_json::json!("durable runs")),
+            ("capabilities", serde_json::json!(["tasks"])),
+            ("orphaned", serde_json::json!(false)),
+            ("first_seen", serde_json::json!("2026-10-09T10:00:00Z")),
+            ("last_seen", serde_json::json!("2026-10-09T11:00:00Z")),
+        ] {
+            assert_eq!(json[key], want, "{key}");
+        }
+        // Absent or null, the portal reads both as no owner.
+        assert!(json.get("owner").is_none_or(serde_json::Value::is_null));
+        let occ = &json["occurrences"][0];
+        for (key, want) in [
+            ("project_id", serde_json::json!(project)),
+            ("project_name", serde_json::json!("Studio")),
+            ("repo", serde_json::json!("acme/studio")),
+            ("git_ref", serde_json::json!("main")),
+            ("path", serde_json::json!("studio-backend/src/tasks")),
+            ("commit", serde_json::json!("abc")),
+            ("declared_in", serde_json::json!("attribute")),
+        ] {
+            assert_eq!(occ[key], want, "{key}");
+        }
+        // Only the contract's fields: nothing of the stored record leaks.
+        assert!(occ.get("repo_key").is_none() && occ.get("doc_text").is_none());
+    }
+
+    #[test]
+    fn a_source_round_trips_through_its_dto() {
+        let s = RepoSource {
+            tenant: Uuid::from_u128(2),
+            connection_id: None,
+            repo: "acme/gears".into(),
+            git_ref: String::new(),
+            mode: "frontx".into(),
+        };
+        let dto = source_dto(s);
+        assert_eq!(dto.git_ref, None);
+        assert_eq!(dto.mode.as_deref(), Some("frontx"));
+        let back = source_of(dto);
+        assert_eq!(back.repo, "acme/gears");
+        assert_eq!(back.git_ref, "");
+        assert_eq!(back.mode, "frontx");
+    }
+
+    #[test]
+    fn an_entry_with_decisions_carries_owner_aliases_and_history() {
+        use crate::components_catalog::registry::Owner;
+        use crate::components_catalog::registry_decisions::DecisionRecord;
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                organization_id: Uuid::from_u128(1),
+                name: "billing".into(),
+                kind: "gear".into(),
+                state: "deprecated".into(),
+                description: None,
+                category: Some("payments".into()),
+                owner: Some(Owner {
+                    kind: "team".into(),
+                    id: None,
+                    name: "Payments".into(),
+                }),
+                capabilities: Vec::new(),
+                aliases: vec!["billing-old".into()],
+                merged_into: None,
+                replaced_by: Some("invoicing".into()),
+                version: Some("1.2.0".into()),
+                orphaned: false,
+                first_seen: None,
+                last_seen: None,
+                fingerprint: None,
+                ..EntryRecord::default()
+            },
+            occurrences: Vec::new(),
+        };
+        let list = serde_json::to_value(registry_entry_dto(entry.clone())).unwrap();
+        assert!(list["decisions"].is_null(), "the list stays light");
+        assert_eq!(
+            list["owner"],
+            serde_json::json!({"kind": "team", "id": null, "name": "Payments"})
+        );
+        assert_eq!(list["aliases"], serde_json::json!(["billing-old"]));
+        assert_eq!(list["replaced_by"], "invoicing");
+        assert_eq!(list["category"], "payments");
+        assert_eq!(list["version"], "1.2.0");
+        let decision = DecisionRecord {
+            organization_id: Uuid::from_u128(1),
+            entry: "billing".into(),
+            entry_id: "e".into(),
+            action: "deprecate".into(),
+            from: "registered".into(),
+            to: "deprecated".into(),
+            by: "person-1".into(),
+            by_name: None,
+            at: "2026-10-09T12:00:00Z".into(),
+            reason: Some("replaced".into()),
+            details: serde_json::json!({"replaced_by": "invoicing"}),
+        };
+        let one = serde_json::to_value(registry_entry_detail_dto(entry, vec![decision])).unwrap();
+        let d = &one["decisions"][0];
+        assert_eq!(d["action"], "deprecate");
+        assert_eq!(d["from"], "registered");
+        assert_eq!(d["to"], "deprecated");
+        assert_eq!(d["by"], "person-1");
+        assert_eq!(d["reason"], "replaced");
+        assert_eq!(d["details"]["replaced_by"], "invoicing");
+        assert!(d.get("organization_id").is_none() && d.get("entry_id").is_none());
+    }
+
+    #[test]
+    fn a_decision_request_reads_into_the_services_terms() {
+        let body: RegistryDecisionRequest = serde_json::from_value(serde_json::json!({
+            "action": "register",
+            "owner": {"kind": "person", "id": "u1", "name": "Ada"},
+            "capabilities": ["billing"]
+        }))
+        .unwrap();
+        let input = decision_input(body);
+        assert_eq!(input.action, "register");
+        assert_eq!(input.owner.as_ref().map(|o| o.name.as_str()), Some("Ada"));
+        assert_eq!(input.capabilities, Some(vec!["billing".to_owned()]));
+        assert_eq!(input.reason, None);
+    }
+
+    /// A fake studio-user: grants the registry privilege to one subject.
+    struct Authority(Uuid);
+
+    #[async_trait::async_trait]
+    impl crate::user_profile::OrgAuthority for Authority {
+        async fn may_administer(&self, ctx: &SecurityContext, _org: Uuid, privilege: &str) -> bool {
+            privilege == REGISTRY_PRIVILEGE && ctx.subject_id() == self.0
+        }
+        async fn may_dispose(&self, _ctx: &SecurityContext, _org: Uuid) -> bool {
+            false
+        }
+    }
+
+    fn caller(id: u128) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(id))
+            .subject_tenant_id(Uuid::from_u128(1))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn only_an_administrator_decides_and_without_studio_user_nobody_does() {
+        let authority = Authority(Uuid::from_u128(7));
+        assert!(may_decide(Some(&authority), &caller(7)).await);
+        assert!(
+            !may_decide(Some(&authority), &caller(8)).await,
+            "a member is refused"
+        );
+        assert!(!may_decide(None, &caller(7)).await);
+    }
+
+    #[test]
+    fn a_candidate_carries_its_score_and_evidence_and_declare_reads_its_body() {
+        use crate::components_catalog::candidates::Evidence;
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                name: "documents".into(),
+                state: "candidate".into(),
+                score: Some(8),
+                evidence: vec![Evidence {
+                    signal: "rest".into(),
+                    detail: "own REST surface: rest.rs".into(),
+                    weight: 3,
+                }],
+                ..EntryRecord::default()
+            },
+            occurrences: Vec::new(),
+        };
+        let json = serde_json::to_value(registry_entry_dto(entry)).unwrap();
+        assert_eq!(json["score"], 8);
+        assert_eq!(
+            json["evidence"][0],
+            serde_json::json!({"signal": "rest", "detail": "own REST surface: rest.rs", "weight": 3})
+        );
+
+        // No body is an empty one; a dry run says so.
+        assert_eq!(
+            declare_input(None),
+            crate::components_catalog::registry_declare::DeclareInput::default()
+        );
+        let body: RegistryDeclareRequest =
+            serde_json::from_value(serde_json::json!({"dry_run": true, "capabilities": ["docs"]}))
+                .unwrap();
+        let input = declare_input(Some(body));
+        assert!(input.dry_run);
+        assert_eq!(input.capabilities, Some(vec!["docs".to_owned()]));
+
+        let problem = format!(
+            "{:?}",
+            declare_problem(
+                crate::components_catalog::registry_declare::DeclareError::NotCandidate {
+                    state: "declared".into()
+                }
+            )
+        );
+        assert!(problem.contains("REGISTRY_NOT_A_CANDIDATE"), "{problem}");
+    }
+
+    #[test]
+    fn a_refused_move_says_which_states_the_action_applies_to() {
+        use crate::components_catalog::registry_decisions::DecisionError;
+        assert_eq!(allowed_from("publish"), "registered");
+        assert_eq!(allowed_from("deprecate"), "registered, published");
+        let problem = decision_problem(DecisionError::Illegal {
+            action: "publish".into(),
+            from: "declared".into(),
+        });
+        let text = format!("{problem:?}");
+        assert!(text.contains("REGISTRY_TRANSITION_NOT_ALLOWED"), "{text}");
+    }
 }

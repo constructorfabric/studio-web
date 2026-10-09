@@ -234,14 +234,17 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 }
             };
 
-            Some(Arc::new(IngestService::new(
-                credstore,
-                drivers,
-                graph,
-                classifier,
-                workspaces_root,
-                work_root,
-            )))
+            Some(Arc::new(
+                IngestService::new(
+                    credstore,
+                    drivers,
+                    graph,
+                    classifier,
+                    workspaces_root,
+                    work_root,
+                )
+                .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub())),
+            ))
         };
 
         // A sync is an `artifact.ingest` run on studio-tasks — durable,

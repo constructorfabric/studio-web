@@ -47,7 +47,7 @@ pub const ROLE_OWNER: &str = "owner";
 /// purpose: projects are account-management tenants (ADR-0010), so reaching one
 /// is membership rather than a privilege, and an entry that must be granted to
 /// everybody in order not to break them is worse than no entry.
-pub const PRIVILEGES: [&str; 14] = [
+pub const PRIVILEGES: [&str; 15] = [
     "people.view",
     "people.invite",
     "people.manage",
@@ -64,6 +64,9 @@ pub const PRIVILEGES: [&str; 14] = [
     "domain.view",
     "domain.edit",
     "domain.model",
+    // The organization's component registry (ADR-0041 P2): moving an entry
+    // through its lifecycle is administration, asked of studio-user.
+    "component.registry",
 ];
 
 /// The role ladder a fresh organization is seeded with (ADR-0019 §2).

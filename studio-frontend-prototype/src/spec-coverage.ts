@@ -12,7 +12,7 @@
  * capability; a gear found by its words alone talks about the subject, which
  * does not prove it does the job, and is reported as such. */
 
-import type { Candidate, PlanRow } from "./api";
+import type { Candidate, ComponentTier, PlanRow } from "./api";
 
 /** How a capability stands against the product's picks. `profile`: answered
  *  by where the product runs, not by a gear. */
@@ -106,11 +106,54 @@ export function lookingFor(row: PlanRow): string {
   return `Gears are matched by ${parts.join(", then by ")}.`;
 }
 
+/** Code in the project's own repository that is not a gear yet: the
+ *  organization's registry found it looks like one (ADR-0041 P3). */
+export function couldBecomeGear(c: Candidate): boolean {
+  return c.origin === "project" && c.registry_state === "candidate";
+}
+
+/** Whose component a candidate is (ADR-0042). A server older than the tiers
+ *  says only whether the project's own repository declares it. */
+export function candidateTier(c: Candidate): ComponentTier | null {
+  if (c.tier) return c.tier;
+  return c.origin === "project" ? "project" : null;
+}
+
+/** The chip's tag for a tier. */
+export function tierTag(tier: ComponentTier): string {
+  return tier === "platform" ? "PLATFORM" : tier === "organization" ? "OURS" : "THIS PROJECT";
+}
+
+/** What a tier means, in a sentence for the "?" panel. */
+export function tierReason(tier: ComponentTier): string {
+  switch (tier) {
+    case "platform":
+      return "From the platform: the shared components every organization builds on.";
+    case "organization":
+      return "Your organization's own component. Offered before an equally strong platform gear: it was written for you.";
+    case "project":
+      return "This project's own: declared in its repositories.";
+  }
+}
+
 /** Why a candidate is offered for a capability, and what stands in its way. */
 export function candidateReasons(c: Candidate, capability: string): string[] {
   const lines: string[] = [];
-  if (c.origin === "project") {
+  const tier = candidateTier(c);
+  if (tier && tier !== "project") lines.push(tierReason(tier));
+  if (couldBecomeGear(c)) {
+    lines.push(
+      `Found in this project's own code${c.path ? `, at ${c.path}` : ""}, and not a gear yet: it looks like one, so it could become a gear. Declare it to open a pull request adding its gear.toml.`,
+    );
+  } else if (c.origin === "project") {
     lines.push(`Declared in this project's own repository${c.path ? `, at ${c.path}` : ""}: you already have it.`);
+  }
+  if (c.registry_state === "deprecated") {
+    lines.push(
+      c.replaced_by
+        ? `Deprecated in the organization's registry — use ${c.replaced_by} instead.`
+        : "Deprecated in the organization's registry: no longer to be chosen.",
+    );
   }
   if (c.step === "contract") {
     lines.push(`Provides ${(c.contracts ?? []).join(", ")}: a contract ${quote(capability)} is satisfied by.`);

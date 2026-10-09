@@ -107,6 +107,20 @@ impl RepoMode {
 /// under the same slug rather than two records that happen to look alike.
 const KIT_MANIFEST: &str = ".cf-studio-kit.toml";
 
+/// What [`RepoEnricher::project_gears_unless`] found.
+pub enum ProjectGearsRead {
+    /// The files discovery reads still have this fingerprint: nothing was read.
+    Unchanged,
+    /// Read (or served from the in-memory cache) under this fingerprint.
+    Read {
+        fingerprint: String,
+        gears: Arc<Vec<project_gears::LocalGear>>,
+        /// What looks like a gear and is not declared one, before the copy
+        /// signal (`candidates::detect`). Empty unless asked for.
+        candidates: Arc<Vec<super::candidates::Candidate>>,
+    },
+}
+
 /// Reads gear metadata from a repository, using a Studio GitHub connection for
 /// auth. Constructed per sync from the source the caller chose on the Gears page.
 pub struct RepoEnricher {
@@ -646,6 +660,40 @@ impl RepoEnricher {
         Ok(out)
     }
 
+    /// Every file at the ref with its size when the host reports it: one
+    /// tree listing. What publishing bounds a gear's directory by.
+    pub async fn file_listing(&self, ctx: &SecurityContext) -> Result<Vec<(String, Option<i64>)>> {
+        let src = self.open(ctx).await?;
+        let tree = self.tree(&src).await?;
+        if tree.truncated {
+            anyhow::bail!(
+                "the repository {} is too large to list in one read",
+                self.repo
+            );
+        }
+        Ok(tree
+            .files
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| (e.path, e.size))
+            .collect())
+    }
+
+    /// The text of each of `paths` at the ref, through one opened
+    /// repository; `None` for a file that is gone or not text.
+    pub async fn read_texts(
+        &self,
+        ctx: &SecurityContext,
+        paths: &[String],
+    ) -> Result<Vec<(String, Option<String>)>> {
+        let src = self.open(ctx).await?;
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            out.push((path.clone(), self.read_file(&src, path).await));
+        }
+        Ok(out)
+    }
+
     /// The gears this repository declares itself: by a `gear.toml` or
     /// `gear.gdl` directory, and by `#[toolkit::gear(name = …)]` in Rust
     /// source (`project_gears` holds the rules and the bounds). Read again
@@ -656,6 +704,58 @@ impl RepoEnricher {
         ctx: &SecurityContext,
         cache: &project_gears::Cache,
     ) -> Result<Arc<Vec<project_gears::LocalGear>>> {
+        match self.project_gears_unless(ctx, cache, None, false).await? {
+            ProjectGearsRead::Read { gears, .. } => Ok(gears),
+            // Asked with no fingerprint to compare with, so never answered.
+            ProjectGearsRead::Unchanged => Ok(Arc::new(Vec::new())),
+        }
+    }
+
+    /// Where this reader reads: the tenant, the connection, the repository and
+    /// the ref, as one key.
+    pub fn repo_key(&self) -> String {
+        format!(
+            "{}/{:?}/{}@{}",
+            self.tenant,
+            self.connection_id,
+            self.repo.to_ascii_lowercase(),
+            self.git_ref
+        )
+    }
+
+    /// The ref this reader reads.
+    pub fn git_ref(&self) -> &str {
+        &self.git_ref
+    }
+
+    /// The newest commit on the ref, best effort: one request, and `None`
+    /// when the host does not say.
+    pub async fn head_commit(&self, ctx: &SecurityContext) -> Option<String> {
+        let src = self.open(ctx).await.ok()?;
+        src.history("", 1)
+            .await
+            .ok()?
+            .into_iter()
+            .next()
+            .map(|c| c.sha)
+    }
+
+    /// [`Self::project_gears`], unless the files it reads still have the
+    /// fingerprint `known`: then only the tree listing is paid for, and the
+    /// answer is [`ProjectGearsRead::Unchanged`]. What the registry walk asks,
+    /// with the fingerprint it stored the last time.
+    ///
+    /// With `with_candidates`, also what looks like a gear and is not
+    /// declared one (`candidates::detect`): from the tree listing and the
+    /// files already read, plus at most `candidates::MAX_MANIFEST_READS`
+    /// `Cargo.toml` files.
+    pub async fn project_gears_unless(
+        &self,
+        ctx: &SecurityContext,
+        cache: &project_gears::Cache,
+        known: Option<&str>,
+        with_candidates: bool,
+    ) -> Result<ProjectGearsRead> {
         use project_gears::{LocalGear, MAX_FILE_BYTES, MAX_PROJECT_GEARS};
 
         let src = self.open(ctx).await?;
@@ -670,15 +770,16 @@ impl RepoEnricher {
             .map(|e| (e.path, e.sha))
             .collect();
         let print = project_gears::fingerprint(&files);
-        let key = format!(
-            "{}/{:?}/{}@{}",
-            self.tenant,
-            self.connection_id,
-            self.repo.to_ascii_lowercase(),
-            self.git_ref
-        );
-        if let Some(hit) = cache.get(&key, print) {
-            return Ok(hit);
+        if project_gears::unchanged(known, &print) {
+            return Ok(ProjectGearsRead::Unchanged);
+        }
+        let key = self.repo_key();
+        if let Some((gears, candidates)) = cache.get_found(&key, &print, with_candidates) {
+            return Ok(ProjectGearsRead::Read {
+                fingerprint: print,
+                gears,
+                candidates,
+            });
         }
         let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
         let has = |p: &str| paths.contains(&p);
@@ -814,13 +915,37 @@ impl RepoEnricher {
                 }
             }
         }
+        // What looks like a gear and is not declared one: from the tree, the
+        // Rust files read above, and the manifests (bounded).
+        let candidates = if with_candidates {
+            let mut texts: std::collections::HashMap<String, String> = bodies
+                .into_iter()
+                .filter_map(|(path, body)| body.map(|b| (path.to_string(), b)))
+                .collect();
+            for manifest in super::candidates::manifests_to_read(&paths) {
+                if texts.contains_key(manifest) {
+                    continue;
+                }
+                if let Some(body) = self.read_file(&src, manifest).await {
+                    texts.insert(manifest.to_string(), body);
+                }
+            }
+            Some(Arc::new(super::candidates::detect(&files, &texts, &gears)))
+        } else {
+            None
+        };
         info!(
             repo = %self.repo, gears = gears.len(),
+            candidates = candidates.as_ref().map_or(0, |c| c.len()),
             "studio-components-catalog: project gears discovered"
         );
         let gears = Arc::new(gears);
-        cache.put(key, print, Arc::clone(&gears));
-        Ok(gears)
+        cache.put_found(key, print.clone(), Arc::clone(&gears), candidates.clone());
+        Ok(ProjectGearsRead::Read {
+            fingerprint: print,
+            gears,
+            candidates: candidates.unwrap_or_default(),
+        })
     }
 
     /// Fetch one text file's raw content, or `None` when it is absent.

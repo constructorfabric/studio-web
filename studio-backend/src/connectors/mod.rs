@@ -45,6 +45,7 @@ mod graph_sync;
 mod graph_sync_task;
 pub(crate) mod gts;
 mod notify;
+mod ownership;
 mod plugin;
 mod repository;
 mod rest;

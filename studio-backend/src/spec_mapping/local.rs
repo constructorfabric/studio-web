@@ -22,22 +22,122 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::rest::CandidateDto;
-use crate::components_catalog::port::ComponentCatalog;
+use crate::components_catalog::port::{
+    ComponentCatalog, Registry, RegistryEntry, STATE_DEPRECATED, TIER_PROJECT, offered,
+    project_gears_of,
+};
+
+/// What the organization's registry says of each of its entries, by name
+/// (case-folded): the state, and for a deprecated one its replacement.
+pub(super) type RegistryStates = BTreeMap<String, (String, Option<String>)>;
+
+/// Every entry's state, by case-folded name.
+pub(super) fn registry_states(entries: &[RegistryEntry]) -> RegistryStates {
+    entries
+        .iter()
+        .map(|e| {
+            let replaced_by = (e.entry.state == STATE_DEPRECATED)
+                .then(|| e.entry.replaced_by.clone())
+                .flatten();
+            (
+                e.entry.name.to_ascii_lowercase(),
+                (e.entry.state.clone(), replaced_by),
+            )
+        })
+        .collect()
+}
+
+/// A repository read without the registry, less what the registry withholds:
+/// a gear the organization rejected, or merged into another, is not offered
+/// even when the project's code still declares it.
+fn withhold(
+    (gears, mut profiles): (Vec<Value>, Map<String, Value>),
+    states: &RegistryStates,
+) -> (Vec<Value>, Map<String, Value>) {
+    let withheld = |name: &str| {
+        states
+            .get(&name.to_ascii_lowercase())
+            .is_some_and(|(state, _)| !offered(state))
+    };
+    let gears = gears
+        .into_iter()
+        .filter(|g| {
+            let name = g.get("name").and_then(Value::as_str).unwrap_or_default();
+            if withheld(name) {
+                profiles.remove(name);
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (gears, profiles)
+}
 
 /// The project's own gears, or none when they cannot be read: they add to the
 /// catalogue's answer, which stands without them.
+///
+/// Taken from the organization's registry (ADR-0041) when it has found
+/// anything in the project -- kept between reads, so a plan no longer reads
+/// the repositories -- and otherwise read on demand, as before. Either way in
+/// the same shape: `origin: project` and the `path` in the repository.
+///
+/// Also answers what the registry says of each of its entries, so the plan
+/// can mark the candidates it backs ([`mark_registry_state`]). A gear the
+/// registry rejected or merged into another is not offered either way.
 pub(super) async fn project_gears(
     catalog: &dyn ComponentCatalog,
+    registry: Option<&dyn Registry>,
     ctx: &SecurityContext,
     project_id: Uuid,
-) -> (Vec<Value>, Map<String, Value>) {
-    catalog
+) -> ((Vec<Value>, Map<String, Value>), RegistryStates) {
+    let mut states = RegistryStates::new();
+    if let Some(registry) = registry {
+        match registry.project_entries(ctx, project_id).await {
+            Ok(entries) => {
+                states = registry_states(&entries);
+                let found = project_gears_of(&entries, project_id);
+                if !found.0.is_empty() {
+                    return (found, states);
+                }
+                // Nothing found in this project yet; what the organization
+                // decided about a name still holds for an on-demand read.
+                if let Ok(all) = registry.entries(ctx, ctx.subject_tenant_id()).await {
+                    states = registry_states(&all);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; reading the project's repositories");
+            }
+        }
+    }
+    let read = catalog
         .project_gears(ctx, &project_id.to_string())
         .await
         .unwrap_or_else(|e| {
             tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the project's own gears unreadable");
             (Vec::new(), Map::new())
-        })
+        });
+    (withhold(read, &states), states)
+}
+
+/// Mark the candidates the registry backs -- the project's own gears it has
+/// an entry for -- with that entry's state, and a deprecated one with what
+/// replaces it. Every other candidate stays unmarked.
+pub(super) fn mark_registry_state<'a>(
+    candidates: impl IntoIterator<Item = &'a mut CandidateDto>,
+    in_repo: &BTreeMap<String, String>,
+    states: &RegistryStates,
+) {
+    for candidate in candidates {
+        if !in_repo.contains_key(&candidate.name) {
+            continue;
+        }
+        if let Some((state, replaced_by)) = states.get(&candidate.name.to_ascii_lowercase()) {
+            candidate.registry_state = Some(state.clone());
+            candidate.replaced_by = replaced_by.clone();
+        }
+    }
 }
 
 /// Add the project's gears to the catalogue's, one entry per gear. Answers
@@ -58,11 +158,18 @@ pub(super) fn with_project_gears(
             .unwrap_or_default()
             .to_owned();
         let profile = gear_profiles.remove(&name);
-        let catalogued = components.iter().find_map(|c| {
-            c.get("name")
+        // A catalogued gear the project's code declares too is the
+        // project's (ADR-0042): it ranks, and is labelled, as such.
+        let catalogued = components.iter_mut().find_map(|c| {
+            let found = c
+                .get("name")
                 .and_then(Value::as_str)
                 .filter(|n| n.eq_ignore_ascii_case(&name))
-                .map(str::to_owned)
+                .map(str::to_owned)?;
+            if let Some(obj) = c.as_object_mut() {
+                obj.insert("tier".to_owned(), Value::String(TIER_PROJECT.to_owned()));
+            }
+            Some(found)
         });
         let key = match catalogued {
             Some(catalogued) => catalogued,
@@ -89,6 +196,7 @@ pub(super) fn mark_in_repo<'a>(
     for candidate in candidates {
         if let Some(path) = in_repo.get(&candidate.name) {
             candidate.origin = "project".to_owned();
+            TIER_PROJECT.clone_into(&mut candidate.tier);
             candidate.path = (!path.is_empty()).then(|| path.clone());
         }
     }
@@ -205,6 +313,9 @@ mod tests {
             composable_why: None,
             origin: "catalogue".into(),
             path: None,
+            registry_state: None,
+            replaced_by: None,
+            tier: "platform".into(),
         };
         let mut candidates = [candidate("mine"), candidate("theirs")];
         let in_repo = BTreeMap::from([("mine".to_owned(), "src/mine".to_owned())]);
@@ -213,5 +324,104 @@ mod tests {
         assert_eq!(candidates[0].path.as_deref(), Some("src/mine"));
         assert_eq!(candidates[1].origin, "catalogue");
         assert_eq!(candidates[1].path, None);
+        // In the repository, so the project's: whatever tier the catalogue
+        // said.
+        assert_eq!(candidates[0].tier, "project");
+        assert_eq!(candidates[1].tier, "platform");
+    }
+
+    /// ADR-0042 §3: a catalogued gear the project's code declares too is the
+    /// project's, and ranks before the platform's on equal keys.
+    #[test]
+    fn a_catalogued_gear_in_the_repository_is_the_projects() {
+        let mut components = vec![
+            json!({ "name": "cf-gears-ledger", "kind": "gear", "tier": "platform",
+                    "description": "a ledger" }),
+            json!({ "name": "aa-ledger", "kind": "gear", "tier": "platform",
+                    "description": "a ledger" }),
+        ];
+        let mut profiles = Map::new();
+        with_project_gears(
+            &mut components,
+            &mut profiles,
+            gears(&[local("cf-gears-ledger", "gears/ledger", "a ledger")]),
+        );
+        assert_eq!(components[0]["tier"], "project");
+        assert_eq!(components[1]["tier"], "platform");
+        let rows = plan::plan(
+            &["ledger".to_owned()],
+            &components,
+            &profiles,
+            &Vocabulary::default(),
+        );
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        let tiers: Vec<&str> = rows[0].candidates.iter().map(|c| c.tier.as_str()).collect();
+        // Equal on every other key only when both are equally unscanned; the
+        // project's has a profile saying it is built, so it is first anyway.
+        assert_eq!(names[0], "cf-gears-ledger");
+        assert_eq!(tiers[0], "project");
+    }
+
+    #[test]
+    fn a_deprecated_registry_gear_is_marked_and_a_rejected_one_withheld() {
+        let states = RegistryStates::from([
+            (
+                "old-ledger".to_owned(),
+                ("deprecated".to_owned(), Some("ledger".to_owned())),
+            ),
+            ("scratch".to_owned(), ("rejected".to_owned(), None)),
+            ("ledger-v0".to_owned(), ("merged".to_owned(), None)),
+            ("ledger".to_owned(), ("registered".to_owned(), None)),
+        ]);
+        let (kept, profiles) = withhold(
+            gears(&[
+                local("Old-Ledger", "src/old", "a ledger"),
+                local("scratch", "src/scratch", "helpers"),
+                local("ledger-v0", "src/v0", "a ledger"),
+                local("ledger", "src/ledger", "a ledger"),
+            ]),
+            &states,
+        );
+        let names: Vec<&str> = kept.iter().filter_map(|g| g["name"].as_str()).collect();
+        assert_eq!(names, ["Old-Ledger", "ledger"]);
+        assert!(!profiles.contains_key("scratch") && !profiles.contains_key("ledger-v0"));
+
+        let candidate = |name: &str| CandidateDto {
+            name: name.into(),
+            kind: "gear".into(),
+            step: "evidence".into(),
+            contracts: Vec::new(),
+            passage: None,
+            cites: None,
+            version: None,
+            decision: None,
+            declared: false,
+            score: 1,
+            why: Vec::new(),
+            built: "built".into(),
+            composable: "undescribed".into(),
+            composable_why: None,
+            origin: "catalogue".into(),
+            path: None,
+            registry_state: None,
+            replaced_by: None,
+            tier: "platform".into(),
+        };
+        let mut candidates = [
+            candidate("Old-Ledger"),
+            candidate("ledger"),
+            candidate("cf-gears-ledger"),
+        ];
+        let in_repo = BTreeMap::from([
+            ("Old-Ledger".to_owned(), "src/old".to_owned()),
+            ("ledger".to_owned(), "src/ledger".to_owned()),
+        ]);
+        mark_registry_state(candidates.iter_mut(), &in_repo, &states);
+        assert_eq!(candidates[0].registry_state.as_deref(), Some("deprecated"));
+        assert_eq!(candidates[0].replaced_by.as_deref(), Some("ledger"));
+        assert_eq!(candidates[1].registry_state.as_deref(), Some("registered"));
+        assert_eq!(candidates[1].replaced_by, None);
+        // Not the registry's: no mark.
+        assert_eq!(candidates[2].registry_state, None);
     }
 }

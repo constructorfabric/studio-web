@@ -16,6 +16,12 @@ pub struct Source {
     pub target: Option<String>,
     /// credstore reference of the source host token. Never returned either.
     pub token_ref: Option<String>,
+    /// The tenant holding the source's connection, when that is outside the
+    /// project's organization (the platform's root, another organization):
+    /// its token is not the organization's to use, so `token_ref` is `None`
+    /// and the proxy refuses the source rather than reach the host as the
+    /// platform (`cpt-studio-constraint-connector-own-connections`).
+    pub held_outside: Option<uuid::Uuid>,
 }
 
 /// The two Git services the smart-HTTP protocol names in `info/refs`.
@@ -73,6 +79,16 @@ pub fn presented_token(authorization: Option<&str>) -> Option<String> {
     let decoded = String::from_utf8(decoded).ok()?;
     let (_, password) = decoded.split_once(':')?;
     (!password.is_empty()).then(|| password.to_owned())
+}
+
+/// What `git` prints for a source whose connection is held outside the
+/// project's organization ([`Source::held_outside`]).
+pub fn not_owned_text(holder: uuid::Uuid) -> String {
+    use crate::connectors::sdk::ownership::{CONNECTION_NOT_OWNED, NOT_OWNED_HINT, whose};
+    format!(
+        "{CONNECTION_NOT_OWNED}: this source's connection is held by {}, outside the project's organization. {NOT_OWNED_HINT}",
+        whose(holder)
+    )
 }
 
 /// Basic credentials for the source host: the token as the password, the way
@@ -134,6 +150,14 @@ mod tests {
         );
         assert_eq!(presented_token(Some(&empty)), None);
         assert_eq!(presented_token(Some("Digest abc")), None);
+    }
+
+    #[test]
+    fn a_source_held_outside_the_organization_says_whose_and_what_to_do() {
+        let text = not_owned_text(uuid::Uuid::from_u128(1));
+        assert!(text.starts_with("CONNECTION_NOT_OWNED"), "{text}");
+        assert!(text.contains("the platform's root"), "{text}");
+        assert!(text.contains("organization-scope connection of your own"));
     }
 
     #[test]

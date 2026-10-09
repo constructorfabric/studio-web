@@ -3274,6 +3274,18 @@ impl crate::documents::port::AnalysisRecorder for DocumentsService {
 }
 
 #[async_trait::async_trait]
+impl crate::documents::port::CapabilityVocabulary for DocumentsService {
+    async fn organization_vocabulary(
+        &self,
+        ctx: &SecurityContext,
+        organization_id: Uuid,
+    ) -> anyhow::Result<Vec<Capability>> {
+        self.list_organization_capabilities(ctx, organization_id)
+            .await
+    }
+}
+
+#[async_trait::async_trait]
 impl crate::documents::port::SpecNeeds for DocumentsService {
     async fn project_workspace(
         &self,

@@ -28,6 +28,16 @@ This README is what you need to work in the directory.
 | `GET /sources/{source}/sharing?project_id=&head=` | how a project's repository shares edits |
 | `POST /sources/{source}/pull-requests?project_id=` | open or reuse a pull request for it |
 
+## Whose connection
+
+A project sees its ancestors' connections, the platform root's included; it
+may use only its organization's own. Ask `sdk::ownership` (the pure rule) or
+`ConnectorService::ensure_owned` / `sdk::check_owned` (over the real tree)
+before acting through one for an organization, and take the holder from
+`holder_of` / `holder_of_row` (the row's `owner_tenant_id`), never from
+`locate`, which answers wherever an inherited catalogue listed it. The rule:
+`cpt-studio-constraint-connector-own-connections` in the design.
+
 ## Sharing from the IDE
 
 "Share with the team" in the IDE commits a person's edited documents. Each

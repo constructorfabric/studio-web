@@ -17,6 +17,22 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.delete_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Remove the organization's gear repository",
+      "authenticated": true,
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-connector/v1/connections/{id}",
       "operation_id": "studio_connector.delete_connection",
       "tag": "StudioConnectors",
@@ -500,6 +516,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/platform/sources",
+      "operation_id": "studio_components_catalog.list_platform_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The platform's catalogue sources",
+      "authenticated": true,
+      "responses": [
+        "PlatformSourcesDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/profiles",
       "operation_id": "studio_components_catalog.list_profiles",
       "tag": "StudioComponentsCatalog",
@@ -525,6 +557,98 @@
       ],
       "errors": [
         "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry",
+      "operation_id": "studio_components_catalog.list_registry_entries",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's registry of components, each with where it was found",
+      "authenticated": true,
+      "responses": [
+        "RegistryEntryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/excluded-projects",
+      "operation_id": "studio_components_catalog.get_registry_excluded_projects",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The projects the registry walk skips",
+      "authenticated": true,
+      "responses": [
+        "ExcludedProjectsDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.get_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's gear repository",
+      "authenticated": true,
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/projects",
+      "operation_id": "studio_components_catalog.list_registry_projects",
+      "tag": "StudioComponentsCatalog",
+      "summary": "What the last registry walk saw of each project",
+      "authenticated": true,
+      "responses": [
+        "RegistryProjectListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/{name}",
+      "operation_id": "studio_components_catalog.get_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One component of the organization's registry, with its occurrences",
+      "authenticated": true,
+      "responses": [
+        "RegistryEntryDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/sources",
+      "operation_id": "studio_components_catalog.list_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's catalogue sources, kept on the server",
+      "authenticated": true,
+      "responses": [
+        "RepoSourceListDto"
+      ],
+      "errors": [
         "401",
         "500"
       ]
@@ -2282,6 +2406,114 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/platform/sync",
+      "operation_id": "studio_components_catalog.sync_platform",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Enqueue a sync of the platform's catalogue",
+      "authenticated": true,
+      "responses": [
+        "CatalogSyncEnqueued"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/gear-repository/create",
+      "operation_id": "studio_components_catalog.create_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create a repository and make it the organization's gear repository",
+      "authenticated": true,
+      "request": "CreateGearRepositoryRequest",
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/scaffold",
+      "operation_id": "studio_components_catalog.scaffold_registry_gear",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create a gear in the organization's gear repository",
+      "authenticated": true,
+      "request": "RegistryScaffoldRequest",
+      "responses": [
+        "RegistryScaffoldResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/decisions",
+      "operation_id": "studio_components_catalog.decide_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Move a registry entry through its lifecycle, as a recorded decision",
+      "authenticated": true,
+      "request": "RegistryDecisionRequest",
+      "responses": [
+        "RegistryEntryDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/declare",
+      "operation_id": "studio_components_catalog.open_registry_declaration",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Declare a candidate a gear, by a pull request in its repository",
+      "authenticated": true,
+      "request": "RegistryDeclareRequest",
+      "responses": [
+        "RegistryDeclareResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/suggest",
+      "operation_id": "studio_components_catalog.analyze_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "A model's description, category and capabilities for a registry entry",
+      "authenticated": true,
+      "responses": [
+        "RegistrySuggestionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/sync",
       "operation_id": "studio_components_catalog.sync",
       "tag": "StudioComponentsCatalog",
@@ -2292,6 +2524,7 @@
         "CatalogSyncEnqueued"
       ],
       "errors": [
+        "400",
         "401",
         "500"
       ]
@@ -3698,6 +3931,76 @@
       "request": "SaveFieldSchemaRequest",
       "responses": [
         "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/platform/sources",
+      "operation_id": "studio_components_catalog.update_platform_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the platform's catalogue sources",
+      "authenticated": true,
+      "request": "ReplacePlatformSourcesRequest",
+      "responses": [
+        "PlatformSourcesDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/registry/excluded-projects",
+      "operation_id": "studio_components_catalog.update_registry_excluded_projects",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the projects the registry walk skips",
+      "authenticated": true,
+      "request": "ExcludedProjectsDto",
+      "responses": [
+        "ExcludedProjectsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.update_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Set the organization's gear repository",
+      "authenticated": true,
+      "request": "SetGearRepositoryRequest",
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/sources",
+      "operation_id": "studio_components_catalog.update_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the organization's catalogue sources",
+      "authenticated": true,
+      "request": "ReplaceSourcesRequest",
+      "responses": [
+        "RepoSourceListDto"
       ],
       "errors": [
         "400",

@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
@@ -69,6 +70,17 @@ pub struct IngestPayload {
 }
 
 impl IngestPayload {
+    /// The tenant the sync is for: its project, else its workspace, else
+    /// `run_tenant` (the run's own). An id that does not parse is the run's
+    /// tenant too: the ownership check then asks about that.
+    pub fn tenant(&self, run_tenant: Uuid) -> Uuid {
+        self.project_id
+            .as_deref()
+            .or(self.workspace_id.as_deref())
+            .and_then(|id| Uuid::parse_str(id.trim()).ok())
+            .unwrap_or(run_tenant)
+    }
+
     /// Two syncs that would write the same graph keys must not run at once.
     /// Those keys are built from exactly these four things (see `gts::*_node`),
     /// so the same four make the partition key: the same repository under a
@@ -117,6 +129,25 @@ impl TaskHandler for IngestTask {
                 ));
             }
         };
+
+        // The token must be the organization's own, whoever enqueued the run
+        // (`connectors::sdk::ownership`). Permanent: retrying cannot change
+        // whose connection it is.
+        if let Err(refused) = self
+            .service
+            .ensure_token_owned(
+                &ctx.security,
+                ctx.tenant,
+                payload.tenant(ctx.tenant),
+                &payload.secret_ref,
+            )
+            .await
+        {
+            return TaskOutcome::Failed(format!(
+                "studio-artifact-ingest: {repo} is not read with this token: {refused}",
+                repo = payload.repo_full_path
+            ));
+        }
 
         // Per attempt, as the module note says. The worker's own identity: the
         // caller's is long gone, and a scheduled sync never had one.
@@ -284,6 +315,28 @@ mod tests {
         })
         .unwrap();
         assert!(json.get("token").is_none(), "{json}");
+    }
+
+    #[test]
+    fn a_run_is_for_its_project_else_its_workspace_else_its_own_tenant() {
+        let run = Uuid::from_u128(1);
+        let project = Uuid::from_u128(2);
+        let workspace = Uuid::from_u128(3);
+        let mut payload = IngestPayload {
+            provider: "github".to_owned(),
+            base_url: None,
+            secret_ref: "s".to_owned(),
+            repo_full_path: "org/repo".to_owned(),
+            since: None,
+            workspace_id: Some(workspace.to_string()),
+            project_id: Some(project.to_string()),
+            repo_dir: None,
+        };
+        assert_eq!(payload.tenant(run), project);
+        payload.project_id = None;
+        assert_eq!(payload.tenant(run), workspace);
+        payload.workspace_id = Some("not-a-tenant".to_owned());
+        assert_eq!(payload.tenant(run), run);
     }
 
     #[test]

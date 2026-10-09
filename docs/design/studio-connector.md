@@ -161,6 +161,50 @@ check, not a network policy: a public name that resolves to a private address
 still passes, because resolution happens later in `reqwest`. Closing that is an
 egress policy on the deployment.
 
+#### A tenant uses only a connection its organization owns
+
+- [x] `p1` - **ID**: `cpt-studio-constraint-connector-own-connections`
+
+Connections are inherited downwards: a project sees its workspace's, its
+organization's and the platform root's, because the catalogue is tenant
+metadata with `inheritance_policy: inherit`. Seeing one is not owning it.
+**An organization -- and anything under it -- uses only a connection held by
+itself, one of its workspaces or one of its projects**; never one held above
+it (the platform's root, whose token would read or write the organization's
+possibly private repositories with the platform's rights) and never another
+organization's. The root acting for itself -- the platform's own catalogue
+sync, publishing to the platform's gear repository -- uses the root's
+connections: there the root is the organization.
+
+"Held" is the row's `owner_tenant_id`, not where a lookup found it: catalogues
+are inherited whole, so a project or organization without a catalogue of its
+own lists the root's connections as if they were its own, and
+`ConnectorService::locate` answers the project.
+
+The rule lives here, with the connections, so every gear asks the same
+question through `connectors::sdk` without reaching into another gear:
+
+- `sdk::ownership` -- the pure rule (`within`, `connection_is_owned`, the
+  `Tree`/`Holders` it asks, `NotOwned`, `CONNECTION_NOT_OWNED`), tested with
+  tables; it fails closed when the tree cannot be read.
+- `ConnectorService::holder_of` / `ensure_owned` and `sdk::check_owned` --
+  the same rule over account-management's tree and the real catalogue; the
+  organization is the scope's (`organizations::sdk::organization_of`), or the
+  scope itself when it has none (the root).
+- `ConnectorService::ensure_secret_owned` -- the same rule for a use that
+  names a token reference instead of a connection: the connection holding it,
+  found from the tenant the use is for, must be the organization's. No
+  connection holding it at all is reported, and its reader refuses it:
+  credstore would still lend the token.
+
+Where it is applied: the components catalogue
+(`cpt-studio-constraint-catalog-own-connections`), studio-product's writes
+(`cpt-studio-constraint-product-own-connections`) and studio-git's upstream
+token (`cpt-studio-constraint-git-own-connections`) and artifact-ingest's
+repository sync (`cpt-studio-component-artifact-ingest`). A refused write is a 400
+`failed_precondition` `CONNECTION_NOT_OWNED`; a refused read is skipped and
+reported.
+
 #### Only GitHub reads and writes more than a repository list
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-connector-github-depth`
@@ -381,6 +425,7 @@ implements these today.
 | `graph_storage` | `GraphStorageClientV1`, resolved in the REST phase | The import's destination |
 | `cpt-studio-component-user` | `PersonResolver`, `AliasResolver` (scope `IDENTITY_INSTANCE_ID`) | The personal-connection edit guard; contributor aliases |
 | `cpt-studio-component-llm-proxy` | `llm_proxy::port::ModelProviders`, resolved when a key is tested | The Anthropic and OpenAI drivers' key test (ADR-0039) |
+| `cpt-studio-component-organizations` | `organizations::sdk::organization_of` | The organization a use of a connection is for (`cpt-studio-constraint-connector-own-connections`) |
 
 There is one `ConnectorService` in the process: this gear builds it at `init`
 and publishes it on the ClientHub. `cpt-studio-component-components-catalog`,

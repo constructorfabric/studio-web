@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import type { Candidate, PlanRow } from "./api";
 import {
   candidateReasons,
+  candidateTier,
   candidateStrength,
+  couldBecomeGear,
   coverageSummary,
   gearProblem,
   lookingFor,
   picksBeyondShortlist,
   rowCoverage,
   specReasons,
+  tierReason,
+  tierTag,
 } from "./spec-coverage";
 
 const cand = (name: string, extra: Partial<Candidate> = {}): Candidate => ({
@@ -87,6 +91,46 @@ describe("why a gear is offered", () => {
     expect(candidateReasons(cand("studio-documents", { origin: "project", path: "studio-backend/src/documents" }), "storage")[0]).toBe(
       "Declared in this project's own repository, at studio-backend/src/documents: you already have it.",
     );
+  });
+
+  it("offers a registry candidate in the project's code as something that could become a gear", () => {
+    const c = cand("documents", { origin: "project", path: "studio-backend/src/documents", registry_state: "candidate" });
+    expect(couldBecomeGear(c)).toBe(true);
+    const first = candidateReasons(c, "storage")[0];
+    expect(first).toContain("not a gear yet");
+    expect(first).toContain("at studio-backend/src/documents");
+    expect(first).toContain("Declare it");
+    expect(couldBecomeGear(cand("documents", { origin: "project", registry_state: "declared" }))).toBe(false);
+    expect(couldBecomeGear(cand("documents", { registry_state: "candidate" }))).toBe(false);
+  });
+
+  it("says when the organization's registry deprecated the gear, and what replaces it", () => {
+    const lines = candidateReasons(
+      cand("old-ledger", { origin: "project", path: "src/old", registry_state: "deprecated", replaced_by: "ledger" }),
+      "ledger",
+    );
+    expect(lines[1]).toBe("Deprecated in the organization's registry — use ledger instead.");
+    expect(candidateReasons(cand("a", { registry_state: "deprecated" }), "x")[0]).toBe(
+      "Deprecated in the organization's registry: no longer to be chosen.",
+    );
+    expect(candidateReasons(cand("a", { registry_state: "registered" }), "x").some((l) => l.includes("Deprecated"))).toBe(false);
+  });
+
+  it("tags a candidate with its tier and says what the tier means", () => {
+    expect(candidateTier(cand("a", { tier: "platform" }))).toBe("platform");
+    expect(candidateTier(cand("a", { tier: "organization" }))).toBe("organization");
+    // A server older than the tiers: only the project's own is known.
+    expect(candidateTier(cand("a", { origin: "project" }))).toBe("project");
+    expect(candidateTier(cand("a"))).toBeNull();
+    expect(tierTag("platform")).toBe("PLATFORM");
+    expect(tierTag("organization")).toBe("OURS");
+    expect(tierTag("project")).toBe("THIS PROJECT");
+    expect(candidateReasons(cand("a", { tier: "platform" }), "x")[0]).toBe(tierReason("platform"));
+    expect(candidateReasons(cand("a", { tier: "organization" }), "x")[0]).toContain("Offered before an equally strong platform gear");
+    // The project's own says so in its own words, once.
+    const own = candidateReasons(cand("a", { tier: "project", origin: "project", path: "src/a" }), "x");
+    expect(own[0]).toBe("Declared in this project's own repository, at src/a: you already have it.");
+    expect(own.some((l) => l === tierReason("project"))).toBe(false);
   });
 
   it("names the contract and what blocks the engine", () => {

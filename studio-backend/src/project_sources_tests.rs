@@ -89,7 +89,27 @@ fn resolved(secret_ref: Option<&str>, personal: bool) -> Resolved {
         .remove(0),
         secret_ref: secret_ref.map(str::to_owned),
         personal,
+        holder: None,
+        held_outside: None,
     }
+}
+
+/// A source whose connection the platform's root holds -- the project sees
+/// it because connections are inherited downwards -- lends no token to a
+/// clone or a push, and says whose it was, so the proxy refuses it.
+#[test]
+fn a_connection_held_outside_the_organization_lends_no_token() {
+    let root = Uuid::from_u128(1);
+    let mut r = resolved(Some("studio-connection-root"), false);
+    r.holder = Some(root);
+    r.held_outside = Some(root);
+    let got = to_git_source(r);
+    assert_eq!(got.token_ref, None);
+    assert_eq!(got.held_outside, Some(root));
+    // The organization's own still lends its token.
+    let own = to_git_source(resolved(Some("studio-connection-1"), false));
+    assert_eq!(own.held_outside, None);
+    assert_eq!(own.token_ref.as_deref(), Some("studio-connection-1"));
 }
 
 #[test]

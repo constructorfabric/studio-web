@@ -75,6 +75,7 @@ mod tests {
             branch: Some("main".to_owned()),
             target: None,
             token_ref: Some(format!("ref-{name}")),
+            held_outside: None,
         }
     }
 

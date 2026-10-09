@@ -89,6 +89,46 @@ impl GitProxy {
 }
 
 impl GitProxy {
+    /// Ask the organization's component registry to read the pushed project
+    /// again (ADR-0041): a `catalog.registry` walk of that one project, which
+    /// reads only the repositories whose files moved. Best effort, like the
+    /// re-sync: the push has already succeeded.
+    async fn refresh_registry_after_push(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        workspace_id: Option<Uuid>,
+    ) {
+        let Ok(registry) = self
+            .hub
+            .get::<dyn crate::components_catalog::port::Registry>()
+        else {
+            return;
+        };
+        let Some(workspace_id) = workspace_id else {
+            return;
+        };
+        let Some(org) = self
+            .account_management
+            .get_tenant(ctx, workspace_id)
+            .await
+            .ok()
+            .and_then(|t| t.parent_id)
+            .map(|p| p.0)
+        else {
+            tracing::info!(%project_id, "studio-git: the pushed project's organization is not visible; the registry is not refreshed");
+            return;
+        };
+        match registry.queue_refresh(ctx, org, &[project_id]).await {
+            Ok(run_id) => {
+                tracing::info!(%project_id, %org, %run_id, "studio-git: a push refreshes the component registry");
+            }
+            Err(error) => {
+                tracing::warn!(%project_id, %org, error = %format!("{error:#}"), "studio-git: a push could not queue a registry refresh");
+            }
+        }
+    }
+
     /// Queue a sync of every project source the push went to (ADR-0027 phase
     /// 2). Best effort and after the fact: the push has already succeeded, so
     /// a sync that cannot be queued is logged, never answered.
@@ -100,6 +140,8 @@ impl GitProxy {
             .ok()
             .and_then(|t| t.parent_id)
             .map(|p| p.0);
+        self.refresh_registry_after_push(ctx, project_id, workspace_id)
+            .await;
         let mut runs = Vec::new();
 
         // The project's record of its repositories names each one's
@@ -118,10 +160,25 @@ impl GitProxy {
                 let Some(connectors) = self.connectors.get() else {
                     continue;
                 };
-                if let Some((_, c)) = connectors
+                if let Some((at, c)) = connectors
                     .nearest_by_id(ctx, project_id, connection_id)
                     .await
                 {
+                    // The server's checkout is synced with this token: only
+                    // the organization's own (`connectors::sdk::ownership`).
+                    let holder = crate::connectors::sdk::holder_of_row(&c, at);
+                    if let Err(refused) = crate::connectors::sdk::check_owned(
+                        self.account_management.as_ref(),
+                        ctx,
+                        project_id,
+                        project_id,
+                        Some(holder),
+                    )
+                    .await
+                    {
+                        tracing::warn!(%project_id, holder = %refused.holder, "studio-git: a pushed source's connection is not the organization's; not re-synced through it");
+                        continue;
+                    }
                     connections.insert(
                         c.id,
                         Upstream {
@@ -340,6 +397,13 @@ async fn forward(
             "The workspace has no Git source by that name.",
         );
     };
+    // Never as the platform: a source connected through a connection held
+    // above the project's organization is not proxied, neither with that
+    // token nor without it.
+    if let Some(holder) = found.held_outside {
+        tracing::warn!(%workspace_id, source, %holder, "studio-git: the source's connection is not the organization's; refused");
+        return refuse(StatusCode::FORBIDDEN, &sources::not_owned_text(holder));
+    }
     let Some(url) = sources::upstream_url(&found.url, protocol_path) else {
         return refuse(
             StatusCode::NOT_FOUND,
@@ -581,7 +645,10 @@ pub fn register_routes(
     .description(
         "The first request of every clone, fetch and push. Authenticated with \
              the member's Studio token as the Basic password (or a Bearer token); \
-             answers 401 with a Basic challenge so `git` asks its credential helper.",
+             answers 401 with a Basic challenge so `git` asks its credential helper. \
+             A source whose connection is held outside the project's organization \
+             (the platform's, inherited) is refused 403 `CONNECTION_NOT_OWNED`, \
+             here and on the pack routes.",
     )
     .tag("StudioGit")
     .anonymous()
