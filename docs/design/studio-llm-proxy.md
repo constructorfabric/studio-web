@@ -26,18 +26,19 @@ view, and how this gear sits among the others, is in
 ### 1.1 Architectural Vision
 
 The AI inside an IDE session works without the session ever holding a
-provider key. The obvious way to point Theia AI or an agent at a provider is to
-put the key in the container, where anything running there can read it and
-anyone who reaches the daemon is one `docker inspect` away from it. This gear
-inverts that: the IDE authenticates with the member's own Studio token, and the
-proxy attaches a key held on the server on the way out.
+provider key, and without Studio holding one of its own. The obvious way to
+point Theia AI or an agent at a provider is to put the key in the container,
+where anything running there can read it and anyone who reaches the daemon is
+one docker inspect away from it. This gear inverts that: the IDE authenticates
+with the member's own Studio token, and the proxy attaches that member's key on
+the way out, from their profile or from an AI connection they reach.
 
-It has two halves. The OpenAI-compatible half serves Theia AI's `ai-openai`
-provider: one configured upstream, one key held in the backend's environment.
-The provider half serves the agents, Claude Code (Anthropic's Messages API)
-and Codex (OpenAI's API), with the key credstore answers for the calling
-member, so several people can run agents in one container, each on their own
-key (ADR-0030).
+It has two halves. The provider half serves the agents, Claude Code
+(Anthropic's Messages API) and Codex (OpenAI's API), so several people can run
+agents in one container, each on their own key (ADR-0030). The chat half
+serves Theia AI's `ai-openai` provider: an OpenAI chat completion sent to the
+first provider the member has a key for, at that provider's OpenAI-compatible
+endpoint.
 
 Both are passthroughs: bytes in, bytes out, the upstream status preserved,
 streaming responses streamed.
@@ -53,13 +54,13 @@ call goes out through the same provider table and HTTP client as an agent's.
 
 | Requirement | Design Response |
 |-------------|------------------|
-| `cpt-studio-fr-ide-llm-proxy` | `/studio-llm/v1/chat/completions`, `/models` and `/client-config` over the configured upstream; `/studio-llm/v1/providers/{provider}/…` for the agents. Every route is authenticated with the caller's Studio token. |
+| `cpt-studio-fr-ide-llm-proxy` | `/studio-llm/v1/[workspaces/{workspace_id}/]chat/completions`, `/models` and `/client-config` for the IDE's chat; `/studio-llm/v1/[workspaces/{workspace_id}/]providers/{provider}/…` for the agents. Every route is authenticated with the caller's Studio token, and every call goes out on the caller's key. |
 
 #### NFR Allocation
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
-| `cpt-studio-nfr-credential-isolation` | No provider key in a session, a browser or a response | `cpt-studio-component-llm-proxy` | The key is attached server-side; `client-config` returns no secret; the caller's `Authorization` and `x-api-key` are never forwarded, and only listed headers come back | `llm_proxy` unit tests (`config.rs`, `providers.rs`) in the `test-backend` job |
+| `cpt-studio-nfr-credential-isolation` | No provider key in a session, a browser or a response | `cpt-studio-component-llm-proxy` | The key is attached server-side; `client-config` returns no secret; the caller's `Authorization` and `x-api-key` are never forwarded, and only listed headers come back; a workspace's key answers only a caller who reaches the workspace | `llm_proxy` unit tests (`keys.rs`, `providers.rs`, `config.rs`) and `connectors::service` tests in the `test-backend` job |
 
 #### Key ADRs
 
@@ -73,24 +74,34 @@ call goes out through the same provider table and HTTP client as an agent's.
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| REST | The two families of routes | `OperationBuilder` routes in `rest.rs` |
-| Passthrough | Forward and stream back | `ProxyState::forward` in `rest.rs`, `Providers::forward` in `providers.rs`, over `reqwest` with its `stream` feature |
-| Keys | The upstream key from config or environment; a member's key from credstore | `config.rs`, `providers::CredstoreKeys` |
+| REST | The two families of routes, each with and without a workspace | `OperationBuilder` routes in `rest.rs` |
+| Passthrough | Forward and stream back | `Providers::forward` and `Providers::chat` in `providers.rs`, over `reqwest` with its `stream` feature |
+| Keys | A member's key: their profile, else their AI connections | `keys.rs` (`PeopleKeys`), `ConnectorService::model_key_for` in the connector gear |
 | Port | Other gears' way to a provider, with a key they hand it | `port::ModelProviders`, implemented by `providers::Providers` |
 
 ## 2. Principles & Constraints
 
 ### 2.1 Design Principles
 
-#### No default provider
+#### No Studio key
 
 - [x] `p2` - **ID**: `cpt-studio-principle-llm-no-default-provider`
 
-A proxy that silently picks a provider silently bills someone. With no base
-URL, model or key configured the gear boots, logs that in-IDE AI stays off,
-and answers the OpenAI-compatible routes with an error naming the variables to
-set. The provider half's defaults name the two public APIs, but a call there
-uses only a key the member or the workspace stored.
+A key Studio holds silently bills someone, and one seeded from the
+environment was what every member without a key of their own ran on. There is
+none: every call goes out on the caller's key, found in this order —
+
+1. their **profile key**: the credstore secret under the provider's reference
+   (`anthropic-key`, `openai-key`), accepted only when it is *private*, the
+   caller's own. Credstore answers a value shared with the tenant when the
+   caller keeps none; such a value — the env-seeded key still sitting in an
+   existing database — is ignored;
+2. their **personal** AI connection of that provider;
+3. a **workspace** AI connection, on the workspace routes only, once the
+   caller is shown to reach the workspace;
+4. an **organization** AI connection.
+
+With none, the call is refused with 403 and words that say where a key goes.
 
 #### The caller's credentials stop here
 
@@ -109,9 +120,10 @@ the provider's request id and its rate-limit headers, which the CLIs read.
 
 - [x] `p2` - **ID**: `cpt-studio-principle-llm-no-policy`
 
-No request rewriting, no model policy, no stored conversations. The model the
-IDE asks for is the one the server advertises in `client-config`. Policy is
-the `mini_chat` and `api_egress` chain's job (`cpt-studio-component-llm-chain`).
+No stored conversations and no model policy beyond one rule: the chat goes to
+the provider the caller's keys decide, so its `model` is set to that
+provider's chat model. Policy is the `mini_chat` and `api_egress` chain's job
+(`cpt-studio-component-llm-chain`).
 
 ### 2.2 Constraints
 
@@ -137,18 +149,22 @@ Provider calls share the same client.
 
 - [x] `p2` - **ID**: `cpt-studio-entity-llm-provider`
 
-A **provider** is one upstream an agent may reach: its path name, base URL,
-the credstore reference of its key, and how the key is sent (`bearer` or
-`x-api-key`). The defaults are `anthropic` (`https://api.anthropic.com`,
-`anthropic-key`, `x-api-key`) and `openai` (`https://api.openai.com/v1`,
-`openai-key`, `bearer`). For Studio's own calls a provider also names where its
-model list is under the base URL (`v1/models`, `models`) and the headers those
-calls carry (`anthropic-version` for Anthropic). The **upstream** of the OpenAI-compatible half is a
-base URL up to `/v1`, a model name and a key.
+A **provider** is one upstream an agent or the chat may reach: its path name
+(also the connector provider id of its AI connections), base URL, the credstore
+reference of a member's profile key, and how the key is sent (`bearer` or
+`x-api-key`). For the chat it names a `chat_model`, the `chat_path` of its
+OpenAI-compatible endpoint and the `developer_message_settings` an OpenAI
+client should use. The defaults are `anthropic` (`https://api.anthropic.com`,
+`anthropic-key`, `x-api-key`, chat model `claude-sonnet-5-5` at
+`v1/chat/completions`) and `openai` (`https://api.openai.com/v1`, `openai-key`,
+`bearer`, chat model `gpt-4.1-mini` at `chat/completions`), in that order. For
+Studio's own calls a provider also names where its model list is under the base
+URL (`v1/models`, `models`) and the headers those calls carry
+(`anthropic-version` for Anthropic).
 
 ### 3.2 Component Model
 
-#### OpenAI-compatible passthrough
+#### OpenAI-compatible chat
 
 - [x] `p2` - **ID**: `cpt-studio-component-llm-openai-passthrough`
 
@@ -159,17 +175,19 @@ against any base URL.
 
 ##### Responsibility scope
 
-Forwards `POST /chat/completions` and `GET /models` to the upstream with
-`Authorization: Bearer <key>` and streams the answer back with its status and
-content type, JSON or SSE alike. `client-config` returns the model and
-`developer_message_settings` (`system` by default), so provider choice stays
-out of the IDE image. The base URL and model come from `STUDIO_LLM_BASE_URL` and
-`STUDIO_LLM_MODEL` before the YAML; the key from a literal `api_key` before
-`STUDIO_LLM_API_KEY`.
+`POST …/chat/completions` picks the first provider, in configuration order,
+that has a chat model and a key for the caller, sets the request's `model` to
+that chat model, and sends it to the provider's `chat_path` with the key as a
+bearer (Anthropic's OpenAI-SDK-compatible endpoint takes it that way), streaming
+the answer back. `client-config` answers, for this caller, the provider and
+model they would get and its `developer_message_settings` — or no model and a
+`reason` that says where to add a key. `GET …/models` lists that one model, or
+none.
 
 ##### Responsibility boundaries
 
-One upstream per deployment; switching it is a restart.
+No server upstream and no server key. A provider without a chat model is
+never picked.
 
 ##### Related components (by ID)
 
@@ -186,21 +204,24 @@ share must not carry one person's key.
 
 ##### Responsibility scope
 
-`providers.rs`: `GET` and `POST /studio-llm/v1/providers/{provider}/{*rest}`
-append the rest of the path and the query to the provider's base URL, read the
-key from credstore as the caller — their private secret first, else the one
-shared with their tenant — and stream the answer back. An unknown provider is
-404; no key is 403, telling the member to add one to their profile or ask an
-owner to share one; an unreadable key or an unreachable provider is 502.
+`providers.rs`: `GET` and `POST …/providers/{provider}/{*rest}` append the rest
+of the path and the query to the provider's base URL, attach the caller's key
+(see *No Studio key*) and stream the answer back. On the workspace routes a
+caller who does not reach the workspace is 404 and no key is looked for. An
+unknown provider is 404; no key is 403 — "No {provider} key for you: add one
+to your Studio profile, or connect one (for yourself or this workspace) under
+Connections."; an unreadable key or an unreachable provider is 502.
 
 ##### Responsibility boundaries
 
-Mounted only when a credstore client is available. Stores nothing.
+Stores nothing. Reads AI connections through the connector gear's `sdk`, which
+reads each token as the caller.
 
 ##### Related components (by ID)
 
 - `cpt-studio-component-session` — points a session's agents at it
-- `cpt-studio-component-platform-feature-gears` — reads the caller's key from credstore
+- `cpt-studio-component-connector` — answers the caller's AI connection key
+- `cpt-studio-component-platform-feature-gears` — reads the caller's profile key from credstore
 
 #### Provider port
 
@@ -239,23 +260,37 @@ needs one.
 - **Technology**: REST/OpenAPI through `api_gateway`; OpenAI-compatible and provider-native bodies passed through
 - **Location**: [`studio-backend/docs/api-contract.json`](../../studio-backend/docs/api-contract.json)
 
+The workspace is a path segment on purpose (a baselined break of rule C): the
+agent CLIs and the OpenAI client append their own paths to a base URL, so a
+query parameter cannot carry it. The handler asks account-management, as the
+caller, whether they reach the workspace; the path names it, it does not grant
+it.
+
 **Endpoints Overview**:
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `POST` | `/studio-llm/v1/chat/completions` | Chat completions on the configured upstream; `stream: true` piped through as SSE | unstable |
-| `GET` | `/studio-llm/v1/models` | The upstream's model list | unstable |
-| `GET` | `/studio-llm/v1/client-config` | Model and system-prompt role for the IDE; no secret | unstable |
-| `GET` `POST` | `/studio-llm/v1/providers/{provider}/{*rest}` | An agent's call to its provider, on the caller's own key | unstable |
+| `POST` | `/studio-llm/v1/workspaces/{workspace_id}/chat/completions` | The IDE's chat, on the caller's key, workspace connections included; `stream: true` piped through as SSE | unstable |
+| `GET` | `/studio-llm/v1/workspaces/{workspace_id}/models` | The one chat model this caller gets there, or none | unstable |
+| `GET` | `/studio-llm/v1/workspaces/{workspace_id}/client-config` | Provider, model and system-prompt role for this caller, or a reason; no secret | unstable |
+| `GET` `POST` | `/studio-llm/v1/workspaces/{workspace_id}/providers/{provider}/{*rest}` | An agent's call to its provider, on the caller's key | unstable |
+| `POST` | `/studio-llm/v1/chat/completions` | The same chat outside a workspace (no workspace connections) | unstable |
+| `GET` | `/studio-llm/v1/models` | The same, outside a workspace | unstable |
+| `GET` | `/studio-llm/v1/client-config` | The same, outside a workspace | unstable |
+| `GET` `POST` | `/studio-llm/v1/providers/{provider}/{*rest}` | The same, outside a workspace | unstable |
 
 ### 3.4 Internal Dependencies
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | The caller's provider key |
+| `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | The caller's profile key (private only) |
+| `studio-connector` (`cpt-studio-component-connector`) | `connectors::sdk::Connectors` → `ConnectorService::model_key_for` | The caller's personal, the workspace's and the organization's AI connection key |
+| `studio-session` (`cpt-studio-component-session`) | `studio_session::sdk::TenantMembership` | Whether the caller reaches the workspace a route names |
 
 It is used in-process by `studio-connector`'s `anthropic-connector-plugin` and
-`openai-connector-plugin`, through `ModelProviders`, resolved on use.
+`openai-connector-plugin`, through `ModelProviders`, resolved on use. The two
+gears use each other through each other's `port`/`sdk`, each resolved from the
+ClientHub when used, so neither depends on the other's start.
 
 ### 3.5 External Dependencies
 
@@ -265,7 +300,7 @@ It is used in-process by `studio-connector`'s `anthropic-connector-plugin` and
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| `cpt-studio-component-llm-proxy` | OpenAI-compatible chat completions; Anthropic Messages API; OpenAI API | Completions for Theia AI and the agents |
+| `cpt-studio-component-llm-proxy` | Anthropic Messages API and its OpenAI-compatible chat completions; OpenAI API | Completions for the agents and Theia AI |
 
 ### 3.6 Interactions & Sequences
 
@@ -281,19 +316,26 @@ The model call in `cpt-studio-seq-open-ide-session` is this gear.
 sequenceDiagram
     participant A as Agent in a session
     participant P as studio-llm-proxy
+    participant M as account-management
     participant C as credstore
+    participant K as studio-connector
     participant U as Provider
-    A->>P: POST /studio-llm/v1/providers/anthropic/v1/messages (Bearer Studio token)
+    A->>P: POST /studio-llm/v1/workspaces/{ws}/providers/anthropic/v1/messages (Bearer Studio token)
+    P->>M: does the caller reach {ws}?
     P->>C: get anthropic-key as the caller
-    C-->>P: private key, else the shared one
+    C-->>P: accepted only if private
+    P->>K: model_key_for(caller, ws, anthropic) when there is none
+    K-->>P: personal, else workspace, else organization connection key
     P->>U: POST /v1/messages (x-api-key)
     U-->>P: SSE stream
     P-->>A: SSE stream
 ```
 
 **Description**: The session points the agent here with `ANTHROPIC_BASE_URL` or
-`OPENAI_BASE_URL` under its gateway URL and `STUDIO_LLM_AUTH=bearer`, which the
-patched Claude Code and Codex services read to send the window's token.
+`OPENAI_BASE_URL` under its gateway URL and its workspace, and
+`STUDIO_LLM_AUTH=bearer`, which the patched Claude Code and Codex services read
+to send the window's token. The IDE's chat follows the same order through
+`…/chat/completions`.
 
 ### 3.7 Database schemas & tables
 
@@ -303,17 +345,16 @@ None.
 
 In-process in the one `studio-backend` binary, every build: gear
 `studio-llm-proxy`, capabilities `[rest]`, deps `credstore`, config section
-`gears.studio-llm-proxy` (`base_url`, `model`, `api_key`, the `*_env` names,
-`developer_message_settings`, `providers`). Publishes `ModelProviders` on the
+`gears.studio-llm-proxy` (`providers` only). Publishes `ModelProviders` on the
 ClientHub.
 
 ## 4. Additional context
 
-`studio-secrets-bootstrap` seeds `openai-key` and `anthropic-key` as shared
-secrets from `STUDIO_LLM_API_KEY` and `STUDIO_ANTHROPIC_API_KEY`, which is what
-the provider half answers with for a member who keeps no key of their own.
-`studio-spec-quality` has the same shape: an authenticated passthrough with the
-credential on the server.
+Nothing is seeded for this gear. `studio-secrets-bootstrap` seeds only
+`studio-assistant-llm-key`, mini-chat's own key, from `STUDIO_LLM_API_KEY`; an
+`openai-key` or `anthropic-key` a deployment once seeded as a shared secret may
+still sit in its database, and is ignored. `studio-spec-quality` has a similar
+shape: an authenticated passthrough with the credential on the server.
 
 ## 5. Traceability
 

@@ -119,9 +119,10 @@ route through it, and this decision does not change it.
 
 - One place to change how Studio reaches a provider; a connector's key test and
   an agent's call go out through the same client, table and headers.
-- The release deploys the proxy. Without `STUDIO_LLM_BASE_URL`/`_MODEL`/
-  `_API_KEY` the OpenAI-compatible half answers with the error that names
-  them, as on a dev stand; the provider half needs only credstore.
+- The release deploys the proxy. (At the time, without `STUDIO_LLM_BASE_URL`/
+  `_MODEL`/`_API_KEY` the OpenAI-compatible half answered with an error naming
+  them. Since 2026-10-09 that half has no server upstream at all: see the
+  follow-up below.)
 - A key test in a deployment without the proxy fails with a message naming it,
   instead of reaching the provider on its own.
 - Two key stores still exist for the agents: the member's profile keys and the
@@ -129,6 +130,15 @@ route through it, and this decision does not change it.
   provider half reads, and the AI connections, which it does not. Having the
   provider half select a member's AI connection is the follow-up that makes
   the connection the one place a key is kept.
+  **Done (2026-10-09).** A call — an agent's or the IDE chat's — goes out on a
+  person's key only: their profile key (private only; a shared value under the
+  same reference is ignored), else their personal AI connection, else the
+  workspace's (on `/studio-llm/v1/workspaces/{workspace_id}/…`, which sessions
+  now point their agents and chat at), else the organization's
+  (`ConnectorService::model_key_for`). The env-seeded shared `openai-key` /
+  `anthropic-key` and the chat half's server upstream (`STUDIO_LLM_BASE_URL`,
+  `_MODEL`, `_API_KEY`) are gone; the chat picks the first provider with a chat
+  model the caller has a key for.
 
 ## More Information
 
@@ -140,7 +150,8 @@ route through it, and this decision does not change it.
   change to its callers.
 - The `openai-key` reference that mini-chat's OAGW upstream and the proxy's
   `openai` provider both read. They are one secret by configuration, not by
-  design.
+  design. (Resolved with the follow-up above: mini-chat's upstream reads its own
+  `studio-assistant-llm-key`, and `openai-key` is only a member's profile key.)
 
 ## Traceability
 

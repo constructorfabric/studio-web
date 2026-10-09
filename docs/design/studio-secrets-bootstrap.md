@@ -158,17 +158,20 @@ secrets.
 In-process in the one `studio-backend` binary: gear
 `studio-secrets-bootstrap`, capabilities `[stateful]`, deps `credstore`, config
 section `gears.studio-secrets-bootstrap` with its `secrets` list. `docker.yaml`
-and `k8s.yaml` seed `openai-key` from `STUDIO_LLM_API_KEY` and `anthropic-key`
-from `STUDIO_ANTHROPIC_API_KEY`, both shared.
+and `k8s.yaml` seed `studio-assistant-llm-key` (mini-chat's provider key) from
+`STUDIO_LLM_API_KEY`, shared. They no longer seed `openai-key` or
+`anthropic-key`: those are a member's own profile keys, and the agents and the
+IDE chat run on a person's key, never on one from the environment.
 
 ## 4. Additional context
 
 With `studio-credstore-pg` active the heal is normally a no-op that logs "secret
-accessible — no heal needed". It is still the only source of `openai-key` and
-`anthropic-key` on a first boot, after `STUDIO_CREDSTORE_KEY` changes (old rows
-stop decrypting and read as absent), and whenever the persistent store stands
-down and the in-memory fallback takes over. `studio-llm-proxy` answers an
-agent's call with these shared keys for a member who keeps none of their own.
+accessible — no heal needed". It is still the only source of
+`studio-assistant-llm-key` on a first boot, after `STUDIO_CREDSTORE_KEY` changes
+(old rows stop decrypting and read as absent), and whenever the persistent store
+stands down and the in-memory fallback takes over. `studio-llm-proxy` reads
+nothing it seeds: a member without a key of their own gets an AI connection's,
+or a refusal that says where to add one.
 
 ## 5. Traceability
 
