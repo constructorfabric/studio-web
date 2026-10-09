@@ -5537,10 +5537,11 @@ const PAT_SECRET_TYPE = "gts.cf.core.credstore.secret.v1~cf.core.credstore.api_k
 
 // Personal AI keys are per-user, so they use the private-only `personal_token`
 // type (credstore rejects tenant sharing for it) and are written with
-// sharing: "private". The IDE launch resolves `openai-key`/`anthropic-key`
-// under the launching user's identity and the credstore returns that user's
-// private secret ahead of any org-wide one — so a key set in Profile overrides
-// the organization fallback for that user only.
+// sharing: "private". Studio's model-provider proxy reads `openai-key` /
+// `anthropic-key` as the caller and accepts only a PRIVATE value — the
+// person's own. Without one it falls back to an AI connection (the person's
+// own, then the workspace's, then the organization's), never to a key shared
+// under the same reference.
 const PERSONAL_SECRET_TYPE =
   "gts.cf.core.credstore.secret.v1~cf.core.credstore.personal_token.v1~";
 
@@ -6727,7 +6728,9 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
     key: "ai",
     title: "AI providers",
     blurb:
-      "Credentials the IDE agents authenticate with — Anthropic for Claude Code, OpenAI for Codex.",
+      "Keys the IDE agents and chat run on — Anthropic for Claude Code, OpenAI for Codex — for " +
+      "anyone without a key in their profile: a personal one for you, a workspace one for this " +
+      "workspace, an organization one for every workspace in it.",
   },
   {
     key: "notification",
@@ -9505,21 +9508,20 @@ function decodeJwtClaims(token: string): Record<string, unknown> | null {
   }
 }
 
-/** Per-user AI keys the in-IDE agents authenticate with. `anthropic-key` →
- *  ANTHROPIC_API_KEY (Claude Code), `openai-key` → OPENAI_API_KEY (Codex).
- *  Stored as PRIVATE credstore secrets so only the owner's launches see them. */
-const AI_KEYS: { ref: string; label: string; env: string; hint: string }[] = [
+/** Per-user AI keys the in-IDE agents and chat run on. `anthropic-key` → Claude
+ *  Code, `openai-key` → Codex; the IDE chat uses whichever the person has.
+ *  Stored as PRIVATE credstore secrets: only the owner's calls use them, and
+ *  the key never enters an IDE container (Studio's proxy attaches it). */
+const AI_KEYS: { ref: string; label: string; hint: string }[] = [
   {
     ref: "anthropic-key",
     label: "Anthropic API key",
-    env: "ANTHROPIC_API_KEY",
-    hint: "Claude Code agent in the IDE",
+    hint: "Claude Code agent and the chat in the IDE",
   },
   {
     ref: "openai-key",
     label: "OpenAI API key",
-    env: "OPENAI_API_KEY",
-    hint: "Codex agent in the IDE",
+    hint: "Codex agent and the chat in the IDE",
   },
 ];
 
@@ -9532,7 +9534,9 @@ function AiKeysCard({ token }: { token: string }) {
   const probe = useCallback(
     async (ref: string) => {
       setStatus((s) => ({ ...s, [ref]: "checking" }));
-      const r = await api.checkSecret(token, ref);
+      // Only the person's own (private) key counts: a value shared under the
+      // same reference is not used for them.
+      const r = await api.checkOwnSecret(token, ref);
       setStatus((s) => ({ ...s, [ref]: r }));
     },
     [token],
@@ -9552,7 +9556,7 @@ function AiKeysCard({ token }: { token: string }) {
     try {
       await api.putSecret(token, ref, value.trim(), PERSONAL_SECRET_TYPE, "private");
       await probe(ref);
-      setNote(`${label} saved — new IDE sessions you launch will use it.`);
+      setNote(`${label} saved — your agents and IDE chat use it from their next call.`);
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -9563,7 +9567,7 @@ function AiKeysCard({ token }: { token: string }) {
   async function removeKey(ref: string, label: string) {
     if (
       !window.confirm(
-        `Delete your ${label}? Sessions you launch will fall back to the organization key, if one is set.`,
+        `Delete your ${label}? Your agents and IDE chat will then use an AI connection (yours, the workspace's or the organization's), if there is one — otherwise they stop.`,
       )
     )
       return;
@@ -9585,9 +9589,11 @@ function AiKeysCard({ token }: { token: string }) {
     <div className="card">
       <h2>AI keys</h2>
       <p className="hint">
-        Personal keys for the in-IDE AI agents. Stored encrypted in your private credstore and
-        injected only into sessions you launch — nobody else can read them, and they take
-        precedence over the organization key. Write-only: a saved value is never displayed back.
+        Your keys for the in-IDE AI agents and chat. Stored encrypted in your private credstore;
+        Studio attaches them to your calls only — they never enter an IDE container, and nobody
+        else can read them. Without a key here, your calls use an AI connection under Connections
+        (yours, the workspace's or the organization's); with neither, the agents say so. Studio
+        keeps no key of its own. Write-only: a saved value is never displayed back.
       </p>
       <ul className="rows">
         {AI_KEYS.map((k) => {
@@ -9596,9 +9602,7 @@ function AiKeysCard({ token }: { token: string }) {
             <li key={k.ref}>
               <div className="grow">
                 <div className="name">{k.label}</div>
-                <div className="sub">
-                  {k.hint} — <code>{k.env}</code>
-                </div>
+                <div className="sub">{k.hint}</div>
               </div>
               {st === "ok" && <span className="badge workspace">set ✓</span>}
               {st === "broken" && <span className="sub">not set</span>}

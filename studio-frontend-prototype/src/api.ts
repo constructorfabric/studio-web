@@ -4105,6 +4105,23 @@ export const api = {
       return "broken";
     }
   },
+  /**
+   * Whether the caller keeps a PRIVATE secret under `reference` — their own.
+   * Credstore answers a tenant-shared value when they keep none, and the
+   * model-provider proxy ignores such a value, so a profile must not call it
+   * "set".
+   */
+  checkOwnSecret: async (token: string, reference: string): Promise<"ok" | "broken"> => {
+    try {
+      const secret = await request<{ metadata?: { sharing?: string } }>(
+        `/credstore/v1/secrets/${encodeURIComponent(reference)}`,
+        token,
+      );
+      return secret?.metadata?.sharing?.toLowerCase() === "private" ? "ok" : "broken";
+    } catch {
+      return "broken";
+    }
+  },
 
   deleteSecret: (token: string, reference: string) =>
     request<unknown>(`/credstore/v1/secrets/${encodeURIComponent(reference)}`, token, {
