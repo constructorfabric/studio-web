@@ -394,9 +394,10 @@ gears:
       priority: 100
       secrets:
         # Shared secret (no tenant_id). Put your real OpenAI key here for the
-        # Ask AI feature; without it chats are created but streaming replies
-        # fail at the provider with 401.
-        - key: "openai-key"
+        # Ask AI feature (mini-chat); without it chats are created but
+        # streaming replies fail at the provider with 401. The agents and the
+        # IDE chat never read it: they use a person's own key.
+        - key: "studio-assistant-llm-key"
           value: "sk-REPLACE_ME"
 
   # No studio-tasks or studio-scheduler section here either, for the same
@@ -431,7 +432,7 @@ gears:
           auth_config:
             header: "Authorization"
             prefix: "Bearer "
-            secret_ref: "openai-key"
+            secret_ref: "studio-assistant-llm-key"
 
   static-mini-chat-model-policy-plugin:
     config:

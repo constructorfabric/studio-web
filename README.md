@@ -152,8 +152,8 @@ its feature off with a clear message rather than breaking the stack.
 
 | Capability | What to set |
 |---|---|
-| Ask AI, mini-chat, Codex agent | `STUDIO_LLM_API_KEY` (any OpenAI-compatible key) |
-| Claude Code agent in sessions | `STUDIO_ANTHROPIC_API_KEY` |
+| Ask AI, mini-chat | `STUDIO_LLM_API_KEY` (any OpenAI-compatible key) |
+| Claude Code, Codex and the chat in IDE sessions | Nothing to set: each person adds their own key to their profile, or an owner connects one under Connections |
 | Secrets that survive a restart | `STUDIO_CREDSTORE_KEY` — generate once with `openssl rand -base64 32` and keep it; a new key makes stored values unreadable |
 | A private session image from GHCR | `STUDIO_REGISTRY_USER`, `STUDIO_REGISTRY_TOKEN` (a PAT with `read:packages`) |
 | Spec quality, Insight analytics | `STUDIO_SPEC_QUALITY_API_KEY`, `STUDIO_INSIGHT_API_KEY` |

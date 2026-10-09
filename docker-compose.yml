@@ -180,12 +180,10 @@ services:
     restart: unless-stopped
     environment:
       STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
-      # Provider keys. Empty is a valid state: the features that need them
-      # stay off and say so, rather than the stack refusing to start.
-      #   Ask AI / mini-chat + the Codex agent  -> STUDIO_LLM_API_KEY
-      #   the Claude Code agent in IDE sessions -> STUDIO_ANTHROPIC_API_KEY
+      # Ask AI / mini-chat's provider key. Empty is a valid state: the feature
+      # stays off and says so. The IDE's agents and chat take no key from the
+      # environment: each person's own (profile or AI connection) is used.
       STUDIO_LLM_API_KEY: ${STUDIO_LLM_API_KEY:-}
-      STUDIO_ANTHROPIC_API_KEY: ${STUDIO_ANTHROPIC_API_KEY:-}
       # Bearer secret for the external spec-quality detector service. The gear
       # has base_url in config/docker.yaml but reads the KEY from this env var
       # (studio-spec-quality.config.api_key_env); without it the wrapper reports

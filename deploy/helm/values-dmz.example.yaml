@@ -8,7 +8,7 @@
 #       (operator-managed PG)
 #   studio-web-idp        issuer_url, client_id, client_secret
 #       (OIDC realm the portal + backend validate against)
-#   studio-web-app        llm_api_key           [required]
+#   studio-web-app        llm_api_key           [required: mini-chat (Ask AI) only]
 #                         fs_signing_seed       [required, e.g. `openssl rand -base64 32 | tr '+/' '-_'`]
 #                         credstore_key         [strongly recommended: `openssl rand -base64 32`;
 #                                                without it user-typed secrets (repo PATs) die
@@ -44,9 +44,7 @@ backend:
   image:
     tag: "v0.1.0"                   # immutable release tag (ghcr)
   llm:
-    baseUrl: "https://api.groq.com/openai/v1"
     host: "api.groq.com"
-    model: "llama-3.3-70b-versatile"
   # idpAdmin:
   #   baseUrl: "https://<keycloak-host>"   # enables portal user invites
 

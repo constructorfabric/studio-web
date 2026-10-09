@@ -458,22 +458,18 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       secrets:
-        # These entries only declare the references. The VALUES are supplied
-        # by studio-secrets-bootstrap from the environment on every start:
-        #   export STUDIO_LLM_API_KEY=gsk_...        (Ask AI; console.groq.com
-        #                                             → API Keys, no card)
-        #   export STUDIO_ANTHROPIC_API_KEY=sk-ant-... (Claude Code in IDE
-        #                                             sessions — not
-        #                                             OpenAI-compatible, never
-        #                                             goes through the proxy)
+        # This entry only declares the reference. The VALUE is supplied by
+        # studio-secrets-bootstrap from the environment on every start:
+        #   export STUDIO_LLM_API_KEY=gsk_...   (Ask AI / mini-chat only;
+        #                                        console.groq.com → API Keys)
+        # The agents and the IDE chat never read it: they use a person's own
+        # key (profile or AI connection) through studio-llm-proxy.
         #
         # Keep the values empty even though the whole file IS env-expanded at
         # load since #65: studio-secrets-bootstrap stays the single seeding
         # path, and a key baked into the effective config would also show up
         # in --print-config.
-        - key: "openai-key"
-          value: ""
-        - key: "anthropic-key"
+        - key: "studio-assistant-llm-key"
           value: ""
 
   # ── studio-tasks (durable background runs) ──
@@ -565,7 +561,7 @@ gears:
         client_secret: "mini-chat-dev-secret"
       providers:
         # Any OpenAI-compatible /chat/completions provider; Groq's free tier
-        # by default (same key as studio-llm-proxy above). Nothing in this
+        # by default (key: STUDIO_LLM_API_KEY, see above). Nothing in this
         # block is env-expanded — host and api_path are literals and must be
         # changed together (plain providers use /v1/chat/completions, Groq
         # nests under /openai). For OpenAI's Responses API: kind
@@ -580,7 +576,7 @@ gears:
           auth_config:
             header: "Authorization"
             prefix: "Bearer "
-            secret_ref: "openai-key"
+            secret_ref: "studio-assistant-llm-key"
 
   static-mini-chat-model-policy-plugin:
     config:
@@ -680,18 +676,17 @@ gears:
   # Re-seeds the references declared above from the environment on every start.
   # With studio-credstore-pg active the values already survive a restart, so
   # this is normally a no-op that logs "secret accessible — no heal needed". It
-  # is still the ONLY source for openai-key / anthropic-key: on a first boot,
+  # is still the ONLY source for studio-assistant-llm-key: on a first boot,
   # after STUDIO_CREDSTORE_KEY changes (old rows stop decrypting and read as
   # absent), and whenever the persistent store stands down and the in-memory
   # fallback takes over.
   studio-secrets-bootstrap:
     config:
       secrets:
-        - ref: "openai-key"
+        # mini-chat's (Ask AI) provider key, read by its OAGW upstream above.
+        # Not the agents' or the IDE chat's: those use a person's own key.
+        - ref: "studio-assistant-llm-key"
           value_env: "STUDIO_LLM_API_KEY"
-          sharing: "shared"
-        - ref: "anthropic-key"
-          value_env: "STUDIO_ANTHROPIC_API_KEY"
           sharing: "shared"
 
   # ── Source connectors (driver plugins + tenant connection catalogue) ──
@@ -717,7 +712,9 @@ gears:
   # Model providers. These are the credentials the IDE agents authenticate
   # with: an Anthropic key powers @theia/ai-claude-code, an OpenAI key powers
   # @theia/ai-codex. The OpenAI driver also validates any OpenAI-compatible
-  # endpoint (Groq, vLLM, our own studio-llm-proxy) via the instance URL.
+  # endpoint (Groq, vLLM) via the instance URL. A personal, workspace or
+  # organization AI connection is also where studio-llm-proxy finds a key for
+  # a member who keeps none in their profile.
   anthropic-connector-plugin:
     config:
       vendor: "constructorfabric"
@@ -784,22 +781,13 @@ gears:
   studio-connector:
     config: {}
 
-  # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
-  # Provider-agnostic gear; this PROFILE defaults to Groq's free tier
-  # (console.groq.com → API Keys; free, no card, rate-limited). Env beats
-  # YAML, so any other provider is a restart away:
-  #   STUDIO_LLM_BASE_URL  e.g. https://api.openai.com/v1, http://localhost:11434/v1
-  #   STUDIO_LLM_MODEL     e.g. gpt-4o-mini, qwen2.5-coder
-  #   STUDIO_LLM_API_KEY   the provider key (server-side only)
-  # The IDE never learns the provider — it reads GET /studio-llm/v1/client-config
-  # and authenticates with the user's Studio token; this gear attaches the
-  # server-held key upstream.
+  # ── studio-llm-proxy: the agents' and the IDE chat's way to their providers ──
+  # Every call goes out on the CALLER's key: their profile key, else an AI
+  # connection they reach (personal, workspace, organization). No key lives
+  # here and none is seeded from the environment. `providers` (defaults in
+  # src/llm_proxy/providers.rs) may override a provider's chat_model.
   studio-llm-proxy:
-    config:
-      base_url: "https://api.groq.com/openai/v1"
-      model: "llama-3.3-70b-versatile"
-      developer_message_settings: "system"    # safest across providers
-      api_key_env: "STUDIO_LLM_API_KEY"
+    config: {}
 
   # static-authn-plugin is link-time active here too; pinned BELOW the OIDC
   # plugin so it never wins the vendor selection in this profile.

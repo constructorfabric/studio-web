@@ -244,8 +244,9 @@ spec:
             # default applies when the key is absent.
             - name: STUDIO_OIDC_S2S_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: s2s_client_secret, optional: true } }
-            # LLM egress (Theia AI proxy + mini-chat). Key is secret; provider
-            # endpoint/model are plain values (see backend.llm).
+            # mini-chat's (Ask AI) provider key; its host is backend.llm.host.
+            # The agents and the IDE chat never use it: studio-llm-proxy sends
+            # each call on the person's own key (profile or AI connection).
             - name: STUDIO_LLM_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: llm_api_key } }
             # External spec-quality detector bearer secret. Optional keeps the
@@ -261,10 +262,6 @@ spec:
             # credential comes from the Secret.
             - name: STUDIO_INSIGHT_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: insight_api_key, optional: true } }
-            - name: STUDIO_LLM_BASE_URL
-              value: {{ .Values.backend.llm.baseUrl | quote }}
-            - name: STUDIO_LLM_MODEL
-              value: {{ .Values.backend.llm.model | quote }}
             - name: STUDIO_LLM_HOST
               value: {{ .Values.backend.llm.host | quote }}
             # file-storage URL-signing seed — per environment, never baked in.

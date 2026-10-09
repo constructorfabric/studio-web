@@ -96,7 +96,7 @@ backend:
   # (keys: issuer_url, client_id, client_secret).
   auth:
     existingSecret: "studio-web-idp"
-  # Application secrets (keys: llm_api_key [required], fs_signing_seed
+  # Application secrets (keys: llm_api_key [required; mini-chat only], fs_signing_seed
   # [required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
@@ -233,12 +233,12 @@ backend:
       # exist — and in a namespace whose quota counts limits, that is a quarter
       # of an IDE session spent on nothing.
       limits: { cpu: "200m", memory: 512Mi }
-  # LLM egress endpoint (non-secret half; the key lives in appSecrets).
-  # Any OpenAI-compatible provider; defaults = Groq free tier.
+  # mini-chat's (Ask AI) LLM endpoint (non-secret half; the key lives in
+  # appSecrets). Any OpenAI-compatible provider; default = Groq free tier.
+  # The IDE's agents and chat have no endpoint here: they reach Anthropic or
+  # OpenAI on each person's own key (profile or AI connection).
   llm:
-    baseUrl: "https://api.groq.com/openai/v1"  # Theia AI proxy upstream
     host: "api.groq.com"                       # mini-chat/OAGW upstream host
-    model: "llama-3.3-70b-versatile"
   # Keycloak Admin API base URL for user invites (keycloak-idp-plugin).
   # Empty = invites disabled (plugin self-deprioritizes).
   idpAdmin:

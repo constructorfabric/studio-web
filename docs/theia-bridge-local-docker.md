@@ -44,8 +44,8 @@ cp .env.example .env    # if you don't have one yet
 openssl rand -base64 32   # -> paste into STUDIO_CREDSTORE_KEY in .env
 ```
 
-`STUDIO_LLM_API_KEY` / `STUDIO_ANTHROPIC_API_KEY` are optional — the loop does not
-need them (they only power in-IDE AI). The session image is now local, so
+`STUDIO_LLM_API_KEY` is optional — the loop does not need it (it only powers Ask
+AI). In-IDE AI runs on your own key: add one to your Studio profile. The session image is now local, so
 `STUDIO_REGISTRY_USER/TOKEN` are not needed either.
 
 ## 3. Build + start the backend (with the bridge linked)
