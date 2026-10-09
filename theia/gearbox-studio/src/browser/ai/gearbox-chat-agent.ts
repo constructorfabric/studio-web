@@ -105,14 +105,15 @@ export class GearboxChatAgent extends AbstractStreamParsingChatAgent {
       if (ready === undefined) {
         request.response.response.addContent(
           new MarkdownChatResponseContentImpl(
-            // Constructor Studio: the model is Studio's own (`studio-llm`),
-            // configured when the portal hands this IDE its token. There is no
-            // key to type here, and asking for one would be the wrong fix.
+            // Constructor Studio: the model is Studio's (`studio-llm`), on the
+            // person's own key, configured when the portal hands this IDE its
+            // token. There is no key to type here, and asking for one would be
+            // the wrong fix: it belongs in the person's Studio profile.
             `I have no language model to answer with, so nothing I said would be grounded.\n\n` +
               `The model comes from Constructor Studio and is set up when the IDE is opened ` +
-              `from the portal. Open it from your project there; if this persists, the ` +
-              `workspace has no LLM configured. Resolving, generating and every diagnostic ` +
-              `work without it.`,
+              `from the portal, on your own Anthropic or OpenAI key. If this persists, add a ` +
+              `key to your Studio profile, or connect one (for yourself or this workspace) ` +
+              `under Connections. Resolving, generating and every diagnostic work without it.`,
           ),
         );
         // Complete rather than error: nothing failed, something is unset, and the

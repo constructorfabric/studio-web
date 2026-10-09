@@ -38,6 +38,7 @@ import { ArtifactGraphCommand } from './artifact-graph-contribution';
 import { NotifyEditorFrontendController } from './notify-editor-controller';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
 import { StudioApi } from './studio-api';
+import { planTheiaAi, StudioLlmClientConfig, studioLlmBase } from './studio-llm-config';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
 import { StudioRuntimeService, type StudioRuntimeSession } from '../common/studio-protocol';
@@ -201,6 +202,7 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     protected readonly deferredOpens: (() => void)[] = [];
     protected portalOrigin: string | undefined;
     protected lastDirty = -1;
+    /** `<scope>|<token>` the IDE's chat was last configured for. */
     protected lastAiToken = '';
 
     registerCommands(commands: CommandRegistry): void {
@@ -276,15 +278,17 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             if ((msg.type === 'studio.init' || msg.type === 'studio.theme') && msg.theme) {
                 this.applyPortalTheme(msg.theme);
             }
+            // The scope before the token: the IDE's chat is configured under
+            // the workspace, so it has to be known when the token arrives.
+            if ((msg.type === 'studio.init' || msg.type === 'studio.token') && typeof msg.workspaceId === 'string') {
+                StudioApi.scope = msg.workspaceId;
+            }
             if ((msg.type === 'studio.init' || msg.type === 'studio.token') && msg.apiToken) {
                 StudioApi.token = msg.apiToken;
                 // Alongside the token, and from the same message, so nothing
                 // can call a gear as a person the portal has not named.
                 StudioApi.viewer = msg.viewer;
                 void this.configureTheiaAi(msg.apiToken);
-            }
-            if ((msg.type === 'studio.init' || msg.type === 'studio.token') && typeof msg.workspaceId === 'string') {
-                StudioApi.scope = msg.workspaceId;
             }
             if (msg.type === 'studio.init' || msg.type === 'studio.token') {
                 // Restated on every silent renew, not only at the handshake: a
@@ -508,48 +512,49 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
      * to the Studio backend's OpenAI-compatible LLM proxy.
      *
      * Provider-agnostic on purpose: the IDE image knows nothing about the
-     * LLM vendor. The backend decides (STUDIO_LLM_BASE_URL / _MODEL /
-     * _API_KEY on the server) and advertises the client side of that choice
-     * via GET /studio-llm/v1/client-config; we fetch it here and configure
-     * Theia's `ai-openai` accordingly.
+     * LLM vendor, and Studio holds no key for it. The proxy serves each
+     * request on the PERSON's key — their profile key, else an AI connection
+     * they reach (their own, this workspace's, the organization's) — and
+     * GET …/client-config says which model that gets them, or why none.
+     * Both are addressed under the workspace (`StudioApi.scope`), so the
+     * workspace's connection counts.
      *
      * The `ai-openai` provider runs in Theia's NODE backend and calls
      * `{url}/chat/completions` with `Authorization: Bearer {apiKey}`. We
      * point it at the in-container session gate (`127.0.0.1:3003`), whose
      * `/studio-api` route forwards to the Studio gateway with headers
      * passed through — and we use the portal-issued USER token as the
-     * apiKey. The real provider key stays on the Studio backend; revoking
-     * the user session revokes in-IDE AI with it.
+     * apiKey. The provider key stays on the Studio backend; revoking the
+     * user session revokes in-IDE AI with it.
+     *
+     * No key: Theia AI is left unconfigured and the console says where to
+     * add one. Not retried for the same token — the next silent renewal
+     * asks again, which picks up a key added meanwhile.
      *
      * Written at User scope: settings live in the throwaway session
      * container, not in the workspace repo. Re-applied on every silent
      * token renewal the portal posts (`studio.token`).
      */
     protected async configureTheiaAi(token: string): Promise<void> {
-        if (token === this.lastAiToken) {
+        const scope = StudioApi.scope;
+        const asked = `${scope}|${token}`;
+        if (asked === this.lastAiToken) {
             return;
         }
-        this.lastAiToken = token;
+        this.lastAiToken = asked;
         try {
-            const res = await StudioApi.fetch('/studio-llm/v1/client-config');
+            const res = await StudioApi.fetch(`${studioLlmBase(scope)}/client-config`);
             if (!res.ok) {
                 console.warn(`studio: LLM client-config unavailable (HTTP ${res.status}) — Theia AI left unconfigured`);
                 this.lastAiToken = ''; // retry on the next token post
                 return;
             }
-            const cfg = await res.json() as { model?: string; developer_message_settings?: string };
-            if (!cfg.model) {
-                console.warn('studio: LLM client-config has no model — Theia AI left unconfigured');
-                this.lastAiToken = '';
+            const plan = planTheiaAi(await res.json() as StudioLlmClientConfig, token, scope);
+            if (plan.kind === 'no-key') {
+                console.warn(plan.message);
                 return;
             }
-            const model = {
-                id: 'studio-llm',
-                model: cfg.model,
-                url: 'http://127.0.0.1:3003/studio-api/studio-llm/v1',
-                apiKey: token,
-                developerMessageSettings: cfg.developer_message_settings ?? 'system',
-            };
+            const model = plan.model;
             const aliases = Object.fromEntries(
                 ['universal', 'code', 'code-completion', 'summarize', 'fast']
                     .map(a => [`default/${a}`, { selectedModel: model.id }]),

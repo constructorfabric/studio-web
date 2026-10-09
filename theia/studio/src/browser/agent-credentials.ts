@@ -5,8 +5,11 @@
 // hands it to that one run only. In a Studio session the key is the member's
 // own Studio token, taken from the portal bridge: the session sets
 // STUDIO_LLM_AUTH=bearer, so the backend passes it on as a bearer to Studio's
-// provider proxy, which swaps it for that member's key from their profile
-// (`/studio-llm/v1/providers/*`). Nobody's provider key is in the container,
+// provider proxy, which swaps it for that member's key — from their profile,
+// else an AI connection they reach (their own, the workspace's, the
+// organization's) — at `/studio-llm/v1/workspaces/<workspace>/providers/*`,
+// where the session's ANTHROPIC_BASE_URL / OPENAI_BASE_URL point. Nobody's
+// provider key is in the container,
 // and nothing here is written to the preferences, which every person in the
 // container shares.
 
