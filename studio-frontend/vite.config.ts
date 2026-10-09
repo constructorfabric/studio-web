@@ -71,9 +71,16 @@ export default defineConfig(({ command, mode }) => {
       }),
     ],
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src-app'),
-      },
+      alias: [
+        { find: '@', replacement: path.resolve(__dirname, './src-app') },
+        // Every entry of use-sync-external-store (shim, with-selector, both)
+        // is served by ESM on React 19's own hook. Bundled as CommonJS it
+        // blanks the portal; see src-app/app/lib/syncExternalStore.ts.
+        {
+          find: /^use-sync-external-store(\/shim)?(\/index|\/with-selector)?(\.js)?$/,
+          replacement: path.resolve(__dirname, './src-app/app/lib/syncExternalStore.ts'),
+        },
+      ],
       dedupe: ['@gears-frontx/api', '@gears-frontx/framework', '@gears-frontx/react'],
     },
     optimizeDeps: {
