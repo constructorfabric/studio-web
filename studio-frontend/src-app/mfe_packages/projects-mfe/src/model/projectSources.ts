@@ -8,13 +8,20 @@ import type { ProjectSource } from '@constructor-studio/mfe-shared';
 /**
  * A clone URL reduced to what names the repository: host and path, without
  * the scheme, credentials, a trailing slash or `.git`, in lower case. `null`
- * for anything without a scheme. The backend's `repository_key`
- * (`studio-backend/src/project_sources.rs`): change both together.
+ * for anything without a scheme.
+ *
+ * The backend's `repository_key` (`studio-backend/src/project_sources.rs`)
+ * gives the same key for a provider's clone URL. They part on what a provider
+ * does not answer with: an explicit default port, a query or a fragment, which
+ * the backend keeps in the key and `URL` drops. Change both together.
  */
 export function repositoryKey(cloneUrl: string): string | null {
   try {
     const url = new URL(cloneUrl.trim());
-    const path = url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '');
+    const path = url.pathname
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/\.git$/, '')
+      .replace(/\/+$/, '');
     return url.host && path ? `${url.host}/${path}`.toLowerCase() : null;
   } catch {
     return null;

@@ -16,6 +16,7 @@ describe('repositoryKey', () => {
   it('names a repository however its URL is spelled', () => {
     expect(repositoryKey(' https://user:token@GitHub.com/Acme/API.git/ ')).toBe('github.com/acme/api');
     expect(repositoryKey('https://github.com/acme/api')).toBe('github.com/acme/api');
+    expect(repositoryKey('https://github.com/acme/api/.git')).toBe('github.com/acme/api');
   });
 
   it('names nothing without a scheme, a host or a path', () => {
