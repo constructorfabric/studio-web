@@ -7,6 +7,9 @@ import {
 } from '@gears-frontx/react';
 import type {
   ArtifactNodeListDto,
+  ReconcileRequest,
+  ReconcileResponse,
+  SourceActivityListDto,
   SyncBody,
   SyncEnqueuedDto,
 } from './artifactTypes';
@@ -74,4 +77,16 @@ export class ArtifactIngestApiService extends BaseApiService {
     'POST',
     SYNC_PATH
   );
+
+  /** Pull requests and commits per repository of a workspace or project, over the last 7 days. */
+  readonly sourceActivity = this.protocol(RestEndpointProtocol).queryWith<
+    SourceActivityListDto,
+    { scope: string }
+  >(({ scope }) => `/source-activity?${new URLSearchParams({ scope })}`);
+
+  /** Forgets every repository synced into the scope that `keep` does not name. */
+  readonly reconcile = this.protocol(RestEndpointProtocol).mutation<
+    ReconcileResponse,
+    ReconcileRequest
+  >('POST', '/reconcile');
 }

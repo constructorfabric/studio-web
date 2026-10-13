@@ -42,6 +42,10 @@ export interface ArtifactNodeValue {
   origin?: string;
   workspace_id?: string;
   project_id?: string;
+  /** Repos only: the `secret_ref` its sync was sent, `studio-connection-<connection id>`. */
+  connector_id?: string;
+  /** Repos only. RFC 3339, when the last sync finished; absent before the first one does. */
+  synced_at?: string;
 }
 
 export interface ArtifactNodeDto {
@@ -72,3 +76,49 @@ export interface SyncEnqueuedDto {
   status: string;
 }
 
+
+/** Mirrors `RepoActivityDto`: one repository's movement over the window. */
+export interface RepoActivityDto {
+  /** The repo node's instance id. */
+  repo: string;
+  /** Pull requests open now, however old. */
+  open: number;
+  /** Pull requests merged inside the window. */
+  merged: number;
+  /** Commits inside the window. */
+  commits: number;
+  /** One bucket per day, oldest first, always `days` long. */
+  days: number[];
+}
+
+/** Mirrors `SourceActivityListDto`. */
+export interface SourceActivityListDto {
+  items: RepoActivityDto[];
+  total: number;
+  /** The window, in days. */
+  days: number;
+}
+
+/** Mirrors `AttachedRepo`: the pair a sync of the repository is sent. */
+export interface AttachedRepo {
+  secret_ref: string;
+  repo_full_path: string;
+}
+
+/** Mirrors `ReconcileRequest`. */
+export interface ReconcileRequest {
+  workspace_id?: string;
+  project_id?: string;
+  /**
+   * Every repository the scope has attached now. Any other synced into it is
+   * forgotten, with everything synced from it.
+   */
+  keep: AttachedRepo[];
+}
+
+/** Mirrors `ReconcileResponse`: what was forgotten. */
+export interface ReconcileResponse {
+  repos: number;
+  nodes: number;
+  bindings: number;
+}

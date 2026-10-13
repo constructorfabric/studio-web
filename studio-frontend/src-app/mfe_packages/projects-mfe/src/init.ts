@@ -24,6 +24,7 @@ import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
+import { SpecQualityApiService } from './api/SpecQualityApiService';
 import {
   ConnectorsApiService,
   StudioEventsApiService,
@@ -31,16 +32,18 @@ import {
 } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build so plugin sync finds them.
-// Six gears: account-management holds the projects themselves (tenants, since
+// Seven gears: account-management holds the projects themselves (tenants, since
 // the studio-project gear was retired), studio-connector the source hosts the
 // New project wizard imports from, studio-artifact-ingest the graph of what a
 // project's repositories contain, studio-tasks the run each repository's sync
-// is, studio-events the stream those runs are announced on, and
-// studio-documents the journey-stage catalogue a new project is seeded from.
+// is, studio-events the stream those runs are announced on, studio-documents
+// the journey-stage catalogue a new project is seeded from and the project's
+// specs, and studio-spec-quality whether those specs can be checked.
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(ConnectorsApiService);
 apiRegistry.register(ArtifactIngestApiService);
 apiRegistry.register(DocumentsApiService);
+apiRegistry.register(SpecQualityApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(StudioEventsApiService);
 apiRegistry.initialize();
