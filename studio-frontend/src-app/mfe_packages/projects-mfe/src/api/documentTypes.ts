@@ -96,7 +96,11 @@ export interface AnalyzeBindingsRequest {
 /** Mirrors `AnalyzeEnqueuedDto` (documents): the run doing the check. */
 export interface AnalyzeEnqueuedDto {
   run_id: string;
-  /** Where to follow it, as every other run is followed. */
+  /**
+   * The backend's own path to the run, without the gateway's `/cf`, so not
+   * fetchable as is. Follow `run_id` through `StudioTasksApiService`, as a
+   * sync's run is.
+   */
   poll: string;
   /** Documents the run will analyse — fewer than asked when a checkout lacks one. */
   documents: number;

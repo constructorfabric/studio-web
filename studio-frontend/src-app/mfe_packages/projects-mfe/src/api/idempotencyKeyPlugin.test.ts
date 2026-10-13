@@ -45,11 +45,11 @@ describe('IdempotencyKeyPlugin', () => {
     expect(again.headers[IDEMPOTENCY_KEY_HEADER]).toBe(first.headers[IDEMPOTENCY_KEY_HEADER]);
   });
 
-  it('gives one body sent to two routes two keys: the server remembers a key per tenant, not per route', () => {
-    const body = { binding_ids: ['b-1'] };
-    const purpose = plugin.onRequest(request('POST', SYNC_URL, body));
-    const elsewhere = plugin.onRequest(request('POST', `${SYNC_URL}?again=1`, body));
-    expect(elsewhere.headers[IDEMPOTENCY_KEY_HEADER]).not.toBe(purpose.headers[IDEMPOTENCY_KEY_HEADER]);
+  it('gives one body sent to two URLs two keys: the server remembers a key per tenant, not per route', () => {
+    const body = { repo: 'a' };
+    const first = plugin.onRequest(request('POST', SYNC_URL, body));
+    const other = plugin.onRequest(request('POST', `${SYNC_URL}?again=1`, body));
+    expect(other.headers[IDEMPOTENCY_KEY_HEADER]).not.toBe(first.headers[IDEMPOTENCY_KEY_HEADER]);
   });
 
   it('keeps a key the caller already chose', () => {

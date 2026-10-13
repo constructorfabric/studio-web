@@ -76,7 +76,6 @@ export interface SyncEnqueuedDto {
   status: string;
 }
 
-
 /** Mirrors `RepoActivityDto`: one repository's movement over the window. */
 export interface RepoActivityDto {
   /** The repo node's instance id. */

@@ -44,6 +44,7 @@ exposes, a working example per use case, and **Traps**.
 | studio-documents | `DocumentsApiService` | — |
 | studio-connector | `ConnectorsApiService` | — |
 | studio-artifact-ingest | `ArtifactIngestApiService` | — |
+| studio-spec-quality | `SpecQualityApiService` | — |
 
 A dash is a page that has not been written yet, not a resource that does not
 need one. A service that gains a second consumer gets its page in that PR —
