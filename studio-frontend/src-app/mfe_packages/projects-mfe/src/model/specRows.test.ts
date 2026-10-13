@@ -271,6 +271,19 @@ describe('order', () => {
     expect(sorted(rows, 'source', 'desc')).toEqual(['web', 'api', 'studio']);
   });
 
+  it('keeps the API order between rows that both sort last', () => {
+    const rows = rowsOf(
+      authored({ name: 'studio-1', type_key: 'adr' }),
+      dto({ name: 'untyped-1', type_key: null }),
+      authored({ name: 'studio-2', type_key: 'adr' }),
+      dto({ name: 'untyped-2', type_key: null })
+    );
+    for (const direction of ['asc', 'desc'] as const) {
+      expect(sorted(rows, 'source', direction).slice(2)).toEqual(['studio-1', 'studio-2']);
+      expect(sorted(rows, 'type', direction).slice(2)).toEqual(['untyped-1', 'untyped-2']);
+    }
+  });
+
   it('keeps the API order between equals', () => {
     const rows = rowsOf(dto({ name: 'first' }), dto({ name: 'second' }));
     expect(sorted(rows, 'type', 'desc')).toEqual(['first', 'second']);
