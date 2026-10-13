@@ -2,8 +2,10 @@ import { act, render, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpecRowDto, SpecRowListDto } from '../api/documentTypes';
 
+type FetchOptions = { signal?: AbortSignal; staleTime?: number };
+
 const { specRows, types, triggerLoad } = vi.hoisted(() => ({
-  specRows: vi.fn<(options?: { signal?: AbortSignal }) => Promise<SpecRowListDto>>(),
+  specRows: vi.fn<(options?: FetchOptions) => Promise<SpecRowListDto>>(),
   types: vi.fn<() => Promise<{ items: { key: string; name: string }[] }>>(),
   triggerLoad: vi.fn(),
 }));
@@ -140,6 +142,8 @@ describe('useSpecsLoad', () => {
     expect(triggerLoad).toHaveBeenCalledTimes(1);
     await act(() => result.current.load(page(1)));
     expect(specRows).toHaveBeenCalledTimes(2);
+    // Past the shared fetch cache, which would hand back the same rows for 30 s.
+    expect(specRows).toHaveBeenLastCalledWith({ staleTime: 0 });
   });
 
   it('reads the list of the project it is asked about', async () => {

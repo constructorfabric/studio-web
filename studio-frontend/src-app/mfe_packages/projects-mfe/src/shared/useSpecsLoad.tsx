@@ -66,7 +66,8 @@ function queryOf(filters: DataGridLoadContext['filters']): SpecsQuery {
 async function fetchAnswer(projectId: string, workspaceId: string): Promise<Answer> {
   const documents = apiRegistry.getService(DocumentsApiService);
   const [list, types] = await Promise.all([
-    documents.specRows({ projectId }).fetch(),
+    // `kept` is the cache here; the shared one would answer reload() with the same rows for 30 s.
+    documents.specRows({ projectId }).fetch({ staleTime: 0 }),
     // Without the names a type reads as its key; that is no reason to fail the list.
     documents.types({ workspaceId }).fetch().catch(() => ({ items: [] })),
   ]);
