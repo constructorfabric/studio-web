@@ -192,7 +192,7 @@ describe('useSpecsLoad, with reads that overlap', () => {
     expect(specRows).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves the newer project's snapshot alone when the older read fails late", async () => {
+  it("answers from the newer project's read when the older read fails late", async () => {
     const older = deferred<SpecRowListDto>();
     specRows.mockReturnValueOnce(older.promise);
     const { result, rerender } = renderHook(({ project }) => useSpecsLoad(project, 'w1'), {
@@ -203,13 +203,27 @@ describe('useSpecsLoad, with reads that overlap', () => {
     await act(() => result.current.load(page(1)));
     await act(async () => {
       older.reject(new Error('502'));
-      await expect(late).rejects.toThrow('502');
+      await late;
     });
     expect(result.current.snapshot?.failed).toBe(false);
     expect(result.current.snapshot?.rows).toHaveLength(4);
   });
 
-  it('drops the read reload() replaced, even when it answers last', async () => {
+  it('lets a load whose read reload() replaced wait on the newer read', async () => {
+    const stale = deferred<SpecRowListDto>();
+    specRows.mockReturnValueOnce(stale.promise);
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    // The grid's first load: throwing here would leave the grid on its error view.
+    const first = result.current.load(page(1, 4));
+    act(() => result.current.reload());
+    await act(async () => {
+      stale.resolve({ ...LIST, items: [row('stale.md')] });
+      expect(names(await first)).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+    });
+    expect(specRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers with the newer read even when the one reload() replaced answers last', async () => {
     const stale = deferred<SpecRowListDto>();
     specRows.mockReturnValueOnce(stale.promise);
     const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
@@ -218,10 +232,11 @@ describe('useSpecsLoad, with reads that overlap', () => {
     await act(() => result.current.load(page(1, 4)));
     await act(async () => {
       stale.resolve({ ...LIST, items: [row('stale.md')] });
-      await expect(late).rejects.toThrow();
+      expect(names(await late)).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
     });
     const rows = result.current.snapshot?.rows.map((r) => r.name);
     expect(rows).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+    expect(specRows).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the fresh read when the one reload() replaced fails', async () => {
@@ -233,7 +248,7 @@ describe('useSpecsLoad, with reads that overlap', () => {
     await act(() => result.current.load(page(1)));
     await act(async () => {
       stale.reject(new Error('502'));
-      await expect(late).rejects.toThrow('502');
+      expect(names(await late)).toEqual(['a.md', 'b.md']);
     });
     expect(result.current.snapshot?.failed).toBe(false);
     await act(() => result.current.load(page(2)));

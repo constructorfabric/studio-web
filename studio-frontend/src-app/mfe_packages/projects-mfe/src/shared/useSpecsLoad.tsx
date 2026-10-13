@@ -104,24 +104,25 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
   const load = useCallback(
     async (context: DataGridLoadContext): Promise<DataGridLoadResult<SpecRow>> => {
       const key = `${projectId}/${workspaceId}`;
-      if (kept.current?.key !== key) {
-        kept.current = { key, answer: fetchAnswer(projectId, workspaceId) };
-      }
-      const pending = kept.current.answer;
-      // Another project, or reload(), may have started a newer read meanwhile.
-      const current = () => kept.current?.answer === pending;
-      let answer: Answer;
-      try {
-        answer = await pending;
-      } catch (error) {
-        if (current()) {
-          kept.current = null;
-          setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, failed: true });
+      if (kept.current?.key !== key) kept.current = null;
+      let answer: Answer | undefined;
+      // reload() can replace the read a load waits on. The load then waits on the newer
+      // one, so it neither returns rows from before a change nor fails the grid's first load.
+      while (!answer) {
+        kept.current ??= { key, answer: fetchAnswer(projectId, workspaceId) };
+        const pending = kept.current.answer;
+        try {
+          const settled = await pending;
+          if (kept.current?.answer === pending) answer = settled;
+        } catch (error) {
+          if (kept.current?.answer === pending) {
+            kept.current = null;
+            setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, failed: true });
+            throw error;
+          }
         }
-        throw error;
+        context.signal?.throwIfAborted();
       }
-      context.signal?.throwIfAborted();
-      if (!current()) throw new Error('A newer read of spec-rows replaced this one');
 
       const filtered = filterSpecRows(answer.rows, queryOf(context.filters));
       const shown = sortSpecRows(filtered, context.order?.[0]);
