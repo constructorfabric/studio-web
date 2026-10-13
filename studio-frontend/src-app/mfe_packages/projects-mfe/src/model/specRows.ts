@@ -131,7 +131,7 @@ export function buildSpecRows(
 }
 
 /** Every row but the ones a person said are not specifications. */
-export function inDefaultView(row: SpecRow): boolean {
+function inDefaultView(row: SpecRow): boolean {
   return row.state !== 'not_a_document';
 }
 
