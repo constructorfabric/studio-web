@@ -107,15 +107,20 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
         kept.current = { key, answer: fetchAnswer(projectId, workspaceId) };
       }
       const pending = kept.current.answer;
+      // Another project, or reload(), may have started a newer read meanwhile.
+      const current = () => kept.current?.answer === pending;
       let answer: Answer;
       try {
         answer = await pending;
       } catch (error) {
-        if (kept.current?.answer === pending) kept.current = null;
-        setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, failed: true });
+        if (current()) {
+          kept.current = null;
+          setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, failed: true });
+        }
         throw error;
       }
       context.signal?.throwIfAborted();
+      if (!current()) throw new Error('A newer read of spec-rows replaced this one');
 
       const filtered = filterSpecRows(answer.rows, queryOf(context.filters));
       const shown = sortSpecRows(filtered, context.order?.[0]);

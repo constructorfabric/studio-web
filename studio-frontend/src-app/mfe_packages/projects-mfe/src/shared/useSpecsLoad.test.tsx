@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpecRowDto, SpecRowListDto } from '../api/documentTypes';
 
 const { specRows, types, triggerLoad } = vi.hoisted(() => ({
-  specRows: vi.fn<() => Promise<SpecRowListDto>>(),
+  specRows: vi.fn<(options?: { signal?: AbortSignal }) => Promise<SpecRowListDto>>(),
   types: vi.fn<() => Promise<{ items: { key: string; name: string }[] }>>(),
   triggerLoad: vi.fn(),
 }));
@@ -32,6 +32,16 @@ const LIST: SpecRowListDto = {
 };
 
 const names = (result: { results: { name: string }[] }) => result.results.map((r) => r.name);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 const page = (n: number, limit = 2) => ({ pagination: { page: n, limit } });
 
 beforeEach(() => {
@@ -138,6 +148,99 @@ describe('useSpecsLoad', () => {
     });
     await act(() => result.current.load(page(1)));
     rerender({ project: 'p2' });
+    await act(() => result.current.load(page(1)));
+    expect(specRows).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useSpecsLoad, with reads that overlap', () => {
+  it('serves loads started together from one read', async () => {
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    const [first, second] = await act(() =>
+      Promise.all([
+        result.current.load(page(1)),
+        result.current.load({
+          filters: { [SPECS_FILTER_KEYS.filter]: { value: 'with_findings' } },
+        }),
+      ])
+    );
+    expect(names(first)).toEqual(['a.md', 'b.md']);
+    expect(names(second)).toEqual(['b.md']);
+    expect(specRows).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers a waiting load from the read a load the grid aborted started', async () => {
+    const read = deferred<SpecRowListDto>();
+    specRows.mockImplementationOnce((options) => {
+      options?.signal?.addEventListener('abort', () => read.reject(new Error('aborted')));
+      return read.promise;
+    });
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    const grid = new AbortController();
+    const aborted = result.current.load({ ...page(1), signal: grid.signal });
+    const waiting = result.current.load(page(1));
+    grid.abort();
+    await act(async () => {
+      read.resolve(LIST);
+      await expect(aborted).rejects.toThrow();
+    });
+    expect(names(await act(() => waiting))).toEqual(['a.md', 'b.md']);
+    expect(specRows).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the newer project's snapshot alone when the older read fails late", async () => {
+    const older = deferred<SpecRowListDto>();
+    specRows.mockReturnValueOnce(older.promise);
+    const { result, rerender } = renderHook(({ project }) => useSpecsLoad(project, 'w1'), {
+      initialProps: { project: 'p1' },
+    });
+    const late = result.current.load(page(1));
+    rerender({ project: 'p2' });
+    await act(() => result.current.load(page(1)));
+    await act(async () => {
+      older.reject(new Error('502'));
+      await expect(late).rejects.toThrow('502');
+    });
+    expect(result.current.snapshot?.failed).toBe(false);
+    expect(result.current.snapshot?.rows).toHaveLength(4);
+  });
+
+  it('drops the read reload() replaced, even when it answers last', async () => {
+    const stale = deferred<SpecRowListDto>();
+    specRows.mockReturnValueOnce(stale.promise);
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    const late = result.current.load(page(1, 4));
+    act(() => result.current.reload());
+    await act(() => result.current.load(page(1, 4)));
+    await act(async () => {
+      stale.resolve({ ...LIST, items: [row('stale.md')] });
+      await expect(late).rejects.toThrow();
+    });
+    const rows = result.current.snapshot?.rows.map((r) => r.name);
+    expect(rows).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+  });
+
+  it('keeps the fresh read when the one reload() replaced fails', async () => {
+    const stale = deferred<SpecRowListDto>();
+    specRows.mockReturnValueOnce(stale.promise);
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    const late = result.current.load(page(1));
+    act(() => result.current.reload());
+    await act(() => result.current.load(page(1)));
+    await act(async () => {
+      stale.reject(new Error('502'));
+      await expect(late).rejects.toThrow('502');
+    });
+    expect(result.current.snapshot?.failed).toBe(false);
+    await act(() => result.current.load(page(2)));
+    expect(specRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads again after reload() before the grid has mounted the bridge', async () => {
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    await act(() => result.current.load(page(1)));
+    act(() => result.current.reload());
+    expect(triggerLoad).not.toHaveBeenCalled();
     await act(() => result.current.load(page(1)));
     expect(specRows).toHaveBeenCalledTimes(2);
   });
