@@ -82,7 +82,10 @@ describe('screen translation split', () => {
   it("loads the Specs and Sources sections' own dictionaries", async () => {
     await mount(<Sections />);
 
-    await waitFor(() => expect(screen.getByTestId('specs').textContent).toBe('The specs list is being built.'));
-    expect(screen.getByTestId('sources').textContent).toBe('The sources list is being built.');
+    // Each dictionary is its own import and they settle in either order.
+    await waitFor(() => {
+      expect(screen.getByTestId('specs').textContent).toBe('The specs list is being built.');
+      expect(screen.getByTestId('sources').textContent).toBe('The sources list is being built.');
+    });
   });
 });
