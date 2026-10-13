@@ -17,6 +17,12 @@ export interface ProjectSource {
   clone_url: string;
   /** The branch a session checks out; the repository's default when absent. */
   branch?: string;
+  /**
+   * How the IDE's "Share with the team" lands edits: onto `branch`, or through
+   * a pull request from a person's own branch. `branch` when absent
+   * (`studio-backend/src/project_sources.rs`).
+   */
+  share_mode?: 'branch' | 'pull_request';
 }
 
 /**
