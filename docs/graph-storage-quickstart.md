@@ -117,17 +117,17 @@ and converges on a byte-identical re-registration.
 ```bash
 curl -s -X POST "${H[@]}" "$B/types" -d '{
   "types": [
-    { "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo.thing.v1~",
+    { "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo._.thing.v1~",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo.thing.v1~",
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo._.thing.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "allOf": [{ "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~" }],
         "x-gts-traits": { "full_text_search": ["/payload/note"], "vector_search": ["/payload/note"] }
       } },
-    { "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo.links.v1~",
+    { "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo._.links.v1~",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo.links.v1~",
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo._.links.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "allOf": [{ "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~" }]
@@ -135,8 +135,8 @@ curl -s -X POST "${H[@]}" "$B/types" -d '{
   ]
 }'
 
-T=gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo.thing.v1~
-E=gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo.links.v1~
+T=gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.demo._.thing.v1~
+E=gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.demo._.links.v1~
 curl -s -X POST "${H[@]}" "$B/ingest" -d "{
   \"nodes\": [
     {\"node_key\":\"a\",\"type_id\":\"$T\",\"name\":\"alpha\",\"payload\":{\"note\":\"a plaintext password was committed\"}},
@@ -231,7 +231,10 @@ curl -s -X POST "${H[@]}" "$B/search" -d '{"mode":"vector","query":"a hardcoded 
 
 ## 6. Look at the SQL/PGQ side directly
 
-The gear declares a property graph over its own tables, so you can query it from
+Only while `graph-postgres` is the pinned PostgreSQL 19 **beta 3**: SQL/PGQ was
+reverted in 19 beta 4, so PostgreSQL 19 GA and 18 have no property graph, and
+the gear is retiring its SQL/PGQ hop (gears-rust #5267). On that server the gear
+still declares a property graph over its own tables, so you can query it from
 psql without going through the API:
 
 ```bash
@@ -263,13 +266,13 @@ Two things worth knowing if you experiment with patterns:
 
 ## 7. Which traversal backend served a request
 
-`traversal_hop: pgq` is configured, so hops run as `GRAPH_TABLE` statements. A
-request whose scope cannot be carried by the pattern falls back to the
-portable two-query hop, and says so:
+`traversal_hop: two_query` is configured: every hop is two scoped statements
+(incident edges, then the authorized endpoints), on any PostgreSQL 16+ with
+pgvector, and nothing falls back. The gear's readiness reports the choice as
+healthy:
 
 ```bash
-docker logs studio-backend 2>&1 | grep 'two-query hop'
-# empty output = every request was served by the pattern backend
+curl -s "$B/health/ready" | jq '.components[] | select(.component == "server_major_and_sqlpgq")'
 ```
 
 ## Troubleshooting

@@ -127,8 +127,8 @@ src, dst }], truncated: null | reason, revision }`.
   `400 EMBEDDING_SPACE_MISMATCH`; lexical search is unaffected.
 - Traversal is bounded by depth, node count, frontier and edges scanned; a
   stop reports its reason in `truncated` rather than returning a partial graph
-  silently. Each hop runs as one SQL/PGQ `GRAPH_TABLE` statement; a scope the
-  pattern cannot carry is served by the two-query hop with a logged reason.
+  silently. Each hop runs as two scoped statements, incident edges and then
+  the authorized endpoints (`traversal_hop: two_query`).
 - Type patterns are GTS patterns resolved against the registered types; they
   are never compiled into SQL.
 
@@ -186,7 +186,7 @@ vector only through the bounded `text_excerpt` artifact-ingest stores.
 graph-storage:
   database: { server: "pg_main", dbname: "graph_storage" }
   config:
-    traversal_hop: pgq                # pgq | two_query
+    traversal_hop: two_query          # two_query | auto (pgq: PG19 beta only, being retired, gears-rust #5267)
     embedding_dimension: 384          # fixed at migration time
     embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-onnx}"   # fake | onnx | remote
     embedding_model_path: "/app/models/minilm/model.onnx"

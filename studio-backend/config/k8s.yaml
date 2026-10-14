@@ -794,7 +794,12 @@ gears:
       # dev graph are still clipped (5,944 of 79,184 relations) against 27,852
       # under the per-node read this replaced.
       traversal_max_nodes: 10000
-      traversal_hop: pgq
+      # `two_query`: each hop is two scoped statements, on any PostgreSQL 16+
+      # with pgvector. Not `pgq`: the SQL/PGQ hop needs a property graph that
+      # PostgreSQL 19 GA does not ship (reverted in 19 beta 4), it is a demand
+      # (no SQL/PGQ = gear not ready, traversal refused), and on the reference
+      # graph it measured 2.5-3x slower than `two_query` (gears-rust #5267).
+      traversal_hop: two_query
       # One embedding provider per deployment, chosen by the chart
       # (backend.embedding.provider): `onnx` loads the MiniLM model the init
       # container fetched into /app/models; `remote` calls an OpenAI-compatible

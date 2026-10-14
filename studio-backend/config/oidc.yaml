@@ -819,11 +819,6 @@ gears:
         hnsw.iterative_scan: "relaxed_order"
         hnsw.ef_search: "200"
     config:
-      # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A
-      # request whose scope cannot be bounded to a set of tenants is served by
-      # `two_query` instead, so this is safe to leave on; `two_query` is the
-      # portable fallback and `cte` is deliberately absent while the pinned
-      # gears-rust revision predates the safe-CTE API it needs.
       # The relation graph is read back by one traversal per 400 seeds, and the
       # gear budgets a traversal by TOTAL NODES with the seeds counted in. The
       # default of 1,000 would leave 600 for the expansion of 400 seeds, and an
@@ -833,7 +828,12 @@ gears:
       # dev graph are still clipped (5,944 of 79,184 relations) against 27,852
       # under the per-node read this replaced.
       traversal_max_nodes: 10000
-      traversal_hop: pgq
+      # `two_query`: each hop is two scoped statements, on any PostgreSQL 16+
+      # with pgvector. Not `pgq`: the SQL/PGQ hop needs a property graph that
+      # PostgreSQL 19 GA does not ship (reverted in 19 beta 4), it is a demand
+      # (no SQL/PGQ = gear not ready, traversal refused), and on the reference
+      # graph it measured 2.5-3x slower than `two_query` (gears-rust #5267).
+      traversal_hop: two_query
       # Embedding provider for a backend run on the host. Defaults to the
       # deterministic `fake` so `cargo run` needs no model artifacts; set
       # STUDIO_EMBEDDING_PROVIDER=onnx with STUDIO_EMBED_MODEL_PATH /
