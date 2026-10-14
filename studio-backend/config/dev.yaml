@@ -21,11 +21,11 @@ database:
         max_conns: 1          # SQLite is single-writer
         acquire_timeout: "30s"
 
-    # The one PostgreSQL — the graph image (PG19 + pgvector) that compose
-    # runs, published on 127.0.0.1:5433. In this profile it hosts a single
-    # gear: graph-storage, whose migrations need `CREATE EXTENSION vector`,
-    # `CREATE PROPERTY GRAPH` (SQL/PGQ, PG19+) and an HNSW index, none of which
-    # SQLite provides. Everything else here stays on `sqlite_main` — that is
+    # The one PostgreSQL — the graph image that compose runs, published on
+    # 127.0.0.1:5433. In this profile it hosts a single gear: graph-storage,
+    # which needs PostgreSQL 16+ with pgvector (`CREATE EXTENSION vector` and an
+    # HNSW index), which SQLite cannot provide. It does not need SQL/PGQ: the
+    # profile traverses with `two_query`. Everything else here stays on `sqlite_main` — that is
     # what this profile is for. Named `pg_main` like every other profile's, so
     # a gear block reads the same wherever it is copied from.
     pg_main:

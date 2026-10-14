@@ -749,7 +749,8 @@ gears:
               audio_transcription: false
               audio_translation: false
 
-  # Knowledge graph: PostgreSQL 19 SQL/PGQ plus pgvector. The release binary is
+  # Knowledge graph: PostgreSQL 16+ with pgvector (no SQL/PGQ: the hop is
+  # `two_query`). The release binary is
   # compiled with `--no-default-features --features graph`, so this database
   # must be available before the backend starts.
   graph-storage:

@@ -1,8 +1,10 @@
 # PostgreSQL 19 beta 3 with pgvector — CloudNativePG operand for graph-storage.
 #
 # The gear cannot share `postgres` (16-alpine) with the rest of the assembly:
-# its migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
-# (SQL/PGQ, PostgreSQL 19+) and an HNSW index, none of which that server has.
+# its migrations need `CREATE EXTENSION vector` and an HNSW index, which that
+# server has no pgvector for. SQL/PGQ (`CREATE PROPERTY GRAPH`) is the reason
+# this is a 19 beta, and it is no longer used: the profiles traverse with
+# `two_query`, and PostgreSQL 19 GA ships without SQL/PGQ (gears-rust #5267).
 # Rather than move every other gear onto a beta server, graph-storage is
 # pointed at this one through the per-gear `database.server` override — see
 # `database.servers.pg_graph` in studio-backend/config/*.yaml.

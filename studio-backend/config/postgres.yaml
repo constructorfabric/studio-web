@@ -28,10 +28,10 @@ database:
   # else gets a connection error on the first request, not at boot.
   auto_provision: true
   servers:
-    # One PostgreSQL for the whole assembly, and it is the graph image
-    # (PostgreSQL 19 + pgvector). graph-storage cannot run on anything else —
-    # its migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
-    # (SQL/PGQ, PG19+) and an HNSW index — and no other gear minds where it
+    # One PostgreSQL for the whole assembly, and it is the graph image.
+    # graph-storage needs PostgreSQL 16+ with pgvector (`CREATE EXTENSION
+    # vector` and an HNSW index); it does not need SQL/PGQ, because the profile
+    # traverses with `two_query`. No other gear minds where it
     # lives, so the second server entry was only ever a second name for the
     # same instance. Each gear names its own `dbname`; that is what separates
     # them, not the server.

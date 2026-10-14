@@ -133,9 +133,11 @@ services:
     restart: "no"
     entrypoint: ["true"]
 
-  # PostgreSQL 19 + pgvector — the single PostgreSQL instance for local
-  # Compose. It hosts application gear databases and graph_storage. PostgreSQL
-  # 19 is required for graph-storage's vector, SQL/PGQ and HNSW features.
+  # PostgreSQL 19 beta 3 + pgvector — the single PostgreSQL instance for local
+  # Compose. It hosts application gear databases and graph_storage.
+  # graph-storage needs PostgreSQL 16+ with pgvector (vector and HNSW); SQL/PGQ
+  # is not used (`traversal_hop: two_query`), and the move off the beta follows
+  # the gear's release that retires it (gears-rust #5267).
   graph-postgres:
     build:
       context: studio-backend/docker/graph-postgres
