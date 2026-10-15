@@ -119,7 +119,7 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
       case 'artifacts':
         return <ArtifactsSection projectId={projectId} />;
       case 'specs':
-        return <SpecsSection />;
+        return <SpecsSection projectId={projectId} />;
       case 'sources':
         return <SourcesSection />;
       default:

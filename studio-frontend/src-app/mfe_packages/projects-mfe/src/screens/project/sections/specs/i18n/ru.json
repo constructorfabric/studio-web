@@ -1,1 +1,1 @@
-{"placeholder": "Список спецификаций ещё в работе."}
+{"placeholder": "Список спецификаций ещё в работе.", "type_proposed": "предложен", "type_set": "Задать тип", "type_not_scanned": "Ещё не просканирован", "type_change": "Изменить тип {name}", "type_confirm": "Подтвердить {type}", "type_unknown": "Неизвестно", "type_not_spec": "Не спецификация", "type_refused": "Не удалось изменить тип {name}.", "type_refused_because": "Не удалось изменить тип {name}: {reason}"}

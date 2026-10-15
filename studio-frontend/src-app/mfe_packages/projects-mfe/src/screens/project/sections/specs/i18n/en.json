@@ -1,1 +1,1 @@
-{"placeholder": "The specs list is being built."}
+{"placeholder": "The specs list is being built.", "type_proposed": "proposed", "type_set": "Set type", "type_not_scanned": "Not scanned yet", "type_change": "Change the type of {name}", "type_confirm": "Confirm {type}", "type_unknown": "Unknown", "type_not_spec": "Not a specification", "type_refused": "Couldn't change the type of {name}.", "type_refused_because": "Couldn't change the type of {name}: {reason}"}
