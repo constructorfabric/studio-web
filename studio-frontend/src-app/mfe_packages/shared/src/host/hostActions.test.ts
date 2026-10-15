@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { STUDIO_ARTIFACT_KINDS, isStudioArtifactKind } from './hostActions';
+import { describe, expect, it, vi } from 'vitest';
+import { FRONTX_SCREEN_DOMAIN, type ChildMfeBridge } from '@gears-frontx/react';
+import {
+  STUDIO_ACTION_NOTIFY,
+  STUDIO_ARTIFACT_KINDS,
+  isStudioArtifactKind,
+  notify,
+} from './hostActions';
 
 describe('isStudioArtifactKind', () => {
   it('accepts every declared kind', () => {
@@ -10,5 +16,20 @@ describe('isStudioArtifactKind', () => {
     for (const value of ['spec_finding', 'File', '', undefined, null, 1, {}]) {
       expect(isStudioArtifactKind(value)).toBe(false);
     }
+  });
+});
+
+describe('notify', () => {
+  it('asks the screen domain for a toast with the notice as it was given', () => {
+    const executeActionsChain = vi.fn(() => Promise.resolve());
+    const bridge = { executeActionsChain } as unknown as ChildMfeBridge;
+    notify(bridge, { kind: 'error', text: 'Could not change the type' }, 'test');
+    expect(executeActionsChain).toHaveBeenCalledWith({
+      action: {
+        type: STUDIO_ACTION_NOTIFY,
+        target: FRONTX_SCREEN_DOMAIN,
+        payload: { kind: 'error', text: 'Could not change the type' },
+      },
+    });
   });
 });

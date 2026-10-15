@@ -4,6 +4,7 @@ import {
   FRONTX_ACTION_MOUNT_EXT,
   FRONTX_ACTION_UNMOUNT_EXT,
   FRONTX_OVERLAY_DOMAIN,
+  FRONTX_SCREEN_DOMAIN,
   type ChildMfeBridge,
 } from '@gears-frontx/react';
 
@@ -50,6 +51,21 @@ export interface StudioArtifact {
 /** A request to open an artifact: the artifact and the project it sits in. */
 export type StudioArtifactRequest = StudioArtifact & { projectId: string };
 
+/**
+ * Screen domain: a toast. The shell owns the only toaster, so an MFE asks for
+ * one; the text comes already in the user's language, since the dictionary is
+ * the MFE's.
+ */
+export const STUDIO_ACTION_NOTIFY =
+  'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.notification.show.v1~';
+
+export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info'] as const;
+
+export interface StudioNotice {
+  kind: (typeof STUDIO_NOTICE_KINDS)[number];
+  text: string;
+}
+
 /** projects-mfe's New workspace overlay, opened from organization-mfe as well. */
 export const STUDIO_EXTENSION_WORKSPACE_CREATE =
   'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.workspace_create.main.v1';
@@ -74,6 +90,14 @@ export function sendAndForget(bridge: ChildMfeBridge | null, action: HostAction,
   void sendToHost(bridge, action).catch((error: unknown) => {
     console.error(`[${tag}] host action failed`, action.type, error);
   });
+}
+
+export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice, tag: string): void {
+  sendAndForget(
+    bridge,
+    { type: STUDIO_ACTION_NOTIFY, target: FRONTX_SCREEN_DOMAIN, payload: { ...notice } },
+    tag
+  );
 }
 
 function overlayAction(type: string, extensionId: string): HostAction {

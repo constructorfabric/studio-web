@@ -16,6 +16,7 @@ import extensionScreenLeveledSchemaJson from './extension_screen_leveled.v1.json
 import actionContextPublishSchemaJson from './action_context_publish.v1.json';
 import actionContextWorkspacesPublishSchemaJson from './action_context_workspaces_publish.v1.json';
 import actionContextArtifactOpenSchemaJson from './action_context_artifact_open.v1.json';
+import actionShellNotificationShowSchemaJson from './action_shell_notification_show.v1.json';
 import sharedPropertyContextArtifactSchemaJson from './shared_property_context_artifact.v1.json';
 import sharedPropertyContextProjectSchemaJson from './shared_property_context_project.v1.json';
 import sharedPropertyContextOrganizationSchemaJson from './shared_property_context_organization.v1.json';
@@ -55,6 +56,8 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   // the editor is on (#320). The MFE publishes, the shell owns the answer.
   actionContextArtifactOpenSchemaJson as JSONSchema,
   sharedPropertyContextArtifactSchemaJson as JSONSchema,
+  // A toast an MFE asks for: the shell owns the only toaster.
+  actionShellNotificationShowSchemaJson as JSONSchema,
   // The shell -> MFE half of the same slot. `sharedProperties` on a domain and
   // `requiredProperties` on an entry both carry an `x-gts-ref` that checks the type
   // is IN THE REGISTRY, not merely that the string looks right, so an unregistered

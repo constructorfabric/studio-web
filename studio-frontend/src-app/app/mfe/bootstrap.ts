@@ -46,6 +46,7 @@ import type {
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_ACTION_CONTEXT_PUBLISH,
+  STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
@@ -60,6 +61,7 @@ import {
   createContextPublishHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
+import { createNotifyHandler } from '@/app/mfe/notifyAction';
 import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
@@ -202,6 +204,7 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_CONTEXT_PUBLISH, createContextPublishHandler());
     ctx.registerHandler(STUDIO_ACTION_WORKSPACES_PUBLISH, createWorkspacePublishHandler());
     ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
+    ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
   }
 
   protected getMountStrategies(): MountStrategy[] {
@@ -423,6 +426,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_CONTEXT_PUBLISH,
       STUDIO_ACTION_WORKSPACES_PUBLISH,
       STUDIO_ACTION_ARTIFACT_OPEN,
+      STUDIO_ACTION_NOTIFY,
     ],
     sharedProperties: [
       ...screenDomain.sharedProperties,

@@ -34,6 +34,7 @@ import { SHELL_SCHEMAS } from './schemas';
 import { resolveLevelMenu } from './screenLevels';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
+  STUDIO_ACTION_NOTIFY,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
 } from '@constructor-studio/mfe-shared';
@@ -275,6 +276,23 @@ describe('generated MFE manifest', () => {
       expect(
         publish({ artifactId: 'n-1', repository: 'r', path: 'p', kind: 'file', url: 'x' })
       ).toThrow();
+    });
+  });
+
+  describe('notify action', () => {
+    it('is declared by the projects screen, the entry that asks for toasts', () => {
+      // The shell registers an action schema only when an entry declares the
+      // action, and routes nothing whose type it has not registered.
+      const declaring = manifests
+        .flatMap((config) => config.entries)
+        .filter((entry) => (entry.domainActions ?? []).includes(STUDIO_ACTION_NOTIFY));
+      expect(declaring.map((entry) => entry.id)).toEqual([
+        expect.stringContaining('constructor_studio.projects.mfe.main'),
+      ]);
+    });
+
+    it('has a schema the shell registers', () => {
+      expect(SHELL_SCHEMAS.map((schema) => schema.$id)).toContain(`gts://${STUDIO_ACTION_NOTIFY}`);
     });
   });
 
