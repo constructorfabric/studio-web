@@ -20,10 +20,12 @@ import { createWizardSlice } from './slices/createSlice';
 import { workspaceCreateSlice } from './slices/workspaceSlice';
 import { artifactSyncSlice } from './slices/artifactSyncSlice';
 import { sourcesConnectSlice } from './slices/sourcesConnectSlice';
+import { typeDecisionSlice } from './slices/typeDecisionSlice';
 import { initWizardEffects } from './effects/wizardEffects';
 import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { initSourcesConnectEffects } from './effects/sourcesConnectEffects';
+import { initTypeDecisionEffects } from './effects/typeDecisionEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
 import { SpecQualityApiService } from './api/SpecQualityApiService';
@@ -72,5 +74,7 @@ registerSlice(workspaceCreateSlice, initWorkspaceEffects);
 // app-bound QueryClient.
 registerSlice(artifactSyncSlice, (dispatch) => initArtifactEffects(dispatch, mfeApp));
 registerSlice(sourcesConnectSlice, (dispatch) => initSourcesConnectEffects(dispatch, mfeApp));
+// A type decision drops the Sources section's cached Specs counts, on the app-bound QueryClient.
+registerSlice(typeDecisionSlice, (dispatch) => initTypeDecisionEffects(dispatch, mfeApp));
 
 export { mfeApp };

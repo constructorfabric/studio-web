@@ -72,6 +72,10 @@ vi.mock('./slices/sourcesConnectSlice', () => ({
   sourcesConnectSlice: { name: 'projects/sources-connect' },
 }));
 
+vi.mock('./slices/typeDecisionSlice', () => ({
+  typeDecisionSlice: { name: 'projects/typeDecision' },
+}));
+
 vi.mock('./effects/wizardEffects', () => ({
   initWizardEffects: vi.fn(),
 }));
@@ -86,6 +90,10 @@ vi.mock('./effects/artifactEffects', () => ({
 
 vi.mock('./effects/sourcesConnectEffects', () => ({
   initSourcesConnectEffects: vi.fn(),
+}));
+
+vi.mock('./effects/typeDecisionEffects', () => ({
+  initTypeDecisionEffects: vi.fn(),
 }));
 
 describe('projects-mfe init', () => {
@@ -152,6 +160,11 @@ describe('projects-mfe init', () => {
     // Connect source's slice, for the fourth entry; its effect writes the config.
     expect(registerSlice).toHaveBeenCalledWith(
       { name: 'projects/sources-connect' },
+      expect.any(Function)
+    );
+    // The Specs list's type decisions; the effect drops cached counts on the app.
+    expect(registerSlice).toHaveBeenCalledWith(
+      { name: 'projects/typeDecision' },
       expect.any(Function)
     );
     expect(module.mfeApp).toBe(expectedApp);
