@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { apiRegistry } from '@gears-frontx/react';
+import { apiRegistry, eventBus } from '@gears-frontx/react';
 import {
   useDataGrid,
   type DataGridLoadContext,
   type DataGridLoadResult,
 } from '@gears-frontx/ui-kit';
 import { DocumentsApiService } from '../api/DocumentsApiService';
-import type { SpecRowsSourcesDto } from '../api/documentTypes';
+import '../events/specsEvents';
+import type { DocumentTypeDto, SpecRowsSourcesDto } from '../api/documentTypes';
 import {
   buildSpecRows,
+  documentTypeOptions,
   filterSpecRows,
   sortSpecRows,
   type SpecRow,
@@ -28,6 +30,11 @@ export interface SpecsSnapshot {
   /** The rows the filters keep, in the table's order: what Check takes with nothing selected. */
   shown: SpecRow[];
   sources: SpecRowsSourcesDto;
+  /**
+   * What the Type menu offers (#690): the workspace's catalogue in its own order,
+   * or, when it did not load, the types the rows have.
+   */
+  types: DocumentTypeDto[];
   /** `spec-rows` did not load. */
   failed: boolean;
 }
@@ -45,6 +52,7 @@ export interface SpecsLoad {
 interface Answer {
   rows: SpecRow[];
   sources: SpecRowsSourcesDto;
+  types: DocumentTypeDto[];
 }
 
 const NO_SOURCES: SpecRowsSourcesDto = {
@@ -71,7 +79,12 @@ async function fetchAnswer(projectId: string, workspaceId: string): Promise<Answ
     // Without the names a type reads as its key; that is no reason to fail the list.
     documents.types({ workspaceId }).fetch().catch(() => ({ items: [] })),
   ]);
-  return { rows: buildSpecRows(list.items, list.sources, types.items), sources: list.sources };
+  const rows = buildSpecRows(list.items, list.sources, types.items);
+  return {
+    rows,
+    sources: list.sources,
+    types: types.items.length > 0 ? types.items : documentTypeOptions(rows),
+  };
 }
 
 const ReloadBridge: React.FC<{ triggerRef: React.RefObject<(() => void) | null> }> = ({
@@ -117,7 +130,7 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
         } catch (error) {
           if (kept.current?.answer === pending) {
             kept.current = null;
-            setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, failed: true });
+            setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, types: [], failed: true });
             throw error;
           }
         }
@@ -126,7 +139,13 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
 
       const filtered = filterSpecRows(answer.rows, queryOf(context.filters));
       const shown = sortSpecRows(filtered, context.order?.[0]);
-      setSnapshot({ rows: answer.rows, shown, sources: answer.sources, failed: false });
+      setSnapshot({
+        rows: answer.rows,
+        shown,
+        sources: answer.sources,
+        types: answer.types,
+        failed: false,
+      });
 
       const { page, limit } = context.pagination ?? { page: 1, limit: shown.length };
       return { results: shown.slice((page - 1) * limit, page * limit), total: shown.length };
@@ -138,6 +157,13 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
     kept.current = null;
     triggerRef.current?.();
   }, []);
+
+  useEffect(() => {
+    const subscription = eventBus.on('mfe/projects/specs-changed', (changed) => {
+      if (changed.projectId === projectId) reload();
+    });
+    return () => subscription.unsubscribe();
+  }, [projectId, reload]);
 
   return { load, snapshot, reload, reloadBridge: <ReloadBridge triggerRef={triggerRef} /> };
 }

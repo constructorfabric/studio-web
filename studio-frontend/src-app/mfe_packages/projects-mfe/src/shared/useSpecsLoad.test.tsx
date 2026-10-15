@@ -10,7 +10,8 @@ const { specRows, types, triggerLoad } = vi.hoisted(() => ({
   triggerLoad: vi.fn(),
 }));
 
-vi.mock('@gears-frontx/react', () => ({
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: {
     getService: () => ({
       specRows: () => ({ fetch: specRows }),
@@ -21,6 +22,7 @@ vi.mock('@gears-frontx/react', () => ({
 vi.mock('@gears-frontx/ui-kit', () => ({ useDataGrid: () => ({ triggerLoad }) }));
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
 
+import { eventBus } from '@gears-frontx/react';
 import { specRowDto } from '../model/specRows.fixture';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from './useSpecsLoad';
 
@@ -98,6 +100,40 @@ describe('useSpecsLoad', () => {
     expect(snapshot.shown.map((r) => r.name)).toEqual(['a.md', 'b.md', 'c.md']);
     expect(snapshot.sources).toBe(LIST.sources);
     expect(snapshot.failed).toBe(false);
+  });
+
+  it("offers the workspace's types in the catalogue's own order", async () => {
+    const catalogue = [
+      { key: 'runbook', name: 'Runbook' },
+      { key: 'prd', name: 'PRD' },
+    ];
+    types.mockResolvedValue({ items: catalogue });
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    await act(() => result.current.load(page(1)));
+    expect(result.current.snapshot?.types).toEqual(catalogue);
+  });
+
+  it('offers the types the rows have when the catalogue does not load', async () => {
+    types.mockRejectedValue(new Error('503'));
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    await act(() => result.current.load(page(1)));
+    expect(result.current.snapshot?.types).toEqual([
+      { key: 'adr', name: 'adr' },
+      { key: 'prd', name: 'prd' },
+    ]);
+  });
+
+  it('reads spec-rows again when its project says they changed, and only then', async () => {
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    render(result.current.reloadBridge);
+    await act(() => result.current.load(page(1)));
+
+    act(() => eventBus.emit('mfe/projects/specs-changed', { projectId: 'p2' }));
+    expect(triggerLoad).not.toHaveBeenCalled();
+    act(() => eventBus.emit('mfe/projects/specs-changed', { projectId: 'p1' }));
+    expect(triggerLoad).toHaveBeenCalledTimes(1);
+    await act(() => result.current.load(page(1)));
+    expect(specRows).toHaveBeenCalledTimes(2);
   });
 
   it('names a type by its key when the types do not load', async () => {
