@@ -6,7 +6,9 @@
 // @cpt-algo:cpt-studiofrontend-algo-project-artifacts-sync-request:p2
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-syncable-providers:p1
 // @cpt-algo:cpt-studiofrontend-algo-project-sources-sync-missing:p2
+// @cpt-dod:cpt-studiofrontend-dod-project-sources-rows:p1
 import type { ConnectionDto, ProjectSource } from '@constructor-studio/mfe-shared';
+import { ARTIFACT_NODE_TYPES, type ArtifactNodeDto } from '../api/artifactTypes';
 import type { SyncRequest } from '../events/artifactEvents';
 
 // TODO: take this from the gear once it says which drivers can sync.
@@ -65,19 +67,32 @@ export function syncPlan(
 }
 
 /** A provider's casing of a path need not match the one written in the config. */
-function pathKey(path: string): string {
+export function pathKey(path: string): string {
   return path.toLowerCase();
+}
+
+export function repoNodeOf(
+  nodes: readonly ArtifactNodeDto[],
+  source: ProjectSource
+): ArtifactNodeDto | null {
+  const path = pathKey(source.full_path);
+  const connector = `studio-connection-${source.connection_id}`;
+  let pathOnly: ArtifactNodeDto | null = null;
+  for (const node of nodes) {
+    if (node.type_id !== ARTIFACT_NODE_TYPES.repo) continue;
+    if (pathKey(node.value.full_path ?? '') !== path) continue;
+    if (node.value.connector_id === connector) return node;
+    if (!node.value.connector_id) pathOnly ??= node;
+  }
+  return pathOnly;
 }
 
 export function unsyncedSources(
   sources: readonly ProjectSource[],
-  synced: readonly string[],
+  nodes: readonly ArtifactNodeDto[],
   lines: readonly { repo: string }[],
   requested: readonly string[]
 ): ProjectSource[] {
-  // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-5
-  const inGraph = new Set(synced.map(pathKey));
-  // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-5
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-6
   const inImport = lines.map((line) => line.repo);
   // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-6
@@ -85,7 +100,9 @@ export function unsyncedSources(
   const asked = new Set([...inImport, ...requested].map(pathKey));
   // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-7
   return sources.filter((source) => {
-    const key = pathKey(source.full_path);
-    return !inGraph.has(key) && !asked.has(key);
+    // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-5
+    const inGraph = repoNodeOf(nodes, source) !== null;
+    // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-5
+    return !inGraph && !asked.has(pathKey(source.full_path));
   });
 }

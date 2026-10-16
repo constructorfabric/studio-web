@@ -1444,17 +1444,20 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - [ ] `p1` - **ID**: `cpt-studio-feature-project-sources`
 
-- **Purpose**: A project's Sources section: the repositories the project works from, attaching more of them, and each one's sync. Started by #687 with Connect source; the rows, the row menu, the table and uploading documents follow in #685, #686, #688 and #693.
+- **Purpose**: A project's Sources section: the repositories the project works from, attaching more of them, and each one's sync. Started by #687 with Connect source and #685 with the rows; the row menu, the table and uploading documents follow in #686, #688 and #693.
 
-- **Depends On**: `cpt-studio-feature-project-create`, `cpt-studio-feature-project-artifacts`, `cpt-studio-feature-connection-create`
+- **Depends On**: `cpt-studio-feature-project-create`, `cpt-studio-feature-project-artifacts`, `cpt-studio-feature-connection-create`, `cpt-studio-feature-documents`
 
 - **Scope**:
   - the Sources section of `projects-mfe` and its Connect source dialog, an overlay extension sharing the New project wizard's repository picker
   - appending repositories to the project config's `sources[]`, and syncing the new ones as part of the project's import
+  - the rows the section's table shows: each source joined to its repository node, its week of pull requests and commits, its specs and its sync, with the search and the footer
 
 - **Out of scope**:
   - creating a connection inside the dialog (the Connections screen's form is opened instead)
   - syncing GitLab and Bitbucket repositories, whose drivers do not expose files
+  - a row for a repository the graph has and the config does not name
+  - following, while the project is open, a sync started outside the tab
 
 - **Requirements Covered**:
 
@@ -1470,16 +1473,17 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - None
 
 - **Domain Model Entities**:
-  - Tenant, Connection, Artifact node
+  - Tenant, Connection, Artifact node, Document
 
 - **Design Components**:
 
   - [ ] `p1` - `cpt-studio-component-projects-mfe`
   - [ ] `p1` - `cpt-studio-component-connector`
   - [ ] `p1` - `cpt-studio-component-artifact-ingest`
+  - [ ] `p1` - `cpt-studio-component-documents`
 
 - **API**:
-  - `/cf/account-management/v1` (the project config), `/studio-connector/v1`, `/studio-artifact-ingest/v1`
+  - `/cf/account-management/v1` (the project config), `/studio-connector/v1`, `/studio-artifact-ingest/v1`, `/studio-documents/v1`
 
 - **Sequences**:
 
@@ -1516,7 +1520,8 @@ cpt-studio-feature-tenancy
     │       ├─→ cpt-studio-feature-connection-create
     │       ├─→ cpt-studio-feature-knowledge-graph
     │       │       ├─→ cpt-studio-feature-documents
-    │       │       │       └─→ cpt-studio-feature-project-specs
+    │       │       │       ├─→ cpt-studio-feature-project-specs
+    │       │       │       └─→ cpt-studio-feature-project-sources
     │       │       ├─→ cpt-studio-feature-project-artifacts
     │       │       └─→ cpt-studio-feature-gears-products
     │       └─→ cpt-studio-feature-ide-sessions

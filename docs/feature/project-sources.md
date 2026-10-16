@@ -22,11 +22,15 @@ owner: studio-team
   - [1.4 References](#14-references)
 - [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
   - [Connect repositories to a project](#connect-repositories-to-a-project)
+  - [See the project's sources](#see-the-projects-sources)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Attach the picked repositories](#attach-the-picked-repositories)
   - [Sync the sources nothing has pulled in](#sync-the-sources-nothing-has-pulled-in)
+  - [Build the Sources rows](#build-the-sources-rows)
+  - [Count the Sources footer](#count-the-sources-footer)
 - [4. States (CDSL)](#4-states-cdsl)
   - [Connect Source Dialog State Machine](#connect-source-dialog-state-machine)
+  - [Source Row Sync State Machine](#source-row-sync-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [Connect source is an overlay extension, opened from the Sources header](#connect-source-is-an-overlay-extension-opened-from-the-sources-header)
   - [The dialog and the wizard share one repository picker](#the-dialog-and-the-wizard-share-one-repository-picker)
@@ -34,6 +38,13 @@ owner: studio-team
   - [The picks are appended to the config, and only then does the dialog close](#the-picks-are-appended-to-the-config-and-only-then-does-the-dialog-close)
   - [With no connection, the dialog leads to creating one](#with-no-connection-the-dialog-leads-to-creating-one)
   - [The project screen syncs the sources the graph does not have](#the-project-screen-syncs-the-sources-the-graph-does-not-have)
+  - [Each source in the config is a row, joined to its repository node](#each-source-in-the-config-is-a-row-joined-to-its-repository-node)
+  - [Last sync is the last successful sync, and the sync this tab follows](#last-sync-is-the-last-successful-sync-and-the-sync-this-tab-follows)
+  - [The row says what can be done with its sync](#the-row-says-what-can-be-done-with-its-sync)
+  - [A missing number is shown as missing, never as zero](#a-missing-number-is-shown-as-missing-never-as-zero)
+  - [The rows are searched by name and path, in the config's order](#the-rows-are-searched-by-name-and-path-in-the-configs-order)
+  - [The footer counts the whole project](#the-footer-counts-the-whole-project)
+  - [The section reads through the shared cache, and the table shows the rows it builds](#the-section-reads-through-the-shared-cache-and-the-table-shows-the-rows-it-builds)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
@@ -49,8 +60,10 @@ more.
 
 This spec starts with attaching more: **Connect source** in the section's
 header opens a dialog with the wizard's repository picker, and the picked
-repositories join the project's config and its import. The rows, the row menu,
-the table and uploading documents are added with #685, #686, #688 and #693.
+repositories join the project's config and its import (#687). It then builds the
+rows the section's table shows (#685): each source joined to its repository in
+the graph, its week of pull requests and commits, its specs and its sync. The
+row menu, the table and uploading documents are added with #686, #688 and #693.
 
 ### 1.2 Purpose
 
@@ -96,7 +109,39 @@ code:
   actions slot in ui-kit yet; the projects MFE adds one per section until the
   kit's page header replaces the header.
 - **Until #688, the section stays a placeholder.** After Connect source the new
-  repositories' syncs show in Artifacts, where the import already reports.
+  repositories' syncs show in Artifacts, where the import already reports. The
+  rows (#685) are checked through the tests of the hook that builds them.
+
+**For the rows (#685)**, fixed here because the design is silent, or shows data
+the prototype does not read:
+
+- **A row is a source in the config, and nothing else.** The design also lists a
+  repository the project's artifacts come from but which is not attached ("Not
+  connected", "Artifact snapshot · no connection recorded"). Here such a
+  repository can only be left over from a failed reconcile, so it gets no row.
+- **A row finds its repository node by path and connection.** The node's
+  `connector_id` is `studio-connection-<connection id>`; a node without one, or
+  with an empty one, is matched by its path alone. A repository attached again
+  through another connection does not take the old connection's node: it reads
+  Not synced, and the screen syncs it, comparing by the same key.
+- **The branch is the config's.** A source attached before #687 has none, and
+  neither the repository node nor the connection's listing is read for one; its
+  row shows the path alone.
+- **Last sync has two lines.** The first is the last successful sync, unchanged
+  while a sync runs; the second is the sync this tab follows: syncing,
+  cancelling, or the last attempt failed or cancelled, as the design's second
+  line does.
+- **A missing number is not zero.** A read that failed, a repository with no
+  node, files the documents gear cannot list: each leaves its numbers missing.
+  Only the config and the repository nodes fail the section, because without
+  them no row can say whether it was synced.
+- **The rows keep the config's order**, as in the design, which sorts no column.
+  The footer counts the whole project, whatever the search keeps.
+- **The section reads through the shared query cache**, and the table only shows
+  what the reads give. The Specs list reads inside its table's load (#711);
+  Sources has six reads, the import's live state, and other places that change
+  what it reads, each of which drops its query in the shared cache rather than
+  reaching into this section.
 
 **Requirements**: `cpt-studio-fr-connections`, `cpt-studio-fr-artifact-ingest`
 
@@ -112,7 +157,9 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 | **Shell** (`cpt-studio-actor-shell`) | Owns the overlay frame: mounts and unmounts the dialog, draws the scrim, handles Escape and click-outside. |
 | **MFE** (`cpt-studio-actor-mfe`) | projects-mfe. Draws the dialog in one extension and the project screen in another; the screen syncs what the dialog attached. |
 | **Connector gear** (`cpt-studio-component-connector`) | Lists the organization's connections and each connection's repositories. |
-| **Artifact gear** (`cpt-studio-component-artifact-ingest`) | Syncs each new GitHub repository into the graph. |
+| **Artifact gear** (`cpt-studio-component-artifact-ingest`) | Syncs each new GitHub repository into the graph; answers each repository's node and its week of pull requests and commits. |
+| **Documents gear** (`cpt-studio-component-documents`) | Counts each repository's specs and the documents created in Studio. |
+| **Event stream** (`cpt-studio-component-events`) | Carries the transitions of each sync the tab follows. |
 
 ### 1.4 References
 
@@ -123,7 +170,8 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Feature**: [Project artifacts](project-artifacts.md): the import the new repositories join
 - **Feature**: [Connect a source host](connection-create.md): the form Add connection opens
 - **Feature**: [The project's specs](project-specs.md): the section before this one
-- **Issues**: #643 (the Specs and Sources sections), #687 (this part), #709 (the config write), #685, #686, #688, #693 (the rest of the section)
+- **Decomposition entry** `cpt-studio-feature-documents`: the specs counted per repository and the documents created in Studio (no feature spec of its own)
+- **Issues**: #643 (the Specs and Sources sections), #687 (Connect source), #685 (the rows), #709 (the config write), #711 (the Specs list's load), #686, #688, #693 (the rest of the section)
 
 ## 2. Actor Flows (CDSL)
 
@@ -168,6 +216,36 @@ extensions, the shell's overlay frame and connections-mfe.
 14. [ ] - `p1` - The project screen runs `cpt-studiofrontend-algo-project-sources-sync-missing` - `inst-16`
 15. [ ] - `p1` - **RETURN** the new repositories' syncs show in the project's import - `inst-17`
 
+**Use case**: see the repositories a project works from, and how each one stands.
+
+### See the project's sources
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-sources-list`
+
+**Actor**: Member
+
+**Success Scenarios**:
+- Each source of the project is a row: its provider, name, path and branch, its specs, its pull requests and commits over the last 7 days, and its last sync.
+
+**Error Scenarios**:
+- The project's config or its repository nodes cannot be read; the section says so.
+- Another read fails; the rows show, and what that read gives is missing.
+
+**Steps**:
+1. [ ] - `p1` - Member opens the Sources section of a project - `inst-1`
+2. [ ] - `p1` - `API: GET /cf/account-management/v1/tenants/{project}/metadata/{project config type} (the sources)` - `inst-2`
+3. [ ] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&type=repo (each source's repository)` - `inst-3`
+4. [ ] - `p1` - `API: GET /studio-connector/v1/connections?tenant={organization} (each source's connection)` - `inst-4`
+5. [ ] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/source-activity?scope={project} (pull requests and commits per repository)` - `inst-5`
+6. [ ] - `p1` - `API: GET /cf/studio-documents/v1/specs-per-source?scope={project} (specs per repository)` - `inst-6`
+7. [ ] - `p1` - `API: GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1 (the documents created in Studio)` - `inst-7`
+8. [ ] - `p1` - **IF** the config or the repository nodes cannot be read - `inst-8`
+   1. [ ] - `p1` - **RETURN** the section says so - `inst-9`
+9. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-sources-rows` and `cpt-studiofrontend-algo-project-sources-footer` - `inst-10`
+10. [ ] - `p1` - Member searches; the rows whose name or path holds the text stay, and the footer does not change - `inst-11`
+11. [ ] - `p1` - A sync of one of the sources settles; read the repository nodes, the activity and the specs again, and build the rows again - `inst-12`
+12. [ ] - `p1` - **RETURN** the rows and the footer - `inst-13`
+
 ## 3. Processes / Business Logic (CDSL)
 
 ### Attach the picked repositories
@@ -205,7 +283,7 @@ extensions, the shell's overlay frame and connections-mfe.
    1. [x] - `p1` - **RETURN** nothing; the first import syncs every source - `inst-2`
 3. [x] - `p1` - Read the project's sources from its config - `inst-3`
 4. [x] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&type=repo` for the repositories the graph has - `inst-4`
-5. [x] - `p1` - Take the sources whose path has no repository node - `inst-5`
+5. [x] - `p1` - Take the sources with no repository node of the same path and connection, found as `cpt-studiofrontend-algo-project-sources-rows` finds a row's node - `inst-5`
 6. [x] - `p1` - Leave out a source that already has a line in the import, whatever its state - `inst-6`
 7. [x] - `p1` - Leave out a source a sync was already requested for in this tab, whatever came of it - `inst-7`
 8. [x] - `p1` - **IF** none is left - `inst-8`
@@ -217,6 +295,41 @@ extensions, the shell's overlay frame and connections-mfe.
 The rule reads data, not a change. A source attached in another tab, or while
 the project was closed, or just before a reload, has no repository node either,
 so it is found the next time the project screen reads the project.
+
+### Build the Sources rows
+
+- [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-sources-rows`
+
+**Input**: the project's sources; its repository nodes; the organization's connections, the activity and the specs per repository, each read or not; the import's lines for the project
+
+**Output**: one row per source, in the config's order
+
+**Steps**:
+1. [x] - `p1` - **FOR EACH** source in the config, in its order - `inst-1`
+   1. [x] - `p1` - Find its repository node: the same path, ignoring case, and a `connector_id` of `studio-connection-<its connection id>`, or no `connector_id` or an empty one - `inst-2`
+   2. [x] - `p1` - Find its connection by id - `inst-3`
+   3. [x] - `p1` - Take the provider from the node, else from the connection, else none - `inst-4`
+   4. [x] - `p1` - Name it by the last segment of its path; keep the path, and the config's `branch` when it has one - `inst-5`
+   5. [x] - `p1` - **IF** the specs could not be read, the documents gear does not know the files (`files_known` false), or the source has no node, its specs are missing; **ELSE** they are the count listed for its node, 0 when the node is not listed - `inst-6`
+   6. [x] - `p1` - **IF** the activity could not be read or the source has no node, its pull requests and commits are missing; **ELSE** they are its node's, none on every day of the window when the node is not listed - `inst-7`
+   7. [x] - `p1` - Take its last sync: Not connected **IF** the connections were read and its connection is not among them; **ELSE** unavailable **IF** its provider cannot sync (`cpt-studiofrontend-dod-project-artifacts-syncable-providers`); **ELSE** the node's `synced_at` **IF** it has one; **ELSE** Not synced - `inst-8`
+   8. [x] - `p1` - Take the sync this tab follows, from the import's line of the same path: in flight **IF** it is queued or running, with whether a cancel is pending and whether it can be cancelled; stopped **IF** it failed, was cancelled or was lost, with its reason and whether its run can be retried; none otherwise - `inst-9`
+2. [x] - `p1` - **RETURN** the rows - `inst-10`
+
+### Count the Sources footer
+
+- [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-sources-footer`
+
+**Input**: every row, before the search; the Studio documents, read or not
+
+**Output**: four counts, each a number or missing
+
+**Steps**:
+1. [x] - `p1` - Sources: the number of rows - `inst-1`
+2. [x] - `p1` - Specs from sources: the sum of the rows' specs that are not missing; missing **IF** the specs could not be read or `files_known` is false - `inst-2`
+3. [x] - `p1` - Created in Studio: the `total` of the project's documents; missing **IF** they could not be read - `inst-3`
+4. [x] - `p1` - Open pull requests: the sum of the rows' open pull requests that are not missing; missing **IF** the activity could not be read - `inst-4`
+5. [x] - `p1` - **RETURN** the four counts - `inst-5`
 
 ## 4. States (CDSL)
 
@@ -246,6 +359,33 @@ The dialog leaves every state by being unmounted: after a write, on Back from
 Choosing, on Escape or on the scrim. Nothing is written once it is gone. Back
 from Picking returns to Choosing and keeps the picks; the prototype closes the
 dialog there.
+
+### Source Row Sync State Machine
+
+- [ ] `p2` - **ID**: `cpt-studiofrontend-state-project-sources-row-sync`
+
+**States**: None, In flight, Cancelling, Stopped
+
+**Initial State**: None
+
+**Transitions**:
+1. [ ] - `p1` - **FROM** None **TO** In flight **WHEN** a sync of the source is requested, or is found queued or running when the project opens (`cpt-studiofrontend-algo-project-artifacts-sync-resume`) - `inst-1`
+2. [ ] - `p1` - **FROM** In flight **TO** Cancelling **WHEN** Cancel sync is used - `inst-2`
+3. [ ] - `p1` - **FROM** Cancelling **TO** In flight **WHEN** the gear refuses the cancel - `inst-3`
+4. [ ] - `p1` - **FROM** In flight **TO** None **WHEN** the sync succeeds, or **FROM** Cancelling **TO** None **WHEN** it succeeds before the cancel lands - `inst-4`
+5. [ ] - `p1` - **FROM** In flight **TO** Stopped **WHEN** the sync fails, is cancelled or is lost, or **FROM** Cancelling **TO** Stopped **WHEN** the cancel lands - `inst-5`
+6. [ ] - `p1` - **FROM** Stopped **TO** In flight **WHEN** Sync now is used: the run is retried when it can be, and a new sync is requested when not - `inst-6`
+7. [ ] - `p1` - **FROM** In flight, Cancelling or Stopped **TO** None **WHEN** the project closes - `inst-7`
+
+In flight covers queued and running alike, as the design's one word does. Only
+the second line of Last sync follows this state; the first changes when a sync
+succeeds and the repository nodes are read again.
+
+A stopped sync is known only while the project stays open in the tab that
+followed it. Closing the project ends its import's watch and forgets its lines
+(`cpt-studiofrontend-state-project-artifacts-import`), and an opening finds only the
+syncs still queued or running, so a reopened project, a reload or a new tab
+shows the last successful sync alone.
 
 ## 5. Definitions of Done
 
@@ -383,7 +523,8 @@ organization-mfe began to open it.
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-sync-missing`
 
 The system **MUST** request, from the project screen, a sync for every GitHub
-source of the open project that has no repository node in the graph, no line in
+source of the open project that has no repository node of its path and
+connection in the graph (`cpt-studiofrontend-dod-project-sources-rows`), no line in
 the import, whatever that line's state, and for which no sync was requested in
 this tab, even one that then failed. It **MUST** decide this from the data each
 time it reads the project's sources or repository nodes, not from what changed
@@ -430,7 +571,194 @@ partition. The cost is one repeated upsert.
 
 **Touches**:
 - API: `GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&type=repo`
-- Entities: `ProjectScreen`, `useSourcesSync`, `importAttempts`, `artifactSyncSlice`
+- Entities: `ProjectScreen`, `useSourcesSync`, `importAttempts`, `artifactSyncSlice`, `model/syncRequest`
+
+### Each source in the config is a row, joined to its repository node
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-rows`
+
+The system **MUST** build one row per entry of the project config's `sources[]`,
+in the config's order, and **MUST NOT** build one for a repository node the
+config does not name. A row **MUST** find its repository node by its path,
+ignoring case, and its connection: the node's `connector_id` is
+`studio-connection-<connection id>`. A node without a `connector_id`, or with an
+empty one, is matched by its path alone; a node of another connection is not
+matched. The `connector_id` is empty when the repository was synced through a
+connection without a token: such a connection's `secret_ref` is empty, and the
+sync runs without credentials.
+
+A row carries what the table's cells need (#688): the provider, the name (the
+last segment of the path), the path, the config's branch when it has one, the
+specs, the pull requests open and merged with one count per day of the window,
+oldest first, the commits, the last sync and the sync this tab follows.
+
+The sync of the missing sources compares by the same key
+(`cpt-studiofrontend-algo-project-sources-sync-missing`), so a row that reads Not
+synced is a source the screen syncs. Comparing by path alone, a repository
+attached again through another connection would show the old connection's node
+and never be synced.
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-sources-rows`
+- `cpt-studiofrontend-flow-project-sources-list`
+
+**Touches**:
+- API: `GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&type=repo`, `GET /studio-connector/v1/connections?tenant={organization}`
+- Entities: `model/sourceRows`, `model/syncRequest`
+
+### Last sync is the last successful sync, and the sync this tab follows
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-last-sync`
+
+The system **MUST** show a source's last sync in two lines. The first **MUST** be
+one of: the time of the last successful sync (the repository node's
+`synced_at`); Not synced, when there is no node or it has no `synced_at`; Not
+connected, when the source's connection is gone from the organization; Sync
+isn't available for <provider> yet, for a provider that cannot sync. It **MUST
+NOT** change while a sync runs.
+
+The second line **MUST** show the sync this tab follows: Syncing… while it is
+queued or running, Cancelling… once a cancel is asked for and the gear has not
+recorded it, and Last attempt failed or Last attempt cancelled, with the reason
+as the line's title, once it stopped; nothing otherwise.
+
+The phase, the counts and the gear's summary that the import's lines hold
+(`cpt-studiofrontend-dod-project-artifacts-run-control`) are not shown in the
+row, as in the design.
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-sources-rows`
+- `cpt-studiofrontend-state-project-sources-row-sync`
+
+**Touches**:
+- Entities: `model/sourceRows`, `useProjectImport`, `artifactSyncSlice`
+
+### The row says what can be done with its sync
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-row-sync`
+
+The system **MUST** give each row its sync's state and what can be done with it,
+for the row menu's one sync item (#686): Cancel sync while the sync is in flight
+and has a run; nothing while a cancel is pending; Sync now otherwise, which
+retries the stopped run when it can be retried (`canRetry`) and requests a new
+sync when not; and no sync for a provider that cannot sync, with the reason.
+
+Retry and a new sync are one item because they do the same for the member, and
+a retried run keeps its history. Cancel sync asks no confirmation: what the sync
+stored stays, and Sync now starts it again. The item's label and its effects
+are the menu's (#686); the row only says which applies.
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-sources-rows`
+- `cpt-studiofrontend-state-project-sources-row-sync`
+
+**Touches**:
+- Entities: `model/sourceRows`, `model/repoImport` (`canCancel`, `canRetry`)
+
+### A missing number is shown as missing, never as zero
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-gaps`
+
+The system **MUST** fail the section only when the project's config or its
+repository nodes cannot be read, and **MUST** show the rows when another read
+fails, with what that read gives missing:
+
+- the specs per repository cannot be read, or `files_known` is false: every
+  row's specs and the footer's specs from sources;
+- the activity cannot be read: every row's pull requests and commits, and the
+  footer's open pull requests;
+- the Studio documents cannot be read: the footer's created in Studio;
+- the connections cannot be read: no row reads Not connected, and the rows take
+  their provider from their node.
+
+A source with no repository node has its specs, pull requests and commits
+missing whatever the reads answered. A node the activity does not list had no
+pull requests and no commits in the window, and one the specs per repository
+does not list has no specs: those are zero.
+
+The table shows missing pull requests as "Pull request activity unavailable", in
+the row and in the footer, as the design does, and every other missing number
+as `—` (#688).
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-sources-rows`
+- `cpt-studiofrontend-algo-project-sources-footer`
+- `cpt-studiofrontend-flow-project-sources-list`
+
+**Touches**:
+- API: `GET /cf/studio-artifact-ingest/v1/source-activity?scope={project}`, `GET /cf/studio-documents/v1/specs-per-source?scope={project}`, `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1`
+- Entities: `model/sourceRows`, `shared/useSourcesLoad`
+
+### The rows are searched by name and path, in the config's order
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-search`
+
+The system **MUST** keep the rows whose name or path contains the search text,
+ignoring case, and **MUST** keep them in the config's order: no column sorts the
+table, as in the design. The table pages the rows it keeps (#688).
+
+**Implements**:
+- `cpt-studiofrontend-flow-project-sources-list`
+
+**Touches**:
+- Entities: `model/sourceRows`, `shared/useSourcesLoad`
+
+### The footer counts the whole project
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-footer`
+
+The system **MUST** count the footer over every source of the project, whatever
+the search keeps: the sources; the specs from sources, the sum of the rows'
+specs; the documents created in Studio, the `total` of the project's documents
+read with `limit=1`; and the open pull requests, the sum of the rows' open pull
+requests. The project's documents include the workspace's documents the project
+sees, as the Specs list's Created in Studio rows do.
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-sources-footer`
+
+**Touches**:
+- API: `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1`
+- Entities: `model/sourceRows`
+
+### The section reads through the shared cache, and the table shows the rows it builds
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-reads`
+
+The system **MUST** read the project's sources, its repository nodes, the
+organization's connections, the activity, the specs per repository and the
+Studio documents through the shared query cache, build the rows and the footer
+from those answers and the import's state, and give the table a load that only
+searches and pages the rows built. The table **MUST** load again whenever the
+rows change, which a sync's progress does without any read, and **MUST** show
+once every read has answered or failed, with the section's loading state until
+then.
+
+The system **MUST** read the repository nodes, the activity and the specs per
+repository again when a sync of one of the project's sources settles, as
+Artifacts does (`cpt-studiofrontend-algo-project-artifacts-sync`). The config is
+read again when Connect source drops the cached copy
+(`cpt-studiofrontend-algo-project-sources-attach`), and so will it be after
+Disconnect (#686). A place that changes another answer drops that query in the
+shared cache: a type decided in Specs the specs per repository (#690), an upload
+the Studio documents (#693).
+
+The Specs list reads inside its table's load and keeps its own cache (#711). For
+Sources that would leave every place above reaching into this section to reload
+it. The event stream carries a sync's run, not its repository or its project,
+so nothing pushes a repository's new numbers; they are read when the run
+settles. A sync started outside this tab is not followed while the project is
+open; the next opening finds it if it is still queued or running
+(`cpt-studiofrontend-algo-project-artifacts-sync-resume`).
+
+**Implements**:
+- `cpt-studiofrontend-flow-project-sources-list`
+- `cpt-studiofrontend-algo-project-sources-rows`
+- `cpt-studiofrontend-algo-project-sources-footer`
+
+**Touches**:
+- API: every read of `cpt-studiofrontend-flow-project-sources-list`
+- Entities: `shared/useSourcesLoad`, `model/sourceRows`, `useProjectConfig`, `useSourceConnections`, `useProjectImport`
 
 ## 6. Acceptance Criteria
 
@@ -455,3 +783,21 @@ partition. The cost is one repeated upsert.
 - [ ] A repository whose sync failed before the graph had its node is not requested again in the same tab; a new tab asks for it once.
 - [ ] Reopening a project syncs its GitHub sources that have no repository node and have not been requested in this tab, and no others.
 - [ ] The New project wizard's repositories step works as `project-create.md` describes, on the same picker; in both, Back to the providers clears the connection, the search and any error, and keeps the picks.
+
+The rows (#685), checked through the hook's tests until the table lands (#688):
+
+- [ ] A synced GitHub source's row has its node's last sync time on the first line, its specs, its open and merged pull requests with one count per day of the last 7, and its commits.
+- [ ] A source with no repository node reads Not synced, with its specs, pull requests and commits missing.
+- [ ] A GitLab or Bitbucket source reads "Sync isn't available for GitLab yet" (or Bitbucket), and offers no sync.
+- [ ] A source whose connection is gone from the organization reads Not connected, and shows what its node holds.
+- [ ] A repository attached again through another connection does not show the old connection's node: it reads Not synced, and the screen requests its sync.
+- [ ] A row's name is the last segment of its path, and the path is followed by the config's branch only when the config has one.
+- [ ] While a source's sync is queued or running, its first line stays as it was and the second reads Syncing…; after Cancel sync, Cancelling…; once the sync fails or is cancelled, Last attempt failed or Last attempt cancelled, with the reason as the title.
+- [ ] A row whose sync is in flight offers Cancel sync; a row whose last attempt failed offers Sync now, which retries that run.
+- [ ] When a source's sync settles, its row's last sync, pull requests, commits and specs are read again, without leaving the section.
+- [ ] After a reload, a source whose last attempt failed shows its last successful sync alone.
+- [ ] With `files_known` false, every row's specs and the footer's specs are missing; a repository node that specs per repository does not list has 0.
+- [ ] When the activity cannot be read, every row's pull requests and commits and the footer's open pull requests are missing, and the rows still show.
+- [ ] When the config or the repository nodes cannot be read, the section says so.
+- [ ] Searching keeps the rows whose name or path holds the text, ignoring case, in the config's order, and leaves the footer as it was.
+- [ ] The footer gives the number of sources, the specs from sources, the documents created in Studio and the open pull requests of the whole project.

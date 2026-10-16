@@ -16,12 +16,13 @@ import {
   type SpecRow,
   type SpecsQuery,
 } from '../model/specRows';
+import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 
 /** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692). */
 export const SPECS_FILTER_KEYS = {
   filter: 'specs',
   documentType: 'documentType',
-  search: 'textSearch',
+  search: TEXT_SEARCH_FILTER_KEY,
 } as const;
 
 /** What the page alone does not carry, rebuilt by every load. */

@@ -2,7 +2,6 @@ import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import { useEffect, useMemo } from 'react';
 import { apiRegistry, eventBus, useApiQuery } from '@gears-frontx/react';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
-import { buildRepositories } from '../model/artifact';
 import { syncPlan, unsyncedSources } from '../model/syncRequest';
 import { useSourceConnections } from './useConnections';
 import { useProjectImport } from './useArtifactImport';
@@ -36,18 +35,15 @@ export function useSourcesSync({
   const { connections, loading, failed } = useSourceConnections(orgId);
   const { repos: lines, lookedUp } = useProjectImport(projectId);
 
-  const synced = useMemo(
-    () => (nodes.data ? buildRepositories(nodes.data.nodes).map((repository) => repository.name) : null),
-    [nodes.data]
-  );
+  const repoNodes = nodes.data?.nodes ?? null;
   const byId = useMemo(
     () => new Map(connections.map((connection) => [connection.id, connection])),
     [connections]
   );
-  const ready = sourcesRead && synced !== null && !nodes.isError && !loading && !failed;
+  const ready = sourcesRead && repoNodes !== null && !nodes.isError && !loading && !failed;
 
   useEffect(() => {
-    if (!ready || !synced) return;
+    if (!ready || !repoNodes) return;
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-13
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-14
     if (!lookedUp) return;
@@ -59,7 +55,7 @@ export function useSourcesSync({
     // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-1
     // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-2
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-3
-    const missing = unsyncedSources(sources, synced, lines, requestedInTab(projectId));
+    const missing = unsyncedSources(sources, repoNodes, lines, requestedInTab(projectId));
     // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-3
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-8
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-9
@@ -74,5 +70,5 @@ export function useSourcesSync({
     eventBus.emit('mfe/artifacts/repos-added', { projectId, workspaceId, ...plan });
     // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-11
     // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-12
-  }, [ready, lookedUp, isFirstImport, sources, synced, lines, byId, projectId, workspaceId]);
+  }, [ready, lookedUp, isFirstImport, sources, repoNodes, lines, byId, projectId, workspaceId]);
 }

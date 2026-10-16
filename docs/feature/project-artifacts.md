@@ -832,10 +832,14 @@ a page holds may show only some of them.
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-run-control`
 
-Not implemented in this feature: the store and the effects hold everything below,
-and the project's Sources tab shows it once its rows land (#685–#688). Until then the
-Artifacts section reports only the repositories that did not come through, as
-before.
+Not implemented in this feature: the store and the effects hold everything below.
+The project's Sources rows show it in the design's shorter form
+(`cpt-studiofrontend-dod-project-sources-last-sync`,
+`cpt-studiofrontend-dod-project-sources-row-sync`): a sync in flight, a cancel
+pending, a last attempt failed or cancelled with its reason, and one sync item
+that cancels or retries. The phase, the counts and the gear's summary stay in
+the store. Until the table lands (#688), the Artifacts section reports only the
+repositories that did not come through, as before.
 
 The system **MUST** show each repository's sync as its own line — queued,
 importing with its phase and counts, cancelling, succeeded with the gear's
