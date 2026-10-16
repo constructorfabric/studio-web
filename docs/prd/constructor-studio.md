@@ -103,26 +103,7 @@ goals are stated as observable outcomes rather than numeric targets.
 
 ### 1.4 Glossary
 
-These terms are used with exactly this meaning in every document under `docs/`.
-
-| Term | Definition |
-|------|------------|
-| Organization | An account-management tenant that owns members, the shared connection catalogue and the access config. Hidden from navigation in concept v2, not removed. |
-| Workspace | An account-management tenant of type `workspace` under an organization. Concept v2 calls it a root project; the wire keeps `workspace` and `workspace_id` (ADR-0010). |
-| Project | A tenant nested under a workspace; its attributes are tenant metadata (ADR-0010). |
-| Member | A person with a membership in an organization, recorded by `studio-user` (ADR-0016). |
-| Gear | A CF/Gears module linked into the backend binary and registered at link time through `inventory`. A Studio gear lives in `studio-backend/src/`; a platform gear comes from gears-rust. |
-| Plugin | A gear that implements another gear's plugin contract, for example a connector plugin for `studio-connector` or an AuthZ resolver plugin. |
-| Connection | A configured credential for one provider (source host, model provider or chat platform), owned by a tenant; its secret is a credstore reference. |
-| Session | A running Theia IDE container or Pod for one workspace, managed by `studio-session`. |
-| Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
-| Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
-| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
-| Contract | What the Gearbox engine reports a gear doing for others, so it is checked rather than read from prose: a contract the gear provides (`<gear>/<Trait>@v<N>`, projected from `#[toolkit::provides]`), the GTS spec of an extension point it hosts, or the spec of the point it implements as a plugin. |
-| Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
-| Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
-| Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
-| Run | One unit of durable background work in `studio-tasks`. |
+The project's terms are kept in [the glossary](../glossary.md): one row per term, with what it means and the other names it goes by. Link a term there where a document first uses it.
 
 ## 2. Actors
 
@@ -546,24 +527,6 @@ A decision **MUST** be shown as needing review again once the section or the gea
 - **Rationale**: A product's composition has to be explainable section by section, and a confirmation made once should not be asked for again on the next product (#205, #206).
 - **Actors**: `cpt-studio-actor-member`
 
-#### The documents' domain model
-
-- [ ] `p1` - **ID**: `cpt-studio-fr-spec-domain-model`
-
-The system **MUST** read from a project's documents, as they are written, the domain model of the application they describe: its entities with their attributes and relations, its requirements, its constraints, lifecycles and decisions. Every fact **MUST** cite the passage it comes from and say whether that passage is in force (active, proposed, deferred, superseded, or evidence rather than specification). The model **MUST** be one per project, merged across its documents, and **MUST NOT** require any document to be changed to be built.
-
-- **Rationale**: The model of a product nobody has built yet is spread over many documents, and only the whole of it shows where they disagree ([spec-domain-model.md](../spec-domain-model.md)).
-- **Actors**: `cpt-studio-actor-member`
-
-#### Disagreements in the documents are findings
-
-- [ ] `p1` - **ID**: `cpt-studio-fr-spec-contradictions`
-
-The system **MUST** report where a project's documents cannot all be right about the product: two passages in force that state one thing two ways, text that treats a proposed decision as made or describes what a later decision replaced, and references to identifiers, decisions or files that do not exist. Each finding **MUST** quote every side, say why they conflict, and propose the smallest edit that fixes it, or name the decision a person has to take. A member **MUST** be able to confirm or dismiss a finding, and the decision **MUST** hold while the passages are unchanged. The system **MUST NOT** report style, missing template sections or wording.
-
-- **Rationale**: Documentation is not made perfect; its contradictions are fixed one by one, before someone builds one side of them.
-- **Actors**: `cpt-studio-actor-member`
-
 #### Non-functional requirements shape the profile, not the gear list
 
 - [ ] `p2` - **ID**: `cpt-studio-fr-nfr-to-profile`
@@ -953,7 +916,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-org-administration` | `studio-backend/src/organizations/`, `studio-backend/src/access_config.rs`, `studio-backend/src/user_profile/`; `/studio-organizations/v1/{access-catalogue,capabilities,rollups}`, `/studio-user/v1/organizations/{org_id}/invitations`; prototype admin `access` and `people`; official portal: `people-mfe`, specified in [feature/organization-people.md](../feature/organization-people.md) |
 | `cpt-studio-fr-workspace-project-tenants` | platform `account_management`; `/cf/account-management/v1`; `projects-mfe` (Projects, New project, New workspace), `organization-mfe` (Workspaces); prototype `projects`, workspace tab `projects`, platform `workspaces`, project tab `automation` |
 | `cpt-studio-fr-portal-levels` | `studio-frontend/src-app/app/`, `studio-frontend/src-app/mfe_packages/_iframe-fixture/` |
-| `cpt-studio-fr-portal-reserved-areas` | `people-mfe`, `kits-mfe`, `search-mfe`, `organization-mfe` (Organization settings), `projects-mfe` placeholder sections (Overview, Sources until #685, Activity, Timeline, Team, Project settings); prototype project tab `timeline` |
+| `cpt-studio-fr-portal-reserved-areas` | `people-mfe`, `kits-mfe`, `search-mfe`, `organization-mfe` (Organization settings), `projects-mfe` placeholder sections (Overview, Findings, Activity, Timeline, Team, Project settings); prototype project tab `timeline` |
 | `cpt-studio-fr-sign-in` | platform `oidc_authn_plugin`, `static_authn_plugin`, `static_authz_plugin`; `keycloak/`; `studio-frontend/src-app/app/`; `studio-frontend-prototype/src/oidc.ts` |
 | `cpt-studio-fr-canonical-user` | `studio-backend/src/user_profile/`; `/studio-user/v1/{me,resolve,merge,users}`; prototype `profile` |
 | `cpt-studio-fr-invitations-membership` | `studio-backend/src/user_profile/`, platform `keycloak_idp_plugin`, `static_idp_plugin`; `/studio-user/v1/me/{invitations,memberships}`; prototype `people`, project tab `people` |
@@ -968,8 +931,6 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/spec_mapping/` (`reading.rs`: a specification read as written; `plan.rs`: contract, then evidence with a cited passage, then gap); `/studio-spec-mapping/v1/{plan,capabilities}`; facts from `product/gearbox.rs` (`gdl_contracts`) and `repo_enrich.rs` (`doc_text`); vocabulary `documents/model.rs` (`Capability::contracts`); prototype project tab `components`; #205, #199 |
 | `cpt-studio-fr-mapping-decisions` | `studio-backend/src/spec_mapping/` (`/studio-spec-mapping/v1/decisions`, ranking in `plan.rs`); stored as `mapping_decision` nodes with `decision_on` edges by `artifact_ingest` (`port::MappingDecisionStore`); prototype project tab `components` (✓/✗ on a candidate); planned: decisions shared across an organization; #205, #206 |
 | `cpt-studio-fr-nfr-to-profile` | `studio-backend/src/spec_mapping/` (`reading::declared_requirements`, `plan::deployment_profile`, `nonfunctional` capabilities offer no gear); `/studio-spec-mapping/v1/requirements`; indexed by `documents` (`m0013`); prototype project tab `components` ("Use <profile>"); planned: `config` from requirements; #205 |
-| `cpt-studio-fr-spec-domain-model` | planned: `studio-backend/src/documents/spec_model/` (index, extraction per revision, assembly); `/studio-documents/v1/spec-model`; prototype project tab `model`; [spec-domain-model.md](../spec-domain-model.md) |
-| `cpt-studio-fr-spec-contradictions` | `studio-backend/src/documents/spec_model/index.rs` (references, built); planned: `rules.rs`, `judge.rs`; `/studio-documents/v1/spec-model/findings`; recorded as `spec_finding` nodes with `detector: model`; prototype project tab `model` |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
 | `cpt-studio-fr-theia-bridge` | `studio-backend/src/studio_theia/`; `/studio-theia/v1`; `theia/studio/src/node/studio-control-api.ts` |
 | `cpt-studio-fr-ide-product-surface` | `theia/studio/`, `theia/product-ext/`, `theia/drawio-editor/` |
