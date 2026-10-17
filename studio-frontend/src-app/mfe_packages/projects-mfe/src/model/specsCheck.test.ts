@@ -154,7 +154,7 @@ describe('the outcome of a check', () => {
   });
 
   it('a run lost', () => {
-    expect(checkOutcome([ended(ALL), { kind: 'lost', documents: 3 }], 2)).toEqual({ kind: 'lost' });
+    expect(checkOutcome([ended(ALL), { kind: 'lost' }], 2)).toEqual({ kind: 'lost' });
   });
 
   it('has no M without the read of the findings', () => {
