@@ -59,11 +59,14 @@ export type StudioArtifactRequest = StudioArtifact & { projectId: string };
 export const STUDIO_ACTION_NOTIFY =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.notification.show.v1~';
 
-export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info'] as const;
+/** `loading` stays up until a notice with its `id` replaces it. */
+export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info', 'loading'] as const;
 
 export interface StudioNotice {
   kind: (typeof STUDIO_NOTICE_KINDS)[number];
   text: string;
+  /** A notice with the id of a shown toast replaces it, so progress and its outcome are one toast. */
+  id?: string;
 }
 
 /** projects-mfe's New workspace overlay, opened from organization-mfe as well. */

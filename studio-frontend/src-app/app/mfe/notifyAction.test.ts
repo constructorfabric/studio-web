@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
+const toast = vi.hoisted(() => ({
+  error: vi.fn(),
+  success: vi.fn(),
+  info: vi.fn(),
+  loading: vi.fn(),
+}));
 vi.mock('sonner', () => ({ toast }));
 
 import notifySchema from './schemas/action_shell_notification_show.v1.json';
@@ -18,10 +23,20 @@ describe('notify', () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it('refuses a payload with an unknown kind or no text, and shows nothing', async () => {
+  it('replaces the toast with the same id, so progress and its outcome are one toast', async () => {
+    const handler = createNotifyHandler();
+    await handler.handleAction('action', { kind: 'loading', text: 'Checking 3/20', id: 'check:p-1' });
+    await handler.handleAction('action', { kind: 'success', text: '20 checked', id: 'check:p-1' });
+    expect(toast.loading).toHaveBeenCalledWith('Checking 3/20', { id: 'check:p-1' });
+    expect(toast.success).toHaveBeenCalledWith('20 checked', { id: 'check:p-1' });
+  });
+
+  it('refuses a payload with an unknown kind, no text or an id that is not a name', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(noticeOf({ kind: 'warning', text: 'x' })).toBeNull();
     expect(noticeOf({ kind: 'info', text: '' })).toBeNull();
+    expect(noticeOf({ kind: 'info', text: 'x', id: '' })).toBeNull();
+    expect(noticeOf({ kind: 'info', text: 'x', id: 7 })).toBeNull();
     expect(noticeOf(undefined)).toBeNull();
     await createNotifyHandler().handleAction('action', { kind: 'warning', text: 'x' });
     for (const show of Object.values(toast)) expect(show).not.toHaveBeenCalled();

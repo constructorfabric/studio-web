@@ -12,12 +12,17 @@
       "type": "object",
       "properties": {
         "kind": {
-          "enum": ["error", "success", "info"],
-          "$comment": "STUDIO_NOTICE_KINDS in mfe-shared (host/hostActions.ts); picks the toast's icon and colour."
+          "enum": ["error", "success", "info", "loading"],
+          "$comment": "STUDIO_NOTICE_KINDS in mfe-shared (host/hostActions.ts); picks the toast's icon and colour. A loading toast stays until a notice with its id replaces it."
         },
         "text": {
           "type": "string",
           "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional. A notice with the id of a shown toast replaces it (sonner's toast id)."
         }
       },
       "required": ["kind", "text"]
