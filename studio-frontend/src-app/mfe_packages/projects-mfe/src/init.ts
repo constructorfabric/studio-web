@@ -21,11 +21,13 @@ import { workspaceCreateSlice } from './slices/workspaceSlice';
 import { artifactSyncSlice } from './slices/artifactSyncSlice';
 import { sourcesConnectSlice } from './slices/sourcesConnectSlice';
 import { typeDecisionSlice } from './slices/typeDecisionSlice';
+import { specsCheckSlice } from './slices/specsCheckSlice';
 import { initWizardEffects } from './effects/wizardEffects';
 import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { initSourcesConnectEffects } from './effects/sourcesConnectEffects';
 import { initTypeDecisionEffects } from './effects/typeDecisionEffects';
+import { initSpecsCheckEffects } from './effects/specsCheckEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
 import { SpecQualityApiService } from './api/SpecQualityApiService';
@@ -76,5 +78,7 @@ registerSlice(artifactSyncSlice, (dispatch) => initArtifactEffects(dispatch, mfe
 registerSlice(sourcesConnectSlice, (dispatch) => initSourcesConnectEffects(dispatch, mfeApp));
 // A type decision drops the Sources section's cached Specs counts, on the app-bound QueryClient.
 registerSlice(typeDecisionSlice, (dispatch) => initTypeDecisionEffects(dispatch, mfeApp));
+// Check's runs, followed here so a check outlives a switch of section or project.
+registerSlice(specsCheckSlice, initSpecsCheckEffects);
 
 export { mfeApp };
