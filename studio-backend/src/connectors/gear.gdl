@@ -1,0 +1,30 @@
+# Studio Connector: what Gearbox needs to place it in a product.
+#
+# Projected from #[toolkit::gear] in src/connectors/mod.rs, so not written here: the id,
+# the capabilities, the co-located dependencies. Every Studio gear is a
+# module of the one cf-studio-backend crate; `attr` names the file the
+# attribute is in.
+
+gear(
+    maturity = "preview",
+    name = "Studio Connector",
+    description = "Connectors — the providers Studio talks to, and the credentials it talks with.",
+    category = "core-functionality",
+    visibility = "internal",
+    package = cargo(
+        crate_name = "cf-studio-backend",
+        lib = "cf_studio_backend",
+        path = "../..",
+        attr = "src/connectors/mod.rs",
+    ),
+    # The connector plugin spec is declared in this crate (connectors/gts.rs),
+    # so the crate is its own SDK.
+    sdk = cargo(crate_name = "cf-studio-backend", lib = "cf_studio_backend", path = "../.."),
+    extension_points = [
+        extension_point("cf.studio.connector.plugin.v1~", trait = "ConnectorDriver", selector = "vendor"),
+    ],
+    docs = docs(design = "../../../docs/design/studio-connector.md"),
+    # The vendor it takes its drivers from (ConnectorGearConfig): every driver
+    # it takes registers under it.
+    config_schema = config(rust = "ConnectorGearConfig", exposes = ["vendor"]),
+)

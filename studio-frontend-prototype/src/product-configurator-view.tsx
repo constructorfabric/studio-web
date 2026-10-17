@@ -34,8 +34,16 @@ import {
   type BatchResult,
   type CatalogueIndex,
   type ExplanationIndex,
+  type GearOrigin,
   type Part,
 } from "./product-configurator";
+
+/** Whose a part is, in a tooltip. */
+const ORIGIN_TITLE: Record<GearOrigin, string> = {
+  project: "This project's own gear: its code, described by a gear.gdl in its repository",
+  organization: "This organization's gear, from one of its gear repositories",
+  platform: "A platform gear, shared by every organization",
+};
 import { errText, problemOf } from "./problem";
 import { gearLabel } from "./product";
 import { entitiesOf, type GlossaryEntry } from "./spec-model";
@@ -63,7 +71,7 @@ export function useGearCatalogue(token: string, on: boolean): Catalogue {
     let live = true;
     api
       .gearboxCatalogue(token)
-      .then((r) => live && setRead({ index: indexCatalogue(r.catalogue) }))
+      .then((r) => live && setRead({ index: indexCatalogue(r.catalogue, r) }))
       .catch((e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }));
     return () => {
       live = false;
@@ -290,7 +298,14 @@ export function ProductConfigurator({
         />
 
         <div className="pm-box">
-          <div className="pm-h">Product map</div>
+          <div className="pm-h">
+            Product map
+            <span className="pm-legend" aria-label="Whose each part is">
+              <span className="pm-origin-key pm-origin-project">This project</span>
+              <span className="pm-origin-key pm-origin-organization">This organization</span>
+              <span className="pm-origin-key pm-origin-platform">Platform</span>
+            </span>
+          </div>
           <div
             className={`pm-zones${dragging ? " over" : ""}`}
             onDragOver={(e) => {
@@ -320,6 +335,7 @@ export function ProductConfigurator({
                     <Tile
                       key={p.name}
                       part={p}
+                      origin={index.origin(index.find(p.name))}
                       keeps={kept?.get(p.id)}
                       words={plainWords(index.find(p.name), explanations.byId)}
                       selected={p.name === selected}
@@ -387,12 +403,15 @@ function keepsLine(keeps: string[], max = 3): string {
 
 function Tile({
   part,
+  origin,
   keeps,
   words,
   selected,
   onSelect,
 }: {
   part: Part;
+  /** Whose the gear is: the map colours the project's and the organization's own. */
+  origin: GearOrigin;
   keeps?: string[];
   /** The gear in plain words: its explanation, else its description. */
   words: string | null;
@@ -401,7 +420,14 @@ function Tile({
 }) {
   const open = part.unset.length > 0 || part.slots.some((s) => s.chosen.length === 0 || s.unset.length > 0);
   return (
-    <button type="button" className={`pm-tile${selected ? " selected" : ""}`} onClick={onSelect} data-part={part.name}>
+    <button
+      type="button"
+      className={`pm-tile pm-origin-${origin}${selected ? " selected" : ""}`}
+      onClick={onSelect}
+      data-part={part.name}
+      data-origin={origin}
+      title={ORIGIN_TITLE[origin]}
+    >
       {open && <span className="pm-flag" title="Needs something from you" />}
       <Cog size={24} />
       <b>{part.label}</b>
@@ -474,7 +500,9 @@ function Palette({
           {g.items.map((o) => (
             <div
               key={o.name}
-              className="pm-offer"
+              className={`pm-offer pm-origin-${index.origin(index.find(o.name))}`}
+              data-origin={index.origin(index.find(o.name))}
+              title={ORIGIN_TITLE[index.origin(index.find(o.name))]}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData("text/plain", o.name);

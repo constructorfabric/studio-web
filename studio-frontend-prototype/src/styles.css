@@ -2338,9 +2338,22 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .pm-tile:hover { border-color: var(--primary); }
 .pm-tile.selected { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent); }
 .pm-tile.auto { border-style: dashed; background: transparent; cursor: default; }
+/* Whose a part is: the project's own and the organization's coloured, the
+   platform's plain. A stripe on the left, the same on the map and in the
+   palette, and a legend above the map. */
+.pm-tile.pm-origin-project, .pm-offer.pm-origin-project { border-left: 4px solid var(--success); }
+.pm-tile.pm-origin-organization, .pm-offer.pm-origin-organization { border-left: 4px solid var(--chart-4); }
+.pm-legend { display: inline-flex; gap: 10px; margin-left: 12px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.pm-origin-key { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted-foreground); }
+.pm-origin-key::before { content: ""; width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--border); background: var(--card); }
+.pm-origin-key.pm-origin-project::before { background: var(--success); border-color: var(--success); }
+.pm-origin-key.pm-origin-organization::before { background: var(--chart-4); border-color: var(--chart-4); }
 .pm-tile.auto .pm-cog { color: var(--studio-icon-subtle); }
 .pm-tile b { font-size: 13px; }
 .pm-tile small { color: var(--muted-foreground); font-size: 11.5px; overflow-wrap: anywhere; }
+/* Everything after the name sits in the text column, the "Keeps" line too:
+   in the icon's 26px column it broke one letter per line. */
+.pm-tile > small { grid-column: 2; }
 .pm-tile .pm-cog { grid-row: 1 / 3; }
 .pm-flag { position: absolute; top: 6px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--warning, #d97706); }
 .pm-sockets { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }

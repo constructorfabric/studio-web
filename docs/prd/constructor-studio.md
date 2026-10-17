@@ -103,26 +103,7 @@ goals are stated as observable outcomes rather than numeric targets.
 
 ### 1.4 Glossary
 
-These terms are used with exactly this meaning in every document under `docs/`.
-
-| Term | Definition |
-|------|------------|
-| Organization | An account-management tenant that owns members, the shared connection catalogue and the access config. Hidden from navigation in concept v2, not removed. |
-| Workspace | An account-management tenant of type `workspace` under an organization. Concept v2 calls it a root project; the wire keeps `workspace` and `workspace_id` (ADR-0010). |
-| Project | A tenant nested under a workspace; its attributes are tenant metadata (ADR-0010). |
-| Member | A person with a membership in an organization, recorded by `studio-user` (ADR-0016). |
-| Gear | A CF/Gears module linked into the backend binary and registered at link time through `inventory`. A Studio gear lives in `studio-backend/src/`; a platform gear comes from gears-rust. |
-| Plugin | A gear that implements another gear's plugin contract, for example a connector plugin for `studio-connector` or an AuthZ resolver plugin. |
-| Connection | A configured credential for one provider (source host, model provider or chat platform), owned by a tenant; its secret is a credstore reference. |
-| Session | A running Theia IDE container or Pod for one workspace, managed by `studio-session`. |
-| Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
-| Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
-| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
-| Contract | What the Gearbox engine reports a gear doing for others, so it is checked rather than read from prose: a contract the gear provides (`<gear>/<Trait>@v<N>`, projected from `#[toolkit::provides]`), the GTS spec of an extension point it hosts, or the spec of the point it implements as a plugin. |
-| Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
-| Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
-| Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
-| Run | One unit of durable background work in `studio-tasks`. |
+The project's terms are kept in [the glossary](../glossary.md): one row per term, with what it means and the other names it goes by. Link a term there where a document first uses it.
 
 ## 2. Actors
 
@@ -330,7 +311,7 @@ The system **MUST** answer every authorization request through the Studio PDP, w
 
 - [ ] `p2` - **ID**: `cpt-studio-fr-authz-row-roles`
 
-Planned. The Studio PDP **MUST** map a Studio resource type and action to a privilege when that resource's gear starts asking for row-level access; `privilege_for` in `studio_authz_plugin.rs` returns nothing today (ADR-0019, Follow-ups).
+Planned. The Studio PDP **MUST** map a Studio resource type and action to a privilege when that resource's gear starts asking for row-level access; `privilege_for` in `studio_authz_plugin/mod.rs` returns nothing today (ADR-0019, Follow-ups).
 
 - **Rationale**: Row access is the PDP's question; administration is not (ADR-0019 §3).
 - **Actors**: `cpt-studio-actor-member`
@@ -958,8 +939,8 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-canonical-user` | `studio-backend/src/user_profile/`; `/studio-user/v1/{me,resolve,merge,users}`; prototype `profile` |
 | `cpt-studio-fr-invitations-membership` | `studio-backend/src/user_profile/`, platform `keycloak_idp_plugin`, `static_idp_plugin`; `/studio-user/v1/me/{invitations,memberships}`; prototype `people`, project tab `people` |
 | `cpt-studio-fr-identity-directory` | `studio-backend/src/identity_directory/`; `/studio-identity/v1`; prototype platform `identities` |
-| `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
-| `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin.rs`; ADR-0019 Follow-ups |
+| `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin/mod.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
+| `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin/mod.rs`; ADR-0019 Follow-ups |
 | `cpt-studio-fr-presence` | `studio-backend/src/presence/`; `/studio-presence/v1`; `studio-frontend-prototype/src/presence.tsx` |
 | `cpt-studio-fr-connections` | `studio-backend/src/connectors/` and its eleven plugin gears; `/studio-connector/v1`; `connections-mfe` (Connections, Connect source); prototype `connectors`, admin `connectors`, project tab `sources` |
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
@@ -1010,7 +991,7 @@ Platform gears that serve every requirement rather than one — `gear_orchestrat
 | AC3 | `studio-backend/src/connectors/rest.rs`; `cpt-studio-fr-connections` |
 | AC4 | `studio-backend/src/organizations/`; `cpt-studio-fr-org-create` |
 | AC5 | `studio-backend/src/user_profile/`, `studio-backend/src/identity_directory/`; `cpt-studio-fr-invitations-membership`, `cpt-studio-fr-identity-directory` |
-| AC6 | `studio-backend/src/studio_authz_plugin.rs`; `cpt-studio-nfr-tenant-isolation` |
+| AC6 | `studio-backend/src/studio_authz_plugin/mod.rs`; `cpt-studio-nfr-tenant-isolation` |
 | AC7 | `studio-backend/src/credstore_pg/`, `studio-backend/src/tasks/`, `studio-backend/src/studio_events/`; `cpt-studio-nfr-durable-work` |
 | AC8 | `studio-backend/src/documents/classify.rs`, `studio-backend/src/documents/validate.rs`; `cpt-studio-fr-repository-documents` |
 | AC9 | `studio-backend/src/studio_events/`, `studio-backend/src/tasks/`; `cpt-studio-fr-push-channel` |

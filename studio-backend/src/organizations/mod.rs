@@ -12,6 +12,8 @@
 //! resumed (see `service`).
 
 pub mod logo;
+/// The logo document only this gear writes, for the PDP's gear-held list.
+pub use logo::LOGO_METADATA_TYPE;
 pub mod port;
 mod rest;
 pub mod rollups;

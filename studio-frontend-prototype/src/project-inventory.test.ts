@@ -35,4 +35,19 @@ describe("what a project is made of", () => {
   it("puts its own first, the services last", () => {
     expect(rows.map((r) => r.role)).toEqual(["ours", "could", "create", "platform", "platform", "service"]);
   });
+
+  it("lists every gear its own code declares, offered or not, as in its code", () => {
+    const own = [
+      { name: "studio-domain-model", kind: "gear" },
+      { name: "studio-documents", kind: "gear", path: "studio-backend/src/documents" },
+      { name: "github-connector-plugin", kind: "plugin" },
+    ];
+    const withOwn = inventory(plan, { components_in_code: ["studio-documents"] } as never, [], [], () => false, own);
+    const find = (name: string) => withOwn.find((r) => r.name === name);
+    expect(find("studio-domain-model")).toMatchObject({ role: "ours", inCode: true, answers: ["domain"] });
+    expect(find("studio-documents")).toMatchObject({ role: "ours", inCode: true, path: "studio-backend/src/documents" });
+    expect(find("github-connector-plugin")).toMatchObject({ role: "ours", kind: "plugin" });
+    // Its code holds studio-documents, and it is still the project's, not the platform's.
+    expect(withOwn.filter((r) => r.name === "studio-documents")).toHaveLength(1);
+  });
 });

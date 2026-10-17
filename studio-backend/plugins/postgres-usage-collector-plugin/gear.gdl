@@ -1,0 +1,20 @@
+# Postgres Usage Collector Plugin: what Gearbox needs to place it in a product.
+#
+# Projected from #[toolkit::gear] in src/gear.rs, so not written here: the id,
+# the capabilities, the co-located dependencies. Vendored from the platform's
+# TimescaleDB plugin, so usage-collector runs on plain PostgreSQL until the
+# shared Postgres has TimescaleDB (issue #781).
+
+gear(
+    maturity = "preview",
+    name = "Postgres Usage Collector Plugin",
+    description = "Usage Collector storage backend on plain PostgreSQL, vendored from the TimescaleDB plugin.",
+    category = "core-platform-integration",
+    visibility = "internal",
+    package = cargo(
+        crate_name = "studio-postgres-usage-collector-plugin",
+        lib = "postgres_usage_collector_plugin",
+        path = ".",
+    ),
+    implements = "cf.core.uc.plugin.v1~",
+)

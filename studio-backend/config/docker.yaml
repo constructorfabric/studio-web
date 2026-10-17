@@ -273,15 +273,9 @@ gears:
               - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
               - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
             idp_provisioning: false
-        # Connector driver contract (see oidc.yaml for the rationale).
-        - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
-          "$schema": "http://json-schema.org/draft-07/schema#"
-          description: "Studio source connector provider plugin specification"
-          type: "object"
-          # Derived types must compose their base (gts 0.12 inclusion check):
-          # the base is a closed envelope with an open `payload` container.
-          allOf:
-            - "$ref": "gts://gts.cf.toolkit.plugins.plugin.v1~"
+        # The connector driver contract is declared in code (connectors/gts.rs,
+        # ConnectorPluginSpecV1) and registered from there, so it is not listed
+        # here: a second declaration fails the boot with already_exists.
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio source connections (free-form until gears issue #4)"

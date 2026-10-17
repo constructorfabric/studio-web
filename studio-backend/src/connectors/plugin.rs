@@ -7,18 +7,19 @@
 //! provider is present exactly when its plugin gear is linked into the
 //! assembly — no registry of hardcoded constructors.
 //!
-//! ## Why one module per gear
+//! ## Why one module, and one directory, per gear
 //!
 //! `#[toolkit::gear(deps = [...])]` expands to a module-scope `use <dep> as
 //! _gear_dep_<dep>;` alias for every declared dependency. Two gears in the
 //! same module that both depend on `types_registry` therefore emit the same
 //! alias twice and fail to compile (E0252). Each gear gets its own child
 //! module; the shared config type and helpers stay here and are reachable as
-//! `super::*` because private items are visible to descendant modules.
+//! `super::*` because private items are visible to descendant modules. Each
+//! child lives in `plugins/<provider>/`, beside the `gear.gdl` that describes
+//! it to Gearbox: a description names the one file its gear is declared in.
 
 use std::sync::Arc;
 
-use serde::Deserialize;
 use toolkit::client_hub::ClientScope;
 use toolkit::context::GearCtx;
 use tracing::{info, warn};
@@ -27,40 +28,17 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use super::driver::ConnectorDriver;
 use super::gts::plugin_registration;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConnectorPluginConfig {
-    #[serde(default = "default_vendor")]
-    pub vendor: String,
-    #[serde(default = "default_priority")]
-    pub priority: i16,
-}
-
-impl Default for ConnectorPluginConfig {
-    fn default() -> Self {
-        Self {
-            vendor: default_vendor(),
-            priority: default_priority(),
-        }
-    }
-}
-
-fn default_vendor() -> String {
-    "constructorfabric".into()
-}
-fn default_priority() -> i16 {
-    100
-}
-
 /// Shared registration path: publish the instance document, then expose the
 /// driver under the same GTS id.
 async fn register_driver(
     ctx: &GearCtx,
     instance_id: &str,
-    cfg: &ConnectorPluginConfig,
+    vendor: &str,
+    priority: i16,
     driver: Arc<dyn ConnectorDriver>,
 ) -> anyhow::Result<()> {
     let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-    let doc = plugin_registration(instance_id, &cfg.vendor, cfg.priority);
+    let doc = plugin_registration(instance_id, vendor, priority);
     // A profile that does not declare the connector contract (older config,
     // trimmed deployment) must not fail the boot over an optional feature:
     // skip the scoped registration instead, and studio-connector reports the
@@ -83,7 +61,18 @@ async fn register_driver(
     }
     ctx.client_hub()
         .register_scoped::<dyn ConnectorDriver>(ClientScope::gts_id(instance_id), driver);
-    info!(instance_id = %instance_id, vendor = %cfg.vendor, priority = cfg.priority,
+    // What it registered under, beside it: studio-connector selects drivers
+    // by vendor in its own init, before the registry serves what was
+    // registered in this one.
+    ctx.client_hub()
+        .register_scoped::<super::driver::DriverRegistration>(
+            ClientScope::gts_id(instance_id),
+            Arc::new(super::driver::DriverRegistration {
+                vendor: vendor.to_owned(),
+                priority,
+            }),
+        );
+    info!(instance_id = %instance_id, vendor = %vendor, priority = priority,
           "connector driver registered");
     Ok(())
 }
@@ -99,140 +88,23 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
-mod gitlab_plugin {
-    use std::sync::Arc;
+#[path = "plugins/gitlab/mod.rs"]
+mod gitlab_plugin;
 
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
+#[path = "plugins/github/mod.rs"]
+mod github_plugin;
 
-    use super::super::driver::ConnectorDriver;
-    use super::super::gitlab::GitLabDriver;
-    use super::super::gts::GITLAB_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "gitlab-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct GitLabConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for GitLabConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(GitLabDriver::new(http_client()?));
-            register_driver(ctx, GITLAB_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod github_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::driver::ConnectorDriver;
-    use super::super::github::GitHubDriver;
-    use super::super::gts::GITHUB_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "github-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct GitHubConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for GitHubConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(GitHubDriver::new(http_client()?));
-            register_driver(ctx, GITHUB_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod bitbucket_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::bitbucket::BitbucketDriver;
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::BITBUCKET_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "bitbucket-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct BitbucketConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for BitbucketConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(BitbucketDriver::new(http_client()?));
-            register_driver(ctx, BITBUCKET_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
+#[path = "plugins/bitbucket/mod.rs"]
+mod bitbucket_plugin;
 
 /// Anthropic — the credential `@theia/ai-claude-code` authenticates with. Its
 /// key test goes out through studio-llm-proxy (ADR-0039), not a client here.
-mod anthropic_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::ai_providers::{AnthropicDriver, hub_link};
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::ANTHROPIC_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, register_driver};
-
-    #[toolkit::gear(name = "anthropic-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct AnthropicConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for AnthropicConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(AnthropicDriver::new(hub_link(ctx.client_hub())));
-            register_driver(ctx, ANTHROPIC_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
+#[path = "plugins/anthropic/mod.rs"]
+mod anthropic_plugin;
 
 /// OpenAI — what `@theia/ai-codex` uses. Tested through studio-llm-proxy too.
-mod openai_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::ai_providers::{OpenAiDriver, hub_link};
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::OPENAI_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, register_driver};
-
-    #[toolkit::gear(name = "openai-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct OpenAiConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for OpenAiConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(OpenAiDriver::new(hub_link(ctx.client_hub())));
-            register_driver(ctx, OPENAI_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
+#[path = "plugins/openai/mod.rs"]
+mod openai_plugin;
 
 /* ── Chat platforms ──────────────────────────────────────────────────────────
  *
@@ -245,216 +117,26 @@ mod openai_plugin {
  * its profile and that provider stops being offered.
  */
 
-mod slack_plugin {
-    use std::sync::Arc;
+#[path = "plugins/slack/mod.rs"]
+mod slack_plugin;
 
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
+#[path = "plugins/slack_webhook/mod.rs"]
+mod slack_webhook_plugin;
 
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::SLACK_INSTANCE_ID;
-    use super::super::slack::SlackDriver;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
+#[path = "plugins/zulip/mod.rs"]
+mod zulip_plugin;
 
-    #[toolkit::gear(name = "slack-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct SlackConnectorPlugin {}
+#[path = "plugins/zulip_webhook/mod.rs"]
+mod zulip_webhook_plugin;
 
-    #[async_trait]
-    impl Gear for SlackConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(SlackDriver::new(http_client()?));
-            register_driver(ctx, SLACK_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
+#[path = "plugins/discord/mod.rs"]
+mod discord_plugin;
 
-mod slack_webhook_plugin {
-    use std::sync::Arc;
+#[path = "plugins/discord_webhook/mod.rs"]
+mod discord_webhook_plugin;
 
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
+#[path = "plugins/kubernetes/mod.rs"]
+mod kubernetes_plugin;
 
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::SLACK_WEBHOOK_INSTANCE_ID;
-    use super::super::slack::SlackWebhookDriver;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "slack-webhook-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct SlackWebhookConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for SlackWebhookConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(SlackWebhookDriver::new(http_client()?));
-            register_driver(ctx, SLACK_WEBHOOK_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod zulip_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::ZULIP_INSTANCE_ID;
-    use super::super::zulip::ZulipDriver;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "zulip-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct ZulipConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for ZulipConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(ZulipDriver::new(http_client()?));
-            register_driver(ctx, ZULIP_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod zulip_webhook_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::ZULIP_WEBHOOK_INSTANCE_ID;
-    use super::super::zulip::ZulipWebhookDriver;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "zulip-webhook-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct ZulipWebhookConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for ZulipWebhookConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(ZulipWebhookDriver::new(http_client()?));
-            register_driver(ctx, ZULIP_WEBHOOK_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod discord_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::discord::DiscordDriver;
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::DISCORD_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "discord-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct DiscordConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for DiscordConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(DiscordDriver::new(http_client()?));
-            register_driver(ctx, DISCORD_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod discord_webhook_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::discord::DiscordWebhookDriver;
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::DISCORD_WEBHOOK_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "discord-webhook-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct DiscordWebhookConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for DiscordWebhookConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(DiscordWebhookDriver::new(http_client()?));
-            register_driver(ctx, DISCORD_WEBHOOK_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod kubernetes_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::driver::ConnectorDriver;
-    use super::super::gts::KUBERNETES_INSTANCE_ID;
-    use super::super::kubernetes::KubernetesDriver;
-    use super::{ConnectorPluginConfig, register_driver};
-
-    // No `http_client()`: a cluster is reached through kube's own client,
-    // built per call from the connection's CA and credential.
-    #[toolkit::gear(name = "kubernetes-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct KubernetesConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for KubernetesConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> = Arc::new(KubernetesDriver);
-            register_driver(ctx, KUBERNETES_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
-
-mod gear_repository_plugin {
-    use std::sync::Arc;
-
-    use async_trait::async_trait;
-    use toolkit::Gear;
-    use toolkit::context::GearCtx;
-
-    use super::super::driver::ConnectorDriver;
-    use super::super::gear_repository::GearRepositoryDriver;
-    use super::super::gts::GEAR_REPOSITORY_INSTANCE_ID;
-    use super::{ConnectorPluginConfig, http_client, register_driver};
-
-    #[toolkit::gear(name = "gear-repository-connector-plugin", deps = [types_registry])]
-    #[derive(Default)]
-    pub struct GearRepositoryConnectorPlugin {}
-
-    #[async_trait]
-    impl Gear for GearRepositoryConnectorPlugin {
-        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
-            let driver: Arc<dyn ConnectorDriver> =
-                Arc::new(GearRepositoryDriver::new(http_client()?));
-            register_driver(ctx, GEAR_REPOSITORY_INSTANCE_ID, &cfg, driver).await
-        }
-    }
-}
+#[path = "plugins/gear_repository/mod.rs"]
+mod gear_repository_plugin;

@@ -1,0 +1,21 @@
+# Studio Presence: what Gearbox needs to place it in a product.
+#
+# Projected from #[toolkit::gear] in src/presence/mod.rs, so not written here: the id,
+# the capabilities, the co-located dependencies. Every Studio gear is a
+# module of the one cf-studio-backend crate; `attr` names the file the
+# attribute is in.
+
+gear(
+    maturity = "preview",
+    name = "Studio Presence",
+    description = "Who is in Studio right now, and a way to reach them.",
+    category = "core-functionality",
+    visibility = "internal",
+    package = cargo(
+        crate_name = "cf-studio-backend",
+        lib = "cf_studio_backend",
+        path = "../..",
+        attr = "src/presence/mod.rs",
+    ),
+    docs = docs(design = "../../../docs/design/studio-presence.md"),
+)

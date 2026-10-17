@@ -29,7 +29,7 @@ const ENGINE_ROUTES: [&str; 2] = ["/studio-product/", "/studio-components-catalo
 /// The checkout key of a repository at a ref: the same repository connected
 /// twice -- by the platform and by an organization, or by two organizations
 /// -- under the same source id is one clone.
-fn checkout_key(url: &str, git_ref: &str) -> String {
+pub(super) fn checkout_key(url: &str, git_ref: &str) -> String {
     use sha2::Digest as _;
     let digest = sha2::Sha256::digest(format!("{}#{}", url.trim(), git_ref.trim()).as_bytes());
     let hex: String = digest.iter().take(6).map(|b| format!("{b:02x}")).collect();
@@ -55,6 +55,7 @@ pub fn root_of(r: GearRepositorySource) -> GearRoot {
         id: r.source_id,
         connection_id: Some(r.connection_id),
         organization: false,
+        subdir: None,
     }
 }
 
@@ -97,8 +98,9 @@ pub async fn refresh(gearbox: &Gearbox, connectors: &Connectors, ctx: &SecurityC
 /// `now`). The platform's root and no organization are the platform's scope.
 /// The caller has already shown that `ctx` reaches `org`.
 pub async fn scope_for(
-    gearbox: &Gearbox,
+    gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
+    hub: &Arc<toolkit::client_hub::ClientHub>,
     ctx: &SecurityContext,
     org: Option<Uuid>,
     now: bool,
@@ -111,9 +113,22 @@ pub async fn scope_for(
             Ok(octx) => service.gear_repositories(&octx, org).await,
             Err(e) => Err(e),
         };
+        // Its projects' own gears too: the directories their product.gdl
+        // names, read from the repositories they are already connected by.
+        let (project_roots, files) = match acting_in(ctx, org) {
+            Ok(octx) => super::project_roots::read(gearbox, connectors, hub, &octx, org).await,
+            Err(_) => Default::default(),
+        };
+        gearbox.use_project_files(org, files);
         match listed {
             Ok(list) => {
-                gearbox.use_org_repositories(org, list.into_iter().map(root_of).collect());
+                let mut roots: Vec<GearRoot> = list.into_iter().map(root_of).collect();
+                let fresh: Vec<GearRoot> = project_roots
+                    .into_iter()
+                    .filter(|p| roots.iter().all(|r| r.id != p.id))
+                    .collect();
+                roots.extend(fresh);
+                gearbox.use_org_repositories(org, roots);
             }
             Err(e) => {
                 gearbox.mark_org_roots_checked(org);

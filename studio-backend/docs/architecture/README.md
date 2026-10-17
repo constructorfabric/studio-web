@@ -23,7 +23,7 @@
 
 Схема — навигация, а не спецификация. Проверяемые вещи живут в коде:
 
-- состав ассамбли — `src/registered_gears.rs` и `mod`-ы в `src/main.rs`;
+- состав ассамбли — `src/registered_gears.rs` и `mod`-ы в `src/lib.rs` (бинарник `src/main.rs` только вызывает `run_cli`); описание для Gearbox — `gear.gdl` рядом с каждым gear-ом и `product.gdl` в корне репозитория;
 - границы между гирами — тест `assembly::manifest::tests::no_gear_reaches_into_another_gears_private_modules`;
 - feature-флаги и источники зависимостей — `Cargo.toml` (все `cf-gears-*` с crates.io, точные версии — `Cargo.lock`);
 - флаги сборки, дев и релизной — `.github/workflows/studio-delivery.yml`;

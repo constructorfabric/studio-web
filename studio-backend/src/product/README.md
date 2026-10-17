@@ -49,6 +49,14 @@ This README is what you need to work in the directory.
   commit, and optionally a pull request, through the connection's
   `connectors::sdk::Repository`; the provider API is the driver's
   (`connectors/github_write.rs`).
+- `project_roots.rs` — the gears an organization's projects keep in their own
+  repositories: each project's `product.gdl` (at its repository's root) is
+  read from a clone of the source it is already connected by; its
+  `source(id, at = path("…"))` directories become roots of the
+  organization's corpus, after its gear repositories, and the gears it names
+  are the project's product (`GET …/projects/{id}/product` answers them, with
+  `from_file`). No second "gear repository" connection for a project that
+  holds its gears. Read with the organization's roots (`gear_roots::scope_for`).
 - `gearbox.rs` — the corpus checkout, the engine catalogue, extension points,
   completion, the preview, the corpus relay's upstream.
 - `explanations.rs` — gears in plain words: the stored row, the model's

@@ -63,6 +63,7 @@ use account_management_sdk::AccountManagementClient;
 use async_trait::async_trait;
 use axum::Router;
 use credstore_sdk::CredStoreClientV1;
+use serde::Deserialize;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::{Gear, GearCtx};
@@ -170,6 +171,31 @@ pub fn source_driver_ids() -> [&'static str; 3] {
     ]
 }
 
+/// studio-connector's section. Its drivers are plugins of its connector
+/// point; it takes the ones registered under `vendor`, as a toolkit host
+/// selects its plugins (each driver says its own vendor, `constructorfabric`
+/// by default), and leaves a driver of another vendor out.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectorGearConfig {
+    #[serde(default = "default_vendor")]
+    pub vendor: String,
+}
+
+// The default lives in `Default` as a literal, because Gearbox reads a
+// host's selected vendor from there and from nowhere else; serde's default
+// reads it back.
+impl Default for ConnectorGearConfig {
+    fn default() -> Self {
+        Self {
+            vendor: "constructorfabric".into(),
+        }
+    }
+}
+
+fn default_vendor() -> String {
+    ConnectorGearConfig::default().vendor
+}
+
 #[toolkit::gear(
     name = "studio-connector",
     deps = [types_registry, account_management, credstore],
@@ -192,6 +218,7 @@ impl Gear for StudioConnectorGear {
         RegisterResult::ensure_all_ok(&results)?;
         info!("studio-connector: knowledge-graph types cataloged");
 
+        let cfg: ConnectorGearConfig = ctx.config_or_default()?;
         let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
         for id in KNOWN_DRIVERS {
             match ctx
@@ -199,6 +226,19 @@ impl Gear for StudioConnectorGear {
                 .get_scoped::<dyn ConnectorDriver>(&ClientScope::gts_id(id))
             {
                 Ok(d) => {
+                    // Only the drivers of this host's vendor, as each plugin
+                    // published it beside its driver: the types registry does
+                    // not serve what was registered during init yet.
+                    let vendor = ctx
+                        .client_hub()
+                        .get_scoped::<driver::DriverRegistration>(&ClientScope::gts_id(id))
+                        .ok()
+                        .map(|r| r.vendor.clone());
+                    if vendor.as_deref() != Some(cfg.vendor.as_str()) {
+                        info!(instance_id = %id, vendor = ?vendor, selected = %cfg.vendor,
+                              "studio-connector: driver of another vendor left out");
+                        continue;
+                    }
                     info!(instance_id = %id, provider = %d.provider(),
                           "studio-connector: driver resolved");
                     drivers.push((id.to_string(), d));
@@ -323,5 +363,23 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
             people,
             graph,
         ))
+    }
+}
+
+#[cfg(test)]
+mod vendor_tests {
+    use super::*;
+
+    #[test]
+    fn the_host_and_its_drivers_default_to_one_vendor() {
+        // A driver's own default (connectors/plugins/<provider>/mod.rs) and
+        // the host's must agree, or the host takes none of them.
+        assert_eq!(ConnectorGearConfig::default().vendor, "constructorfabric");
+        let doc = gts::plugin_registration(
+            gts::GITHUB_INSTANCE_ID,
+            &ConnectorGearConfig::default().vendor,
+            100,
+        );
+        assert_eq!(doc["vendor"], "constructorfabric");
     }
 }

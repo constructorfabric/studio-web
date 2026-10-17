@@ -22,6 +22,8 @@ export interface CataloguePoint {
 /** One gear of the engine's catalogue (`GearDescriptor`), as much as is read here. */
 export interface CatalogueGear {
   id: string;
+  /** The root it was read from, by source id. */
+  source?: string | null;
   display_name?: string | null;
   description?: string | null;
   category?: string | null;
@@ -52,16 +54,33 @@ export interface GearCatalogue {
   gears: Record<string, CatalogueGear>;
 }
 
+/** Whose a gear is: the platform's, the organization's own gear
+ *  repositories', or the project's own code (its product.gdl's sources). */
+export type GearOrigin = "platform" | "organization" | "project";
+
+/** Where the catalogue's roots come from, as the catalogue route says. */
+export interface CatalogueRoots {
+  roots?: { source_id: string; tier?: string | null }[] | null;
+  /** The roots read out of the organization's projects' own repositories. */
+  project_sources?: string[] | null;
+}
+
 /** The catalogue looked up by engine id and by crate name. */
 export interface CatalogueIndex {
   gears: CatalogueGear[];
+  /** Whose `g` is. A gear whose root is not listed is the platform's. */
+  origin: (g: CatalogueGear | undefined) => GearOrigin;
   find: (name: string) => CatalogueGear | undefined;
   /** The name a pick spells a gear by: its crate, or its engine id when
    *  another gear shares that crate, so the name finds this gear alone. */
   name: (g: CatalogueGear) => string;
 }
 
-export function indexCatalogue(catalogue: GearCatalogue | null | undefined): CatalogueIndex {
+export function indexCatalogue(catalogue: GearCatalogue | null | undefined, from: CatalogueRoots = {}): CatalogueIndex {
+  const projectRoots = new Set(from.project_sources ?? []);
+  const orgRoots = new Set((from.roots ?? []).filter((r) => r.tier === "organization").map((r) => r.source_id));
+  const origin = (g: CatalogueGear | undefined): GearOrigin =>
+    !g?.source ? "platform" : projectRoots.has(g.source) ? "project" : orgRoots.has(g.source) ? "organization" : "platform";
   const gears = Object.values(catalogue?.gears ?? {}).sort((a, b) => a.id.localeCompare(b.id));
   const byId = new Map(gears.map((g) => [g.id, g]));
   // A crate can hold several gears (`cf-gears-mini-chat` is mini-chat and its
@@ -75,6 +94,7 @@ export function indexCatalogue(catalogue: GearCatalogue | null | undefined): Cat
   }
   return {
     gears,
+    origin,
     find: (name) => byId.get(name) ?? byCrate.get(name),
     // The crate when the crate finds this gear, else the engine id.
     name: (g) => (byCrate.get(g.package.crate_name)?.id === g.id ? g.package.crate_name : g.id),

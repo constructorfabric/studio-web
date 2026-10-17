@@ -9,6 +9,14 @@ publish = false
 license = "Apache-2.0"
 description = "Constructor Studio backend server assembled from CF/Gears (account-management demo)"
 
+# The gears and the command line are a library, so a Gearbox product can link
+# the Studio gears it names; the binary is a thin main over it. Doc tests are
+# off: the doc comments quote shapes and commands, not compilable examples.
+[lib]
+name = "cf_studio_backend"
+path = "src/lib.rs"
+doctest = false
+
 [[bin]]
 name = "studio-backend"
 path = "src/main.rs"
@@ -125,6 +133,11 @@ event-broker-sdk = { package = "cf-gears-event-broker-sdk", version = "0.2.6", o
 # `utoipa` is on for graph-storage: it renders its Problem responses into the
 # OpenAPI document.
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "0.9.5", features = ["axum", "utoipa"] }
+# The connector plugin spec as a type (connectors/gts.rs), so Gearbox can check
+# the point studio-connector declares against it; already in the tree.
+toolkit-gts = { package = "cf-gears-toolkit-gts", version = "0.1.6" }
+# What the #[gts_type_schema] expansion names; the version toolkit-gts uses.
+schemars = "1.2.2"
 
 # ── studio-credstore-pg (in-crate; persistent credstore value store, issue #66) ──
 # The only value-store plugin CF/Gears ships keeps values in memory, so every

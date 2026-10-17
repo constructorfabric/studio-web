@@ -696,7 +696,7 @@ const GEAR_HELD_METADATA: [&str; 5] = [
     crate::environments::ENVIRONMENTS_METADATA_TYPE,
     crate::usage::PRICES_METADATA_TYPE,
     crate::environments::DEPLOYMENTS_METADATA_TYPE,
-    crate::organizations::logo::LOGO_METADATA_TYPE,
+    crate::organizations::LOGO_METADATA_TYPE,
     crate::product::EXPLANATIONS_METADATA_TYPE,
 ];
 

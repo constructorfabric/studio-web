@@ -11,7 +11,7 @@ owner: studio-team
 The gear-level design of `cpt-studio-component-authz-plugin`, the Studio PDP.
 The product-level view, and how this gear sits among the others, is in
 [Constructor Studio's design](constructor-studio.md). The code is one file,
-[`studio-backend/src/studio_authz_plugin.rs`](../../studio-backend/src/studio_authz_plugin.rs).
+[`studio-backend/src/studio_authz_plugin/mod.rs`](../../studio-backend/src/studio_authz_plugin/mod.rs).
 
 ## Table of Contents
 
@@ -56,7 +56,7 @@ are a member", which is how a member would appoint themselves owner.
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
-| `cpt-studio-nfr-tenant-isolation` | Every allow stays in the caller's tenant subtree | `cpt-studio-component-authz-plugin` | Every allow carries the clamp's constraints; a project-scoped grant AND-s its scope ids into the clamp of the grant's own tenant, so a scope outside the subtree drops out at evaluation | Unit tests in `studio_authz_plugin.rs` |
+| `cpt-studio-nfr-tenant-isolation` | Every allow stays in the caller's tenant subtree | `cpt-studio-component-authz-plugin` | Every allow carries the clamp's constraints; a project-scoped grant AND-s its scope ids into the clamp of the grant's own tenant, so a scope outside the subtree drops out at evaluation | Unit tests in `studio_authz_plugin/mod.rs` |
 
 #### Key ADRs
 
@@ -186,7 +186,7 @@ organization-wide. An allow is the clamp.
 - [x] `p2` - **ID**: `cpt-studio-interface-authz-plugin`
 
 - **Technology**: `authz_resolver_sdk::AuthZResolverPluginClient`, in process
-- **Location**: [`studio-backend/src/studio_authz_plugin.rs`](../../studio-backend/src/studio_authz_plugin.rs)
+- **Location**: [`studio-backend/src/studio_authz_plugin/mod.rs`](../../studio-backend/src/studio_authz_plugin/mod.rs)
 
 Registered with the types-registry as instance
 `cf.studio.authz_resolver.plugin.v1` (vendor `constructorfabric`, priority 40)
@@ -276,4 +276,4 @@ same rule.
 - **PRD**: [Constructor Studio](../prd/constructor-studio.md)
 - **Design**: [Constructor Studio](constructor-studio.md)
 - **ADRs**: [ADR index](../adr/README.md)
-- **Code**: [`studio-backend/src/studio_authz_plugin.rs`](../../studio-backend/src/studio_authz_plugin.rs)
+- **Code**: [`studio-backend/src/studio_authz_plugin/mod.rs`](../../studio-backend/src/studio_authz_plugin/mod.rs)

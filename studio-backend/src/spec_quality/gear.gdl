@@ -1,0 +1,21 @@
+# Studio Spec Quality: what Gearbox needs to place it in a product.
+#
+# Projected from #[toolkit::gear] in src/spec_quality/gear.rs, so not written here: the id,
+# the capabilities, the co-located dependencies. Every Studio gear is a
+# module of the one cf-studio-backend crate; `attr` names the file the
+# attribute is in.
+
+gear(
+    maturity = "preview",
+    name = "Studio Spec Quality",
+    description = "A thin, authenticated wrapper over the external spec-quality service (the detector API whose Swagger lives at the configured base_url/docs).",
+    category = "core-functionality",
+    visibility = "internal",
+    package = cargo(
+        crate_name = "cf-studio-backend",
+        lib = "cf_studio_backend",
+        path = "../..",
+        attr = "src/spec_quality/gear.rs",
+    ),
+    docs = docs(design = "../../../docs/design/studio-spec-quality.md"),
+)

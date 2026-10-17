@@ -1,0 +1,24 @@
+# Zulip Connector Plugin: what Gearbox needs to place it in a product.
+#
+# Projected from #[toolkit::gear] in src/connectors/plugins/zulip/mod.rs, so not written here: the id,
+# the capabilities, the co-located dependencies. Every Studio gear is a
+# module of the one cf-studio-backend crate; `attr` names the file the
+# attribute is in.
+
+gear(
+    maturity = "preview",
+    name = "Zulip Connector Plugin",
+    description = "The Zulip driver of studio-connector, registered under its connector plugin point.",
+    category = "core-platform-integration",
+    visibility = "internal",
+    package = cargo(
+        crate_name = "cf-studio-backend",
+        lib = "cf_studio_backend",
+        path = "../../../..",
+        attr = "src/connectors/plugins/zulip/mod.rs",
+    ),
+    implements = "cf.studio.connector.plugin.v1~",
+    # The vendor studio-connector selects drivers by, and the priority among
+    # drivers of one vendor.
+    config_schema = config(rust = "Config", exposes = ["vendor", "priority"]),
+)

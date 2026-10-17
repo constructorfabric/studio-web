@@ -1039,7 +1039,7 @@ async fn create_conformance_report(
             )
             .create());
     };
-    let (components, profiles) = catalog.components(&org).await.map_err(internal)?;
+    let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
 
     // The catalogue components the code is made of: gears and plugins its
     // manifests depend on. SDK crates and libraries are how a gear is used,
@@ -1056,6 +1056,36 @@ async fn create_conformance_report(
         .filter(|name| deps.contains(*name))
         .map(str::to_owned)
         .collect();
+    // What the engine is asked about below: the catalogue's gears, by the
+    // names it knows them by.
+    let from_manifests = in_code.clone();
+
+    // The project's own gears are its code by definition -- found in its
+    // repository (a gear.gdl, or the toolkit's attribute) and built there --
+    // and never one of its Cargo dependencies, so the manifests alone left
+    // every one of them out: Studio's own Components tab said none of its
+    // forty gears was in its code. Offered to the plan as candidates too, the
+    // way the plan route offers them.
+    if let Ok(project_uuid) = Uuid::parse_str(project_id) {
+        let registry = ports.registry();
+        let (own, _) =
+            local::project_gears(catalog.as_ref(), registry.as_deref(), &org, project_uuid).await;
+        let built: Vec<String> = own
+            .0
+            .iter()
+            .filter_map(|g| g.get("name").and_then(Value::as_str))
+            .filter(|name| {
+                own.1
+                    .get(*name)
+                    .and_then(|p| p.pointer("/auto/gear_status"))
+                    .and_then(Value::as_str)
+                    == Some("built")
+            })
+            .map(str::to_owned)
+            .collect();
+        local::with_project_gears(&mut components, &mut profiles, own);
+        in_code.extend(built);
+    }
     in_code.sort();
     in_code.dedup();
 
@@ -1124,7 +1154,7 @@ async fn create_conformance_report(
 
     // The engine's view of the code's own set: what it would add, and what it
     // says cannot run. Best-effort -- the comparison stands without it.
-    let gearbox: Vec<EngineChangeDto> = match catalog.engine_completion(&in_code).await {
+    let gearbox: Vec<EngineChangeDto> = match catalog.engine_completion(&from_manifests).await {
         Some(Ok(changes)) => changes
             .into_iter()
             .map(|c| EngineChangeDto {

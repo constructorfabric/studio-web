@@ -264,3 +264,29 @@ describe("gears in plain words", () => {
     expect(s).toEqual({ done: 2, failed: 0, skipped: 3 });
   });
 });
+
+describe("whose a part is", () => {
+  const idx = indexCatalogue(
+    {
+      gears: {
+        "api-gateway": { id: "api-gateway", source: "gears-rust", package: { crate_name: "cf-gears-api-gateway" } },
+        "acme-billing": { id: "acme-billing", source: "acme-gears", package: { crate_name: "acme-billing" } },
+        "studio-documents": { id: "studio-documents", source: "studio-backend", package: { crate_name: "cf-studio-backend" } },
+      },
+    },
+    {
+      roots: [
+        { source_id: "gears-rust", tier: "platform" },
+        { source_id: "acme-gears", tier: "organization" },
+      ],
+      project_sources: ["studio-backend"],
+    },
+  );
+
+  it("is the project's for a root its own repository holds, the organization's for its gear repositories, else the platform's", () => {
+    expect(idx.origin(idx.find("studio-documents"))).toBe("project");
+    expect(idx.origin(idx.find("acme-billing"))).toBe("organization");
+    expect(idx.origin(idx.find("api-gateway"))).toBe("platform");
+    expect(idx.origin(undefined)).toBe("platform");
+  });
+});

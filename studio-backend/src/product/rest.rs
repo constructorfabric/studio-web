@@ -106,7 +106,7 @@ impl Product {
         let gearbox = self.gearbox.as_ref()?;
         let org = self.service.organization_of_project(ctx, tenant).await;
         let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
-        super::gear_roots::scope_for(gearbox, &connectors, ctx, org, now).await
+        super::gear_roots::scope_for(gearbox, &connectors, &self.hub, ctx, org, now).await
     }
 
     fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
@@ -241,6 +241,12 @@ pub struct GearboxCatalogueDto {
     /// (ADR-0046): an IDE brings in each under its `source_id`. The `corpus_*`
     /// fields above are the first, for an IDE that reads one.
     pub roots: Vec<GearboxRootDto>,
+    /// The roots read out of the organization's projects' own repositories
+    /// (their product.gdl's `path(...)` sources), by source id: the project's
+    /// own gears. Not in `roots`, because an IDE has the project open already
+    /// and must not clone it a second time as a corpus.
+    #[serde(default)]
+    pub project_sources: Vec<String>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
@@ -892,10 +898,50 @@ async fn get_project_product(
         .get_project_product(&ctx, &project_id.to_string())
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // A project whose repository keeps its own product.gdl is that product:
+    // its gears are what the file names, whatever was picked here. Read with
+    // the organization's roots, so asking for the scope reads it when due.
+    let _ = product.scope(&ctx, project_id, false).await;
+    let file = product
+        .gearbox
+        .as_ref()
+        .and_then(|g| g.project_file(project_id));
+    let node = match file {
+        Some(file) => Some(from_product_file(node, &project_id.to_string(), &file)),
+        None => node,
+    };
     Ok(Json(ProductRecordListDto {
         nodes: to_dtos(node.into_iter().collect()),
         truncated: false,
     }))
+}
+
+/// The product record as the project's own `product.gdl` says it: its gears,
+/// and where they were read (`from_file`). What the file does not say -- the
+/// profile, the configuration, the last preview -- stays the record's.
+fn from_product_file(
+    node: Option<GtsNode>,
+    project_id: &str,
+    file: &super::gearbox::ProjectFile,
+) -> GtsNode {
+    let mut value = node
+        .and_then(|n| n.value.as_object().cloned())
+        .unwrap_or_default();
+    value.insert(
+        "project_id".to_owned(),
+        Value::String(project_id.to_owned()),
+    );
+    value.insert("gears".to_owned(), serde_json::json!(file.gears));
+    value.insert(
+        "from_file".to_owned(),
+        serde_json::json!({
+            "path": file.path,
+            "repo": file.repo,
+            "branch": file.branch,
+            "commit": file.commit,
+        }),
+    );
+    crate::catalog_graph::gts::project_product_node(project_id, Value::Object(value))
 }
 
 async fn save_project_product(
@@ -1145,9 +1191,13 @@ async fn gearbox_catalogue(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin(scope);
-    let roots = gearbox
+    let (project_roots, corpus_roots): (Vec<_>, Vec<_>) = gearbox
         .read_roots(scope)
         .await
+        .into_iter()
+        .partition(|r| r.root.subdir.is_some());
+    let project_sources = project_roots.into_iter().map(|r| r.root.id).collect();
+    let roots = corpus_roots
         .into_iter()
         .map(|r| catalogue_root(scope, r))
         .collect();
@@ -1160,6 +1210,7 @@ async fn gearbox_catalogue(
         corpus_clone_path: corpus_needs_token.then(|| CORPUS_GIT_PATH.to_string()),
         corpus_needs_token,
         roots,
+        project_sources,
         catalogue: Value::clone(&raw),
     }))
 }
@@ -1274,7 +1325,15 @@ async fn corpus_git(
                 );
             };
             let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&product.hub));
-            super::gear_roots::scope_for(gearbox, &connectors, &octx, Some(org), false).await
+            super::gear_roots::scope_for(
+                gearbox,
+                &connectors,
+                &product.hub,
+                &octx,
+                Some(org),
+                false,
+            )
+            .await
         }
     };
     let Some((url, token)) = gearbox.corpus_fetch(scope, root.source_id.as_deref()) else {

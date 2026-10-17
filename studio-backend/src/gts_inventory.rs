@@ -205,6 +205,9 @@ pub fn schemas() -> Vec<Value> {
     for s in crate::connectors::gts::catalog_type_schemas() {
         out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
     }
+    // The driver contract is not here: it is declared with #[gts_type_schema]
+    // and registered from the toolkit's inventory, like the platform SDKs'
+    // plugin specs (`no_profile_declares_a_type_the_code_registers`).
     for s in crate::connectors::gts::graph_type_schemas() {
         out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
     }
@@ -277,10 +280,9 @@ pub fn plugin_instance_segments() -> Vec<Value> {
 /// below can prove every shipped profile declares every one of them.
 pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
     vec![
-        (
-            "studio-connector",
-            crate::connectors::gts::CONNECTOR_PLUGIN_TYPE,
-        ),
+        // Not the connector driver contract (CONNECTOR_PLUGIN_TYPE): the code
+        // declares it (ConnectorPluginSpecV1), and a profile declaring it too
+        // stops the boot -- see `no_profile_declares_a_type_the_code_registers`.
         (
             "studio-connector",
             crate::connectors::gts::CONNECTIONS_METADATA_TYPE,
@@ -433,6 +435,34 @@ mod tests {
         ("postgres.yaml", include_str!("../config/postgres.yaml")),
         ("k8s.yaml", include_str!("../config/k8s.yaml")),
     ];
+
+    /// A type the code declares with `#[gts_type_schema]` is registered from
+    /// the toolkit's inventory at boot; a profile that lists it under
+    /// `static_entities` as well makes types-registry refuse the second copy
+    /// with `already_exists`, and the backend does not start. Found by
+    /// booting once (the connector driver contract moved into code); this
+    /// makes it a red test instead.
+    #[test]
+    fn no_profile_declares_a_type_the_code_registers() {
+        let from_code: BTreeSet<String> = toolkit_gts::all_inventory_type_schemas()
+            .expect("the inventory's schemas")
+            .iter()
+            .filter_map(|s| s["$id"].as_str())
+            .map(|id| id.trim_start_matches("gts://").to_owned())
+            .collect();
+        assert!(
+            from_code.contains(crate::connectors::gts::CONNECTOR_PLUGIN_TYPE),
+            "the connector driver contract is not in the toolkit's inventory: {from_code:?}"
+        );
+        for (name, text) in PROFILES {
+            let declared = declared_ids(text);
+            let twice: Vec<&String> = declared.intersection(&from_code).collect();
+            assert!(
+                twice.is_empty(),
+                "{name} declares types the code already registers, which stops the boot: {twice:?}"
+            );
+        }
+    }
 
     /// graph-storage validates a type's traits against what its base
     /// declares, and the edge base declares none -- so an edge type carrying

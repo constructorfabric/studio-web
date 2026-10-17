@@ -422,6 +422,18 @@ pub fn absorb(gears: &mut Vec<LocalGear>, found: LocalGear) {
         .iter_mut()
         .find(|g| g.name.eq_ignore_ascii_case(&found.name) || inside(g))
     {
+        // A described directory with no crate of its own is a module of a
+        // larger crate (Studio's gears are `studio-backend/src/<module>/` with a
+        // `gear.gdl` each), so it was named after the directory: the attribute
+        // inside it says the gear's real name.
+        let named_by_dir = g
+            .path
+            .rsplit('/')
+            .next()
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(&g.name));
+        if named_by_dir && home(g) && !g.name.eq_ignore_ascii_case(&found.name) {
+            g.name = found.name.clone();
+        }
         g.built = true;
         for r in found.runtime {
             if !g.runtime.contains(&r) {

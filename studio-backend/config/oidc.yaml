@@ -217,18 +217,11 @@ gears:
               - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
               - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
             idp_provisioning: false
-        # Connector driver contract. Each driver plugin registers a
-        # PluginV1 instance derived from this type, so `GET
-        # /studio-connector/v1/providers` is really "what is in the
-        # types registry", not a hardcoded list.
-        - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
-          "$schema": "http://json-schema.org/draft-07/schema#"
-          description: "Studio source connector provider plugin specification"
-          type: "object"
-          # Derived types must compose their base (gts 0.12 inclusion check):
-          # the base is a closed envelope with an open `payload` container.
-          allOf:
-            - "$ref": "gts://gts.cf.toolkit.plugins.plugin.v1~"
+        # The connector driver contract (each driver plugin registers a PluginV1
+        # instance derived from it, so `GET /studio-connector/v1/providers` is
+        # what is in the types registry) is declared in code (connectors/gts.rs,
+        # ConnectorPluginSpecV1) and registered from there, so it is not listed
+        # here: a second declaration fails the boot with already_exists.
         # Connection catalogue of one tenant. Tokens are NOT here — only
         # credstore references. inheritance_policy: inherit lets a
         # workspace see its organization's connections; per AM contract

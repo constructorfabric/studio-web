@@ -19,6 +19,7 @@ mod gear_roots;
 mod gearbox;
 mod new_gear;
 pub mod port;
+mod project_roots;
 mod rest;
 mod scaffold;
 pub mod sdk;

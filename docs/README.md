@@ -36,6 +36,7 @@ repository.
 
 **Contracts and catalogues** — the rules the code is held to:
 
+- [glossary.md](glossary.md) — the project's terms, one row per term, with the other names each goes by.
 - [api-conventions.md](api-conventions.md) — the REST and event contract (ADR-0020).
 - [errors-catalog.md](errors-catalog.md) — the canonical error categories.
 - [events-catalog.md](events-catalog.md) — the `studio-events` vocabulary.

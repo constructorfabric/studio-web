@@ -214,6 +214,61 @@ fn an_attribute_inside_a_described_gear_is_that_gear() {
 }
 
 #[test]
+fn a_described_module_takes_its_attributes_name() {
+    // Studio's own layout: a gear.gdl beside each module of one crate. With no
+    // Cargo.toml in the directory the description is named after it
+    // (`documents`); the attribute inside says what the gear is called.
+    let mut gears = vec![
+        gear(
+            "documents",
+            "studio-backend/src/documents",
+            "studio-backend/src/documents/gear.gdl",
+        ),
+        gear(
+            "github",
+            "studio-backend/src/connectors/plugins/github",
+            "studio-backend/src/connectors/plugins/github/gear.gdl",
+        ),
+    ];
+    absorb(
+        &mut gears,
+        gear(
+            "studio-documents",
+            "studio-backend/src/documents",
+            "studio-backend/src/documents/mod.rs",
+        ),
+    );
+    absorb(
+        &mut gears,
+        gear(
+            "github-connector-plugin",
+            "studio-backend/src/connectors/plugins/github",
+            "studio-backend/src/connectors/plugins/github/mod.rs",
+        ),
+    );
+    let names: Vec<&str> = gears.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, vec!["studio-documents", "github-connector-plugin"]);
+    assert!(gears.iter().all(|g| g.built));
+
+    // A crate directory keeps its crate's name: `cf-gears-api-gateway` is not
+    // the directory's.
+    let mut crate_gear = vec![gear(
+        "cf-gears-api-gateway",
+        "gears/api-gateway",
+        "gears/api-gateway/gear.gdl",
+    )];
+    absorb(
+        &mut crate_gear,
+        gear(
+            "api-gateway",
+            "gears/api-gateway",
+            "gears/api-gateway/src/lib.rs",
+        ),
+    );
+    assert_eq!(crate_gear[0].name, "cf-gears-api-gateway");
+}
+
+#[test]
 fn a_gear_is_offered_in_the_catalogues_shape() {
     let mut g = gear(
         "studio-spec-mapping",

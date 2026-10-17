@@ -49,6 +49,35 @@ pub struct Snapshot {
     pub gears: Vec<Described>,
 }
 
+/// The gears this binary links, described, in start order: the registry the
+/// runtime builds, walked again. Needs no config, so it also answers offline.
+fn linked() -> anyhow::Result<Vec<Described>> {
+    let registry = GearRegistry::discover_and_build()
+        .map_err(|e| anyhow::anyhow!("studio-assembly: the gear registry: {e}"))?;
+    let linked: Vec<manifest::Linked> = registry
+        .gears()
+        .iter()
+        .map(|entry| manifest::Linked {
+            name: entry.name().to_owned(),
+            deps: entry.deps().iter().map(|d| (*d).to_owned()).collect(),
+            capabilities: entry
+                .caps()
+                .labels()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        })
+        .collect();
+    Ok(manifest::describe(&linked))
+}
+
+/// What `studio-backend gears` prints: the manifest's gears, as the endpoint
+/// answers them, from the code alone. `scripts/product-gdl.mjs` hands this list
+/// to the Gearbox engine, which writes the product description from it.
+pub fn gears_json() -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(&rest::gears_of(&linked()?))?)
+}
+
 #[toolkit::gear(name = "studio-assembly", capabilities = [rest])]
 #[derive(Default)]
 pub struct AssemblyGear {
@@ -58,23 +87,6 @@ pub struct AssemblyGear {
 #[async_trait]
 impl Gear for AssemblyGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-        let registry = GearRegistry::discover_and_build()
-            .map_err(|e| anyhow::anyhow!("studio-assembly: the gear registry: {e}"))?;
-        let linked: Vec<manifest::Linked> = registry
-            .gears()
-            .iter()
-            .map(|entry| manifest::Linked {
-                name: entry.name().to_owned(),
-                deps: entry.deps().iter().map(|d| (*d).to_owned()).collect(),
-                capabilities: entry
-                    .caps()
-                    .labels()
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect(),
-            })
-            .collect();
-
         // The session gear's own parse of its own section: the image it will
         // actually start, with the same defaults it applies.
         let session: StudioSessionConfig =
@@ -85,7 +97,7 @@ impl Gear for AssemblyGear {
             features: manifest::features(),
             sessions_enabled: session.enabled,
             session_image: session.enabled.then(|| session.image.clone()),
-            gears: manifest::describe(&linked),
+            gears: linked()?,
         };
         tracing::info!(
             gears = snapshot.gears.len(),
@@ -115,3 +127,7 @@ impl RestApiCapability for AssemblyGear {
         Ok(rest::register_routes(router, openapi, snapshot))
     }
 }
+
+#[cfg(test)]
+#[path = "product_tests.rs"]
+mod product_tests;

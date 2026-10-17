@@ -2,10 +2,6 @@
   "config_declared_types": [
     {
       "gear": "studio-connector",
-      "type_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
-    },
-    {
-      "gear": "studio-connector",
       "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
     },
     {

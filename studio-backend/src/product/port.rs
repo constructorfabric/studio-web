@@ -123,7 +123,7 @@ pub async fn engine_scope(
         .ok()?;
     let org = crate::organizations::sdk::organization_of(am.as_ref(), ctx, tenant).await;
     let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub));
-    super::gear_roots::scope_for(&gearbox, &connectors, ctx, org, false).await
+    super::gear_roots::scope_for(&gearbox, &connectors, hub, ctx, org, false).await
 }
 
 /// `router` with the platform's gear repositories read into the engine on the

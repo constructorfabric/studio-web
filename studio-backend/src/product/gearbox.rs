@@ -1527,6 +1527,10 @@ pub struct SourcePin<'a> {
     pub id: &'a str,
     pub url: &'a str,
     pub rev: Option<&'a str>,
+    /// A source inside the project's own repository, at this path from its
+    /// root (`studio-backend`): written as a `path(...)` from the product
+    /// file, because it travels with it.
+    pub within: Option<&'a str>,
 }
 
 /// The `product.gdl` for a composition, to be saved at `product_path` in the
@@ -1551,6 +1555,7 @@ pub fn render_product_gdl(
         id: CORPUS_SOURCE_ID,
         url: pin.as_ref().map_or("", |p| p.url),
         rev: pin.as_ref().map(|p| p.rev),
+        within: None,
     };
     render_product_gdl_from(
         product_id,
@@ -1647,13 +1652,20 @@ pub fn render_product_gdl_from(
     let declared = sources
         .iter()
         .map(|s| {
-            let at = match s.rev {
-                Some(rev) => format!(
+            let at = match (s.within, s.rev) {
+                (Some(within), _) => format!(
+                    "path({})",
+                    gdl_string(&format!(
+                        "{}{within}",
+                        "../".repeat(depth.saturating_sub(1))
+                    ))
+                ),
+                (None, Some(rev)) => format!(
                     "git(url = {}, rev = {})",
                     gdl_string(s.url),
                     gdl_string(rev)
                 ),
-                None => format!("path({})", gdl_string(&format!("{up}{}", s.id))),
+                (None, None) => format!("path({})", gdl_string(&format!("{up}{}", s.id))),
             };
             format!("source(id = {}, at = {at})", gdl_string(s.id))
         })
@@ -1958,6 +1970,11 @@ pub struct GearRoot {
     pub connection_id: Option<uuid::Uuid>,
     /// An organization's own repository, rather than the platform's.
     pub organization: bool,
+    /// The directory inside the checkout the engine reads, when the root is
+    /// not the repository itself: a project's `source(id, at = path("..."))`
+    /// (studio-web's gears are `studio-backend/`). Its last segment is the
+    /// source id, because the engine names a root by its directory.
+    pub subdir: Option<String>,
 }
 
 impl GearRoot {
@@ -1969,6 +1986,7 @@ impl GearRoot {
             && self.source.url == other.source.url
             && self.source.git_ref == other.source.git_ref
             && self.source.token == other.source.token
+            && self.subdir == other.subdir
     }
 }
 
@@ -2072,6 +2090,34 @@ pub struct Gearbox {
     /// Each organization's own roots, by organization.
     org_roots: std::sync::Mutex<HashMap<uuid::Uuid, RootSet>>,
     checkouts: CheckoutLocks,
+    /// The `product.gdl` each project keeps in its repository, read with its
+    /// organization's roots (`project_roots`), by project.
+    project_files: std::sync::Mutex<HashMap<uuid::Uuid, ProjectFile>>,
+}
+
+/// A project's own product description, as its repository holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFile {
+    pub organization: uuid::Uuid,
+    /// `owner/repo` and the branch it was read from.
+    pub repo: String,
+    pub branch: String,
+    /// Its path in the repository: `product.gdl`.
+    pub path: String,
+    pub commit: Option<String>,
+    /// Every gear it names, hosts and plugins, by gear id.
+    pub gears: Vec<String>,
+}
+
+/// Where a root is checked out: `gearbox-roots/<key>/<source id>`, the
+/// engine naming a root by its directory; a root inside its repository is the
+/// repository's one clone, `gearbox-roots/<key>/repo`, read at its subdir.
+pub fn checkout_dir(workdir: &Path, root: &GearRoot) -> PathBuf {
+    let base = workdir.join("gearbox-roots").join(&root.source.key);
+    match root.subdir {
+        Some(_) => base.join("repo"),
+        None => base.join(&root.id),
+    }
 }
 
 /// The deployment's corpus as the one root, when it names one.
@@ -2098,6 +2144,7 @@ fn deployment_roots(cfg: &GearboxConfig) -> Vec<GearRoot> {
         },
         connection_id: None,
         organization: false,
+        subdir: None,
     }]
 }
 
@@ -2126,7 +2173,51 @@ impl Gearbox {
             roots: std::sync::Mutex::new(RootSet::new(list)),
             org_roots: std::sync::Mutex::new(HashMap::new()),
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            project_files: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Check `source` out at `dir` (see [`checkout_dir`]) under the same lock
+    /// the corpus takes, so a project's clone read for its product file and
+    /// the corpus reading it as a root never fetch into it at once. Blocking.
+    pub fn checkout_at(
+        &self,
+        dir: &Path,
+        source: &CorpusSource,
+    ) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
+        let lock = Arc::clone(
+            self.checkouts
+                .lock()
+                .expect("gearbox checkout locks")
+                .entry(dir.to_path_buf())
+                .or_default(),
+        );
+        let _held = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let git_ref = Some(source.git_ref.as_str()).filter(|g| !g.trim().is_empty());
+        crate::connectors::sdk::git_checkout::clone_or_update_into(
+            dir,
+            &source.url,
+            &source.username,
+            &source.token,
+            git_ref,
+        )
+    }
+
+    /// Replace organization `org`'s projects' product files.
+    pub fn use_project_files(&self, org: uuid::Uuid, files: Vec<(uuid::Uuid, ProjectFile)>) {
+        let mut map = self.project_files.lock().expect("gearbox project files");
+        map.retain(|_, f| f.organization != org);
+        map.extend(files);
+    }
+
+    /// The product file project `project` keeps, when its organization's
+    /// roots were read and it has one.
+    pub fn project_file(&self, project: uuid::Uuid) -> Option<ProjectFile> {
+        self.project_files
+            .lock()
+            .expect("gearbox project files")
+            .get(&project)
+            .cloned()
     }
 
     /// The platform's roots, in the engine's order.
@@ -2474,7 +2565,7 @@ impl Gearbox {
                         // root by its directory -- the real one, after links
                         // are followed -- so the checkout itself carries the
                         // id; the key keeps two repositories apart.
-                        let dir = workdir.join("gearbox-roots").join(&s.key).join(&r.id);
+                        let dir = checkout_dir(&workdir, r);
                         let lock = Arc::clone(
                             locks
                                 .lock()
@@ -2501,7 +2592,10 @@ impl Gearbox {
                 match result {
                     Ok(c) => roots.push(Root {
                         id: r.id.clone(),
-                        dir: c.dir,
+                        dir: match &r.subdir {
+                            Some(sub) => c.dir.join(sub),
+                            None => c.dir,
+                        },
                         commit: c.commit,
                     }),
                     // Keep serving the checkout we have; a flaky fetch should
@@ -2720,18 +2814,29 @@ impl Gearbox {
         // Each root at the commit it was read at, so the description says by
         // itself what it was built from.
         let read = self.read_roots(scope).await;
-        let pins: Vec<SourcePin<'_>> = read
-            .iter()
-            .map(|r| SourcePin {
-                id: &r.root.id,
-                url: &r.root.source.url,
-                rev: r.commit.as_deref(),
-            })
-            .collect();
         let gear_source: BTreeMap<String, String> = catalogue
             .gears
             .values()
             .filter_map(|g| g.source.clone().map(|s| (g.id.clone(), s)))
+            .collect();
+        // A project's own root (inside its repository) is this product's
+        // source only when one of its gears is in it: another project's
+        // directory means nothing beside this file.
+        let used: BTreeSet<&str> = composition
+            .gears
+            .iter()
+            .flat_map(|g| std::iter::once(&g.id).chain(&g.plugins))
+            .filter_map(|id| gear_source.get(id).map(String::as_str))
+            .collect();
+        let pins: Vec<SourcePin<'_>> = read
+            .iter()
+            .filter(|r| r.root.subdir.is_none() || used.contains(r.root.id.as_str()))
+            .map(|r| SourcePin {
+                id: &r.root.id,
+                url: &r.root.source.url,
+                rev: r.commit.as_deref(),
+                within: r.root.subdir.as_deref(),
+            })
             .collect();
         // Config arrives keyed as the picks are (crate names); the description
         // names gears by engine id.
@@ -3981,6 +4086,7 @@ mod tests {
             },
             connection_id: Some(uuid::Uuid::new_v4()),
             organization: false,
+            subdir: None,
         }
     }
 
@@ -4091,6 +4197,45 @@ mod tests {
     }
 
     #[test]
+    fn a_source_inside_the_projects_repository_is_a_path_from_the_product_file() {
+        let c = compose(&catalogue(), &names(&["api-gateway"]));
+        let pins = [SourcePin {
+            id: "studio-backend",
+            url: "https://github.com/constructorfabric/studio-web.git",
+            rev: Some("cccc"),
+            within: Some("studio-backend"),
+        }];
+        let at_root = render_product_gdl_from(
+            "studio-web",
+            "product.gdl",
+            "Studio",
+            &c,
+            "dev",
+            &pins,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert!(
+            at_root.contains(r#"source(id = "studio-backend", at = path("studio-backend"))"#),
+            "{at_root}"
+        );
+        let below = render_product_gdl_from(
+            "studio-web",
+            "products/studio-web/product.gdl",
+            "Studio",
+            &c,
+            "dev",
+            &pins,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        assert!(
+            below.contains(r#"source(id = "studio-backend", at = path("../../studio-backend"))"#),
+            "{below}"
+        );
+    }
+
+    #[test]
     fn each_gear_names_the_repository_it_came_from_and_each_repository_is_pinned() {
         let c = compose(&catalogue(), &names(&["api-gateway", "credstore"]));
         let gear_source: BTreeMap<String, String> =
@@ -4106,11 +4251,13 @@ mod tests {
                     id: "gears-core",
                     url: "https://github.com/constructorfabric/gears-core.git",
                     rev: Some("aaaa"),
+                    within: None,
                 },
                 SourcePin {
                     id: "gears-security",
                     url: "https://github.com/constructorfabric/gears-security.git",
                     rev: Some("bbbb"),
+                    within: None,
                 },
             ],
             &gear_source,

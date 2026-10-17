@@ -1112,3 +1112,13 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         ))
     }
 }
+
+/// What a connector driver registered under: published by its plugin beside
+/// the driver, under the same GTS instance id, so studio-connector can select
+/// drivers by vendor in its `init` -- the types registry does not serve an
+/// instance registered during init until the assembly is ready.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverRegistration {
+    pub vendor: String,
+    pub priority: i16,
+}

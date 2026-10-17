@@ -100,31 +100,35 @@ fn manifest_of(snapshot: &Snapshot) -> AssemblyManifestDto {
         },
         sessions_enabled: snapshot.sessions_enabled,
         session_image: snapshot.session_image.clone(),
-        gears: snapshot
-            .gears
-            .iter()
-            .map(|g| AssemblyGearDto {
-                name: g.name.clone(),
-                origin: g.origin.as_str().to_owned(),
-                role: g.role.as_str().to_owned(),
-                extends: g.extends.clone(),
-                depends_on: g.depends_on.clone(),
-                uses: g
-                    .uses
-                    .iter()
-                    .map(|u| AssemblyUseDto {
-                        gear: u.gear.clone(),
-                        via: u.via.to_owned(),
-                        items: u.items.clone(),
-                    })
-                    .collect(),
-                capabilities: g.capabilities.clone(),
-                order: g.order,
-                purpose: g.purpose.clone(),
-                design_doc: g.design_doc.clone(),
-            })
-            .collect(),
+        gears: gears_of(&snapshot.gears),
     }
+}
+
+/// The gears as the answer carries them.
+pub fn gears_of(gears: &[super::Described]) -> Vec<AssemblyGearDto> {
+    gears
+        .iter()
+        .map(|g| AssemblyGearDto {
+            name: g.name.clone(),
+            origin: g.origin.as_str().to_owned(),
+            role: g.role.as_str().to_owned(),
+            extends: g.extends.clone(),
+            depends_on: g.depends_on.clone(),
+            uses: g
+                .uses
+                .iter()
+                .map(|u| AssemblyUseDto {
+                    gear: u.gear.clone(),
+                    via: u.via.to_owned(),
+                    items: u.items.clone(),
+                })
+                .collect(),
+            capabilities: g.capabilities.clone(),
+            order: g.order,
+            purpose: g.purpose.clone(),
+            design_doc: g.design_doc.clone(),
+        })
+        .collect()
 }
 
 async fn get_manifest(

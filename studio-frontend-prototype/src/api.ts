@@ -2459,7 +2459,9 @@ export function setCurrentOrganization(id: string | undefined): void {
 }
 
 /** Gears that keep their data per organization and take `?organization_id=`. */
-const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/"];
+// studio-product too: its engine reads the organization's corpus -- its gear
+// repositories and its projects' own gears -- not the caller's home tenant's.
+const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/", "/studio-product/"];
 
 /**
  * `path` with the organization on screen named, for a gear that keeps its
@@ -5298,7 +5300,14 @@ export const api = {
   /** The gear corpus's catalogue as the Gearbox engine reads it: every gear
    *  with its name, category, extension points and config schema. */
   gearboxCatalogue: (token: string) =>
-    request<{ catalogue: GearCatalogue; corpus_ref: string; corpus_commit?: string | null }>(
+    request<{
+      catalogue: GearCatalogue;
+      corpus_ref: string;
+      corpus_commit?: string | null;
+      roots?: { source_id: string; tier?: string | null }[];
+      /** The roots read out of the organization's projects' own repositories. */
+      project_sources?: string[];
+    }>(
       `/studio-product/v1/gearbox/catalogue`,
       token,
     ),

@@ -10,7 +10,24 @@
 //! `#[gts_type_schema]`, matching how this crate already declares
 //! `cf.studio.workspace.settings.v1`. Runtime behaviour is identical — the
 //! registry stores the same documents — and the assembly crate stays free of
-//! the GTS macro toolchain.
+//! the GTS macro toolchain -- with one exception, [`ConnectorPluginSpecV1`].
+
+use toolkit::gts::PluginV1;
+use toolkit_gts::gts_type_schema;
+
+/// The connector plugin spec as a type: what Gearbox checks studio-connector's
+/// extension point (`gear.gdl`) and every driver's `implements` against.
+/// Declared only; the registry still learns the schema from the profile's
+/// `static_entities`, so nothing registers it twice.
+#[derive(Default)]
+#[gts_type_schema(
+    dir_path = "schemas",
+    base = PluginV1,
+    type_id = gts_id!("cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"),
+    description = "Connector driver plugin specification",
+    properties = "",
+)]
+pub struct ConnectorPluginSpecV1;
 
 /// Plugin contract every connector driver derives from.
 pub const CONNECTOR_PLUGIN_TYPE: &str =

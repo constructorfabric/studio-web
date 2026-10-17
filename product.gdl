@@ -1,0 +1,65 @@
+# Generated product description for Constructor Studio.
+#
+# Edit this file in Gearbox Studio. Comments carry the reasoning for choices
+# made here — preserve them when changing the description.
+
+product(
+    id = "studio-web",
+    name = "Constructor Studio",
+    version = "0.1.0",
+
+    sources = [
+        source(id = "studio-backend", at = path("studio-backend")),
+        source(id = "gears-rust", at = path("../gears-rust"))
+    ],
+
+    profiles = [
+        embedded(id = "dev"),
+    ],
+    default_profile = "dev",
+
+    gears = [
+        use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin"), plugin("static-idp-plugin")]),
+        use_gear("api-gateway", source = "gears-rust"),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("oidc-authn-plugin"), plugin("static-authn-plugin")]),
+        use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("static-authz-plugin"), plugin("studio-authz-plugin")]),
+        use_gear("credstore", source = "gears-rust", plugins = [plugin("static-credstore-plugin"), plugin("studio-credstore-pg")]),
+        use_gear("file-storage", source = "gears-rust"),
+        use_gear("graph-storage", source = "gears-rust"),
+        use_gear("grpc-hub", source = "gears-rust"),
+        use_gear("mini-chat", source = "gears-rust", plugins = [plugin("static-mini-chat-audit-plugin"), plugin("static-mini-chat-model-policy-plugin")]),
+        use_gear("nodes-registry", source = "gears-rust"),
+        use_gear("oagw", source = "gears-rust"),
+        use_gear("resource-group", source = "gears-rust"),
+        use_gear("simple-user-settings", source = "gears-rust"),
+        use_gear("studio-artifact-ingest", source = "studio-backend"),
+        use_gear("studio-assembly", source = "studio-backend"),
+        use_gear("studio-components-catalog", source = "studio-backend"),
+        use_gear("studio-connector", source = "studio-backend", plugins = [plugin("anthropic-connector-plugin"), plugin("bitbucket-connector-plugin"), plugin("discord-connector-plugin"), plugin("discord-webhook-connector-plugin"), plugin("gear-repository-connector-plugin"), plugin("github-connector-plugin"), plugin("gitlab-connector-plugin"), plugin("kubernetes-connector-plugin"), plugin("openai-connector-plugin"), plugin("slack-connector-plugin"), plugin("slack-webhook-connector-plugin"), plugin("zulip-connector-plugin"), plugin("zulip-webhook-connector-plugin")]),
+        use_gear("studio-documents", source = "studio-backend"),
+        use_gear("studio-domain-model", source = "studio-backend"),
+        use_gear("studio-environments", source = "studio-backend"),
+        use_gear("studio-events", source = "studio-backend"),
+        use_gear("studio-git", source = "studio-backend"),
+        use_gear("studio-identity-directory", source = "studio-backend"),
+        use_gear("studio-insight", source = "studio-backend"),
+        use_gear("studio-kits", source = "studio-backend"),
+        use_gear("studio-llm-proxy", source = "studio-backend"),
+        use_gear("studio-notify", source = "studio-backend"),
+        use_gear("studio-organizations", source = "studio-backend"),
+        use_gear("studio-presence", source = "studio-backend"),
+        use_gear("studio-product", source = "studio-backend"),
+        use_gear("studio-reports", source = "studio-backend"),
+        use_gear("studio-scheduler", source = "studio-backend"),
+        use_gear("studio-secrets-bootstrap", source = "studio-backend"),
+        use_gear("studio-session", source = "studio-backend"),
+        use_gear("studio-spec-mapping", source = "studio-backend"),
+        use_gear("studio-spec-quality", source = "studio-backend"),
+        use_gear("studio-tasks", source = "studio-backend"),
+        use_gear("studio-usage", source = "studio-backend"),
+        use_gear("studio-user", source = "studio-backend"),
+        use_gear("tenant-resolver", source = "gears-rust"),
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("usage-collector", source = "gears-rust", plugins = [plugin("postgres-usage-collector-plugin")]),
+    ],
+)

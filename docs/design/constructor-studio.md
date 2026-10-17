@@ -84,7 +84,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-studio-nfr-credential-isolation` | No secret in a session, a browser or a response | `cpt-studio-component-llm-proxy`, `cpt-studio-component-connector`, `cpt-studio-component-session` | The proxy attaches the provider key server-side; connections return the credstore reference; the session receives Git credentials through an inline credential helper | `test-theia-session-gate` job (`theia/docker/git-credentials.test.mjs`) and `test-backend` in `studio-delivery.yml` |
-| `cpt-studio-nfr-tenant-isolation` | Every allow stays in the caller's tenant subtree | `cpt-studio-component-authz-plugin` | The tenant clamp is AND-ed with every role-path allow | Unit tests in `studio-backend/src/studio_authz_plugin.rs` |
+| `cpt-studio-nfr-tenant-isolation` | Every allow stays in the caller's tenant subtree | `cpt-studio-component-authz-plugin` | The tenant clamp is AND-ed with every role-path allow | Unit tests in `studio-backend/src/studio_authz_plugin/mod.rs` |
 | `cpt-studio-nfr-durable-work` | Runs, schedules, events and credentials survive a restart | `cpt-studio-component-tasks`, `cpt-studio-component-scheduler`, `cpt-studio-component-events`, `cpt-studio-component-credstore-pg` | Each keeps its state in its own PostgreSQL database | Store tests against the shared test PostgreSQL (`test_pg.rs`), e.g. `credstore_pg/store_tests.rs`, `studio_events/store_tests.rs` |
 | `cpt-studio-nfr-session-bounds` | Four-hour lifetime, bounded ports | `cpt-studio-component-session` | `reap_task.rs` collects expired sessions; the Docker driver allocates from the configured port range | `test-backend` job |
 | `cpt-studio-nfr-list-pagination` | One paging contract | `cpt-studio-component-api-contract` | `pagination.rs` parses `offset`/`limit` for every list | `api_contract` drift test |
@@ -744,7 +744,7 @@ The Studio PDP layers roles over the tenant model (ADR-0009).
 
 ##### Responsibility scope
 
-`studio-backend/src/studio_authz_plugin.rs`: an AuthZ resolver plugin that returns the tenant clamp for every request — the token's tenant plus every organization the person is an active member of, cached for 10 s and invalidated by the membership generation; a request with no tenant is denied — and, for a role-mapped resource type, AND-s role grants with it. A write to the access config is decided by ownership, not by the clamp. `privilege_for` maps no resource type today.
+`studio-backend/src/studio_authz_plugin/mod.rs`: an AuthZ resolver plugin that returns the tenant clamp for every request — the token's tenant plus every organization the person is an active member of, cached for 10 s and invalidated by the membership generation; a request with no tenant is denied — and, for a role-mapped resource type, AND-s role grants with it. A write to the access config is decided by ownership, not by the clamp. `privilege_for` maps no resource type today.
 
 ##### Responsibility boundaries
 

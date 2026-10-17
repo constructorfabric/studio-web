@@ -2,7 +2,17 @@
 
 The Constructor Studio backend service, assembled from [CF/Gears](https://github.com/constructorfabric/gears-rust). First milestone: the users + multi-tenancy layer, demonstrated end-to-end on the **account-management** gear (capability review: `../../REVIEW-account-management-for-studio.md`).
 
-**What it is.** A single HTTP API service — the CF/Gears analogue of an ASP.NET Core WebAPI host. It contains almost no code of its own (~150 lines): gears are linked in as library crates and discovered at link time (`src/registered_gears.rs`); `main.rs` only loads layered configuration and hands control to the toolkit bootstrap. All functionality comes from the gears. The frontend consumes it via REST + OpenAPI (`/cf/docs`, ready for TS client codegen) and SSE for streaming.
+**What it is.** A single HTTP API service — the CF/Gears analogue of an ASP.NET Core WebAPI host. It contains almost no code of its own (~150 lines): gears are linked in as library crates and discovered at link time (`src/registered_gears.rs`). The crate is a library (`src/lib.rs`: the gear modules and the command line) with a thin `studio-backend` binary over it (`src/main.rs`), so a Gearbox product can link the Studio gears it names. All functionality comes from the gears. The frontend consumes it via REST + OpenAPI (`/cf/docs`, ready for TS client codegen) and SSE for streaming.
+
+## Studio as a Gearbox product
+
+Studio is described the way any product built from gears is, so the portal and the engine read what it is made of from the code instead of guessing it.
+
+- **`gear.gdl` beside every Studio gear** (`src/<module>/gear.gdl`, the connector drivers under `src/connectors/plugins/<provider>/`): what Gearbox needs that Rust does not already say — the name, a description, the category, the module file the `#[toolkit::gear]` is in (`cargo(..., attr = ...)`, since every Studio gear is a module of this one crate), what a plugin implements. The id, the capabilities and the dependencies are projected from the attribute.
+- **`product.gdl` at the repository root**: Studio as a product — the gears this binary links, each from `studio-backend` (this crate) or `gears-rust`, plugins under their hosts. The engine writes it, not we: `studio-backend gears` prints what is linked, and `node scripts/product-gdl.mjs --gears <that> --gears-rust ../gears-rust [--image studio-backend]` hands the list to `gearbox/product/create` and `applyEdits`; which host a plugin goes under is the catalogue's answer. The script refuses an engine other than the one the images pin (`STUDIO_GEARBOX_REF`).
+- **`cargo test`** fails when `product.gdl` names other gears than the binary links (`assembly::product_tests`). `gear-orchestrator` is linked and named by no product: it is the toolkit's runtime.
+
+Checked with the pinned engine: `gearbox validate --root ../gears-rust --root studio-backend --product product.gdl` reports no error. `gearbox resolve` stops at one gap outside this repository: account-management fills tenant-resolver's point itself (`tr_plugin.enabled: true` in our profiles), which gears-rust's description of it does not say (GBX0511, constructorfabric/gears-rust#5374). studio-connector takes its drivers by `vendor` like any toolkit host (`ConnectorGearConfig`, each driver publishing what it registered under beside it), so its point resolves.
 
 ## Assembly (fixed at link time; optional parts are Cargo features `llm`, `graph`, `theia-bridge`, `theia-event-broker`)
 

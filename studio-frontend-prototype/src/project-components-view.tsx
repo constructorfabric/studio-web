@@ -11,7 +11,7 @@ import { DataTable } from "./data-table";
 import { ScaffoldModal } from "./documents";
 import { errText } from "./format";
 import { usePortalNav } from "./portal-nav";
-import { inventory, ROLE_LABEL, type InventoryRole, type InventoryRow } from "./project-inventory";
+import { inventory, ownGearsOf, ROLE_LABEL, type InventoryRole, type InventoryRow, type OwnGear } from "./project-inventory";
 import type { ProjectComponent } from "./project-checks";
 import { gearProblem, rowCoverage } from "./spec-coverage";
 
@@ -20,6 +20,8 @@ interface Read {
   code: Conformance | null;
   picks: string[];
   services: ProjectComponent[];
+  /** The gears the project's own code declares, from the registry. */
+  own: OwnGear[];
   /** What could not be read, each in a sentence; the rest still shows. */
   partial: string[];
 }
@@ -49,7 +51,7 @@ export function ProjectComponentsInventory({
     setError(null);
     const partial: string[] = [];
     try {
-      const [plan, product, services, code] = await Promise.all([
+      const [plan, product, services, code, registry] = await Promise.all([
         api.projectPlan(token, forProject),
         api.projectProduct(token, forProject).catch(() => {
           partial.push("the product could not be read");
@@ -65,9 +67,22 @@ export function ProjectComponentsInventory({
             partial.push("the code could not be read");
             return null;
           }),
+        // Every gear the project's code declares, whether a capability offers
+        // it or not; the plan only names the ones its documents ask for.
+        api.componentRegistry(token, { project_id: forProject }).catch(() => {
+          partial.push("the project's own gears could not be read");
+          return null;
+        }),
       ]);
       if (asking.current !== forProject) return;
-      setRead({ plan: plan.items, code, picks: product?.gears ?? [], services: services?.items ?? [], partial });
+      setRead({
+        plan: plan.items,
+        code,
+        picks: product?.gears ?? [],
+        services: services?.items ?? [],
+        own: ownGearsOf(registry?.items ?? [], forProject),
+        partial,
+      });
     } catch (e) {
       if (asking.current === forProject) setError(errText(e));
     }
@@ -83,7 +98,7 @@ export function ProjectComponentsInventory({
     const needsGear = (row: PlanRow) =>
       !row.nonfunctional &&
       !!(row.gap || row.unbuilt || (rowCoverage(row, read.picks).cover === "open" && !row.candidates.some((c) => c.built === "built")));
-    return inventory(read.plan, read.code, read.picks, read.services, needsGear);
+    return inventory(read.plan, read.code, read.picks, read.services, needsGear, read.own);
   }, [read]);
   const n = (role: InventoryRole) => rows?.filter((r) => r.role === role).length ?? 0;
   const roles: InventoryRole[] = ["ours", "could", "create", "organization", "platform", "service"];
