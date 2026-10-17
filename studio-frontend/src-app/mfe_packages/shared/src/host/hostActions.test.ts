@@ -32,4 +32,17 @@ describe('notify', () => {
       },
     });
   });
+
+  it('passes the id through, for a toast the next notice replaces', () => {
+    const executeActionsChain = vi.fn(() => Promise.resolve());
+    const bridge = { executeActionsChain } as unknown as ChildMfeBridge;
+    notify(bridge, { kind: 'loading', text: 'Checking', id: 'specs-check:p-1' }, 'test');
+    expect(executeActionsChain).toHaveBeenCalledWith({
+      action: {
+        type: STUDIO_ACTION_NOTIFY,
+        target: FRONTX_SCREEN_DOMAIN,
+        payload: { kind: 'loading', text: 'Checking', id: 'specs-check:p-1' },
+      },
+    });
+  });
 });
