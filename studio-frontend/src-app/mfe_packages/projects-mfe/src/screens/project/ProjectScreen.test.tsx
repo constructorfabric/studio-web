@@ -44,6 +44,11 @@ vi.mock('../../shared/useSourcesSync', () => ({ useSourcesSync: vi.fn() }));
 vi.mock('../../actions/sourcesConnectActions', () => ({ openSourcesConnect }));
 vi.mock('./sections/ArtifactsSection', () => ({ ArtifactsSection: () => null }));
 vi.mock('./sections/specs/SpecsSection', () => ({ SpecsSection: () => null }));
+vi.mock('./sections/specs/SpecsActions', () => ({
+  SpecsActions: ({ projectId, projectName }: { projectId: string; projectName: string }) => (
+    <button type="button">{`check ${projectId} ${projectName}`}</button>
+  ),
+}));
 vi.mock('./sections/sources/SourcesSection', () => ({ SourcesSection: () => null }));
 vi.mock('./sections/PlaceholderSection', () => ({ PlaceholderSection: () => null }));
 
@@ -74,6 +79,14 @@ describe('the project header', () => {
       expect(connectSource()).toBeNull();
     }
   );
+
+  it('offers Check in Specs, for the open project', () => {
+    nav.section = 'specs';
+    render(<ProjectScreen projectId="p-1" />);
+
+    expect(screen.getByRole('button', { name: 'check p-1 Billing' })).toBeTruthy();
+    expect(connectSource()).toBeNull();
+  });
 
   it('offers nothing while the project loads or when it cannot be read', () => {
     nav.section = 'sources';
