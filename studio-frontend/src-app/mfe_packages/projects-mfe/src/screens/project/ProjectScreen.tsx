@@ -20,10 +20,12 @@ import { ArtifactsSection } from './sections/ArtifactsSection';
 import { SpecsSection } from './sections/specs/SpecsSection';
 import { SourcesSection } from './sections/sources/SourcesSection';
 import { SourcesActions } from './sections/sources/SourcesActions';
+import { SpecsActions, type SpecsActionsProps } from './sections/specs/SpecsActions';
 import styles from './ProjectScreen.module.css';
 
 /** A section's buttons in the project header. */
-const SECTION_ACTIONS: Partial<Record<ProjectSection, React.FC>> = {
+const SECTION_ACTIONS: Partial<Record<ProjectSection, React.FC<SpecsActionsProps>>> = {
+  specs: SpecsActions,
   sources: SourcesActions,
 };
 
@@ -144,7 +146,9 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
           <h2 className={styles.title}>
             {busy ? <Skeleton className={styles.titleSkeleton} /> : t(`section_${section}`)}
           </h2>
-          {!busy && project && Actions ? <Actions /> : null}
+          {!busy && project && Actions ? (
+            <Actions projectId={projectId} projectName={project.name} />
+          ) : null}
         </header>
         <div className={styles.body} data-section={section}>
           {body()}

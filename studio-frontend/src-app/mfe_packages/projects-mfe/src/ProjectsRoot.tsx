@@ -21,6 +21,7 @@ import {
 } from './slices/navSlice';
 import { StudioScopeProvider } from './shared/workspaceProjects';
 import { publishWorkspaceScope } from './actions/workspaceActions';
+import { useSpecsCheckToasts } from './screens/project/sections/specs/useSpecsCheckToasts';
 import styles from './ProjectsRoot.module.css';
 
 /** This MFE's screen-domain root. */
@@ -34,6 +35,8 @@ export const ProjectsRoot: React.FC = () => {
   useEffect(() => {
     publishWorkspaceScope(bridge);
   }, [bridge]);
+  // Here, not in the Specs section: a check's toast outlives a switch of section or project.
+  useSpecsCheckToasts();
   const projectId = useAppSelector((state) => state[NAV_SLICE_KEY].projectId);
 
   const projectIdRef = useRef(projectId);
