@@ -66,7 +66,7 @@ export type CheckRun =
   /** Its POST was refused. */
   | { kind: 'refused'; reason: string | null }
   /** `createRunFollower` gave up on it. */
-  | { kind: 'lost'; documents: number }
+  | { kind: 'lost' }
   | {
       kind: 'ended';
       /** What its 202 said it would check. */

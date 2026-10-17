@@ -95,7 +95,7 @@ export function initSpecsCheckEffects(dispatch: AppDispatch): void {
         },
         onLost: (runId) => {
           const entry = runs.find((run) => run.runId === runId);
-          if (entry) end(entry, { kind: 'lost', documents: entry.documents });
+          if (entry) end(entry, { kind: 'lost' });
         },
       });
       follower.follow(
