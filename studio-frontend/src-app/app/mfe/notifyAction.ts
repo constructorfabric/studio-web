@@ -6,10 +6,12 @@ import { STUDIO_NOTICE_KINDS, type StudioNotice } from '@constructor-studio/mfe-
 
 /** The notify payload as the schema names it, or `null` when it is not one. */
 export function noticeOf(payload: Record<string, unknown> | undefined): StudioNotice | null {
-  const { kind, text } = payload ?? {};
+  const { kind, text, id } = payload ?? {};
   const known = STUDIO_NOTICE_KINDS.find((candidate) => candidate === kind);
   if (!known || typeof text !== 'string' || !text) return null;
-  return { kind: known, text };
+  if (id === undefined) return { kind: known, text };
+  if (typeof id !== 'string' || !id) return null;
+  return { kind: known, text, id };
 }
 
 export function createNotifyHandler(): ActionHandler {
@@ -19,6 +21,8 @@ export function createNotifyHandler(): ActionHandler {
       console.warn('[shell] notify: payload refused', payload);
       return;
     }
-    toast[notice.kind](notice.text);
+    // sonner replaces the toast that has this id, or shows a new one.
+    if (notice.id === undefined) toast[notice.kind](notice.text);
+    else toast[notice.kind](notice.text, { id: notice.id });
   });
 }

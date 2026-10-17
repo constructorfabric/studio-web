@@ -76,6 +76,10 @@ vi.mock('./slices/typeDecisionSlice', () => ({
   typeDecisionSlice: { name: 'projects/typeDecision' },
 }));
 
+vi.mock('./slices/specsCheckSlice', () => ({
+  specsCheckSlice: { name: 'projects/specsCheck' },
+}));
+
 vi.mock('./effects/wizardEffects', () => ({
   initWizardEffects: vi.fn(),
 }));
@@ -96,6 +100,10 @@ vi.mock('./effects/typeDecisionEffects', () => ({
   initTypeDecisionEffects: vi.fn(),
 }));
 
+vi.mock('./effects/specsCheckEffects', () => ({
+  initSpecsCheckEffects: vi.fn(),
+}));
+
 describe('projects-mfe init', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -110,6 +118,7 @@ describe('projects-mfe init', () => {
     build.mockReturnValue(expectedApp);
 
     const { initWorkspaceEffects } = await import('./effects/workspaceEffects');
+    const { initSpecsCheckEffects } = await import('./effects/specsCheckEffects');
     const module = await import('./init');
 
     // Seven gears: account-management, studio-connector, studio-artifact-ingest,
@@ -166,6 +175,11 @@ describe('projects-mfe init', () => {
     expect(registerSlice).toHaveBeenCalledWith(
       { name: 'projects/typeDecision' },
       expect.any(Function)
+    );
+    // Check's runs; the effect needs only the dispatch.
+    expect(registerSlice).toHaveBeenCalledWith(
+      { name: 'projects/specsCheck' },
+      initSpecsCheckEffects
     );
     expect(module.mfeApp).toBe(expectedApp);
   });
