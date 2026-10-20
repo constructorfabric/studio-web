@@ -1,33 +1,36 @@
-# Generated product description for Constructor Studio.
+# The product this project ships, as Gearbox composes it.
 #
-# Edit this file in Gearbox Studio. Comments carry the reasoning for choices
-# made here — preserve them when changing the description.
+# Written by Constructor Studio from the gears picked for the project. The
+# gears come from `gears-rust`, `studio-backend` at the commit this was checked against;
+# the Studio IDE brings that commit in when it opens the product. From a
+# checkout of `gears-rust`, `studio-backend` at that commit, resolve it with
+#
+#   gearbox resolve --root ../gears-rust --root ../studio-backend --product product.gdl --profile dev
+#
+# Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
 
 product(
     id = "studio-web",
-    name = "Constructor Studio",
+    name = "Studio-web",
     version = "0.1.0",
-
-    sources = [
-        source(id = "studio-backend", at = path("studio-backend")),
-        source(id = "gears-rust", at = path("../gears-rust"))
-    ],
-
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "b90bea456f0894dc703cf7e9b546397e8fcda215")),
+                   source(id = "studio-backend", at = path("studio-backend"))],
+    # Where the gears that keep data keep it: one Postgres per profile
+    # (GDL 1.1). The password is only ever a `${NAME}` the deployment
+    # sets; change the host and user to the server you run.
     profiles = [
-        embedded(
-            id = "dev",
-            database = postgres(
-                host = "127.0.0.1",
-                port = 5433,
-                user = "studio",
-                password = "${STUDIO_PG_PASSWORD}",
-            ),
-        ),
+        embedded(id = "dev",
+                 database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
+        self_hosted(id = "local", host = "studio-web", worker_discovery = "directory",
+                    target_dir = "target",
+                    database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
+        kubernetes(id = "prod", discovery = "static", namespace = "studio-web",
+                   database = postgres(host = "postgres", user = "app", password = "${GEARS_PG_PASSWORD}",
+                                       existing_secret = "studio-web-db")),
     ],
-    default_profile = "dev",
-
+    default_profile = "local",
     gears = [
-        use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin"), plugin("static-idp-plugin")]),
+        use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin", config = {"vendor": "constructorfabric"}), plugin("static-idp-plugin")]),
         use_gear("api-gateway", source = "gears-rust"),
         use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("oidc-authn-plugin"), plugin("static-authn-plugin")]),
         use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("static-authz-plugin"), plugin("studio-authz-plugin")]),
