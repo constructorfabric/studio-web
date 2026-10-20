@@ -45,6 +45,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
 
 import type { AppDispatch } from '@gears-frontx/react';
+import { createRunFollower } from '@constructor-studio/mfe-shared';
 import { initSpecsCheckEffects } from './specsCheckEffects';
 import reducer, { type SpecsCheckState } from '../slices/specsCheckSlice';
 import type { SpecsCheckRequest } from '../events/specsEvents';
@@ -260,6 +261,23 @@ describe('a check', () => {
     followers[0].options.onLost('run-leak', new Error('not found'));
     await settle();
     expect(state().checks['p-1'].outcome).toEqual({ kind: 'lost' });
+  });
+
+  it('ends as lost when following breaks off, so the project can be checked again', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(createRunFollower).mockImplementationOnce(() => ({
+      follow: () => {
+        throw new Error('SseStreamProtocol not initialized');
+      },
+      stop: vi.fn(),
+    }));
+    const { request, state } = harness();
+    request();
+    await settle();
+    expect(state().checks['p-1'].outcome).toEqual({ kind: 'lost' });
+    request();
+    await settle();
+    expect(analyze).toHaveBeenCalledTimes(4);
   });
 
   it('starts nothing with nothing to check', async () => {

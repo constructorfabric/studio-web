@@ -146,6 +146,12 @@ export function initSpecsCheckEffects(dispatch: AppDispatch): void {
     if (targets.length === 0 || running.has(projectId)) return;
     running.add(projectId);
     dispatch(checkStarted({ projectId, project, count: targets.length }));
-    void check(request).finally(() => running.delete(projectId));
+    void check(request)
+      .catch((error: unknown) => {
+        // Without an outcome the project would read as being checked for good.
+        console.error('[specs-check] the check broke off:', error);
+        dispatch(checkEnded({ projectId, outcome: { kind: 'lost' } }));
+      })
+      .finally(() => running.delete(projectId));
   });
 }
