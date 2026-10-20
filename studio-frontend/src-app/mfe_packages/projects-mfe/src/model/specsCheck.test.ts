@@ -142,12 +142,12 @@ describe('the outcome of a check', () => {
     expect(outcome).toEqual({ kind: 'not_started', reason: 'Spec Quality is not configured' });
   });
 
-  it('one POST refused: the specs it would have checked count as not checked', () => {
+  it('one POST refused: the specs it would have checked count as not checked, with no M', () => {
     const outcome = checkOutcome([{ kind: 'refused', reason: 'detector busy' }, ended(ALL)], 4);
     expect(outcome).toEqual({
       kind: 'checked',
       checked: 0,
-      findings: 4,
+      findings: null,
       unchecked: 3,
       reason: 'detector busy',
     });
@@ -155,6 +155,13 @@ describe('the outcome of a check', () => {
 
   it('a run lost', () => {
     expect(checkOutcome([ended(ALL), { kind: 'lost' }], 2)).toEqual({ kind: 'lost' });
+  });
+
+  it('a run that succeeded without saying which specs it checked reads as lost', () => {
+    for (const result of [null, {}, { items: 'none' }]) {
+      const silent = ended([], { result } as Partial<CheckRun>);
+      expect(checkOutcome([ended(ALL), silent], 2)).toEqual({ kind: 'lost' });
+    }
   });
 
   it('has no M without the read of the findings', () => {

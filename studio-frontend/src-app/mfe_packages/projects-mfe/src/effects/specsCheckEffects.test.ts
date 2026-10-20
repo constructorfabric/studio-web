@@ -229,7 +229,7 @@ describe('a check', () => {
     expect(state().checks['p-1'].outcome).toEqual({
       kind: 'checked',
       checked: 0,
-      findings: 7,
+      findings: null,
       unchecked: 2,
       reason: 'detector unavailable',
     });

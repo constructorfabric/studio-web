@@ -83,7 +83,10 @@ export type SpecsCheckOutcome =
   | {
       kind: 'checked';
       checked: number;
-      /** M: the checked specs' findings; `null` when they could not be read. */
+      /**
+       * M: the findings of the specs sent, every detector's, as the Review column
+       * shows them; `null` when they could not be read or nothing was checked.
+       */
       findings: number | null;
       /** K: the specs a run did not check. */
       unchecked: number;
@@ -142,6 +145,8 @@ export function checkOutcome(
     };
   }
   if (ended.length < accepted.length) return { kind: 'lost' };
+  // A run that succeeded says which specs it checked; without that, nobody can tell.
+  if (ended.some((run) => !Array.isArray(run.result?.items))) return { kind: 'lost' };
 
   const taken = Math.max(...ended.map((run) => run.documents));
   const outcomes = ended.map((run) => itemsOf(run.result));
@@ -158,7 +163,7 @@ export function checkOutcome(
   return {
     kind: 'checked',
     checked,
-    findings,
+    findings: checked > 0 ? findings : null,
     unchecked: Math.max(0, taken - checked),
     reason: refusals.find((reason) => reason !== null) ?? firstError ?? null,
   };
