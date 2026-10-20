@@ -80,6 +80,10 @@ describe("a check's toast", () => {
       { kind: 'loading', text: 'check_progress_at#20(Billing|3|20|prd.md)', id: 'specs-check:p-1' },
     ]);
 
+    // A new answer from the store that says the same: the run ahead moved, the one behind did not.
+    checks.current = {
+      'p-1': running({ purpose: '8/20 · docs/b.md', leak: '3/20 · docs/prd.md' }),
+    };
     rerender();
     expect(notify).toHaveBeenCalledTimes(1);
 
