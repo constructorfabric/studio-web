@@ -62,12 +62,10 @@ export const STUDIO_ACTION_NOTIFY =
 /** `loading` stays up until a notice with its `id` replaces it, so a `loading` notice needs an `id`. */
 export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info', 'loading'] as const;
 
-export interface StudioNotice {
-  kind: (typeof STUDIO_NOTICE_KINDS)[number];
-  text: string;
-  /** A notice with the id of a shown toast replaces it, so progress and its outcome are one toast. */
-  id?: string;
-}
+/** A notice with the id of a shown toast replaces it, so progress and its outcome are one toast. */
+export type StudioNotice =
+  | { kind: Exclude<(typeof STUDIO_NOTICE_KINDS)[number], 'loading'>; text: string; id?: string }
+  | { kind: 'loading'; text: string; id: string };
 
 /** projects-mfe's New workspace overlay, opened from organization-mfe as well. */
 export const STUDIO_EXTENSION_WORKSPACE_CREATE =

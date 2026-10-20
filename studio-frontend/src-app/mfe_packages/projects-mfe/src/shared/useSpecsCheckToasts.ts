@@ -12,7 +12,10 @@ import {
 /** One toast per project: its progress, then its outcome, in place. */
 const specsCheckToastId = (projectId: string): string => `specs-check:${projectId}`;
 
-function outcomeNotice(t: ScreenText, project: string, outcome: SpecsCheckOutcome): StudioNotice {
+/** A notice before it is given its project's toast id. */
+type CheckNotice = Omit<StudioNotice, 'id'>;
+
+function outcomeNotice(t: ScreenText, project: string, outcome: SpecsCheckOutcome): CheckNotice {
   switch (outcome.kind) {
     case 'checked': {
       const checked = t.count('check_checked', outcome.checked);
@@ -48,7 +51,7 @@ function outcomeNotice(t: ScreenText, project: string, outcome: SpecsCheckOutcom
 }
 
 /** What a check's toast says now. */
-export function checkNotice(t: ScreenText, check: SpecsCheck): StudioNotice {
+export function checkNotice(t: ScreenText, check: SpecsCheck): CheckNotice {
   const { project, count, outcome } = check;
   if (outcome) return outcomeNotice(t, project, outcome);
   const phase = behindPhase(Object.values(check.phases));

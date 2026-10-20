@@ -5,6 +5,7 @@ import {
   STUDIO_ARTIFACT_KINDS,
   isStudioArtifactKind,
   notify,
+  type StudioNotice,
 } from './hostActions';
 
 describe('isStudioArtifactKind', () => {
@@ -44,5 +45,13 @@ describe('notify', () => {
         payload: { kind: 'loading', text: 'Checking', id: 'specs-check:p-1' },
       },
     });
+  });
+
+  it('takes a loading notice only with an id, since nothing else could close that toast', () => {
+    // Stops compiling once a loading notice's id turns optional.
+    const idRequired: undefined extends Extract<StudioNotice, { kind: 'loading' }>['id']
+      ? false
+      : true = true;
+    expect(idRequired).toBe(true);
   });
 });
