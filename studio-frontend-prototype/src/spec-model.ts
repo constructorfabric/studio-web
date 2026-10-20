@@ -455,6 +455,7 @@ export function ruleLabel(rule: string): string {
     "reference.misattributed": "Wrong record cited",
     "product.missing": "Not in the code",
     "product.decided_not_built": "Decided, not built",
+    "product.immature": "Rests on an unready gear",
   };
   return labels[rule] ?? rule;
 }
@@ -470,7 +471,7 @@ export interface ProductSide {
 /** What the project's documents ask for that its code is not made of. */
 export interface ProductFinding {
   fingerprint: string;
-  rule: "product.missing" | "product.decided_not_built";
+  rule: "product.missing" | "product.decided_not_built" | "product.immature";
   severity: "high" | "medium";
   capability: string;
   gear?: string | null;

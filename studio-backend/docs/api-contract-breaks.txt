@@ -1,0 +1,13 @@
+# Promises Studio deliberately stopped keeping (docs/api-conventions.md, G4).
+#
+# `cargo test api_contract` fails when a change takes away something
+# docs/api-contract-accepted.txt records: an operation, a request or response
+# field, an event kind or payload field. Each line here accepts one of those
+# breaks. Paste the line exactly as the test prints it (tab-separated), under
+# a `#` comment that says why and who agreed; the comment block directly above
+# a group of lines, up to the previous blank line, is their reason, and a line
+# without one is refused. Then run `cargo run --quiet -- api-contract --accept`.
+#
+# Lines stay after they are accepted: this file is the history of what was
+# broken and why, and it only grows. Prefer G1 — add beside, deprecate, remove
+# later — to a line here.

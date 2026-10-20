@@ -151,6 +151,8 @@ pub struct CapabilityProviderDto {
     /// or a member confirmed it. `false`: only its words were found, which
     /// says it talks about the subject, not that it does the job.
     pub strong: bool,
+    /// Its maturity as its gear.gdl declares it. Null when unknown.
+    pub maturity: Option<String>,
 }
 
 /// One component offered for one capability.
@@ -216,6 +218,10 @@ pub struct CandidateDto {
     /// catalogue or registry) or `platform` (the shared set). On otherwise
     /// equal ranking, the project's and the organization's come first.
     pub tier: String,
+    /// Its maturity as its gear.gdl declares it (gears-rust #5275):
+    /// `design`, `experimental`, `preview`, `stable` or `deprecated`. Null
+    /// when the catalogue does not know it.
+    pub maturity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -660,6 +666,7 @@ fn plan_dto(
                 .map(|p| CapabilityProviderDto {
                     name: p.name,
                     strong: p.strong,
+                    maturity: p.maturity,
                 })
                 .collect(),
             candidates: row
@@ -688,6 +695,7 @@ fn plan_dto(
                     registry_state: None,
                     replaced_by: None,
                     tier: c.tier,
+                    maturity: c.maturity,
                 })
                 .collect(),
         })

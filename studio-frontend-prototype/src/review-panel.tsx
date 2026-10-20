@@ -1,7 +1,8 @@
 // The review of one document: ask people to review the version on screen,
 // see where the current request stands, and — when you are asked — give your
 // verdict. Every verdict stays on record; the stage the document belongs to
-// waits until its required reviewers approve.
+// waits until its required reviewers approve -- unless the document's
+// maturity is below stable, when only a security concern holds it.
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Colleague } from "./api";
@@ -9,9 +10,13 @@ import {
   addReviewer,
   canDecide,
   currentRequest,
+  gateNote,
   isStale,
+  parseStakeholders,
   reviewRequestBody,
   reviewState,
+  rulesNote,
+  stakeholderLines,
   type ReviewerInput,
   type ReviewRequest,
   type ReviewSubject,
@@ -42,7 +47,9 @@ export function ReviewPanel({
   const [asking, setAsking] = useState(false);
   const [picked, setPicked] = useState<ReviewerInput[]>([]);
   const [due, setDue] = useState("");
+  const [mustApprove, setMustApprove] = useState("");
   const [note, setNote] = useState("");
+  const [security, setSecurity] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -86,10 +93,14 @@ export function ReviewPanel({
   const send = async () => {
     setBusy(true);
     try {
-      await api.createReviewRequest(token, reviewRequestBody(projectId, subject, picked, due || null));
+      await api.createReviewRequest(
+        token,
+        reviewRequestBody(projectId, subject, picked, due || null, parseStakeholders(mustApprove)),
+      );
       setAsking(false);
       setPicked([]);
       setDue("");
+      setMustApprove("");
       await load();
       onChanged?.();
     } catch (e) {
@@ -102,8 +113,9 @@ export function ReviewPanel({
   const decide = async (r: ReviewRequest, verdict: "approved" | "changes_requested") => {
     setBusy(true);
     try {
-      await api.createReviewApproval(token, projectId, r.id, verdict, note.trim() || null);
+      await api.createReviewApproval(token, projectId, r.id, verdict, note.trim() || null, verdict === "changes_requested" && security);
       setNote("");
+      setSecurity(false);
       await load();
       onChanged?.();
     } catch (e) {
@@ -129,6 +141,9 @@ export function ReviewPanel({
   if (requests === null) return null;
   const current = currentRequest(requests);
   const state = current ? reviewState(current) : null;
+  const gate = current ? gateNote(current) : null;
+  const rules = current ? rulesNote(current) : null;
+  const holders = current ? stakeholderLines(current) : [];
   const nameOf = (person: string) =>
     people.find((p) => p.user_id === person)?.display_name ?? picked.find((p) => p.person === person)?.name ?? person;
 
@@ -148,6 +163,12 @@ export function ReviewPanel({
         )}
       </div>
       {err && <div className="rv-err">{err}</div>}
+      {gate && <div className="rv-muted">{gate}</div>}
+      {rules && (
+        <div className="rv-muted" data-rules-changed>
+          {rules}
+        </div>
+      )}
 
       {current && (
         <>
@@ -155,11 +176,27 @@ export function ReviewPanel({
             {current.reviewers.map((r) => (
               <li key={r.person}>
                 {r.name ?? r.person}
+                {r.stakeholder ? ` for ${r.stakeholder}` : ""}
                 {r.required ? "" : " (optional)"}:{" "}
-                <b>{r.verdict === "approved" ? "✓ approved" : r.verdict === "changes_requested" ? "✗ changes" : "—"}</b>
+                <b>
+                  {r.verdict === "approved"
+                    ? "✓ approved"
+                    : r.verdict === "changes_requested"
+                      ? r.security
+                        ? "✗ changes (security)"
+                        : "✗ changes"
+                      : "—"}
+                </b>
               </li>
             ))}
           </ul>
+          {holders.length > 0 && (
+            <ul className="rv-reviewers" aria-label="Stakeholders">
+              {holders.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
           {current.due_at && <div className="rv-muted">Due {current.due_at.slice(0, 10)}</div>}
           {canDecide(current, me) && (
             <div className="rv-decide">
@@ -175,6 +212,10 @@ export function ReviewPanel({
               <button disabled={busy} onClick={() => void decide(current, "changes_requested")}>
                 ✗ Request changes
               </button>
+              <label title="A security concern holds the stage at any maturity">
+                <input type="checkbox" checked={security} onChange={(e) => setSecurity(e.target.checked)} /> a
+                security concern
+              </label>
             </div>
           )}
           {current.state === "open" && current.requested_by === me && (
@@ -189,7 +230,7 @@ export function ReviewPanel({
                 {current.verdicts.map((v) => (
                   <li key={v.id}>
                     {v.decided_at.slice(0, 16).replace("T", " ")} · {v.approver_name ?? v.approver} ·{" "}
-                    {v.verdict === "approved" ? "approved" : "requested changes"}
+                    {v.verdict === "approved" ? "approved" : v.security ? "requested changes (security)" : "requested changes"}
                     {v.note && <> · “{v.note}”</>}
                     {v.checks.length > 0 && <span className="rv-muted"> · passed: {v.checks.join(", ")}</span>}
                   </li>
@@ -221,6 +262,17 @@ export function ReviewPanel({
                   />{" "}
                   required
                 </label>
+                <input
+                  className="rv-for"
+                  placeholder="for (org)"
+                  title="The stakeholder they speak for: one approval answers for it"
+                  aria-label={`Whom ${p.name ?? p.person} speaks for`}
+                  value={p.stakeholder ?? ""}
+                  onChange={(e) =>
+                    setPicked(picked.map((x) => (x.person === p.person ? { ...x, stakeholder: e.target.value } : x)))
+                  }
+                  style={{ width: 90, fontSize: 11 }}
+                />
                 <button
                   className="rv-x"
                   aria-label={`Remove ${p.name ?? p.person}`}
@@ -250,6 +302,14 @@ export function ReviewPanel({
           </select>
           <label className="rv-due">
             Due <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+          </label>
+          <label className="rv-due" title="Each must approve through somebody speaking for it">
+            Must be approved by{" "}
+            <input
+              placeholder="Acronis, Constructor, Virtuozzo"
+              value={mustApprove}
+              onChange={(e) => setMustApprove(e.target.value)}
+            />
           </label>
           <div className="rv-actions">
             <button className="primary" disabled={busy || picked.length === 0} onClick={() => void send()}>

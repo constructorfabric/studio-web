@@ -432,6 +432,62 @@ export function subsystems(index: CatalogueIndex): string[] {
   return [...new Set(index.gears.map(subsystemOf))].sort(subsystemOrder);
 }
 
+// ── Readiness: how far a subsystem is towards v1, from its gears' maturity ──
+
+/** How far each maturity (gears-rust #5275) is towards v1. A gear with no
+ *  maturity, or one the levels do not name, has not started; a deprecated
+ *  gear is on its way out and does not count either way. */
+const MATURITY_PROGRESS: Record<string, number> = {
+  design: 0.25,
+  experimental: 0.5,
+  preview: 0.75,
+  stable: 1,
+};
+
+export interface Readiness {
+  /** 0–100, rounded: the mean progress of the gears that count. */
+  percent: number;
+  /** How many gears count, and how many of them at each maturity. */
+  gears: number;
+  by: Record<string, number>;
+}
+
+/** The v1 readiness of the gears given, the number the catalogue slide
+ *  used to be tallied by hand for. `null` when no gear counts. */
+export function readiness(gears: Pick<CatalogueGear, "maturity">[]): Readiness | null {
+  const by: Record<string, number> = {};
+  let sum = 0;
+  let n = 0;
+  for (const g of gears) {
+    const m = g.maturity?.trim().toLowerCase() || "not started";
+    if (m === "deprecated") continue;
+    by[m] = (by[m] ?? 0) + 1;
+    sum += MATURITY_PROGRESS[m] ?? 0;
+    n += 1;
+  }
+  return n === 0 ? null : { percent: Math.round((100 * sum) / n), gears: n, by };
+}
+
+/** The readiness of every subsystem of the catalogue, by its name. Plugins
+ *  count: a choice not ready is as much a gap as a gear not ready. */
+export function subsystemReadiness(index: CatalogueIndex): Map<string, Readiness> {
+  const out = new Map<string, Readiness>();
+  for (const zone of subsystems(index)) {
+    const r = readiness(index.gears.filter((g) => subsystemOf(g) === zone));
+    if (r) out.set(zone, r);
+  }
+  return out;
+}
+
+/** "3 stable · 2 preview · 1 design", most mature first, for a tooltip. */
+export function readinessBreakdown(r: Readiness): string {
+  const rank = (m: string) => -(MATURITY_PROGRESS[m] ?? -1);
+  return Object.entries(r.by)
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([m, n]) => `${n} ${m}`)
+    .join(" · ");
+}
+
 /** What is known of a gear for certain, in plain words, for when its
  *  gear.gdl has no description and beside it when it has one. */
 export function gearFacts(index: CatalogueIndex, g: CatalogueGear): string[] {

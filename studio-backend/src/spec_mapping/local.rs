@@ -407,6 +407,7 @@ mod tests {
             path: None,
             registry_state: None,
             replaced_by: None,
+            maturity: None,
             tier: "platform".into(),
         };
         let mut candidates = [candidate("mine"), candidate("theirs")];
@@ -497,6 +498,7 @@ mod tests {
             path: None,
             registry_state: None,
             replaced_by: None,
+            maturity: None,
             tier: "platform".into(),
         };
         let mut candidates = [
@@ -578,6 +580,7 @@ mod tests {
             path: None,
             registry_state: None,
             replaced_by: None,
+            maturity: None,
             tier: "organization".into(),
         };
         let states =

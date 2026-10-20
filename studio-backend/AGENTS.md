@@ -75,6 +75,12 @@ fails. Need more? Add it to the owner's `sdk` or `port`.
 - `scripts/backend-check.sh` exits 0 even on failure. Judge it by its output.
 - After adding or renaming a route, `cargo test api_contract` is the gate.
   `studio-backend api-contract --violations` exits 0 either way.
+- A change to a DTO, a route or `docs/events-catalog.md` also moves
+  `docs/api-contract-accepted.txt`: run `cargo run --quiet -- api-contract
+  --accept`. If it refuses, the change breaks a published promise (rule G4):
+  keep the old shape, or record the printed line with a reason in
+  `docs/api-contract-breaks.txt`. Never delete lines from the accepted file by
+  hand, since that is how the check would be bypassed.
 
 ## Finding what is slow
 

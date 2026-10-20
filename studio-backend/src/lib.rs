@@ -120,6 +120,12 @@ enum Commands {
         /// baseline lines to paste.
         #[arg(long)]
         violations: bool,
+        /// Accept the contract as it stands: rewrite
+        /// `docs/api-contract-accepted.txt` and `docs/api-contract.json` in
+        /// place. Refuses, and writes nothing, while a change breaks a promise
+        /// not recorded in `docs/api-contract-breaks.txt` (rule G4).
+        #[arg(long, conflicts_with = "violations")]
+        accept: bool,
     },
     /// Print every GTS document this assembly registers (JSON) and exit.
     ///
@@ -169,9 +175,11 @@ pub async fn run_cli() -> Result<()> {
 
     // Same shape as `gts-types`: read out of the code, so it needs no profile
     // and no database, and it is the snapshot `cargo test` drift-checks.
-    if let Some(Commands::ApiContract { violations }) = &cli.command {
+    if let Some(Commands::ApiContract { violations, accept }) = &cli.command {
         if *violations {
             api_contract::print_violations();
+        } else if *accept {
+            api_contract::compat::accept()?;
         } else {
             print!("{}", api_contract::to_pretty_json()?);
         }

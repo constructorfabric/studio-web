@@ -1000,6 +1000,8 @@ async fn a_new_request_supersedes_only_its_own_projects_request() {
         state: "open".to_string(),
         created_at: OffsetDateTime::now_utc(),
         reviewed_text: None,
+        stakeholders: serde_json::json!([]),
+        rules_snapshot: None,
     };
     let in_b = request(b);
     repo.put_review_request(in_b.clone()).await.expect("b's");

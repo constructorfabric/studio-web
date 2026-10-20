@@ -323,6 +323,22 @@ export function edgeCounts(edges: Edge[]): Record<Via, number> & { total: number
 }
 
 /** What `name` uses, worst first, then by name. */
+/** One kind of event on the studio-events channel, as
+ *  `GET /studio-events/v1/catalog` serves docs/events-catalog.md. */
+export interface EventKind {
+  kind: string;
+  subject_type: string;
+  publisher?: string | null;
+  when: string;
+  fields: string[];
+}
+
+/** The kinds `gear` publishes, by name. Unversioned: the compatibility
+ *  ratchet (rule G4) keeps each one's payload from losing a field. */
+export function eventsOf(catalog: EventKind[], gear: string): EventKind[] {
+  return catalog.filter((k) => k.publisher === gear).sort((a, b) => a.kind.localeCompare(b.kind));
+}
+
 export function usesOf(edges: Edge[], name: string): Edge[] {
   return edges
     .filter((e) => e.from === name)
@@ -617,6 +633,7 @@ export const SURFACES: Surface[] = [
     gears: [
       "studio-components-catalog",
       "studio-documents",
+      "studio-environments",
       "studio-kits",
       "studio-product",
       "studio-spec-mapping",
@@ -825,6 +842,7 @@ export const SURFACES: Surface[] = [
       "studio-assembly",
       "studio-connector",
       "studio-domain-model",
+      "studio-events",
       "types-registry",
     ],
   },

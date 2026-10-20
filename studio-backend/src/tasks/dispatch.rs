@@ -49,6 +49,15 @@ use crate::studio_events::{StudioEvent, StudioEventPublisher};
 const EVENT_SOURCE: &str = "studio-tasks";
 /// The `subject_type` those events are about.
 const EVENT_SUBJECT: &str = "task_run";
+/// The kind a handler's progress report is announced as.
+const PROGRESS_KIND: &str = "task.progress";
+
+/// The kind a run's transition into `state` is announced as. Every kind this
+/// gear publishes is one of these or [`PROGRESS_KIND`], and each is a row in
+/// `docs/events-catalog.md` (checked by the tests below).
+fn transition_kind(state: RunState) -> String {
+    format!("task.{}", state.as_str())
+}
 
 /// Announce a run's transition on the `studio-events` channel, so a portal
 /// watching a run is told instead of polling for it.
@@ -177,7 +186,7 @@ impl ProgressSink for DbProgress {
             &self.hub,
             tenant,
             run_id,
-            "task.progress",
+            PROGRESS_KIND,
             Value::Object(event),
         );
     }
@@ -263,7 +272,7 @@ impl TaskDispatcher {
     /// Apply a state transition to the row. Best-effort: the queue decides
     /// whether a message is done, this table only records it.
     async fn record(&self, tenant: Uuid, id: Uuid, task_type: &str, patch: Patch<'_>) {
-        let kind = format!("task.{}", patch.state.as_str());
+        let kind = transition_kind(patch.state);
         let payload = {
             let mut event = serde_json::Map::new();
             event.insert("run_id".into(), json!(id));
@@ -745,6 +754,40 @@ impl LeasedMessageHandler for TaskDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every kind a run can be announced as is documented, and every `task.*`
+    /// kind the catalogue documents is one a run can still be announced as.
+    #[test]
+    fn the_kinds_it_publishes_are_the_ones_the_catalogue_lists() {
+        let states = [
+            RunState::Queued,
+            RunState::Running,
+            RunState::Succeeded,
+            RunState::Failed,
+            RunState::Cancelled,
+        ];
+        // A new state is a new kind: this stops compiling until it is listed
+        // above, and then the catalogue has to list it too.
+        for state in states {
+            match state {
+                RunState::Queued
+                | RunState::Running
+                | RunState::Succeeded
+                | RunState::Failed
+                | RunState::Cancelled => {}
+            }
+        }
+        let published: std::collections::BTreeSet<String> = states
+            .into_iter()
+            .map(transition_kind)
+            .chain([PROGRESS_KIND.to_string()])
+            .collect();
+        assert_eq!(
+            published,
+            crate::api_contract::events::documented_kinds("task."),
+            "docs/events-catalog.md and studio-tasks disagree on the `task.*` kinds"
+        );
+    }
 
     #[test]
     fn a_finished_run_reads_as_what_it_did() {

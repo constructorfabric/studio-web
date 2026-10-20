@@ -1166,7 +1166,13 @@ async fn stage_evidence(
             .iter()
             .filter(|r| r.request.state == "open")
             .filter(|r| {
-                !super::approvals::outstanding(&r.reviewers(), &r.verdict_facts()).is_empty()
+                !super::approvals::holding(
+                    &r.reviewers(),
+                    &r.verdict_facts(),
+                    r.maturity().as_deref(),
+                    true,
+                )
+                .is_empty()
             })
             .map(|r| r.request.title.clone())
             .collect();
@@ -5249,7 +5255,13 @@ async fn list_requirement_trace(
         .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    let traced = sources.trace();
+    // Reading every checkout file is CPU work, not waiting: off the async
+    // workers, so a large project does not stall every other request and the
+    // health check with them.
+    let (traced, files) =
+        tokio::task::spawn_blocking(move || (sources.trace(), sources.files.len()))
+            .await
+            .map_err(|e| internal(anyhow::anyhow!("tracing requirements: {e}")))?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let sides = |c: Vec<super::spec_model::trace::Cited>| -> Vec<SpecModelSideDto> {
         c.into_iter().map(|x| side_at(&x.path, x.line)).collect()
@@ -5273,7 +5285,7 @@ async fn list_requirement_trace(
         items,
         implemented: count(implemented),
         tested: count(tested),
-        files: count(sources.files.len()),
+        files: count(files),
     }))
 }
 
@@ -6567,6 +6579,9 @@ pub struct ReviewerInput {
     pub name: Option<String>,
     /// Defaults to true: the request is not approved until they approve.
     pub required: Option<bool>,
+    /// The stakeholder (an organization) they speak for. One approval from
+    /// a stakeholder answers for every reviewer of it.
+    pub stakeholder: Option<String>,
 }
 
 /// Ask for a review of one version of one document.
@@ -6588,6 +6603,9 @@ pub struct ReviewRequestInput {
     pub reviewers: Vec<ReviewerInput>,
     /// RFC 3339.
     pub due_at: Option<String>,
+    /// The stakeholders (organizations) that must approve: one nobody of
+    /// theirs approved for holds the request.
+    pub stakeholders: Option<Vec<String>>,
 }
 
 /// A reviewer's verdict on a request.
@@ -6597,6 +6615,9 @@ pub struct ReviewVerdictInput {
     pub project_id: String,
     /// `approved` or `changes_requested`.
     pub verdict: String,
+    /// The changes asked for are a security concern, which holds the stage at
+    /// any maturity. Ignored on an approval.
+    pub security: Option<bool>,
     pub note: Option<String>,
 }
 
@@ -6616,6 +6637,26 @@ pub struct ReviewerDto {
     pub required: bool,
     /// Their latest verdict, when they gave one.
     pub verdict: Option<String>,
+    /// That verdict asks for changes over a security concern.
+    pub security: bool,
+    /// The stakeholder they speak for, when the requester named one.
+    pub stakeholder: Option<String>,
+}
+
+/// Where one stakeholder stands on a request.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StakeholderDto {
+    pub name: String,
+    /// The request names it as one that must approve.
+    pub required: bool,
+    /// Somebody speaking for it approved.
+    pub approved: bool,
+    /// Its reviewers who approved, by name.
+    pub approved_by: Vec<String>,
+    /// Every reviewer asked on its behalf, by name. Empty for a required
+    /// stakeholder nobody was asked for yet.
+    pub asked: Vec<String>,
 }
 
 /// One verdict, as it was recorded. Never edited.
@@ -6628,6 +6669,8 @@ pub struct ApprovalDto {
     pub approver: String,
     pub approver_name: Option<String>,
     pub verdict: String,
+    /// The changes asked for are a security concern.
+    pub security: bool,
     pub note: Option<String>,
     /// The detectors that had passed on the document when it was given.
     pub checks: Vec<String>,
@@ -6655,6 +6698,11 @@ pub struct ReviewRequestDto {
     pub overdue: bool,
     /// The required reviewers who have not approved, by name.
     pub outstanding: Vec<String>,
+    /// The maturity the version asked about declares in its front matter.
+    pub maturity: Option<String>,
+    /// That maturity is below `stable`: the review is advice, and only a
+    /// security concern holds the stage on it.
+    pub advisory: bool,
     pub created_at: String,
     pub verdicts: Vec<ApprovalDto>,
     /// The version the document is at now: a binding's content digest, a
@@ -6664,6 +6712,15 @@ pub struct ReviewRequestDto {
     pub stale: bool,
     /// The detectors that pass on the document now.
     pub recorded_checks: Vec<String>,
+    /// The stakeholders it requires, then any other a reviewer speaks for.
+    pub stakeholders: Vec<StakeholderDto>,
+    /// The digest of the type's template and review guide when the review
+    /// was asked for: what it is judged by. `null` for an older request.
+    pub rules_digest: Option<String>,
+    /// The type's rules changed since the review was asked for. The review
+    /// is still judged by the ones it started with
+    /// (`GET /review-criteria?review_request_id=`).
+    pub rules_changed: bool,
 }
 
 /// What a review was asked about, against what the document is now and the
@@ -6755,10 +6812,38 @@ fn parse_uuid_field(field: &str, raw: &str) -> ApiResult<Uuid> {
     })
 }
 
+/// What happened to a review request, as the `review_request.*` kind it is
+/// announced under. An enum so the kinds are a closed set the tests can hold
+/// against `docs/events-catalog.md`.
+#[derive(Debug, Clone, Copy)]
+enum ReviewEvent {
+    Created,
+    Decided,
+    Cancelled,
+}
+
+impl ReviewEvent {
+    #[cfg(test)]
+    const ALL: [Self; 3] = [Self::Created, Self::Decided, Self::Cancelled];
+
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Created => "review_request.created",
+            Self::Decided => "review_request.decided",
+            Self::Cancelled => "review_request.cancelled",
+        }
+    }
+}
+
 /// Tell the caller's organization a review request changed, so an inbox or a
 /// stage on screen reads it again (`docs/events-catalog.md`, rule E5: the
 /// event is a prompt, `GET /review-requests` is the truth).
-fn announce_review(quality: &Quality, ctx: &SecurityContext, kind: &str, dto: &ReviewRequestDto) {
+fn announce_review(
+    quality: &Quality,
+    ctx: &SecurityContext,
+    event: ReviewEvent,
+    dto: &ReviewRequestDto,
+) {
     let Ok(events) = quality
         .hub
         .get::<dyn crate::studio_events::StudioEventPublisher>()
@@ -6768,7 +6853,7 @@ fn announce_review(quality: &Quality, ctx: &SecurityContext, kind: &str, dto: &R
     events.publish(
         crate::studio_events::StudioEvent::new(
             ctx.subject_tenant_id(),
-            kind,
+            event.kind(),
             "review_request",
             dto.id.clone(),
             "studio-documents",
@@ -6795,6 +6880,7 @@ fn approval_dto(a: &super::entity::approval::Model) -> ApprovalDto {
         approver: a.approver.clone(),
         approver_name: a.approver_name.clone(),
         verdict: a.verdict.clone(),
+        security: a.security,
         note: a.note.clone(),
         checks: serde_json::from_value(a.checks.clone()).unwrap_or_default(),
         decided_at: rfc3339(a.decided_at),
@@ -6811,9 +6897,19 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
             .iter()
             .filter(|v| v.approver == person)
             .max_by_key(|v| v.decided_at)
-            .map(|v| v.verdict.clone())
     };
     let open = r.state == "open";
+    let maturity = review.maturity();
+    let stakeholders = super::approvals::stakeholders(&review.stakeholders(), &reviewers, &facts)
+        .into_iter()
+        .map(|s| StakeholderDto {
+            approved: !s.approved_by.is_empty(),
+            name: s.name,
+            required: s.required,
+            approved_by: s.approved_by,
+            asked: s.asked,
+        })
+        .collect();
     ReviewRequestDto {
         id: r.id.to_string(),
         project_id: r.project_id.to_string(),
@@ -6833,15 +6929,22 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
         } else {
             Vec::new()
         },
+        advisory: super::approvals::advisory(maturity.as_deref()),
+        maturity,
         reviewers: reviewers
             .iter()
             .map(|x| ReviewerDto {
-                verdict: latest(&x.person),
+                verdict: latest(&x.person).map(|v| v.verdict.clone()),
+                security: latest(&x.person).is_some_and(|v| v.security),
                 person: x.person.clone(),
                 name: x.name.clone(),
                 required: x.required,
+                stakeholder: x.stakeholder.clone(),
             })
             .collect(),
+        stakeholders,
+        rules_digest: review.rules().map(|s| s.digest),
+        rules_changed: false,
         due_at: r.due_at.map(rfc3339),
         state: r.state.clone(),
         created_at: rfc3339(r.created_at),
@@ -6850,6 +6953,37 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
         stale: false,
         recorded_checks: Vec::new(),
     }
+}
+
+/// Say whether the type's rules moved since the review was asked for, from
+/// each type's digest now (`type_key` -> digest).
+fn with_rules(
+    mut dto: ReviewRequestDto,
+    now: &std::collections::HashMap<String, String>,
+) -> ReviewRequestDto {
+    dto.rules_changed = match (
+        &dto.rules_digest,
+        dto.type_key.as_ref().and_then(|k| now.get(k)),
+    ) {
+        (Some(then), Some(now)) => then != now,
+        _ => false,
+    };
+    dto
+}
+
+/// Each type's rules digest as `workspace_id` sees them now.
+async fn rules_now(
+    service: &DocumentsService,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+) -> std::collections::HashMap<String, String> {
+    service
+        .list_types(ctx, workspace_id)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|t| (t.key.clone(), super::review_guide::rules_snapshot(t).digest))
+        .collect()
 }
 
 /// Fold the document's current version and passing checks into a request.
@@ -6922,12 +7056,18 @@ async fn create_review_request(
                 person: r.person.trim().to_string(),
                 name: r.name,
                 required: r.required.unwrap_or(true),
+                stakeholder: r.stakeholder,
             })
             .collect(),
         due_at,
+        stakeholders: body.stakeholders.unwrap_or_default(),
     };
+    let types = service
+        .list_types(&ctx, workspace_id)
+        .await
+        .map_err(internal)?;
     let review = service
-        .request_review(workspace_id, project_id, ask, requester, text)
+        .request_review(workspace_id, project_id, ask, requester, text, &types)
         .await
         .map_err(invalid)?;
     let versions = service
@@ -6938,7 +7078,7 @@ async fn create_review_request(
         review_dto(&review, time::OffsetDateTime::now_utc()),
         &versions,
     );
-    announce_review(&quality, &ctx, "review_request.created", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Created, &dto);
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -7019,9 +7159,24 @@ async fn list_review_requests(
             versions.extend(v);
         }
     }
+    let mut rules: std::collections::HashMap<Uuid, std::collections::HashMap<String, String>> =
+        std::collections::HashMap::new();
+    for ws in reviews
+        .iter()
+        .map(|r| r.request.tenant_id)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        rules.insert(ws, rules_now(&service, &ctx, ws).await);
+    }
+    let no_rules = std::collections::HashMap::new();
     let items: Vec<ReviewRequestDto> = reviews
         .iter()
-        .map(|r| with_version(review_dto(r, now), &versions))
+        .map(|r| {
+            with_rules(
+                with_version(review_dto(r, now), &versions),
+                rules.get(&r.request.tenant_id).unwrap_or(&no_rules),
+            )
+        })
         .collect();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let open: Vec<&ReviewRequestDto> = items.iter().filter(|r| r.state == "open").collect();
@@ -7053,6 +7208,7 @@ async fn create_review_approval(
             request_id,
             approver,
             &body.verdict,
+            body.security.unwrap_or(false),
             body.note,
         )
         .await
@@ -7063,7 +7219,7 @@ async fn create_review_approval(
                 .create()
         })?;
     let dto = review_dto(&review, time::OffsetDateTime::now_utc());
-    announce_review(&quality, &ctx, "review_request.decided", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Decided, &dto);
     Ok((StatusCode::CREATED, Json(approval_dto(&approval))))
 }
 
@@ -7089,7 +7245,7 @@ async fn cancel_review_request(
                 .create()
         })?;
     let dto = review_dto(&review, time::OffsetDateTime::now_utc());
-    announce_review(&quality, &ctx, "review_request.cancelled", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Cancelled, &dto);
     Ok(Json(dto))
 }
 
@@ -7643,6 +7799,10 @@ pub struct ReviewCriteriaQuery {
     /// included. Omitted, the platform's built-in guide is read.
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Read the criteria a review is judged by: the ones kept when it was
+    /// asked for, however the type changed since. Needs `project_id`.
+    #[serde(default)]
+    pub review_request_id: Option<String>,
 }
 
 /// One criterion of a type's review checklist.
@@ -7717,8 +7877,35 @@ async fn list_review_criteria(
             .with_resource(key.to_owned())
             .create()
     })?;
-    let (guide, owner) =
+    let (mut guide, owner) =
         effective_guide(&ty).unwrap_or_else(|| (ReviewGuide::default(), ty.owner.clone()));
+    // A review is judged by the rules it started with.
+    if let (Some(raw), Some(project)) = (
+        query.review_request_id.as_deref(),
+        query.project_id.as_deref(),
+    ) {
+        let request_id = parse_uuid_field("review_request_id", raw)?;
+        let project_id = parse_project_id(project)?;
+        let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+        let kept = service
+            .reviews_with_verdicts(workspace_id, project_id, None)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .find(|r| r.request.id == request_id)
+            .ok_or_else(|| {
+                DocumentsError::not_found("no such review request in this project")
+                    .with_resource("review_request")
+                    .create()
+            })?
+            .rules();
+        if let Some(kept) = kept {
+            guide = ReviewGuide {
+                checklist: kept.checklist,
+                rules: kept.rules,
+            };
+        }
+    }
     let (owner, owner_tenant_id) = match owner {
         Owner::Builtin => ("builtin".to_string(), None),
         Owner::Organization { tenant_id } => ("organization".to_string(), Some(tenant_id)),
@@ -8463,8 +8650,10 @@ pub fn register_routes(
             "Records `approved` or `changes_requested` from the caller, who must be one of the \
              request's reviewers, against the version the request names, with the detectors \
              that had passed on the document at that moment. A verdict is never edited: a \
-             later one is another record, and the latest counts. When every required reviewer \
-             has approved, the request becomes `approved`.",
+             later one is another record, and the latest counts. `security: true` marks the \
+             changes asked for as a security concern, which holds the stage at any maturity. \
+             When every required reviewer has approved and no latest verdict is a security \
+             concern, the request becomes `approved`.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -10044,6 +10233,27 @@ pub fn register_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The review kinds this gear publishes are the ones the events catalogue
+    /// lists, no more and no fewer.
+    #[test]
+    fn the_review_kinds_are_the_ones_the_catalogue_lists() {
+        for event in ReviewEvent::ALL {
+            // A new variant stops compiling here until it is in `ALL`.
+            match event {
+                ReviewEvent::Created | ReviewEvent::Decided | ReviewEvent::Cancelled => {}
+            }
+        }
+        let published: std::collections::BTreeSet<String> = ReviewEvent::ALL
+            .into_iter()
+            .map(|event| event.kind().to_string())
+            .collect();
+        assert_eq!(
+            published,
+            crate::api_contract::events::documented_kinds("review_request."),
+            "docs/events-catalog.md and studio-documents disagree on the `review_request.*` kinds"
+        );
+    }
 
     #[test]
     fn a_review_state_fits_only_what_its_key_names() {

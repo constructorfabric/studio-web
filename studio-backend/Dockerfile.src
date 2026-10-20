@@ -54,6 +54,9 @@ COPY studio-backend/ .
 # into the binary (../docs/design from here). After the cook, so editing a
 # design never invalidates the dependency layer.
 COPY docs/design/ /src/docs/design/
+# The events catalogue, which studio-events serves as built
+# (`GET /studio-events/v1/catalog`, include_str! from ../docs).
+COPY docs/events-catalog.md /src/docs/events-catalog.md
 # The commit, when the caller knows it (`--build-arg STUDIO_BUILD_COMMIT=$(git
 # rev-parse HEAD)`); compose does not pass it, and the manifest then says null.
 ARG STUDIO_BUILD_COMMIT=""

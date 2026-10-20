@@ -3562,6 +3562,14 @@ function Checklist({ report }: { report: DocValidation | null }) {
     <div style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>Checklist</span>
+        {report?.maturity && (
+          <span
+            title="The maturity this document declares. Below stable, unwritten sections and open questions do not block it."
+            style={{ fontSize: 11, color: "var(--muted-foreground)" }}
+          >
+            {report.maturity}
+          </span>
+        )}
         <span
           style={{
             marginLeft: "auto",
@@ -3597,6 +3605,16 @@ function Checklist({ report }: { report: DocValidation | null }) {
               <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "var(--warning)" }}>Issues</div>
               <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--muted-foreground)" }}>
                 {report.issues.map((i, k) => (
+                  <li key={k}>{i}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {(report.open?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Open at {report.maturity}</div>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--muted-foreground)" }}>
+                {report.open!.map((i, k) => (
                   <li key={k}>{i}</li>
                 ))}
               </ul>

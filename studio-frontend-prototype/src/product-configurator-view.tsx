@@ -17,6 +17,7 @@ import { layerOf } from "./domain-layers";
 import { entityGears, gearRefs } from "./entity-gears";
 import { BringsWithIt } from "./gear-brings-view";
 import { GearConfigForm } from "./gear-config-form";
+import { gearDeployState, runningNow, type GearDeployState, type ProductAt, type Running } from "./gear-deploys-model";
 import {
   choosePlugin,
   compose,
@@ -26,8 +27,10 @@ import {
   indexCatalogue,
   offers,
   plainWords,
+  readinessBreakdown,
   removePart,
   subsystemOf,
+  subsystemReadiness,
   subsystems,
   todos,
   unexplained,
@@ -36,6 +39,7 @@ import {
   type ExplanationIndex,
   type GearOrigin,
   type Part,
+  type Readiness,
 } from "./product-configurator";
 
 /** Whose a part is, in a tooltip. */
@@ -106,6 +110,31 @@ export function useKeptEntities(token: string, projectId: string, index: Catalog
     };
   }, [token, projectId, index]);
   return kept;
+}
+
+/** What each environment the project deploys to runs now (gear-deploys-model.ts),
+ *  read once per project; null while read, or when this Studio keeps no
+ *  deployments: the gears then say nothing about where they run. */
+export function useRunning(token: string, projectId: string): Running[] | null {
+  const [running, setRunning] = useState<Running[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    setRunning(null);
+    Promise.all([
+      api.deployments(token, { project: projectId }),
+      // Without the targets every run still shows; only `protected` is lost.
+      api.projectTargets(token, projectId).catch(() => null),
+    ])
+      .then(([d, t]) => {
+        if (!live) return;
+        setRunning(runningNow(d.items,t?.environments.map((e) => e.environment) ?? []));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+  return running;
 }
 
 /** The organization's explanations of gears, and a way to keep a new one. */
@@ -197,11 +226,17 @@ export function ProductConfigurator({
   onBuild,
   onOpen,
   kept,
+  running,
+  productAt,
 }: {
   token: string;
   index: CatalogueIndex;
   /** The Domain entities each gear keeps, by engine id (useKeptEntities). */
   kept?: Map<string, string[]>;
+  /** What each environment runs now (useRunning); absent or null: unknown. */
+  running?: Running[] | null;
+  /** The product the runs are measured against: its last commit and change. */
+  productAt?: ProductAt;
   product: ConfiguredProduct;
   /** The engine's last answer about this product, if any. */
   preview: Pick<ProductPreview, "gears" | "ok" | "diagnostics" | "applications" | "profile"> | null;
@@ -218,8 +253,10 @@ export function ProductConfigurator({
   const [dragging, setDragging] = useState<string | null>(null);
   const composition = useMemo(() => compose(index, picks, config, preview), [index, picks, config, preview]);
   const zones = useMemo(() => subsystems(index), [index]);
+  const ready = useMemo(() => subsystemReadiness(index), [index]);
   const left = todos(composition);
   const chosen = composition.parts.find((p) => p.name === selected) ?? null;
+  const deployOf = (p: Part): GearDeployState | null => gearDeployState(p, running ?? null, productAt);
 
   const add = (name: string) => {
     if (busy || picks.includes(name)) return;
@@ -330,6 +367,7 @@ export function ProductConfigurator({
                   <header>
                     <b>{z}</b>
                     <span>{parts.length || ""}</span>
+                    <ReadyPill r={ready.get(z)} />
                   </header>
                   {parts.length === 0 && <div className="pm-hint">Drop it here</div>}
                   {parts.map((p) => (
@@ -339,6 +377,7 @@ export function ProductConfigurator({
                       origin={index.origin(index.find(p.name))}
                       keeps={kept?.get(p.id)}
                       words={plainWords(index.find(p.name), explanations.byId)}
+                      deploy={deployOf(p)}
                       selected={p.name === selected}
                       onSelect={() => setSelected(p.name)}
                     />
@@ -382,6 +421,7 @@ export function ProductConfigurator({
           index={index}
           part={chosen}
           keeps={chosen ? kept?.get(chosen.id) : undefined}
+          deploy={chosen ? deployOf(chosen) : null}
           product={product}
           explanations={explanations}
           busy={busy}
@@ -407,6 +447,7 @@ function Tile({
   origin,
   keeps,
   words,
+  deploy,
   selected,
   onSelect,
 }: {
@@ -416,6 +457,8 @@ function Tile({
   keeps?: string[];
   /** The gear in plain words: its explanation, else its description. */
   words: string | null;
+  /** Where it runs; null when that is not known. */
+  deploy: GearDeployState | null;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -438,6 +481,12 @@ function Tile({
           <b>Keeps:</b> {keepsLine(keeps)}
         </small>
       )}
+      {deploy && (
+        <small data-runs={deploy.runs.length > 0 ? "yes" : "no"} title={deploy.hint ?? deploy.line}>
+          {deploy.hint && "⚠ "}
+          {deploy.runs.length > 0 ? `runs in ${deploy.runs.map((r) => r.environment).join(", ")}` : "not deployed"}
+        </small>
+      )}
       {part.slots.length > 0 && (
         <span className="pm-sockets">
           {part.slots.map((s) => {
@@ -452,6 +501,21 @@ function Tile({
         </span>
       )}
     </button>
+  );
+}
+
+/** How far a subsystem of the catalogue is towards v1, from its gears'
+ *  maturity -- the number the catalogue slide used to be tallied by hand. */
+function ReadyPill({ r }: { r: Readiness | undefined }) {
+  if (!r) return null;
+  return (
+    <span
+      className="pm-ready"
+      data-ready={r.percent}
+      title={`v1 readiness of the whole catalogue's ${r.gears} gear${r.gears === 1 ? "" : "s"} here: ${readinessBreakdown(r)}`}
+    >
+      {r.percent} % ready
+    </span>
   );
 }
 
@@ -474,6 +538,7 @@ function Palette({
   const [only, setOnly] = useState<string | null>(null);
   const [looking, setLooking] = useState<string | null>(null);
   const all = offers(index, product.picks, query);
+  const ready = useMemo(() => subsystemReadiness(index), [index]);
   const groups = only ? all.filter((g) => g.category === only) : all;
   return (
     <div className="pm-box pm-palette" aria-label="Parts you can add">
@@ -497,7 +562,11 @@ function Palette({
       {groups.length === 0 && <div className="empty">Nothing matches. Try other words.</div>}
       {groups.map((g) => (
         <div key={g.category} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {!only && <div className="pm-h" style={{ margin: "4px 0 0" }}>{g.category}</div>}
+          {!only && (
+            <div className="pm-h" style={{ margin: "4px 0 0" }}>
+              {g.category} <ReadyPill r={ready.get(g.category)} />
+            </div>
+          )}
           {g.items.map((o) => (
             <div
               key={o.name}
@@ -551,6 +620,7 @@ function Inspector({
   index,
   part,
   keeps,
+  deploy,
   product,
   explanations,
   busy,
@@ -561,6 +631,7 @@ function Inspector({
   index: CatalogueIndex;
   part: Part | null;
   keeps?: string[];
+  deploy: GearDeployState | null;
   product: ConfiguredProduct;
   explanations: Explanations;
   busy: boolean;
@@ -607,6 +678,16 @@ function Inspector({
           </>
         )}
       </div>
+      {deploy && (
+        <div data-deploy>
+          <span style={{ color: "var(--muted-foreground)", fontSize: 12 }}>{deploy.line[0].toUpperCase() + deploy.line.slice(1)}.</span>
+          {deploy.hint && (
+            <div className="hint" data-deploy-hint style={{ color: "var(--destructive)", fontSize: 12 }}>
+              {deploy.hint}
+            </div>
+          )}
+        </div>
+      )}
       <Explanation key={part.id} token={token} gearId={part.id} description={part.description} explanations={explanations} />
       {keeps && keeps.length > 0 && (
         <div data-keeps>

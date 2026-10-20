@@ -10,7 +10,8 @@ import { capabilityEntities, keptSentences, suggestedCategory } from "./capabili
 import { ProjectCandidate } from "./component-registry";
 import { layerOf } from "./domain-layers";
 import { entityGears, gearRefs } from "./entity-gears";
-import { useGearCatalogue } from "./product-configurator-view";
+import { gearDeployState, type ProductAt } from "./gear-deploys-model";
+import { useGearCatalogue, useRunning } from "./product-configurator-view";
 import { DataTable } from "./data-table";
 import { ScaffoldModal } from "./documents";
 import { errText } from "./format";
@@ -24,6 +25,8 @@ interface Read {
   plan: PlanRow[];
   code: Conformance | null;
   picks: string[];
+  /** The product's last commit and change, which its deploys are read against. */
+  productAt: ProductAt;
   services: ProjectComponent[];
   /** The gears the project's own code declares, from the registry. */
   own: OwnGear[];
@@ -71,7 +74,9 @@ export function ProjectComponentsInventory({
   }, [scaffold, entities, token, projectId]);
   // The catalogue says which subsystem the new gear most likely joins; a
   // catalogue that cannot be read leaves the choice to the server's default.
-  const catalogue = useGearCatalogue(token, !!scaffold, projectId);
+  // It also gives the product's gears their maturity, read against where they run.
+  const catalogue = useGearCatalogue(token, !!scaffold || (read?.picks.length ?? 0) > 0, projectId);
+  const running = useRunning(token, projectId);
   const index = catalogue && "index" in catalogue ? catalogue.index : null;
   const draft = useMemo(() => {
     if (!scaffold || !entities || !catalogue) return null;
@@ -118,6 +123,7 @@ export function ProjectComponentsInventory({
         plan: plan.items,
         code,
         picks: product?.gears ?? [],
+        productAt: { commit: product?.written?.commit_sha, updatedAt: product?.updated_at },
         services: services?.items ?? [],
         own: ownGearsOf(registry?.items ?? [], forProject),
         partial,
@@ -191,6 +197,21 @@ export function ProjectComponentsInventory({
               cell: (r) => (r.answers.length ? <code className="sub">{r.answers.join(", ")}</code> : <span className="sub">—</span>),
             },
             { id: "product", header: "In the product", cell: (r) => (r.inProduct ? "✓" : <span className="sub">—</span>) },
+            {
+              id: "runs",
+              header: "Runs",
+              cell: (r) => {
+                // Only what the product carries is deployed with it.
+                const s = r.inProduct && read ? gearDeployState({ name: r.name, maturity: index?.find(r.name)?.maturity }, running, read.productAt) : null;
+                if (!s) return <span className="sub">—</span>;
+                return (
+                  <span className="sub" data-runs={s.runs.length > 0 ? "yes" : "no"} title={s.hint ?? s.line}>
+                    {s.hint && <span style={{ color: "var(--destructive)" }}>⚠ </span>}
+                    {s.runs.length > 0 ? s.runs.map((x) => x.environment).join(", ") : "not deployed"}
+                  </span>
+                );
+              },
+            },
             { id: "code", header: "In the code", cell: (r) => (r.inCode ? "✓" : <span className="sub">—</span>) },
             {
               id: "state",

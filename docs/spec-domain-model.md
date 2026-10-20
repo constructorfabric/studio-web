@@ -586,6 +586,11 @@ says where to add one. A ✓ or ✗ survives a reload. The routes answer in unde
 a second from a checkout on a volume; from a Windows bind mount, reading the
 3,562 files took 10–17 s.
 
+**Against history.** These calibrations judged each finding by reading it,
+so they say what was right, not what was missed. A run at an older commit,
+matched to the fixes committed after it, says both:
+[calibrating findings against history](probe-calibration.md).
+
 ## Later
 
 - Extraction on sync with an organization's key, once an organization can name

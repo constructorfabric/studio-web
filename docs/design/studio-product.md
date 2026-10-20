@@ -44,6 +44,23 @@ corpus checkout, the engine's catalogue for the components reference — and
 reads it, with a project's gear repository, through this gear's port. Nothing
 here reads the catalogue.
 
+What the product makes is read back from where it runs. Each gear on the
+project's Product map and each product row of its Components tab says where
+it runs — "running in stage since 2026-10-19 (0.1.0)", or "not deployed" —
+from the latest successful deploy in each environment (`studio-environments`,
+ADR-0043 §4): a later deploy that failed, waits or was declined does not
+replace what runs there. The portal joins it from what it already reads, the
+project's deployments, its targets and this gear's product record; no route
+was added (`gear-deploys-model.ts`). The version is the one `product.gdl`
+names (`analytics@0.1.0`, ADR-0044 §2), else the deploy's commit. A deploy
+record names the product and the commit, not the gears, so a deploy older
+than the product's last change, at a commit other than the one `product.gdl`
+was last written at, is said to be "from an earlier product": the gear may
+not have been in it. Two readings contradict a gear's maturity and are shown
+as a hint: a `stable` gear that runs nowhere, and an `experimental` (or
+`design`) one running in a production-like environment — protected, or named
+`prod`, `production` or `live` — since experimental must not ship as stable.
+
 ### 1.2 Architecture Drivers
 
 #### Functional Drivers
@@ -485,6 +502,12 @@ What is not done yet:
   calls, lives on the catalogue's port and should move here.
 - The deprecated paths under `/studio-components-catalog/v1` go once no
   supported desktop release reads them.
+- Where a gear runs is inferred, not recorded: a deploy should carry the gears
+  and versions of the `product.gdl` it was generated from, which the IDE has
+  at Deploy, so "from an earlier product" can say which. The deployments'
+  history keeps the latest record of each environment, not the latest
+  successful one, so past 200 records an environment whose last deploy failed
+  can read as not deployed.
 
 ## 5. Traceability
 

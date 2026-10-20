@@ -70,8 +70,9 @@ Every REST operation this assembly registers follows
 test rather than a review note:
 
 ```bash
-cargo test api_contract                                          # the rules, the snapshot
-cargo run --quiet -- api-contract > docs/api-contract.json       # regenerate the surface
+cargo test api_contract                                          # the rules, the snapshot, compatibility
+cargo run --quiet -- api-contract --accept                       # regenerate the surface and the accepted contract
+cargo run --quiet -- api-contract > docs/api-contract.json       # regenerate the surface only
 cargo run --quiet -- api-contract --violations                   # what is still broken, with baseline lines
 node ../scripts/check-api-usage.mjs                              # do both portals call paths that exist?
 ```
@@ -86,6 +87,14 @@ frontend reviewer reads.
 Existing breaks are listed in [`docs/api-contract-baseline.txt`](docs/api-contract-baseline.txt)
 and the test asserts the live set equals that file exactly, so the file can only
 shrink. Adding a line to it is a deliberate, reviewable act.
+
+Compatibility ratchets the other way (rule G4). `docs/api-contract-accepted.txt`
+lists every promise already published — operations, request and response
+fields, event kinds and payload fields from `docs/events-catalog.md` — and
+`cargo test api_contract` fails when a change takes one away, unless the line is
+recorded with a reason in [`docs/api-contract-breaks.txt`](docs/api-contract-breaks.txt).
+`--accept` rewrites the accepted file after a compatible change, and refuses
+while an unrecorded break is open.
 
 ### GTS types
 

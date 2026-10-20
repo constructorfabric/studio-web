@@ -13,6 +13,7 @@ import { createRoot } from "react-dom/client";
 
 import type { OpenApiDoc } from "./api-docs";
 import {
+  eventsOf,
   AREAS,
   SURFACES,
   VIA_WORDS,
@@ -40,7 +41,7 @@ import {
   usedBy,
   usesOf,
 } from "./architecture";
-import type { Edge, GroupedDomain, Manifest, ManifestGear, PrototypeMap, RestSurface, Surface, Via } from "./architecture";
+import type { Edge, EventKind, GroupedDomain, Manifest, ManifestGear, PrototypeMap, RestSurface, Surface, Via } from "./architecture";
 import "./styles.css";
 import "./architecture.css";
 
@@ -48,7 +49,9 @@ const MANIFEST_URL = "/cf/studio-assembly/v1/manifest";
 const OPENAPI_URL = "/cf/openapi.json";
 const MAP_URL = "./prototype-map.json";
 
-type Loaded = { manifest: Manifest; openapi: OpenApiDoc | null; map: PrototypeMap | null };
+/** `null`: this backend serves no catalogue (older than it). */
+type Loaded = { manifest: Manifest; openapi: OpenApiDoc | null; map: PrototypeMap | null; events: EventKind[] | null };
+const EVENTS_URL = "/cf/studio-events/v1/catalog";
 type LoadError = { kind: "signed-out" | "missing" | "failed"; message: string };
 
 /** The portal's session in this browser, renewed; null when there is none. */
@@ -67,13 +70,17 @@ async function load(): Promise<Loaded> {
   const token = await accessToken();
   const headers: Record<string, string> = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const [manifestRes, openapi, map] = await Promise.all([
+  const [manifestRes, openapi, map, events] = await Promise.all([
     fetch(MANIFEST_URL, { headers }),
     fetch(OPENAPI_URL, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? (r.json() as Promise<OpenApiDoc>) : null))
       .catch(() => null),
     fetch(MAP_URL, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? (r.json() as Promise<PrototypeMap>) : null))
+      .catch(() => null),
+    fetch(EVENTS_URL, { headers })
+      .then((r) => (r.ok ? (r.json() as Promise<{ items: EventKind[] }>) : null))
+      .then((b) => b?.items ?? null)
       .catch(() => null),
   ]);
   if (manifestRes.status === 401) {
@@ -88,7 +95,7 @@ async function load(): Promise<Loaded> {
   if (!manifestRes.ok) {
     throw { kind: "failed", message: `${MANIFEST_URL} answered ${manifestRes.status}.` } satisfies LoadError;
   }
-  return { manifest: (await manifestRes.json()) as Manifest, openapi, map };
+  return { manifest: (await manifestRes.json()) as Manifest, openapi, map, events };
 }
 
 /* ── Selection ───────────────────────────────────────────────────────────── */
@@ -627,6 +634,7 @@ function GearDetail({
   hasUses,
   commit,
   surface,
+  events,
   onGear,
   onSurface,
   onClose,
@@ -636,6 +644,8 @@ function GearDetail({
   edges: Edge[];
   hasUses: boolean;
   commit?: string | null;
+  /** The channel's catalogue; `null` when this backend serves none. */
+  events: EventKind[] | null;
   surface?: RestSurface;
   onGear: (name: string) => void;
   onSurface: (id: string) => void;
@@ -723,6 +733,24 @@ function GearDetail({
               )}
             </Fact>
           </>
+        )}
+        {events && eventsOf(events, gear.name).length > 0 && (
+          <Fact label={`Events it publishes (${eventsOf(events, gear.name).length})`}>
+            <ul className="arch-plain-list" data-events>
+              {eventsOf(events, gear.name).map((k) => (
+                <li key={k.kind} title={k.when}>
+                  <code>{k.kind}</code>{" "}
+                  <span className="arch-muted">
+                    on <code>{k.subject_type}</code>
+                    {k.fields.length > 0 ? ` · ${k.fields.join(", ")}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <span className="arch-muted arch-small">
+              Read live by the portal (studio-events). Unversioned: a field is never removed without a recorded break.
+            </span>
+          </Fact>
         )}
         <Fact label="Needs from the platform">
           {gear.depends_on.length ? (
@@ -1092,6 +1120,7 @@ function ArchitecturePage() {
               hasUses={hasUses}
               commit={backendCommit}
               surface={surfaces?.get(selectedGear.name)}
+              events={data.events}
               onGear={onGear}
               onSurface={onSurface}
               onClose={close}

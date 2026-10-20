@@ -499,6 +499,13 @@ pub mod review_request {
         pub created_at: OffsetDateTime,
         /// The text asked about, kept at request time (at most 256 KiB).
         pub reviewed_text: Option<String>,
+        /// The stakeholders that must approve, as the requester named them.
+        #[sea_orm(column_type = "JsonBinary")]
+        pub stakeholders: serde_json::Value,
+        /// The type's review rules when the review was asked for
+        /// (`review_guide::RulesSnapshot`). `None` for an older request.
+        #[sea_orm(column_type = "JsonBinary", nullable)]
+        pub rules_snapshot: Option<serde_json::Value>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -530,6 +537,9 @@ pub mod approval {
         pub approver_name: Option<String>,
         /// `approved` or `changes_requested`.
         pub verdict: String,
+        /// The changes asked for are a security concern: they hold the stage
+        /// whatever the document's maturity (`approvals::holding`).
+        pub security: bool,
         pub note: Option<String>,
         /// The detectors that had passed on the document when the verdict
         /// was given.

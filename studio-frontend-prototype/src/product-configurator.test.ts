@@ -22,6 +22,9 @@ import {
   explanationIndex,
   inBatches,
   plainWords,
+  readiness,
+  readinessBreakdown,
+  subsystemReadiness,
   unexplained,
 } from "./product-configurator";
 
@@ -164,6 +167,29 @@ describe("subsystems", () => {
     expect(subsystemOf({})).toBe("Other");
     expect(["Other", "Examples", "AI", "Billing (BSS)"].sort(subsystemOrder)).toEqual(["AI", "Billing (BSS)", "Examples", "Other"]);
     expect(subsystems(index)).toEqual(["Platform", "Security", "Other"]);
+  });
+});
+
+describe("readiness", () => {
+  it("is the mean of the gears' maturity towards v1, deprecated left out", () => {
+    const r = readiness([{ maturity: "stable" }, { maturity: "preview" }, { maturity: "design" }, { maturity: null }, { maturity: "deprecated" }]);
+    expect(r).toEqual({ percent: 50, gears: 4, by: { stable: 1, preview: 1, design: 1, "not started": 1 } });
+    expect(readinessBreakdown(r!)).toBe("1 stable · 1 preview · 1 design · 1 not started");
+    expect(readiness([{ maturity: "deprecated" }])).toBeNull();
+    expect(readiness([{ maturity: "Stable " }])?.percent).toBe(100);
+  });
+
+  it("is told per subsystem of the catalogue", () => {
+    const ix = indexCatalogue({
+      gears: {
+        a: { id: "a", category: "bss", maturity: "stable", package: { crate_name: "a" } },
+        b: { id: "b", category: "bss", maturity: "experimental", package: { crate_name: "b" } },
+        c: { id: "c", category: "gen-ai", package: { crate_name: "c" } },
+      },
+    });
+    const by = subsystemReadiness(ix);
+    expect(by.get("Billing (BSS)")?.percent).toBe(75);
+    expect(by.get("AI")?.percent).toBe(0);
   });
 });
 

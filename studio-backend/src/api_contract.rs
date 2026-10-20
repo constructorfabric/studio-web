@@ -30,11 +30,22 @@
 //!   rather than forgotten.
 //!
 //! When the baseline reaches zero lines it is deleted, along with this section.
+//!
+//! # Compatibility
+//!
+//! The rules say how an operation is declared; [`compat`] says what a change
+//! may do to one that is already published (rule G4). It reads the same scan,
+//! plus `docs/events-catalog.md` ([`events`]), and ratchets the other way: the
+//! accepted contract only grows, and a promise taken out of it has to be
+//! recorded as a break, with a reason.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub(crate) mod compat;
+pub(crate) mod events;
 
 /// The domain registry: the first path segment of every Studio API.
 ///
@@ -109,6 +120,8 @@ const SCOPE_PARAMS: &[&str] = &[
 /// This module's own source, excluded from the scan: it quotes every token the
 /// scanner looks for, and scanning it would invent operations that do not exist.
 const SELF_FILE: &str = "api_contract.rs";
+/// Its submodules, excluded for the same reason: their tests quote DTOs.
+const SELF_DIR: &str = "api_contract";
 
 /// One registered operation, as the source declares it.
 #[derive(Debug, Clone)]
@@ -221,7 +234,9 @@ fn source_files(src: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                if path.file_name().is_none_or(|name| name != SELF_DIR) {
+                    stack.push(path);
+                }
             } else if path.extension().is_some_and(|ext| ext == "rs")
                 && path.file_name().is_some_and(|name| name != SELF_FILE)
             {
@@ -837,15 +852,20 @@ pub fn print_violations() {
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// Scan the crate: every declared operation, and every rule it breaks.
-fn audit(crate_root: &Path) -> (Vec<Operation>, Vec<Violation>) {
-    let sources: Vec<(PathBuf, String)> = source_files(&crate_root.join("src"))
+/// Every scanned source file, with its `//` comments blanked.
+fn read_sources(crate_root: &Path) -> Vec<(PathBuf, String)> {
+    source_files(&crate_root.join("src"))
         .into_iter()
         .filter_map(|path| {
             let text = fs::read_to_string(&path).ok()?;
             Some((path, strip_line_comments(&text)))
         })
-        .collect();
+        .collect()
+}
+
+/// Scan the crate: every declared operation, and every rule it breaks.
+fn audit(crate_root: &Path) -> (Vec<Operation>, Vec<Violation>) {
+    let sources = read_sources(crate_root);
 
     let mut operations = Vec::new();
     for (path, text) in &sources {

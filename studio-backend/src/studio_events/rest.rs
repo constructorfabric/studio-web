@@ -14,7 +14,7 @@ use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseF
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit_security::SecurityContext;
 
-use super::dto::{StudioEventDto, StudioEventPage};
+use super::dto::{EventCatalogDto, EventKindDto, StudioEventDto, StudioEventPage};
 use super::hub::StudioEventHub;
 use super::store::EventStore;
 
@@ -98,6 +98,35 @@ async fn events(
     Ok(Json(StudioEventPage { events, latest_seq }))
 }
 
+/// The catalogue as this binary was built with it.
+const CATALOGUE: &str = include_str!("../../../docs/events-catalog.md");
+
+/// The documented kinds, by name. A catalogue that does not parse is a build
+/// the catalogue tests already failed; served as empty rather than a panic.
+fn catalogue() -> EventCatalogDto {
+    let items: Vec<EventKindDto> = crate::api_contract::events::parse(CATALOGUE)
+        .map(|c| c.kinds)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(kind, d)| EventKindDto {
+            kind,
+            subject_type: d.subject_type,
+            publisher: d.publisher,
+            when: d.when,
+            fields: d.fields.into_iter().collect(),
+        })
+        .collect();
+    EventCatalogDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }
+}
+
+/// `GET /studio-events/v1/catalog` — what each gear publishes.
+async fn event_catalog() -> ApiResult<JsonBody<EventCatalogDto>> {
+    Ok(Json(catalogue()))
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -140,5 +169,42 @@ pub fn register_routes(
         .error_401(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-events/v1/catalog")
+        .operation_id("studio_events.list_kinds")
+        .summary("The kinds of event the channel carries, and who publishes each")
+        .description(
+            "Every kind docs/events-catalog.md documents, with its subject type, \
+             the gear that publishes it, when, and its payload fields. The same \
+             page the compatibility ratchet holds the channel to, as this build \
+             carries it. Needs no database.",
+        )
+        .tag("StudioEvents")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(event_catalog)
+        .json_response_with_schema::<EventCatalogDto>(
+            openapi,
+            StatusCode::OK,
+            "The documented kinds",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router.layer(Extension(Channel { hub, store }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_catalogue_this_build_carries_names_each_kinds_publisher() {
+        let c = super::catalogue();
+        assert!(c.total > 0);
+        let decided = c
+            .items
+            .iter()
+            .find(|k| k.kind == "review_request.decided")
+            .expect("documented");
+        assert_eq!(decided.publisher.as_deref(), Some("studio-documents"));
+    }
 }

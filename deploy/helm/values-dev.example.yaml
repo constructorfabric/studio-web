@@ -21,9 +21,14 @@ backend:
   # request. With the chart's 1Gi the container was OOM-killed seconds after
   # boot (2026-09-30, rev 103); at 2Gi it settled at about 220Mi between
   # requests. The request stays the chart's.
+  # 2026-10-20: 2Gi / 1 CPU was the ceiling again. The working set peaked at
+  # 2.0Gi and CPU at 0.99 within one hour, the process stalled at the limit,
+  # and the liveness probe restarted it six times in a morning (the prototype
+  # went blank each time). The namespace quota has room (6 of 16 CPU, 10.6 of
+  # 24Gi with this), and the node idles at 2%.
   resources:
     requests: { cpu: 200m, memory: 256Mi }
-    limits: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "2", memory: 4Gi }
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1

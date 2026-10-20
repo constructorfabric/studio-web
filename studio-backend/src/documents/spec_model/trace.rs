@@ -7,6 +7,8 @@
 //! implements what. A test is told from code by its path, the conventions of
 //! the common languages; nothing about a project is assumed beyond them.
 
+use std::collections::{HashMap, HashSet};
+
 use super::index::SourceDoc;
 use super::requirements::Requirement;
 use super::work::names;
@@ -76,46 +78,123 @@ fn first_line_naming(text: &str, id: &str) -> Option<usize> {
         .map(|(i, _)| i + 1)
 }
 
+/// What a token is made of, as [`names`] reads a whole token.
+fn is_part(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// An id [`names`] can only find as one whole token -- every id a document
+/// labels. Anything else is looked for the slow way, line by line.
+fn is_token(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(is_part)
+}
+
+/// The lines of `text` (from 1) naming each of `wanted` (lower-cased ids),
+/// at most `keep` per id, read in one pass over the text.
+fn lines_naming(text: &str, wanted: &HashSet<String>, keep: usize) -> HashMap<String, Vec<usize>> {
+    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, line) in text.lines().enumerate() {
+        for token in line.split(|c: char| !is_part(c)) {
+            if token.is_empty() {
+                continue;
+            }
+            let token = token.to_ascii_lowercase();
+            if !wanted.contains(&token) {
+                continue;
+            }
+            let at = out.entry(token).or_default();
+            if at.len() < keep && at.last() != Some(&(i + 1)) {
+                at.push(i + 1);
+            }
+        }
+    }
+    out
+}
+
 /// Every requirement with the places that name it, in the requirements' order.
+///
+/// Each file is read once, whatever the number of requirements: a project
+/// with hundreds of requirements over a checkout of thousands of files asked
+/// one scan per pair before, which held a request for a minute and the
+/// backend's health check with it.
 pub fn trace(
     requirements: &[Requirement],
     docs: &[SourceDoc<'_>],
     files: &[(String, String)],
 ) -> Vec<Trace> {
+    let wanted: HashSet<String> = requirements
+        .iter()
+        .filter(|r| is_token(&r.id))
+        .map(|r| r.id.to_ascii_lowercase())
+        .collect();
+    // Two lines per document: a definition is not a reference to itself, so
+    // the line after it may be the one that counts.
+    let in_docs: Vec<HashMap<String, Vec<usize>>> = docs
+        .iter()
+        .map(|d| lines_naming(d.text, &wanted, 2))
+        .collect();
+    let sources: Vec<&(String, String)> = files
+        .iter()
+        .filter(|(path, _)| is_code_path(path) || is_test_path(path))
+        .collect();
+    let in_files: Vec<HashMap<String, Vec<usize>>> = sources
+        .iter()
+        .map(|(_, text)| lines_naming(text, &wanted, 1))
+        .collect();
+
     requirements
         .iter()
         .map(|r| {
+            let key = r.id.to_ascii_lowercase();
+            let indexed = wanted.contains(&key);
             let mut documents: Vec<Cited> = docs
                 .iter()
-                .filter_map(|d| {
-                    // Its own definition is not a reference to it: look past it.
-                    let text: String = if d.path == r.path {
-                        d.text
-                            .lines()
-                            .enumerate()
-                            .filter(|(i, _)| i + 1 != r.line)
-                            .map(|(_, l)| l)
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                .zip(&in_docs)
+                .filter_map(|(d, found)| {
+                    let own = d.path == r.path;
+                    let line = if indexed {
+                        found
+                            .get(&key)?
+                            .iter()
+                            .copied()
+                            .find(|&l| !own || l != r.line)?
                     } else {
-                        d.text.to_string()
-                    };
-                    first_line_naming(&text, &r.id).map(|line| Cited {
-                        path: d.path.to_string(),
-                        line: if d.path == r.path && line >= r.line {
+                        // Its own definition is not a reference to it: look past it.
+                        let text: String = if own {
+                            d.text
+                                .lines()
+                                .enumerate()
+                                .filter(|(i, _)| i + 1 != r.line)
+                                .map(|(_, l)| l)
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        } else {
+                            d.text.to_string()
+                        };
+                        let line = first_line_naming(&text, &r.id)?;
+                        if own && line >= r.line {
                             line + 1
                         } else {
                             line
-                        },
+                        }
+                    };
+                    Some(Cited {
+                        path: d.path.to_string(),
+                        line,
                     })
                 })
                 .collect();
             documents.truncate(PER_KIND);
-            let (mut tests, mut code): (Vec<Cited>, Vec<Cited>) = files
+            let (mut tests, mut code): (Vec<Cited>, Vec<Cited>) = sources
                 .iter()
-                .filter(|(path, _)| is_code_path(path) || is_test_path(path))
-                .filter_map(|(path, text)| {
-                    first_line_naming(text, &r.id).map(|line| Cited {
+                .zip(&in_files)
+                .filter_map(|((path, text), found)| {
+                    let line = if indexed {
+                        found.get(&key)?.first().copied()?
+                    } else {
+                        first_line_naming(text, &r.id)?
+                    };
+                    Some(Cited {
                         path: path.clone(),
                         line,
                     })

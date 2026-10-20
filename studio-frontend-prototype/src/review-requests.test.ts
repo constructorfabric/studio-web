@@ -3,9 +3,13 @@ import {
   addReviewer,
   canDecide,
   currentRequest,
+  gateNote,
   isStale,
+  parseStakeholders,
   reviewRequestBody,
   reviewState,
+  rulesNote,
+  stakeholderLines,
   type ReviewRequest,
 } from "./review-requests";
 
@@ -39,7 +43,8 @@ describe("review requests", () => {
       "2026-10-20",
     );
     expect(body.due_at).toBe("2026-10-20T23:59:59Z");
-    expect(body.reviewers).toEqual([{ person: "ann", name: "Ann", required: true }]);
+    expect(body.reviewers).toEqual([{ person: "ann", name: "Ann", required: true, stakeholder: null }]);
+    expect(body.stakeholders).toEqual([]);
     expect(reviewRequestBody("p", { kind: "document", id: "d", title: "t", version: "v" }, [], null).due_at).toBeNull();
   });
 
@@ -68,5 +73,58 @@ describe("review requests", () => {
     const one = addReviewer([], { person: "ann", required: true });
     expect(addReviewer(one, { person: "ann", required: false })).toBe(one);
     expect(addReviewer(one, { person: "bob", required: false })).toHaveLength(2);
+  });
+
+  it("says when a review is advice and when a security concern holds the stage", () => {
+    expect(gateNote(request())).toBeNull();
+    expect(gateNote(request({ maturity: "experimental", advisory: true }))).toMatch(
+      /experimental: this review is advice and does not hold the stage/,
+    );
+    const concern = request({
+      maturity: "preview",
+      advisory: true,
+      reviewers: [{ person: "bob", name: "Bob", required: false, verdict: "changes_requested", security: true }],
+    });
+    expect(gateNote(concern)).toMatch(/^Bob raised a security concern/);
+    expect(gateNote(request({ ...concern, maturity: "stable", advisory: false }))).toMatch(/security concern/);
+    expect(gateNote(request({ advisory: true, state: "approved" }))).toBeNull();
+  });
+});
+
+describe("stakeholders", () => {
+  it("are parsed once each, first spelling kept", () => {
+    expect(parseStakeholders(" Acronis, constructor ,acronis;;")).toEqual(["Acronis", "constructor"]);
+  });
+
+  it("a silent required stakeholder is waited for, and each says where it stands", () => {
+    const r = request({
+      outstanding: [],
+      stakeholders: [
+        { name: "Acronis", required: true, approved: true, approved_by: ["Ann"], asked: ["Ann"] },
+        { name: "Virtuozzo", required: true, approved: false, approved_by: [], asked: [] },
+      ],
+    });
+    expect(reviewState(r).label).toBe("Waiting for Virtuozzo");
+    expect(stakeholderLines(r)).toEqual(["Acronis: ✓ Ann", "Virtuozzo: nobody asked yet — it must approve"]);
+  });
+
+  it("go into the request body with each reviewer's", () => {
+    const body = reviewRequestBody(
+      "p",
+      { kind: "binding", id: "b1", title: "prd.md", version: "sha-1" },
+      [{ person: "ann", required: true, stakeholder: " Acronis " }],
+      null,
+      ["Acronis", "acronis"],
+    );
+    expect(body.stakeholders).toEqual(["Acronis"]);
+    expect(body.reviewers[0].stakeholder).toBe("Acronis");
+  });
+});
+
+describe("rules changed mid-review", () => {
+  it("is said on an open request only", () => {
+    expect(rulesNote(request({ rules_changed: true }))).toMatch(/judged by the ones it started with/);
+    expect(rulesNote(request({ rules_changed: true, state: "approved" }))).toBeNull();
+    expect(rulesNote(request())).toBeNull();
   });
 });

@@ -40,6 +40,21 @@ pub trait TheiaEventSink: Send + Sync {
     async fn accept(&self, event: TheiaForwardedEvent);
 }
 
+/// The forwarded kinds [`StudioEventsSink`] republishes, as `theia.<kind>`.
+///
+/// Each is a row in `docs/events-catalog.md` (the test below holds the two
+/// together). A kind the bridge sends that is not here is traced and dropped:
+/// a consumer may rely only on what the catalogue lists, so a new one is added
+/// here and there in the same PR, not discovered on the stream.
+#[cfg_attr(feature = "theia-event-broker", allow(dead_code))]
+const REPUBLISHED_KINDS: &[&str] = &[
+    "operation",
+    "audit",
+    "repositories-changed",
+    "workspace-snapshot-changed",
+    "workspace-activity",
+];
+
 /// Default sink: republish onto the `studio-events` channel, so a forwarded
 /// Theia event reaches the portal like any other studio event.
 ///
@@ -78,6 +93,13 @@ impl TheiaEventSink for StudioEventsSink {
             payload_bytes = event.payload.to_string().len(),
             "studio-theia: received forwarded Theia event"
         );
+        if !REPUBLISHED_KINDS.contains(&event.kind.as_str()) {
+            tracing::warn!(
+                kind = %event.kind,
+                "studio-theia: not republished, the kind is not in docs/events-catalog.md"
+            );
+            return;
+        }
         let Ok(events) = self
             .hub
             .get::<dyn crate::studio_events::StudioEventPublisher>()
@@ -261,3 +283,23 @@ mod broker {
 
 #[cfg(feature = "theia-event-broker")]
 pub use broker::EventBrokerEventSink;
+
+#[cfg(test)]
+mod tests {
+    use super::REPUBLISHED_KINDS;
+
+    /// The `theia.*` kinds the sink republishes are the ones the events
+    /// catalogue lists, no more and no fewer.
+    #[test]
+    fn the_republished_kinds_are_the_ones_the_catalogue_lists() {
+        let published: std::collections::BTreeSet<String> = REPUBLISHED_KINDS
+            .iter()
+            .map(|kind| format!("theia.{kind}"))
+            .collect();
+        assert_eq!(
+            published,
+            crate::api_contract::events::documented_kinds("theia."),
+            "docs/events-catalog.md and the Theia sink disagree on the `theia.*` kinds"
+        );
+    }
+}

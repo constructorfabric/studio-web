@@ -159,6 +159,9 @@ To discuss after this iteration:
   sections, front-matter, the title.
 - **IDs and references across a project.** Duplicate IDs, dangling references,
   broken links. This is what `traceability` should have given.
+- **Recall and precision from history.** Findings emitted at an older
+  commit, matched to the fixes made after it
+  ([calibrating findings against history](probe-calibration.md)).
 - **A review against the kit's checklists.** The criteria in
   `documents/review/*/checklist.md` (#394), with proposed changes.
 - **Asks of the Spec Quality service:**

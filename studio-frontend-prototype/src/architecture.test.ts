@@ -28,6 +28,7 @@ import {
   surfacesOf,
   usedBy,
   usesOf,
+  eventsOf,
 } from "./architecture";
 import type { ManifestGear } from "./architecture";
 
@@ -316,5 +317,17 @@ describe("words and links", () => {
     );
     expect(designDocUrl("docs/design/studio-tasks.md", null)).toContain("/blob/main/");
     expect(apiDocsUrl("studio-identity")).toBe("/api-docs/?component=studio-identity");
+  });
+});
+
+describe("events a gear publishes", () => {
+  it("are the catalogue's kinds naming it, by name", () => {
+    const catalog = [
+      { kind: "task.succeeded", subject_type: "task_run", publisher: "studio-tasks", when: "", fields: ["run_id"] },
+      { kind: "task.failed", subject_type: "task_run", publisher: "studio-tasks", when: "", fields: [] },
+      { kind: "theia.operation", subject_type: "workspace", publisher: null, when: "", fields: [] },
+    ];
+    expect(eventsOf(catalog, "studio-tasks").map((k) => k.kind)).toEqual(["task.failed", "task.succeeded"]);
+    expect(eventsOf(catalog, "studio-theia")).toEqual([]);
   });
 });

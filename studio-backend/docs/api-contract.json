@@ -1830,6 +1830,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-events/v1/catalog",
+      "operation_id": "studio_events.list_kinds",
+      "tag": "StudioEvents",
+      "summary": "The kinds of event the channel carries, and who publishes each",
+      "authenticated": true,
+      "responses": [
+        "EventCatalogDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-events/v1/events",
       "operation_id": "studio_events.events",
       "tag": "StudioEvents",

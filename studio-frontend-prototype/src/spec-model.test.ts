@@ -227,6 +227,7 @@ describe("product findings", () => {
     const ordered = orderProductFindings([finding("tenancy", "medium"), finding("storage", "high"), finding("auth", "high")]);
     expect(ordered.map((f) => f.capability)).toEqual(["auth", "storage", "tenancy"]);
     expect(ruleLabel("product.decided_not_built")).toBe("Decided, not built");
+    expect(ruleLabel("product.immature")).toBe("Rests on an unready gear");
   });
 });
 

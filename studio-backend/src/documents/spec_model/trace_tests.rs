@@ -84,3 +84,37 @@ fn tests_are_told_from_code_by_their_path() {
         assert!(!is_test_path(p), "{p}");
     }
 }
+
+#[test]
+fn one_pass_finds_the_same_places_as_reading_each_requirement_alone() {
+    let docs = [doc("prd.md", PRD), doc("design.md", DESIGN)];
+    let reqs = requirements(&docs);
+    let files: Vec<(String, String)> = (0..50)
+        .map(|i| {
+            (
+                format!("src/m{i}.rs"),
+                format!(
+                    "fn f() {{}}\n// CPT-APP-FR-EXPORT{}\n",
+                    if i == 7 { "" } else { "-x" }
+                ),
+            )
+        })
+        .collect();
+    let traced = trace(&reqs, &docs, &files);
+    let export = traced
+        .iter()
+        .find(|t| t.requirement.id == "cpt-app-fr-export")
+        .expect("export");
+    assert_eq!(
+        export.code,
+        [Cited {
+            path: "src/m7.rs".into(),
+            line: 2
+        }],
+        "case aside, a whole token only"
+    );
+    assert_eq!(
+        export.documents[0].line, 9,
+        "the mention after its own definition"
+    );
+}

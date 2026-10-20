@@ -243,6 +243,10 @@ pub struct Candidate {
     /// Whose component it is (ADR-0042): `project`, `organization` or
     /// `platform`.
     pub tier: String,
+    /// Its maturity as gear.gdl declares it (gears-rust #5275): `design`,
+    /// `experimental`, `preview`, `stable` or `deprecated`. Absent when the
+    /// catalogue does not know it.
+    pub maturity: Option<String>,
 }
 
 /// Whose component `component` is (ADR-0042): `project` for one the
@@ -301,6 +305,9 @@ pub struct Provider {
     /// its words, which says the gear talks about the subject, not that it
     /// does the job.
     pub strong: bool,
+    /// The candidate's maturity, carried so a finding can say a capability
+    /// rests on a gear not ready to be relied on.
+    pub maturity: Option<String>,
 }
 
 impl Provider {
@@ -314,6 +321,7 @@ impl Provider {
             strong: c.step == Step::Contract
                 || c.declared
                 || decided.is_some_and(|d| d.decision == "confirmed"),
+            maturity: c.maturity.clone(),
         })
     }
 }
@@ -563,6 +571,19 @@ pub(crate) fn declared_capabilities(component: &Value, profile: Option<&Value>) 
         .collect()
 }
 
+/// A component's maturity as the catalogue resolves it (a person's entry
+/// over gear.gdl over the registry), lower-cased; `None` when it says none.
+pub(crate) fn maturity_of(component: &Value, profile: Option<&Value>) -> Option<String> {
+    let values = crate::components_catalog::sdk::resolve(component, profile);
+    let field = values.get("maturity")?;
+    let text = field
+        .get("v")
+        .and_then(Value::as_str)
+        .or_else(|| field.as_str())?;
+    let text = text.trim().to_ascii_lowercase();
+    (!text.is_empty()).then_some(text)
+}
+
 /// The description the repository scan wrote, wherever it put it.
 fn profile_text(profile: Option<&Value>) -> String {
     let Some(auto) = profile.and_then(|p| p.get("auto")) else {
@@ -725,6 +746,7 @@ fn plan_with_limit(
                             current_version(component),
                         ),
                         tier: tier_of(component),
+                        maturity: maturity_of(component, profile),
                     })
                 })
                 .collect();

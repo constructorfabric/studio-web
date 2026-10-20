@@ -36,6 +36,31 @@ pub struct StudioEventDto {
     pub payload: Value,
 }
 
+/// One kind of event the channel carries, as `docs/events-catalog.md`
+/// documents it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct EventKindDto {
+    /// `task.succeeded`, `review_request.decided`, …
+    pub kind: String,
+    /// The `subject_type` of its frames.
+    pub subject_type: String,
+    /// The gear that publishes it. Null when the catalogue does not say.
+    pub publisher: Option<String>,
+    /// When it is published, as the catalogue says.
+    pub when: String,
+    /// The payload fields it may carry.
+    pub fields: Vec<String>,
+}
+
+/// The channel's vocabulary: every documented kind, by name.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct EventCatalogDto {
+    pub items: Vec<EventKindDto>,
+    pub total: u32,
+}
+
 /// A page of replayed events, newest last.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]

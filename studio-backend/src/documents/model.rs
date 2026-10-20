@@ -635,6 +635,8 @@ pub struct Requirement {
     /// The required reviewers of the document's current review request who
     /// have not approved it, by name (or person id when nameless). Empty when
     /// nobody was asked: a review gates the stage only once it is requested.
+    /// Below `stable` maturity, only the reviewers whose latest verdict is a
+    /// security concern, who are also listed at any level.
     #[serde(default)]
     pub approvals_outstanding: Vec<String>,
 }

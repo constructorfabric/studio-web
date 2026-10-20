@@ -22,7 +22,7 @@ import {
 import { DataTable, When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
-import { ProductConfigurator, useGearCatalogue, useKeptEntities } from "./product-configurator-view";
+import { ProductConfigurator, useGearCatalogue, useKeptEntities, useRunning } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -1059,6 +1059,15 @@ function SuggestedComponents({
                                 </span>
                               )}
                               {c.built === "docs-only" && <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>}
+                              {(c.maturity === "design" || c.maturity === "experimental") && (
+                                <span
+                                  style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--warning, #b7791f)" }}
+                                  title="Not ready to be relied on: what it promises can still change"
+                                  data-maturity={c.maturity}
+                                >
+                                  {c.maturity.toUpperCase()}
+                                </span>
+                              )}
                               {c.decision?.decision === "rejected" && !c.decision.needs_review && (
                                 <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>REJECTED</span>
                               )}
@@ -1570,6 +1579,8 @@ function ProductCard({
   const catalogue = useGearCatalogue(token, product.composing, projectId);
   const map = catalogue && "index" in catalogue ? catalogue.index : null;
   const kept = useKeptEntities(token, projectId, map);
+  // Where each gear runs (ADR-0043 §4), against the product as it was last written.
+  const running = useRunning(token, projectId);
 
   const inCode = code.report ? codeGears(code.report) : [];
   const diff = codeDiff(picks, inCode);
@@ -1611,6 +1622,8 @@ function ProductCard({
           onBuild={() => void buildInTheia()}
           onOpen={nav ? (name) => nav.openComponent(name) : undefined}
           kept={kept}
+          running={running}
+          productAt={{ commit: record?.written?.commit_sha, updatedAt: record?.updated_at }}
         />
       ) : (
         <>

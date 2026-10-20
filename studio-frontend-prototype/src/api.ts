@@ -1025,6 +1025,9 @@ export interface Candidate {
   /** Whose component it is (ADR-0042): the shared set, the organization's
    *  own, or this project's. Absent from a server older than the tiers. */
   tier?: ComponentTier;
+  /** Its gear.gdl maturity (design | experimental | preview | stable |
+   *  deprecated). Absent when unknown, or from an older server. */
+  maturity?: string | null;
 }
 
 /** Where a component comes from (ADR-0042): `platform` -- the shared set,
@@ -2909,6 +2912,12 @@ export interface DocValidation {
   conforms: boolean;
   sections: DocSectionStatus[];
   issues: string[];
+  /** The `maturity:` the document declares (design | experimental | preview |
+   *  stable | deprecated). Below stable the check is lighter. */
+  maturity?: string;
+  /** What the full check would reject and this maturity lets stand. Shown,
+   *  never counted against `conforms`. */
+  open?: string[];
 }
 
 /** The gear repository connected to a project — where its gears live and where
@@ -3562,11 +3571,14 @@ export const api = {
     requestId: string,
     verdict: "approved" | "changes_requested",
     note: string | null,
+    /** The changes asked for are a security concern: they hold the stage at
+     *  any maturity. */
+    security = false,
   ) =>
     request<ReviewVerdict>(
       `/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/approvals`,
       token,
-      { method: "POST", body: JSON.stringify({ project_id: projectId, verdict, note }) },
+      { method: "POST", body: JSON.stringify({ project_id: projectId, verdict, note, security }) },
     ),
   cancelReviewRequest: (token: string, projectId: string, requestId: string) =>
     request<ReviewRequest>(`/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/cancel`, token, {

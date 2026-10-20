@@ -13,8 +13,38 @@
 //! that does not falls back to the built-in guide for its key.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::model::{DocumentType, Owner};
+
+/// What a review is judged by, kept when it is asked for: the type's review
+/// guide as it was then, and a digest of that guide and the type's template.
+/// A convention changed since does not apply to a review already running
+/// (`approvals`); the digest tells that it changed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesSnapshot {
+    pub digest: String,
+    #[serde(default)]
+    pub checklist: String,
+    #[serde(default)]
+    pub rules: String,
+}
+
+/// The rules a review of a document of type `ty` is judged by now.
+pub fn rules_snapshot(ty: &DocumentType) -> RulesSnapshot {
+    let guide = effective_guide(ty).map(|(g, _)| g).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_vec(&ty.template).unwrap_or_default());
+    for part in [&guide.checklist, &guide.rules] {
+        hasher.update([0x1e]);
+        hasher.update(part.as_bytes());
+    }
+    RulesSnapshot {
+        digest: hex::encode(&hasher.finalize()[..12]),
+        checklist: guide.checklist,
+        rules: guide.rules,
+    }
+}
 
 /// A review guide as its author wrote it: two markdown documents.
 ///

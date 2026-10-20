@@ -1,11 +1,14 @@
 //! The documents against the product: what a project's documents ask for
 //! that its code is not made of, as findings on the documents.
 //!
-//! Two rules, both mechanical (`docs/project-and-product.md`):
+//! Three rules, all mechanical (`docs/project-and-product.md`):
 //! - `product.missing`: a capability the documents need, and no component
 //!   the code depends on fills it;
 //! - `product.decided_not_built`: a member confirmed a gear for a
-//!   capability, and the code does not depend on it.
+//!   capability, and the code does not depend on it;
+//! - `product.immature`: the capability is filled, but only by gears still
+//!   in `design` or `experimental` (gears-rust #5275) -- the design rests on
+//!   platform state that is not built yet, and may move under it.
 //!
 //! A finding sits on the documents that ask, because that is where the intent
 //! is written; the code is what is compared against it.
@@ -19,6 +22,11 @@ use crate::documents::port::{CapabilitySource, DeclaredCapability};
 
 pub const MISSING: &str = "product.missing";
 pub const DECIDED_NOT_BUILT: &str = "product.decided_not_built";
+pub const IMMATURE: &str = "product.immature";
+
+/// The maturities a capability should not rest on: what they promise can
+/// still change without notice. `preview` is past that.
+const IMMATURE_LEVELS: [&str; 2] = ["design", "experimental"];
 
 /// One document a finding rests on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +93,60 @@ pub fn findings(
             .into_iter()
             .collect();
         let sides: Vec<Side> = need.sources.iter().map(side).collect();
+
+        // Filled, but only by what is not ready to be relied on. One mature
+        // gear among them is enough: the capability rests on that one.
+        let maturity: BTreeMap<String, &str> = row
+            .providers
+            .iter()
+            .filter_map(|p| Some((crate_key(&p.name), p.maturity.as_deref()?)))
+            .chain(
+                row.candidates
+                    .iter()
+                    .filter_map(|c| Some((crate_key(&c.name), c.maturity.as_deref()?))),
+            )
+            .collect();
+        let immature = |n: &str| {
+            maturity
+                .get(&crate_key(n))
+                .is_some_and(|m| IMMATURE_LEVELS.contains(m))
+        };
+        if !filled_by.is_empty() && filled_by.iter().all(|n| immature(n)) {
+            let levels: Vec<String> = filled_by
+                .iter()
+                .map(|n| format!("`{n}` is {}", maturity[&crate_key(n)]))
+                .collect();
+            let ready: Vec<String> = row
+                .providers
+                .iter()
+                .filter(|p| {
+                    p.maturity
+                        .as_deref()
+                        .is_some_and(|m| m == "preview" || m == "stable")
+                })
+                .take(3)
+                .map(|p| p.name.clone())
+                .collect();
+            let instead = if ready.is_empty() {
+                String::new()
+            } else {
+                format!(" Further along: {}.", names(&ready))
+            };
+            out.push(Finding {
+                fingerprint: fingerprint(IMMATURE, &need.key, &filled_by.join(",")),
+                rule: IMMATURE.to_owned(),
+                severity: "medium".to_owned(),
+                capability: need.key.clone(),
+                gear: filled_by.first().cloned(),
+                message: format!(
+                    "The documents rest `{}` on gears not ready to be relied on: {}. What they promise can still change.{instead}",
+                    need.key,
+                    levels.join(", ")
+                ),
+                sides: sides.clone(),
+                candidates: ready,
+            });
+        }
 
         let confirmed = confirmed_gears(decisions, &need.key);
         let unbuilt: Vec<&str> = confirmed

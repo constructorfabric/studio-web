@@ -31,6 +31,17 @@ This gear makes those opinions data: a document **type** carries a markdown
 template, a section checklist and structural conformance rules, so "is this
 document complete" has an answer that is not a person reading it.
 
+How complete depends on what the document is for. Its front matter may
+declare a `maturity`, the level a gear declares in its `gear.gdl`
+(gears-rust #5275), and the check follows it. At `design` or `experimental`,
+a required section may be missing or short. At `preview`, every section has to
+be written, but `TODO` and `TBD` may stay, because an open question is closed
+with a spike or a follow-up change, not with another review round. At `stable`
+or `deprecated`, and when nothing is declared, the full check applies. An
+unedited template (`{{…}}`, `<…>`) fails at every level. What a level lets
+stand is still listed in the report's `open` and shown in the checklist; it
+just does not count against `conforms`.
+
 Documents reach a project two ways. Somebody writes one in Studio, and its
 content is a column here; or the repository already had one, and a sync binds
 the file to a type. The binding records a verdict and a path, never the text:
@@ -341,7 +352,38 @@ and it keeps the detectors that had passed on the document when it was given.
 `stage-status` folds the current request (the newest open or approved one) into
 each requirement as `approvals_outstanding`: the required reviewers who have
 not approved. A stage is complete only when that is empty, so a review gates a
-stage once somebody asks for it, and never before. Reviewer suggestions are the
+stage once somebody asks for it, and never before. How much it gates follows
+the document's `maturity`, as the structural check reads it (gears-rust
+#5275): review strictness follows the level, and only a security issue blocks
+at every level. A verdict asking for changes may say `security: true`. At
+`stable` or `deprecated`, and when nothing is declared, the gate is the one
+above, plus anybody, required or not, whose latest verdict is a security
+concern. At `design`, `experimental` or `preview` the review is advice: the
+request still waits for its required reviewers and still closes as `approved`
+only when they approve, but the stage waits only on a security concern. An open
+question closes with a spike or a follow-up change, not another review round.
+A request whose latest verdicts include a security concern is not `approved`,
+since an approved request takes no more verdicts and the concern could never be
+lifted. Each request answers its `maturity`, read from the text it was asked
+about, and `advisory` when that is below `stable`. The stage holds a review to
+that maturity, or to a stricter one the document declares since
+(`governing_maturity`): a level lowered mid-review does not turn a gate into
+advice.
+
+A reviewer may speak for a **stakeholder**, an organization the document
+answers to (as a gear's demand names its consumers: Acronis, Constructor,
+Virtuozzo). One approval answers for its stakeholder, so the other required
+reviewers of the same one are no longer awaited. A request may also name the
+stakeholders that must approve (`stakeholders`, migration m0027); one that
+nobody of theirs approved for keeps the request from closing as `approved` and,
+at `stable`, holds the stage, listed in `approvals_outstanding` by name. Each
+request answers every stakeholder with who approved for it and who was asked.
+
+A review is judged by the **rules it started with**. The request keeps its
+type's review guide and a digest of that guide and the template
+(`rules_snapshot`); `GET /review-criteria?review_request_id=` serves the
+criteria kept, and the request says `rules_changed` when the type's rules moved
+since. Asking again reviews against the new ones. Reviewer suggestions are the
 reviewers of earlier requests on the document, then on its type, ranked by how
 often they were asked. Each request change is announced on `studio-events` as
 `review_request.created`, `.decided` or `.cancelled`
@@ -761,6 +803,7 @@ deletes one.
 | `version` | TEXT | the version the verdict is about |
 | `approver`, `approver_name` | TEXT | the canonical person |
 | `verdict` | TEXT | `approved` or `changes_requested` |
+| `security` | BOOLEAN | the changes asked for are a security concern, which holds the stage at any maturity (`m0026`); `false` on an approval |
 | `note` | TEXT | optional |
 | `checks` | JSONB | the detectors that had passed on the document then |
 | `decided_at` | TIMESTAMPTZ | |

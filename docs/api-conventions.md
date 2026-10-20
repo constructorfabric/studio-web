@@ -206,6 +206,30 @@ either portal calls has to exist in `studio-backend/docs/api-contract.json`. It
 runs in CI on every push with no component filter, because the drift it looks
 for is exactly the drift a per-component filter hides.
 
+**G4 `[compat]` — a published promise is kept by default; breaking one is
+recorded, never regenerated away.** Within `v1` (and within a documented event
+`kind`) a change may add, and may relax, but may not take away. These are
+breaks:
+
+| On | A break |
+| --- | --- |
+| an operation | it is removed, or its method or path changes (a path parameter's *name* is not on the wire, so renaming `{id}` is not one) |
+| a request body | a field changes type; a required field is removed; an optional field becomes required; a new required field appears |
+| a response | a field is removed, changes type, or may now be missing (`Option`, `skip_serializing_if`) |
+| an event | a `subject_type` or a `kind` stops being documented, a kind moves to another subject type, or a documented payload field is removed |
+
+Adding an operation, an optional request field, a response field, a kind or a
+payload field is not a break; neither is renaming a DTO type, since its name
+is not on the wire. For that to hold, a consumer ignores the fields and kinds
+it does not know rather than refusing them.
+
+The default answer to a break is G1: add the new shape beside the old one,
+deprecate the old, remove it later. When a break is agreed instead — the
+operation never had a caller, or every caller moves in the same PR (G3) — it is
+recorded in `studio-backend/docs/api-contract-breaks.txt`: the line the test
+prints, under a `#` comment that says why and who agreed. The record stays; it
+is the history of what Studio stopped promising.
+
 ## H. Status codes
 
 **H1 *(by review)* — the success code says what happened, and the method
@@ -312,7 +336,7 @@ response, and a batch's per-item outcomes are its result, not its status.
 
 ## How this is enforced
 
-Three things, none of which needs a running deployment.
+Four things, none of which needs a running deployment.
 
 ### 1. The rules, as a test
 
@@ -389,11 +413,54 @@ a call that does.
 knowing: **62 of 137 registered paths are called by neither portal.** That is
 what "designed inside the gear that owns it" produces.
 
+### 4. Compatibility, as a ratchet the other way
+
+`api-contract.json` is regenerated on every change, so on its own it shows a
+break and accepts it in the same breath. Rule G4 is held by a second file from
+the same scan, `studio-backend/docs/api-contract-accepted.txt`: one
+tab-separated line per promise — every operation, every request and response
+field (followed into nested DTOs, by its name on the wire), and every subject
+type, kind and payload field in [`events-catalog.md`](events-catalog.md).
+
+`cargo test api_contract` compares it with the tree. A promise that is no
+longer kept fails, with the line to record and what a caller now meets:
+
+```
+$ cargo test api_contract
+
+These changes break what Studio has already published (1 of them):
+
+  response  GET /studio-tasks/v1/runs/{}  summary  String  optional
+      a field of the answer is gone: callers reading it break
+```
+
+A change that only adds fails too, more quietly, until it is accepted:
+
+```
+cd studio-backend && cargo run --quiet -- api-contract --accept
+```
+
+That rewrites the accepted file and `api-contract.json` together, and it
+**refuses, writing nothing, while an unrecorded break is open** — so
+regenerating is never how a break gets in, and the only way past one is a
+reviewed line in `docs/api-contract-breaks.txt` with its reason above it. The
+accepted file grows with the API, and the diff of it is the list of promises a
+PR makes.
+
+The events half has a second check, in each producer's tests: the kinds
+`studio-tasks`, `studio-documents` and the Theia sink can publish are compared
+with the catalogue rows for their prefix, so the page and the code cannot
+drift apart (E3, for kinds).
+
+Not covered yet: query parameters, status codes, enum values, and the payload
+a producer actually builds — for events, the payload fields are the
+catalogue's word.
+
 ### Rules that are not checked yet
 
-B2, B4, B5, B6, D1, D3, E1–E5, F3, F4, G1, G2, H1–H3, I1–I5 and J1–J4 are reviewer's rules today.
+B2, B4, B5, B6, D1, D3, E1, E2, E4, E5, F3, F4, G1, G2, H1–H3, I1–I5 and J1–J4 are reviewer's rules today; E3 is checked for kinds
+(section 4) and still by review for subject types.
 The ones worth mechanising next, in order: **H1** (the success code against the
-method and the operation's verb, with D1's `202` + `run_id` shape), **B6** (a
-DTO field scan catches `camelCase` on the wire), and **E3** (the event
-vocabulary against `events-catalog.md`). Each is a scan of the same
-sources this module already reads.
+method and the operation's verb, with D1's `202` + `run_id` shape) and **B6**
+(the DTO field scan G4 already does can flag `camelCase` on the wire). Each is
+a scan of the same sources this module already reads.

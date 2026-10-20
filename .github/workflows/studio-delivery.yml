@@ -343,6 +343,9 @@ jobs:
       # The reader behind both that check and the /architecture/ page's
       # prototype map (scripts/prototype-api-map.mjs).
       - run: node --test scripts/prototype-api-map.test.mjs
+      # Not a contract, but Node-only and seconds: the hunk mapping and
+      # scoring of docs/probe-calibration.md.
+      - run: node --test scripts/probe-calibrate.test.mjs
       # The other contract both portals owe, and the reason it lives in this
       # job rather than test-frontend: the event stream must not be
       # compressed, and a config change that breaks it is invisible in

@@ -45,6 +45,7 @@ fn candidate(name: &str) -> Candidate {
         version: None,
         decision: None,
         tier: "platform".into(),
+        maturity: None,
     }
 }
 
@@ -60,6 +61,7 @@ fn row(capability: &str, gears: &[&str], nonfunctional: bool) -> PlanRow {
             .map(|g| Provider {
                 name: (*g).into(),
                 strong: true,
+                maturity: None,
             })
             .collect(),
     }
@@ -180,4 +182,50 @@ fn a_fingerprint_follows_the_capability_and_gear_not_the_documents() {
         &[],
     );
     assert_eq!(a[0].fingerprint, b[0].fingerprint);
+}
+
+/// `row`, with each gear at the maturity given.
+fn row_at(capability: &str, gears: &[(&str, &str)]) -> PlanRow {
+    let names: Vec<&str> = gears.iter().map(|(g, _)| *g).collect();
+    let mut r = row(capability, &names, false);
+    for (c, (_, m)) in r.candidates.iter_mut().zip(gears) {
+        c.maturity = Some((*m).into());
+    }
+    for (p, (_, m)) in r.providers.iter_mut().zip(gears) {
+        p.maturity = Some((*m).into());
+    }
+    r
+}
+
+#[test]
+fn a_capability_filled_only_by_immature_gears_says_so_and_names_what_is_further_along() {
+    let needs = [need("storage", vec![source("docs/PRD.md", false)])];
+    let rows = [row_at(
+        "storage",
+        &[("file-storage", "experimental"), ("blob-store", "stable")],
+    )];
+    let found = findings(&needs, &rows, &code(&["file_storage"]), &[]);
+    assert_eq!(found.len(), 1);
+    let f = &found[0];
+    assert_eq!(f.rule, IMMATURE);
+    assert_eq!(f.severity, "medium");
+    assert_eq!(f.gear.as_deref(), Some("file-storage"));
+    assert_eq!(f.candidates, ["blob-store"]);
+    assert!(
+        f.message.contains("`file-storage` is experimental"),
+        "{}",
+        f.message
+    );
+}
+
+#[test]
+fn one_ready_gear_among_the_fillers_or_an_unknown_maturity_is_no_immature_finding() {
+    let needs = [need("storage", vec![source("docs/PRD.md", false)])];
+    let both = [row_at(
+        "storage",
+        &[("file-storage", "design"), ("blob-store", "preview")],
+    )];
+    assert!(findings(&needs, &both, &code(&["file-storage", "blob-store"]), &[]).is_empty());
+    let unknown = [row("storage", &["file-storage"], false)];
+    assert!(findings(&needs, &unknown, &code(&["file-storage"]), &[]).is_empty());
 }

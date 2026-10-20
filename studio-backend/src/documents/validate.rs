@@ -35,6 +35,40 @@ pub struct ValidationReport {
     pub conforms: bool,
     pub sections: Vec<SectionStatus>,
     pub issues: Vec<String>,
+    /// The maturity the document declares in its front matter, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maturity: Option<String>,
+    /// What the full check would reject and this maturity lets stand: an
+    /// unwritten section of an experiment, an open TODO in a preview. Reported
+    /// so nothing is hidden, never counted against `conforms`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<String>,
+}
+
+/// The maturity levels a gear declares in its `gear.gdl` (gears-rust #5275).
+pub const MATURITY_LEVELS: [&str; 5] =
+    ["design", "experimental", "preview", "stable", "deprecated"];
+
+/// How much of the template a document must meet. Specs are a tool, not a text
+/// to finish before code: an experiment is written as far as it is known, a
+/// preview may keep its open questions, and only a stable (or deprecated) gear,
+/// or a document that declares nothing, gets the full check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Strictness {
+    /// `design`, `experimental`: required sections may be missing or short.
+    Explore,
+    /// `preview`: every section written, `TODO` and `TBD` may stay.
+    Preview,
+    Full,
+}
+
+fn strictness(level: &str) -> Option<Strictness> {
+    match level {
+        "design" | "experimental" => Some(Strictness::Explore),
+        "preview" => Some(Strictness::Preview),
+        "stable" | "deprecated" => Some(Strictness::Full),
+        _ => None,
+    }
 }
 
 /// A heading found in the document: its level, normalized title, and the word
@@ -188,6 +222,20 @@ fn strip_comments(line: &str, in_comment: &mut bool) -> String {
     }
 }
 
+/// The maturity a front matter declares, normalized; `None` when it declares
+/// none.
+fn maturity_in(fm: &HashMap<String, String>) -> Option<String> {
+    fm.get("maturity")
+        .map(|v| normalize(v.trim_matches(|c| c == '"' || c == '\'')))
+        .filter(|v| !v.is_empty())
+}
+
+/// The maturity a document declares in its front matter, as [`validate`]
+/// reads it: what a review of it is held to (`approvals::advisory`).
+pub(super) fn maturity_of(content: &str) -> Option<String> {
+    maturity_in(&split_front_matter(content).0)
+}
+
 /// First `# ` (level-1) heading title, if any.
 fn first_title(heads: &[Heading]) -> Option<String> {
     heads
@@ -202,7 +250,21 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
     let heads = headings(body);
     let mut issues: Vec<String> = Vec::new();
     let mut sections: Vec<SectionStatus> = Vec::new();
+    let mut open: Vec<String> = Vec::new();
     let mut conforms = true;
+
+    let maturity = maturity_in(&fm);
+    let level = match maturity.as_deref() {
+        None => Strictness::Full,
+        Some(m) => strictness(m).unwrap_or_else(|| {
+            conforms = false;
+            issues.push(format!(
+                "Unknown maturity \"{m}\": use one of {}",
+                MATURITY_LEVELS.join(", ")
+            ));
+            Strictness::Full
+        }),
+    };
 
     // Sections.
     for s in &spec.sections {
@@ -234,18 +296,23 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
         };
         let satisfied = ok && present && word_count > 0;
         if !ok {
-            conforms = false;
-            if !present {
-                issues.push(format!("Missing required section: {}", s.title));
+            let issue = if !present {
+                format!("Missing required section: {}", s.title)
             } else if word_count == 0 {
-                issues.push(format!("Section is empty: {}", s.title));
-            } else if !meets_min {
-                issues.push(format!(
+                format!("Section is empty: {}", s.title)
+            } else {
+                format!(
                     "Section \"{}\" is too short ({} words, need {})",
                     s.title,
                     word_count,
                     s.min_words.unwrap_or(0)
-                ));
+                )
+            };
+            if level == Strictness::Explore {
+                open.push(issue);
+            } else {
+                conforms = false;
+                issues.push(issue);
             }
         }
         sections.push(SectionStatus {
@@ -293,10 +360,21 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
         // ingested from a real repository is full of them -- flagging those
         // would make the check useless on exactly the documents that need it.
         let prose = strip_code(content);
-        for marker in ["{{", "TODO", "TBD"] {
+        if prose.contains("{{") {
+            conforms = false;
+            issues.push("Leftover placeholder: {{".to_string());
+        }
+        // A TODO is an open question, and below stable it closes with a spike
+        // or a follow-up change, not another review round. `{{` and the
+        // bracket markers are an unedited template at any level.
+        for marker in ["TODO", "TBD"] {
             if prose.contains(marker) {
-                conforms = false;
-                issues.push(format!("Leftover placeholder: {marker}"));
+                if level == Strictness::Full {
+                    conforms = false;
+                    issues.push(format!("Leftover placeholder: {marker}"));
+                } else {
+                    open.push(format!("Open question: {marker}"));
+                }
             }
         }
         if has_angle_placeholder(&prose) {
@@ -313,6 +391,8 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
         conforms,
         sections,
         issues,
+        maturity,
+        open,
     }
 }
 
@@ -503,6 +583,106 @@ Too short.
         let spec = spec(vec![sec("problem", "Problem", true, None)]);
         let report = validate(FRONT, &spec);
         assert!(!report.conforms);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.contains("Missing required section")),
+            "{:?}",
+            report.issues
+        );
+    }
+
+    fn with_maturity(level: &str, body: &str) -> String {
+        format!("---\nstatus: draft\nmaturity: {level}\n---\n\n# A Real Title Here\n\n{body}")
+    }
+
+    #[test]
+    fn an_experiment_may_leave_required_sections_unwritten_and_says_so() {
+        let spec = spec(vec![
+            sec("problem", "Problem", true, None),
+            sec("design", "Design", true, Some(50)),
+        ]);
+        let body = with_maturity(
+            "experimental",
+            "## Problem\n\nTry it. TODO: measure.\n\n## Design\n\nShort.\n",
+        );
+
+        let report = validate(&body, &spec);
+        assert!(report.conforms, "issues: {:?}", report.issues);
+        assert_eq!(report.maturity.as_deref(), Some("experimental"));
+        assert!(
+            report.open.iter().any(|o| o.contains("too short")),
+            "{:?}",
+            report.open
+        );
+        assert!(
+            report.open.iter().any(|o| o.contains("TODO")),
+            "{:?}",
+            report.open
+        );
+        let design = report
+            .sections
+            .iter()
+            .find(|s| s.key == "design")
+            .expect("design");
+        assert!(!design.ok, "the checklist still says it is unfinished");
+    }
+
+    #[test]
+    fn a_preview_keeps_its_open_questions_but_writes_every_section() {
+        let spec = spec(vec![
+            sec("problem", "Problem", true, None),
+            sec("risks", "Risks", true, None),
+        ]);
+        let open_question = with_maturity(
+            "preview",
+            "## Problem\n\nKnown. TBD: the quota.\n\n## Risks\n\nFew.\n",
+        );
+        let report = validate(&open_question, &spec);
+        assert!(report.conforms, "issues: {:?}", report.issues);
+        assert_eq!(report.open, vec!["Open question: TBD".to_string()]);
+
+        let missing = with_maturity("preview", "## Problem\n\nKnown.\n");
+        assert!(
+            !validate(&missing, &spec).conforms,
+            "a preview still needs its sections"
+        );
+    }
+
+    #[test]
+    fn stable_and_undeclared_documents_get_the_full_check() {
+        let spec = spec(vec![sec("problem", "Problem", true, None)]);
+        for body in [
+            with_maturity("stable", "## Problem\n\nTODO\n"),
+            format!("{FRONT}## Problem\n\nTODO\n"),
+        ] {
+            let report = validate(&body, &spec);
+            assert!(!report.conforms);
+            assert!(report.open.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_unedited_template_fails_at_any_maturity() {
+        let spec = spec(vec![sec("problem", "Problem", true, None)]);
+        let report = validate(
+            &with_maturity("design", "## Problem\n\n{{problem}}\n"),
+            &spec,
+        );
+        assert!(!report.conforms, "{:?}", report.issues);
+    }
+
+    #[test]
+    fn an_unknown_maturity_is_reported_and_checked_in_full() {
+        let spec = spec(vec![sec("problem", "Problem", true, None)]);
+        let report = validate(&with_maturity("alpha", ""), &spec);
+        assert!(!report.conforms);
+        assert!(
+            report.issues.iter().any(|i| i.contains("Unknown maturity")),
+            "{:?}",
+            report.issues
+        );
         assert!(
             report
                 .issues
