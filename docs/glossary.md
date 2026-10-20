@@ -34,7 +34,7 @@ These terms are used with exactly this meaning in every document of the project.
 | <a id="desktop-session"></a>**Desktop session** | A second kind of session in studio-session, a lease with an expiry, with no container, gate token, control port or S2S token | — | — | `docs/adr/0027-a-desktop-session-keeps-the-secrets-on-the-server.md:140` |
 | <a id="document"></a>**Document** | Authored document stored in studio_documents with its text | — | — | `docs/adr/0037-one-model-for-a-project.md:37` |
 | <a id="document-analysis"></a>**Document analysis** | Verdict of a detector on a document or binding | — | — | `docs/design/studio-documents.md:545` |
-| <a id="editor-session"></a>**Editor session** | The project's Theia session, reused when one is alive and launched when not. | — | — | `docs/feature/editor-session.md:52` |
+| <a id="editor-session"></a>**Editor session** | The project's Theia session, reused when one is alive and launched when not. | — | [Editor](../studio-frontend/GLOSSARY.md#editor) | `docs/feature/editor-session.md:52` |
 | <a id="event"></a>**Event** | A producer states kind and subject, puts its own vocabulary in payload; the channel assigns seq and at_ms | — | — | `docs/design/studio-events.md:29` |
 | <a id="finding"></a>**Finding** | Interpretation of a finished analysis result, with an id. | — | — | `docs/design/studio-spec-quality.md:51` |
 | <a id="gearbox-engine"></a>**Gearbox engine** | A tool a desktop session receives. | — | — | `docs/adr/0032-the-desktop-gets-its-tools-as-extensions.md:265` |
