@@ -37,11 +37,32 @@ Concrete, reproducible defects. State the input or state that triggers them and 
 
 Not a bug: a hypothetical that requires the code to be called in a way it never is. Check the callers before reporting.
 
+**Look past the diff.** Most behaviour bugs human reviewers found after our review sat where the diff meets code
+it relies on. For each of these, do the trace, don't stop at the changed lines:
+- **Every backend call the diff adds or newly depends on** — open its handler in the repo (`studio-backend/`,
+  the gear's routes): default and maximum `limit`, pagination and what marks the last page, error codes, what a
+  missing or deleted record returns. A one-page read of a paged endpoint is a bug (#557: a catch-up read one page
+  of the backend's default 200 and dropped the high-water mark).
+- **A promise the PR changes** — a doc comment, README, ADR text or test name in the diff that says what the code
+  does: check the code that delivers it, changed or not. The promise is new even if the code is old.
+- **Lifecycle and state machines** — list the states and every transition: retry, cancel, unmount, re-enter,
+  failure half-way, a second call while the first is pending. For each new flag or cache, find every writer and
+  every reset (`rg` the name); a flag set on one path and never cleared on another is the classic miss.
+- **Invariants an ADR states** — "only X writes Y", "never Z": `rg` the whole tree for other writers, not only the
+  file that implements it (#380: reducers selected an org although ADR-0022 says only `materialize` does).
+- **Data the code assumes** — locale rules applied to dictionaries that are still English copies, plural forms,
+  ordering, empty and very long inputs (#697: CLDR plural rules applied to untranslated copies).
+
 ## 3. Duplication
 
 - New code that re-implements something that already exists in the repo — search (`grep`/`rg`) for similarly named functions, hooks, utilities, constants before reporting, and name the existing one.
 - Copy-paste inside the PR (same block in two files/slices).
 - Duplicated knowledge: the same constant, mapping or validation rule defined in two places that must stay in sync.
+
+**Knowledge first.** The duplication worth a comment is duplicated knowledge, not look-alike code. For every new
+string id, literal list, enum-like set or magic number in the diff, `rg` the repo for an exported constant with
+the same value or members (#584: `'light'` hardcoded while `LIGHT_THEME_ID` is exported; #396: a schema list
+copied a third time). That is a finding even with two copies. Look-alike helpers are judged by the rule below.
 
 **Report only when it costs something.** A duplication finding needs one of: the copies must change together
 (shared knowledge — a constant, a mapping, a validation rule, an error shape), three or more copies, or a
@@ -97,6 +118,10 @@ The team's testing philosophy. Apply it; don't ask for tests it considers pointl
 **Scope of e2e:** the main happy path of the flow, plus optionally one deliberately-breaking path to verify errors are handled. Corner cases belong in unit tests, not e2e. If an e2e test in the PR tries to cover corner cases, suggest moving them to unit level.
 
 **Weak tests** are findings too: tests that assert implementation details, mock the thing under test, or would pass if the logic were deleted.
+Ask of every new test of logic: which break would it not notice? The ones reviewers found after us: a condition
+of several terms where the test makes only one false (#794: `ready` is six reads, the test holds back one); a
+throttle test that a debounce also passes (#645); an ordering or dedup assertion that holds for any order. The
+mutation probes (SKILL.md, step 4) turn these into evidence.
 
 ## Severity
 

@@ -118,6 +118,8 @@ for pr in "${prs[@]}"; do
     --output-format json > "$wd/result.json" 2> "$wd/claude-stderr.log" \
     || echo "$(date -Is) PR #$pr: claude exited with $?"
   summarize "$wd/result.json"
+  # Mutation probes are mandatory (SKILL.md step 4); a round that skipped them is visible in the log.
+  [ -f "$wd/mutations.json" ] || echo "$(date -Is) PR #$pr: mutation probes not run this round"
   # Threads this round re-checked are not re-checked again between rounds unless someone writes in them, and the
   # head counts as reviewed even when the orchestrator had nothing to publish (else the next tick reviews it again).
   if succeeded "$wd/result.json" && [ "${DRY_RUN:-}" != "1" ]; then

@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 import review_state
 
@@ -90,6 +91,30 @@ def format_body(f, plan, moved_from=None):
     elif (f.get("verify") or "").strip():
         body += f"\n\n**How to verify:** {f['verify'].strip()}"
     return body
+
+
+def note_withdrawn(repo, n, replies, replies_path):
+    """Every finding we withdrew goes to state/decision-candidates.md with the author's reason: the ones that hold
+    beyond this PR are moved by a person to references/team-decisions.md, so they are not raised on the next PR."""
+    withdrawn = [r for r in replies if re.match(r"(Agreed — withdrawn|Noted as a follow-up)", (r.get("body") or "").strip())]
+    if not withdrawn:
+        return
+    try:
+        threads = json.load(open(os.path.join(os.path.dirname(os.path.abspath(replies_path)), "open-threads.json")))
+    except (OSError, ValueError):
+        threads = []
+    by_comment = {t.get("comment_id"): t for t in threads}
+    out = []
+    for r in withdrawn:
+        t = by_comment.get(r.get("comment_id"), {})
+        said = [c for c in t.get("conversation", []) if c.get("author") != t.get("conversation", [{}])[0].get("author")]
+        reason = said[-1]["body"].replace("\n", " ")[:500] if said else "(reason not recorded)"
+        out.append(f"- {time.strftime('%Y-%m-%d')} #{n} `{t.get('path', '?')}:{t.get('line', '?')}` {t.get('label', '')} "
+                   f"— {t.get('title', '')[:160]}\n  author: {reason}\n  we said: {r['body'].strip()[:200]}\n")
+    path = os.path.join(review_state.state_dir(), "decision-candidates.md")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as fh:
+        fh.writelines(out)
 
 
 def main():
@@ -176,6 +201,7 @@ def main():
                 "-f", f"body={text}"])
         if r.get("action") == "resolve" and r.get("thread_id"):
             gh(["api", "graphql", "-f", f"query={RESOLVE}", "-F", f"id={r['thread_id']}"])
+    note_withdrawn(owner_repo, meta["number"], replies, a.replies)
     review_state.record(owner_repo, meta["number"], head, posted=post_review,
                         note=f"round {(plan or {}).get('round', 1)}: {len(comments)} findings, {len(replies)} thread actions")
 

@@ -10,6 +10,7 @@ Writes:
   <workdir>/issues.md             the issues the description references (#N), title and text
   <workdir>/existing-comments.md  what people, CodeRabbit and earlier runs already said
   <workdir>/open-threads.json     unresolved threads this skill opened in earlier rounds (re-checked, replied to)
+  <workdir>/earlier-findings.md   every thread this skill opened on the PR, resolved or not — never raise one again
   <workdir>/cfs-validate.md       `cfs validate --local-only` at the head, split into new vs already on the base
   <workdir>/context.md            context pack skeleton — fill in the ORCHESTRATOR sections
   <workdir>/briefs/<agent>.md     one ready-to-send prompt per agent (architecture, slice-k or single)
@@ -29,6 +30,7 @@ SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHECKLIST = f"{SKILL}/references/checklist.md"
 BRIEFS = f"{SKILL}/references/agent-briefs.md"
 STUDIO = f"{SKILL}/references/studio-checklist.md"
+TEAM = f"{SKILL}/references/team-decisions.md"
 
 THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
@@ -176,14 +178,35 @@ code anchor, …) is a convention finding, not a failing check.
 STILL_AT_RE = re.compile(r"Still at `([0-9a-f]{7,40})`")
 
 
-def own_threads(repo, n, me, head=""):
-    """Unresolved review threads opened by `me` (earlier rounds of this skill). `head`: the PR head now."""
+def thread_nodes(repo, n):
     owner, name = repo.split("/")
     res = subprocess.run(["gh", "api", "graphql", "-f", f"query={THREADS_QUERY}", "-F", f"owner={owner}",
                           "-F", f"name={name}", "-F", f"number={n}"], capture_output=True, text=True)
     if res.returncode != 0:
         return None
-    nodes = json.loads(res.stdout)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    return json.loads(res.stdout)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+
+
+def write_earlier_findings(workdir, nodes, me):
+    """One line per thread `me` opened, resolved or not, with how it ended: what a new finding is checked against."""
+    lines = []
+    for t in nodes or []:
+        cs = t["comments"]["nodes"]
+        if not cs or (cs[0]["author"] or {}).get("login") != me:
+            continue
+        body = [l for l in cs[0]["body"].strip().splitlines() if l.strip()]
+        answer = next((c["body"].strip().replace("\n", " ")[:300] for c in reversed(cs)
+                       if (c["author"] or {}).get("login") != me), "no answer")
+        lines.append(f"- [{'resolved' if t['isResolved'] else 'open'}] `{t['path']}:{t['line'] or t['originalLine']}` "
+                     f"{body[0] if body else ''} — {(body[1] if len(body) > 1 else '')[:200]}\n  author: {answer}")
+    open(f"{workdir}/earlier-findings.md", "w").write("\n".join(lines) + "\n" if lines else "none\n")
+
+
+def own_threads(repo, n, me, head="", nodes=None):
+    """Unresolved review threads opened by `me` (earlier rounds of this skill). `head`: the PR head now."""
+    nodes = nodes if nodes is not None else thread_nodes(repo, n)
+    if nodes is None:
+        return None
     out = []
     for t in nodes:
         comments = t["comments"]["nodes"]
@@ -372,7 +395,9 @@ def main():
     open(f"{workdir}/existing-comments.md", "w").write("\n".join(said) + "\n" if said else "none\n")
 
     me = sh("gh", "api", "user", "--jq", ".login").strip()
-    threads = [] if blind else own_threads(repo, n, me, pr["headRefOid"])
+    nodes = [] if blind else thread_nodes(repo, n)
+    threads = None if nodes is None else own_threads(repo, n, me, pr["headRefOid"], nodes)
+    write_earlier_findings(workdir, nodes, me)
     json.dump(threads or [], open(f"{workdir}/open-threads.json", "w"), indent=2, ensure_ascii=False)
     if threads is None:
         threads_note = "Could not read review threads (GraphQL failed): don't post thread replies this run."
@@ -428,6 +453,10 @@ Full description: `{workdir}/pr-body.md` — read it.
 ## Already said on this PR
 Existing review comments (people, CodeRabbit, earlier automated runs): `{workdir}/existing-comments.md`.
 Don't re-report a point that is already raised there unless you have new evidence that it is worse than stated.
+Every thread this skill opened on the PR, resolved or open, with the author's answer: `{workdir}/earlier-findings.md`.
+Check each finding against it before writing it down: the same concern on the same code — reworded, on a moved
+line, or "the same gap" in a sibling file — is not a new finding. One the author declined or we withdrew is
+never raised again on this PR.
 {threads_note}
 
 ## Linked issues
@@ -436,6 +465,10 @@ References in the body: {refs}. Their text is in `{workdir}/issues.md` — read 
 
 ## Specs to read (paths relative to the worktree)
 <!-- ORCHESTRATOR: pick from plan.spec_candidates the ADR/PRD/contract docs this PR touches; one line of why each -->
+
+## Team decisions
+`{TEAM}` — what the team has already ruled on (declined findings, project decisions). Read it before reviewing;
+never raise what it rules out, and don't argue with it in a thread.
 
 ## Conventions
 {chr(10).join('- `' + c + '`' for c in conventions) or '- none found'}

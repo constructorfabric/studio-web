@@ -135,6 +135,10 @@ Note contradictions between agents and likely duplicates first. Then:
   otherwise verify them yourself.
 - The rest — verify yourself: open the cited line, confirm, check it isn't a duplicate or already in
   `existing-comments.md` / `open-threads.json`. Can't confirm in a minute or two → reject.
+- Every kept finding, against `earlier-findings.md` (all our threads on this PR, resolved too) and
+  `references/team-decisions.md`: the same concern on the same code — reworded, moved, or "the same gap" in a
+  sibling file — is `duplicate`; one the author declined, we withdrew, or a team decision rules out is
+  `rejected`. Re-raised findings were most of our own errors on past PRs.
 - Check every kept finding has a `verify` line and is anchored on a changed line; fix it while verifying.
 
 Write your verdicts to `findings/self_verdicts.json`:
@@ -158,14 +162,18 @@ test can. For every kept blocker/major and every kept `bug` finding (at most 6 p
 `repro_tests.py` exits with a message when bubblewrap is missing — then skip this step and say so in the
 summary; never run PR code outside the sandbox in auto mode.
 
-**Mutation probes: do the PR's tests check its key logic?** Coverage says a line runs, not that a test would
-notice it breaking. Pick 3–6 pieces of logic this PR adds that `local-checks.md` shows as executed — guards,
-conditions, branches that decide behaviour (the stale-scope guard, the retry-once flag, the refusal rule) —
+**Mutation probes: do the PR's tests check its key logic?** Mandatory in round 1 and in every later round whose
+new lines add logic — whatever the findings so far. "No behaviour findings" is not a reason to skip: probes look
+for tests that would not notice a break, which is what human reviewers most often found after us. Coverage says
+a line runs, not that a test would notice it breaking. Pick 3–6 pieces of logic this PR adds that
+`local-checks.md` shows as executed — guards, conditions, branches that decide behaviour (the stale-scope guard,
+the retry-once flag, the refusal rule), each term of a multi-term condition, a throttle or ordering rule —
 write them to `<workdir>/mutations.json` (format in `scripts/mutation_checks.py`) and run:
 ```bash
 python3 .claude/skills/studio-frontend-review/scripts/mutation_checks.py <workdir>
 ```
-`survived` means every related test passed with that logic broken: a `tests` finding (minor) anchored on the
+If nothing qualifies (the round adds no logic), write `[]` to `mutations.json` and say so in the summary — the
+runner logs a round without the file. `survived` means every related test passed with that logic broken: a `tests` finding (minor) anchored on the
 line, naming the mutation and the test that should catch it; `verify` is the printed command. `killed` needs
 nothing. The worktree file is restored after each mutation.
 

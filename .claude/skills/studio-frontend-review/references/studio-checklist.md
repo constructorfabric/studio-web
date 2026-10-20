@@ -185,7 +185,8 @@ When source/config changes generate artifacts:
 
 ## 9. Traceability
 
-For changes that introduce or materially change a user-facing feature:
+For changes that introduce or materially change a user-facing feature (except where `team-decisions.md` says a
+track has dropped `cfs` traceability — the Specs track has):
 
 * a `cfs` FEATURE artifact is required at `studio-frontend/docs/sdlc/FEATURE/<name>.md`;
 * the artifact should follow the shape of `project-create.md`;
