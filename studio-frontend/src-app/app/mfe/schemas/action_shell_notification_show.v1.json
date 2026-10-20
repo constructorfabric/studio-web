@@ -22,10 +22,12 @@
         "id": {
           "type": "string",
           "minLength": 1,
-          "$comment": "Optional. A notice with the id of a shown toast replaces it (sonner's toast id)."
+          "$comment": "A notice with the id of a shown toast replaces it (sonner's toast id). Required for a loading notice: nothing else can end that toast."
         }
       },
-      "required": ["kind", "text"]
+      "required": ["kind", "text"],
+      "if": { "properties": { "kind": { "const": "loading" } } },
+      "then": { "required": ["id"] }
     }
   },
   "required": ["payload"]

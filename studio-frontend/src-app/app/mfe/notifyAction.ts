@@ -9,7 +9,8 @@ export function noticeOf(payload: Record<string, unknown> | undefined): StudioNo
   const { kind, text, id } = payload ?? {};
   const known = STUDIO_NOTICE_KINDS.find((candidate) => candidate === kind);
   if (!known || typeof text !== 'string' || !text) return null;
-  if (id === undefined) return { kind: known, text };
+  // A loading toast never closes by itself: only a notice with its id can end it.
+  if (id === undefined) return known === 'loading' ? null : { kind: known, text };
   if (typeof id !== 'string' || !id) return null;
   return { kind: known, text, id };
 }

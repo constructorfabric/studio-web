@@ -37,6 +37,8 @@ describe('notify', () => {
     expect(noticeOf({ kind: 'info', text: '' })).toBeNull();
     expect(noticeOf({ kind: 'info', text: 'x', id: '' })).toBeNull();
     expect(noticeOf({ kind: 'info', text: 'x', id: 7 })).toBeNull();
+    // Nothing could ever close it.
+    expect(noticeOf({ kind: 'loading', text: 'Checking' })).toBeNull();
     expect(noticeOf(undefined)).toBeNull();
     await createNotifyHandler().handleAction('action', { kind: 'warning', text: 'x' });
     for (const show of Object.values(toast)) expect(show).not.toHaveBeenCalled();

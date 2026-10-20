@@ -59,7 +59,7 @@ export type StudioArtifactRequest = StudioArtifact & { projectId: string };
 export const STUDIO_ACTION_NOTIFY =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.notification.show.v1~';
 
-/** `loading` stays up until a notice with its `id` replaces it. */
+/** `loading` stays up until a notice with its `id` replaces it, so a `loading` notice needs an `id`. */
 export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info', 'loading'] as const;
 
 export interface StudioNotice {
