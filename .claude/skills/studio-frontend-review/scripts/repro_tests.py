@@ -28,6 +28,7 @@ import re
 import shutil
 import sys
 
+from local_checks import config_dir
 from sandbox import run as sandboxed, setup as sandbox_setup
 
 
@@ -97,15 +98,21 @@ def main():
         placed[dest] = (src, meta["repro-for"])
 
     try:
+        # The config that owns each test, found as mutation_checks.py does: an MFE under mfe_packages/ has its own,
+        # and the src-app config excludes mfe_packages/**, so running an MFE test under it runs nothing.
         by_config = {}
         for dest in placed:
             rel = os.path.relpath(dest, fe)
-            config = "src-app/vitest.config.ts" if rel.startswith("src-app/") else "vitest.config.ts"
-            by_config.setdefault(config, []).append(rel)
-        for config, rels in by_config.items():
-            out_json = f"{workdir}/repro/vitest-{config.replace('/', '_')}.json"
-            cmd = ["npx", "vitest", "run", "--config", config, "--reporter=json", f"--outputFile={out_json}", *rels]
-            code, out = sandboxed(cmd, fe, workdir, network=False, no_sandbox=a.no_sandbox, timeout=600)
+            cfg = config_dir(fe, rel)
+            cwd = fe if cfg in ("", "src-app") else os.path.join(fe, cfg)
+            config = os.path.join(cfg, "vitest.config.ts") if cwd == fe else "vitest.config.ts"
+            by_config.setdefault((cwd, config), []).append(rel)
+        for (cwd, config), rels in by_config.items():
+            out_json = f"{workdir}/repro/vitest-{os.path.relpath(cwd, fe).replace('/', '_')}-{config.replace('/', '_')}.json"
+            # Absolute paths: a config may set its own `root` (src-app does).
+            cmd = ["npx", "vitest", "run", "--config", config, "--reporter=json", f"--outputFile={out_json}",
+                   *[os.path.join(fe, r) for r in rels]]
+            code, out = sandboxed(cmd, cwd, workdir, network=False, no_sandbox=a.no_sandbox, timeout=600)
             report = json.load(open(out_json)) if os.path.exists(out_json) else {"testResults": []}
             by_name = {os.path.realpath(r["name"]): r for r in report.get("testResults", [])}
             for rel in rels:
@@ -116,7 +123,8 @@ def main():
                 results[fid] = {
                     "status": classify(r),
                     "file": src,
-                    "command": f"cd studio-frontend && npx vitest run --config {config} {rel}",
+                    "command": f"cd {os.path.relpath(cwd, os.path.dirname(fe))} && npx vitest run --config {config} "
+                               f"{os.path.relpath(dest, cwd)}",
                     "tests": [{"name": t["title"], "status": t["status"],
                                "message": (t.get("failureMessages") or [""])[0][:600]} for t in r.get("assertionResults") or []],
                     **({"error": (r.get("message") or out[-1500:])[:1500]} if not r.get("assertionResults") else {}),
