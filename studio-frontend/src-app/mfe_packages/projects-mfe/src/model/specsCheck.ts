@@ -33,7 +33,7 @@ export function checkRequest(targets: readonly SpecsCheckTarget[]): AnalyzeBindi
   };
 }
 
-export interface CheckPhase {
+interface CheckPhase {
   /** The spec the run is on, from 1. */
   step: number;
   total: number;

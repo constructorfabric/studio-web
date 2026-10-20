@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SpecsCheck } from '../../../../slices/specsCheckSlice';
+import type { SpecsCheck } from '../slices/specsCheckSlice';
 
 const { notify, bridge, dispatch, checks, loaded } = vi.hoisted(() => ({
   notify: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   notify,
 }));
-vi.mock('../../../../i18n', () => {
+vi.mock('../i18n', () => {
   const t = Object.assign(
     (key: string, params?: Record<string, unknown>) =>
       params ? `${key}(${Object.values(params).join('|')})` : key,
@@ -36,8 +36,8 @@ vi.mock('../../../../i18n', () => {
   };
 });
 
-import { outcomeShown } from '../../../../slices/specsCheckSlice';
-import type { SpecsCheckOutcome } from '../../../../model/specsCheck';
+import { outcomeShown } from '../slices/specsCheckSlice';
+import type { SpecsCheckOutcome } from '../model/specsCheck';
 import { useSpecsCheckToasts } from './useSpecsCheckToasts';
 
 const running = (phases: SpecsCheck['phases'] = {}): SpecsCheck => ({

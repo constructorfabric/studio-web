@@ -1,16 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import { notify, type ScreenText, type StudioNotice } from '@constructor-studio/mfe-shared';
-import { useSpecsSectionTranslations, useSpecsText } from '../../../../i18n';
-import { behindPhase, fileName, type SpecsCheckOutcome } from '../../../../model/specsCheck';
+import { useSpecsSectionTranslations, useSpecsText } from '../i18n';
+import { behindPhase, fileName, type SpecsCheckOutcome } from '../model/specsCheck';
 import {
   SPECS_CHECK_SLICE_KEY,
   outcomeShown,
   type SpecsCheck,
-} from '../../../../slices/specsCheckSlice';
+} from '../slices/specsCheckSlice';
 
 /** One toast per project: its progress, then its outcome, in place. */
-export const specsCheckToastId = (projectId: string): string => `specs-check:${projectId}`;
+const specsCheckToastId = (projectId: string): string => `specs-check:${projectId}`;
 
 function outcomeNotice(t: ScreenText, project: string, outcome: SpecsCheckOutcome): StudioNotice {
   switch (outcome.kind) {
@@ -75,7 +75,7 @@ export function useSpecsCheckToasts(): void {
   const dispatch = useAppDispatch();
   const checks = useAppSelector((state) => state[SPECS_CHECK_SLICE_KEY].checks);
   /** What each project's toast says, so a render that changes nothing sends nothing. */
-  const said = useRef(new Map<string, string>());
+  const said = useRef(new Map<string, { text: string; project: string }>());
   const leave = useRef<() => void>(() => undefined);
 
   useEffect(() => {
@@ -84,9 +84,9 @@ export function useSpecsCheckToasts(): void {
     for (const [projectId, check] of Object.entries(checks)) {
       const notice = checkNotice(t, check);
       const text = `${notice.kind}:${notice.text}`;
-      if (shown.get(projectId) !== text) {
+      if (shown.get(projectId)?.text !== text) {
         notify(bridge, { ...notice, id: specsCheckToastId(projectId) }, 'projects');
-        shown.set(projectId, text);
+        shown.set(projectId, { text, project: check.project });
       }
       if (check.outcome) {
         shown.delete(projectId);
@@ -94,8 +94,7 @@ export function useSpecsCheckToasts(): void {
       }
     }
     leave.current = () => {
-      for (const projectId of shown.keys()) {
-        const project = checks[projectId]?.project ?? '';
+      for (const [projectId, { project }] of shown) {
         notify(
           bridge,
           { kind: 'info', text: t('check_left', { project }), id: specsCheckToastId(projectId) },

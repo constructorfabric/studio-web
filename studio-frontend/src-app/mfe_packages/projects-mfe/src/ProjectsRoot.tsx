@@ -21,7 +21,7 @@ import {
 } from './slices/navSlice';
 import { StudioScopeProvider } from './shared/workspaceProjects';
 import { publishWorkspaceScope } from './actions/workspaceActions';
-import { useSpecsCheckToasts } from './screens/project/sections/specs/useSpecsCheckToasts';
+import { useSpecsCheckToasts } from './shared/useSpecsCheckToasts';
 import styles from './ProjectsRoot.module.css';
 
 /** This MFE's screen-domain root. */
