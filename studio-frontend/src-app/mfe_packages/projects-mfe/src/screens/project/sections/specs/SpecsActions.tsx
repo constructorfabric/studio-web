@@ -23,7 +23,7 @@ import { SPECS_CHECK_SLICE_KEY, checkRunning } from '../../../../slices/specsChe
 import { requestSpecsCheck } from '../../../../actions/specsCheckActions';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
 
-export interface SpecsActionsProps {
+interface SpecsActionsProps {
   projectId: string;
   projectName: string;
 }

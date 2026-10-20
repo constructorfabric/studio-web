@@ -20,11 +20,13 @@ import { ArtifactsSection } from './sections/ArtifactsSection';
 import { SpecsSection } from './sections/specs/SpecsSection';
 import { SourcesSection } from './sections/sources/SourcesSection';
 import { SourcesActions } from './sections/sources/SourcesActions';
-import { SpecsActions, type SpecsActionsProps } from './sections/specs/SpecsActions';
+import { SpecsActions } from './sections/specs/SpecsActions';
 import styles from './ProjectScreen.module.css';
 
-/** A section's buttons in the project header. */
-const SECTION_ACTIONS: Partial<Record<ProjectSection, React.FC<SpecsActionsProps>>> = {
+/** A section's buttons in the project header, given the open project. */
+const SECTION_ACTIONS: Partial<
+  Record<ProjectSection, React.FC<{ projectId: string; projectName: string }>>
+> = {
   specs: SpecsActions,
   sources: SourcesActions,
 };
