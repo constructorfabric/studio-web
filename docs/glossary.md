@@ -34,7 +34,6 @@ These terms are used with exactly this meaning in every document of the project.
 | <a id="desktop-session"></a>**Desktop session** | A second kind of session in studio-session, a lease with an expiry, with no container, gate token, control port or S2S token | — | — | `docs/adr/0027-a-desktop-session-keeps-the-secrets-on-the-server.md:140` |
 | <a id="document"></a>**Document** | Authored document stored in studio_documents with its text | — | — | `docs/adr/0037-one-model-for-a-project.md:37` |
 | <a id="document-analysis"></a>**Document analysis** | Verdict of a detector on a document or binding | — | — | `docs/design/studio-documents.md:545` |
-| <a id="editor"></a>**Editor** | hidden project-level screen; Artifacts tab active while shown | — | — | `docs/feature/shell-levels.md:397` |
 | <a id="editor-session"></a>**Editor session** | The project's Theia session, reused when one is alive and launched when not. | — | — | `docs/feature/editor-session.md:52` |
 | <a id="event"></a>**Event** | A producer states kind and subject, puts its own vocabulary in payload; the channel assigns seq and at_ms | — | — | `docs/design/studio-events.md:29` |
 | <a id="finding"></a>**Finding** | Interpretation of a finished analysis result, with an id. | — | — | `docs/design/studio-spec-quality.md:51` |
@@ -51,7 +50,6 @@ These terms are used with exactly this meaning in every document of the project.
 | <a id="mapping-decision"></a>**Mapping decision** | A member's decisions kept as mapping_decision nodes in the artifact graph | — | — | `docs/adr/0037-one-model-for-a-project.md:51` |
 | <a id="membership"></a>**Membership** | cpt-studio-component-user holds the membership that makes somebody the owner. | — | — | `docs/design/studio-organizations.md:34` |
 | <a id="owner-grant"></a>**Owner grant** | projection of an active owner membership into the document the PDP evaluates | — | — | `docs/adr/0040-one-owner-for-people-and-membership.md:109` |
-| <a id="people-screen"></a>**People screen** | The organization level's People screen shows who belongs to the organization, in what role and standing, with owner controls. | — | — | `docs/feature/organization-people.md:48` |
 | <a id="person"></a>**Person** | A person (identity_user) is the profile — name, e-mail, avatar, locale, UI preferences, last seen — and a merged_into pointer once merged away | — | — | `docs/design/studio-user.md:199` |
 | <a id="plan"></a>**Plan** | The plan file kept by the planning team. | — | — | `docs/adr/0033-a-report-is-a-definition-over-a-source.md:134` |
 | <a id="platform-administrator"></a>**Platform administrator** | A membership of the platform root and nothing else | — | — | `deploy/README.md:42` |
@@ -61,8 +59,6 @@ These terms are used with exactly this meaning in every document of the project.
 | <a id="role"></a>**Role** | Role carried in the access config with grants and scopes | — | — | `docs/adr/0019-a-role-narrows-what-a-member-may-do.md:47` |
 | <a id="rollups"></a>**Rollups** | Rollups show what each workspace and project contains. | — | — | `docs/design/studio-organizations.md:43` |
 | <a id="schedule"></a>**Schedule** | Domain model entity of background work | — | — | `docs/decomposition/constructor-studio.md:1071` |
-| <a id="shell"></a>**Shell** | The application shell composing app-owned shadcn-style primitives with Tailwind | — | — | `docs/adr/0007-shell-tokens-as-whole-colours.md:33` |
 | <a id="source"></a>**Source** | A repository source of a workspace, configured in project_sources | — | — | `docs/design/studio-git.md:81` |
 | <a id="tenant"></a>**Tenant** | Organization, workspace (tenant_type: workspace) or project, owned by account-management | — | — | `docs/design/constructor-studio.md:277` |
 | <a id="user"></a>**User** | The canonical person and profile, role-free, with a Studio-owned id independent of any IdP | — | — | `docs/adr/0023-canonical-user-and-identity-mapper.md:78` |
-| <a id="workspaces-screen"></a>**Workspaces screen** | Screen of the organization level listing the organization's workspaces | — | — | `docs/feature/workspaces-screen.md:42` |
