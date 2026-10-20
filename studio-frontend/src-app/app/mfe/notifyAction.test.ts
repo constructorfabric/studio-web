@@ -47,4 +47,14 @@ describe('notify', () => {
   it('names the kinds mfe-shared declares', () => {
     expect(notifySchema.properties.payload.properties.kind.enum).toEqual([...STUDIO_NOTICE_KINDS]);
   });
+
+  it('requires an id in the schema for exactly the kinds noticeOf refuses without one', () => {
+    const payload = notifySchema.properties.payload;
+    expect(payload.properties.id.minLength).toBe(1);
+    expect(payload.then.required).toEqual(['id']);
+    for (const kind of STUDIO_NOTICE_KINDS) {
+      const needsId = payload.if.properties.kind.const === kind;
+      expect(noticeOf({ kind, text: 'x' }) === null).toBe(needsId);
+    }
+  });
 });
