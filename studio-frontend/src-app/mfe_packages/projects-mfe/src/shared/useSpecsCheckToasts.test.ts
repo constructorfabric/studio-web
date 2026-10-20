@@ -38,7 +38,10 @@ vi.mock('../i18n', () => {
 
 import { outcomeShown } from '../slices/specsCheckSlice';
 import type { SpecsCheckOutcome } from '../model/specsCheck';
-import { useSpecsCheckToasts } from './useSpecsCheckToasts';
+import { checkNotice, useSpecsCheckToasts } from './useSpecsCheckToasts';
+import { screenText } from '@constructor-studio/mfe-shared';
+import en from '../screens/project/sections/specs/i18n/en.json';
+import ru from '../screens/project/sections/specs/i18n/ru.json';
 
 const running = (phases: SpecsCheck['phases'] = {}): SpecsCheck => ({
   project: 'Billing',
@@ -178,5 +181,96 @@ describe("a check's toast", () => {
     expect(notices()).toEqual([
       { kind: 'loading', text: 'check_progress#20(Billing)', id: 'specs-check:p-1' },
     ]);
+  });
+});
+
+const DICTIONARIES: Record<'en' | 'ru', Record<string, string>> = { en, ru };
+
+/** The real dictionary, read the way `I18nRegistry` reads one: a missing key is the key, `{name}` filled. */
+function textIn(language: 'en' | 'ru') {
+  const dictionary = DICTIONARIES[language];
+  return screenText(
+    (key, params) =>
+      (dictionary[key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) =>
+        params?.[name] === undefined ? match : String(params[name])
+      ),
+    language
+  );
+}
+
+const OUTCOMES: SpecsCheckOutcome[] = [
+  { kind: 'checked', checked: 18, findings: 7, unchecked: 0, reason: null },
+  { kind: 'checked', checked: 3, findings: 2, unchecked: 2, reason: 'upstream 500' },
+  { kind: 'checked', checked: 1, findings: null, unchecked: 1, reason: null },
+  { kind: 'stopped', done: 61, total: 120, error: 'lease' },
+  { kind: 'stopped', done: 0, total: 3, error: null },
+  { kind: 'not_started', reason: 'not configured' },
+  { kind: 'not_started', reason: null },
+  { kind: 'lost' },
+];
+
+describe("a check's toast, in the real dictionaries", () => {
+  const atlas = (check: Partial<SpecsCheck>): SpecsCheck => ({
+    project: 'Atlas',
+    count: 20,
+    phases: {},
+    outcome: null,
+    ...check,
+  });
+
+  it('reads as sentences in English', () => {
+    const t = textIn('en');
+    expect(checkNotice(t, atlas({ count: 1 })).text).toBe('Atlas: checking 1 spec…');
+    expect(checkNotice(t, atlas({ phases: { leak: '3/20 · docs/prd.md' } })).text).toBe(
+      'Atlas: checking 20 specs · 3/20 · prd.md'
+    );
+    expect(checkNotice(t, atlas({ outcome: OUTCOMES[0] })).text).toBe(
+      'Atlas: 18 checked · 7 findings'
+    );
+    expect(checkNotice(t, atlas({ outcome: OUTCOMES[1] })).text).toBe(
+      "Atlas: 3 checked · 2 findings. 2 couldn't be checked: upstream 500"
+    );
+    expect(checkNotice(t, atlas({ outcome: OUTCOMES[3] })).text).toBe(
+      'Atlas: the check stopped after 61 of 120: lease'
+    );
+  });
+
+  it("takes Russian's one, few and many forms", () => {
+    const t = textIn('ru');
+    expect(checkNotice(t, atlas({ count: 1 })).text).toBe('Atlas: проверяется 1 спецификация…');
+    expect(checkNotice(t, atlas({ count: 22 })).text).toBe('Atlas: проверяются 22 спецификации…');
+    expect(checkNotice(t, atlas({ count: 25 })).text).toBe('Atlas: проверяется 25 спецификаций…');
+    expect(checkNotice(t, atlas({ outcome: OUTCOMES[1] })).text).toBe(
+      'Atlas: проверены 3 · 2 замечания. 2 не удалось проверить: upstream 500'
+    );
+  });
+
+  it('leaves no key and no placeholder unfilled, in either language', () => {
+    for (const language of ['en', 'ru'] as const) {
+      const t = textIn(language);
+      const texts = [
+        ...[0, 1, 2, 5, 22].map((count) => checkNotice(t, atlas({ count })).text),
+        checkNotice(t, atlas({ phases: { purpose: '1/2 · a.md' } })).text,
+        ...OUTCOMES.map((outcome) => checkNotice(t, atlas({ outcome })).text),
+        t('check_left', { project: 'Atlas' }),
+      ];
+      for (const text of texts) expect(text).not.toMatch(/check_|\{/);
+    }
+  });
+
+  it('names the same placeholders in English and Russian', () => {
+    // `check_one`, `check_few` and `check_many` are one string with the form picked by count.
+    const placeholders = (dictionary: Record<string, string>) => {
+      const byName = new Map<string, Set<string>>();
+      for (const [key, value] of Object.entries(dictionary)) {
+        if (!key.startsWith('check')) continue;
+        const name = key.replace(/_(one|few|many)$/, '');
+        const found = byName.get(name) ?? new Set<string>();
+        for (const [, placeholder] of value.matchAll(/\{(\w+)\}/g)) found.add(placeholder);
+        byName.set(name, found);
+      }
+      return Object.fromEntries([...byName].map(([name, found]) => [name, [...found].sort()]));
+    };
+    expect(placeholders(ru)).toEqual(placeholders(en));
   });
 });
