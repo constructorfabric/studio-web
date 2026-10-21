@@ -30,18 +30,20 @@ jobs:
         run: |
           set -uo pipefail
           missing=0
+          # The table goes to the log as well: the job summary has no API.
+          exec > >(tee -a "$GITHUB_STEP_SUMMARY")
           {
             echo "### $RUNNER_NAME"
             echo "| Check | Result |"
             echo "|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
+          }
           check() {
             local what=$1; shift
             local out
             if out=$("$@" 2>&1 | head -1); then
-              echo "| $what | ok: ${out:-—} |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| $what | ok: ${out:-—} |"
             else
-              echo "| $what | **MISSING** ${out:+($out)} |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| $what | **MISSING** ${out:+($out)} |"
               missing=$((missing + 1))
             fi
           }
@@ -75,5 +77,5 @@ jobs:
             echo
             echo "Disk: \`$(df -h --output=avail,size "$GITHUB_WORKSPACE" | tail -1)\` (available, size)"
             echo "Docker images: $(docker images -q 2>/dev/null | wc -l), containers left running: $(docker ps -q 2>/dev/null | wc -l)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          }
           exit $(( missing > 0 ))
