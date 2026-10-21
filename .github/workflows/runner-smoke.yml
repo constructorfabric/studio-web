@@ -1,8 +1,8 @@
 name: Self-hosted runner smoke
 
 # Asks the studio-large runners (org group studio-runners, INFRA-5037) for
-# everything the Linux jobs of studio-delivery.yml and studio-cli.yml take for
-# granted on a GitHub-hosted image, before STUDIO_RUNNER sends them there.
+# everything the Linux jobs of studio-delivery.yml take for granted on a
+# GitHub-hosted image, before STUDIO_RUNNER sends them there.
 # Every check runs and lands in the job summary; the job fails if any is
 # missing, so a red run is the list of what to ask the runner owners for.
 # Two jobs at once, so with both runners idle each machine answers.
@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         attempt: [1, 2]
-    runs-on: [self-hosted, studio-large]
+    runs-on: [self-hosted, Linux, X64, studio-large]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -53,7 +53,7 @@ jobs:
           check "docker daemon" docker info --format '{{.ServerVersion}}'
           check "docker compose" docker compose version --short
           check "docker buildx" docker buildx version
-          # Called without a setup step (gh: studio-cli.yml).
+          # Called without a setup step.
           check "jq" jq --version
           check "gh" gh --version
           check "curl" curl --version
