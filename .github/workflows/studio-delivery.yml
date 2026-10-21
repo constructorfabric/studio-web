@@ -426,6 +426,12 @@ jobs:
           # expressions, job dependencies, actions and event schemas.
           "$RUNNER_TEMP/actionlint" -color -shellcheck=
 
+      # A GitHub-hosted image has node preinstalled; a self-hosted runner
+      # does not.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       # Nothing else looks at these files before they reach a cluster, and
       # every way they break — a datasource uid that does not exist, a uid
       # that collides, a ConfigMap over the size a ConfigMap may be — shows
