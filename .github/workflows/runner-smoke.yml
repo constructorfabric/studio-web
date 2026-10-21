@@ -1,0 +1,79 @@
+name: Self-hosted runner smoke
+
+# Asks the studio-large runners (org group studio-runners, INFRA-5037) for
+# everything the Linux jobs of studio-delivery.yml and studio-cli.yml take for
+# granted on a GitHub-hosted image, before STUDIO_RUNNER sends them there.
+# Every check runs and lands in the job summary; the job fails if any is
+# missing, so a red run is the list of what to ask the runner owners for.
+# Two jobs at once, so with both runners idle each machine answers.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/runner-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2]
+    runs-on: [self-hosted, studio-large]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the machine
+        run: |
+          set -uo pipefail
+          missing=0
+          {
+            echo "### $RUNNER_NAME"
+            echo "| Check | Result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          check() {
+            local what=$1; shift
+            local out
+            if out=$("$@" 2>&1 | head -1); then
+              echo "| $what | ok: ${out:-—} |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $what | **MISSING** ${out:+($out)} |" >> "$GITHUB_STEP_SUMMARY"
+              missing=$((missing + 1))
+            fi
+          }
+          # test-backend, build-backend-binary, build-file-storage-sidecar-binary
+          # and test-e2e (playwright --with-deps) install packages with sudo.
+          check "sudo without a password" sudo -n true
+          check "docker daemon" docker info --format '{{.ServerVersion}}'
+          check "docker compose" docker compose version --short
+          check "docker buildx" docker buildx version
+          # Called without a setup step.
+          check "jq" jq --version
+          check "gh" gh --version
+          check "curl" curl --version
+          check "git" git --version
+          check "python3" python3 --version
+          check "unzip" unzip -v
+          # Linking Rust needs a C toolchain.
+          check "cc" cc --version
+          # Installed by the jobs through apt today; listed to see whether
+          # the image already has them.
+          check "protoc" protoc --version
+          check "cmake" cmake --version
+          check "pkg-config" pkg-config --version
+          # Outbound reach the pipeline depends on.
+          check "github.com" curl -fsS -o /dev/null -w '%{http_code}' https://github.com
+          check "ghcr.io" curl -sS -o /dev/null -w '%{http_code}' https://ghcr.io/v2/
+          check "registry-1.docker.io" curl -sS -o /dev/null -w '%{http_code}' https://registry-1.docker.io/v2/
+          check "index.crates.io" curl -fsS -o /dev/null -w '%{http_code}' https://index.crates.io/config.json
+          check "registry.npmjs.org" curl -fsS -o /dev/null -w '%{http_code}' https://registry.npmjs.org/
+          {
+            echo
+            echo "Disk: \`$(df -h --output=avail,size "$GITHUB_WORKSPACE" | tail -1)\` (available, size)"
+            echo "Docker images: $(docker images -q 2>/dev/null | wc -l), containers left running: $(docker ps -q 2>/dev/null | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $(( missing > 0 ))

@@ -1,0 +1,5 @@
+# Labels of the self-hosted runners in the org group studio-runners
+# (INFRA-5037), so actionlint accepts them in runs-on.
+self-hosted-runner:
+  labels:
+    - studio-large

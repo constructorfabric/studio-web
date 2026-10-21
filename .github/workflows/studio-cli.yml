@@ -38,7 +38,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    # STUDIO_RUNNER: see the note above `env:` in studio-delivery.yml.
+    runs-on: ${{ (vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || vars.STUDIO_RUNNER }}
     permissions:
       contents: write
     env:
