@@ -47,13 +47,13 @@ jobs:
               missing=$((missing + 1))
             fi
           }
-          # test-backend, build-backend-binary, build-file-storage-sidecar-binary
-          # and test-e2e (playwright --with-deps) install packages with sudo.
-          check "sudo without a password" sudo -n true
+          # Not required: on a self-hosted runner the jobs skip their sudo apt
+          # steps and expect the packages below to be preinstalled instead.
+          if sudo -n true 2>/dev/null; then echo "| sudo without a password | yes (not required) |"; else echo "| sudo without a password | no (not required) |"; fi
           check "docker daemon" docker info --format '{{.ServerVersion}}'
           check "docker compose" docker compose version --short
           check "docker buildx" docker buildx version
-          # Called without a setup step.
+          # Called without a setup step (gh: studio-cli.yml).
           check "jq" jq --version
           check "gh" gh --version
           check "curl" curl --version
@@ -62,11 +62,16 @@ jobs:
           check "unzip" unzip -v
           # Linking Rust needs a C toolchain.
           check "cc" cc --version
-          # Installed by the jobs through apt today; listed to see whether
-          # the image already has them.
+          # Installed by apt on GitHub-hosted only; preinstalled on self-hosted.
           check "protoc" protoc --version
           check "cmake" cmake --version
           check "pkg-config" pkg-config --version
+          # shellcheck disable=SC2016 # dpkg-query format, not a shell expansion
+          check "libprotobuf-dev" dpkg-query -W -f='${Version}' libprotobuf-dev
+          # What `playwright install --with-deps chromium` would add on 24.04;
+          # test-e2e skips --with-deps on self-hosted.
+          # shellcheck disable=SC2016
+          check "chromium system libraries" dpkg-query -W -f='${Package} ' libnss3 libatk-bridge2.0-0t64 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 libcairo2
           # Outbound reach the pipeline depends on.
           check "github.com" curl -fsS -o /dev/null -w '%{http_code}' https://github.com
           check "ghcr.io" curl -sS -o /dev/null -w '%{http_code}' https://ghcr.io/v2/

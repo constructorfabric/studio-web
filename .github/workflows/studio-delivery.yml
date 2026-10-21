@@ -193,7 +193,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.source_ref || github.sha }}
 
+      # The self-hosted runners have these preinstalled and no sudo, so the
+      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
       - name: System dependencies
+        if: runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
 
       - uses: dtolnay/rust-toolchain@stable
@@ -604,7 +607,10 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
+      # The self-hosted runners have these preinstalled and no sudo, so the
+      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
       - name: System dependencies
+        if: runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
@@ -670,8 +676,10 @@ jobs:
           path: ${{ runner.temp }}/sidecar/bin/sidecar
           key: file-storage-sidecar-${{ steps.gear.outputs.version }}-rust-1.97.0-ubuntu-24.04
 
+      # The self-hosted runners have these preinstalled and no sudo, so the
+      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
       - name: System dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
@@ -1234,7 +1242,9 @@ jobs:
         working-directory: studio-frontend
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          # --with-deps installs the browser's system libraries through sudo
+          # apt; the self-hosted runners have them preinstalled and no sudo.
+          npx playwright install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium
       - name: Run
         working-directory: studio-frontend
         run: npm run e2e
