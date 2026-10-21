@@ -2919,7 +2919,8 @@ pub struct SpecModelDocumentDto {
     pub path: String,
     pub revision: String,
     /// `extracted`, `failed` (part-way; read again on the next build),
-    /// `stale` (only an older revision was read) or `pending`.
+    /// `stale` (only an older revision was read), `pending`, or `kept` (its
+    /// text is not on this server; the last reading is shown).
     pub state: String,
     pub facts: u32,
     /// Facts the model gave that the text did not bear out.
@@ -2956,9 +2957,15 @@ pub struct SpecModelDto {
     pub documents: Vec<SpecModelDocumentDto>,
     pub facts: Vec<SpecModelFactDto>,
     /// Typed documents (the Specs tab's Bound list) whose text this server
-    /// has no copy of: the repository was not synced here yet, or its clone
-    /// went with a restarted pod. Syncing the repository brings them back.
+    /// has no copy of: the repository was not synced here yet, its clone
+    /// could not be written, or it went with a restarted pod. Syncing the
+    /// repository brings them back; meanwhile their last reading is listed
+    /// in `documents` as `kept`, and its facts are in `facts`.
     pub unread_documents: u32,
+    /// Why the copy is missing, when the server knows: the last clone of the
+    /// repository failed, or its clone volume cannot be written. A sync does
+    /// not help until that is fixed.
+    pub unread_because: Option<String>,
 }
 
 /// The project's sources, the facts of their current revisions, and where
@@ -2989,9 +2996,14 @@ async fn spec_model_state(
             facts: &r.facts,
             dropped: r.dropped,
             error: r.error.as_deref(),
+            created_at: r.created_at.unix_timestamp(),
         })
         .collect();
-    let (facts, coverage) = super::spec_model::current(&sources.documents, &kept);
+    let (mut facts, mut coverage) = super::spec_model::current(&sources.documents, &kept);
+    // A clone that is gone or could not be written does not empty the model.
+    let (last, kept_coverage) = super::spec_model::last_read(&sources.unread, &kept);
+    facts.extend(last);
+    coverage.extend(kept_coverage);
     Ok((sources, facts, coverage))
 }
 
@@ -3009,7 +3021,8 @@ async fn get_spec_model(
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(SpecModelDto {
-        unread_documents: count(sources.unread),
+        unread_documents: count(sources.unread.len()),
+        unread_because: sources.unread_because,
         build: super::spec_model::build::state(project_id).into(),
         documents: coverage
             .into_iter()
@@ -3077,6 +3090,7 @@ async fn start_spec_model_build(
         // Recording findings needs no code files.
         files: Vec::new(),
         unread: sources.unread,
+        unread_because: sources.unread_because,
     };
     let documents = sources.documents;
     tokio::spawn(async move {
@@ -3232,6 +3246,7 @@ async fn judged_candidates(
             facts: &r.facts,
             dropped: r.dropped,
             error: r.error.as_deref(),
+            created_at: r.created_at.unix_timestamp(),
         })
         .collect();
     let (facts, _) = sm::current(documents, &kept);

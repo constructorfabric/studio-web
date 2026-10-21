@@ -202,10 +202,21 @@ impl RestApiCapability for StudioArtifactIngestGear {
 
             // Optional fallback: our own shallow clone volume (off unless
             // STUDIO_ARTIFACT_WORKDIR is set).
+            let mut work_root_failure = None;
             let work_root = match resolve_dir("STUDIO_ARTIFACT_WORKDIR") {
                 Some(path) => match std::fs::create_dir_all(&path) {
                     Ok(()) => {
-                        info!(dir = %path.display(), "studio-artifact-ingest: fallback own-clone volume enabled");
+                        // Kept even when it cannot be written: the clones
+                        // already in it still read.
+                        work_root_failure = service::writable(&path);
+                        match &work_root_failure {
+                            Some(why) => {
+                                tracing::error!(dir = %path.display(), why, "studio-artifact-ingest: the own-clone volume cannot be written — every clone will fail")
+                            }
+                            None => {
+                                info!(dir = %path.display(), "studio-artifact-ingest: fallback own-clone volume enabled")
+                            }
+                        }
                         Some(path)
                     }
                     Err(e) => {
@@ -246,6 +257,7 @@ impl RestApiCapability for StudioArtifactIngestGear {
                     workspaces_root,
                     work_root,
                 )
+                .with_work_root_failure(work_root_failure)
                 .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub())),
             ))
         };

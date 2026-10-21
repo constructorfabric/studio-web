@@ -285,6 +285,9 @@ export interface MyMembership {
   status: "active" | "suspended";
   source: string;
   created_at_epoch_ms: number;
+  /** The organization's name: the only way to name one outside the token's
+   *  subtree, which is the one a person switches to. */
+  org_name?: string | null;
 }
 
 /** A member's identities, from
@@ -4081,6 +4084,14 @@ export const api = {
   /** The organizations the caller's person belongs to, with the role in each. */
   myMemberships: (token: string) =>
     request<{ items: MyMembership[] }>("/studio-user/v1/me/memberships", token).then((r) => r.items),
+
+  /** Make one of the caller's organizations their home: the next token is
+   *  scoped to it, so the portal reloads after this answers. */
+  switchHomeOrganization: (token: string, orgId: string) =>
+    request<{ org_id: string; role: string }>("/studio-user/v1/me/home-organization", token, {
+      method: "PUT",
+      body: JSON.stringify({ org_id: orgId }),
+    }),
 
   /** Say an account is the caller's. A claim attributes nothing until proved. */
   claimMyAlias: (token: string, kind: string, externalId: string) =>

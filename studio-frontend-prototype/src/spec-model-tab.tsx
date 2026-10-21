@@ -66,6 +66,9 @@ type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: s
 
 const POLL_MS = 3000;
 
+/** A document's state as the documents list's filter names it. */
+const STATE_LABEL: Partial<Record<string, string>> = { extracted: "read", pending: "never read", kept: "last read (copy missing)" };
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -982,9 +985,9 @@ function Coverage({
               id: "state",
               allLabel: "Every state",
               kind: "chips",
-              options: (["extracted", "stale", "failed", "pending"] as const)
+              options: (["extracted", "kept", "stale", "failed", "pending"] as const)
                 .filter((st) => counts[st] > 0)
-                .map((st) => ({ value: st, label: st === "extracted" ? "read" : st === "pending" ? "never read" : st })),
+                .map((st) => ({ value: st, label: STATE_LABEL[st] ?? st })),
               match: (d, v) => d.state === v,
             },
           ]}
@@ -995,7 +998,10 @@ function Coverage({
               id: "state",
               header: "State",
               cell: (d) => (
-                <span className={`sm-state sm-state-${d.state}`} title={d.error ?? undefined}>
+                <span
+                  className={`sm-state sm-state-${d.state}`}
+                  title={d.error ?? (d.state === "kept" ? "The repository copy is missing on the server: the last reading is shown" : undefined)}
+                >
                   {d.state}
                 </span>
               ),

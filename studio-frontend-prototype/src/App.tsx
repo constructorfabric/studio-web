@@ -1055,6 +1055,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   );
   const showPlatform = home?.id === PLATFORM_ROOT_TENANT_ID;
   const [orgs, setOrgs] = useState<Tenant[]>([]);
+  /** Every organization the person holds an active membership in, named. The
+   *  token sees only its home's subtree, so the ones outside it come from
+   *  here, and picking one moves the home there (ADR-0011 §2). */
+  const [memberOrgs, setMemberOrgs] = useState<{ id: string; name: string }[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   // Temporary platform-admin fallback until every installation bootstraps its
   // default organization server-side. Never runs for an external identity.
@@ -1687,11 +1691,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // other visible, accessible org — so a freshly created, still-empty org is
   // switchable straight away. Self-managed orgs are barriered (no children
   // reachable), so they only appear if they already own a project here.
+  // Then every other organization the person is a member of: outside the
+  // token's subtree, so `away` — picking one switches the home to it.
   const orgOptions = (() => {
-    const m = new Map<string, { id: string; name: string }>();
+    const m = new Map<string, { id: string; name: string; away?: boolean }>();
     for (const w of workspaces) if (w.orgId) m.set(w.orgId, { id: w.orgId, name: w.orgName });
     for (const o of orgs) if (!o.self_managed && !m.has(o.id)) m.set(o.id, { id: o.id, name: o.name });
     if (m.size === 0 && implicitOrgId) m.set(implicitOrgId, { id: implicitOrgId, name: home?.name ?? "Organization" });
+    for (const o of memberOrgs)
+      if (!m.has(o.id)) m.set(o.id, { id: o.id, name: o.name, away: o.id !== home?.id });
     return Array.from(m.values());
   })();
   // Resolve the active org. Honour an explicit pick, else default to one that
@@ -1803,6 +1811,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       );
       setOrgs(orgList);
       setWorkspaces([...directWs, ...nested.flat()]);
+      // Unreadable memberships leave the switcher as the subtree has it.
+      const held: Awaited<ReturnType<typeof api.myMemberships>> = await api
+        .myMemberships(token)
+        .catch(() => []);
+      setMemberOrgs(
+        held
+          // The platform root is not an organization, even for its owner.
+          .filter((m) => m.status === "active" && m.org_id !== PLATFORM_ROOT_TENANT_ID)
+          .map((m) => ({ id: m.org_id, name: m.org_name ?? m.org_id })),
+      );
     } catch (e) {
       setError(errText(e));
     }
@@ -1811,6 +1829,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** Move the home to another of the person's organizations. The token the
+   *  portal holds is still scoped to the old one, so it reloads: signing back
+   *  in from the stored session issues a token for the new home. */
+  const switchHome = useCallback(
+    async (orgId: string) => {
+      try {
+        await api.switchHomeOrganization(token, orgId);
+        window.location.reload();
+      } catch (e) {
+        setError(errText(e));
+      }
+    },
+    [token],
+  );
 
   // Nested projects of the workspace in context — options for the PathBar's
   // project dropdown. Loaded when a workspace is selected; cleared otherwise.
@@ -1960,6 +1993,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 setActiveSpace(null);
               }}
               onPickOrg={(id) => {
+                if (orgOptions.find((o) => o.id === id)?.away) {
+                  void switchHome(id);
+                  return;
+                }
                 setActiveOrgId(id);
                 setAdminOrgId(id);
                 setCrumb({});
@@ -2091,6 +2128,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     setAccountMenu(false);
                   }}
                   onChanged={() => void refresh()}
+                  onSwitchHome={(id) => void switchHome(id)}
                 />
               </div>
             )}
@@ -3158,10 +3196,12 @@ function ContextPane({
   crumb,
   onPick,
   onChanged,
+  onSwitchHome,
 }: {
   token: string;
-  /** Organizations that group the projects — derived from the loaded set. */
-  orgs: { id: string; name: string }[];
+  /** Organizations that group the projects — derived from the loaded set —
+   *  and, `away`, the person's other organizations outside the subtree. */
+  orgs: { id: string; name: string; away?: boolean }[];
   /** Parent tenant a brand-new organization is created under (the home root). */
   homeId: string | null;
   /** Fallback parent for a brand-new project when no org is in context. */
@@ -3170,6 +3210,8 @@ function ContextPane({
   crumb: Crumb;
   onPick: (c: Crumb) => void;
   onChanged: () => void;
+  /** Pick an `away` organization: the home moves there and the portal reloads. */
+  onSwitchHome: (orgId: string) => void;
 }) {
   const [q, setQ] = useState("");
   // Which creator is open, if any — a new organization, or a new project.
@@ -3257,7 +3299,12 @@ function ContextPane({
       )}
       {orgList.map((o) => (
         <div key={o.id} className={`ctx-row${activeOrgId === o.id ? " on" : ""}`}>
-          <button type="button" className="grow" onClick={() => setPickedOrg(o.id)}>
+          <button
+            type="button"
+            className="grow"
+            title={o.away ? "Switch to this organization (the portal reloads)" : undefined}
+            onClick={() => (o.away ? onSwitchHome(o.id) : setPickedOrg(o.id))}
+          >
             <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
             {o.name}
           </button>

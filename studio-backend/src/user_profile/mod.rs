@@ -830,6 +830,14 @@ impl RestApiCapability for StudioUserGear {
                 );
             }
             svc.attach_federated(federated);
+            // Published by the same gear under the same key; absent with it.
+            svc.attach_home(
+                ctx.client_hub()
+                    .get_scoped::<dyn crate::identity_directory::IdpHomeTenant>(
+                        &ClientScope::gts_id(crate::identity_directory::IDP_DIRECTORY_INSTANCE_ID),
+                    )
+                    .ok(),
+            );
 
             // Seeded here rather than in `init` because it writes through the
             // same path everything else does and wants the gear fully built.

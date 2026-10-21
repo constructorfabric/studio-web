@@ -127,12 +127,32 @@ pub struct OrgMembershipDto {
     pub source: String,
     pub created_at_epoch_ms: i64,
     pub updated_at_epoch_ms: i64,
+    /// The organization's name, on the caller's own list (`/me/memberships`):
+    /// a member of an organization outside their token's subtree cannot read
+    /// it any other way, and needs it to switch there.
+    pub org_name: Option<String>,
 }
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct MembershipListDto {
     pub items: Vec<OrgMembershipDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SwitchHomeOrganizationRequest {
+    /// An organization the caller holds an active membership in.
+    pub org_id: String,
+}
+
+/// The caller's home organization after a switch: what their next token is
+/// scoped to, and the role it carries there.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct HomeOrganizationDto {
+    pub org_id: String,
+    pub role: String,
 }
 
 /// One address a person can be reached at.
@@ -508,6 +528,7 @@ fn membership_to_dto(m: MembershipView) -> OrgMembershipDto {
         source: m.source,
         created_at_epoch_ms: m.created_at_epoch_ms,
         updated_at_epoch_ms: m.updated_at_epoch_ms,
+        org_name: None,
     }
 }
 
@@ -1177,14 +1198,45 @@ async fn get_my_memberships(
 ) -> ApiResult<JsonBody<MembershipListDto>> {
     let service = configured(service)?;
     let user_id = caller_user_id(&ctx, &service).await?;
-    let items = service
-        .list_memberships(&user_id)
-        .await
-        .map_err(internal)?
+    let held = service.list_memberships(&user_id).await.map_err(internal)?;
+    // Named together: one read per organization, and a person belongs to few.
+    let mut reads = Vec::with_capacity(held.len());
+    for m in &held {
+        reads.push(service.organization_name(&m.org_id));
+    }
+    let names = futures_util::future::join_all(reads).await;
+    let items = held
         .into_iter()
-        .map(membership_to_dto)
+        .zip(names)
+        .map(|(m, name)| OrgMembershipDto {
+            org_name: name,
+            ..membership_to_dto(m)
+        })
         .collect();
     Ok(Json(MembershipListDto { items }))
+}
+
+/// Make one of the caller's organizations their home: the tenant their next
+/// token is scoped to (ADR-0011 §2, by moving the home tenant). 404 for an
+/// organization they hold no active membership in, whether or not it exists.
+async fn switch_my_home_organization(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<SwitchHomeOrganizationRequest>,
+) -> ApiResult<JsonBody<HomeOrganizationDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let org_id = req.org_id.trim().to_owned();
+    let role = service
+        .switch_home(&ctx.subject_id().to_string(), &user_id, &org_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            UserProfileError::not_found("not a member of this organization")
+                .with_resource(org_id.clone())
+                .create()
+        })?;
+    Ok(Json(HomeOrganizationDto { org_id, role }))
 }
 
 async fn get_user(
@@ -2008,6 +2060,31 @@ pub fn register_routes(
             "The caller's memberships",
         )
         .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::put("/studio-user/v1/me/home-organization")
+        .operation_id("studio_user.update_my_home_organization")
+        .summary("Switch the caller to another of their organizations")
+        .description(
+            "Moves the caller's home tenant -- the tenant their next token is \
+             scoped to -- to an organization they hold an active membership in. \
+             The portal refreshes its token afterwards. 404 for an organization \
+             the caller is not an active member of.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SwitchHomeOrganizationRequest>(openapi, "The organization to switch to")
+        .handler(switch_my_home_organization)
+        .json_response_with_schema::<HomeOrganizationDto>(
+            openapi,
+            StatusCode::OK,
+            "The caller's home organization now",
+        )
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));

@@ -483,6 +483,34 @@ jobs:
           # cleanly — and nothing about the rendered YAML would look wrong.
           refuses --set backend.preStopDrainSeconds=60
           refuses --set backend.preStopDrainSeconds=60 --set backend.terminationGracePeriodSeconds=60
+
+      # A claim the pod's fsGroup does not reach mounts root:root 755, and the
+      # backend (uid 1000) then fails every clone with "Permission denied"
+      # while lint and a dry-run stay green (#854). Every claim the backend
+      # writes must be handed to it by `claim-owner`.
+      - name: Chart hands the backend's claims to its user
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/studio-web
+          out=$(helm template guard "$chart" -f deploy/helm/values-dev.example.yaml \
+            --set backend.image.tag=t --set frontend.image.tag=t \
+            --set backend.gearbox.enabled=true --set backend.gearbox.persistence.enabled=true \
+            --set backend.gearbox.corpusUrl=https://example.invalid/c.git \
+            --show-only templates/backend/deployment.yaml)
+          owner=$(printf '%s\n' "$out" | awk '/- name: claim-owner/{f=1} f&&/volumeMounts:/{m=1} f&&m&&/mountPath:/{print $2} f&&/resources:/{exit}')
+          for path in /var/lib/studio/artifact-clones /var/lib/studio/gearbox; do
+            if ! printf '%s\n' "$owner" | grep -qx "$path"; then
+              echo "claim-owner does not hand $path to the backend user" >&2
+              exit 1
+            fi
+          done
+          # With no claim, no root init container.
+          if helm template guard "$chart" --set backend.image.tag=t --set frontend.image.tag=t \
+               --show-only templates/backend/deployment.yaml | grep -q 'name: claim-owner'; then
+            echo "claim-owner rendered with no claim to hand over" >&2
+            exit 1
+          fi
   test-complete:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.

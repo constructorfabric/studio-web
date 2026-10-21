@@ -117,6 +117,14 @@ pub trait RepoFileReader: Send + Sync + 'static {
         ))
     }
 
+    /// Why the sync's own clone of a repository is missing, when it is known:
+    /// the last clone of it failed, or the clone volume cannot be written.
+    /// `None` when nothing failed — the default, for a reader that keeps no
+    /// clones of its own.
+    async fn clone_failure(&self, _secret_ref: &str, _repo_full_path: &str) -> Option<String> {
+        None
+    }
+
     /// One text file of the checkout [`Self::read_repo_files`] reads, by its
     /// repo-relative `path`. `None` when the checkout does not hold it as text.
     ///

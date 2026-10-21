@@ -410,6 +410,10 @@ pub struct IdentityService {
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
     federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
+    /// Where a person's home tenant is moved when they switch organization.
+    /// Attached with `federated`; `Some(None)` means Keycloak admin is
+    /// unconfigured and switching is unavailable.
+    home: OnceLock<Option<Arc<dyn crate::identity_directory::IdpHomeTenant>>>,
     /// The organization a person joins the first time they are seen, if the
     /// installation says there is one.
     first_login_join: OnceLock<Option<(Uuid, String)>>,
@@ -428,6 +432,7 @@ impl IdentityService {
             am,
             connectors: OnceLock::new(),
             federated: OnceLock::new(),
+            home: OnceLock::new(),
             first_login_join: OnceLock::new(),
             last_seen: Mutex::new(HashMap::new()),
             realm_read: Mutex::new(HashMap::new()),
@@ -567,6 +572,58 @@ impl IdentityService {
     /// where it is known to have registered.
     pub fn attach_federated(&self, federated: Option<Arc<dyn IdpDirectoryReader>>) {
         let _ = self.federated.set(federated);
+    }
+
+    /// Hand the service the IdP's home-tenant writer, in the same phase.
+    pub fn attach_home(&self, home: Option<Arc<dyn crate::identity_directory::IdpHomeTenant>>) {
+        let _ = self.home.set(home);
+    }
+
+    /// Make `org_id` the home organization of the person signed in as
+    /// `subject` (person `user_id`): the tenant their next token is scoped to.
+    ///
+    /// Only to an organization they hold an active membership in -- the
+    /// membership is the authority (ADR-0011 §2), and the token attribute is
+    /// moved to match it. Answers the role carried there, `Ok(None)` when the
+    /// person has no active membership in `org_id` (one answer for "not
+    /// yours" and "not there"), and an error when there is no IdP to write to.
+    pub async fn switch_home(
+        &self,
+        subject: &str,
+        user_id: &str,
+        org_id: &str,
+    ) -> Result<Option<String>> {
+        let Some(held) = self
+            .list_memberships(user_id)
+            .await?
+            .into_iter()
+            .find(|m| m.org_id == org_id && m.status == "active")
+        else {
+            return Ok(None);
+        };
+        let tenant =
+            Uuid::parse_str(org_id).map_err(|_| anyhow!("the organization id is not a UUID"))?;
+        let Some(home) = self.home.get().cloned().flatten() else {
+            anyhow::bail!("the IdP directory is not configured, so the home tenant cannot move");
+        };
+        home.set_home_tenant(subject, tenant, &held.role).await?;
+        Ok(Some(held.role))
+    }
+
+    /// The name of the organization `org_id`, read as that organization's
+    /// own service context: the caller may be a member of an organization
+    /// their token's subtree does not reach, which is exactly the one they
+    /// need named to switch to it. `None` when it cannot be read.
+    pub async fn organization_name(&self, org_id: &str) -> Option<String> {
+        let tenant = Uuid::parse_str(org_id).ok()?;
+        let ctx = SecurityContext::builder()
+            .subject_id(Uuid::parse_str(super::STUDIO_SERVICE_SUBJECT).ok()?)
+            .subject_type("service")
+            .subject_tenant_id(tenant)
+            .token_scopes(vec!["*".to_owned()])
+            .build()
+            .ok()?;
+        self.am.get_tenant(&ctx, tenant).await.ok().map(|t| t.name)
     }
 
     /// Every key a grant may name the person behind `subject` by: the person

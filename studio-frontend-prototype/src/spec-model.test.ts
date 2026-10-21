@@ -185,7 +185,7 @@ describe("coverage and progress", () => {
       { path: "b", revision: "r", state: "pending", facts: 0, dropped: 0 },
       { path: "c", revision: "r", state: "pending", facts: 0, dropped: 0 },
     ]);
-    expect(counts).toEqual({ extracted: 1, failed: 0, stale: 0, pending: 2 });
+    expect(counts).toEqual({ extracted: 1, failed: 0, stale: 0, pending: 2, kept: 0 });
   });
 
   it("says what a build is doing, or why it stopped", () => {
@@ -334,6 +334,27 @@ describe("unread documents", () => {
   it("says the repository copy is missing, not that nothing is typed", () => {
     expect(unreadNote(model(0, 101))).toMatch(/^101 typed documents cannot be read: this server has no copy/);
     expect(unreadNote(model(3, 1))).toMatch(/^1 typed document cannot be read/);
+  });
+  it("says why the copy is missing, and that a sync alone will not help", () => {
+    const m = {
+      build: {} as never,
+      documents: [{ path: "a", revision: "r", state: "kept", facts: 4, dropped: 0 }],
+      facts: [],
+      unread_documents: 1,
+      unread_because: "the clone volume /var/lib/studio/artifact-clones cannot be written: Permission denied",
+    } as never;
+    expect(unreadNote(m)).toBe(
+      "1 typed document cannot be read: the clone volume /var/lib/studio/artifact-clones cannot be written: Permission denied. A sync will not bring them back until that is fixed. The model shows what was last read of them.",
+    );
+  });
+  it("says the documents show as last read while the copy is away", () => {
+    const m = {
+      build: {} as never,
+      documents: [{ path: "a", revision: "r", state: "kept", facts: 4, dropped: 0 }],
+      facts: [],
+      unread_documents: 1,
+    } as never;
+    expect(unreadNote(m)).toMatch(/^1 typed document are shown as last read/);
   });
   it("keeps the plain advice when nothing is typed, and says nothing when all were read", () => {
     expect(unreadNote(model(0))).toMatch(/None are yet/);

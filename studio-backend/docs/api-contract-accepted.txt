@@ -866,6 +866,7 @@ request	PUT /studio-user/v1/capacity/availability	person	String	required
 request	PUT /studio-user/v1/capacity/availability	week	String	required
 request	PUT /studio-user/v1/me/avatar	content_type	String	required
 request	PUT /studio-user/v1/me/avatar	data	String	required
+request	PUT /studio-user/v1/me/home-organization	org_id	String	required
 request	PUT /studio-user/v1/me/inbox-marks	item_key	String	required
 request	PUT /studio-user/v1/me/inbox-marks	state	String	required
 request	PUT /studio-user/v1/me/inbox-marks	until	String	optional
@@ -1829,6 +1830,7 @@ response	GET /studio-documents/v1/spec-model	facts.status_because	String	always
 response	GET /studio-documents/v1/spec-model	facts.subject	String	always
 response	GET /studio-documents/v1/spec-model	facts.text	String	always
 response	GET /studio-documents/v1/spec-model	facts.value	String	always
+response	GET /studio-documents/v1/spec-model	unread_because	String	optional
 response	GET /studio-documents/v1/spec-model	unread_documents	u32	always
 response	GET /studio-documents/v1/spec-model/build-estimate	characters	u64	always
 response	GET /studio-documents/v1/spec-model/build-estimate	documents	u32	always
@@ -3338,6 +3340,7 @@ response	GET /studio-user/v1/me/logins	items.verified	bool	always
 response	GET /studio-user/v1/me/memberships	items	Vec<{}>	always
 response	GET /studio-user/v1/me/memberships	items.created_at_epoch_ms	i64	always
 response	GET /studio-user/v1/me/memberships	items.org_id	String	always
+response	GET /studio-user/v1/me/memberships	items.org_name	String	optional
 response	GET /studio-user/v1/me/memberships	items.role	String	always
 response	GET /studio-user/v1/me/memberships	items.source	String	always
 response	GET /studio-user/v1/me/memberships	items.status	String	always
@@ -3404,6 +3407,7 @@ response	GET /studio-user/v1/users/{}	updated_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}/memberships	items	Vec<{}>	always
 response	GET /studio-user/v1/users/{}/memberships	items.created_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}/memberships	items.org_id	String	always
+response	GET /studio-user/v1/users/{}/memberships	items.org_name	String	optional
 response	GET /studio-user/v1/users/{}/memberships	items.role	String	always
 response	GET /studio-user/v1/users/{}/memberships	items.source	String	always
 response	GET /studio-user/v1/users/{}/memberships	items.status	String	always
@@ -4771,6 +4775,7 @@ response	POST /studio-user/v1/me/aliases/revoke	outcome	String	always
 response	POST /studio-user/v1/me/aliases/revoke	reason	String	optional
 response	POST /studio-user/v1/me/invitations/accept	created_at_epoch_ms	i64	always
 response	POST /studio-user/v1/me/invitations/accept	org_id	String	always
+response	POST /studio-user/v1/me/invitations/accept	org_name	String	optional
 response	POST /studio-user/v1/me/invitations/accept	role	String	always
 response	POST /studio-user/v1/me/invitations/accept	source	String	always
 response	POST /studio-user/v1/me/invitations/accept	status	String	always
@@ -5196,6 +5201,8 @@ response	PUT /studio-user/v1/me/avatar	last_seen_at_epoch_ms	i64	optional
 response	PUT /studio-user/v1/me/avatar	locale	String	optional
 response	PUT /studio-user/v1/me/avatar	merged_into	String	optional
 response	PUT /studio-user/v1/me/avatar	updated_at_epoch_ms	i64	always
+response	PUT /studio-user/v1/me/home-organization	org_id	String	always
+response	PUT /studio-user/v1/me/home-organization	role	String	always
 response	PUT /studio-user/v1/me/inbox-marks	item_key	String	always
 response	PUT /studio-user/v1/me/inbox-marks	state	String	always
 response	PUT /studio-user/v1/me/inbox-marks	until	String	optional
@@ -5203,6 +5210,7 @@ response	PUT /studio-user/v1/me/inbox-marks	updated_at	String	always
 response	PUT /studio-user/v1/me/ui-preferences	preferences	BTreeMap<String,String>	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	created_at_epoch_ms	i64	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	org_id	String	always
+response	PUT /studio-user/v1/users/{}/memberships/{}	org_name	String	optional
 response	PUT /studio-user/v1/users/{}/memberships/{}	role	String	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	source	String	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	status	String	always
@@ -5571,6 +5579,7 @@ route	PUT /studio-usage/v1/prices
 route	PUT /studio-user/v1/capacity/allocations
 route	PUT /studio-user/v1/capacity/availability
 route	PUT /studio-user/v1/me/avatar
+route	PUT /studio-user/v1/me/home-organization
 route	PUT /studio-user/v1/me/inbox-marks
 route	PUT /studio-user/v1/me/ui-preferences
 route	PUT /studio-user/v1/users/{}/memberships/{}

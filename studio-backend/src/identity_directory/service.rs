@@ -739,6 +739,85 @@ impl IdentityDirectoryService {
         })
     }
 
+    /// Set the two attributes the token carries -- the home tenant and the
+    /// role in it -- on the realm user `identity_id`, leaving every other
+    /// field as Keycloak had it. Answers the person's name and address, read
+    /// before the edit, for a caller that records them.
+    async fn write_home_attributes(
+        &self,
+        token: &str,
+        identity_id: Uuid,
+        tenant_id: Uuid,
+        organization_role: &str,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let url = format!(
+            "{}/admin/realms/{}/users/{}",
+            self.admin_base_url, self.realm, identity_id
+        );
+        let mut user = self
+            .http
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("get Keycloak user for organization assignment")?
+            .error_for_status()
+            .context("Keycloak rejected the user lookup")?
+            .json::<serde_json::Value>()
+            .await
+            .context("decode Keycloak user representation")?;
+        let names = representation_names(&user);
+
+        let attributes = user
+            .as_object_mut()
+            .context("Keycloak user representation is not an object")?
+            .entry("attributes")
+            .or_insert_with(|| serde_json::json!({}));
+        let attributes = attributes
+            .as_object_mut()
+            .context("Keycloak user attributes are not an object")?;
+        attributes.insert(
+            HOME_TENANT_ATTRIBUTE.to_owned(),
+            serde_json::json!([tenant_id.to_string()]),
+        );
+        attributes.insert(
+            ORGANIZATION_ROLE_ATTRIBUTE.to_owned(),
+            serde_json::json!([organization_role]),
+        );
+
+        self.http
+            .put(url)
+            .bearer_auth(token)
+            .json(&user)
+            .send()
+            .await
+            .context("update Keycloak organization assignment")?
+            .error_for_status()
+            .context("Keycloak rejected the organization assignment")?;
+        Ok(names)
+    }
+
+    /// Move the realm user `subject`'s home tenant to `tenant_id`, with
+    /// `organization_role` as the role the token carries there.
+    ///
+    /// For a person switching between organizations they already belong to;
+    /// the caller has checked that membership. Unlike [`Self::assign`] it
+    /// neither checks reach (the person's current token cannot see a sibling
+    /// organization, which is why they are switching) nor moves the per-tenant
+    /// group: the person stays listed in each organization's people.
+    pub async fn set_home_tenant(
+        &self,
+        subject: &str,
+        tenant_id: Uuid,
+        organization_role: &str,
+    ) -> Result<()> {
+        let identity_id = Uuid::parse_str(subject).context("the subject is not a realm user id")?;
+        let token = self.admin_token().await?;
+        self.write_home_attributes(&token, identity_id, tenant_id, organization_role)
+            .await?;
+        Ok(())
+    }
+
     /// Assign an existing Keycloak identity to an Account Management tenant.
     ///
     /// Account Management's user surface is an IdP-backed projection. Tokens
@@ -771,57 +850,13 @@ impl IdentityDirectoryService {
             .map_err(|error| anyhow::anyhow!("cannot resolve target organization: {error}"))?;
 
         let token = self.admin_token().await?;
-        let url = format!(
-            "{}/admin/realms/{}/users/{}",
-            self.admin_base_url, self.realm, identity_id
-        );
-        let mut user = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .context("get Keycloak user for organization assignment")?
-            .error_for_status()
-            .context("Keycloak rejected the user lookup")?
-            .json::<serde_json::Value>()
-            .await
-            .context("decode Keycloak user representation")?;
-        // Read before the representation is edited: the membership record
-        // below names the person with them.
-        let (display_name, email) = representation_names(&user);
-
-        let attributes = user
-            .as_object_mut()
-            .context("Keycloak user representation is not an object")?
-            .entry("attributes")
-            .or_insert_with(|| serde_json::json!({}));
-        let attributes = attributes
-            .as_object_mut()
-            .context("Keycloak user attributes are not an object")?;
-        attributes.insert(
-            HOME_TENANT_ATTRIBUTE.to_owned(),
-            serde_json::json!([tenant_id.to_string()]),
-        );
-        attributes.insert(
-            ORGANIZATION_ROLE_ATTRIBUTE.to_owned(),
-            serde_json::json!([organization_role]),
-        );
-
         // The owner grant is not written here. It is a projection of the
         // membership, and studio-user writes it with the membership below
         // (ADR-0040 §2); the two Keycloak attributes are this gear's own
         // projection, for the platform, and nothing in Studio reads them back.
-
-        self.http
-            .put(url)
-            .bearer_auth(&token)
-            .json(&user)
-            .send()
-            .await
-            .context("update Keycloak organization assignment")?
-            .error_for_status()
-            .context("Keycloak rejected the organization assignment")?;
+        let (display_name, email) = self
+            .write_home_attributes(&token, identity_id, tenant_id, organization_role)
+            .await?;
 
         // Account Management's Keycloak IdP projection lists members from
         // the per-tenant group, not from the `tenant_id` attribute. Keep both

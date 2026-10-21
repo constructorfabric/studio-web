@@ -66,13 +66,54 @@ spec:
         # `embedding-models` is an emptyDir shared with the one-shot downloader.
         # Give its group write access without making either container root.
         fsGroup: 1000
+      {{- $clonesClaim := and .Values.backend.artifactClone.enabled .Values.backend.artifactClone.persistence.enabled }}
+      {{- $gearboxClaim := and .Values.backend.gearbox.enabled .Values.backend.gearbox.persistence.enabled }}
+      {{- if or (eq .Values.backend.embedding.provider "onnx") $clonesClaim $gearboxClaim }}
+      initContainers:
+      {{- end }}
+      {{- if or $clonesClaim $gearboxClaim }}
+        # fsGroup does not reach every claim: a CSI driver with fsGroupPolicy
+        # ReadWriteOnceWithFSType (Cinder) skips a volume whose class sets no
+        # fsType, and the claim mounts root:root 755. On Dev that refused every
+        # clone with "Permission denied" and left the Domain model empty
+        # (2026-10-21). Only the mount point is handed over; what is inside
+        # the backend writes as 1000 itself.
+        - name: claim-owner
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"], add: ["CHOWN"] }
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile: { type: RuntimeDefault }
+          command:
+            - chown
+            - "1000:1000"
+            {{- if $clonesClaim }}
+            - {{ .Values.backend.artifactClone.mountPath | quote }}
+            {{- end }}
+            {{- if $gearboxClaim }}
+            - {{ .Values.backend.gearbox.mountPath | quote }}
+            {{- end }}
+          volumeMounts:
+            {{- if $clonesClaim }}
+            - name: artifact-clones
+              mountPath: {{ .Values.backend.artifactClone.mountPath }}
+            {{- end }}
+            {{- if $gearboxClaim }}
+            - name: gearbox
+              mountPath: {{ .Values.backend.gearbox.mountPath }}
+            {{- end }}
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+      {{- end }}
       {{- if eq .Values.backend.embedding.provider "onnx" }}
       # The graph-storage `onnx` embedding provider loads its model at boot and
       # refuses to start without it, so the artifacts are fetched first, into
       # an emptyDir the backend reads at /app/models. Pinned by SHA-256: the
       # gear names the embedding space by the bytes it loads, and a different
       # model would block vector search until the graph is re-embedded.
-      initContainers:
         - name: embedding-model
           image: {{ .Values.backend.embedding.fetchImage | quote }}
           # curlimages/curl declares USER as the name `curl_user`, which makes
@@ -378,8 +419,9 @@ spec:
         {{- if .Values.backend.artifactClone.enabled }}
         # Shallow, single-branch clones for artifact ingest. Disposable: a
         # restart re-clones, which is the trade this emptyDir makes against a
-        # per-environment claim. The pod's fsGroup (1000) is what makes it
-        # writable by a container that runs as uid 1000.
+        # per-environment claim. The pod's fsGroup (1000) makes the emptyDir
+        # writable by a container that runs as uid 1000; the claim is handed
+        # over by `claim-owner`, since fsGroup does not reach every claim.
         - name: artifact-clones
           {{- if .Values.backend.artifactClone.persistence.enabled }}
           persistentVolumeClaim:

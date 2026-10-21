@@ -50,9 +50,14 @@ pub struct Sources {
     /// requirement can be traced to.
     pub files: Vec<(String, String)>,
     /// Typed documents whose text no checkout on this server holds: the
-    /// repository was never synced here, or the copy went with a restarted
-    /// pod (the clones live on an `emptyDir`). A sync brings them back.
-    pub unread: usize,
+    /// repository was never synced here, its clone could not be written, or
+    /// the copy went with a restarted pod. A sync brings them back; until
+    /// then [`last_read`] shows what was read of them.
+    pub unread: Vec<String>,
+    /// Why the clone a sync keeps is missing, when the reader knows: the
+    /// last clone of the repository failed, or the clone volume cannot be
+    /// written. `None` when nothing failed (the repository was not synced).
+    pub unread_because: Option<String>,
 }
 
 impl Sources {
@@ -135,6 +140,9 @@ pub struct Kept<'a> {
     pub facts: &'a str,
     pub dropped: i32,
     pub error: Option<&'a str>,
+    /// When it was kept, in Unix seconds: the latest reading of a document
+    /// whose text is not here is the one [`last_read`] shows.
+    pub created_at: i64,
 }
 
 /// The facts of every document at its current revision, and where each
@@ -203,12 +211,47 @@ pub fn current(documents: &[SourceText], kept: &[Kept<'_>]) -> (Vec<extract::Fac
     (facts, coverage)
 }
 
+/// The facts last read of documents whose text this server does not hold
+/// (`unread`), so a missing clone does not empty the model: the newest
+/// complete reading of each, by the current extractor when there is one.
+/// Their state is `kept`; a build cannot read them again until the text is
+/// back, and the rules that check passages against the text do not see them.
+pub fn last_read(unread: &[String], kept: &[Kept<'_>]) -> (Vec<extract::Fact>, Vec<Coverage>) {
+    let mut facts = Vec::new();
+    let mut coverage = Vec::new();
+    for path in unread {
+        let best = kept
+            .iter()
+            .filter(|k| k.path == path && k.error.is_none())
+            .max_by_key(|k| {
+                (
+                    k.extractor_version == extract::EXTRACTOR_VERSION,
+                    k.created_at,
+                )
+            });
+        let Some(k) = best else {
+            continue;
+        };
+        let got: Vec<extract::Fact> = serde_json::from_str(k.facts).unwrap_or_default();
+        coverage.push(Coverage {
+            path: path.clone(),
+            revision: k.revision.to_owned(),
+            state: "kept",
+            facts: got.len(),
+            dropped: usize::try_from(k.dropped).unwrap_or(0),
+            error: None,
+        });
+        facts.extend(got);
+    }
+    (facts, coverage)
+}
+
 /// The documents a build has to read: never extracted at their revision, or
 /// extracted part-way.
 pub fn to_read(coverage: &[Coverage]) -> Vec<&str> {
     coverage
         .iter()
-        .filter(|c| c.state != "extracted")
+        .filter(|c| c.state != "extracted" && c.state != "kept")
         .map(|c| c.path.as_str())
         .collect()
 }
@@ -309,6 +352,7 @@ mod current_tests {
             facts: FACTS,
             dropped: 0,
             error: None,
+            created_at: 0,
         }];
         let (facts, coverage) = current(std::slice::from_ref(&d), &kept);
         assert_eq!(facts.len(), 1, "the earlier reading still shows");
@@ -334,6 +378,55 @@ mod current_tests {
         assert!(!is_template_path("docs/example-driven-design.md"));
     }
 
+    fn kept<'a>(revision: &'a str, version: &'a str, error: Option<&'a str>, at: i64) -> Kept<'a> {
+        Kept {
+            path: "docs/a.md",
+            revision,
+            extractor_version: version,
+            facts: FACTS,
+            dropped: 0,
+            error,
+            created_at: at,
+        }
+    }
+
+    #[test]
+    fn a_document_whose_clone_is_gone_keeps_its_last_reading() {
+        let unread = vec!["docs/a.md".to_owned()];
+        let rows = [
+            kept("old", extract::EXTRACTOR_VERSION, None, 10),
+            kept("new", extract::EXTRACTOR_VERSION, None, 20),
+            kept("newer", extract::EXTRACTOR_VERSION, Some("cut off"), 30),
+        ];
+        let (facts, coverage) = last_read(&unread, &rows);
+        assert_eq!(facts.len(), 1, "the model does not empty with the clone");
+        assert_eq!(coverage[0].state, "kept");
+        assert_eq!(coverage[0].revision, "new", "the newest complete reading");
+        assert!(
+            to_read(&coverage).is_empty(),
+            "no text to read it again from"
+        );
+    }
+
+    #[test]
+    fn the_current_extractor_s_reading_wins_over_a_later_older_one() {
+        let unread = vec!["docs/a.md".to_owned()];
+        let rows = [
+            kept("a", extract::EXTRACTOR_VERSION, None, 10),
+            kept("b", "0", None, 20),
+        ];
+        let (_, coverage) = last_read(&unread, &rows);
+        assert_eq!(coverage[0].revision, "a");
+    }
+
+    #[test]
+    fn a_document_never_read_shows_nothing_while_its_text_is_away() {
+        let unread = vec!["docs/b.md".to_owned()];
+        let (facts, coverage) =
+            last_read(&unread, &[kept("a", extract::EXTRACTOR_VERSION, None, 1)]);
+        assert!(facts.is_empty() && coverage.is_empty());
+    }
+
     #[test]
     fn another_revision_gives_no_facts() {
         let d = doc("docs/a.md", "An invoice, changed.\n");
@@ -344,6 +437,7 @@ mod current_tests {
             facts: FACTS,
             dropped: 0,
             error: None,
+            created_at: 0,
         }];
         let (facts, coverage) = current(std::slice::from_ref(&d), &kept);
         assert!(facts.is_empty(), "its lines are not this text's");

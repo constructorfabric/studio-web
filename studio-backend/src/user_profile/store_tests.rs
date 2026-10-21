@@ -619,3 +619,85 @@ async fn an_expired_snooze_never_pushes_a_done_mark_out() {
     left.sort();
     assert_eq!(left, ["new-done", "old-done"]);
 }
+
+/// The IdP side of a switch, recording what it was asked to write.
+#[derive(Default)]
+struct HomeWrites(std::sync::Mutex<Vec<(String, Uuid, String)>>);
+
+#[async_trait]
+impl crate::identity_directory::IdpHomeTenant for HomeWrites {
+    async fn set_home_tenant(&self, subject: &str, tenant: Uuid, role: &str) -> anyhow::Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((subject.to_owned(), tenant, role.to_owned()));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_person_switches_only_to_an_organization_they_actively_belong_to() {
+    let (service, store) = service().await;
+    let writes = Arc::new(HomeWrites::default());
+    service.attach_home(Some(writes.clone()));
+    let user = Uuid::new_v4().to_string();
+    let owned = Uuid::new_v4().to_string();
+    let suspended = Uuid::new_v4().to_string();
+    let elsewhere = Uuid::new_v4().to_string();
+    store.upsert_user(&person(&user)).await.unwrap();
+    store
+        .upsert_membership(&membership(&user, &owned, "owner"))
+        .await
+        .unwrap();
+    store
+        .upsert_membership(&MembershipView {
+            status: "suspended".to_owned(),
+            ..membership(&user, &suspended, "member")
+        })
+        .await
+        .unwrap();
+
+    let role = service
+        .switch_home("subject-1", &user, &owned)
+        .await
+        .unwrap();
+    assert_eq!(role.as_deref(), Some("owner"));
+    // Neither a suspended membership nor an organization they are not in
+    // moves anything.
+    assert_eq!(
+        service
+            .switch_home("subject-1", &user, &suspended)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        service
+            .switch_home("subject-1", &user, &elsewhere)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        *writes.0.lock().unwrap(),
+        [(
+            "subject-1".to_owned(),
+            Uuid::parse_str(&owned).unwrap(),
+            "owner".to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn without_an_idp_to_write_to_a_switch_is_an_error_not_a_quiet_no() {
+    let (service, store) = service().await;
+    service.attach_home(None);
+    let user = Uuid::new_v4().to_string();
+    let org = Uuid::new_v4().to_string();
+    store.upsert_user(&person(&user)).await.unwrap();
+    store
+        .upsert_membership(&membership(&user, &org, "member"))
+        .await
+        .unwrap();
+    assert!(service.switch_home("subject-1", &user, &org).await.is_err());
+}

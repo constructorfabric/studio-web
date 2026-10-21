@@ -56,7 +56,8 @@ export interface SpecModelFact {
 export interface SpecModelDocument {
   path: string;
   revision: string;
-  state: "extracted" | "failed" | "stale" | "pending";
+  /** `kept`: the text is not on this server; the last reading is shown. */
+  state: "extracted" | "failed" | "stale" | "pending" | "kept";
   facts: number;
   dropped: number;
   error?: string | null;
@@ -86,6 +87,9 @@ export interface SpecModel {
    *  synced here (or its clone went with a restarted backend). Absent from
    *  an older server. */
   unread_documents?: number;
+  /** Why that copy is missing, when the server knows: the last clone
+   *  failed, or the clone volume cannot be written. */
+  unread_because?: string | null;
 }
 
 /** Why the model has nothing to read, or reads less than is typed, in one
@@ -98,8 +102,16 @@ export function unreadNote(model: SpecModel): string | null {
       : null;
   }
   const n = `${unread} typed document${unread === 1 ? "" : "s"}`;
-  return model.documents.length === 0
-    ? `${n} cannot be read: this server has no copy of the repository right now (it is lost when the backend restarts). Sync the repository on the Sources tab, then build the model.`
+  const kept = model.documents.filter((d) => d.state === "kept").length;
+  const shown = kept > 0 ? " The model shows what was last read of them." : "";
+  if (model.unread_because) {
+    return `${n} cannot be read: ${model.unread_because}. A sync will not bring them back until that is fixed.${shown}`;
+  }
+  if (model.documents.length === 0) {
+    return `${n} cannot be read: this server has no copy of the repository right now. Sync the repository on the Sources tab, then build the model.`;
+  }
+  return kept > 0
+    ? `${n} are shown as last read: the server's copy of the repository is missing. Sync it on the Sources tab to read them again.`
     : `${n} cannot be read: the server's copy of the repository is missing. Sync it on the Sources tab to read them too.`;
 }
 
@@ -507,7 +519,7 @@ export function orderProductFindings(findings: ProductFinding[]): ProductFinding
 
 /** How many documents are in each state. */
 export function coverageCounts(documents: SpecModelDocument[]): Record<SpecModelDocument["state"], number> {
-  const counts = { extracted: 0, failed: 0, stale: 0, pending: 0 };
+  const counts = { extracted: 0, failed: 0, stale: 0, pending: 0, kept: 0 };
   for (const d of documents) counts[d.state] += 1;
   return counts;
 }

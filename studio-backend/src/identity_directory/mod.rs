@@ -73,6 +73,39 @@ impl IdpDirectoryReader for IdentityDirectoryService {
     }
 }
 
+/// Moving a person's home tenant in the IdP, for the person themselves.
+///
+/// The token's `tenant_id` decides which subtree the platform shows the
+/// caller, so a person who belongs to several organizations works in one at a
+/// time and switches by moving it (ADR-0011 §2, until the selection travels
+/// with each request). Separate from [`IdpDirectoryReader`] because it writes.
+///
+/// Decides nothing: the caller has already shown, from the Studio membership,
+/// that the person holds `role` in `tenant`. Only the two token attributes
+/// move. The per-tenant groups stay as the assignments left them, so the
+/// person stays listed among each organization's people.
+#[async_trait]
+pub trait IdpHomeTenant: Send + Sync + 'static {
+    async fn set_home_tenant(
+        &self,
+        subject: &str,
+        tenant: uuid::Uuid,
+        role: &str,
+    ) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+impl IdpHomeTenant for IdentityDirectoryService {
+    async fn set_home_tenant(
+        &self,
+        subject: &str,
+        tenant: uuid::Uuid,
+        role: &str,
+    ) -> anyhow::Result<()> {
+        IdentityDirectoryService::set_home_tenant(self, subject, tenant, role).await
+    }
+}
+
 #[toolkit::gear(
     name = "studio-identity-directory",
     deps = [account_management],
@@ -112,6 +145,11 @@ impl Gear for IdentityDirectoryGear {
         // leaves the identity gear's IdP proof channel unavailable and its
         // connector channel untouched.
         if let Some(svc) = service.clone() {
+            let home: Arc<dyn IdpHomeTenant> = svc.clone();
+            ctx.client_hub().register_scoped::<dyn IdpHomeTenant>(
+                ClientScope::gts_id(IDP_DIRECTORY_INSTANCE_ID),
+                home,
+            );
             let reader: Arc<dyn IdpDirectoryReader> = svc;
             ctx.client_hub().register_scoped::<dyn IdpDirectoryReader>(
                 ClientScope::gts_id(IDP_DIRECTORY_INSTANCE_ID),

@@ -5864,6 +5864,23 @@
     },
     {
       "method": "PUT",
+      "path": "/studio-user/v1/me/home-organization",
+      "operation_id": "studio_user.update_my_home_organization",
+      "tag": "StudioUser",
+      "summary": "Switch the caller to another of their organizations",
+      "authenticated": true,
+      "request": "SwitchHomeOrganizationRequest",
+      "responses": [
+        "HomeOrganizationDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
       "path": "/studio-user/v1/me/inbox-marks",
       "operation_id": "studio_user.upsert_my_inbox_mark",
       "tag": "StudioUser",

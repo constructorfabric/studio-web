@@ -2099,23 +2099,28 @@ impl DocumentsService {
                 node: String::new(),
                 binding: None,
             });
-        let typed = rows.len();
+        let mut unread = Vec::new();
         let documents: Vec<super::spec_model::SourceText> = rows
             .into_iter()
-            .filter_map(|row| {
-                by_path
-                    .remove(&row.path)
-                    .flatten()
-                    .map(|text| super::spec_model::SourceText {
-                        binding: Some(row.id),
-                        path: row.path,
-                        text,
-                        doc_type: row.type_key,
-                        node: row.node_id,
-                    })
+            .filter_map(|row| match by_path.remove(&row.path).flatten() {
+                Some(text) => Some(super::spec_model::SourceText {
+                    binding: Some(row.id),
+                    path: row.path,
+                    text,
+                    doc_type: row.type_key,
+                    node: row.node_id,
+                }),
+                None => {
+                    unread.push(row.path);
+                    None
+                }
             })
             .collect();
-        let unread = typed - documents.len();
+        let unread_because = if unread.is_empty() {
+            None
+        } else {
+            self.clone_failure(ctx, &tenants, reader).await
+        };
         let documents = documents.into_iter().chain(unbound_domain_doc);
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
         documents.extend(self.studio_sources(workspace_id, project_id).await?);
@@ -2125,6 +2130,7 @@ impl DocumentsService {
                 tree,
                 files: Vec::new(),
                 unread,
+                unread_because,
             },
             tenants,
             documents: wanted,
@@ -2992,6 +2998,34 @@ impl DocumentsService {
 
     /// Every file of those checkouts, text or not, with the text of the ones
     /// [`Self::checkout_files`] gives — tried tenant by tenant the same way.
+    /// Why the sync's clone of one of the tenants' repositories is missing,
+    /// as the reader last saw it fail: the first such reason, or `None`.
+    async fn clone_failure(
+        &self,
+        ctx: &SecurityContext,
+        tenants: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Option<String> {
+        for tenant in tenants {
+            let Some(sources) =
+                crate::project_sources::resolve(self.account_management.as_ref(), ctx, *tenant)
+                    .await
+            else {
+                continue;
+            };
+            for resolved in sources {
+                if let Some(secret_ref) = resolved.secret_ref.as_ref()
+                    && let Some(why) = reader
+                        .clone_failure(secret_ref, &resolved.source.full_path)
+                        .await
+                {
+                    return Some(why);
+                }
+            }
+        }
+        None
+    }
+
     async fn checkout_listing(
         &self,
         ctx: &SecurityContext,

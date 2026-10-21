@@ -243,6 +243,12 @@ pub struct IngestService {
     /// Fallback own-clone volume (`STUDIO_ARTIFACT_WORKDIR`). `None` = no
     /// fallback clone → tree-API metadata when no workspace checkout exists.
     work_root: Option<PathBuf>,
+    /// Why `work_root` cannot be written, found at startup: every clone into
+    /// it would fail, so every reader is told so rather than to sync again.
+    work_root_failure: Option<String>,
+    /// The last clone failure of each repository, by its checkout key; gone
+    /// once a clone of it succeeds.
+    clone_failures: std::sync::Mutex<HashMap<String, String>>,
     /// The connector service, asked whose connection holds the token a sync
     /// reads with (`connectors::sdk::ownership`). `None` refuses every
     /// sync that names a token: nothing could say it is the organization's.
@@ -319,7 +325,39 @@ impl IngestService {
             classifier,
             workspaces_root,
             work_root,
+            work_root_failure: None,
+            clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
+        }
+    }
+
+    /// Record that `work_root` cannot be written (see [`writable`]).
+    #[must_use]
+    pub fn with_work_root_failure(mut self, failure: Option<String>) -> Self {
+        self.work_root_failure = failure;
+        self
+    }
+
+    /// Why a repository's own clone is missing: the volume, else its last
+    /// failed clone.
+    fn clone_failure_of(&self, secret_ref: &str, repo_full_path: &str) -> Option<String> {
+        if let Some(why) = &self.work_root_failure {
+            return Some(why.clone());
+        }
+        let key = git_checkout::checkout_key(secret_ref, repo_full_path);
+        self.clone_failures
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&key).cloned())
+    }
+
+    fn note_clone(&self, secret_ref: &str, repo_full_path: &str, failure: Option<String>) {
+        let key = git_checkout::checkout_key(secret_ref, repo_full_path);
+        if let Ok(mut m) = self.clone_failures.lock() {
+            match failure {
+                Some(why) => m.insert(key, why),
+                None => m.remove(&key),
+            };
         }
     }
 
@@ -688,12 +726,20 @@ impl IngestService {
                 )
                 .await
             {
-                Ok(v) => Some(v),
+                Ok(v) => {
+                    self.note_clone(connector_id, repo_full_path, None);
+                    Some(v)
+                }
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
                         repo = repo_full_path,
                         "studio-artifact-ingest: clone failed — skipping files"
+                    );
+                    self.note_clone(
+                        connector_id,
+                        repo_full_path,
+                        Some(format!("the last clone failed: {e:#}")),
                     );
                     // An incomplete walk, so nothing is forgotten over it.
                     Some((PathBuf::new(), git_checkout::Walk::default(), None))
@@ -2858,6 +2904,24 @@ impl super::port::ArtifactFiles for IngestService {
     }
 }
 
+/// Whether a clone volume can be written: a probe file is created and
+/// removed. `Some(why)` when it cannot. A claim the pod's fsGroup did not
+/// reach mounts `root:root 755`, and every clone into it then fails with
+/// "Permission denied" (#854) — found here, at startup, not at each sync.
+pub fn writable(dir: &std::path::Path) -> Option<String> {
+    let probe = dir.join(".studio-write-probe");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(e) => Some(format!(
+            "the clone volume {} cannot be written: {e}",
+            dir.display()
+        )),
+    }
+}
+
 /// The checkout, offered to whoever owns the documents in it.
 ///
 /// A thin forward to the inherent method the REST route already uses: the
@@ -2865,6 +2929,10 @@ impl super::port::ArtifactFiles for IngestService {
 /// back, not because the reading itself is different.
 #[async_trait::async_trait]
 impl super::port::RepoFileReader for IngestService {
+    async fn clone_failure(&self, secret_ref: &str, repo_full_path: &str) -> Option<String> {
+        self.clone_failure_of(secret_ref, repo_full_path)
+    }
+
     async fn read_repo_files(
         &self,
         workspace_id: &str,
@@ -3819,6 +3887,67 @@ mod prune_tests {
             other.is_empty(),
             "another connection's clone is not this one"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_clone_is_said_until_one_succeeds() {
+        use super::super::port::RepoFileReader;
+        let (svc, _, _) = service();
+        assert_eq!(svc.clone_failure("conn", "org/repo").await, None);
+        svc.note_clone(
+            "conn",
+            "org/repo",
+            Some("the last clone failed: Permission denied".into()),
+        );
+        assert_eq!(
+            svc.clone_failure("conn", "org/repo").await.as_deref(),
+            Some("the last clone failed: Permission denied")
+        );
+        assert_eq!(
+            svc.clone_failure("conn", "org/other").await,
+            None,
+            "only that repository"
+        );
+        svc.note_clone("conn", "org/repo", None);
+        assert_eq!(svc.clone_failure("conn", "org/repo").await, None);
+    }
+
+    #[tokio::test]
+    async fn an_unwritable_volume_is_the_reason_for_every_repository() {
+        use super::super::port::RepoFileReader;
+        let (svc, _, _) = service();
+        let svc = svc.with_work_root_failure(Some("the clone volume /c cannot be written".into()));
+        assert_eq!(
+            svc.clone_failure("any", "org/repo").await.as_deref(),
+            Some("the clone volume /c cannot be written")
+        );
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn a_writable_volume_passes_the_probe_and_keeps_nothing() {
+        let dir = scratch("probe-ok");
+        assert_eq!(writable(&dir), None);
+        assert_eq!(
+            std::fs::read_dir(&dir).expect("read").count(),
+            0,
+            "the probe is removed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_volume_that_cannot_be_written_fails_the_probe() {
+        let dir = scratch("probe-missing");
+        let missing = dir.join("not-there");
+        let why = writable(&missing).expect("a directory that does not exist cannot be written");
+        assert!(why.contains("cannot be written"), "{why}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
