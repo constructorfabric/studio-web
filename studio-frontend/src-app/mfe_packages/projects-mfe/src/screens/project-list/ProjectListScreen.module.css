@@ -1,45 +1,26 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
   min-height: 100%;
+  background: var(--card);
 }
 
-.toolbar {
+.body {
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.searchRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  justify-content: flex-end;
+  padding-block: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border);
 }
 
-.controls {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+.searchBox {
+  flex: none;
 }
 
-.title {
-  margin: 0;
-  font-size: var(--text-heading-1-size);
-  line-height: var(--text-heading-1-line-height);
-  font-weight: var(--text-heading-1-weight);
-  letter-spacing: var(--text-heading-1-tracking);
-}
-
-.titleSkeleton {
-  width: 8rem;
-  height: var(--text-heading-1-line-height);
-}
-
-/* `input.search`, not `.search`: the kit's own `._input` rule is a single class
-   too, and its stylesheet is injected into the MFE shadow root AFTER this one,
-   so a bare class loses every declaration it tries to override. Element+class
-   wins on specificity instead of hoping for source order.
-   No radius here on purpose: inside the MFE the kit's `--radius-md` already
-   resolves to 8px (the shell's scale differs), which is what the design draws.
-   Height matches the `size="sm"` button beside it; the kit's default is 40px. */
 input.search {
   width: 13.75rem;
   height: var(--control-height-sm);
@@ -52,14 +33,6 @@ input.search {
 
 .sortPrefix {
   color: var(--muted-foreground);
-}
-
-.card {
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-elevated);
-  color: var(--card-foreground);
-  overflow: hidden;
 }
 
 .table {

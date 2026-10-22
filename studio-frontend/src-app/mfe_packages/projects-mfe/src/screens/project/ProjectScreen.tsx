@@ -15,6 +15,7 @@ import { useArtifactImport } from '../../shared/useArtifactImport';
 import { useSourcesSync } from '../../shared/useSourcesSync';
 import { NAV_SLICE_KEY, landOnFirstImport, type ProjectSection } from '../../slices/navSlice';
 import { announceSection } from '../../actions/projectsActions';
+import { SectionHeader } from '../../components/SectionHeader';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
 import { SpecsSection } from './sections/specs/SpecsSection';
@@ -106,6 +107,11 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
   const busy = (!isLoaded && !translationsFailed) || isLoading;
   const Actions = SECTION_ACTIONS[section];
 
+  const actions = () => {
+    if (busy || !project || !Actions) return null;
+    return <Actions projectId={projectId} projectName={project.name} />;
+  };
+
   const body = () => {
     if (busy) {
       return (
@@ -144,14 +150,12 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
             artifactsRead={artifactsRead}
           />
         )}
-        <header className={styles.header}>
-          <h2 className={styles.title}>
-            {busy ? <Skeleton className={styles.titleSkeleton} /> : t(`section_${section}`)}
-          </h2>
-          {!busy && project && Actions ? (
-            <Actions projectId={projectId} projectName={project.name} />
-          ) : null}
-        </header>
+        <SectionHeader
+          className={styles.header}
+          title={t(`section_${section}`)}
+          busy={busy}
+          actions={actions()}
+        />
         <div className={styles.body} data-section={section}>
           {body()}
         </div>

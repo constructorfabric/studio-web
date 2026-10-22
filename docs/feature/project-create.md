@@ -127,7 +127,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 
 The three flows below stay unchecked on purpose, and not because they are
 unimplemented. A checked flow obliges every one of its CDSL instructions to
-carry a `@cpt-begin`/`@cpt-end` block, and these span the toolbar, the overlay
+carry a `@cpt-begin`/`@cpt-end` block, and these span the list header, the overlay
 plumbing, both steps, the write effect and — for "Abandon the wizard" — the
 shell's own dismissal code, which is outside this system's codebase scope. Their
 evidence is the acceptance criteria in section 6, exercised against a running
@@ -150,7 +150,7 @@ are traced.
 - The tenant is created but its metadata write fails; the project exists with no attributes.
 
 **Steps**:
-1. [ ] - `p1` - Member activates "New project" in the list toolbar - `inst-1`
+1. [ ] - `p1` - Member activates "New project" in the list header - `inst-1`
 2. [ ] - `p1` - Mount the overlay extension in the shell's overlay domain - `inst-2`
 3. [ ] - `p1` - Reset the draft so no earlier attempt is carried in - `inst-3`
 4. [ ] - `p1` - Member enters a name, an optional goal, and picks "Start from scratch" - `inst-4`

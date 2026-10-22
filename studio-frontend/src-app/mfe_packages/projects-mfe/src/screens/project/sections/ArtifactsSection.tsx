@@ -256,11 +256,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
               setOffset(0);
             }}
           >
-            <SelectTrigger
-              size="sm"
-              className={styles.repoFilter}
-              aria-label={t('artifacts_col_repository')}
-            >
+            <SelectTrigger className={styles.repoFilter} aria-label={t('artifacts_col_repository')}>
               <SelectValue>
                 {(selected: unknown) => (
                   <span className={styles.truncate}>
@@ -294,7 +290,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
               setOffset(0);
             }}
           >
-            <SelectTrigger size="sm" className={styles.repoFilter} aria-label={t('artifacts_kind')}>
+            <SelectTrigger className={styles.repoFilter} aria-label={t('artifacts_kind')}>
               <SelectValue>
                 {(selected: unknown) =>
                   !selected || selected === ALL_KINDS

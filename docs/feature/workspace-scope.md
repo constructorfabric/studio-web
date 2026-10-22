@@ -427,7 +427,7 @@ only button is already refused.
 - `cpt-studiofrontend-flow-workspace-scope-create`
 
 **Touches**:
-- Entities: `ProjectsToolbar`
+- Entities: `ProjectListScreen`
 
 ## 6. Acceptance Criteria
 

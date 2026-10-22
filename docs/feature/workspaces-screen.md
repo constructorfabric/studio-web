@@ -246,7 +246,7 @@ the projects list is a screen of one workspace already.
 - `cpt-studiofrontend-flow-workspaces-screen-create`
 
 **Touches**:
-- Entities: `mfe.json` (organization-mfe, projects-mfe), `NewWorkspaceForm`, `ProjectsToolbar`
+- Entities: `mfe.json` (organization-mfe, projects-mfe), `NewWorkspaceForm`, `ProjectListScreen`
 
 ### The counts come from the tenant list
 

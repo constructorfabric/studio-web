@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder } from 'lucide-react';
+import { Folder, Search } from 'lucide-react';
 import {
   Button,
   Empty,
@@ -8,20 +8,25 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
+  Input,
   Skeleton,
 } from '@gears-frontx/ui-kit';
+import { useMfeBridge } from '@gears-frontx/react';
 import { useProjectListScreenTranslations, useProjectListText } from '../../i18n';
 import { WorkspaceProjectsProvider } from '../../shared/workspaceProjects';
 import { useProjectList } from '../../shared/useProjectList';
 import { DEFAULT_SORT_OPTION, type ProjectSortOption } from '../../model/project';
-import { ProjectsToolbar } from './components/ProjectsToolbar';
+import { openProjectWizard } from '../../actions/wizardActions';
+import { SectionHeader } from '../../components/SectionHeader';
 import { ProjectsTable } from './components/ProjectsTable';
 import styles from './ProjectListScreen.module.css';
 
 
+// @cpt-dod:cpt-studiofrontend-dod-workspace-scope-no-workspace:p1
 const ProjectList: React.FC = () => {
   const { isLoaded, error: translationsFailed } = useProjectListScreenTranslations();
   const t = useProjectListText();
+  const bridge = useMfeBridge();
   const [query, setQuery] = useState('');
 
   const sort: ProjectSortOption = DEFAULT_SORT_OPTION;
@@ -29,16 +34,37 @@ const ProjectList: React.FC = () => {
   const { loading, failed, org, workspace, rows, total } = useProjectList(query, sort);
   const busy = (!isLoaded && !translationsFailed) || loading;
 
+  const actions = () => (
+    <Button
+      size="sm"
+      disabled={!workspace}
+      title={workspace ? undefined : t('empty_no_workspace')}
+      onClick={() => openProjectWizard(bridge)}
+    >
+      {t('new_project')}
+    </Button>
+  );
+
   return (
     <div className={styles.screen}>
-      <ProjectsToolbar
-        query={query}
-        onQueryChange={setQuery}
-        busy={busy}
-        hasWorkspace={!!workspace}
-      />
+      <SectionHeader title={t('title')} busy={busy} actions={actions()} />
 
-      <section className={styles.card}>
+      <section className={styles.body}>
+        {/* TODO: DataGrid's text search replaces this row. */}
+        <div className={styles.searchRow}>
+          <div className={styles.searchBox}>
+            <Input
+              className={styles.search}
+              type="search"
+              value={query}
+              icon={<Search size={16} strokeWidth={1.3} />}
+              placeholder={t('search_placeholder')}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label={t('search_placeholder')}
+            />
+          </div>
+        </div>
+
         {busy ? (
           <div className={styles.rowsSkeleton}>
             <Skeleton className={styles.rowSkeleton} />
