@@ -72,12 +72,13 @@ jobs:
           # test-e2e skips --with-deps on self-hosted.
           # shellcheck disable=SC2016
           check "chromium system libraries" dpkg-query -W -f='${Package} ' libnss3 libatk-bridge2.0-0t64 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 libcairo2
-          # Outbound reach the pipeline depends on.
-          check "github.com" curl -fsS -o /dev/null -w '%{http_code}' https://github.com
-          check "ghcr.io" curl -sS -o /dev/null -w '%{http_code}' https://ghcr.io/v2/
-          check "registry-1.docker.io" curl -sS -o /dev/null -w '%{http_code}' https://registry-1.docker.io/v2/
-          check "index.crates.io" curl -fsS -o /dev/null -w '%{http_code}' https://index.crates.io/config.json
-          check "registry.npmjs.org" curl -fsS -o /dev/null -w '%{http_code}' https://registry.npmjs.org/
+          # Outbound reach the pipeline depends on; a dropped packet must not
+          # hold the job until its timeout.
+          check "github.com" curl -fsS --max-time 20 -o /dev/null -w '%{http_code}' https://github.com
+          check "ghcr.io" curl -sS --max-time 20 -o /dev/null -w '%{http_code}' https://ghcr.io/v2/
+          check "registry-1.docker.io" curl -sS --max-time 20 -o /dev/null -w '%{http_code}' https://registry-1.docker.io/v2/
+          check "index.crates.io" curl -fsS --max-time 20 -o /dev/null -w '%{http_code}' https://index.crates.io/config.json
+          check "registry.npmjs.org" curl -fsS --max-time 20 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/
           {
             echo
             echo "Disk: \`$(df -h --output=avail,size "$GITHUB_WORKSPACE" | tail -1)\` (available, size)"
