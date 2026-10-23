@@ -18,6 +18,7 @@ import type {
 import { randomBytes } from "crypto";
 import { execFile } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { promisify } from "util";
 
@@ -68,6 +69,7 @@ import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
 import type { DeployInfo } from "../common/deploy-product";
 import { deployInfo } from "./deploy-support";
 import { packChart } from "./chart-package";
+import { withBuildTools } from "../common/deploy-product";
 import { buildToolchain, containerOnPort, exec, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
@@ -107,6 +109,8 @@ let slowScan: ScanHint | undefined;
  */
 const INITIALIZE_TIMEOUT_MS = 20_000;
 const LOAD_TIMEOUT_MS = 120_000;
+/** How long a Publish's registry token folder is kept (ADR-0048). */
+const PUSH_CONFIG_TTL_MS = 30 * 60_000;
 /**
  * And the same cap for the product methods.
  *
@@ -1079,6 +1083,58 @@ export class GearboxServiceImpl implements GearboxService {
       throw new Error(`refusing to pack a chart outside a generated tree: ${dir}`);
     }
     return packChart(dir).toString("base64");
+  }
+
+  async repositoryPathOf(file: string): Promise<{ path: string; branch?: string } | undefined> {
+    if (!path.isAbsolute(file)) return undefined;
+    const dir = path.dirname(file);
+    const top = await exec("git", ["-C", dir, "rev-parse", "--show-toplevel"]);
+    if (!top.ok) return undefined;
+    const relative = path.relative(path.resolve(top.stdout.trim()), path.resolve(file)).replace(/\\/g, "/");
+    if (relative.startsWith("..") || relative === "") return undefined;
+    const branch = await exec("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
+    const name = branch.stdout.trim();
+    return { path: relative, ...(branch.ok && name !== "" && name !== "HEAD" ? { branch: name } : {}) };
+  }
+
+  async prepareImageBuild(outRoot: string): Promise<void> {
+    const tree = path.resolve(outRoot);
+    if (!/\/\.gearbox\//.test(tree.replace(/\\/g, "/"))) {
+      throw new Error(`refusing to change files outside a generated tree: ${tree}`);
+    }
+    const docker = path.join(tree, "docker");
+    const ignore = await fs.promises.readFile(path.join(docker, ".dockerignore"), "utf8").catch(() => undefined);
+    for (const entry of await fs.promises.readdir(docker, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(docker, entry.name, "Dockerfile");
+      const text = await fs.promises.readFile(file, "utf8").catch(() => undefined);
+      if (text === undefined) continue;
+      const fixed = withBuildTools(text);
+      if (fixed !== text) await fs.promises.writeFile(file, fixed);
+      if (ignore !== undefined) await fs.promises.writeFile(`${file}.dockerignore`, ignore);
+    }
+  }
+
+  async writeRegistryConfig(host: string, token: string): Promise<string> {
+    if (!/^[A-Za-z0-9.-]+(:[0-9]+)?$/.test(host) || token.trim() === "" || /\s/.test(token.trim())) {
+      throw new Error("a registry token is a host and a token");
+    }
+    // Earlier publishes' folders go first: their tokens have expired anyway.
+    const tmp = os.tmpdir();
+    for (const name of await fs.promises.readdir(tmp).catch(() => [] as string[])) {
+      if (!name.startsWith("studio-push-")) continue;
+      const old = path.join(tmp, name);
+      const stat = await fs.promises.stat(old).catch(() => undefined);
+      if (stat !== undefined && Date.now() - stat.mtimeMs > PUSH_CONFIG_TTL_MS) {
+        await fs.promises.rm(old, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+    const dir = await fs.promises.mkdtemp(path.join(tmp, "studio-push-"));
+    // Only a bearer token, for only this registry: docker and helm send it as is.
+    const config = { auths: { [host]: { registrytoken: token.trim() } } };
+    await fs.promises.writeFile(path.join(dir, "config.json"), JSON.stringify(config), { mode: 0o600 });
+    setTimeout(() => void fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined), PUSH_CONFIG_TTL_MS).unref();
+    return dir;
   }
 
   async headCommitOf(file: string): Promise<string | undefined> {

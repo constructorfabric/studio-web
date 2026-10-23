@@ -333,6 +333,19 @@ impl ProductService {
         Ok((issue.number, issue.url))
     }
 
+    /// The project's repository, the one a product description is written to,
+    /// checked to be reachable through a connection the organization holds.
+    pub async fn project_repository(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<RepositoryTarget> {
+        let target = self.write_target(ctx, project_id).await?;
+        self.ensure_owned(ctx, scope_of(ctx, project_id), &target)
+            .await?;
+        Ok(target)
+    }
+
     /// The text of `path` in the project's repository (the one a product
     /// description is written to), on its base branch; `None` when the
     /// repository has no such file.

@@ -536,6 +536,21 @@ export interface GearboxService {
    * the Studio server (ADR-0043).
    */
   packChart(outRoot: string, chart: string): Promise<string>;
+  /**
+   * Write a Docker config holding only a bearer token for `host` (ADR-0048),
+   * in a folder of its own, and say which: Publish pushes with
+   * `docker --config <dir>` and `helm push --registry-config <dir>/config.json`.
+   */
+  writeRegistryConfig(host: string, token: string): Promise<string>;
+  /**
+   * Make the generated tree buildable by `docker build` as it is today: each
+   * application's `Dockerfile.dockerignore` (build.sh's `--ignorefile` is no
+   * docker flag) and protoc and cmake in the build stage. Inside a generated
+   * tree only.
+   */
+  prepareImageBuild(outRoot: string): Promise<void>;
+  /** Where `file` is in its git repository, and the branch checked out: what a build in Studio clones. */
+  repositoryPathOf(file: string): Promise<{ readonly path: string; readonly branch?: string } | undefined>;
 
   /** Constructor Studio: the commit checked out where `file` is, when it is in a git checkout. */
   headCommitOf(file: string): Promise<string | undefined>;
@@ -744,7 +759,24 @@ export interface DeployEnvironmentsSource {
   /** For the project `file` (a product.gdl) belongs to; undefined when it is none of Studio's, or signed out. */
   targets(file: string): Promise<DeployTargets | undefined>;
   /** Ask the server to deploy; rejects with the server's own words. */
-  requestDeploy(projectId: string, body: DeployRequestBody): Promise<{ readonly state: string; readonly environment_name: string; readonly namespace: string }>;
+  requestDeploy(
+    projectId: string,
+    body: DeployRequestBody | ReturnType<typeof import("./deploy-product").deployBuildRequest>,
+  ): Promise<{ readonly state: string; readonly environment_name: string; readonly namespace: string }>;
+  /**
+   * A short-lived token that may push `repositories` under the environment's
+   * registry prefix, issued by the registry for the server (ADR-0048).
+   */
+  /** Build the product in the environment's cluster (ADR-0048 §9); rejects with the server's words. */
+  startBuild?(
+    projectId: string,
+    body: { readonly environment_id: string; readonly profile: string; readonly product_file: string; readonly ref?: string },
+  ): Promise<{ readonly build_id: string; readonly namespace: string }>;
+  pushToken?(
+    projectId: string,
+    environmentId: string,
+    repositories: readonly string[],
+  ): Promise<{ readonly registry: string; readonly prefix: string; readonly token: string; readonly expires_in?: number | null }>;
 }
 export interface RemoteCatalogueSource {
   /**

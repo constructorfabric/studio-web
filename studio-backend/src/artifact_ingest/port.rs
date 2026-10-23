@@ -459,3 +459,132 @@ mod text_of_tests {
         );
     }
 }
+
+/// One build as its record says (ADR-0045, ADR-0048 §4): what another gear
+/// deploys when it is told a build's id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildRecord {
+    pub build_id: String,
+    /// `running` | `passed` | `failed` | `cancelled`.
+    pub status: String,
+    pub product: Option<String>,
+    pub profile: Option<String>,
+    pub commit: Option<String>,
+    pub lock_hash: Option<String>,
+    /// `(app, image)`: what it published, with registry and digest.
+    pub images: Vec<(String, String)>,
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
+}
+
+impl BuildRecord {
+    /// A record's fields out of its node's payload.
+    pub fn of(value: &serde_json::Value) -> Self {
+        let text = |k: &str| value.get(k).and_then(|v| v.as_str()).map(str::to_owned);
+        BuildRecord {
+            build_id: text("build_id").unwrap_or_default(),
+            status: text("status").unwrap_or_default(),
+            product: text("product"),
+            profile: text("profile"),
+            commit: text("commit"),
+            lock_hash: text("lock_hash"),
+            images: value
+                .get("images")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| {
+                            Some((
+                                i.get("app")?.as_str()?.to_owned(),
+                                i.get("image")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            chart_ref: value
+                .get("chart")
+                .and_then(|c| c.get("reference"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            chart_version: value
+                .get("chart")
+                .and_then(|c| c.get("version"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        }
+    }
+}
+
+/// A build Studio ran in an organization's cluster (ADR-0048 §9), as its
+/// gear records it: running, then passed with what it published, or failed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildOutcome {
+    pub build_id: String,
+    /// `running` | `passed` | `failed`.
+    pub status: String,
+    pub product: Option<String>,
+    pub profile: Option<String>,
+    /// `owner/name`.
+    pub repository: Option<String>,
+    pub commit: Option<String>,
+    pub lock_hash: Option<String>,
+    pub failure: Option<String>,
+    pub failure_step: Option<String>,
+    pub images: Vec<(String, String)>,
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
+}
+
+impl BuildOutcome {
+    pub fn running(build_id: &str, repository: &str, profile: &str) -> Self {
+        Self {
+            build_id: build_id.to_owned(),
+            status: "running".into(),
+            repository: Some(repository.to_owned()),
+            profile: Some(profile.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    pub fn failed(
+        build_id: &str,
+        repository: &str,
+        profile: &str,
+        failure: &str,
+        step: &str,
+    ) -> Self {
+        Self {
+            build_id: build_id.to_owned(),
+            status: "failed".into(),
+            repository: Some(repository.to_owned()),
+            profile: Some(profile.to_owned()),
+            failure: Some(failure.chars().take(500).collect()),
+            failure_step: Some(step.to_owned()),
+            ..Self::default()
+        }
+    }
+}
+
+/// A project's builds, by id, for the gear that deploys them -- and the
+/// builds that gear runs itself.
+#[async_trait]
+pub trait BuildRecords: Send + Sync + 'static {
+    /// The build `build_id` of `project_id` (its tenant id); `None` when the
+    /// project has none by that id.
+    async fn build(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        project_id: &str,
+        build_id: &str,
+    ) -> anyhow::Result<Option<BuildRecord>>;
+
+    /// Record a build Studio runs (`where: studio`): its start, then its end.
+    async fn record(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        project_id: &str,
+        outcome: &BuildOutcome,
+    ) -> anyhow::Result<()>;
+}

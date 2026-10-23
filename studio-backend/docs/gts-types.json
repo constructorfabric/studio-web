@@ -35,6 +35,10 @@
     {
       "gear": "studio-projects",
       "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+    },
+    {
+      "gear": "studio-projects",
+      "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~"
     }
   ],
   "plugin_instance_segments": [
@@ -95,6 +99,14 @@
     {
       "gear": "studio-connector",
       "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.kubernetes_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.registry_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.research_connector.v1"
     }
   ],
   "schemas": [

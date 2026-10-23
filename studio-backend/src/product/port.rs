@@ -248,6 +248,14 @@ pub trait ProjectFiles: Send + Sync {
         propose: bool,
     ) -> anyhow::Result<DeclarationWritten>;
 
+    /// Where the project's repository is: the one its product description
+    /// lives in, through a connection the caller may use.
+    async fn repository(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<RepositoryTarget>;
+
     /// Open an issue in the project's repository, assigned to the given host
     /// accounts: `(number, url)`.
     async fn create_issue(
@@ -273,6 +281,14 @@ impl Files {
 
 #[async_trait]
 impl ProjectFiles for Files {
+    async fn repository(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<RepositoryTarget> {
+        self.service.project_repository(ctx, project_id).await
+    }
+
     async fn read(
         &self,
         ctx: &SecurityContext,

@@ -47,10 +47,13 @@ mod graph_sync_task;
 pub(crate) mod gts;
 mod kubernetes; // a cluster an organization deploys into (ADR-0043)
 mod notify;
+mod oauth; // a connection signed in to rather than pasted (ADR-0049)
 mod ownership;
 mod plugin;
 mod references; // the one resolver of references (ADR-0047)
+mod registry; // an OCI registry products ship through (ADR-0048)
 mod repository;
+mod research; // where a member's products are built and run (ADR-0049)
 mod rest;
 pub mod sdk;
 mod service;
@@ -81,7 +84,7 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 13] = [
+const KNOWN_DRIVERS: [&str; 15] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
@@ -95,6 +98,8 @@ const KNOWN_DRIVERS: [&str; 13] = [
     gts::DISCORD_WEBHOOK_INSTANCE_ID,
     gts::KUBERNETES_INSTANCE_ID,
     gts::GEAR_REPOSITORY_INSTANCE_ID,
+    gts::REGISTRY_INSTANCE_ID,
+    gts::RESEARCH_INSTANCE_ID,
 ];
 
 /// ClientHub key under which the notification sender is published for other

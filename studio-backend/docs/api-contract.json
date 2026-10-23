@@ -178,6 +178,20 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/config-secrets/{key}",
+      "operation_id": "studio_environments.delete_config_secret",
+      "tag": "",
+      "summary": "Remove a secret of a project's configuration in an environment",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-environments/v1/environments/{environment_id}",
       "operation_id": "studio_environments.delete_environment",
       "tag": "",
@@ -3534,6 +3548,40 @@
     },
     {
       "method": "POST",
+      "path": "/studio-connector/v1/oauth/complete",
+      "operation_id": "studio_connector.confirm_sign_in",
+      "tag": "StudioConnectors",
+      "summary": "Finish a connection made by signing in",
+      "authenticated": true,
+      "request": "ConfirmSignInRequest",
+      "responses": [
+        "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/oauth/start",
+      "operation_id": "studio_connector.start_sign_in",
+      "tag": "StudioConnectors",
+      "summary": "Start a connection made by signing in",
+      "authenticated": true,
+      "request": "StartSignInRequest",
+      "responses": [
+        "SignInStartedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-connector/v1/probe",
       "operation_id": "studio_connector.probe_connection",
       "tag": "StudioConnectors",
@@ -4282,6 +4330,44 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/build-workflows",
+      "operation_id": "studio_environments.scaffold_build_workflow",
+      "tag": "",
+      "summary": "Propose the workflow that builds a project's product for an environment",
+      "authenticated": true,
+      "request": "BuildWorkflowRequest",
+      "responses": [
+        "BuildWorkflowDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/builds",
+      "operation_id": "studio_environments.start_build",
+      "tag": "",
+      "summary": "Build a project's product in an environment's cluster",
+      "authenticated": true,
+      "request": "StudioBuildRequest",
+      "responses": [
+        "StudioBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.create_deployment",
       "tag": "",
@@ -4333,6 +4419,25 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/environments/{environment_id}/push-tokens",
+      "operation_id": "studio_environments.create_push_token",
+      "tag": "",
+      "summary": "Get a token that pushes a build's images and chart to an environment's registry",
+      "authenticated": true,
+      "request": "PushTokenRequest",
+      "responses": [
+        "PushTokenDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -5572,6 +5677,25 @@
       "errors": [
         "400",
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/config-secrets/{key}",
+      "operation_id": "studio_environments.upsert_config_secret",
+      "tag": "",
+      "summary": "Set a secret of a project's configuration in an environment",
+      "authenticated": true,
+      "request": "ConfigSecretRequest",
+      "responses": [
+        "ConfigSecretDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]

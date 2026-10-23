@@ -2794,3 +2794,42 @@ div.dm-block { padding-left: 0; }
 .output-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .output-files li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .output-files .error { flex-basis: 100%; }
+
+/* The project's Frontend tab (frontend-constructor-view.tsx): the product's
+   shell drawn as the portal draws one — navigation, page, sidebar, strips for
+   overlays and popups — filled with the screens the picked packages bring. */
+.fc-shell.over { border-color: var(--primary); background: var(--accent); }
+.fc-frame { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--background); }
+.fc-top { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--muted); }
+.fc-dot { width: 9px; height: 9px; border-radius: 50%; background: color-mix(in srgb, var(--foreground) 18%, transparent); }
+.fc-url { margin-left: 8px; flex: 1; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-foreground); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-body { display: grid; grid-template-columns: 170px minmax(0, 1fr) 150px; min-height: 340px; }
+.fc-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; border-right: 1px solid var(--border); background: var(--card); }
+.fc-nav-item { display: flex; align-items: center; gap: 7px; border: 0; background: none; color: inherit; font: inherit; font-size: 12.5px; padding: 5px 6px; border-radius: 6px; text-align: left; cursor: pointer; }
+.fc-nav-item:hover { background: var(--muted); }
+.fc-nav-item.on { background: var(--accent); color: var(--primary); font-weight: 600; }
+.fc-page { padding: 12px; display: flex; min-width: 0; }
+.fc-side { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-left: 1px solid var(--border); background: var(--card); }
+.fc-strips { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border-top: 1px solid var(--border); }
+.fc-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; min-height: 36px; }
+.fc-strip + .fc-strip { border-left: 1px solid var(--border); }
+.fc-zone-h { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin-right: 4px; }
+.fc-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: inherit; font: inherit; font-size: 11.5px; padding: 1px 8px 1px 3px; cursor: pointer; }
+.fc-chip:hover { border-color: var(--primary); }
+.fc-glyph { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); font-size: 10.5px; font-weight: 700; }
+.fc-empty { color: var(--muted-foreground); font-size: 11.5px; padding: 4px 6px; }
+.fc-empty.big { margin: auto; max-width: 340px; text-align: center; font-size: 13px; border: 1.5px dashed var(--border); border-radius: 10px; padding: 24px 16px; }
+.fc-pagecard { flex: 1; display: flex; flex-direction: column; gap: 10px; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: inherit; font: inherit; padding: 12px; cursor: pointer; min-width: 0; }
+.fc-pagecard:hover { border-color: var(--primary); }
+.fc-pagecard-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fc-pagecard-h code { font-size: 11.5px; color: var(--muted-foreground); }
+.fc-skeleton { display: grid; gap: 8px; }
+.fc-skeleton i { display: block; height: 10px; border-radius: 4px; background: color-mix(in srgb, var(--foreground) 10%, transparent); }
+.fc-calls { display: flex; flex-wrap: wrap; gap: 4px; }
+.fc-call { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); color: var(--success, #16a34a); }
+.fc-call.missing { background: color-mix(in srgb, var(--destructive) 14%, transparent); color: var(--destructive); }
+@media (max-width: 760px) {
+  .fc-body { grid-template-columns: minmax(0, 1fr); }
+  .fc-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
+  .fc-side { border-left: 0; border-top: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; }
+}

@@ -22,6 +22,9 @@ export interface IdeBuildReport {
     readonly finished_at?: string;
     readonly failure?: string;
     readonly failure_step?: string;
+    readonly images?: readonly { readonly app: string; readonly image: string }[];
+    readonly chart_ref?: string;
+    readonly chart_version?: string;
 }
 
 type Fetch = (path: string, init?: RequestInit) => Promise<Response>;

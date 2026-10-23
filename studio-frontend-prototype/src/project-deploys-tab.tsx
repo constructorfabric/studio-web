@@ -4,13 +4,16 @@
  * then the bindings of the product's kubernetes profiles and the history,
  * which `ProjectEnvironments` already draws.
  *
- * Builds before it, because a deploy takes what a build made; the portal
- * neither builds nor deploys by itself: Deploy is asked for from the IDE after
- * Generate, and the server installs it with the environment's connection. */
+ * Builds before it, because a deploy takes what a build made. The portal
+ * never builds: a pipeline (the workflow proposed here) or the IDE publishes a
+ * build's images and chart, and Deploy a build names it; the server installs
+ * it with the environment's connection (ADR-0048). */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api, type Deployment, type ProjectTargets } from "./api";
+import { ideBuildsOf, type IdeBuild } from "./builds";
+import { BuildWorkflowProposal, EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
 import { ProjectEnvironments } from "./environments-screen";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { errText, relTime } from "./format";
@@ -28,19 +31,31 @@ export function ProjectDeploys({
 }) {
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [builds, setBuilds] = useState<IdeBuild[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [round, setRound] = useState(0);
+  const changed = useCallback((message: string) => {
+    setNotice(message);
+    setRound((r) => r + 1);
+  }, []);
 
   useEffect(() => {
     let live = true;
     Promise.all([
       api.projectTargets(token, projectId),
       api.deployments(token, { project: projectId }).catch(() => ({ items: [] as Deployment[], total: 0 })),
+      api
+        .listArtifactNodes(token, "build", projectId, undefined, 200, { sort: "updated" })
+        .then((p) => ideBuildsOf(p.nodes ?? []))
+        .catch(() => [] as IdeBuild[]),
     ])
-      .then(([t, d]) => {
+      .then(([t, d, b]) => {
         if (!live) return;
         setTargets(t);
         setDeployments(d.items);
+        setBuilds(b);
       })
       .catch((e) => {
         if (!live) return;
@@ -50,7 +65,8 @@ export function ProjectDeploys({
     return () => {
       live = false;
     };
-  }, [token, projectId]);
+  }, [token, projectId, round]);
+  const envName = (id: string) => targets?.environments.find((t) => t.environment.id === id)?.environment.name ?? id;
 
   const latest = latestByEnvironment(deployments);
 
@@ -60,10 +76,15 @@ export function ProjectDeploys({
       <h1>Deploys</h1>
       <p className="subtitle">
         Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments); the
-        project picks which of them its product goes to. A deploy is asked for from the IDE, after Generate, and the server
-        installs it with the environment&apos;s cluster connection.
+        project picks which of them its product goes to. A deploy names a build that published its images and chart -- from
+        the workflow below or the IDE -- and the server installs it with the environment&apos;s cluster connection.
       </p>
       {error && <div className="error">{error}</div>}
+      {notice && (
+        <div className="notice" data-deploy-notice>
+          {notice}
+        </div>
+      )}
       {unavailable ? (
         <p className="empty">This Studio has no environments yet (the backend predates them).</p>
       ) : targets === null ? (
@@ -109,15 +130,49 @@ export function ProjectDeploys({
                       <span className="sub">nothing deployed yet</span>
                     )}
                   </dd>
+                  {e.promote_from && (
+                    <>
+                      <dt>Takes from</dt>
+                      <dd>{envName(e.promote_from)}</dd>
+                    </>
+                  )}
                 </dl>
+                <EnvironmentActions
+                  token={token}
+                  projectId={projectId}
+                  env={e}
+                  latest={d}
+                  deployments={deployments}
+                  builds={builds}
+                  envName={envName}
+                  onChanged={changed}
+                />
+                <EnvironmentConfig
+                  key={`${e.id}-${round}`}
+                  token={token}
+                  projectId={projectId}
+                  env={e}
+                  bindings={targets.bindings}
+                  secrets={targets.secrets ?? []}
+                  onChanged={changed}
+                />
               </section>
             );
           })}
         </div>
       )}
       {targets && targets.environments.length > 0 && (
+        <BuildWorkflowProposal
+          token={token}
+          projectId={projectId}
+          environments={targets.environments.map((t) => t.environment)}
+          profiles={[...new Set(targets.bindings.map((b) => b.profile))]}
+          onChanged={changed}
+        />
+      )}
+      {targets && targets.environments.length > 0 && (
         <div className="row deploy-how">
-          <span className="grow hint">To deploy: open the project in the IDE, Generate, then Deploy to a bound environment.</span>
+          <span className="grow hint">Or from the desktop: open the project in the IDE, Generate, then Deploy to a bound environment.</span>
           <button type="button" onClick={onOpenStudio}>
             Open in IDE
           </button>
@@ -138,6 +193,12 @@ const DEPLOYS_CSS = `
 .project-deploys .deploy-env-head { display:flex; gap:8px; align-items:baseline; }
 .project-deploys .deploy-env dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:10px 0 0; font-size:13px; }
 .project-deploys .deploy-env dt { color:var(--muted-foreground); }
+.project-deploys .deploy-actions { margin-top:10px; }
+.project-deploys .deploy-actions .row { gap:6px; flex-wrap:wrap; }
+.project-deploys .deploy-pick { margin-top:8px; }
+.project-deploys .deploy-config { margin-top:10px; font-size:13px; }
+.project-deploys .deploy-config textarea { width:100%; font-family:var(--font-mono, monospace); font-size:12px; }
+.project-deploys .warn { color:var(--warning, #b45309); }
 .project-deploys .deploy-env dd { margin:0; overflow-wrap:anywhere; }
 .project-deploys .sub { color:var(--muted-foreground); font-size:12px; }
 .project-deploys .deploy-ok { background:color-mix(in srgb, #16a34a 18%, transparent); }

@@ -1,0 +1,20 @@
+# A small product of the Studio-web project: what Studio's build and deploy
+# path (ADR-0048) is first checked with, end to end -- built by the proposed
+# workflow, published to the organization's registry, deployed into the
+# project's namespace with a Postgres of its own.
+product(
+    id = "studio-sample",
+    name = "Studio sample",
+    version = "0.1.0",
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "b90bea456f0894dc703cf7e9b546397e8fcda215"))],
+    profiles = [
+        kubernetes(id = "prod", discovery = "static",
+                   database = postgres(host = "postgres", user = "app", password = "${GEARS_PG_PASSWORD}",
+                                       existing_secret = "studio-sample-db")),
+    ],
+    default_profile = "prod",
+    gears = [
+        use_gear("api-gateway", source = "gears-rust"),
+        use_gear("simple-user-settings", source = "gears-rust"),
+    ],
+)

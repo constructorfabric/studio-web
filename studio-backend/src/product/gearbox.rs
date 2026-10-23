@@ -3527,6 +3527,18 @@ fn engine_revision() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The engine's repository and commit, for a pipeline that builds a product
+/// with the engine this Studio runs (ADR-0048 §5): `STUDIO_GEARBOX_REPO`
+/// (the images' build argument) and [`engine_revision`].
+pub fn engine_pin() -> (String, Option<String>) {
+    let repo = std::env::var("STUDIO_GEARBOX_REPO")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://github.com/MikeFalcon77/gearbox.git".to_owned());
+    (repo, engine_revision())
+}
+
 /// `gearbox 0.1.0` with its commit: `gearbox 0.1.0-ea964f9`, so two images
 /// with the same crate version say which engine each runs.
 fn with_revision(version: &str, revision: Option<&str>) -> String {

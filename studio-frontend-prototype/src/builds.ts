@@ -226,6 +226,11 @@ export interface IdeBuild {
   failure: string | null;
   failureStep: string | null;
   outputs: string[];
+  /** The chart it published, when it published one (ADR-0048). */
+  chartRef: string | null;
+  chartVersion: string | null;
+  /** The images it published, by application. */
+  images: { app: string; image: string }[];
 }
 
 /** The `build` nodes as builds, newest first. */
@@ -253,6 +258,16 @@ export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
         failure: str(v.failure),
         failureStep: str(v.failure_step),
         outputs: Array.isArray(v.outputs) ? v.outputs.filter((o): o is string => typeof o === "string") : [],
+        chartRef: str((v.chart as Record<string, unknown> | undefined)?.reference),
+        chartVersion: str((v.chart as Record<string, unknown> | undefined)?.version),
+        images: Array.isArray(v.images)
+          ? v.images.flatMap((i) => {
+              const r = i as Record<string, unknown>;
+              const app = str(r?.app);
+              const image = str(r?.image);
+              return app && image ? [{ app, image }] : [];
+            })
+          : [],
       };
     })
     .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));

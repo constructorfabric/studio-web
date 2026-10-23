@@ -184,6 +184,19 @@ container `gbx-pg-<product>` on `127.0.0.1:5432` with the local development
 password `gears`, the value the Run terminal gets when `GEARS_PG_PASSWORD` is
 unset; it holds the product's development data and nothing of Studio's.
 
+**Publish**, for an environment with a registry login (ADR-0048), writes one
+more: a folder `studio-push-*` in the system's temporary directory holding a
+`config.json` with a bearer token for that registry, and the packaged chart.
+The token is not Studio's and not the registry login: the server asks the
+registry's token service for one that may push and pull only the product's
+image repositories and its chart, and it expires as the registry decides
+(minutes for ghcr.io and Harbor). The IDE backend removes the folder after 30
+minutes, and any older `studio-push-*` folder at the next Publish.
+**Build images** first changes the generated tree it builds: each
+application's Dockerfile gets protoc, the protobuf well-known types and cmake
+in its build stage, and a `Dockerfile.dockerignore` beside it, until the
+engine writes them (constructorfabric/gearbox#12).
+
 One more, when the member opens an Orca agent's terminal: the IDE streams it
 over the Orca runtime's WebSocket, which takes a paired device. A session is
 paired when Orca starts in it; on the desktop the Orca app is already running,

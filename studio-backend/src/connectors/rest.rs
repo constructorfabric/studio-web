@@ -39,8 +39,8 @@ use super::graph_sync::SyncOutcome;
 #[cfg(feature = "graph")]
 use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
 use super::service::{
-    Connection, ConnectionEdit, ConnectorService, FileWrite, NewConnection, PublishOutcome,
-    PullRequestIntent, SourcePullRequest, SourceRefusal, SourceSharing,
+    Connection, ConnectionEdit, ConnectorService, FileWrite, NewConnection, NewSignIn,
+    PublishOutcome, PullRequestIntent, SourcePullRequest, SourceRefusal, SourceSharing,
 };
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
@@ -160,6 +160,9 @@ pub struct ProviderDto {
     /// `true` when a connection may be stored without a credential: a public
     /// gear repository.
     pub token_optional: bool,
+    /// `true` when a connection is made by signing in (`POST /oauth/start`)
+    /// rather than with a pasted credential: Constructor Research.
+    pub sign_in: bool,
 }
 
 #[derive(Debug)]
@@ -193,6 +196,42 @@ pub struct CreateConnectionRequest {
     #[schema(value_type = Option<String>)]
     #[serde(default)]
     pub owner_tenant_id: Option<Uuid>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct StartSignInRequest {
+    /// Driver key from `GET /providers`; one whose `sign_in` is true.
+    pub provider: String,
+    /// Human label of the connection the sign-in will make.
+    pub label: String,
+    /// Installation root; omitted = the provider's default.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// personal | workspace | organization (default: personal).
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Tenant the connection is attached to. Omitted = the caller's own tenant.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub owner_tenant_id: Option<Uuid>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SignInStartedDto {
+    /// Where to send the person: the identity provider's sign-in page. It
+    /// comes back to the portal's callback page with `state` and `code`.
+    pub authorize_url: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ConfirmSignInRequest {
+    /// `state` from the callback address, as the identity provider sent it.
+    pub state: String,
+    /// `code` from the callback address.
+    pub code: String,
 }
 
 #[derive(Debug)]
@@ -599,6 +638,7 @@ async fn list_providers(
                 credential_hint: p.credential_hint,
                 fixed_target: p.fixed_target,
                 token_optional: p.token_optional,
+                sign_in: p.sign_in,
             })
             .collect(),
     }))
@@ -706,6 +746,53 @@ async fn probe_connection(
         account: identity.account,
         display_name: identity.display_name,
     }))
+}
+
+async fn start_sign_in(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Json(req): Json<StartSignInRequest>,
+) -> ApiResult<JsonBody<SignInStartedDto>> {
+    let svc = connectors.get()?;
+    let authorize_url = svc
+        .oauth_start(
+            &ctx,
+            NewSignIn {
+                owner_tenant: req
+                    .owner_tenant_id
+                    .unwrap_or_else(|| ctx.subject_tenant_id()),
+                provider: req.provider.trim(),
+                label: &req.label,
+                base_url: req.base_url.as_deref(),
+                scope: req.scope.as_deref().unwrap_or("personal"),
+            },
+        )
+        .await
+        .map_err(|e| {
+            StudioConnectorError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(SignInStartedDto { authorize_url }))
+}
+
+async fn confirm_sign_in(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Json(req): Json<ConfirmSignInRequest>,
+) -> ApiResult<(StatusCode, JsonBody<ConnectionTestDto>)> {
+    let svc = connectors.get()?;
+    let (connection, identity) = svc
+        .oauth_complete(&ctx, &req.state, &req.code)
+        .await
+        // An expired or foreign sign-in, a refused code, or a provider that
+        // does not know the account: the caller's to start again.
+        .map_err(|e| {
+            StudioConnectorError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok((StatusCode::CREATED, Json(to_test_dto(connection, identity))))
 }
 
 async fn test_connection(
@@ -1065,6 +1152,49 @@ pub fn register_routes(
         .json_request::<ProbeConnectionRequest>(openapi, "Credential to verify")
         .handler(probe_connection)
         .json_response_with_schema::<IdentityDto>(openapi, StatusCode::OK, "Credential is valid")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-connector/v1/oauth/start")
+        .operation_id("studio_connector.start_sign_in")
+        .summary("Start a connection made by signing in")
+        .description(
+            "For a provider whose `sign_in` is true (ADR-0049). Answers the identity \
+             provider's address to send the person to. What the second half needs is \
+             kept for ten minutes, readable only by the caller.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<StartSignInRequest>(openapi, "The connection the sign-in will make")
+        .handler(start_sign_in)
+        .json_response_with_schema::<SignInStartedDto>(openapi, StatusCode::OK, "Where to sign in")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-connector/v1/oauth/complete")
+        .operation_id("studio_connector.confirm_sign_in")
+        .summary("Finish a connection made by signing in")
+        .description(
+            "Called by the portal's callback page with the `state` and `code` the \
+             identity provider sent back. Trades the code for tokens, verifies them \
+             against the provider, and stores the connection; the refresh token goes \
+             to credstore and is never returned.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ConfirmSignInRequest>(openapi, "What the identity provider sent back")
+        .handler(confirm_sign_in)
+        .json_response_with_schema::<ConnectionTestDto>(
+            openapi,
+            StatusCode::CREATED,
+            "Connection created; body carries the account the sign-in belongs to",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

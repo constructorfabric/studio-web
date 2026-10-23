@@ -62,6 +62,13 @@ pub enum ConnectorCategory {
     /// connection is the repository itself; the server clones it for the
     /// Gearbox engine.
     Gears,
+    /// An OCI registry a product's images and chart are pushed to and its
+    /// clusters pull from (ADR-0048). Nothing to browse: an environment names
+    /// it, and only the server uses its credential.
+    Registry,
+    /// A platform that builds and runs products on hardware it allocates
+    /// (Constructor Research, ADR-0049). Signed in to, not pasted.
+    Compute,
 }
 
 impl ConnectorCategory {
@@ -71,7 +78,9 @@ impl ConnectorCategory {
             Self::Ai => "ai",
             Self::Notification => "notification",
             Self::Cluster => "cluster",
+            Self::Registry => "registry",
             Self::Gears => "gears",
+            Self::Compute => "compute",
         }
     }
 }
@@ -87,6 +96,13 @@ impl ConnectorCategory {
 pub struct DriverIdentity {
     pub account: String,
     pub display_name: Option<String>,
+}
+
+/// The credential one call is made with ([`ConnectorDriver::access_token`]).
+pub struct AccessToken {
+    pub token: String,
+    /// A replacement for the stored credential, when the provider rotated it.
+    pub rotated: Option<String>,
 }
 
 /// One repository as the provider describes it.
@@ -585,8 +601,60 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             ConnectorCategory::Ai => "API Key",
             ConnectorCategory::Notification => "Bot Token",
             ConnectorCategory::Cluster => "Service-account token",
+            ConnectorCategory::Registry => "username:token",
             ConnectorCategory::Gears => "Read token",
+            ConnectorCategory::Compute => "Signed in",
         }
+    }
+
+    /* ── Signing in (ADR-0049 §1) ──
+     *
+     * A provider whose credential is obtained by sending the person to its
+     * identity provider, rather than pasted. The service keeps the state
+     * between the two halves and stores what comes back; the driver knows
+     * the provider's client and its endpoints. Defaulted to "pasted", so a
+     * driver that is not signed in to implements none of it.
+     */
+
+    /// Whether a connection is made by signing in rather than by pasting a
+    /// credential. A signed-in provider's connections are never created from
+    /// a pasted one: what it stores is not what a call is made with.
+    fn signs_in(&self) -> bool {
+        false
+    }
+
+    /// Where to send the person to sign in, bound to `state` and the PKCE
+    /// challenge.
+    fn sign_in_url(&self, state: &str, pkce: &super::oauth::Pkce) -> anyhow::Result<String> {
+        let _ = (state, pkce);
+        Err(anyhow::anyhow!(
+            "{} is not signed in to -- its credential is pasted",
+            self.display_name()
+        ))
+    }
+
+    /// The code the identity provider sent back, for tokens.
+    async fn exchange_code(
+        &self,
+        code: &str,
+        verifier: &str,
+    ) -> anyhow::Result<super::oauth::Tokens> {
+        let _ = (code, verifier);
+        Err(anyhow::anyhow!(
+            "{} is not signed in to -- its credential is pasted",
+            self.display_name()
+        ))
+    }
+
+    /// The credential a call is made with, from the one stored. A pasted
+    /// credential is both. A signed-in provider stores a refresh token and
+    /// calls with an access token, and may hand back a new refresh token the
+    /// service must store in place of the old one.
+    async fn access_token(&self, stored: &str) -> anyhow::Result<AccessToken> {
+        Ok(AccessToken {
+            token: stored.to_owned(),
+            rotated: None,
+        })
     }
 
     /// Whether a connection may be stored without a credential: a public

@@ -35,13 +35,14 @@ import {
   emptyEnvironment,
   environmentInput,
   environmentProblems,
+  registryConnections,
   namespaceFor,
   shortCommit,
   stateTone,
 } from "./environments";
 import { DataTable } from "./data-table";
 import { errText, relTime } from "./format";
-import { AddCluster } from "./kubeconfig-field";
+import { AddCluster, AddRegistry } from "./kubeconfig-field";
 import { Tile } from "./view-mode";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
@@ -139,6 +140,7 @@ function EnvironmentForm({
   editing,
   others,
   clusters,
+  registries,
   projects,
   onDone,
   onCancel,
@@ -152,6 +154,8 @@ function EnvironmentForm({
   editing: DeployEnvironment | null;
   others: DeployEnvironment[];
   clusters: Connection[];
+  /** The organization's registry connections (ADR-0048). */
+  registries: Connection[];
   projects: Tenant[];
   onDone: () => void;
   onCancel: () => void;
@@ -165,17 +169,19 @@ function EnvironmentForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectingRegistry, setConnectingRegistry] = useState(false);
   // A field says what is wrong once it was touched, or once Add was pressed:
   // a fresh form is not a list of complaints.
   const [touched, setTouched] = useState<Set<EnvironmentField>>(new Set());
   const [tried, setTried] = useState(false);
-  const problems = environmentProblems(input, others, editing?.id);
+  const problems = environmentProblems(input, others, editing?.id, registries);
   const problem = Object.values(problems)[0] ?? null;
   const shown = (f: EnvironmentField) => ((tried || touched.has(f)) && problems[f]) || null;
   const touch = (f: EnvironmentField) => setTouched((t) => (t.has(f) ? t : new Set(t).add(f)));
   const set = <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => {
     setInput((i) => ({ ...i, [k]: v }));
-    if (k !== "description" && k !== "database" && k !== "protected") touch(k as EnvironmentField);
+    if (k !== "description" && k !== "database" && k !== "protected" && k !== "database_image" && k !== "promote_from")
+      touch(k as EnvironmentField);
   };
   const patternIsDefault = (input.namespace_pattern ?? "").trim() === "" || input.namespace_pattern === DEFAULT_NAMESPACE_PATTERN;
   const examples = (projects.length > 0 ? projects.slice(0, 3).map((p) => p.name) : ["Studio Web"]).map((p) =>
@@ -268,6 +274,46 @@ function EnvironmentForm({
         />
         {shown("registry") && <span className="env-field-error">{shown("registry")}</span>}
       </label>
+      <label className="field">
+        Registry login
+        <select
+          value={connectingRegistry ? NEW_CLUSTER : (input.registry_connection_id ?? "")}
+          onChange={(e) => {
+            if (e.target.value === NEW_CLUSTER) {
+              setConnectingRegistry(true);
+              return;
+            }
+            setConnectingRegistry(false);
+            set("registry_connection_id", e.target.value || null);
+          }}
+          aria-label="Registry login"
+          data-registry-login
+        >
+          <option value="">None — the images are public</option>
+          {registries.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label} — {c.base_url}
+            </option>
+          ))}
+          <option value={NEW_CLUSTER}>+ Connect a registry…</option>
+        </select>
+        <span className="sub">
+          The cluster pulls the product&apos;s images with it, and a published chart is fetched with it.
+        </span>
+      </label>
+      {connectingRegistry && (
+        <AddRegistry
+          token={token}
+          org={org}
+          onCancel={() => setConnectingRegistry(false)}
+          onAdded={(c) => {
+            setConnectingRegistry(false);
+            onClusterAdded(c);
+            set("registry_connection_id", c.id);
+            if (!input.registry.trim()) set("registry", new URL(c.base_url).host);
+          }}
+        />
+      )}
       <details className="env-advanced" open={!patternIsDefault || !!shown("namespace_pattern")}>
         <summary>
           Namespaces: <code>{examples.join(", ")}</code>
@@ -290,9 +336,41 @@ function EnvironmentForm({
       </details>
       <label className="field">
         Database
-        <select value={input.database} onChange={(e) => set("database", e.target.value as "none" | "shared")}>
+        <select
+          value={input.database}
+          onChange={(e) => set("database", e.target.value as "none" | "shared" | "namespace")}
+          aria-label="Database"
+        >
           <option value="none">None: the product brings its own</option>
+          <option value="namespace">A Postgres of the product&apos;s own, in its namespace, with the databases its gears keep</option>
           <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
+        </select>
+      </label>
+      {input.database === "namespace" && (
+        <label className="field">
+          Postgres image
+          <input
+            value={input.database_image ?? ""}
+            onChange={(e) => set("database_image", e.target.value || null)}
+            placeholder="pgvector/pgvector:pg18 — graph-storage asks for pgvector"
+          />
+        </label>
+      )}
+      <label className="field">
+        Takes releases from
+        <select
+          value={input.promote_from ?? ""}
+          onChange={(e) => set("promote_from", e.target.value || null)}
+          aria-label="Takes releases from"
+        >
+          <option value="">Anywhere: any build may be deployed here</option>
+          {others
+            .filter((o) => o.id !== editing?.id)
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                Only what succeeded in {o.name}
+              </option>
+            ))}
         </select>
       </label>
       <label className="env-check">
@@ -410,6 +488,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
   }, [token, workspaceIds]);
 
   const clusters = useMemo(() => clusterConnections(connections), [connections]);
+  const registries = useMemo(() => registryConnections(connections), [connections]);
   const cards = useMemo(() => clusterCards(clusters, environments ?? [], deployments), [clusters, environments, deployments]);
   const current: ClusterCard | null = cards.find((c) => c.id === selected) ?? cards[0] ?? null;
   const check = useCallback(
@@ -664,6 +743,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
               editing={editing === "new" ? null : editing}
               others={environments ?? []}
               clusters={clusters}
+              registries={registries}
               projects={projects}
               initialCluster={current.id}
               onCancel={() => setEditing(null)}
@@ -694,6 +774,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                       <b>{e.name}</b>
                       {e.protected && <span className="badge">protected</span>}
                       {e.database === "shared" && <span className="badge">shared database</span>}
+                      {e.database === "namespace" && <span className="badge">own Postgres</span>}
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />

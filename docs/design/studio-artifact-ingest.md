@@ -202,7 +202,15 @@ session -- as it reported it (ADR-0045 phase 2, `builds.rs`): keyed by
 the images it built, and `reported_by`, which keeps the starter. A finished
 build is not changed: a further report is 400 `BUILD_FINISHED`. It carries
 `project_id` and `workspace_id` like a finding, and no `repo`, so a sync's
-pruning never takes it;
+pruning never takes it. For ADR-0048 a build also carries what it published:
+`images` (`[{app, image}]`, the image with registry, tag and, from CI, digest)
+and `chart` (`{reference, version}`, an `oci://` chart). A pipeline's build has
+`where: ci` and id `ci-run-<run id>`: the sync downloads each run's
+`studio-build` artifact (a zip, at most 1 MiB) through the provider's signed
+link, reads `studio-build.json` from it and records the build once; a report
+that says `ci` through REST is refused, so nobody records one in a pipeline's
+name. `port::BuildRecords` gives another gear a project's build by id, which
+is how studio-environments deploys one;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
 `gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to,closes,references,part_of}.v1~`.

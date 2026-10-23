@@ -8,7 +8,7 @@ owner: studio-team
 
 - [x] `p3` - **ID**: `cpt-studio-design-connector`
 
-The gear-level design of `cpt-studio-component-connector` and its thirteen
+The gear-level design of `cpt-studio-component-connector` and its fifteen
 provider plugin gears. The product-level view, and how this gear sits among
 the others, is in [Constructor Studio's design](constructor-studio.md). The
 code is [`studio-backend/src/connectors/`](../../studio-backend/src/connectors/).
@@ -42,8 +42,25 @@ OpenAI) hold the key the IDE agents authenticate with; **chat platforms**
 (Slack, Zulip, Discord, each with a bot-token and an incoming-webhook variant)
 are where notifications are delivered; **clusters** (Kubernetes) are where
 products are deployed; **gear repositories** (ADR-0046) are where a tier's gears
-come from. The difference between them is only which capabilities of the
-driver contract a driver implements.
+come from; **compute platforms** (Constructor Research, ADR-0049) are where a
+member's products are built and run on hardware the platform allocates. The
+difference between them is only which capabilities of the driver contract a
+driver implements.
+
+A compute connection is not pasted but **signed in to** (`signs_in()`, `sign_in`
+in `GET /providers`). `POST /oauth/start` keeps the PKCE verifier and the
+connection-to-be in credstore under the `state`, private to the caller, for ten
+minutes, and answers the identity provider's address; the portal's callback
+page sends `state` and `code` to `POST /oauth/complete`, which trades the code
+for tokens, verifies them with the driver's `test()`, and stores the refresh
+token as the connection's secret. The pending sign-in is spent on the first
+attempt, and nobody but its creator can read it. On every use the service
+trades the refresh token for an access token (`access_token()`) and stores the
+replacement when the provider rotates it. A pasted credential for a signed-in
+provider is refused. `oauth.rs` is the generic half (PKCE, the authorize
+address, the token endpoint); `research.rs` is the driver, whose address is
+Research's integration service and whose `test()` is its `GET /me`. The
+plugin registers nothing until its identity provider client is configured.
 
 A gear repository connection is one repository, not a host: its address is
 `https://github.com/<owner>/<repo>`, and its `options` say which ref to read
@@ -330,7 +347,8 @@ fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
 `slack-webhook-connector-plugin`, `zulip-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
 `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`,
-`gear-repository-connector-plugin`. Each registers its instance (vendor
+`gear-repository-connector-plugin`, `registry-connector-plugin`,
+`research-connector-plugin`. Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
 skips the scoped registration instead of failing the boot. Model providers
@@ -339,7 +357,12 @@ key can reach. The three chat drivers share rendering in `notify.rs`. The Kubern
 (`kubernetes.rs`) is a cluster an organization's environments deploy into
 (ADR-0043): its credential is a service-account token or a kubeconfig with
 inline data only, and `ClusterAccess` is what `studio-environments` reaches the
-cluster with.
+cluster with. The registry driver (`registry.rs`, category `registry`) is an
+OCI registry a product's images and chart are published to (ADR-0048): its
+credential is `username:token` (a token alone logs in as `studio`), its test
+logs in to `/v2/` and follows the registry's bearer challenge, its token
+service passing the same URL guard, and `RegistryAccess` gives
+`studio-environments` the namespace's pull secret and helm's registry login.
 
 ##### Responsibility boundaries
 

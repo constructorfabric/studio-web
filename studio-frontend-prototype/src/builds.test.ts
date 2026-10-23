@@ -127,4 +127,19 @@ describe("builds", () => {
     expect(ideBuildDuration(builds[1])).toBe("6 min");
     expect(ideBuildDuration(builds[0], Date.parse("2026-10-15T11:00:40Z"))).toBe("40 s");
   });
+
+  it("reads what a build published: its chart and its images by application", () => {
+    const [b] = ideBuildsOf([
+      node("1", {
+        build_id: "ci-run-7",
+        where: "ci",
+        status: "passed",
+        chart: { reference: "oci://ghcr.io/acme/charts/shop", version: "0.1.0-sha.1" },
+        images: [{ app: "api", image: "ghcr.io/acme/gbx-api:sha-1@sha256:ab" }, { app: 3 }],
+      }),
+    ]);
+    expect(b).toMatchObject({ chartRef: "oci://ghcr.io/acme/charts/shop", chartVersion: "0.1.0-sha.1", where: "ci" });
+    expect(b.images).toEqual([{ app: "api", image: "ghcr.io/acme/gbx-api:sha-1@sha256:ab" }]);
+    expect(ideBuildsOf([node("2", { build_id: "b" })])[0].chartRef).toBeNull();
+  });
 });

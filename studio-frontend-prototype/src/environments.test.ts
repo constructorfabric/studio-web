@@ -9,6 +9,8 @@ import {
   environmentProblems,
   environmentsByConnection,
   namespaceFor,
+  registryConnections,
+  registryHost,
   runningNow,
   slug,
 } from "./environments";
@@ -104,6 +106,39 @@ describe("clusters an environment can name", () => {
     expect(
       clusterConnections([c("kubernetes", "organization"), c("kubernetes", "personal"), c("github", "organization")]).map((x) => x.id),
     ).toEqual(["kubernetes-organization"]);
+  });
+});
+
+describe("an environment's registry login (ADR-0048)", () => {
+  const login: Connection = {
+    id: "r1",
+    owner_tenant_id: "o",
+    provider: "registry",
+    label: "org registry",
+    account: "bot",
+    base_url: "https://ghcr.io",
+    scope: "organization",
+    secret_ref: "",
+    created_at_epoch_secs: 0,
+  };
+  const ready = { ...emptyEnvironment(), name: "stage", connection_id: "c1", registry_connection_id: "r1" };
+
+  it("needs a prefix on the login's host", () => {
+    expect(environmentProblems({ ...ready, registry: "" }, [], undefined, [login]).registry).toMatch(/where in the registry/);
+    expect(environmentProblems({ ...ready, registry: "harbor.acme.example/acme" }, [], undefined, [login]).registry).toMatch(/not on ghcr.io/);
+    expect(environmentProblems({ ...ready, registry: "ghcr.io.evil/acme" }, [], undefined, [login]).registry).toMatch(/not on ghcr.io/);
+    expect(environmentProblem({ ...ready, registry: "ghcr.io/acme" }, [])).toBeNull();
+    expect(environmentProblems({ ...ready, registry: "ghcr.io/acme" }, [], undefined, [login]).registry).toBeUndefined();
+  });
+
+  it("counts as a use of the registry connection", () => {
+    expect(environmentsByConnection([env({ registry_connection_id: "r1" })]).get("r1")).toEqual(["prod"]);
+  });
+
+  it("is chosen from the organization's registries, by host", () => {
+    expect(registryConnections([login, { ...login, id: "r2", scope: "personal" }, { ...login, id: "k", provider: "kubernetes" }]).map((c) => c.id)).toEqual(["r1"]);
+    expect(registryHost("https://harbor.acme.example:8443/")).toBe("harbor.acme.example:8443");
+    expect(registryHost("not a url")).toBe("");
   });
 });
 

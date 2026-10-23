@@ -38,9 +38,12 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     description: "",
     connection_id: "",
     registry: "",
+    registry_connection_id: null,
     namespace_pattern: DEFAULT_NAMESPACE_PATTERN,
     database: "none",
+    database_image: null,
     protected: false,
+    promote_from: null,
     projects: null,
   };
 }
@@ -52,15 +55,18 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     description: e.description,
     connection_id: e.connection_id,
     registry: e.registry,
+    registry_connection_id: e.registry_connection_id ?? null,
     namespace_pattern: e.namespace_pattern,
     database: e.database,
+    database_image: e.database_image ?? null,
     protected: e.protected,
+    promote_from: e.promote_from ?? null,
     projects: e.projects ?? null,
   };
 }
 
 /** The fields of the environment form a problem can belong to. */
-export type EnvironmentField = "name" | "connection_id" | "registry" | "namespace_pattern" | "projects";
+export type EnvironmentField = "name" | "connection_id" | "registry" | "registry_connection_id" | "namespace_pattern" | "projects";
 
 /** Everything wrong with a form, by field, in the words the person reads:
  *  shown together at their fields, so one fix does not uncover the next. */
@@ -68,6 +74,7 @@ export function environmentProblems(
   input: DeployEnvironmentInput,
   others: readonly DeployEnvironment[],
   editing?: string,
+  registries: readonly Connection[] = [],
 ): Partial<Record<EnvironmentField, string>> {
   const out: Partial<Record<EnvironmentField, string>> = {};
   const name = input.name.trim();
@@ -82,6 +89,13 @@ export function environmentProblems(
   const registry = input.registry.trim();
   if (registry.includes("://")) out.registry = "Write the registry without a scheme, e.g. ghcr.io/acme.";
   else if (registry !== "" && !/^[A-Za-z0-9._\-/:]+$/.test(registry)) out.registry = "That is not an image registry prefix, e.g. ghcr.io/acme.";
+  const login = input.registry_connection_id ? registries.find((c) => c.id === input.registry_connection_id) : undefined;
+  if (input.registry_connection_id && !out.registry) {
+    const host = login ? registryHost(login.base_url) : "";
+    if (registry === "") out.registry = "Say where in the registry the images go, e.g. ghcr.io/acme.";
+    else if (host && registry !== host && !registry.startsWith(`${host}/`))
+      out.registry = `The prefix is not on ${host}, the registry this login is for.`;
+  }
   if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
   return out;
 }
@@ -94,8 +108,27 @@ export function environmentProblem(input: DeployEnvironmentInput, others: readon
 /** The environments that deploy with each connection, by connection id. */
 export function environmentsByConnection(environments: readonly DeployEnvironment[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const e of environments) out.set(e.connection_id, [...(out.get(e.connection_id) ?? []), e.name]);
+  for (const e of environments) {
+    out.set(e.connection_id, [...(out.get(e.connection_id) ?? []), e.name]);
+    if (e.registry_connection_id) out.set(e.registry_connection_id, [...(out.get(e.registry_connection_id) ?? []), e.name]);
+  }
   return out;
+}
+
+/** The registries an environment can name: the organization's `registry`
+ *  connections, not a personal one (ADR-0048). */
+export function registryConnections(connections: readonly Connection[]): Connection[] {
+  return connections.filter((c) => c.provider === "registry" && c.scope !== "personal");
+}
+
+/** `ghcr.io`, `harbor.acme.example:8443`: what an image reference on a
+ *  registry starts with, from the connection's address. */
+export function registryHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return "";
+  }
 }
 
 /** The connections an environment can name: the organization's clusters,

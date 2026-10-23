@@ -18,6 +18,7 @@
 //! (else the first GitHub one), `owner/name`, the git ref (default `HEAD`) and
 //! the discovery mode.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
@@ -639,6 +640,40 @@ impl RepoEnricher {
                 o.insert("u".into(), Value::String(day.clone()));
             }
             f.insert("lastchange".into(), v);
+        }
+
+        // A micro-frontend says where it shows in the shell (`mfe.json`
+        // extensions) and its API services name the gears it calls. Both feed
+        // the frontend constructor (ADR-0050): which screens a package brings,
+        // and whether the product has the gears they need.
+        // A library is read for its calls too: a micro-frontend that reaches
+        // the backend through a shared package (`@constructor-studio/mfe-shared`)
+        // calls what that package calls, and the constructor adds them up
+        // through `deps_names`.
+        if facts.mfe
+            && rel.contains(&"mfe.json")
+            && let Some(body) = self.read_file(src, &format!("{dir}/mfe.json")).await
+        {
+            let extensions = mfe_extensions(&body);
+            if !extensions.is_empty() {
+                f.insert("mfe_extensions".into(), Value::Array(extensions));
+            }
+        }
+        let mut called = BTreeSet::new();
+        for q in rel
+            .iter()
+            .filter(|q| is_api_source(q))
+            .take(MAX_API_SOURCES)
+        {
+            if let Some(body) = self.read_file(src, &format!("{dir}/{q}")).await {
+                called.extend(gears_called(&body));
+            }
+        }
+        if !called.is_empty() {
+            f.insert(
+                "mfe_calls".into(),
+                Value::Array(called.into_iter().map(Value::String).collect()),
+            );
         }
 
         RepoGear {
@@ -2640,6 +2675,92 @@ pub(crate) fn package_json_facts(body: &str, rel: &[&str]) -> PackageFacts {
     }
 }
 
+/// How many of a micro-frontend's API sources are read for the gears it
+/// calls. Its services sit in a handful of files; the bound keeps one
+/// oddly laid out package from costing a request per source file.
+const MAX_API_SOURCES: usize = 25;
+
+/// Whether a file of a FrontX package is where it talks to the backend: an
+/// API service or a module of its paths (`src/api/…`, `…ApiService.ts`,
+/// `accountsPaths.ts`), never a test or a mock.
+fn is_api_source(rel: &str) -> bool {
+    let is_ts = rel.ends_with(".ts") || rel.ends_with(".tsx");
+    let lower = rel.to_ascii_lowercase();
+    let test = lower.contains(".test.") || lower.contains(".spec.") || lower.contains("mock");
+    let file = lower.rsplit('/').next().unwrap_or(&lower);
+    is_ts
+        && !test
+        && rel.starts_with("src/")
+        && (lower.contains("/api/") || file.contains("api") || file.contains("paths"))
+}
+
+/// The gears a source file calls: every `/cf/<gear>/v<N>` it spells, which is
+/// how a FrontX API service names its base URL. Evidence, not a contract:
+/// `mfe.json` has no field for it yet (ADR-0050).
+pub(crate) fn gears_called(body: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut rest = body;
+    while let Some(i) = rest.find("/cf/") {
+        rest = &rest[i + 4..];
+        let seg: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_')
+            .collect();
+        let after = &rest[seg.len()..];
+        let versioned =
+            after.starts_with("/v") && after[2..].starts_with(|c: char| c.is_ascii_digit());
+        if !seg.is_empty() && versioned {
+            out.insert(seg);
+        }
+    }
+    out
+}
+
+/// The shell placements an `mfe.json` declares, one per extension: the
+/// domain it mounts in (the last segment of the domain's type id, e.g.
+/// `screen`), and its presentation as the shell draws it.
+pub(crate) fn mfe_extensions(body: &str) -> Vec<Value> {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return Vec::new();
+    };
+    let Some(list) = v.get("extensions").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|e| {
+            let id = e.get("id")?.as_str()?;
+            let domain = e
+                .get("domain")
+                .and_then(Value::as_str)
+                .map(domain_name)
+                .unwrap_or_default();
+            let p = e.get("presentation").cloned().unwrap_or(Value::Null);
+            let s = |k: &str| {
+                p.get(k)
+                    .cloned()
+                    .filter(|x| !x.is_null())
+                    .unwrap_or(Value::Null)
+            };
+            Some(json!({
+                "id": id,
+                "domain": domain,
+                "label": s("label"),
+                "icon": s("icon"),
+                "route": s("route"),
+                "order": s("order"),
+                "level": s("level"),
+            }))
+        })
+        .collect()
+}
+
+/// `gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1` → `screen`.
+fn domain_name(id: &str) -> String {
+    let last = id.trim_end_matches('~').rsplit('~').next().unwrap_or(id);
+    let last = last.strip_suffix(".v1").unwrap_or(last);
+    last.rsplit('.').next().unwrap_or(last).to_string()
+}
+
 /// One top-level string field out of a package.json body.
 fn package_json_str(body: &str, key: &str) -> Option<String> {
     serde_json::from_str::<Value>(body)
@@ -2868,6 +2989,48 @@ fn toml_string(body: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_micro_frontend_says_where_it_shows_in_the_shell() {
+        let body = r#"{"extensions": [
+          {"id": "gts.frontx.mfes.ext.extension.v1~x.people.screens.main.v1",
+           "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+           "presentation": {"label": "People", "icon": "lucide:users", "route": "/people", "order": 30, "level": "organization"}},
+          {"id": "gts.frontx.mfes.ext.extension.v1~x.people.sidebar.v1",
+           "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.sidebar.v1~"},
+          {"domain": "no id: not an extension"}
+        ]}"#;
+        let ext = mfe_extensions(body);
+        assert_eq!(ext.len(), 2);
+        assert_eq!(ext[0]["domain"], "screen");
+        assert_eq!(ext[0]["route"], "/people");
+        assert_eq!(ext[0]["order"], 30);
+        assert_eq!(ext[1]["domain"], "sidebar");
+        assert!(ext[1]["label"].is_null());
+        assert!(mfe_extensions("not json").is_empty());
+        assert!(mfe_extensions("{}").is_empty());
+    }
+
+    #[test]
+    fn the_gears_a_micro_frontend_calls_are_its_versioned_base_urls() {
+        let body = "const A = '/cf/studio-documents/v1';\n\
+                    fetch(`/cf/studio-tasks/v1/runs/${id}`);\n\
+                    const doc = '/cf/openapi.json'; // not a gear route\n\
+                    const odd = '/cf/Upper/v1';";
+        let got: Vec<String> = gears_called(body).into_iter().collect();
+        assert_eq!(got, ["studio-documents", "studio-tasks"]);
+    }
+
+    #[test]
+    fn only_api_services_are_read_for_the_gears() {
+        assert!(is_api_source("src/api/DocumentsApiService.ts"));
+        assert!(is_api_source("src/services/PeopleApiService.ts"));
+        assert!(is_api_source("src/accounts/accountsPaths.ts"));
+        assert!(!is_api_source("src/api/mocks.ts"));
+        assert!(!is_api_source("src/api/DocumentsApiService.test.ts"));
+        assert!(!is_api_source("src/screens/Main.tsx"));
+        assert!(!is_api_source("api/x.ts"));
+    }
 
     fn deps(names: &[&str]) -> CargoDeps {
         Arc::new(names.iter().map(|n| n.to_string()).collect())

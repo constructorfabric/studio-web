@@ -112,10 +112,12 @@ export function deployCommands(input: DeployInput): {
 } {
   const docker = join(input.outRoot, "docker");
   const context = join(docker, input.script.contextFromDocker);
+  // No `--ignorefile`, which build.sh passes and no docker build takes: the
+  // IDE backend gives each Dockerfile its own `Dockerfile.dockerignore`
+  // first (`prepareImageBuild`), which BuildKit reads instead.
   const build = input.script.images.map((image) =>
     [
       "docker build",
-      `--ignorefile ${q(join(docker, ".dockerignore"))}`,
       `-f ${q(join(docker, image.app, "Dockerfile"))}`,
       `-t ${registryImage(image.image, input.registry)}`,
       q(context),
@@ -161,6 +163,12 @@ export interface StudioEnvironment {
   readonly registry: string;
   /** A deploy waits for an organization administrator's approval. */
   readonly protected: boolean;
+  /**
+   * The environment has a registry login (ADR-0048): Publish pushes the
+   * images and the chart with a short-lived token the server gets for them,
+   * and Deploy names the published build -- no `docker login` here.
+   */
+  readonly registryLogin?: boolean;
 }
 
 /** Where the open product can be deployed, from the Studio server. */
@@ -239,6 +247,94 @@ export function deployRequest(input: {
     images: input.script.images.map((i) => ({ app: i.app, image: i.image })),
     chart: input.chart,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Publishing a build to an environment's registry (ADR-0048)
+//
+// With a registry login on the environment, the images and the chart are
+// published under its prefix with a token the Studio server gets from the
+// registry for exactly those repositories, and Deploy then names the build
+// that published them: the same request the portal makes, and the server
+// pulls the chart itself.
+// ---------------------------------------------------------------------------
+
+/** The tag and chart version a desktop publish uses: the commit, else the time. */
+export function publishStamp(commit: string | undefined, now: Date = new Date()): { tag: string; chartVersion: string } {
+  const id =
+    commit !== undefined && /^[0-9a-f]{12,}$/.test(commit)
+      ? commit.slice(0, 12)
+      : now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  return { tag: `desktop-${id}`, chartVersion: `0.0.0-desktop.${id}` };
+}
+
+/** What Publish runs, and what the build it makes published. */
+export interface PublishPlan {
+  /** Repositories under the prefix the token must reach: `gbx-api`, `charts/shop`. */
+  readonly repositories: readonly string[];
+  /** The commands, each one line for the Deploy terminal. */
+  readonly commands: readonly string[];
+  readonly images: readonly { readonly app: string; readonly image: string }[];
+  readonly chartRef: string;
+  readonly chartVersion: string;
+}
+
+export function publishPlan(input: {
+  readonly outRoot: string;
+  readonly script: BuildScript;
+  /** The chart, relative to `outRoot` (`helm/<product>`). */
+  readonly chart: string;
+  readonly product: string;
+  /** The environment's registry prefix, `ghcr.io/acme`. */
+  readonly prefix: string;
+  readonly tag: string;
+  readonly chartVersion: string;
+  /** A folder holding the `config.json` the token is written into. */
+  readonly configDir: string;
+}): PublishPlan {
+  const prefix = input.prefix.trim().replace(/\/+$/, "");
+  const config = join(input.configDir);
+  const images = input.script.images.map((i) => {
+    const built = registryImage(i.image, prefix);
+    const name = splitImage(i.image).repository;
+    return { app: i.app, built, name, published: `${prefix}/${name}:${input.tag}` };
+  });
+  const chartName = input.chart.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? input.product;
+  const commands = [
+    ...images.flatMap((i) => [`docker tag ${i.built} ${i.published}`, `docker --config ${q(config)} push ${i.published}`]),
+    `helm package ${q(join(input.outRoot, input.chart))} --version ${input.chartVersion} --destination ${q(config)}`,
+    `helm push ${q(join(config, `${chartName}-${input.chartVersion}.tgz`))} oci://${prefix}/charts --registry-config ${q(join(config, "config.json"))}`,
+  ];
+  return {
+    repositories: [...new Set(images.map((i) => i.name)), `charts/${chartName}`],
+    commands,
+    images: images.map((i) => ({ app: i.app, image: i.published })),
+    chartRef: `oci://${prefix}/charts/${chartName}`,
+    chartVersion: input.chartVersion,
+  };
+}
+
+/** Deploy a published build: the server takes its chart and images from its record. */
+export function deployBuildRequest(input: {
+  readonly environment: StudioEnvironment;
+  readonly profile: string;
+  readonly product: string;
+  readonly build: string;
+}): { readonly environment_id: string; readonly profile: string; readonly product: string; readonly build: string } {
+  return { environment_id: input.environment.id, profile: input.profile, product: input.product, build: input.build };
+}
+
+/** The line a generated Dockerfile's build stage lacks: protoc and the
+ *  well-known types for the gRPC gears, cmake for zlib (`libz-ng-sys`).
+ *  Inserted after its `FROM rust:… AS build` until the engine writes it
+ *  (constructorfabric/gearbox#12). */
+export const BUILD_STAGE_TOOLS =
+  "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake && rm -rf /var/lib/apt/lists/*";
+
+/** A generated Dockerfile with the build stage's tools; unchanged when it has them. */
+export function withBuildTools(dockerfile: string): string {
+  if (dockerfile.includes("protobuf-compiler")) return dockerfile;
+  return dockerfile.replace(/^(FROM rust:\S+ AS build)\s*$/m, `$1\n${BUILD_STAGE_TOOLS}`);
 }
 
 /** What the server answered, as Deploy says it. */

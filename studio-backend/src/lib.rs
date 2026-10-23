@@ -133,6 +133,31 @@ enum Commands {
     /// listener. Regenerates `docs/gts-types.json`, which `cargo test`
     /// drift-checks (see `gts_inventory`).
     GtsTypes,
+    /// One step of a build in an organization's cluster (ADR-0048 §9): clone
+    /// the product's repository and gear sources, generate the profile and
+    /// make the tree buildable. Run by the build Job, not by people.
+    BuildPrepare {
+        #[arg(long)]
+        work: std::path::PathBuf,
+        #[arg(long)]
+        repo_url: String,
+        #[arg(long = "ref")]
+        git_ref: Option<String>,
+        #[arg(long)]
+        product_file: String,
+        #[arg(long)]
+        profile: String,
+    },
+    /// The last step of a build in an organization's cluster: push the chart
+    /// beside the images and leave the manifest as the termination message.
+    BuildPublish {
+        #[arg(long)]
+        work: std::path::PathBuf,
+        #[arg(long)]
+        prefix: String,
+        #[arg(long)]
+        registry_config: std::path::PathBuf,
+    },
     /// Print the gears this binary links (JSON) and exit.
     ///
     /// Built from the code alone, like `gts-types`. `scripts/product-gdl.mjs`
@@ -167,6 +192,31 @@ pub async fn run_cli() -> Result<()> {
     if matches!(cli.command, Some(Commands::Gears)) {
         println!("{}", assembly::gears_json()?);
         return Ok(());
+    }
+    // The build Job's steps: no profile, no database, no listener.
+    if let Some(Commands::BuildPrepare {
+        work,
+        repo_url,
+        git_ref,
+        product_file,
+        profile,
+    }) = &cli.command
+    {
+        return environments::build::prepare(
+            work,
+            repo_url,
+            git_ref.as_deref(),
+            product_file,
+            profile,
+        );
+    }
+    if let Some(Commands::BuildPublish {
+        work,
+        prefix,
+        registry_config,
+    }) = &cli.command
+    {
+        return environments::build::publish(work, prefix, registry_config).map(|_| ());
     }
     if matches!(cli.command, Some(Commands::GtsTypes)) {
         print!("{}", gts_inventory::to_pretty_json()?);
@@ -240,6 +290,8 @@ pub async fn run_cli() -> Result<()> {
         Commands::Bootstrap { apply } => database_bootstrap::run(config, apply).await,
         // Both handled above, before the config was loaded.
         Commands::ApiContract { .. }
+        | Commands::BuildPrepare { .. }
+        | Commands::BuildPublish { .. }
         | Commands::GtsTypes
         | Commands::Gears
         | Commands::GtsAudit { .. } => Ok(()),

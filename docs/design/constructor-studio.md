@@ -406,7 +406,7 @@ One connection per provider replaces a clone URL and token per repository per wo
 
 ##### Responsibility scope
 
-`studio-backend/src/connectors/`: `/studio-connector/v1/{providers,connections,probe}` and, per connection, `test`, `repositories`, `targets`, `files` (publish a file or a pull request), `messages` and `graph-sync`, and the thirteen plugin gears in `plugin.rs`: `github-connector-plugin`, `gitlab-connector-plugin`, `bitbucket-connector-plugin`, `anthropic-connector-plugin`, `openai-connector-plugin`, `slack-connector-plugin`, `slack-webhook-connector-plugin`, `zulip-connector-plugin`, `zulip-webhook-connector-plugin`, `discord-connector-plugin`, `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`, `gear-repository-connector-plugin` (ADR-0046). `url_guard.rs` checks base URLs.
+`studio-backend/src/connectors/`: `/studio-connector/v1/{providers,connections,probe}` and, per connection, `test`, `repositories`, `targets`, `files` (publish a file or a pull request), `messages` and `graph-sync`, and the fifteen plugin gears in `plugin.rs`: `github-connector-plugin`, `gitlab-connector-plugin`, `bitbucket-connector-plugin`, `anthropic-connector-plugin`, `openai-connector-plugin`, `slack-connector-plugin`, `slack-webhook-connector-plugin`, `zulip-connector-plugin`, `zulip-webhook-connector-plugin`, `discord-connector-plugin`, `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`, `gear-repository-connector-plugin` (ADR-0046), `registry-connector-plugin` (ADR-0048), `research-connector-plugin` (ADR-0049, signed in to through `oauth/start` and `oauth/complete`). `url_guard.rs` checks base URLs.
 
 ##### Responsibility boundaries
 

@@ -140,3 +140,10 @@ mod kubernetes_plugin;
 
 #[path = "plugins/gear_repository/mod.rs"]
 mod gear_repository_plugin;
+
+#[path = "plugins/registry/mod.rs"]
+mod registry_plugin;
+/// Constructor Research (ADR-0049): signed in to, and registered only when
+/// its identity provider client is configured.
+#[path = "plugins/research/mod.rs"]
+mod research_plugin;

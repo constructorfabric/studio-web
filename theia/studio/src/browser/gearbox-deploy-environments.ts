@@ -15,6 +15,7 @@ export interface StudioEnvironment {
     readonly namespace: string;
     readonly registry: string;
     readonly protected: boolean;
+    readonly registryLogin?: boolean;
 }
 
 export interface DeployTargets {
@@ -71,7 +72,10 @@ export class DeployEnvironments {
             return undefined;
         }
         const body = await res.json() as {
-            environments?: { environment: { id: string; name: string; registry?: string; protected?: boolean }; namespace: string }[];
+            environments?: {
+                environment: { id: string; name: string; registry?: string; protected?: boolean; registry_connection_id?: string | null };
+                namespace: string;
+            }[];
             bindings?: { profile: string; environment_id: string }[];
         };
         return {
@@ -82,9 +86,41 @@ export class DeployEnvironments {
                 namespace: t.namespace,
                 registry: t.environment.registry ?? '',
                 protected: t.environment.protected === true,
+                registryLogin: typeof t.environment.registry_connection_id === 'string' && t.environment.registry_connection_id !== '',
             })),
             bound: Object.fromEntries((body.bindings ?? []).map(b => [b.profile, b.environment_id])),
         };
+    }
+
+    /** Build the product in the environment's cluster (ADR-0048 §9); rejects with what the server said. */
+    async startBuild(
+        projectId: string,
+        body: { environment_id: string; profile: string; product_file: string; ref?: string },
+    ): Promise<{ build_id: string; namespace: string }> {
+        const res = await this.fetchApi(`/studio-environments/v1/builds?project_id=${encodeURIComponent(projectId)}`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        return await res.json() as { build_id: string; namespace: string };
+    }
+
+    /** A push-only token for `repositories` under the environment's registry (ADR-0048); rejects with what the server said. */
+    async pushToken(
+        projectId: string,
+        environmentId: string,
+        repositories: readonly string[],
+    ): Promise<{ registry: string; prefix: string; token: string; expires_in?: number | null }> {
+        const res = await this.fetchApi(
+            `/studio-environments/v1/environments/${encodeURIComponent(environmentId)}/push-tokens?project_id=${encodeURIComponent(projectId)}`,
+            { method: 'POST', body: JSON.stringify({ repositories }) },
+        );
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        return await res.json() as { registry: string; prefix: string; token: string; expires_in?: number | null };
     }
 
     /** Ask the server to deploy; rejects with what it said. */

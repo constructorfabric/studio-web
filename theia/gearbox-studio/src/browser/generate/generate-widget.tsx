@@ -47,8 +47,11 @@ import { DeployPanel } from "./deploy-panel";
 import {
   defaultTarget,
   deployAnswer,
+  deployBuildRequest,
   deployCommands,
   deployRequest,
+  publishPlan,
+  publishStamp,
   targetEnvironment,
   type DeployInfo,
   type DeployTarget,
@@ -158,6 +161,22 @@ export class GenerateWidget extends ReactWidget {
   protected deployTarget: DeployTarget | undefined;
   protected requestingDeploy = false;
   protected deployNote: string | undefined;
+  /** The build Publish put into an environment's registry (ADR-0048): Deploy names it. */
+  protected published:
+    | {
+        readonly environmentId: string;
+        readonly buildId: string;
+        readonly startedAt: string;
+        readonly commit?: string;
+        readonly images: readonly { readonly app: string; readonly image: string }[];
+        readonly chartRef: string;
+        readonly chartVersion: string;
+      }
+    | undefined;
+  protected publishing = false;
+  /** The build Studio runs in an environment's cluster for this product (ADR-0048 §9): Deploy names it. */
+  protected studioBuild: { readonly environmentId: string; readonly buildId: string } | undefined;
+  protected startingBuild = false;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -447,6 +466,19 @@ export class GenerateWidget extends ReactWidget {
     });
   }
 
+  /** Build images: the tree made buildable first (see `prepareImageBuild`), then `docker build` per application. */
+  protected async buildImages(): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined) return;
+    try {
+      await this.service.prepareImageBuild(context.cwd);
+    } catch (error) {
+      this.messages.error(`The generated Dockerfiles could not be prepared: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.sendDeploy(this.deployCommandsFor()?.build ?? []);
+  }
+
   /** One step into the Deploy terminal: several commands run one after another, stopping at the first that fails. */
   protected async sendDeploy(commands: readonly string[]): Promise<void> {
     const context = this.runContext();
@@ -454,9 +486,130 @@ export class GenerateWidget extends ReactWidget {
     await this.terminals.send("deploy", context.product, context.cwd, commands.join(" && "), { DOCKER_BUILDKIT: "1" });
   }
 
+  /**
+   * Publish into an environment's registry (ADR-0048): the server gets a
+   * token from the registry that may push this product's images and chart
+   * and nothing else; the images Build images made are tagged and pushed
+   * with it, the chart packaged and pushed beside them, and the build is
+   * reported with what it published -- so Deploy can name it.
+   */
+  protected async publish(): Promise<void> {
+    const context = this.runContext();
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const deploy = this.deploy;
+    const source = this.environments;
+    if (
+      context === undefined ||
+      environment === undefined ||
+      deploy?.script === undefined ||
+      deploy.chart === undefined ||
+      source?.pushToken === undefined ||
+      this.deployTargets === undefined ||
+      !environment.registry
+    )
+      return;
+    this.publishing = true;
+    this.deployNote = undefined;
+    this.update();
+    try {
+      const file = this.product.current.open?.path;
+      const commit = file !== undefined ? await this.service.headCommitOf(file) : undefined;
+      const stamp = publishStamp(commit);
+      // The repositories first, from a plan with no folder yet: the token is for them.
+      const draft = publishPlan({
+        outRoot: context.cwd,
+        script: deploy.script,
+        chart: deploy.chart,
+        product: context.product,
+        prefix: environment.registry,
+        ...stamp,
+        configDir: ".",
+      });
+      const token = await source.pushToken(this.deployTargets.projectId, environment.id, draft.repositories);
+      const configDir = await this.service.writeRegistryConfig(token.registry, token.token);
+      const plan = publishPlan({
+        outRoot: context.cwd,
+        script: deploy.script,
+        chart: deploy.chart,
+        product: context.product,
+        prefix: environment.registry,
+        ...stamp,
+        configDir,
+      });
+      await this.sendDeploy(plan.commands);
+      this.published = {
+        environmentId: environment.id,
+        buildId: newBuildId(),
+        startedAt: new Date().toISOString(),
+        ...(commit !== undefined ? { commit } : {}),
+        images: plan.images,
+        chartRef: plan.chartRef,
+        chartVersion: plan.chartVersion,
+      };
+      this.deployNote =
+        `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal. ` +
+        `When it has finished, Deploy asks the Studio server to install that build into ${environment.name}.`;
+    } catch (error) {
+      this.messages.error(`Publish did not start: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.publishing = false;
+      this.update();
+    }
+  }
+
+  /**
+   * Build in Studio: the server runs the build as a Job in the environment's
+   * cluster, from what is pushed to this branch, and records it; Deploy then
+   * names it.
+   */
+  protected async buildInStudio(): Promise<void> {
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    const file = this.product.current.open?.path;
+    if (environment === undefined || source?.startBuild === undefined || this.deployTargets === undefined || file === undefined) return;
+    const where = await this.service.repositoryPathOf(file);
+    if (where === undefined) {
+      this.messages.error("This product is not in a git repository Studio can build from.");
+      return;
+    }
+    const ok = await new ConfirmDialog({
+      title: `Build in ${environment.name}?`,
+      msg:
+        `Studio builds ${where.path} as pushed to ${where.branch ?? "the repository's branch"} -- push your changes first -- ` +
+        `in a Job in ${environment.namespace} on ${environment.name}'s cluster, and pushes the images and the chart to ${environment.registry}.`,
+      ok: "Build",
+    }).open();
+    if (ok !== true) return;
+    this.startingBuild = true;
+    this.update();
+    try {
+      const started = await source.startBuild(this.deployTargets.projectId, {
+        environment_id: environment.id,
+        profile: this.product.current.profile ?? "prod",
+        product_file: where.path,
+        ...(where.branch !== undefined ? { ref: where.branch } : {}),
+      });
+      this.studioBuild = { environmentId: environment.id, buildId: started.build_id };
+      this.deployNote =
+        `Studio is building ${started.build_id} in ${started.namespace} (about ten minutes; the project's Builds tab shows it). ` +
+        `When it has passed, Deploy installs it into ${environment.name}.`;
+    } catch (error) {
+      this.messages.error(`The Studio server did not start the build: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.startingBuild = false;
+      this.update();
+    }
+  }
+
   protected async confirmDeploy(): Promise<void> {
     const target = this.deployTarget;
-    if (target?.kind === "environment") return this.requestServerDeploy();
+    if (target?.kind === "environment") {
+      const built = this.studioBuild;
+      if (built !== undefined && built.environmentId === target.id) return this.requestStudioBuildDeploy(built.buildId);
+      const published = this.published;
+      if (published !== undefined && published.environmentId === target.id) return this.requestBuildDeploy();
+      return this.requestServerDeploy();
+    }
     const kubeContext = target?.kind === "context" ? target.name : undefined;
     const commands = this.deployCommandsFor(kubeContext);
     if (kubeContext === undefined || commands?.install === undefined) return;
@@ -521,6 +674,104 @@ export class GenerateWidget extends ReactWidget {
     }
   }
 
+  /** Deploy the build Studio ran: the server refuses it until it has passed. */
+  protected async requestStudioBuildDeploy(buildId: string): Promise<void> {
+    const context = this.runContext();
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    if (context === undefined || environment === undefined || source === undefined || this.deployTargets === undefined) return;
+    const ok = await new ConfirmDialog({
+      title: `Deploy to ${environment.name}?`,
+      msg:
+        `The Studio server installs build ${buildId} into ${environment.namespace} on ${environment.name} once it has passed.` +
+        (environment.protected ? " An organization administrator approves it before it runs." : ""),
+      ok: "Deploy",
+    }).open();
+    if (ok !== true) return;
+    this.requestingDeploy = true;
+    this.update();
+    try {
+      const answer = await source.requestDeploy(
+        this.deployTargets.projectId,
+        deployBuildRequest({ environment, profile: this.product.current.profile ?? "", product: context.product, build: buildId }),
+      );
+      this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+    } catch (error) {
+      this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.requestingDeploy = false;
+      this.update();
+    }
+  }
+
+  /**
+   * Deploy the build Publish put into the environment's registry. The build is
+   * reported here, once the member says Publish finished, with what it
+   * published; the server then pulls its chart and images.
+   */
+  protected async requestBuildDeploy(): Promise<void> {
+    const context = this.runContext();
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    const published = this.published;
+    const file = this.product.current.open?.path;
+    if (
+      context === undefined ||
+      environment === undefined ||
+      source === undefined ||
+      this.deployTargets === undefined ||
+      published === undefined ||
+      file === undefined
+    )
+      return;
+    if (this.buildReports === undefined) {
+      this.messages.error("This IDE cannot report builds to Studio, so the published build cannot be deployed by name.");
+      return;
+    }
+    const ok = await new ConfirmDialog({
+      title: `Deploy to ${environment.name}?`,
+      msg:
+        `The Studio server installs the build you published into ${environment.namespace} on ${environment.name}, ` +
+        `pulling its chart and images from ${environment.registry} -- once Publish has finished in the terminal.` +
+        (environment.protected ? " An organization administrator approves it before it runs." : ""),
+      ok: "Deploy",
+    }).open();
+    if (ok !== true) return;
+    this.requestingDeploy = true;
+    this.update();
+    try {
+      await this.buildReports.report(file, {
+        build_id: published.buildId,
+        action: "build",
+        status: "passed",
+        product: context.product,
+        ...(this.product.current.profile !== undefined ? { profile: this.product.current.profile } : {}),
+        ...(published.commit !== undefined ? { commit: published.commit } : {}),
+        started_at: published.startedAt,
+        finished_at: new Date().toISOString(),
+        images: published.images,
+        chart_ref: published.chartRef,
+        chart_version: published.chartVersion,
+      });
+      const answer = await source.requestDeploy(
+        this.deployTargets.projectId,
+        deployBuildRequest({
+          environment,
+          profile: this.product.current.profile ?? "",
+          product: context.product,
+          build: published.buildId,
+        }),
+      );
+      this.published = undefined;
+      this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+    } catch (error) {
+      this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.requestingDeploy = false;
+      this.update();
+    }
+  }
+
   protected renderDeploy(generated: boolean): React.ReactNode {
     const context = this.runContext();
     if (generated && context !== undefined) void this.askDeploy(context.cwd);
@@ -545,9 +796,18 @@ export class GenerateWidget extends ReactWidget {
           this.update();
         }}
         requesting={this.requestingDeploy}
+        publishing={this.publishing}
+        startingBuild={this.startingBuild}
+        studioBuild={this.studioBuild !== undefined && this.deployTarget?.kind === "environment" && this.studioBuild.environmentId === this.deployTarget.id}
+        {...(this.environments?.startBuild !== undefined ? { onBuildInStudio: () => void this.buildInStudio() } : {})}
+        published={this.published !== undefined && this.deployTarget?.kind === "environment" && this.published.environmentId === this.deployTarget.id}
         {...(this.deployNote !== undefined ? { note: this.deployNote } : {})}
-        onBuildImages={() => void this.sendDeploy(this.deployCommandsFor()?.build ?? [])}
-        onPush={() => void this.sendDeploy(this.deployCommandsFor()?.push ?? [])}
+        onBuildImages={() => void this.buildImages()}
+        onPush={() => {
+          const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+          if (environment?.registryLogin === true && this.environments?.pushToken !== undefined) void this.publish();
+          else void this.sendDeploy(this.deployCommandsFor()?.push ?? []);
+        }}
         onTemplate={() => {
           const template = this.deployCommandsFor()?.template;
           if (template !== undefined) void this.sendDeploy([template]);

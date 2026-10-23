@@ -34,6 +34,7 @@ pub use super::driver::{
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 pub use super::kubernetes::ClusterAccess;
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
+pub use super::registry::{RegistryAccess, same_registry};
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{
     ConnectorService, GearRepositorySource, check_owned, connection_by_id, holder_of_row,

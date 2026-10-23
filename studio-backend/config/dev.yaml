@@ -346,6 +346,20 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~"
+          # The kinds of project a workspace offers ({types: [...]}): what the
+          # New project card lists, what each creates, which project tabs it
+          # shows. Set on an organization or a workspace; inherited, so the
+          # nearest one wins and an organization sets it once for every
+          # workspace. Unset everywhere = the portal's built-in kinds.
+          # Free-form for the gears issue #4 reason above; shape enforced client-side.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project types a workspace offers (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "inherit"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~"
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Desired Constructor Studio kit installations for one project"

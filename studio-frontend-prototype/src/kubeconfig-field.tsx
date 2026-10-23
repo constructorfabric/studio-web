@@ -160,3 +160,86 @@ export function AddCluster({
     </div>
   );
 }
+
+/** Connect an OCI registry for the organization (ADR-0048): its address and
+ *  a login. The username and token are stored together as one credential,
+ *  `username:token`; only the server uses it, to let the cluster pull and to
+ *  fetch a published chart. */
+export function AddRegistry({
+  token,
+  org,
+  onAdded,
+  onCancel,
+}: {
+  token: string;
+  org: string;
+  onAdded: (c: Connection) => void;
+  onCancel: () => void;
+}) {
+  const [address, setAddress] = useState("https://ghcr.io");
+  const [username, setUsername] = useState("");
+  const [secret, setSecret] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const host = (() => {
+    try {
+      return new URL(address.trim()).host;
+    } catch {
+      return "";
+    }
+  })();
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const t = await api.createConnection(token, {
+        provider: "registry",
+        label: label.trim() || host,
+        base_url: address.trim(),
+        token: username.trim() ? `${username.trim()}:${secret.trim()}` : secret.trim(),
+        scope: "organization",
+        owner_tenant_id: org,
+      });
+      onAdded(t.connection);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card env-form" data-add-registry>
+      <h3>Connect a registry</h3>
+      <p className="hint">
+        Where the product&apos;s images and chart are published: ghcr.io, a Harbor project, a GitLab registry. A robot account
+        or a token that can read it is enough for deploys. Stored in credstore for the organization; only the server uses it.
+      </p>
+      <label className="field">
+        Address
+        <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="https://ghcr.io" />
+      </label>
+      <label className="field">
+        Username
+        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="robot$acme+deployer — empty for a token alone" />
+      </label>
+      <label className="field">
+        Token
+        <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="the robot's secret or a read token" />
+      </label>
+      <label className="field">
+        Name
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={host || "e.g. org registry"} />
+      </label>
+      {error && <div className="error">{error}</div>}
+      <div className="env-actions">
+        <button type="button" className="primary" disabled={busy || !secret.trim() || !host} onClick={() => void save()}>
+          {busy ? "Logging in…" : "Test & connect"}
+        </button>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}

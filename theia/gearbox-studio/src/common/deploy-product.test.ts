@@ -1,9 +1,13 @@
 import {
   defaultTarget,
   deployAnswer,
+  deployBuildRequest,
   deployCommands,
   deployRequest,
   parseBuildScript,
+  publishPlan,
+  publishStamp,
+  withBuildTools,
   parseTarget,
   registryImage,
   splitImage,
@@ -78,7 +82,7 @@ describe("the Deploy commands", () => {
   it("builds as build.sh would, without sh, and keeps images local without a registry", () => {
     const commands = deployCommands({ ...base, registry: undefined, kubeContext: "kind-local" });
     expect(commands.build[0]).toBe(
-      'docker build --ignorefile "C:/w/.gearbox/shop/prod/docker/.dockerignore" -f "C:/w/.gearbox/shop/prod/docker/api-gateway/Dockerfile" -t gbx-api-gateway:0.1.0 "C:/w/.gearbox/shop/prod/docker/../../../../.."',
+      'docker build -f "C:/w/.gearbox/shop/prod/docker/api-gateway/Dockerfile" -t gbx-api-gateway:0.1.0 "C:/w/.gearbox/shop/prod/docker/../../../../.."',
     );
     expect(commands.push).toEqual([]);
     expect(commands.install).toBe('helm upgrade --install shop "C:/w/.gearbox/shop/prod/helm/shop" --namespace shop --create-namespace --kube-context kind-local');
@@ -142,5 +146,68 @@ describe("the organization's environments", () => {
   it("say whether the deploy waits for an approval", () => {
     expect(deployAnswer("awaiting_approval", "prod", "ns")).toMatch(/approval/);
     expect(deployAnswer("queued", "stage", "ns")).toMatch(/deploying into stage/);
+  });
+});
+
+describe("publishing to an environment's registry (ADR-0048)", () => {
+  const script = parseBuildScript(BUILD_SH)!;
+
+  it("stamps a publish with the commit, else the time", () => {
+    expect(publishStamp("0123456789abcdef0123")).toEqual({ tag: "desktop-0123456789ab", chartVersion: "0.0.0-desktop.0123456789ab" });
+    expect(publishStamp(undefined, new Date("2026-10-23T09:08:07Z"))).toEqual({
+      tag: "desktop-20261023090807",
+      chartVersion: "0.0.0-desktop.20261023090807",
+    });
+  });
+
+  it("tags and pushes each image, then packages and pushes the chart, all with the token's config", () => {
+    const plan = publishPlan({
+      outRoot: "/w/.gearbox/shop/prod",
+      script,
+      chart: "helm/shop",
+      product: "shop",
+      prefix: "ghcr.io/acme/",
+      tag: "desktop-abc",
+      chartVersion: "0.0.0-desktop.abc",
+      configDir: "/tmp/studio-push-1",
+    });
+    expect(plan.repositories).toEqual(["gbx-api-gateway", "gbx-worker", "charts/shop"]);
+    expect(plan.commands).toEqual([
+      "docker tag ghcr.io/acme/gbx-api-gateway:0.1.0 ghcr.io/acme/gbx-api-gateway:desktop-abc",
+      'docker --config "/tmp/studio-push-1" push ghcr.io/acme/gbx-api-gateway:desktop-abc',
+      "docker tag ghcr.io/acme/gbx-worker:0.1.0 ghcr.io/acme/gbx-worker:desktop-abc",
+      'docker --config "/tmp/studio-push-1" push ghcr.io/acme/gbx-worker:desktop-abc',
+      'helm package "/w/.gearbox/shop/prod/helm/shop" --version 0.0.0-desktop.abc --destination "/tmp/studio-push-1"',
+      'helm push "/tmp/studio-push-1/shop-0.0.0-desktop.abc.tgz" oci://ghcr.io/acme/charts --registry-config "/tmp/studio-push-1/config.json"',
+    ]);
+    expect(plan.images).toEqual([
+      { app: "api-gateway", image: "ghcr.io/acme/gbx-api-gateway:desktop-abc" },
+      { app: "worker", image: "ghcr.io/acme/gbx-worker:desktop-abc" },
+    ]);
+    expect(plan.chartRef).toBe("oci://ghcr.io/acme/charts/shop");
+  });
+
+  it("deploys a published build by its id alone", () => {
+    const environment = { id: "e1", name: "prod", namespace: "shop-prod", registry: "ghcr.io/acme", protected: false };
+    expect(deployBuildRequest({ environment, profile: "prod", product: "shop", build: "b-1-abc" })).toEqual({
+      environment_id: "e1",
+      profile: "prod",
+      product: "shop",
+      build: "b-1-abc",
+    });
+  });
+});
+
+describe("a generated Dockerfile's build stage", () => {
+  const generated = "# GENERATED\nFROM rust:1.97.0-bookworm AS build\nWORKDIR /src\nCOPY . .\n\nFROM debian:bookworm-slim\n";
+
+  it("gets protoc and cmake right after its FROM, once", () => {
+    const fixed = withBuildTools(generated);
+    expect(fixed.split("\n").slice(1, 3)).toEqual([
+      "FROM rust:1.97.0-bookworm AS build",
+      expect.stringContaining("protobuf-compiler libprotobuf-dev cmake"),
+    ]);
+    expect(withBuildTools(fixed)).toBe(fixed);
+    expect(withBuildTools("FROM debian:bookworm-slim\n")).toBe("FROM debian:bookworm-slim\n");
   });
 });

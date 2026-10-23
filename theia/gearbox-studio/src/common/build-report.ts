@@ -122,6 +122,10 @@ export interface BuildReport {
   readonly finished_at?: string;
   readonly failure?: string;
   readonly failure_step?: string;
+  /** What a Publish put in the registry (ADR-0048): the images by application, and the chart. */
+  readonly images?: readonly { readonly app: string; readonly image: string }[];
+  readonly chart_ref?: string;
+  readonly chart_version?: string;
 }
 
 /** A build id: unique enough per machine, and what the server takes (8-64 of `[A-Za-z0-9-]`). */

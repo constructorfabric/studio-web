@@ -48,7 +48,7 @@ product(
         use_gear("studio-artifact-ingest", source = "studio-backend"),
         use_gear("studio-assembly", source = "studio-backend"),
         use_gear("studio-components-catalog", source = "studio-backend"),
-        use_gear("studio-connector", source = "studio-backend", plugins = [plugin("anthropic-connector-plugin"), plugin("bitbucket-connector-plugin"), plugin("discord-connector-plugin"), plugin("discord-webhook-connector-plugin"), plugin("gear-repository-connector-plugin"), plugin("github-connector-plugin"), plugin("gitlab-connector-plugin"), plugin("kubernetes-connector-plugin"), plugin("openai-connector-plugin"), plugin("slack-connector-plugin"), plugin("slack-webhook-connector-plugin"), plugin("zulip-connector-plugin"), plugin("zulip-webhook-connector-plugin")]),
+        use_gear("studio-connector", source = "studio-backend", plugins = [plugin("anthropic-connector-plugin"), plugin("bitbucket-connector-plugin"), plugin("discord-connector-plugin"), plugin("discord-webhook-connector-plugin"), plugin("gear-repository-connector-plugin"), plugin("github-connector-plugin"), plugin("gitlab-connector-plugin"), plugin("kubernetes-connector-plugin"), plugin("openai-connector-plugin"), plugin("registry-connector-plugin"), plugin("research-connector-plugin"), plugin("slack-connector-plugin"), plugin("slack-webhook-connector-plugin"), plugin("zulip-connector-plugin"), plugin("zulip-webhook-connector-plugin")]),
         use_gear("studio-documents", source = "studio-backend"),
         use_gear("studio-domain-model", source = "studio-backend"),
         use_gear("studio-environments", source = "studio-backend"),

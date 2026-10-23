@@ -25,8 +25,8 @@ use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
 use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{
-    ConnectionAuth, ConnectorDriver, Mention, NumberRef, PullRequestThreads, Relation,
-    find_references,
+    ConnectionAuth, ConnectorDriver, DownloadTarget, Mention, NumberRef, PullRequestThreads,
+    Relation, RemoteBuildArtifact, find_references,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -1283,6 +1283,8 @@ impl IngestService {
         // download is a link it signs. Best effort, like the runs.
         progress.set("pulling build outputs…");
         let mut outputs = 0usize;
+        // Pipelines' manifests (ADR-0048 §4): read after the listing.
+        let mut manifests: Vec<RemoteBuildArtifact> = Vec::new();
         'artifacts: for page in 1..=MAX_OUTPUT_PAGES {
             let batch = match driver
                 .list_build_artifacts(&auth, repo_full_path, page, PER_PAGE)
@@ -1301,6 +1303,9 @@ impl IngestService {
             let last = batch.len() < PER_PAGE as usize;
             outputs += batch.len();
             for a in batch {
+                if a.name == super::builds::MANIFEST_ARTIFACT && !a.expired && a.run_id.is_some() {
+                    manifests.push(a.clone());
+                }
                 let node = gts::build_artifact_node(
                     source_scope,
                     &repo_id,
@@ -1314,6 +1319,20 @@ impl IngestService {
             if last {
                 break;
             }
+        }
+        if let Some(project) = project_id
+            && !manifests.is_empty()
+        {
+            self.record_pipeline_builds(
+                ctx,
+                driver.as_ref(),
+                &auth,
+                repo_full_path,
+                project,
+                workspace_id,
+                manifests,
+            )
+            .await;
         }
         'releases: for page in 1..=MAX_OUTPUT_PAGES {
             let batch = match driver
@@ -2434,6 +2453,90 @@ impl IngestService {
     /// Record one report of a build the IDE ran (ADR-0045 phase 2) in
     /// `project`'s graph: its start, or its end over its start. The caller
     /// has checked that `ctx` reaches the project.
+    /// Record the builds pipelines published, one per run that uploaded a
+    /// `studio-build` artifact and has no record yet. Best effort: a manifest
+    /// that cannot be read is logged and skipped, and tried again next sync.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_pipeline_builds(
+        &self,
+        ctx: &SecurityContext,
+        driver: &dyn ConnectorDriver,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        project_id: &str,
+        workspace_id: Option<&str>,
+        manifests: Vec<RemoteBuildArtifact>,
+    ) {
+        use super::{builds, gts};
+        let known: HashSet<String> = match self
+            .graph
+            .list_in_scope(ctx, Some(gts::BUILD_TYPE), project_id)
+            .await
+        {
+            Ok(nodes) => nodes.into_iter().map(|n| n.instance_id).collect(),
+            Err(e) => {
+                warn!(error = %e, "studio-artifact-ingest: builds unreadable — pipeline manifests skipped");
+                return;
+            }
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+        for a in manifests {
+            let Some(run) = a.run_id else { continue };
+            if known.contains(&gts::build_instance_id(
+                project_id,
+                &builds::ci_build_id(run),
+            )) {
+                continue;
+            }
+            let read = async {
+                let url = driver
+                    .download_link(auth, repo_full_path, DownloadTarget::BuildArtifact(a.id))
+                    .await?;
+                let res = http.get(&url).send().await?.error_for_status()?;
+                if res
+                    .content_length()
+                    .is_some_and(|n| n > builds::MAX_MANIFEST_BYTES as u64)
+                {
+                    anyhow::bail!("the artifact is larger than a manifest");
+                }
+                let bytes = res.bytes().await?;
+                if bytes.len() > builds::MAX_MANIFEST_BYTES {
+                    anyhow::bail!("the artifact is larger than a manifest");
+                }
+                builds::manifest_from_zip(&bytes)
+            };
+            let text = match read.await {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!(error = %e, run, repo = repo_full_path, "studio-artifact-ingest: a pipeline's manifest could not be read");
+                    continue;
+                }
+            };
+            let report = match builds::manifest_report(
+                &text,
+                run,
+                a.sha.as_deref(),
+                a.branch.as_deref(),
+                repo_full_path,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = ?e, run, "studio-artifact-ingest: a pipeline's manifest is not one");
+                    continue;
+                }
+            };
+            if let Err(e) = self
+                .record_build(ctx, project_id, workspace_id, &report)
+                .await
+            {
+                warn!(error = ?e, run, "studio-artifact-ingest: a pipeline's build could not be recorded");
+            }
+        }
+    }
+
     pub async fn record_build(
         &self,
         ctx: &SecurityContext,
@@ -2822,6 +2925,58 @@ impl super::port::ProjectSignalSource for IngestService {
 
 /// The files, offered to the gear that decides what each one is.
 ///
+/// A project's builds by id: one indexed read of its builds.
+#[async_trait::async_trait]
+impl super::port::BuildRecords for IngestService {
+    async fn build(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        build_id: &str,
+    ) -> anyhow::Result<Option<super::port::BuildRecord>> {
+        let instance = super::gts::build_instance_id(project_id, build_id);
+        Ok(self
+            .graph
+            .list_in_scope(ctx, Some(super::gts::BUILD_TYPE), project_id)
+            .await?
+            .into_iter()
+            .find(|n| n.instance_id == instance)
+            .map(|n| super::port::BuildRecord::of(&n.value)))
+    }
+
+    async fn record(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        o: &super::port::BuildOutcome,
+    ) -> anyhow::Result<()> {
+        let report = super::builds::BuildReport {
+            build_id: o.build_id.clone(),
+            r#where: "studio".into(),
+            action: Some("build".into()),
+            status: o.status.clone(),
+            product: o.product.clone(),
+            profile: o.profile.clone(),
+            repository: o.repository.clone(),
+            commit: o.commit.clone(),
+            branch: None,
+            lock_hash: o.lock_hash.clone(),
+            started_at: None,
+            finished_at: None,
+            failure: o.failure.clone(),
+            failure_step: o.failure_step.clone(),
+            outputs: o.images.iter().map(|(_, i)| i.clone()).collect(),
+            images: o.images.clone(),
+            chart_ref: o.chart_ref.clone(),
+            chart_version: o.chart_version.clone(),
+        };
+        self.record_build(ctx, project_id, None, &report)
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow!("the build could not be recorded: {e:?}"))
+    }
+}
+
 /// The same store read and the same scope rule as the count beside it — the
 /// index's columns when the tenant has them, `node_in_scope` otherwise.
 #[async_trait::async_trait]

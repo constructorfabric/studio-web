@@ -2,6 +2,56 @@ use serde_json::json;
 
 use super::*;
 
+const MANIFEST: &str = r#"{
+        "product": "shop", "profile": "prod",
+        "lock_hash": "abcdef1234567",
+        "images": [{"app": "api", "image": "ghcr.io/acme/gbx-api:0.1.0@sha256:0123"}],
+        "chart": {"reference": "oci://ghcr.io/acme/charts/shop", "version": "0.1.0-sha.4f2a9c1"}
+    }"#;
+
+#[test]
+fn a_pipelines_manifest_is_a_passed_build_of_its_run() {
+    let r = manifest_report(MANIFEST, 42, Some("4f2a9c1d"), Some("main"), "acme/shop").unwrap();
+    assert_eq!(r.build_id, "ci-run-42");
+    assert_eq!((r.r#where.as_str(), r.status.as_str()), ("ci", "passed"));
+    assert_eq!(r.commit.as_deref(), Some("4f2a9c1d"), "the run's commit");
+    let v = record(&r, "p", None, "svc", time::OffsetDateTime::UNIX_EPOCH, None).unwrap();
+    assert_eq!(v["images"][0]["app"], "api");
+    assert_eq!(v["chart"]["reference"], "oci://ghcr.io/acme/charts/shop");
+    assert_eq!(v["chart"]["version"], "0.1.0-sha.4f2a9c1");
+    assert_eq!(v["where"], "ci");
+}
+
+#[test]
+fn a_chart_needs_its_version_and_an_image_its_application() {
+    let mut r = manifest_report(MANIFEST, 1, None, None, "acme/shop").unwrap();
+    r.chart_version = None;
+    assert!(record(&r, "p", None, "svc", time::OffsetDateTime::UNIX_EPOCH, None).is_err());
+    let mut r = manifest_report(MANIFEST, 1, None, None, "acme/shop").unwrap();
+    r.images = vec![("api".into(), "https://x/y".into())];
+    assert!(record(&r, "p", None, "svc", time::OffsetDateTime::UNIX_EPOCH, None).is_err());
+    assert!(manifest_report("not json", 1, None, None, "r").is_err());
+}
+
+#[test]
+fn the_manifest_is_read_out_of_its_zip() {
+    use std::io::Write as _;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut w = zip::ZipWriter::new(&mut buf);
+        w.start_file(
+            MANIFEST_FILE,
+            zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored),
+        )
+        .unwrap();
+        w.write_all(MANIFEST.as_bytes()).unwrap();
+        w.finish().unwrap();
+    }
+    assert_eq!(manifest_from_zip(buf.get_ref()).unwrap(), MANIFEST);
+    assert!(manifest_from_zip(b"not a zip").is_err());
+}
+
 fn at(s: &str) -> time::OffsetDateTime {
     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).expect("time")
 }
@@ -116,7 +166,7 @@ fn what_a_report_must_say_is_checked() {
         ..start()
     }));
     assert!(bad(BuildReport {
-        r#where: "ci".into(),
+        r#where: "cloud".into(),
         ..start()
     }));
     assert!(bad(BuildReport {

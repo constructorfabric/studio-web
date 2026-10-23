@@ -178,6 +178,53 @@ pub struct NewConnection<'a> {
     pub options: BTreeMap<String, String>,
 }
 
+/// A connection to be made by signing in (ADR-0049 §1): everything a
+/// [`NewConnection`] says except the credential, which the sign-in brings.
+pub struct NewSignIn<'a> {
+    pub owner_tenant: Uuid,
+    pub provider: &'a str,
+    pub label: &'a str,
+    pub base_url: Option<&'a str>,
+    pub scope: &'a str,
+}
+
+/// How long a person has to come back from the identity provider.
+pub const SIGN_IN_TTL_SECS: u64 = 600;
+
+/// A sign-in between its two halves, kept in credstore under its `state`.
+#[derive(Serialize, Deserialize)]
+struct PendingSignIn {
+    provider: String,
+    label: String,
+    base_url: String,
+    scope: String,
+    owner_tenant: Uuid,
+    verifier: String,
+    started_at_epoch_secs: u64,
+}
+
+fn pending_key(state: &str) -> anyhow::Result<SecretRef> {
+    // A state is a simple UUID; anything else never came from oauth_start.
+    let state = state.trim();
+    if state.len() != 32 || !state.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "this sign-in has expired or was not started by you; start it again"
+        ));
+    }
+    SecretRef::new(format!("studio-oauth-{state}")).map_err(|e| anyhow!("bad sign-in state: {e}"))
+}
+
+/// A verified credential on its way into the catalogue.
+struct Stored<'a> {
+    owner_tenant: Uuid,
+    provider: &'a str,
+    label: &'a str,
+    base_url: String,
+    secret: &'a str,
+    scope: ConnectionScope,
+    options: BTreeMap<String, String>,
+}
+
 /// One request to change a connection.
 ///
 /// The same reasoning as [`NewConnection`], and the same trap: `label`,
@@ -235,6 +282,8 @@ pub struct ProviderInfo {
     /// channel to list and none to pick.
     pub fixed_target: bool,
     pub token_optional: bool,
+    /// Whether a connection is made by signing in (ADR-0049).
+    pub sign_in: bool,
 }
 
 pub struct ConnectorService {
@@ -416,6 +465,7 @@ impl ConnectorService {
                 credential_hint: d.credential_hint().to_string(),
                 fixed_target: d.fixed_target(),
                 token_optional: d.token_optional(),
+                sign_in: d.signs_in(),
             })
             .collect()
     }
@@ -667,11 +717,34 @@ impl ConnectorService {
                     c.label
                 )
             })?;
-        let token = String::from_utf8(secret.value.as_bytes().to_vec())
+        let stored = String::from_utf8(secret.value.as_bytes().to_vec())
             .context("stored token is not valid UTF-8")?;
+        // A signed-in provider stores a refresh token and is called with an
+        // access token (ADR-0049 §1); a pasted credential is both.
+        let access = self.driver(&c.provider)?.access_token(&stored).await?;
+        if let Some(rotated) = access.rotated {
+            // The provider made the stored token unusable when it handed out
+            // this one, so a failed write here loses the connection: say so
+            // rather than carry on with a call that works only once.
+            self.credstore
+                .put(
+                    ctx,
+                    &key,
+                    SecretValue::new(rotated.into_bytes()),
+                    ConnectionScope::parse(&c.scope)?.sharing(),
+                    WritePrecondition::Exists,
+                )
+                .await
+                .map_err(|e| {
+                    anyhow!(
+                        "cannot keep the renewed sign-in for '{}': {e}; sign in again",
+                        c.label
+                    )
+                })?;
+        }
         Ok(ConnectionAuth {
             base_url: c.base_url.clone(),
-            token,
+            token: access.token,
         })
     }
 
@@ -698,6 +771,12 @@ impl ConnectorService {
             options,
         } = req;
         let driver = self.driver(provider)?;
+        if driver.signs_in() {
+            return Err(anyhow!(
+                "a {} connection is made by signing in, not with a pasted credential",
+                driver.display_name()
+            ));
+        }
         let label = label.trim();
         if label.is_empty() {
             return Err(anyhow!("label is required"));
@@ -723,6 +802,41 @@ impl ConnectorService {
             .await
             .context(refusal(driver.as_ref()))?;
 
+        self.insert(
+            ctx,
+            &mut catalogue,
+            Stored {
+                owner_tenant,
+                provider,
+                label,
+                base_url,
+                secret: token,
+                scope,
+                options,
+            },
+            identity,
+        )
+        .await
+    }
+
+    /// Store a verified credential and append its connection to `catalogue`,
+    /// the owner's own row.
+    async fn insert(
+        &self,
+        ctx: &SecurityContext,
+        catalogue: &mut Catalogue,
+        new: Stored<'_>,
+        identity: DriverIdentity,
+    ) -> anyhow::Result<(Connection, DriverIdentity)> {
+        let Stored {
+            owner_tenant,
+            provider,
+            label,
+            base_url,
+            secret: token,
+            scope,
+            options,
+        } = new;
         let id = Uuid::new_v4();
         // No credential, no secret: a public gear repository is read
         // anonymously, and [`Self::auth`] reads an empty reference as that.
@@ -760,7 +874,7 @@ impl ConnectorService {
         };
         catalogue.items.push(connection.clone());
         single_create_target(&mut catalogue.items, connection.id);
-        self.store(ctx, owner_tenant, &catalogue).await?;
+        self.store(ctx, owner_tenant, catalogue).await?;
         Ok((connection, identity))
     }
 
@@ -785,6 +899,120 @@ impl ConnectorService {
                 token: token.to_string(),
             })
             .await
+    }
+
+    /// The first half of a sign-in (ADR-0049 §1): where to send the person.
+    ///
+    /// Everything the second half needs -- the PKCE verifier and what the
+    /// connection will be -- is kept in credstore under the `state`, private
+    /// to the caller. Only the same person can therefore finish it, and a
+    /// `state` replayed by anyone else finds nothing.
+    pub async fn oauth_start(
+        &self,
+        ctx: &SecurityContext,
+        req: NewSignIn<'_>,
+    ) -> anyhow::Result<String> {
+        let driver = self.driver(req.provider)?;
+        if !driver.signs_in() {
+            return Err(anyhow!(
+                "a {} connection is made with a pasted credential, not by signing in",
+                driver.display_name()
+            ));
+        }
+        if req.label.trim().is_empty() {
+            return Err(anyhow!("label is required"));
+        }
+        ConnectionScope::parse(req.scope)?;
+        let base_url = resolve_base_url(driver.as_ref(), req.base_url)?;
+
+        let state = Uuid::new_v4().simple().to_string();
+        let pkce = super::oauth::Pkce::new();
+        let url = driver.sign_in_url(&state, &pkce)?;
+        let pending = PendingSignIn {
+            provider: req.provider.to_owned(),
+            label: req.label.trim().to_owned(),
+            base_url,
+            scope: req.scope.to_owned(),
+            owner_tenant: req.owner_tenant,
+            verifier: pkce.verifier,
+            started_at_epoch_secs: now_secs(),
+        };
+        self.credstore
+            .create(
+                ctx,
+                &pending_key(&state)?,
+                SecretValue::new(serde_json::to_vec(&pending)?),
+                SharingMode::Private,
+            )
+            .await
+            .map_err(|e| anyhow!("cannot start the sign-in: {e}"))?;
+        Ok(url)
+    }
+
+    /// The second half: the code the identity provider sent back becomes a
+    /// verified, stored connection. The pending sign-in is used once, by the
+    /// person who started it, within [`SIGN_IN_TTL_SECS`].
+    pub async fn oauth_complete(
+        &self,
+        ctx: &SecurityContext,
+        state: &str,
+        code: &str,
+    ) -> anyhow::Result<(Connection, DriverIdentity)> {
+        let key = pending_key(state)?;
+        let gone = || anyhow!("this sign-in has expired or was not started by you; start it again");
+        let pending = self
+            .credstore
+            .get(ctx, &key)
+            .await
+            .map_err(|e| anyhow!("credstore: {e}"))?
+            .ok_or_else(gone)?;
+        // Used once, whatever happens next.
+        if let Err(e) = self
+            .credstore
+            .delete(ctx, &key, WritePrecondition::Exists)
+            .await
+        {
+            tracing::warn!("studio-connector: a finished sign-in was not removed: {e}");
+        }
+        let pending: PendingSignIn =
+            serde_json::from_slice(pending.value.as_bytes()).map_err(|_| gone())?;
+        if now_secs().saturating_sub(pending.started_at_epoch_secs) > SIGN_IN_TTL_SECS {
+            return Err(gone());
+        }
+
+        let driver = self.driver(&pending.provider)?;
+        let tokens = driver.exchange_code(code.trim(), &pending.verifier).await?;
+        let Some(refresh) = tokens.refresh_token.filter(|t| !t.is_empty()) else {
+            return Err(anyhow!(
+                "{} gave no lasting sign-in (no refresh token); its client needs \
+                 the offline_access scope",
+                driver.display_name()
+            ));
+        };
+        let identity = driver
+            .test(&ConnectionAuth {
+                base_url: pending.base_url.clone(),
+                token: tokens.access_token,
+            })
+            .await
+            .context(refusal(driver.as_ref()))?;
+
+        let mut catalogue = self.load_own(ctx, pending.owner_tenant).await?;
+        self.insert(
+            ctx,
+            &mut catalogue,
+            Stored {
+                owner_tenant: pending.owner_tenant,
+                provider: &pending.provider,
+                label: &pending.label,
+                base_url: pending.base_url.clone(),
+                secret: &refresh,
+                scope: ConnectionScope::parse(&pending.scope)?,
+                options: Default::default(),
+            },
+            identity,
+        )
+        .await
     }
 
     /// `tenant` is the context the caller is looking from; the row is edited on
@@ -2763,3 +2991,7 @@ mod publish_tests {
         assert!(driver.calls().is_empty(), "{:?}", driver.calls());
     }
 }
+
+#[cfg(test)]
+#[path = "oauth_flow_tests.rs"]
+mod oauth_flow_tests;

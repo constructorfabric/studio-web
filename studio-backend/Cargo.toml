@@ -258,6 +258,7 @@ rustls = "0.23.43"
 hyper-util = { version = "0.1.20", features = ["client", "client-legacy", "http1", "tokio"] }
 http-body-util = "0.1.4"
 hyper = { version = "1.11.0", features = ["client", "http1"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # ── dev only ────────────────────────────────────────────────────────────────
 # studio-documents keeps its tables in PostgreSQL and its tests exercise the

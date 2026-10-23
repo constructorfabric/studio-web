@@ -247,6 +247,8 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::DISCORD_INSTANCE_ID),
         ("studio-connector", connectors::DISCORD_WEBHOOK_INSTANCE_ID),
         ("studio-connector", connectors::KUBERNETES_INSTANCE_ID),
+        ("studio-connector", connectors::REGISTRY_INSTANCE_ID),
+        ("studio-connector", connectors::RESEARCH_INSTANCE_ID),
     ]
     .into_iter()
     .map(|(gear, instance_id)| json!({ "gear": gear, "instance_id": instance_id }))
@@ -301,7 +303,7 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
         // Declared by the profile and consumed by account-management and the
         // portal rather than by a constant in this crate: the three tenant types
         // below the platform root that shape the org / workspace / project
-        // hierarchy, and the two metadata envelopes the portal writes. Listed so
+        // hierarchy, and the three metadata envelopes the portal writes. Listed so
         // the per-profile guard covers the whole set a deployment needs, not
         // only the part the code happens to name. The platform-root type is not
         // here: account-management 0.10 registers it itself from
@@ -326,6 +328,10 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
         (
             "studio-projects",
             "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~",
+        ),
+        (
+            "studio-projects",
+            "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~",
         ),
     ]
 }

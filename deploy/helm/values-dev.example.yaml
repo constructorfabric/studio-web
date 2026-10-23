@@ -12,10 +12,18 @@ backend:
   # branch that carries gear.gdl descriptors until
   # constructorfabric/gears-rust#4793 merges; named here so dev does not
   # silently follow a change of the code's default.
+  #
+  # Pinned to a commit, not the branch: on 2026-10-23 the branch moved to a GDL
+  # (`deps` on `gear(...)`, `helm_chart(...)`) that the engine pinned in the
+  # Dockerfiles (STUDIO_GEARBOX_REF) cannot read, and the catalogue went empty
+  # (500 on /gearbox/catalogue). This is the branch's last commit that engine
+  # reads. Move it back to "feature/gearbox" together with the engine bump.
+  # A commit works only over an existing checkout (the backend fetches it); a
+  # fresh volume clones with --branch, which takes a branch or a tag.
   gearbox:
     enabled: true
     corpusUrl: "https://github.com/MikeFalcon77/gears-rust.git"
-    corpusRef: "feature/gearbox"
+    corpusRef: "b90bea456f0894dc703cf7e9b546397e8fcda215"
     # The checkouts outlive a restart (#848), as the artifact clones do.
     persistence:
       enabled: true

@@ -19,8 +19,21 @@ use serde_json::{Map, Value, json};
 
 use crate::connectors::sdk::ownership::NotOwned;
 
-/// Where a build ran.
-pub const WHERE: [&str; 2] = ["desktop", "session"];
+/// Where a build ran. `ci` is a pipeline's build, recorded from the
+/// `studio-build.json` it uploaded (ADR-0048 §4).
+pub const WHERE: [&str; 4] = ["desktop", "session", "ci", "studio"];
+
+/// Where only Studio records a build from: a pipeline's manifest, or a build
+/// it ran in the organization's cluster. Nobody reports one through REST.
+pub const RECORDED_BY_STUDIO: [&str; 2] = ["ci", "studio"];
+
+/// The workflow artifact a product's pipeline uploads its manifest in, and
+/// the file inside it.
+pub const MANIFEST_ARTIFACT: &str = "studio-build";
+pub const MANIFEST_FILE: &str = "studio-build.json";
+
+/// How large a manifest's artifact may be: a few hundred bytes of JSON.
+pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 /// What the member pressed.
 pub const ACTIONS: [&str; 2] = ["build", "run"];
 /// A build's status: running until its end is reported.
@@ -54,6 +67,90 @@ pub struct BuildReport {
     pub failure_step: Option<String>,
     /// The images it built, `name:tag` or with a digest.
     pub outputs: Vec<String>,
+    /// The images it published, by application: `(app, image)`, the image
+    /// with its registry, its tag and, from CI, its digest (ADR-0048 §4).
+    pub images: Vec<(String, String)>,
+    /// The chart it published: `oci://…` and its version.
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
+}
+
+/// The id of a pipeline's build: its run's.
+pub fn ci_build_id(run_id: i64) -> String {
+    format!("ci-run-{run_id}")
+}
+
+/// The manifest a pipeline uploads, as written by the workflow Studio
+/// proposes (ADR-0048 §5).
+#[derive(Debug, serde::Deserialize)]
+struct Manifest {
+    product: Option<String>,
+    profile: Option<String>,
+    commit: Option<String>,
+    lock_hash: Option<String>,
+    #[serde(default)]
+    images: Vec<ManifestImage>,
+    chart: Option<ManifestChart>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestImage {
+    app: String,
+    image: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestChart {
+    reference: String,
+    version: String,
+}
+
+/// The report a pipeline's manifest makes: a passed build in `ci`, keyed
+/// by its run, at the run's commit unless the manifest names one.
+pub fn manifest_report(
+    text: &str,
+    run_id: i64,
+    sha: Option<&str>,
+    branch: Option<&str>,
+    repository: &str,
+) -> Result<BuildReport, BuildRefusal> {
+    let m: Manifest = serde_json::from_str(text)
+        .map_err(|e| BuildRefusal::Invalid(format!("{MANIFEST_FILE} is not a manifest: {e}")))?;
+    Ok(BuildReport {
+        build_id: ci_build_id(run_id),
+        r#where: "ci".into(),
+        action: Some("build".into()),
+        status: "passed".into(),
+        product: m.product,
+        profile: m.profile,
+        repository: Some(repository.to_owned()),
+        commit: m.commit.or_else(|| sha.map(str::to_owned)),
+        branch: branch.map(str::to_owned),
+        lock_hash: m.lock_hash,
+        started_at: None,
+        finished_at: None,
+        failure: None,
+        failure_step: None,
+        outputs: m.images.iter().map(|i| i.image.clone()).collect(),
+        images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
+        chart_ref: m.chart.as_ref().map(|c| c.reference.clone()),
+        chart_version: m.chart.map(|c| c.version),
+    })
+}
+
+/// The manifest's text out of the artifact a provider hands over, a zip.
+pub fn manifest_from_zip(bytes: &[u8]) -> anyhow::Result<String> {
+    use std::io::Read as _;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| anyhow::anyhow!("the {MANIFEST_ARTIFACT} artifact is not a zip: {e}"))?;
+    let file = archive.by_name(MANIFEST_FILE).map_err(|_| {
+        anyhow::anyhow!("the {MANIFEST_ARTIFACT} artifact holds no {MANIFEST_FILE}")
+    })?;
+    let mut text = String::new();
+    file.take(MAX_MANIFEST_BYTES as u64)
+        .read_to_string(&mut text)
+        .map_err(|e| anyhow::anyhow!("{MANIFEST_FILE} could not be read: {e}"))?;
+    Ok(text)
 }
 
 /// Why a build is not recorded, or not started.
@@ -223,6 +320,61 @@ pub fn record(
             "a build names at most {MAX_OUTPUTS} outputs"
         )));
     }
+    let mut images = Vec::new();
+    for (app, image) in &report.images {
+        let app = app.trim();
+        let image = image.trim();
+        let app_ok = !app.is_empty()
+            && app.len() <= 63
+            && app
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        let image_ok = !image.is_empty()
+            && image.len() <= 300
+            && !image.contains("://")
+            && image.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/' | b':' | b'@')
+            });
+        if !app_ok || !image_ok {
+            return Err(BuildRefusal::Invalid(format!(
+                "'{app}' = '{image}' is not an application and an image"
+            )));
+        }
+        images.push(json!({ "app": app, "image": image }));
+    }
+    if images.len() > MAX_OUTPUTS {
+        return Err(BuildRefusal::Invalid(format!(
+            "a build names at most {MAX_OUTPUTS} images"
+        )));
+    }
+    let chart = match (
+        clean(report.chart_ref.as_deref(), "chart_ref", 300)?,
+        clean(report.chart_version.as_deref(), "chart_version", 128)?,
+    ) {
+        (Some(reference), Some(version)) => {
+            let ok = reference.starts_with("oci://")
+                && reference[6..].bytes().all(|b| {
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || matches!(b, b'.' | b'-' | b'_' | b'/' | b':')
+                })
+                && version
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'));
+            if !ok {
+                return Err(BuildRefusal::Invalid(format!(
+                    "'{reference}' at '{version}' is not a published chart"
+                )));
+            }
+            Some(json!({ "reference": reference, "version": version }))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(BuildRefusal::Invalid(
+                "a published chart has a reference and a version".into(),
+            ));
+        }
+    };
     let failure = if status == "failed" {
         clean(report.failure.as_deref(), "failure", 500)?
     } else {
@@ -287,6 +439,10 @@ pub fn record(
     if !outputs.is_empty() {
         put("outputs", json!(outputs));
     }
+    if !images.is_empty() {
+        put("images", json!(images));
+    }
+    put("chart", json!(chart));
     // Who started it stays who started it: the end may come from the same
     // person on another connection, never from someone else's report.
     put(
