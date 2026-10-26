@@ -79,10 +79,13 @@ concurrency:
 # INFRA-5037); unset, every job keeps its GitHub-hosted image, so deleting the
 # variable is the rollback. The self-hosted runners are persistent: what one
 # job leaves in Docker or the build caches, the next one inherits. So only
-# main, tags and same-repository pull requests (which reach no publishing job)
-# run there; a fork's pull request, a push or manual run on any other branch,
-# and a manual run given a source_ref (any commit, checked out by every
-# routed job) stay on GitHub-hosted. Checkouts on the routed jobs do not keep the
+# main, tags, same-repository pull requests and pull requests from the forks
+# of the team's own developers (pull requests reach no publishing job) run
+# there. The repository variable STUDIO_RUNNER_FORK_OWNERS lists those fork
+# owners as JSON, e.g. ["AndrejK666"]: people who can push to this repository
+# anyway and work from a fork. Any other fork's pull request, a push or
+# manual run on any other branch, and a manual run given a source_ref (any
+# commit, checked out by every routed job) stay on GitHub-hosted. Checkouts on the routed jobs do not keep the
 # job token on disk, where a dependency's build script could read it —
 # except build-service-images, which pushes the delivery/edge tag and builds
 # only inside BuildKit containers. Not routed at all: the
@@ -99,7 +102,7 @@ jobs:
   test-changes:
     name: Detect changed components
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     outputs:
       # A release tag is an explicit reproducibility point. Test every service
       # operand for v* and infrastructure operands for infra-v*, rather than
@@ -191,7 +194,7 @@ jobs:
   test-backend:
     needs: test-changes
     if: needs.test-changes.outputs.backend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     defaults:
       run:
         working-directory: studio-backend
@@ -252,7 +255,7 @@ jobs:
   test-frontend:
     needs: test-changes
     if: needs.test-changes.outputs.frontend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     defaults:
       run:
         working-directory: studio-frontend
@@ -289,7 +292,7 @@ jobs:
   test-prototype:
     needs: test-changes
     if: needs.test-changes.outputs.prototype == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     defaults:
       run:
         working-directory: studio-frontend-prototype
@@ -323,7 +326,7 @@ jobs:
   test-theia-session-gate:
     needs: test-changes
     if: needs.test-changes.outputs.theia == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -354,7 +357,7 @@ jobs:
     name: Contract — both portals call endpoints that exist
     # No `needs` and no filter: it must not inherit the component selection that
     # is exactly what lets this drift through.
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -390,7 +393,7 @@ jobs:
   test-infra:
     needs: test-changes
     if: needs.test-changes.outputs.infra == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -418,7 +421,7 @@ jobs:
   test-deployment-config:
     needs: test-changes
     if: needs.test-changes.outputs.deployment == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -550,7 +553,7 @@ jobs:
       (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
       (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
       (needs.test-deployment-config.result == 'success' || needs.test-deployment-config.result == 'skipped')
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     steps:
       - run: echo "Test stage completed successfully."
   build-require-ci:
@@ -565,7 +568,7 @@ jobs:
       needs.test-complete.result == 'success' &&
       needs.test-changes.result == 'success' &&
       ((github.event_name == 'push' && github.repository == 'constructorfabric/studio-web') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy')))
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
       test_run_id: ${{ steps.tests.outputs.run_id }}
@@ -650,7 +653,7 @@ jobs:
     # least as new. `ubuntu-latest` moving to a newer glibc than trixie would
     # resurrect "version GLIBC_X.YY not found" at container start — bump the
     # runner and the runtime base TOGETHER.
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     steps:
       # Cargo.lock pins every gear's crates.io version, so rebuilding the same
       # commit resolves the same Rust sources.
@@ -693,7 +696,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -758,7 +761,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     permissions:
       actions: read
       contents: read
@@ -809,7 +812,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     permissions:
       actions: read
       contents: read
@@ -863,7 +866,7 @@ jobs:
       # that consume it (`test-e2e`). Derived here rather than recomputed
       # there, so a dispatch with a `source_ref` cannot disagree with itself.
       immutable: ${{ steps.tags.outputs.immutable }}
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     permissions:
       # write: `Record the delivered commit` moves the delivery/edge tag.
       contents: write
@@ -1108,7 +1111,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'infra'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
     permissions:
       contents: read
       packages: write
@@ -1256,7 +1259,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.build-require-ci.result == 'success' &&
       needs.build-service-images.result == 'success'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     permissions:
       contents: read
       packages: read
@@ -1337,7 +1340,7 @@ jobs:
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
       (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped') &&
       (needs.test-e2e.result == 'success' || needs.test-e2e.result == 'skipped')
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || github.event.pull_request.head.repo.fork || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
     steps:
       - run: echo "Build & Publish stage completed successfully."
 
