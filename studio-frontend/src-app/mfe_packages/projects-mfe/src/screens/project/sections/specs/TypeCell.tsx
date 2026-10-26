@@ -76,7 +76,6 @@ export const TypeCell: React.FC<TypeCellProps> = ({
     if (type?.proposed && value === type.key) decide({ action: 'confirm' });
     else if (value === current) return;
     else if (value === UNKNOWN) decide({ action: 'reset' });
-    else if (value === REJECTED) decide({ action: 'reject' });
     else decide({ action: 'set', type_key: value });
   };
 
@@ -119,9 +118,8 @@ export const TypeCell: React.FC<TypeCellProps> = ({
           <DropdownMenuRadioItem closeOnClick value={UNKNOWN} onClick={() => pick(UNKNOWN)}>
             {t('type_unknown')}
           </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem closeOnClick value={REJECTED} onClick={() => pick(REJECTED)}>
-            {t('type_not_spec')}
-          </DropdownMenuRadioItem>
+          {/* *Not a specification* comes back with the filters (#878): a rejected row leaves
+              the list, and only the *Not specifications* filter brings it back. */}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

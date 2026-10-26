@@ -18,7 +18,7 @@ import {
 } from '../model/specRows';
 import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 
-/** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692). */
+/** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {
   filter: 'specs',
   documentType: 'documentType',
@@ -63,7 +63,7 @@ const NO_SOURCES: SpecRowsSourcesDto = {
   counts: [],
 };
 
-// The values come from #692's own plugins, which keep them in memory.
+// The search comes from the kit's text search (#692); the filter and the document type will come from its filters (#878).
 function queryOf(filters: DataGridLoadContext['filters']): SpecsQuery {
   return {
     filter: filters?.[SPECS_FILTER_KEYS.filter]?.value ?? 'all',

@@ -1,0 +1,94 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  /* A narrow pane scrolls the table sideways rather than breaking file names mid-word. */
+  --data-grid-table-min-inline-size: 56rem;
+}
+
+.notice {
+  margin: 0;
+}
+
+/* The Artifacts table's name cell (ArtifactsSection.module.css), so the two lists read alike. */
+.document {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  text-align: start;
+}
+
+.open {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.open:hover .name {
+  color: var(--link-foreground);
+}
+
+.open:focus-visible {
+  outline: var(--border-width-focus) solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+  color: var(--foreground);
+}
+
+.source {
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+
+.findings {
+  color: var(--destructive);
+}
+
+.clean {
+  color: var(--success);
+}
+
+.empty {
+  padding-block: var(--space-6);
+}
+
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+}
+
+.footer {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta-size);
+}

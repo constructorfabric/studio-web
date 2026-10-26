@@ -123,11 +123,17 @@ describe('the Type menu', () => {
     expect(within(await openMenu()).queryByText(/type_confirm/)).toBeNull();
   });
 
-  it('resets and rejects a typed binding', async () => {
+  it('resets a typed binding', async () => {
     renderCell({ type_key: 'prd' });
     fireEvent.click(within(await openMenu()).getByText('type_unknown'));
-    fireEvent.click(within(await openMenu()).getByText('type_not_spec'));
-    expect(sent()).toEqual([{ action: 'reset' }, { action: 'reject' }]);
+    expect(sent()).toEqual([{ action: 'reset' }]);
+  });
+
+  it('offers no Not a specification until the filters can bring a rejected row back (#878)', async () => {
+    renderCell({ type_key: 'prd' });
+    const menu = await openMenu();
+    expect(within(menu).queryByText('type_not_spec')).toBeNull();
+    expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(3);
   });
 
   it('sends nothing for Unknown on a binding that has no type', async () => {
@@ -136,11 +142,11 @@ describe('the Type menu', () => {
     expect(requestTypeDecision).not.toHaveBeenCalled();
   });
 
-  it('brings a rejected row back, and does not reject it again', async () => {
+  it('brings a rejected row back, as Unknown or with a type', async () => {
     renderCell({ type_key: null, state: 'not_a_document' });
-    fireEvent.click(within(await openMenu()).getByText('type_not_spec'));
+    fireEvent.click(within(await openMenu()).getByText('type_unknown'));
     fireEvent.click(within(await openMenu()).getByText('ADR'));
-    expect(sent()).toEqual([{ action: 'set', type_key: 'adr' }]);
+    expect(sent()).toEqual([{ action: 'reset' }, { action: 'set', type_key: 'adr' }]);
   });
 
   it('marks the current type', async () => {
