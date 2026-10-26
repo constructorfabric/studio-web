@@ -90,6 +90,8 @@ export interface EditorSession {
 
 type Outcome = { ready: true } | { ready: false; failure: EditorSessionFailure };
 type Launched = { ready: true; url: string } | { ready: false; failure: EditorSessionFailure };
+/** What the IDE is told to open: a file, or a Studio document with the workspace that addresses it. */
+type Opened = { artifact: StudioArtifact; workspaceId?: string };
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -133,7 +135,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   /** The project's sources as last read: where each repository is checked out. */
   let projectSources: readonly ProjectSource[] = [];
   /** The file or document the editor shows, told to the IDE when it changes and to every new frame. */
-  let opened: StudioArtifact | null = null;
+  let opened: Opened | null = null;
   /** The bridge to the editor's frame, and whether the IDE in it has answered. */
   let bridge: ReturnType<typeof connectEditorBridge> | null = null;
   let answered = false;
@@ -361,11 +363,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     clearAnswerTimer();
   };
 
-  const openMessage = (artifact: StudioArtifact): EditorMessage | null => {
-    if (artifact.kind === 'document') {
-      // The workspace the Specs list reads its documents from: the IDE addresses one by workspace and id.
-      const workspaceId = readAppContext(app).workspace?.id;
-      if (!workspaceId) return null;
+  const openMessage = ({ artifact, workspaceId }: Opened): EditorMessage => {
+    if (workspaceId) {
       return {
         type: 'studio.openDocument',
         workspaceId,
@@ -378,26 +377,24 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     return { type: 'studio.openInEditor', path: directory ? `${directory}/${artifact.path}` : artifact.path };
   };
 
-  const tell = (target: typeof bridge, artifact: StudioArtifact): void => {
-    const message = openMessage(artifact);
-    if (message) target?.post(message);
-  };
-
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
   const showArtifact = (artifact: StudioArtifact | null): void => {
-    // A document waits for its workspace, which a link opened in a fresh tab may not have yet: held
-    // before, the pass that brings the workspace would take it as told.
-    const openable =
-      artifact?.kind === 'document' ? Boolean(readAppContext(app).workspace) : artifact?.kind === 'file' && artifact.path;
-    const next = openable ? artifact : null;
+    let next: Opened | null = null;
+    if (artifact?.kind === 'file' && artifact.path) next = { artifact };
+    // The IDE addresses a document by the workspace the Specs list reads it from. A link opened in a fresh
+    // tab may not have that workspace yet, so the document waits for it: held before, it would be taken
+    // as told by the pass that brings the workspace.
+    const workspaceId = readAppContext(app).workspace?.id;
+    if (artifact?.kind === 'document' && workspaceId) next = { artifact, workspaceId };
     // A document is the same one by its id (its title is no address), a file by where it sits.
+    const [now, was] = [next?.artifact, opened?.artifact];
     const same =
-      next?.kind === 'document' || opened?.kind === 'document'
-        ? next?.kind === opened?.kind && next?.artifactId === opened?.artifactId
-        : next?.repository === opened?.repository && next?.path === opened?.path;
+      now?.kind === 'document' || was?.kind === 'document'
+        ? now?.kind === was?.kind && now?.artifactId === was?.artifactId
+        : now?.repository === was?.repository && now?.path === was?.path;
     if (same) return;
     opened = next;
-    if (next) tell(bridge, next);
+    if (next) bridge?.post(openMessage(next));
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
 
@@ -456,7 +453,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       },
     });
     bridge = mine;
-    if (opened) tell(mine, opened);
+    if (opened) mine.post(openMessage(opened));
     const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.post({ type: 'studio.theme', theme: theme() }));
     // Every renewal; the read only until one is heard, and only for this frame.
     let heard = false;

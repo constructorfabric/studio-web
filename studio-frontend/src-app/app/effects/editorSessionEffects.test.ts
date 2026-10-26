@@ -1105,6 +1105,16 @@ describe('createEditorSession', () => {
       expect(h.frames[0]?.types()).not.toContain('studio.openInEditor');
     });
 
+    it('opens an untitled document without a title, so the IDE names its tab itself', async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+
+      h.open(PROJECT, { ...DOCUMENT, path: '' });
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      expect(h.frames[0]?.sent()).toContainEqual({ type: 'studio.openDocument', workspaceId: WORKSPACE, documentId: 'd1' });
+    });
+
     it('opens a document once its workspace is known, when the IDE answered before the workspaces did', async () => {
       const h = harness();
       h.setWorkspace(null);
