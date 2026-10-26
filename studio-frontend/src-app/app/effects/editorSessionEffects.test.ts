@@ -1135,6 +1135,21 @@ describe('createEditorSession', () => {
       });
     });
 
+    it("opens the document again in the project's own workspace, when a link named the project alone", async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+      h.open(PROJECT, DOCUMENT);
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      // The shell started on its default workspace, then moved the address to the project's.
+      h.setWorkspace({ id: 'w2', name: 'Payments' });
+      h.open(PROJECT, DOCUMENT);
+
+      expect(h.frames[0]?.sent().slice(-1)).toEqual([
+        { type: 'studio.openDocument', workspaceId: 'w2', documentId: 'd1', title: 'Payments PRD' },
+      ]);
+    });
+
     it('opens another document by its id, whatever its title, and a file after it', async () => {
       const h = harness();
       h.launch.mockResolvedValue(session('running'));

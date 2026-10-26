@@ -386,11 +386,13 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     // as told by the pass that brings the workspace.
     const workspaceId = readAppContext(app).workspace?.id;
     if (artifact?.kind === 'document' && workspaceId) next = { artifact, workspaceId };
-    // A document is the same one by its id (its title is no address), a file by where it sits.
+    // A document is the same one by its id and workspace (its title is no address), a file by where it
+    // sits. The workspace can move under the same document: a link that names the project alone starts
+    // on the shell's default workspace, then moves to the project's own.
     const [now, was] = [next?.artifact, opened?.artifact];
     const same =
       now?.kind === 'document' || was?.kind === 'document'
-        ? now?.kind === was?.kind && now?.artifactId === was?.artifactId
+        ? now?.kind === was?.kind && now?.artifactId === was?.artifactId && next?.workspaceId === opened?.workspaceId
         : now?.repository === was?.repository && now?.path === was?.path;
     if (same) return;
     opened = next;
