@@ -54,10 +54,12 @@ export const ProjectsRoot: React.FC = () => {
 
   const publishedSection = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION);
 
+  // Re-applied when the project changes too: `openProject` lands on Overview, and
+  // a direct link publishes the section before the project (ADR-0028, #881).
   useEffect(() => {
     if (!isProjectSection(publishedSection)) return;
     dispatch(selectSection(publishedSection));
-  }, [publishedSection, dispatch]);
+  }, [publishedSection, projectId, dispatch]);
 
   return (
     <div ref={containerRef} className={styles.root} data-theme={dataTheme}>

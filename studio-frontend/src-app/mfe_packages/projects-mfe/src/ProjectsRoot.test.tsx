@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
@@ -39,8 +39,12 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 }));
 
 describe('ProjectsRoot', () => {
-  it('swaps the list for the project frame when a project is open', async () => {
+  // Once per file: a second app re-runs the mock plugin against the stubbed services.
+  beforeAll(() => {
     createFrontXApp({});
+  });
+
+  it('swaps the list for the project frame when a project is open', async () => {
     const { mfeApp } = await import('./init');
     const { ProjectsRoot } = await import('./ProjectsRoot');
     const { openProject, closeProject } = await import('./slices/navSlice');
@@ -74,5 +78,34 @@ describe('ProjectsRoot', () => {
     // budget is raised rather than the work reduced because none of what takes
     // the time is what this test asserts: it pins which screen shows, and the
     // chrome around it renders regardless.
+  }, 45_000);
+
+  // #881: the tabs showed Specs, the body Overview.
+  it('opens a project on the section the shell published before it', async () => {
+    const { mfeApp } = await import('./init');
+    const { ProjectsRoot } = await import('./ProjectsRoot');
+    const { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, STUDIO_SHARED_PROPERTY_CONTEXT_SECTION } =
+      await import('@constructor-studio/mfe-shared');
+    const { bridge, setProperty } = createMfeBridgeFixture({
+      domainId: 'screen',
+      instanceId: 'inst',
+    });
+
+    const { container } = render(
+      <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
+        <ProjectsRoot />
+      </FrontXProvider>
+    );
+
+    // A direct link: the shell publishes the section at once, and the project
+    // only once the workspace list has vouched for its workspace (ADR-0028).
+    await act(async () => {
+      setProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION, 'specs');
+    });
+    await act(async () => {
+      setProperty(STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, '11111111-1111-4111-8111-111111111111');
+    });
+
+    expect(container.querySelector('[data-section]')?.getAttribute('data-section')).toBe('specs');
   }, 45_000);
 });
