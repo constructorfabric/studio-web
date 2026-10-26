@@ -196,6 +196,26 @@ describe('materialize', () => {
       expect(writes).not.toHaveBeenCalled();
     });
 
+    it('opens a Studio document a link names in the editor, its title as given, and writes nothing', () => {
+      const session = { sync: vi.fn(), retry: vi.fn() };
+      const { materialize, adapter } = setup(
+        '/?screen=space;org=o1;workspace=w1;project=p1;artifact=d-1;path=Payments%3B%20v2;kind=document',
+        { ...ready, projects: [ATLAS] },
+        screens,
+        session
+      );
+      const writes = vi.spyOn(adapter, 'replaceState');
+      materialize();
+      expect(session.sync).toHaveBeenLastCalledWith({
+        projectId: 'p1',
+        orgId: 'o1',
+        editor: true,
+        artifact: { artifactId: 'd-1', repository: '', path: 'Payments; v2', kind: 'document' },
+      });
+      expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
+      expect(writes).not.toHaveBeenCalled();
+    });
+
     it('dispatches the artifact once and keeps the same object while the address holds it', () => {
       const { materialize, state } = setup(IN_EDITOR, { ...ready, projects: [ATLAS] });
       materialize();

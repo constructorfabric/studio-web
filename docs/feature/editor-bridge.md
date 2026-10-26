@@ -80,13 +80,18 @@ and each changes the code:
   frame it had. Another address is another session: the bridge starts over with
   it, and the frame's own history no longer piles up in the browser's back
   button.
-- **Only files open.** The new portal opens no products, gears, documents or
-  graphs in the editor, and the shell knows no project type
+- **Files and Studio documents open.** The new portal opens no products, gears
+  or graphs in the editor, and the shell knows no project type
   (`ProjectConfig.mode` is `greenfield | modernize`), so `studio.openInEditor`
-  is the one opening message. Its path is the source's checkout directory
-  (`checkoutDirectory`, the rule `sessionSources` names directories by) joined
-  with the artifact's path: without the directory the IDE takes the first match
-  in any root, and two repositories with a `README.md` are confused.
+  and `studio.openDocument` are the two opening messages. A file's path is the
+  source's checkout directory (`checkoutDirectory`, the rule `sessionSources`
+  names directories by) joined with the artifact's path: without the directory
+  the IDE takes the first match in any root, and two repositories with a
+  `README.md` are confused. A Studio document (#694) is an artifact of kind
+  `document`: its id, and its title where a file has its path. It goes to the
+  IDE with the workspace the Specs list reads documents from, since the IDE
+  addresses a document by workspace and id. Before the IDE answers, only the
+  latest opening message waits, so a file and then a document open one tab.
 - **Ready is the IDE's word.** The launching state lasts until the IDE answers,
   on every load of the frame, a live session's included: before that the frame
   holds Theia's boot, and an IDE without the token or the file. The backend
@@ -282,7 +287,10 @@ The system **MUST** send `studio.openInEditor` for a `file` artifact once per
 file — to every new frame, and again when the editor shows another file while
 it stays on screen — with the path from the workspace root: the checkout
 directory of the artifact's repository, then its path. A repository the project
-does not list **MUST** fall back to the artifact's path alone.
+does not list **MUST** fall back to the artifact's path alone. A `document`
+artifact **MUST** be sent as `studio.openDocument` with the workspace in
+context, its id and, when it has one, its title — once per document id, since
+two documents may share a title.
 
 **Implements**:
 - `cpt-studiofrontend-flow-editor-bridge-open`
@@ -333,7 +341,6 @@ has no component catalogue yet, until #583 gives it a page.
 - [ ] Tests with a stubbed frame cover the queue, the repeat, the re-arm, the theme mapping, the path and the sender checks; the handler's tests cover the hook and the frame per address.
 
 **Out of scope**: `studio.notify`; `studio.documentSaved`; unsaved edits on
-leaving the editor (#582); `studio.openProduct`, `studio.openGear`,
-`studio.openDocument` and `studio.openGraph`, until the portal has entry points
-for them; the component's page (#583); the UI language inside the frame; a
+leaving the editor (#582); `studio.openProduct`, `studio.openGear` and
+`studio.openGraph`, until the portal has entry points for them; the component's page (#583); the UI language inside the frame; a
 separate origin for `/studio/`.

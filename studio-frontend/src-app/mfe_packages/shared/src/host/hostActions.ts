@@ -31,6 +31,8 @@ export const STUDIO_ARTIFACT_KINDS = [
   'commit',
   'comment',
   'user',
+  /** A Studio document (`studio-documents`), not a node of the artifact gear: its title rides in `path`. */
+  'document',
 ] as const;
 
 export type StudioArtifactKind = (typeof STUDIO_ARTIFACT_KINDS)[number];

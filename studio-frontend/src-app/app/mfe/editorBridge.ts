@@ -39,7 +39,8 @@ export interface EditorInit {
 export type EditorMessage =
   | { type: 'studio.theme'; theme: EditorTheme }
   | { type: 'studio.token'; apiToken: string; viewer?: EditorViewer; workspaceName?: string }
-  | { type: 'studio.openInEditor'; path: string };
+  | { type: 'studio.openInEditor'; path: string }
+  | { type: 'studio.openDocument'; workspaceId: string; documentId: string; title?: string };
 
 export interface EditorBridgeOptions {
   init: () => EditorInit;
@@ -58,12 +59,15 @@ export interface EditorBridgeOptions {
  */
 export const INIT_REPEAT_MS = 2_000;
 
+/** The messages that open something: they wait for the answer in one place, so only the latest is told. */
+const OPENS: ReadonlySet<EditorMessage['type']> = new Set(['studio.openInEditor', 'studio.openDocument']);
+
 export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBridgeOptions) {
   const portal = frame.ownerDocument.defaultView;
   // Every document the frame shows is on its address's origin: the gate
   // redirects relatively, and serves its splash at the same address.
   const origin = new URL(frame.src).origin;
-  const waiting = new Map<EditorMessage['type'], EditorMessage>();
+  const waiting = new Map<string, EditorMessage>();
   let answered = false;
   let repeat: ReturnType<typeof setInterval> | undefined;
 
@@ -113,8 +117,8 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
         send(message);
         return;
       }
-      // A file switched twice before the answer opens one tab, not two.
-      waiting.set(message.type, message);
+      // A file or a document switched twice before the answer opens one tab, not two.
+      waiting.set(OPENS.has(message.type) ? 'open' : message.type, message);
     },
     dispose(): void {
       clearInterval(repeat);

@@ -19,7 +19,7 @@
         "artifactId": {
           "type": "string",
           "minLength": 1,
-          "$comment": "The node's instance_id in the artifact gear."
+          "$comment": "The node's instance_id in the artifact gear; a Studio document's id for kind document."
         },
         "repository": {
           "type": "string",
@@ -27,7 +27,7 @@
         },
         "path": {
           "type": "string",
-          "$comment": "Checkout-relative path of a file — what studio.openInEditor takes. Empty for kinds that have no path."
+          "$comment": "Checkout-relative path of a file — what studio.openInEditor takes. A Studio document's title, which names its tab in the IDE. Empty for kinds that have no path."
         },
         "kind": {
           "enum": [
@@ -37,9 +37,10 @@
             "pullRequest",
             "commit",
             "comment",
-            "user"
+            "user",
+            "document"
           ],
-          "$comment": "STUDIO_ARTIFACT_KINDS in mfe-shared (host/hostActions.ts), not the gear's type ids. #320 writes this token into the address; only file opens in the editor today."
+          "$comment": "STUDIO_ARTIFACT_KINDS in mfe-shared (host/hostActions.ts), not the gear's type ids. #320 writes this token into the address; a file and a Studio document open in the editor."
         }
       },
       "required": [

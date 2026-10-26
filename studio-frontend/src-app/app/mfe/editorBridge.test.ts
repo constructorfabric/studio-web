@@ -101,6 +101,21 @@ describe('connectEditorBridge', () => {
     expect(f.sent().slice(-1)).toEqual([{ type: 'studio.token', apiToken: 'T2' }]);
   });
 
+  it('holds one open until the answer, the latest, whether a file or a document', () => {
+    const f = stubFrame(ADDRESS);
+    const { bridge } = connect(f.frame);
+
+    bridge.post({ type: 'studio.openInEditor', path: 'web/README.md' });
+    bridge.post({ type: 'studio.openDocument', workspaceId: 'w1', documentId: 'd1', title: 'Payments PRD' });
+    f.load();
+    f.answer({ type: 'studio.status', dirty: 0 });
+
+    expect(f.sent()).toEqual([
+      { type: 'studio.init', ...INIT },
+      { type: 'studio.openDocument', workspaceId: 'w1', documentId: 'd1', title: 'Payments PRD' },
+    ]);
+  });
+
   it.each([
     ['another window', { type: 'studio.status', dirty: 0 }, { source: {} }],
     ['another origin', { type: 'studio.status', dirty: 0 }, { origin: 'https://evil.test' }],

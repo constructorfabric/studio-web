@@ -77,7 +77,7 @@ export interface EditorScope {
   projectId: string | null;
   orgId: string | null;
   editor: boolean;
-  /** What the editor shows; only a file is told to the IDE. */
+  /** What the editor shows; only a file or a Studio document is told to the IDE. */
   artifact: StudioArtifact | null;
 }
 
@@ -132,8 +132,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   let stopWait: (() => void) | null = null;
   /** The project's sources as last read: where each repository is checked out. */
   let projectSources: readonly ProjectSource[] = [];
-  /** The file the editor shows, told to the IDE when it changes and to every new frame. */
-  let file: StudioArtifact | null = null;
+  /** The file or document the editor shows, told to the IDE when it changes and to every new frame. */
+  let opened: StudioArtifact | null = null;
   /** The bridge to the editor's frame, and whether the IDE in it has answered. */
   let bridge: ReturnType<typeof connectEditorBridge> | null = null;
   let answered = false;
@@ -361,18 +361,39 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     clearAnswerTimer();
   };
 
-  /** Without its directory the IDE looks in every root and one level below, and the first match wins. */
-  const openMessage = (artifact: StudioArtifact): EditorMessage => {
+  const openMessage = (artifact: StudioArtifact): EditorMessage | null => {
+    if (artifact.kind === 'document') {
+      // The workspace the Specs list reads its documents from: the IDE addresses one by workspace and id.
+      const workspaceId = readAppContext(app).workspace?.id;
+      if (!workspaceId) return null;
+      return {
+        type: 'studio.openDocument',
+        workspaceId,
+        documentId: artifact.artifactId,
+        ...(artifact.path ? { title: artifact.path } : {}),
+      };
+    }
+    // Without its directory the IDE looks in every root and one level below, and the first match wins.
     const directory = checkoutDirectory(projectSources, artifact.repository);
     return { type: 'studio.openInEditor', path: directory ? `${directory}/${artifact.path}` : artifact.path };
   };
 
+  const tell = (target: typeof bridge, artifact: StudioArtifact): void => {
+    const message = openMessage(artifact);
+    if (message) target?.post(message);
+  };
+
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
-  const showFile = (artifact: StudioArtifact | null): void => {
-    const next = artifact?.kind === 'file' && artifact.path ? artifact : null;
-    if (next?.repository === file?.repository && next?.path === file?.path) return;
-    file = next;
-    if (next) bridge?.post(openMessage(next));
+  const showArtifact = (artifact: StudioArtifact | null): void => {
+    const next = artifact?.kind === 'document' || (artifact?.kind === 'file' && artifact.path) ? artifact : null;
+    // A document is the same one by its id (its title is no address), a file by where it sits.
+    const same =
+      next?.kind === 'document' || opened?.kind === 'document'
+        ? next?.kind === opened?.kind && next?.artifactId === opened?.artifactId
+        : next?.repository === opened?.repository && next?.path === opened?.path;
+    if (same) return;
+    opened = next;
+    if (next) tell(bridge, next);
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
 
@@ -431,7 +452,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       },
     });
     bridge = mine;
-    if (file) mine.post(openMessage(file));
+    if (opened) tell(mine, opened);
     const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.post({ type: 'studio.theme', theme: theme() }));
     // Every renewal; the read only until one is heard, and only for this frame.
     let heard = false;
@@ -476,7 +497,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       entered = false;
       return;
     }
-    showFile(artifact);
+    showArtifact(artifact);
     if (entered || !projectId || !orgId) return;
     entered = true;
     if (!inFlight) void launch(projectId, orgId, false);

@@ -272,11 +272,12 @@ at once.
 The prototype portal (`studio-frontend-prototype/src/App.tsx`) sends every
 portal → IDE message above and handles all three answers. The official portal
 (`studio-frontend`, [editor bridge](feature/editor-bridge.md)) sends
-`studio.init`, `studio.theme`, `studio.token` and `studio.openInEditor` — only
-files open in its editor so far — and answers `studio.openComponent` with a
-notice until it has a component page (#583). It reads `studio.status` only as
-the acknowledgement (unsaved changes on leaving the editor are #582) and
-ignores `studio.documentSaved`: it opens no portal documents in the IDE.
+`studio.init`, `studio.theme`, `studio.token`, `studio.openInEditor` and
+`studio.openDocument` — files and portal documents open in its editor so far —
+and answers `studio.openComponent` with a notice until it has a component page
+(#583). It reads `studio.status` only as the acknowledgement (unsaved changes on
+leaving the editor are #582) and ignores `studio.documentSaved`: the Specs list
+reads its rows afresh when it is opened again.
 
 ### Portal documents as editor resources
 

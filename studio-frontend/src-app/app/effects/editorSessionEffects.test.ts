@@ -50,6 +50,9 @@ const RUN = 'run-1';
 const ADDRESS = 'https://ide.test/studio/s1/?token=gate';
 const REPOS = [{ name: 'web', kind: 'git', url: 'https://git.test/acme/web.git', token_ref: 'ref-1' }];
 const FILE: StudioArtifact = { artifactId: 'a1', repository: 'acme/web', path: 'src/main.ts', kind: 'file' };
+const WORKSPACE = 'w1';
+/** A Studio document: no repository, and its title where a file has its path. */
+const DOCUMENT: StudioArtifact = { artifactId: 'd1', repository: '', path: 'Payments PRD', kind: 'document' };
 const PROFILE = { id: 'u1', displayName: 'Ada Lovelace', email: 'ada@acme.test' };
 const VIEWER = { sub: 'u1', name: 'Ada Lovelace', email: 'ada@acme.test', kind: 'person' };
 const ANSWER_DEADLINE_MS = 2 * 60_000;
@@ -119,7 +122,10 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
       },
       getState: () => ({
         [EDITOR_SESSION_SLICE_KEY]: state,
-        [APP_CONTEXT_SLICE_KEY]: { project: { id: PROJECT, name: projectName } },
+        [APP_CONTEXT_SLICE_KEY]: {
+          workspace: { id: WORKSPACE, name: 'Acme' },
+          project: { id: PROJECT, name: projectName },
+        },
         [APP_SESSION_SLICE_KEY]: { profile },
       }),
     },
@@ -1078,6 +1084,43 @@ describe('createEditorSession', () => {
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
       expect(h.frames[0]?.sent()).toContainEqual({ type: 'studio.openInEditor', path: 'src/main.ts' });
+    });
+
+    it('opens a Studio document by its workspace and id, under its title', async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+
+      h.open(PROJECT, DOCUMENT);
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+
+      expect(h.frames[0]?.sent()).toContainEqual({
+        type: 'studio.openDocument',
+        workspaceId: WORKSPACE,
+        documentId: 'd1',
+        title: 'Payments PRD',
+      });
+      expect(h.frames[0]?.types()).not.toContain('studio.openInEditor');
+    });
+
+    it('opens another document by its id, whatever its title, and a file after it', async () => {
+      const h = harness();
+      h.launch.mockResolvedValue(session('running'));
+      h.open(PROJECT, DOCUMENT);
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      const opens = (): unknown[] =>
+        (h.frames[0]?.sent() ?? []).filter(
+          (message) => message.type === 'studio.openDocument' || message.type === 'studio.openInEditor'
+        );
+
+      h.open(PROJECT, { ...DOCUMENT });
+      h.open(PROJECT, { ...DOCUMENT, artifactId: 'd2' });
+      h.open(PROJECT, FILE);
+
+      expect(opens()).toEqual([
+        { type: 'studio.openDocument', workspaceId: WORKSPACE, documentId: 'd1', title: 'Payments PRD' },
+        { type: 'studio.openDocument', workspaceId: WORKSPACE, documentId: 'd2', title: 'Payments PRD' },
+        { type: 'studio.openInEditor', path: 'web/src/main.ts' },
+      ]);
     });
 
     it("says the catalogue is not in the portal when the IDE asks for a component's page", async () => {

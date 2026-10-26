@@ -11,7 +11,7 @@
         "artifactId": { "type": "string", "minLength": 1 },
         "repository": { "type": "string" },
         "path": { "type": "string" },
-        "kind": { "enum": ["repo", "file", "issue", "pullRequest", "commit", "comment", "user"] }
+        "kind": { "enum": ["repo", "file", "issue", "pullRequest", "commit", "comment", "user", "document"] }
       },
       "required": ["artifactId", "repository", "path", "kind"],
       "additionalProperties": false
