@@ -178,7 +178,7 @@ router, the shell's effects, the frame handler and the IDE.
 3. [ ] - `p1` - **ON** a message: drop it unless it comes from the frame's window, from that origin, with a `studio.*` type - `inst-3`
 4. [ ] - `p1` - **IF** it is the first since the load: stop repeating, post what waited in order, report the answer - `inst-4`
 5. [ ] - `p1` - **IF** it is `studio.openComponent` with a name: hand the name to the shell - `inst-5`
-6. [ ] - `p1` - **ON** a message to post: send it if the IDE has answered, otherwise keep it, only the latest of its type - `inst-6`
+6. [ ] - `p1` - **ON** a message to post: send it if the IDE has answered, otherwise keep it, only the latest of its type, and only the latest opening message of the two - `inst-6`
 
 ## 4. States (CDSL)
 
@@ -224,7 +224,9 @@ down. The shell **MUST** attach the bridge to `space-mfe`'s entry only.
 The system **MUST** post `studio.init` on every load of the frame and every two
 seconds after it until any `studio.*` message answers, reading its payload
 afresh each time, and **MUST** hold every other message until then — only the
-latest of each type — and post it in order after the answer. It **MUST NOT**
+latest of each type, and one opening message, `studio.openInEditor` or
+`studio.openDocument`, whichever came last — and post it in order after the
+answer. It **MUST NOT**
 post again what it already delivered when the frame loads again.
 
 **Implements**:

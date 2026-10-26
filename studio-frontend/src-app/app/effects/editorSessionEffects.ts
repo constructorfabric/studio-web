@@ -385,7 +385,11 @@ export function createEditorSession(app: FrontXApp): EditorSession {
 
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
   const showArtifact = (artifact: StudioArtifact | null): void => {
-    const next = artifact?.kind === 'document' || (artifact?.kind === 'file' && artifact.path) ? artifact : null;
+    // A document waits for its workspace, which a link opened in a fresh tab may not have yet: held
+    // before, the pass that brings the workspace would take it as told.
+    const openable =
+      artifact?.kind === 'document' ? Boolean(readAppContext(app).workspace) : artifact?.kind === 'file' && artifact.path;
+    const next = openable ? artifact : null;
     // A document is the same one by its id (its title is no address), a file by where it sits.
     const same =
       next?.kind === 'document' || opened?.kind === 'document'

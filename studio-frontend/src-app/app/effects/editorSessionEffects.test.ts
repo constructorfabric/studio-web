@@ -111,6 +111,8 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
   let state: EditorSessionState = reducer(undefined, { type: '@@init' });
   const phases: EditorSessionPhase[] = [];
   let themeId: string | undefined = 'default';
+  // Null until the organization's workspaces are read, as on a link opened in a fresh tab.
+  let workspace: { id: string; name: string } | null = { id: WORKSPACE, name: 'Acme' };
   const themeListeners = new Set<() => void>();
   const authListeners = new Set<(event: AuthStateEvent) => void>();
   const getSession = vi.fn<() => Promise<AuthSession | null>>().mockResolvedValue({ kind: 'bearer', token: 'T1' });
@@ -122,10 +124,7 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
       },
       getState: () => ({
         [EDITOR_SESSION_SLICE_KEY]: state,
-        [APP_CONTEXT_SLICE_KEY]: {
-          workspace: { id: WORKSPACE, name: 'Acme' },
-          project: { id: PROJECT, name: projectName },
-        },
+        [APP_CONTEXT_SLICE_KEY]: { workspace, project: { id: PROJECT, name: projectName } },
         [APP_SESSION_SLICE_KEY]: { profile },
       }),
     },
@@ -148,6 +147,9 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
   const setTheme = (id: string | undefined): void => {
     themeId = id;
     themeListeners.forEach((listener) => listener());
+  };
+  const setWorkspace = (next: typeof workspace): void => {
+    workspace = next;
   };
   const authEvent = (event: AuthStateEvent): void => authListeners.forEach((listener) => listener(event));
   const renewToken = (token: string): void => authEvent({ state: 'authenticated', session: { kind: 'bearer', token } });
@@ -242,6 +244,7 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
     mount,
     unmount,
     setTheme,
+    setWorkspace,
     authEvent,
     renewToken,
     getSession,
@@ -1100,6 +1103,26 @@ describe('createEditorSession', () => {
         title: 'Payments PRD',
       });
       expect(h.frames[0]?.types()).not.toContain('studio.openInEditor');
+    });
+
+    it('opens a document once its workspace is known, when the IDE answered before the workspaces did', async () => {
+      const h = harness();
+      h.setWorkspace(null);
+      h.launch.mockResolvedValue(session('running'));
+      h.open(PROJECT, DOCUMENT);
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      expect(h.frames[0]?.types()).not.toContain('studio.openDocument');
+
+      // The workspaces arrive, and the address is applied again with the same document.
+      h.setWorkspace({ id: WORKSPACE, name: 'Acme' });
+      h.open(PROJECT, DOCUMENT);
+
+      expect(h.frames[0]?.sent()).toContainEqual({
+        type: 'studio.openDocument',
+        workspaceId: WORKSPACE,
+        documentId: 'd1',
+        title: 'Payments PRD',
+      });
     });
 
     it('opens another document by its id, whatever its title, and a file after it', async () => {

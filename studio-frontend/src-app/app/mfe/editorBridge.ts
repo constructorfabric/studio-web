@@ -67,7 +67,7 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
   // Every document the frame shows is on its address's origin: the gate
   // redirects relatively, and serves its splash at the same address.
   const origin = new URL(frame.src).origin;
-  const waiting = new Map<string, EditorMessage>();
+  const waiting = new Map<EditorMessage['type'] | 'open', EditorMessage>();
   let answered = false;
   let repeat: ReturnType<typeof setInterval> | undefined;
 
@@ -111,7 +111,7 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
   portal?.addEventListener('message', onMessage);
 
   return {
-    /** Sent at once after the answer; until then only the latest of each type waits. */
+    /** Sent at once after the answer; until then only the latest of each type waits, and one open of either kind. */
     post(message: EditorMessage): void {
       if (answered) {
         send(message);
