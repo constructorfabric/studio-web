@@ -8,7 +8,7 @@ import type { ArtifactRow } from '../model/artifact';
 import type { SpecRow } from '../model/specRows';
 
 /** What the shell opens: an artifact-gear node, or a Studio document (#694). */
-export type OpenableArtifact = Pick<ArtifactRow, 'id' | 'repository' | 'path'> & {
+type OpenableArtifact = Pick<ArtifactRow, 'id' | 'repository' | 'path'> & {
   kind: StudioArtifactKind | null;
 };
 
