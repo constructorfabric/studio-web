@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { ArtifactKind } from '../../../api/artifactTypes';
 import { opensInEditor, type ArtifactRow } from '../../../model/artifact';
+import { NameCell } from '../../../components/NameCell';
 import styles from './ArtifactsSection.module.css';
 
 const KIND_ICON: Record<ArtifactKind, React.ReactNode> = {
@@ -125,29 +126,18 @@ export function artifactColumns({
   container,
   onOpen,
 }: ArtifactColumnDeps): ArtifactColumn[] {
-  const nameCell = (row: ArtifactRow): React.ReactNode => (
-    <>
-      {row.kind !== null && (
-        <span className={styles.kindIcon} aria-hidden="true">
-          {KIND_ICON[row.kind]}
-        </span>
-      )}
-      <span className={styles.nameText}>{row.name}</span>
-    </>
-  );
   return [
     {
       key: 'name',
       label: labels.name,
       className: styles.colName,
-      render: (row) =>
-        onOpen !== undefined && opensInEditor(row) ? (
-          <button type="button" className={styles.nameButton} onClick={() => onOpen(row, 'name')}>
-            {nameCell(row)}
-          </button>
-        ) : (
-          <span className={styles.nameCell}>{nameCell(row)}</span>
-        ),
+      render: (row) => (
+        <NameCell
+          name={row.name}
+          icon={row.kind !== null && KIND_ICON[row.kind]}
+          onOpen={onOpen !== undefined && opensInEditor(row) ? () => onOpen(row, 'name') : undefined}
+        />
+      ),
     },
     {
       key: 'repository',

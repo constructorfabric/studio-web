@@ -4,6 +4,7 @@ import { FilePenLine, FileText } from 'lucide-react';
 import type { DocumentTypeDto } from '../../../../api/documentTypes';
 import type { SpecRow } from '../../../../model/specRows';
 import { useSpecsText } from '../../../../i18n';
+import { NameCell } from '../../../../components/NameCell';
 import { TypeCell } from './TypeCell';
 import styles from './SpecsTable.module.css';
 
@@ -32,24 +33,19 @@ interface CellProps {
 
 const DocumentCell: React.FC<CellProps> = ({ item }) => {
   const { open } = useCells();
-  const name = (
-    <>
-      <span className={styles.icon} aria-hidden="true">
-        {item.origin === 'authored' ? (
+  return (
+    <NameCell
+      name={item.name}
+      icon={
+        item.origin === 'authored' ? (
           <FilePenLine size={16} strokeWidth={1.3} />
         ) : (
           <FileText size={16} strokeWidth={1.3} />
-        )}
-      </span>
-      <span className={styles.name}>{item.name}</span>
-    </>
-  );
-  // A file whose repository is not known has no checkout to open it from.
-  if (!item.open) return <span className={styles.document}>{name}</span>;
-  return (
-    <button type="button" className={`${styles.document} ${styles.open}`} onClick={() => open(item)}>
-      {name}
-    </button>
+        )
+      }
+      // A file whose repository is not known has no checkout to open it from.
+      onOpen={item.open ? () => open(item) : undefined}
+    />
   );
 };
 

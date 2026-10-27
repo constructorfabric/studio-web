@@ -1,0 +1,42 @@
+.cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.button:hover .name {
+  color: var(--link-foreground);
+}
+
+.button:focus-visible {
+  outline: var(--border-width-focus) solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+/* File names are identifiers: they wrap in full rather than lose their end to an ellipsis. */
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+  font-weight: var(--text-label-weight);
+  color: var(--foreground);
+}

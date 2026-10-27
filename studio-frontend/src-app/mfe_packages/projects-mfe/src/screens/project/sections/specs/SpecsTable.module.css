@@ -11,49 +11,6 @@
   margin: 0;
 }
 
-/* The Artifacts table's name cell (ArtifactsSection.module.css), so the two lists read alike. */
-.document {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  text-align: start;
-}
-
-.open {
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-}
-
-.open:hover .name {
-  color: var(--link-foreground);
-}
-
-.open:focus-visible {
-  outline: var(--border-width-focus) solid var(--ring);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-.icon {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--primary);
-}
-
-.name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--text-body-size);
-  line-height: var(--text-body-line-height);
-  font-weight: var(--text-label-weight);
-  color: var(--foreground);
-}
-
 .source {
   overflow-wrap: anywhere;
 }

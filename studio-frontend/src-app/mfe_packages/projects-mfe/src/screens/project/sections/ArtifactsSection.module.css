@@ -136,55 +136,6 @@ input.search {
   padding-inline: var(--space-1);
 }
 
-.nameCell {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.nameButton {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-.nameButton:hover .nameText {
-  color: var(--link-foreground);
-}
-
-.nameButton:focus-visible {
-  outline: var(--border-width-focus) solid var(--ring);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-.kindIcon {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--primary);
-}
-
-.nameText {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-body-size);
-  line-height: var(--text-body-line-height);
-  font-weight: var(--text-label-weight);
-  color: var(--foreground);
-}
-
 .actionsCell {
   display: flex;
   justify-content: flex-end;
