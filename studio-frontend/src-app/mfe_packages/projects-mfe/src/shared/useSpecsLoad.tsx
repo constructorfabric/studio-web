@@ -129,7 +129,10 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
           const settled = await pending;
           if (kept.current?.answer === pending) answer = settled;
         } catch (error) {
-          if (kept.current?.answer === pending) {
+          // Every load that waited on the failed read fails with it: one that read again could
+          // write a good snapshot over the failed one and leave the grid on its own error view.
+          // Only a load whose read reload() replaced with a newer one waits on that.
+          if (!kept.current || kept.current.answer === pending) {
             kept.current = null;
             setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, types: [], failed: true });
             throw error;

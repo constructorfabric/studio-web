@@ -216,6 +216,17 @@ describe('the Specs section', () => {
     expect(specRows).toHaveBeenCalledTimes(2);
   });
 
+  it('shows its own error with Retry when the first read fails under a seeded search', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    given('acme/api');
+    specRows.mockRejectedValueOnce(new Error('503'));
+    renderSection();
+
+    expect(await screen.findByText('read_failed')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'retry' })).toBeTruthy();
+    expect(specRows).toHaveBeenCalledTimes(1);
+  });
+
   it('gives Check nothing to send once a reload fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     renderSection();
