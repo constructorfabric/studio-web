@@ -107,8 +107,9 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
   const columns = useMemo(() => specsColumns(t), [t]);
 
   // Check (#691) takes the rows the search shows; it stays hidden until the first load writes them.
+  // A failed read shows none, so Check cannot send rows the table no longer shows.
   useEffect(() => {
-    if (snapshot && !snapshot.failed) dispatch(specsShown(snapshot.shown));
+    if (snapshot) dispatch(specsShown(snapshot.shown));
   }, [dispatch, snapshot]);
 
   const types = snapshot?.types;

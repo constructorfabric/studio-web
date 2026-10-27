@@ -6,8 +6,9 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpecRowDto, SpecRowListDto, SpecRowsSourcesDto } from '../../../../api/documentTypes';
 
-const { state, dispatched, specRows, translations, requestOpenSpec, openSourcesConnect } = vi.hoisted(() => ({
+const { state, workspace, dispatched, specRows, translations, requestOpenSpec, openSourcesConnect } = vi.hoisted(() => ({
   state: { current: {} as Record<string, unknown> },
+  workspace: { current: { workspace: null as { id: string; name: string } | null, loading: false } },
   dispatched: [] as { type: string; payload?: unknown }[],
   specRows: vi.fn(),
   translations: { isLoaded: true, error: null as Error | null },
@@ -30,14 +31,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
-  useWorkspace: () => ({ workspace: { id: 'w-1' }, loading: false, failed: false }),
+  useWorkspace: () => workspace.current,
 }));
 vi.mock('../../../../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
 vi.mock('../../../../i18n', () => {
   const t = Object.assign((key: string) => key, {
     count: (key: string, count: number) => `${key} ${count}`,
   });
-  return { useSpecsSectionTranslations: () => translations, useSpecsText: () => t };
+  return { useSpecsSectionTranslations: () => translations, useSpecsText: () => t, useProjectText: () => t };
 });
 vi.mock('./useTypeDecisionRefusals', () => ({ useTypeDecisionRefusals: () => undefined }));
 vi.mock('../../../../actions/artifactActions', () => ({ requestOpenSpec }));
@@ -56,6 +57,7 @@ const answer = (items: SpecRowDto[], sources: Partial<SpecRowsSourcesDto> = {}):
 });
 
 const PRD = specRowDto({ id: 'b-prd', name: 'prd.md', path: 'docs/prd.md', repo_full_path: 'acme/web', findings: 2 });
+/** Checked, nothing found. */
 const API = specRowDto({ id: 'b-api', name: 'api.md', path: 'api.md', repo_full_path: 'acme/api' });
 const STUDIO = specRowDto({
   id: 'doc-1',
@@ -89,6 +91,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   given();
+  workspace.current = { workspace: { id: 'w-1', name: 'Acme' }, loading: false };
   dispatched.length = 0;
   specRows.mockReset().mockResolvedValue(answer([PRD, API, STUDIO]));
   requestOpenSpec.mockClear();
@@ -104,6 +107,25 @@ describe('the Specs section', () => {
     expect(specRows).not.toHaveBeenCalled();
   });
 
+  it('shows the table when its dictionary failed to load, rather than a skeleton for good', async () => {
+    Object.assign(translations, { isLoaded: false, error: new Error('offline') });
+    const { container } = renderSection();
+
+    expect(await screen.findByText('prd.md')).toBeTruthy();
+    expect(container.querySelector('[class*="skeleton"]')).toBeNull();
+  });
+
+  it('waits for the workspace, and says so when none is open', () => {
+    workspace.current = { workspace: null, loading: true };
+    const { container, rerender } = renderSection();
+    expect(container.querySelector('[class*="skeleton"]')).not.toBeNull();
+
+    workspace.current = { workspace: null, loading: false };
+    rerender(<SpecsSection projectId="p-1" projectName="Billing" />);
+    expect(screen.getByText('no_workspace')).toBeTruthy();
+    expect(specRows).not.toHaveBeenCalled();
+  });
+
   it("lists the project's specs with their type, review and source", async () => {
     renderSection();
     await screen.findByText('prd.md');
@@ -112,6 +134,7 @@ describe('the Specs section', () => {
     expect(prd.getByText('PRD')).toBeTruthy();
     expect(prd.getByText('review_findings 2')).toBeTruthy();
     expect(rowOf('prd.md').textContent).toContain('acme/web / docs');
+    expect(within(rowOf('api.md')).getByText('review_findings 0').className).toMatch(/clean/);
     const studio = within(rowOf('Payments PRD'));
     expect(studio.getByText('review_check_needed')).toBeTruthy();
     expect(studio.getByText('source_studio')).toBeTruthy();
@@ -124,6 +147,14 @@ describe('the Specs section', () => {
     expect(requestOpenSpec).toHaveBeenCalledTimes(1);
     const [bridge, projectId, row] = requestOpenSpec.mock.calls[0];
     expect([bridge, projectId, row.id]).toEqual(['the-bridge', 'p-1', 'doc-1']);
+  });
+
+  it('shows a file with no repository as text, with nothing to open', async () => {
+    specRows.mockResolvedValue(answer([specRowDto({ name: 'orphan.md', repo_full_path: '' })]));
+    renderSection();
+
+    await screen.findByText('orphan.md');
+    expect(screen.queryByRole('button', { name: 'orphan.md' })).toBeNull();
   });
 
   it('hands Check the checkable rows the search shows', async () => {
@@ -143,6 +174,7 @@ describe('the Specs section', () => {
     await waitFor(() => expect(screen.queryByText('prd.md')).toBeNull());
     expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('acme/api');
     expect(lastPayload('setSpecsSearch')).toBe('acme/api');
+    await waitFor(() => expect((lastPayload('specsShown') as { id: string }[]).map((row) => row.id)).toEqual(['b-api']));
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'api.md' } });
     expect(lastPayload('setSpecsSearch')).toBe('api.md');
@@ -182,6 +214,18 @@ describe('the Specs section', () => {
 
     expect(await screen.findByText('prd.md')).toBeTruthy();
     expect(specRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives Check nothing to send once a reload fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderSection();
+    await screen.findByText('prd.md');
+
+    specRows.mockRejectedValueOnce(new Error('503'));
+    act(() => eventBus.emit('mfe/projects/specs-changed', { projectId: 'p-1' }));
+
+    expect(await screen.findByText('read_failed')).toBeTruthy();
+    expect(lastPayload('specsShown')).toEqual([]);
   });
 
   it('counts the shown rows, the open findings and names the project under the table', async () => {
