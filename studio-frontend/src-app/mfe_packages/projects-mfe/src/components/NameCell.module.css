@@ -31,9 +31,11 @@
   color: var(--primary);
 }
 
-/* File names are identifiers: they wrap in full rather than lose their end to an ellipsis. */
+/* File names are identifiers: they wrap in full rather than lose their end to an ellipsis.
+   The kit's plain table cell is `nowrap`, so the name says otherwise. */
 .name {
   min-width: 0;
+  white-space: normal;
   overflow-wrap: anywhere;
   font-size: var(--text-body-size);
   line-height: var(--text-body-line-height);
