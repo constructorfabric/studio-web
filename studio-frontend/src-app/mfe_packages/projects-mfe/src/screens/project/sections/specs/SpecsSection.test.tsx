@@ -225,6 +225,8 @@ describe('the Specs section', () => {
     expect(await screen.findByText('read_failed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'retry' })).toBeTruthy();
     expect(specRows).toHaveBeenCalledTimes(1);
+    // The slice keeps the source's search, so Retry opens the list on it again.
+    expect(actions('setSpecsSearch')).toEqual([]);
   });
 
   it('gives Check nothing to send once a reload fails', async () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import {
   Alert,
@@ -36,18 +36,24 @@ const PAGE_LIMITS = [25, 50, 100];
  * The search starts from #683's slice, so Sources can open the list on one
  * repository (#686), and writes every change back, so it survives a switch of
  * section. The kit's search takes no initial value: seeding it is a second load.
+ * That load waits for the first good read and answers from memory: a load the
+ * search starts that fails escapes the kit as an unhandled rejection. Until the
+ * seed is in, nothing is written back, so a Retry starts from it again.
  */
-const SearchFromSlice: React.FC = () => {
+const SearchFromSlice: React.FC<{ read: boolean }> = ({ read }) => {
   const search = useDataGrid().getPlugin<DataGridTextSearchPluginApi>('textSearch');
   if (!search) throw new Error('SearchFromSlice must come after DataGridTextSearchPlugin');
   const dispatch = useAppDispatch();
   const [seed] = useState(useAppSelector((state) => state[SPECS_FILTER_SLICE_KEY].search));
+  const seeding = useRef(Boolean(seed));
   const query = search.useQuery();
   useEffect(() => {
-    if (seed) search.setSearch(seed);
-  }, [search, seed]);
+    if (!read || !seeding.current) return;
+    seeding.current = false;
+    search.setSearch(seed);
+  }, [read, search, seed]);
   useEffect(() => {
-    dispatch(setSpecsSearch(query));
+    if (!seeding.current) dispatch(setSpecsSearch(query));
   }, [dispatch, query]);
   return null;
 };
@@ -149,7 +155,7 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
       <SpecsCellsContext.Provider value={cells}>
         <DataGrid name="specs" persistent="memory" columns={columns} load={load}>
           <DataGridTextSearchPlugin placeholder={t('search')} />
-          <SearchFromSlice />
+          <SearchFromSlice read={snapshot !== null && !snapshot.failed} />
           <DataGridOrderPlugin />
           <DataGridPaginationPlugin defaultLimit={PAGE_LIMITS[0]} limits={PAGE_LIMITS} />
           <DataGridEmptyStatePlugin component={SpecsEmpty} />
