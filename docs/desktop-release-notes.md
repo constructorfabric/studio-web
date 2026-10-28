@@ -9,7 +9,11 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
-## Next
+## 0.3.0-beta.8
+
+Everything merged since `desktop-v0.3.0-beta.7`, and Gearbox Studio's product
+workspace (#912, which reaches `main` through #913). The first release with a
+Mac build beside the Windows installer.
 
 ### Building
 
@@ -18,25 +22,61 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   settings and profiles. Composition is a searchable list of the selected
   gears with the chosen one's settings beside it; Generate, with Build, Run
   and Deploy, is a section rather than a separate view, and does not apply
-  while changes are pending.
+  while changes are pending. A saved layout that still holds a separate
+  Generate tab moves it into the Product view the first time it opens. (#912)
 - **The catalogue groups plugins** under the extension point of the gear they
   plug into (or lists them flat: **Group plugins**), in the Catalogue and in
   Add gear alike, and its search reads descriptions and interfaces too. Its
-  diagnostics open beside Conflicts.
+  diagnostics open beside Conflicts. (#912)
 - **Add gear writes the source the product declares**, so a gears checkout in
   a folder with another name no longer fails with GBX0102; choosing a plugin
-  under a gear the product lacks adds that gear too.
+  under a gear the product lacks adds that gear too. (#912)
 - **Build, publish and deploy from Generate**, as in the portal: the project's
   builds with their stages and what they published, the recent deploys, the
   next step, and binding a profile to an environment. A deploy's **Status**
   reads its pods (ready of desired) and the hosts it answers on from the
   cluster; **Build in CI…** proposes the build workflow to the repository;
   the release's configuration secrets of an environment are set and removed
-  there, and never shown.
+  there, and never shown. (#912)
+- **Deploy to your organization's environments.** The Deploy panel lists the
+  organization's environments first and the kube contexts on this machine
+  below them. Deploying to an environment asks for confirmation, packs the
+  chart (no helm needed on the machine) and sends it to Studio, which runs it
+  or holds it for an administrator's approval; the panel says which. Build
+  images and Push use the environment's namespace and registry. (#727)
+- **Publish instead of Push** for an environment with a registry login: Studio
+  hands out a push-only token, and the images and the chart go to the
+  organization's registry without a `docker login` of your own. **Build in
+  Studio** builds what is pushed to your branch in the organization's
+  cluster; Deploy then deploys that build. (#865)
+- **Builds are reported to Studio.** A Build, Run or Deploy from the desktop
+  is recorded with the project, so the portal shows it too. (#789, #792)
+- **Build and Run on Windows without hand-set tools.** cmake is found on the
+  PATH or in Visual Studio; protoc on the PATH or with **Get protoc**, which
+  fetches it into `~/ConstructorStudio/tools`. Build uses a short target
+  folder so cmake stays under Windows' path limit. Run starts a Postgres with
+  pgvector, **Create the databases** works on one already running, and the
+  local config gets the defaults a fresh product needs to start. For a
+  kubernetes profile, Build images, Push, Preview manifests and Deploy take
+  the place of Build and Run. (#717)
 - **Gearbox: Configure Sources** uses a local gears checkout -- for working
-  without a Studio server, or with gears of your own.
+  without a Studio server, or with gears of your own. (#912)
 - Checks list errors and warnings first; information is folded, and a
-  diagnostic's code and location are under Details.
+  diagnostic's code and location are under Details. (#912)
+- **Remove one plugin** from beside its host in the composition. The Product
+  view names the product's branch, and says when a source reads an old copy
+  of the gears, with the commits and the line to change. (#720)
+- **The Gearbox engine comes from a constructorfabric/gearbox release**
+  (`snapshot-cf63925`), checked against its SHA-256. It reads the gears'
+  current `gear.gdl` (`implements`, maturity); a plugin no host declares no
+  longer breaks the catalogue; the `dev` and `local` profiles are development
+  profiles, so they are no longer held to production rules. (#630, #633,
+  #821, #887)
+- **A Studio without Gearbox** gives an empty catalogue instead of "the Studio
+  backend is not answering". (#696)
+- **A product saved in the portal opens in the desktop.** The portal's Build
+  it in Studio-ide link opens the project, then the product on the branch it
+  was saved to. (#617)
 
 ### macOS
 
@@ -45,7 +85,66 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   the Windows installer. It is signed ad hoc: allow it once in System Settings
   → Privacy & Security, and download each new version from its release page
   (the app says when one is out) -- it does not update itself until it is
-  signed with a Developer ID. See desktop-studio.md, *Installing on a Mac*.
+  signed with a Developer ID. Started from Finder or the Dock, the app takes
+  the login shell's PATH, so Homebrew's tools are found. See
+  desktop-studio.md, *Installing on a Mac*. (#636)
+
+### Documents
+
+- **Rendered comparison of Markdown**: two versions side by side, with the
+  added, removed and reworded parts marked on the rendered text -- against
+  HEAD, a branch or a tag, from a conflict, a history entry, a suggestion, and
+  from *what Sync brought*. (#620)
+- **Share with the team** in Doc editing's Team group, with *N documents not
+  shared* in the status bar: commits only your documents, as you, and pushes;
+  a protected branch, or a repository the project takes changes for by review,
+  gets a pull request instead. (#620, #623, #624)
+- **Editing together without noise.** A save changes only the lines you
+  edited; a colleague's first comment arrives without a reload; a pull while
+  a document is open is the commit author's edit, not a held proposal. (#620)
+- **Studio's findings in the editor.** The findings Spec Quality recorded for
+  a document are drawn in the text and listed on the Quality rail. The
+  Quality button is always there, greyed out without findings. The Analyze
+  panel follows a tab picked while it has focus. (#597, #599, #600, #601,
+  #604, #821)
+- **Writing hints**: a dotted underline on a requirement that is over 20
+  words, states two requirements, or has no actor; a project can turn them
+  off. (#716)
+- **The assistants panel no longer opens by itself** on start or on a mode
+  switch; Doc editing's Agents offers Claude Code and Codex. (#605, #620)
+
+### Fixes
+
+- **git asks no password after sign-in.** Fetch and branch switch used to fall
+  back to a user name prompt, because the credential helper started after the
+  window. (#710)
+- **A product saved on its own branch can be switched to**: a clean checkout
+  moves to the branch instead of keeping it in a worktree beside it. (#710)
+- **Gearbox no longer reads every project on the machine** as a source root.
+  (#710)
+- **Long paths on Windows**: the desktop's clones and the product branch's
+  worktree set `core.longpaths`. (#717)
+- **Build in Studio builds with the product's own crate versions.** The first
+  such build of studio-web failed compiling with two releases of the same
+  toolkit crates. (#911, through #913)
+
+### Known not to work
+
+- **The app was not built or smoke-tested with Gearbox Studio's workspace**:
+  the Product view, the grouped catalogue, and the Deploy panel's builds,
+  deploys, Status, Build in CI and secrets (#912) are covered by unit tests
+  only. Nor were the engine from a release (#887), the Mac build itself
+  (#636), Remove plugin and the stale-source notice (#720), or Sync's *Show
+  changed documents* (#620) run in a built app.
+- **Not run against a real cluster or registry**: Deploy to an environment
+  (#727), Publish and a whole Build in Studio (#865).
+- **The Gearbox engine's catalogue is slow** from a Windows folder: about 60
+  seconds against 5 in a container. (#887)
+- **Build and Run** were checked on Windows only; macOS was not run, nor a
+  machine without Visual Studio's cmake. (#717)
+- `gearbox-engine-process.test.ts` has 2 failures on Windows only (its fake
+  engine is a shebang script); unchanged by this release. (#912)
+- Intel Macs are not built. (#636)
 
 ## 0.3.0-beta.7
 
