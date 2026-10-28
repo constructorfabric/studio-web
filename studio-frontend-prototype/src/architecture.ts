@@ -661,7 +661,7 @@ export const SURFACES: Surface[] = [
     title: "Builds",
     does: "Build the composed product and publish it: in Studio as a Job in the organization's cluster, in the IDE, or by proposing a CI workflow; follow each build's stages (prepare, images, publish), a failed one with its first error, a published one with its images and chart; deploy a published build to an environment; and read the CI runs of the project's repositories.",
     components: ["ProjectBuilds", "BuildWorkflowProposal", "DeployBuildTo"],
-    gears: ["account-management", "studio-artifact-ingest", "studio-environments"],
+    gears: ["account-management", "studio-artifact-ingest", "studio-environments", "studio-product"],
   },
   {
     id: "project-tests",
