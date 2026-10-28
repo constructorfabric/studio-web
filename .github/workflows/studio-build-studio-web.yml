@@ -1,0 +1,143 @@
+# Proposed by Constructor Studio (ADR-0048): builds the product's images and
+# chart for its environments and tells Studio what it published. Studio deploys
+# what this uploads as `studio-build`; change the steps, keep the manifest.
+#
+# The registry login: GITHUB_TOKEN reaches ghcr.io. For another registry, set
+# the repository secrets STUDIO_REGISTRY_USERNAME and STUDIO_REGISTRY_TOKEN.
+name: Studio build studio-web
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  PRODUCT_FILE: "product.gdl"
+  PRODUCT: "studio-web"
+  PROFILE: "prod"
+  REGISTRY: "ghcr.io"
+  PREFIX: "ghcr.io/constructorfabric"
+  GEARBOX_REPO: "https://github.com/MikeFalcon77/gearbox.git"
+  GEARBOX_REV: "6d60603f8db36ef30ee50e1ff7008f3ee24a2501"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The Gearbox engine Studio runs
+        id: engine
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/gearbox
+          key: gearbox-${{ env.GEARBOX_REV }}
+
+      - name: Build the engine
+        if: steps.engine.outputs.cache-hit != 'true'
+        run: cargo install --locked --git "$GEARBOX_REPO" --rev "$GEARBOX_REV" gearbox-cli
+
+      - name: The product's gear sources
+        run: |
+          set -eu
+          mkdir -p .gearbox-sources
+          gearbox product --file "$PRODUCT_FILE" --format json > .gearbox-sources/product.json
+          : > .gearbox-sources/roots
+          # A path source is relative to the product's description.
+          base="$(dirname "$PRODUCT_FILE")"
+          # `|`, not a tab: a tab is whitespace to `read`, and the empty url and
+          # rev of a path source would collapse into it.
+          jq -r '.sources | to_entries[] | [.key, .value.kind, (.value.url // ""), (.value.rev // ""), (.value.at // "")] | join("|")' \
+            .gearbox-sources/product.json |
+          while IFS='|' read -r id kind url rev at; do
+            if [ "$kind" = git ]; then
+              git init -q ".gearbox-sources/$id"
+              git -C ".gearbox-sources/$id" fetch -q --depth 1 "$url" "$rev"
+              git -C ".gearbox-sources/$id" checkout -q FETCH_HEAD
+              echo ".gearbox-sources/$id" >> .gearbox-sources/roots
+            else
+              dir="$(realpath -m --relative-to=. "$base/$at")"
+              if [ "$(basename "$dir")" = "$id" ]; then
+                echo "$dir" >> .gearbox-sources/roots
+              else
+                ln -s "../$dir" ".gearbox-sources/$id"
+                echo ".gearbox-sources/$id" >> .gearbox-sources/roots
+              fi
+            fi
+          done
+
+      - name: Generate the ${{ env.PROFILE }} profile
+        run: |
+          set -eu
+          set --
+          while read -r root; do set -- "$@" --root "$root"; done < .gearbox-sources/roots
+          gearbox generate "$@" --product "$PRODUCT_FILE" --profile "$PROFILE" --out .gearbox/out
+
+      - name: Log in to the registry
+        env:
+          USERNAME: ${{ secrets.STUDIO_REGISTRY_USERNAME || github.actor }}
+          TOKEN: ${{ secrets.STUDIO_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin
+          echo "$TOKEN" | helm registry login "$REGISTRY" -u "$USERNAME" --password-stdin
+
+      - name: Build and push the images
+        run: |
+          set -eu
+          # Two gaps of the generated tree, closed here until the engine does
+          # (constructorfabric/gearbox#12):
+          # build.sh passes `--ignorefile`, which no docker build takes -- a
+          # Dockerfile's own `<Dockerfile>.dockerignore` does the same; and the
+          # build stage has no protoc or cmake, which gRPC gears and zlib need.
+          for d in .gearbox/out/docker/*/; do
+            cp .gearbox/out/docker/.dockerignore "${d}Dockerfile.dockerignore"
+            grep -q protobuf-compiler "${d}Dockerfile" ||
+              sed -i '/^FROM rust:.* AS build$/a RUN apt-get update -qq \&\& apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake \&\& rm -rf /var/lib/apt/lists/*' "${d}Dockerfile"
+          done
+          sed -i '/--ignorefile/d' .gearbox/out/docker/build.sh
+          sh .gearbox/out/docker/build.sh
+          short="$(echo "$GITHUB_SHA" | cut -c1-12)"
+          echo '[]' > images.json
+          sed -n "s/^ *build_one \([A-Za-z0-9_-]*\) '\([^']*\)'.*/\1 \2/p" .gearbox/out/docker/build.sh | sort -u |
+          while read -r app image; do
+            name="${image%%:*}"
+            target="$PREFIX/$name:sha-$short"
+            docker tag "$image" "$target"
+            docker push "$target"
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$target")"
+            jq --arg app "$app" --arg image "$target@${digest#*@}" '. + [{app: $app, image: $image}]' images.json > images.next
+            mv images.next images.json
+          done
+
+      - name: Publish the chart
+        run: |
+          set -eu
+          short="$(echo "$GITHUB_SHA" | cut -c1-12)"
+          base="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' ".gearbox/out/helm/$PRODUCT/Chart.yaml" | head -1)"
+          version="${base:-0.1.0}-sha.$short"
+          helm package ".gearbox/out/helm/$PRODUCT" --version "$version" -d .gearbox/charts
+          helm push ".gearbox/charts/$PRODUCT-$version.tgz" "oci://$PREFIX/charts"
+          echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: The manifest Studio reads
+        run: |
+          set -eu
+          lock=""
+          if [ -f .gearbox/out/product.lock ]; then lock="$(sha256sum .gearbox/out/product.lock | cut -c1-64)"; fi
+          jq -n --arg product "$PRODUCT" --arg profile "$PROFILE" --arg commit "$GITHUB_SHA" \
+            --arg lock "$lock" --arg chart "oci://$PREFIX/charts/$PRODUCT" --arg version "$CHART_VERSION" \
+            --slurpfile images images.json \
+            '{product: $product, profile: $profile, commit: $commit, images: $images[0],
+              chart: {reference: $chart, version: $version}}
+             + (if $lock == "" then {} else {lock_hash: $lock} end)' > studio-build.json
+          cat studio-build.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-build
+          path: studio-build.json
+          retention-days: 90
