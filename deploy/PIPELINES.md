@@ -73,12 +73,14 @@ Every routed job uses the same expression, with only its class and its
 GitHub-hosted image changing:
 
 ```yaml
-runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
+runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
 ```
 
 - `STUDIO_FORCE_GITHUB_HOSTED` = `true` (repository variable) sends every
   routed job back to GitHub-hosted. This is the rollback.
-- A pull request from a fork runs on GitHub-hosted, unless the fork's owner is
+- A run inside a fork (a push to the fork, or its own pull requests) runs on
+  GitHub-hosted: the organisation's runners serve this repository only.
+- A pull request from a fork to this repository runs on GitHub-hosted, unless the fork's owner is
   listed in the repository variable `STUDIO_RUNNER_FORK_OWNERS` (JSON, e.g.
   `["AndrejK666"]`).
 - A new runner label must also be added to `.github/actionlint.yaml`, or the

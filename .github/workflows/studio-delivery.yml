@@ -80,9 +80,10 @@ concurrency:
 #                    (hence the job-level `contents: read` on those jobs)
 #   studio-small-vm  a small VM: short jobs that need a write permission
 #   studio-large     a large VM with Docker: compiles, image builds, compose
-# Two cases stay on GitHub-hosted: the repository variable
+# Three cases stay on GitHub-hosted: the repository variable
 # STUDIO_FORCE_GITHUB_HOSTED set to `true` (the rollback, for every routed job
-# at once), and a pull request from a fork, unless its owner is listed in the
+# at once), any run inside a fork (it cannot use the organisation's runners),
+# and a pull request from a fork, unless its owner is listed in the
 # repository variable STUDIO_RUNNER_FORK_OWNERS as JSON, e.g. ["AndrejK666"]:
 # people who can push to this repository anyway and work from a fork.
 # Checkouts on the routed jobs do not keep the job token on disk, where a
@@ -100,7 +101,7 @@ jobs:
   test-changes:
     name: Detect changed components
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     outputs:
@@ -194,7 +195,7 @@ jobs:
   test-backend:
     needs: test-changes
     if: needs.test-changes.outputs.backend == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
     defaults:
       run:
         working-directory: studio-backend
@@ -255,7 +256,7 @@ jobs:
   test-frontend:
     needs: test-changes
     if: needs.test-changes.outputs.frontend == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
     defaults:
       run:
         working-directory: studio-frontend
@@ -292,7 +293,7 @@ jobs:
   test-prototype:
     needs: test-changes
     if: needs.test-changes.outputs.prototype == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     defaults:
@@ -328,7 +329,7 @@ jobs:
   test-theia-session-gate:
     needs: test-changes
     if: needs.test-changes.outputs.theia == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     steps:
@@ -361,7 +362,7 @@ jobs:
     name: Contract — both portals call endpoints that exist
     # No `needs` and no filter: it must not inherit the component selection that
     # is exactly what lets this drift through.
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     steps:
@@ -399,7 +400,7 @@ jobs:
   test-infra:
     needs: test-changes
     if: needs.test-changes.outputs.infra == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -427,7 +428,7 @@ jobs:
   test-deployment-config:
     needs: test-changes
     if: needs.test-changes.outputs.deployment == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-small' }}
     permissions:
       contents: read
     steps:
@@ -561,7 +562,7 @@ jobs:
       (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
       (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
       (needs.test-deployment-config.result == 'success' || needs.test-deployment-config.result == 'skipped')
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     steps:
@@ -578,7 +579,7 @@ jobs:
       needs.test-complete.result == 'success' &&
       needs.test-changes.result == 'success' &&
       ((github.event_name == 'push' && github.repository == 'constructorfabric/studio-web') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy')))
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-small' }}
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
       test_run_id: ${{ steps.tests.outputs.run_id }}
@@ -663,7 +664,7 @@ jobs:
     # least as new. `ubuntu-latest` moving to a newer glibc than trixie would
     # resurrect "version GLIBC_X.YY not found" at container start — bump the
     # runner and the runtime base TOGETHER.
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       # Cargo.lock pins every gear's crates.io version, so rebuilding the same
       # commit resolves the same Rust sources.
@@ -706,7 +707,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -771,7 +772,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       actions: read
       contents: read
@@ -822,7 +823,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       actions: read
       contents: read
@@ -879,7 +880,7 @@ jobs:
     # Only a push to main enters ci-trusted, whose key lets ci-cache write the
     # BuildKit cache; every other build reads it.
     environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'ci-trusted' || '' }}
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
     permissions:
       # write: `Record the delivered commit` moves the delivery/edge tag.
       contents: write
@@ -1147,7 +1148,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'infra'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-large' }}
     permissions:
       contents: read
       packages: write
@@ -1237,7 +1238,7 @@ jobs:
       needs.build-backend-binary.result == 'success' &&
       needs.build-frontend-dist.result == 'success' &&
       needs.build-service-images.result == 'success'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small-vm' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small-vm' }}
     permissions:
       contents: write
     steps:
@@ -1263,7 +1264,7 @@ jobs:
       github.ref_type == 'tag' &&
       needs.build-require-ci.outputs.scope == 'infra' &&
       needs.build-infra-images.result == 'success'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small-vm' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small-vm' }}
     permissions:
       contents: write
     steps:
@@ -1295,7 +1296,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.build-require-ci.result == 'success' &&
       needs.build-service-images.result == 'success'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-large' }}
     permissions:
       contents: read
       packages: read
@@ -1376,7 +1377,7 @@ jobs:
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
       (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped') &&
       (needs.test-e2e.result == 'success' || needs.test-e2e.result == 'skipped')
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       contents: read
     steps:
