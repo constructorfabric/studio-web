@@ -44,7 +44,9 @@ use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 pub const TASK_TYPE: &str = "environments.build";
 pub const WATCH_TASK_TYPE: &str = "environments.build.watch";
 
-/// The image BuildKit runs in, rootless.
+/// The image BuildKit runs in, rootless, unless `STUDIO_BUILDKIT_IMAGE` names
+/// another: a cluster that admits only its own registry's images wants the
+/// same image through that registry's proxy.
 pub const BUILDKIT_IMAGE: &str = "moby/buildkit:v0.20.0-rootless";
 
 /// How long a build may take before the cluster stops it.
@@ -85,6 +87,14 @@ pub struct BuildPayload {
     pub git_ref: Option<String>,
     /// The image `prepare` and `publish` run in: this Studio's backend.
     pub builder_image: String,
+    /// The image the `build` step runs BuildKit in. Absent from a build
+    /// queued before it was recorded, which gets the default.
+    #[serde(default = "default_buildkit_image")]
+    pub buildkit_image: String,
+}
+
+fn default_buildkit_image() -> String {
+    BUILDKIT_IMAGE.to_owned()
 }
 
 /// What a watch run carries: the Job to follow.
@@ -124,6 +134,15 @@ pub fn git_secret_name(build_id: &str) -> String {
         .chars()
         .take(63)
         .collect()
+}
+
+/// The image BuildKit runs in: `STUDIO_BUILDKIT_IMAGE`, else [`BUILDKIT_IMAGE`].
+pub fn buildkit_image() -> String {
+    std::env::var("STUDIO_BUILDKIT_IMAGE")
+        .ok()
+        .map(|image| image.trim().to_owned())
+        .filter(|image| !image.is_empty())
+        .unwrap_or_else(default_buildkit_image)
 }
 
 /// The image `prepare` and `publish` run in: `STUDIO_BUILDER_IMAGE`, else the
@@ -226,7 +245,7 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
                         },
                         {
                             "name": "build",
-                            "image": BUILDKIT_IMAGE,
+                            "image": p.buildkit_image,
                             "command": ["sh", "-c", BUILD_SCRIPT],
                             "env": [
                                 { "name": "PREFIX", "value": p.prefix },
@@ -854,9 +873,38 @@ fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
         String::from_utf8_lossy(&out.stderr)
     );
     if !out.status.success() {
-        bail!("{what} failed: {}", tail(&text, 1500));
+        // The whole output to the container's log; the failure itself carries
+        // what went wrong, which the run records as the build's reason.
+        eprintln!("{text}");
+        bail!("{what} failed: {}", tail(&errors_first(&text), 1500));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// A tool's output reduced to its `error` diagnostics, each with the lines
+/// indented under it, or all of it when it names none. gearbox prints every
+/// `info` and `warning` before it gives up, and a whole product's of them
+/// pushed the one `error` out of the tail a failure keeps.
+fn errors_first(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut in_error = false;
+    for line in text.lines() {
+        if line.starts_with(char::is_whitespace) {
+            if in_error {
+                kept.push(line);
+            }
+        } else {
+            in_error = line.starts_with("error");
+            if in_error {
+                kept.push(line);
+            }
+        }
+    }
+    if kept.is_empty() {
+        text.to_owned()
+    } else {
+        kept.join("\n")
+    }
 }
 
 fn gearbox() -> String {
@@ -1156,7 +1204,25 @@ mod tests {
             },
             git_ref: None,
             builder_image: "ghcr.io/acme/studio-backend:sha-1".into(),
+            buildkit_image: BUILDKIT_IMAGE.into(),
         }
+    }
+
+    #[test]
+    fn a_failure_keeps_its_errors_however_many_notes_come_before_them() {
+        let notes = "info [GBX0517] two plugins share a vendor\n    help: give them priorities\n"
+            .repeat(40);
+        let text = format!(
+            "{notes}error [GBX0511] gear `tenant-resolver` has no implementation\n    \
+             help: pick one\nwarning [GBX0315] no gRPC services\nerror: resolution reported errors"
+        );
+        let kept = errors_first(&text);
+        assert_eq!(
+            kept,
+            "error [GBX0511] gear `tenant-resolver` has no implementation\n    help: pick one\n\
+             error: resolution reported errors"
+        );
+        assert_eq!(errors_first("fatal: no such ref"), "fatal: no such ref");
     }
 
     #[test]

@@ -1166,6 +1166,7 @@ impl EnvironmentService {
             },
             git_ref,
             builder_image,
+            buildkit_image: build::buildkit_image(),
         };
         if let Ok(builds) = self
             .hub

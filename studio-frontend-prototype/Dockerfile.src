@@ -11,6 +11,8 @@ COPY studio-frontend-prototype/ ./
 # The /architecture/ page's prototype map is read from src/ at build time by
 # vite.config.ts, with the reader the API-usage check uses (../scripts here).
 COPY scripts/api-usage-lib.mjs scripts/prototype-api-map.mjs scripts/prototype-api-map.d.mts /scripts/
+# The cluster's bootstrap manifest, which "Connect a cluster" shows (../deploy here).
+COPY deploy/k8s/studio-environments/bootstrap.yaml /deploy/k8s/studio-environments/bootstrap.yaml
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0

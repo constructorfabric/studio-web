@@ -256,10 +256,15 @@ export function BuildWorkflowProposal({
   const [envId, setEnvId] = useState(withRegistry[0]?.id ?? "");
   const [profile, setProfile] = useState(profiles[0] ?? "prod");
   const [productFile, setProductFile] = useState("product.gdl");
+  const [gitRef, setGitRef] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (withRegistry.length === 0) return null;
+  // The Job pushes with the environment's registry login, which a workflow in
+  // the repository's CI does not need: it brings its own.
+  const chosen = withRegistry.find((e) => e.id === envId);
+  const noLogin = !!chosen && !chosen.registry_connection_id;
   return (
     <div className="card" data-build-workflow>
       <h3>Build</h3>
@@ -284,6 +289,13 @@ export function BuildWorkflowProposal({
           title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
           placeholder="product.gdl"
         />
+        <input
+          value={gitRef}
+          onChange={(e) => setGitRef(e.target.value)}
+          aria-label="Branch or tag"
+          title="The branch or tag to build; the repository's own branch when empty. Push it first: the Job clones from the repository, not from anybody's machine."
+          placeholder="branch (default)"
+        />
         <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
           {(profiles.length ? profiles : ["prod"]).map((p) => (
             <option key={p}>{p}</option>
@@ -292,7 +304,8 @@ export function BuildWorkflowProposal({
         <button
           type="button"
           className="primary"
-          disabled={building || !envId}
+          disabled={building || !envId || noLogin}
+          title={noLogin ? `${chosen?.name} has no registry connection: the Job pushes with its login. Add one to the environment.` : undefined}
           onClick={async () => {
             setBuilding(true);
             setError(null);
@@ -301,6 +314,7 @@ export function BuildWorkflowProposal({
                 environment_id: envId,
                 profile,
                 product_file: productFile.trim() || "product.gdl",
+                ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
               });
               onChanged?.(`Build ${b.build_id} started in ${b.namespace}: it shows under Builds, and under Deploy a build once it passes.`);
             } catch (e) {

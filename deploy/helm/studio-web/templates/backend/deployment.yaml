@@ -255,6 +255,10 @@ spec:
               value: {{ .Values.backend.telemetry.tracing | quote }}
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
+            - name: STUDIO_BUILDER_IMAGE
+              value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+            - name: STUDIO_BUILDKIT_IMAGE
+              value: {{ .Values.backend.builds.buildkitImage | quote }}
             - name: STUDIO_SESSION_ENABLED
               value: {{ .Values.backend.sessions.enabled | quote }}
             - name: STUDIO_SESSION_IMAGE

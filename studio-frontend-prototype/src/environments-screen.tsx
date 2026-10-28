@@ -829,7 +829,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
             What runs here
           </h4>
           {current.running.length === 0 ? (
-            <p className="empty">Nothing deployed to this cluster yet. A deploy is asked for from the desktop, after Generate.</p>
+            <p className="empty">Nothing deployed to this cluster yet. A project deploys from its Deploys tab, or from the desktop after Generate.</p>
           ) : (
             <ul className="env-list">
               {current.running.map((d) => (

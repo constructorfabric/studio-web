@@ -61,6 +61,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // "Connect a cluster" shows the cluster's bootstrap manifest from
+    // ../deploy, outside this root, which the dev server refuses by default.
+    fs: { allow: [".", "../deploy/k8s/studio-environments"] },
     // The repo lives on the Windows FS (/mnt/c) while vite runs in WSL:
     // inotify events don't cross that boundary, so file edits made on the
     // Windows side are never picked up and HMR silently serves stale code.

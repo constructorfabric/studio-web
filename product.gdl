@@ -71,7 +71,7 @@ product(
         use_gear("studio-tasks", source = "studio-backend"),
         use_gear("studio-usage", source = "studio-backend"),
         use_gear("studio-user", source = "studio-backend"),
-        use_gear("tenant-resolver", source = "gears-rust"),
+        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
         use_gear("types-registry", source = "gears-rust"),
         use_gear("usage-collector", source = "gears-rust", plugins = [plugin("postgres-usage-collector-plugin")]),
     ],
