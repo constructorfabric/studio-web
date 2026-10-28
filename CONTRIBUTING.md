@@ -83,6 +83,9 @@ locally for each component you changed:
 | `keycloak/` | the account-takeover tests against the running Compose Keycloak — [`keycloak/README.md`](keycloak/README.md) has the command |
 | `deploy/` | `helm lint deploy/helm/studio-web -f deploy/helm/values-dev.example.yaml`, and the same for `values-test.example.yaml` |
 
+Which runner a CI job uses, and what each runner can run, is in
+[`deploy/PIPELINES.md`](deploy/PIPELINES.md#runners).
+
 `npm run test:unit` is the frontend command CI runs. A bare `vitest` reads one
 config and misses the per-package suites.
 
