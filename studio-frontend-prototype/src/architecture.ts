@@ -55,6 +55,39 @@ export interface Manifest {
   sessions_enabled: boolean;
   session_image?: string | null;
   gears: ManifestGear[];
+  /** Where each gear keeps its records (ADR-0051 §8a); absent on a backend
+   *  older than the domain-model move. */
+  data?: ManifestData[];
+}
+
+/** One gear's records: each kind and its `storage.<kind>` setting, and the
+ *  domain-model types only it writes. */
+export interface ManifestData {
+  gear: string;
+  stores: { kind: string; store: string }[];
+  types: string[];
+}
+
+/** The design the data section explains. */
+export const DATA_DESIGN_DOC = "docs/adr/0051-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md";
+
+/** What the data section counts: gears keeping records, kinds in the model and
+ *  kinds still kept elsewhere, and the types gears hold. */
+export function dataSummary(data: ManifestData[]): {
+  gears: number;
+  inModel: number;
+  elsewhere: { gear: string; kind: string; store: string }[];
+  types: number;
+} {
+  const elsewhere = data.flatMap((d) =>
+    d.stores.filter((s) => s.store !== "model").map((s) => ({ gear: d.gear, ...s })),
+  );
+  return {
+    gears: data.length,
+    inModel: data.reduce((n, d) => n + d.stores.filter((s) => s.store === "model").length, 0),
+    elsewhere,
+    types: new Set(data.flatMap((d) => d.types)).size,
+  };
 }
 
 /** The part of `prototype-map.json` the page still reads: its build commit. */
@@ -510,6 +543,7 @@ export const SURFACES: Surface[] = [
     gears: [
       "account-management",
       "studio-connector",
+      "studio-domain-model",
       "studio-events",
       "studio-notify",
       "studio-organizations",
@@ -562,7 +596,7 @@ export const SURFACES: Surface[] = [
     title: "Project types",
     does: "Decide which kinds of project an organization or a workspace offers, what each creates and which tabs its projects show.",
     components: ["ProjectTypesTab"],
-    gears: ["account-management", "studio-kits"],
+    gears: ["studio-kits", "studio-organizations"],
   },
   {
     id: "project-overview",
@@ -798,9 +832,9 @@ export const SURFACES: Surface[] = [
   {
     id: "domain-model",
     area: "organization",
-    title: "Objects and views",
-    does: "Explore the domain model: object types, their relations, saved views.",
-    components: ["ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
+    title: "Domain model, objects and views",
+    does: "Edit the domain model (types and their fields), explore it, keep saved views, and record the attributes it gives projects and workspaces.",
+    components: ["DomainModelAdmin", "Relations", "LinkList", "GtsIds", "TypeObjectsTab", "LevelGenericTab", "TabsSettings", "ObjectAttributes", "ModelFields", "ProjectTimeline", "MilestoneDialog", "ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
     gears: ["studio-components-catalog", "studio-domain-model", "types-registry"],
   },
   {

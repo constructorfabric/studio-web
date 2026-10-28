@@ -64,6 +64,8 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0049](0049-constructor-research-runs-a-product-as-one-of-its-applications.md) | Constructor Research builds and runs a product as one of its applications, reached through a connection and an integration service | proposed | 2026-10-23 |
 | [0050](0050-a-products-frontend-is-composed-from-frontx-micro-frontends.md) | A product's frontend is composed from FrontX micro-frontends, the way its backend is composed from gears | proposed | 2026-10-23 |
 | [0051](0051-an-owner-asks-for-an-organization-and-an-administrator-approves-it.md) | Anybody with a verified identity may sign in; an owner asks for an organization, and a platform administrator approves the organization, not the person | proposed | 2026-10-28 |
+| [0051](0051-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md) | Domain objects are read from a Postgres mirror of the graph, and the domain query compiles to SQL over it | proposed | 2026-10-26 |
+| [0052](0052-a-domain-object-says-what-happened-to-it-and-kits-bring-the-rest.md) | A domain object says what happened to it, workflows react to that, and a kit brings the rest | proposed | 2026-10-27 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

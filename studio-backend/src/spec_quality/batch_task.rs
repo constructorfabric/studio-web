@@ -109,7 +109,14 @@ impl AnalyzeBatchTask {
 
     /// A document the service will not analyse — a type it does not judge —
     /// recorded as a pending gate verdict that says so.
-    async fn record_refusal(&self, spec: &RecordSpec, detector: &str, item_id: &str, why: &str) {
+    async fn record_refusal(
+        &self,
+        ctx: &TaskContext,
+        spec: &RecordSpec,
+        detector: &str,
+        item_id: &str,
+        why: &str,
+    ) {
         let Some(subject) = spec.subjects.get(item_id) else {
             return;
         };
@@ -124,15 +131,18 @@ impl AnalyzeBatchTask {
             return;
         };
         if let Err(e) = recorder
-            .record_detector_verdict(crate::documents::port::DetectorVerdict {
-                workspace_id: spec.workspace_id,
-                binding_id: subject.binding_id,
-                document_id: subject.document_id,
-                detector: detector.to_owned(),
-                state: "pending".to_owned(),
-                task_id: None,
-                summary: format!("{detector}: not analysed — {why}"),
-            })
+            .record_detector_verdict(
+                &ctx.security,
+                crate::documents::port::DetectorVerdict {
+                    workspace_id: spec.workspace_id,
+                    binding_id: subject.binding_id,
+                    document_id: subject.document_id,
+                    detector: detector.to_owned(),
+                    state: "pending".to_owned(),
+                    task_id: None,
+                    summary: format!("{detector}: not analysed — {why}"),
+                },
+            )
             .await
         {
             warn!(detector, item = %item_id, error = %e, "studio-spec-quality: could not record why a document was not analysed");
@@ -237,15 +247,18 @@ impl AnalyzeBatchTask {
                     continue;
                 }
                 if let Err(e) = recorder
-                    .record_detector_verdict(crate::documents::port::DetectorVerdict {
-                        workspace_id: spec.workspace_id,
-                        binding_id: subject.binding_id,
-                        document_id: subject.document_id,
-                        detector: detector.to_owned(),
-                        state: r.gate.as_str().to_owned(),
-                        task_id: Some(task_id.to_owned()),
-                        summary: r.summary.clone(),
-                    })
+                    .record_detector_verdict(
+                        &ctx.security,
+                        crate::documents::port::DetectorVerdict {
+                            workspace_id: spec.workspace_id,
+                            binding_id: subject.binding_id,
+                            document_id: subject.document_id,
+                            detector: detector.to_owned(),
+                            state: r.gate.as_str().to_owned(),
+                            task_id: Some(task_id.to_owned()),
+                            summary: r.summary.clone(),
+                        },
+                    )
                     .await
                 {
                     warn!(detector, path = %r.path, error = %e, "studio-spec-quality: could not record the gate verdict");
@@ -312,7 +325,7 @@ impl TaskHandler for AnalyzeBatchTask {
                 // why it is not satisfied, and a sync that analyses documents
                 // never analysed does not ask about this one every time.
                 if let Some(spec) = payload.record.as_ref() {
-                    self.record_refusal(spec, &payload.detector, &item.id, &why)
+                    self.record_refusal(ctx, spec, &payload.detector, &item.id, &why)
                         .await;
                 }
                 outcomes.push(ItemOutcome {
@@ -635,7 +648,11 @@ mod tests {
 
     #[async_trait]
     impl AnalysisRecorder for FakeRecorder {
-        async fn record_detector_verdict(&self, verdict: DetectorVerdict) -> anyhow::Result<()> {
+        async fn record_detector_verdict(
+            &self,
+            _ctx: &SecurityContext,
+            verdict: DetectorVerdict,
+        ) -> anyhow::Result<()> {
             self.0.lock().unwrap().push(verdict);
             Ok(())
         }
@@ -1002,6 +1019,7 @@ mod tests {
         let spec = spec(&[("docs/app.md", binding("node-app", BINDING_A))]);
         rig.task
             .record_refusal(
+                &rig.ctx,
                 &spec,
                 "leak",
                 "docs/app.md",
@@ -1039,10 +1057,10 @@ mod tests {
             },
         )]);
         rig.task
-            .record_refusal(&spec, "purpose", "nobody.md", "why")
+            .record_refusal(&rig.ctx, &spec, "purpose", "nobody.md", "why")
             .await;
         rig.task
-            .record_refusal(&spec, "purpose", "b.md", "why")
+            .record_refusal(&rig.ctx, &spec, "purpose", "b.md", "why")
             .await;
         assert!(rig.verdicts().is_empty());
     }

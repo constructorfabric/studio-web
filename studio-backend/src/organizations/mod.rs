@@ -14,6 +14,7 @@
 mod creation;
 pub mod logo;
 mod overview;
+pub mod project_types;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
 pub mod port;
@@ -202,6 +203,19 @@ impl RestApiCapability for StudioOrganizationsGear {
                 crate::studio_session::sdk::TenantMembership::new(Arc::clone(&sources.am)),
             ))
         });
+        // A tenant's project types, kept as domain objects (ADR-0051 §8a).
+        let project_types = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .ok()
+            .map(|am| {
+                project_types::ProjectTypes(crate::model_metadata::client_for(
+                    ctx,
+                    am,
+                    project_types::MODEL_KINDS,
+                ))
+            });
+        let router = project_types::register(router, openapi, project_types);
         Ok(rest::register_routes(
             router, openapi, service, creation, sources, overview, access,
         ))
@@ -264,13 +278,16 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
             crate::user_profile::IDENTITY_INSTANCE_ID,
         ))
         .ok();
-    Some(Arc::new(OrganizationService::new(
-        am,
-        memberships,
-        evictions,
-        authority,
-        requests,
-        reader,
-        PLATFORM_ROOT_TENANT_ID,
-    )))
+    Some(Arc::new(
+        OrganizationService::new(
+            am,
+            memberships,
+            evictions,
+            authority,
+            requests,
+            reader,
+            PLATFORM_ROOT_TENANT_ID,
+        )
+        .with_hub(ctx.client_hub()),
+    ))
 }

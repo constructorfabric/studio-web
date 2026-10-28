@@ -54,6 +54,56 @@ pub const BINDINGS_METADATA_TYPE: &str =
 pub const DEPLOYMENTS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.deployments.v1~";
 
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0051 §8a, `storage.metadata`).
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[
+        Kind {
+            type_id: ENVIRONMENTS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[Part {
+                field: "items",
+                entity: "deployment-environment",
+                name: "Deployment Environment",
+                description: "A cluster namespace an organization deploys its products to.",
+                key: &["id"],
+            }],
+        },
+        Kind {
+            type_id: BINDINGS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[
+                Part {
+                    field: "items",
+                    entity: "environment-binding",
+                    name: "Environment Binding",
+                    description: "Which environment a project's deployment profile deploys to, with its values.",
+                    key: &["profile", "environment_id"],
+                },
+                Part {
+                    field: "secrets",
+                    entity: "environment-config-secret",
+                    name: "Environment Config Secret",
+                    description: "A configuration secret a project sets for one environment; the value stays in credstore.",
+                    key: &["environment_id", "key"],
+                },
+            ],
+        },
+        Kind {
+            type_id: DEPLOYMENTS_METADATA_TYPE,
+            gear: "studio-environments",
+            parts: &[Part {
+                field: "items",
+                entity: "deployment",
+                name: "Deployment",
+                description: "One deploy of a project's build to an environment, and how it went.",
+                key: &["id"],
+            }],
+        },
+    ]
+};
+
 #[toolkit::gear(
     name = "studio-environments",
     deps = [account_management],
@@ -89,7 +139,7 @@ impl RestApiCapability for StudioEnvironmentsGear {
             crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am)),
         ));
         let service = Arc::new(service::EnvironmentService::new(
-            store::Store::new(am),
+            store::Store::new(crate::model_metadata::client_for(ctx, am, MODEL_KINDS)),
             ctx.client_hub(),
         ));
         let router = rest::register_routes(router, openapi, service);

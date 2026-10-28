@@ -25,6 +25,7 @@ mod ingest_task;
 pub mod sdk;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
+mod model_store;
 mod outputs; // what the builds produced: CI artifacts and releases
 pub mod port;
 mod pull_request_waits;
@@ -48,6 +49,22 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use crate::connectors::sdk::ConnectorDriver;
 use graph::InMemoryGraphStore;
 use service::IngestService;
+
+/// `gears.studio-artifact-ingest.config`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ArtifactIngestConfig {
+    /// Where each kind of this gear's data is kept (ADR-0051 §8a).
+    pub storage: ArtifactStorageConfig,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ArtifactStorageConfig {
+    /// The artifact graph: `model` (domain objects, the default) or `graph`
+    /// (the gear's own graph types).
+    pub artifacts: model_store::ArtifactStorage,
+}
 
 #[toolkit::gear(
     name = "studio-artifact-ingest",
@@ -188,6 +205,28 @@ impl RestApiCapability for StudioArtifactIngestGear {
             let graph: Arc<dyn graph::GraphStore> = match self.index.get().cloned().flatten() {
                 Some(index) => Arc::new(index::IndexedGraphStore::new(graph, index)),
                 None => graph,
+            };
+            // The target scheme (ADR-0051 §8a): the artifacts are domain
+            // objects, and the store above only answers until a tenant's have
+            // moved.
+            let config: ArtifactIngestConfig = ctx.config_or_default()?;
+            let held = Arc::new(model_store::ModelGraphStore::new(graph, ctx.client_hub()));
+            let in_model = config.storage.artifacts == model_store::ArtifactStorage::Model;
+            crate::data_places::note(
+                "studio-artifact-ingest",
+                "artifacts",
+                &crate::data_places::store_name(config.storage.artifacts),
+            );
+            crate::model_sweep::register(Arc::new(model_store::ArtifactMover {
+                store: held.clone(),
+                returning: !in_model,
+            }));
+            let graph: Arc<dyn graph::GraphStore> = if in_model {
+                info!("studio-artifact-ingest: artifacts are kept as domain objects");
+                Arc::new(model_store::ModelGraph(held))
+            } else {
+                // Kept in the graph store: what the model holds moves back.
+                Arc::new(model_store::ReturningGraph(held))
             };
 
             // Preferred file source: the studio-session workspaces root. When

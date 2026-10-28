@@ -73,6 +73,7 @@ import {
   walkLine,
 } from "./registry";
 import type { RegistryAction } from "./registry";
+import { useDomainRefresh } from "./domain-live";
 
 export function ComponentRegistry({
   token,
@@ -124,6 +125,7 @@ export function ComponentRegistry({
       else setError(errText(cause));
     }
   };
+  useDomainRefresh(["registry-entry","registry-occurrence","registry-decision","registry-settings","registry-read"], load);
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps

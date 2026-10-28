@@ -101,6 +101,9 @@ pub struct OrganizationService {
     reader: Option<Arc<dyn OrganizationReader>>,
     /// The tenant every organization is created under.
     platform_root: Uuid,
+    /// Where a new organization's domain model is prepared; `None` in tests
+    /// and in a build without the domain model.
+    hub: Option<Arc<toolkit::client_hub::ClientHub>>,
 }
 
 /// Why an approval did not finish.
@@ -132,6 +135,35 @@ impl OrganizationService {
             requests,
             reader,
             platform_root,
+            hub: None,
+        }
+    }
+
+    /// Prepare each new organization's domain model through the gear the hub
+    /// resolves.
+    pub(crate) fn with_hub(mut self, hub: Arc<toolkit::client_hub::ClientHub>) -> Self {
+        self.hub = Some(hub);
+        self
+    }
+
+    /// Studio's own model, stored for a new organization with its types
+    /// registered, so the first screen and the first gear write find it. A
+    /// failure is logged and left to the start-up sweep and the first write:
+    /// the organization exists either way.
+    async fn prepare_model(&self, ctx: &SecurityContext, org: Uuid) {
+        let Some(port) = self
+            .hub
+            .as_ref()
+            .and_then(|h| h.get::<dyn crate::domain_model::port::DomainObjects>().ok())
+        else {
+            return;
+        };
+        let prepared = match crate::org_scope::acting_in(ctx, org) {
+            Ok(acting) => port.prepare_model(&acting).await,
+            Err(e) => Err(anyhow!("{e}")),
+        };
+        if let Err(e) = prepared {
+            tracing::warn!(%org, error = %e, "studio-organizations: the new organization's domain model is not prepared yet");
         }
     }
 
@@ -318,6 +350,7 @@ impl OrganizationService {
             .await
             .map_err(|e| (Step::Membership, e, Some(org.id)))?;
 
+        self.prepare_model(ctx, org.id).await;
         Ok(org)
     }
 

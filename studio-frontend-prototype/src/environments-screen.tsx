@@ -44,6 +44,8 @@ import { DataTable } from "./data-table";
 import { errText, relTime } from "./format";
 import { AddCluster, AddRegistry } from "./kubeconfig-field";
 import { Tile } from "./view-mode";
+import { useDomainRefresh } from "./domain-live";
+import { ModelFields } from "./object-attributes";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
 
@@ -475,6 +477,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
       live = false;
     };
   }, [token, org.id]);
+  useDomainRefresh(["deployment-environment","environment-binding","environment-config-secret","deployment","connector-connection"], load);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -778,6 +781,11 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
+                    <ModelFields
+                      token={token}
+                      entity="deployment-environment"
+                      where={{ doc_tenant_id: { _eq: org.id }, doc_key: { _eq: e.id } }}
+                    />
                   </div>
                 ),
               },

@@ -18,6 +18,7 @@ import {
   type DomainFieldKind,
 } from "./domain-model.gen";
 import type { RawEdge, RawObj } from "./domain-model-graph";
+import { currentModel, fieldsOfModel, relationsOfModel, type DomainModel } from "./domain-runtime";
 
 /** One condition, as the editor holds it. Conditions are ANDed. */
 export interface ViewCondition {
@@ -66,6 +67,7 @@ export interface LooseQuery {
   include?: Record<string, LooseSelection>;
   limit?: number;
   offset?: number;
+  cursor?: string;
   project_id?: string;
 }
 
@@ -89,16 +91,112 @@ export interface LooseResult {
   total: number;
   complete: boolean;
   warnings: string[];
+  /** `read_model` once the organization's read model answers, `graph` before. */
+  source?: "read_model" | "graph";
+  /** Where the next page starts; absent on the last one. */
+  next_cursor?: string;
 }
 
-/** The fields of an entity and their kinds. */
+/** Where each page of a query starts, as the page before it said. The table
+ *  pages by number; the server pages by cursor (the platform's only way), so a
+ *  page that follows one already read is asked by cursor, and only a jump to a
+ *  page nobody has read yet goes by offset. */
+export class PageCursors {
+  private readonly starts = new Map<string, Map<number, string>>();
+
+  private static key(q: LooseQuery): string {
+    return JSON.stringify({ ...q, offset: undefined, limit: undefined, cursor: undefined });
+  }
+
+  /** `q` as sent: by cursor when its offset is a known page start. */
+  place(q: LooseQuery): LooseQuery {
+    const at = q.offset ?? 0;
+    const cursor = at > 0 ? this.starts.get(PageCursors.key(q))?.get(at) : undefined;
+    if (!cursor) return q;
+    const out: LooseQuery = { ...q, cursor };
+    delete out.offset;
+    return out;
+  }
+
+  /** What a page of `q` (as built, with its offset) said about the next one. */
+  note(q: LooseQuery, rows: number, next: string | undefined): void {
+    if (!next) return;
+    const key = PageCursors.key(q);
+    const starts = this.starts.get(key) ?? new Map<number, string>();
+    starts.set((q.offset ?? 0) + rows, next);
+    this.starts.set(key, starts);
+  }
+}
+
+/** Per loaded model, what has been derived from it: a new model (an edit
+ *  reloaded it) starts empty. */
+const derived = new WeakMap<DomainModel, Map<string, unknown>>();
+function memo<T>(key: string, make: (m: DomainModel) => T): T {
+  const m = currentModel();
+  let cache = derived.get(m);
+  if (!cache) derived.set(m, (cache = new Map()));
+  if (!cache.has(key)) cache.set(key, make(m));
+  return cache.get(key) as T;
+}
+
+/** Is `type` in the model? The live one once loaded, the build's seed before. */
+export function isModelType(type: string): type is DomainEntity {
+  const m = currentModel();
+  return m.source === "server" ? m.byId.has(type) : type in DOMAIN_FIELDS;
+}
+
+/** The fields of an entity and their kinds, from the live model when it has
+ *  loaded: a field an administrator adds shows up without a release. */
 export function fieldsOf(type: DomainEntity): { readonly [field: string]: DomainFieldKind } {
-  return DOMAIN_FIELDS[type];
+  return memo(`fields:${type}`, (m) =>
+    m.source === "server"
+      ? Object.fromEntries(fieldsOfModel(m, type).map((f) => [f.name, f.kind]))
+      : (DOMAIN_FIELDS[type] ?? {}),
+  );
 }
 
-/** The relations of an entity and the entity each reaches. */
+/** The entity's own relations (forwards), live model first. */
+function forwardOf(type: DomainEntity): { readonly [relation: string]: DomainEntity } {
+  return memo(`forward:${type}`, (m) =>
+    m.source === "server"
+      ? (relationsOfModel(m, type) as { [relation: string]: DomainEntity })
+      : (DOMAIN_RELATION_TARGETS[type] ?? {}),
+  );
+}
+
+/** The relations of an entity and the entity each reaches: its own, and
+ *  backwards those other entities declare towards it, as `~source.relation`
+ *  (the query follows those from their target, ADR-0051). */
 export function relationsOf(type: DomainEntity): { readonly [relation: string]: DomainEntity } {
-  return DOMAIN_RELATION_TARGETS[type];
+  return { ...forwardOf(type), ...reverseRelationsOf(type) };
+}
+
+/** How a relation reads in a column header or a picker: `delivers → project`
+ *  forwards, and from the other end `team · delivers this`, which says who
+ *  points here instead of spelling the query's `~team.delivers`. */
+export function relationLabel(name: string, target: DomainEntity | undefined): string {
+  const words = (s: string) => s.replace(/_\d+$/, "").replace(/_/g, " ");
+  if (name.startsWith("~")) {
+    const dot = name.indexOf(".");
+    const relation = dot >= 0 ? name.slice(dot + 1) : name.slice(1);
+    return `${target ?? name.slice(1, dot)} · ${words(relation)} this`;
+  }
+  return `${words(name)} → ${target ?? "?"}`;
+}
+
+/** The relations other entities declare towards `type`, each named for the
+ *  query's reverse include and mapped to the entity it reaches back to. */
+export function reverseRelationsOf(type: DomainEntity): { readonly [relation: string]: DomainEntity } {
+  return memo(`reverse:${type}`, (m) => {
+    const sources = (m.source === "server" ? m.entities.map((e) => e.id) : Object.keys(DOMAIN_RELATION_TARGETS)) as DomainEntity[];
+    const out: { [relation: string]: DomainEntity } = {};
+    for (const source of sources) {
+      for (const [relation, target] of Object.entries(forwardOf(source))) {
+        if (target === type) out[`~${source}.${relation}`] = source;
+      }
+    }
+    return out;
+  });
 }
 
 /** The field that names an object of `type`: `name`, else `title`, else its id. */
@@ -224,7 +322,7 @@ export function fromViewObject(value: Record<string, unknown>): ViewSpec | null 
   const query = value.query as LooseQuery | undefined;
   const p = value.presentation as Partial<ViewSpec> | undefined;
   const type = query?.type as DomainEntity | undefined;
-  if (!type || !(type in DOMAIN_FIELDS) || typeof value.id !== "string") return null;
+  if (!type || !isModelType(type) || typeof value.id !== "string") return null;
   return {
     id: value.id,
     name: typeof value.name === "string" ? value.name : "",
@@ -276,7 +374,7 @@ export function toGraph(spec: ViewSpec, res: LooseResult): { nodes: RawObj[]; ed
   const add = (r: LooseRow) => {
     if (nodes.has(r.id)) return;
     const entity = r.entity as DomainEntity;
-    const label = entity in DOMAIN_FIELDS ? labelField(entity) : "name";
+    const label = isModelType(entity) ? labelField(entity) : "name";
     nodes.set(r.id, {
       instance_id: r.id,
       entity: r.entity,

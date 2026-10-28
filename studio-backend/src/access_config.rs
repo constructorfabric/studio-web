@@ -77,6 +77,27 @@ pub const PRIVILEGES: [&str; 18] = [
     "cost.manage",
 ];
 
+/// Does a role with `privileges` carry `wanted`?
+///
+/// Exactly, or by implication for the domain model (ADR-0051 §8a): the model
+/// holds every gear's records, so a role that may see any of them (any
+/// `*.view`, `*.edit`, `*.manage`) may read domain objects, and one that may
+/// change any of them (`*.edit`, `*.manage`) may write them. Which records a
+/// person then reaches is still the gear's and the scope's to say. Without this
+/// a custom role written before the records moved would see empty screens.
+pub(crate) fn carries(privileges: &[String], wanted: &str) -> bool {
+    let writes = |p: &String| p.ends_with(".edit") || p.ends_with(".manage");
+    privileges.iter().any(|p| p == wanted)
+        || match wanted {
+            "domain.view" => privileges.iter().any(|p| p.ends_with(".view") || writes(p)),
+            "domain.edit" => privileges
+                .iter()
+                .filter(|p| *p != "domain.model")
+                .any(writes),
+            _ => false,
+        }
+}
+
 /// The role ladder a fresh organization is seeded with (ADR-0019 §2).
 ///
 /// This is written into the document rather than supplied by whoever reads it.
@@ -226,7 +247,7 @@ impl AccessConfig {
                 .roles
                 .iter()
                 .find(|r| r.key == role_key)
-                .is_some_and(|r| r.privileges.iter().any(|p| p == privilege))
+                .is_some_and(|r| carries(&r.privileges, privilege))
     }
 }
 
@@ -484,6 +505,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_role_that_sees_or_changes_any_records_reaches_the_domain_model() {
+        let p = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert!(carries(&p(&["environment.manage"]), "domain.view"));
+        assert!(carries(&p(&["environment.manage"]), "domain.edit"));
+        assert!(carries(&p(&["cost.view"]), "domain.view"));
+        assert!(!carries(&p(&["cost.view"]), "domain.edit"));
+        assert!(!carries(&p(&["domain.model"]), "domain.edit"));
+        assert!(!carries(&p(&["session.open"]), "domain.view"));
+        assert!(!carries(&p(&["people.view"]), "access.manage"));
+    }
 
     #[test]
     fn a_rekey_moves_member_grants_and_folds_what_becomes_the_same() {

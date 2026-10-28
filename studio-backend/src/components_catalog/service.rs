@@ -431,6 +431,9 @@ pub struct CatalogService {
     /// start: an organization's projects (`organizations::port::ProjectsOf`)
     /// and the scheduler. Unset in tests.
     pub(super) hub: std::sync::OnceLock<Arc<toolkit::client_hub::ClientHub>>,
+    /// Where the publication queue is kept (ADR-0051 §8a); unset is the
+    /// settings record, which is what tests without a hub run.
+    pub(super) request_storage: std::sync::OnceLock<super::registry_curation::RequestStorage>,
 }
 
 /// A read of the platform's tier, best effort: a platform that will not
@@ -477,6 +480,7 @@ impl CatalogService {
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             project_gears: super::project_gears::Cache::default(),
             hub: std::sync::OnceLock::new(),
+            request_storage: std::sync::OnceLock::new(),
         }
     }
 

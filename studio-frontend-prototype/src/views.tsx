@@ -8,7 +8,8 @@ import { api } from "./api";
 import { DataTable, type Column, type PageRequest } from "./data-table";
 import { DomainModelGraph, type GraphSource } from "./domain-model-graph";
 import { DOMAIN_ENTITIES, type DomainEntity } from "./domain-model.gen";
-import type { DomainQuery } from "./domain-query";
+import { useCurrentModel, useDomainModel } from "./domain-runtime";
+import type { DomainOperation, DomainQuery } from "./domain-query";
 import { errText } from "./format";
 import { Modal } from "./modal";
 import {
@@ -21,7 +22,9 @@ import {
   graphQuery,
   labelField,
   pageQuery,
+  PageCursors,
   problems,
+  relationLabel,
   relationsOf,
   toGraph,
   toViewObject,
@@ -31,6 +34,7 @@ import {
   type ViewCondition,
   type ViewSpec,
 } from "./views-model";
+import { useDomainRefresh, useDomainRevision } from "./domain-live";
 
 /** The query endpoint is typed per entity; a view's type is only known at
  *  runtime, so the screen sends the loose shape and reads the loose answer. */
@@ -46,6 +50,9 @@ function newId(): string {
 }
 
 export function ViewsScreen({ token }: { token: string }) {
+  // Fields and relations come from the live model, so a field added in
+  // Administration › Domain model can be a column at once.
+  useDomainModel(token);
   const [views, setViews] = useState<ViewSpec[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -67,6 +74,7 @@ export function ViewsScreen({ token }: { token: string }) {
       setViews([]);
     }
   }, [token]);
+  useDomainRefresh(["view"], reload);
 
   useEffect(() => {
     void reload();
@@ -75,12 +83,9 @@ export function ViewsScreen({ token }: { token: string }) {
   const selected = views?.find((v) => v.id === selectedId) ?? null;
 
   const store = async (spec: ViewSpec, extra?: Record<string, unknown>) => {
-    await api.saveDomainObject(token, {
-      type: "view",
-      key: spec.id,
-      validate: "off",
-      value: { ...toViewObject(spec), ...extra },
-    });
+    // The view's stored shape is the editor's, not the generated type's.
+    const upsert = { op: "upsert", type: "view", key: spec.id, value: { ...toViewObject(spec), ...extra } };
+    await api.mutateDomain(token, { validate: "off", operations: [upsert as DomainOperation] });
   };
 
   const save = async (spec: ViewSpec) => {
@@ -199,7 +204,7 @@ export function ViewTable({ token, spec }: { token: string; spec: ViewSpec }) {
       })),
       ...spec.relations.map((name) => ({
         id: `rel:${name}`,
-        header: `${name} → ${rels[name] ?? "?"}`,
+        header: relationLabel(name, rels[name]),
         cell: (r: LooseRow) => {
           const set = r.relations[name];
           if (!set || set.total === 0) return "—";
@@ -213,15 +218,21 @@ export function ViewTable({ token, spec }: { token: string; spec: ViewSpec }) {
     [spec, fields, rels],
   );
 
+  // The view's type and every type it includes: a change to any of them
+  // re-reads the page, as does a change to the model its columns come from.
+  const revision = useDomainRevision([spec.type, ...Object.values(rels)], { onModel: true });
+  const cursors = useMemo(() => new PageCursors(), []);
   const load = useCallback(
     async (req: PageRequest) => {
-      const res = await runQuery(token, pageQuery(spec, req));
+      const q = pageQuery(spec, req);
+      const res = await runQuery(token, cursors.place(q));
+      cursors.note(q, res.items.length, res.next_cursor);
       const said = [...res.warnings];
       if (!res.complete) said.push("The type has more objects than one query reads; this list covers the first 5,000.");
       setNotes(said);
       return { items: res.items, total: res.total };
     },
-    [token, spec],
+    [token, spec, cursors],
   );
 
   return (
@@ -247,7 +258,7 @@ export function ViewTable({ token, spec }: { token: string; spec: ViewSpec }) {
         rowKey={(r) => r.id}
         rowLabel={(r) => cellText(r.value[labelField(spec.type)] ?? r.id)}
         load={load}
-        reloadKey={JSON.stringify(spec)}
+        reloadKey={`${JSON.stringify(spec)}:${revision}`}
         search={{ placeholder: `Search ${spec.type}` }}
         empty={{ title: `No ${spec.type} matches this view.` }}
       />
@@ -287,7 +298,11 @@ export function ViewEditor({
   const fieldNames = useMemo(() => Object.keys(fields).sort(), [fields]);
   const rels = relationsOf(spec.type);
   const issues = problems(spec);
-  const types = useMemo(() => [...DOMAIN_ENTITIES].sort(), []);
+  const model = useCurrentModel();
+  const types = useMemo(
+    () => (model.source === "server" ? model.entities.filter((e) => !e.abstract).map((e) => e.id as DomainEntity) : [...DOMAIN_ENTITIES]).sort(),
+    [model],
+  );
 
   const toggle = (list: string[], item: string) =>
     list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
@@ -411,7 +426,8 @@ export function ViewEditor({
           <legend>Related objects</legend>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 4 }}>
             {Object.entries(rels)
-              .sort(([a], [b]) => a.localeCompare(b))
+              // Its own relations first, then those pointing at it.
+              .sort(([a], [b]) => Number(a.startsWith("~")) - Number(b.startsWith("~")) || a.localeCompare(b))
               .map(([name, target]) => (
                 <label key={name} style={{ fontSize: 12 }}>
                   <input
@@ -419,7 +435,7 @@ export function ViewEditor({
                     checked={spec.relations.includes(name)}
                     onChange={() => setSpec({ ...spec, relations: toggle(spec.relations, name) })}
                   />{" "}
-                  {name} → {target}
+                  {relationLabel(name, target)}
                 </label>
               ))}
           </div>

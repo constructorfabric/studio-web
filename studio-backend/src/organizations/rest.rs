@@ -17,7 +17,7 @@ use crate::user_profile::{OrganizationRequest, RequestRefusal};
 #[resource_error(gts_id!("cf.studio._.organizations.v1~"))]
 pub struct OrganizationError;
 
-struct License;
+pub(super) struct License;
 impl AsRef<str> for License {
     fn as_ref(&self) -> &'static str {
         CORE_GLOBAL_BASE_LICENSE_FEATURE

@@ -17,6 +17,8 @@ is [`studio-frontend/docs/studio-events.md`](../studio-frontend/docs/studio-even
 | `task_run` | the run id | `GET /studio-tasks/v1/runs/{id}` |
 | `workspace` | the workspace (root project) id | `GET /studio-theia/v1/workspaces/{id}/status` |
 | `review_request` | the review request id | `GET /studio-documents/v1/review-requests?project_id=` |
+| `domain_type` | the domain type whose objects changed | `POST /studio-domain-model/v1/query` with that `type` |
+| `domain_model` | the model version the change made | `GET /studio-domain-model/v1/types` |
 
 ## `task_run` — background work
 
@@ -62,6 +64,32 @@ keeps only what concerns its person (`reviewers`, `requested_by`) and reads
 | `review_request.created` | a review was asked for | the request: `id`, `project_id`, `subject_id`, `title`, `state`, `requested_by`, `reviewers` (person ids), `outstanding`, `due_at` |
 | `review_request.decided` | a reviewer gave a verdict | the same, as the request stands after it: `id`, `project_id`, `subject_id`, `title`, `state`, `requested_by`, `reviewers`, `outstanding`, `due_at` |
 | `review_request.cancelled` | the person who asked withdrew it | the same: `id`, `project_id`, `subject_id`, `title`, `state`, `requested_by`, `reviewers`, `outstanding`, `due_at` |
+
+## `domain_type` — domain objects changed
+
+Published by `studio-domain-model` (`source: "studio-domain-model"`) whenever
+objects of a type are written, deleted or related — by a person through
+`/objects` or `/mutate`, or by a gear keeping its records (ADR-0051 §8a), a
+sync included. A screen showing objects of that type queries them again; the
+event is a prompt (E5) and names no object: everybody listening in the tenant
+hears it, so it says which type changed and how many, never which objects.
+A caller may listen to an organization other than its home tenant with
+`?organization_id=` on the stream and the replay, as on the gears' own routes.
+
+| `kind` | When | Payload fields |
+| --- | --- | --- |
+| `domain.objects_changed` | objects of the type changed | `entity`, `op`, `count` |
+
+## `domain_model` — the model changed
+
+Published by `studio-domain-model` (`source: "studio-domain-model"`) when a
+version of the model is recorded: a type, a field or a relation added, edited
+or removed, a gear's type taken in, an import, a revert. Screens drawn from the
+model read it again, so a field an administrator adds shows at once.
+
+| `kind` | When | Payload fields |
+| --- | --- | --- |
+| `domain.model_changed` | a model version was recorded | `version`, `op` |
 
 ## `workspace` — the IDE bridge
 

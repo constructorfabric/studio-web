@@ -16,16 +16,21 @@
 mod approvals;
 mod brief;
 mod classify;
+mod data;
+#[cfg(test)]
+mod data_tests;
 mod delivery;
 mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
 mod migrations;
 pub(crate) mod model;
+mod model_table;
 mod parts;
 mod paths;
 pub(crate) mod port;
 mod pr_checks;
+mod process_store;
 mod quality;
 mod remarks;
 mod repo;
@@ -33,10 +38,12 @@ mod repo;
 mod repo_tests;
 mod rest;
 mod review_guide;
+mod review_store;
 pub mod sdk;
 mod service;
 mod spec_model;
 mod spec_rows;
+mod stamp;
 #[cfg(test)]
 mod sync_analysis_tests;
 mod validate;
@@ -66,6 +73,21 @@ pub struct DocumentsConfig {
     pub analyze_on_sync: bool,
     /// The most documents one sync has analysed.
     pub analyze_on_sync_max_documents: usize,
+    /// Where each kind of the gear's data is kept (ADR-0051).
+    pub storage: StorageConfig,
+}
+
+/// Per kind of data, the storage strategy: `model` keeps it as domain
+/// objects in the graph, `tables` in this gear's own database.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// The process catalogue's stages and capabilities.
+    pub process: process_store::ProcessStorage,
+    /// Review requests, the verdicts on them, and decisions.
+    pub reviews: review_store::ReviewStorage,
+    /// Documents, bindings, verdicts, the spec model, parts, delivery scopes.
+    pub documents: model_table::TableStorage,
 }
 
 impl Default for DocumentsConfig {
@@ -73,6 +95,7 @@ impl Default for DocumentsConfig {
         Self {
             analyze_on_sync: true,
             analyze_on_sync_max_documents: 50,
+            storage: StorageConfig::default(),
         }
     }
 }
@@ -131,14 +154,36 @@ impl toolkit::Gear for StudioDocumentsGear {
         }
 
         let config: DocumentsConfig = ctx.config_or_default()?;
+        for (kind, store) in [
+            (
+                "process",
+                crate::data_places::store_name(config.storage.process),
+            ),
+            (
+                "reviews",
+                crate::data_places::store_name(config.storage.reviews),
+            ),
+            (
+                "documents",
+                crate::data_places::store_name(config.storage.documents),
+            ),
+        ] {
+            crate::data_places::note("studio-documents", kind, &store);
+        }
         let service = Arc::new(
-            DocumentsService::new(repo, account_management).with_sync_analysis(
-                config.analyze_on_sync.then(|| SyncAnalysis {
+            DocumentsService::new(repo, account_management)
+                .with_process_storage(config.storage.process, ctx.client_hub())
+                .with_review_storage(config.storage.reviews, ctx.client_hub())
+                .with_documents_storage(config.storage.documents, ctx.client_hub())
+                .with_sync_analysis(config.analyze_on_sync.then(|| SyncAnalysis {
                     hub: ctx.client_hub(),
                     max_documents: config.analyze_on_sync_max_documents.max(1),
-                }),
-            ),
+                })),
         );
+
+        for mover in service.movers() {
+            crate::model_sweep::register(mover);
+        }
 
         // Offer classification to whoever walks a repository. Registered here,
         // in `init`, so it is on the hub before any gear's REST phase resolves

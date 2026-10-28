@@ -93,7 +93,9 @@ export type ProjTab =
   | "activity"
   | "timeline"
   | "people"
-  | "automation";
+  | "automation"
+  /** A tab the domain model adds (level-tabs.ts). */
+  | `type:${string}`;
 
 /** What the dashboard needs to know about the project it is showing — the
  *  project tenant, plus the organization it hangs under. */

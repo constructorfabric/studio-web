@@ -869,6 +869,20 @@ impl DocumentsRepo {
         Ok(())
     }
 
+    /// Every decision of a workspace, any project: what a move copies.
+    pub async fn list_workspace_decisions(
+        &self,
+        workspace_id: Uuid,
+    ) -> Result<Vec<decision::Model>> {
+        let conn = self.db.conn()?;
+        let rows = decision::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
     /// A project's decisions, newest first.
     pub async fn list_decisions(
         &self,
@@ -1253,4 +1267,130 @@ pub fn part_id(project_id: Uuid, repo: &str, kind: &str, reference: &str) -> Uui
         &PART_NS,
         format!("{project_id}\u{1f}{repo}\u{1f}{kind}\u{1f}{reference}").as_bytes(),
     )
+}
+
+/// One owner's every row of a table: what a move into the domain model copies
+/// (ADR-0051 §8a). Unfiltered and unpaged on purpose: a move takes all of it.
+macro_rules! owner_rows {
+    ($($name:ident => $m:ident),* $(,)?) => {
+        impl DocumentsRepo {
+            $(
+                pub async fn $name(&self, owner: Uuid) -> Result<Vec<$m::Model>> {
+                    let conn = self.db.conn()?;
+                    Ok($m::Entity::find()
+                        .secure()
+                        .scope_with(&AccessScope::for_tenant(owner))
+                        .all(&conn)
+                        .await?)
+                }
+            )*
+        }
+    };
+}
+
+owner_rows! {
+    all_types => doc_type,
+    all_analyses => analysis,
+    all_extractions => spec_extraction,
+    all_judgements => spec_judgement,
+    all_spec_decisions => spec_decision,
+    all_spec_reviews => spec_review,
+    all_spec_terms => spec_term,
+    all_docs => document,
+    all_bindings => document_binding,
+    all_parts => application_part,
+    all_scopes => delivery_scope,
+    all_limits => delivery_limit,
+    all_scope_history => delivery_history,
+}
+
+/// Drop every row one owner has in the listed tables, in that order: what a
+/// move into the domain model does once the model holds them, so nothing is
+/// kept twice (ADR-0051 §8a). Dependents come first, so no cascade removes a
+/// row before its own table is reached.
+macro_rules! owner_purge {
+    ($name:ident => [$($m:ident),* $(,)?]) => {
+        impl DocumentsRepo {
+            pub async fn $name(&self, owner: Uuid) -> Result<u64> {
+                let conn = self.db.conn()?;
+                let mut removed = 0u64;
+                $(
+                    removed += $m::Entity::delete_many()
+                        .secure()
+                        .scope_with(&AccessScope::for_tenant(owner))
+                        .exec(&conn)
+                        .await?
+                        .rows_affected;
+                )*
+                Ok(removed)
+            }
+        }
+    };
+}
+
+owner_purge!(purge_documents => [
+    analysis,
+    spec_extraction,
+    spec_judgement,
+    spec_decision,
+    spec_review,
+    spec_term,
+    application_part,
+    delivery_history,
+    delivery_limit,
+    delivery_scope,
+    document_binding,
+    document,
+    doc_type,
+]);
+
+owner_purge!(purge_reviews => [approval, review_request, decision]);
+
+/// Write rows back into their tables, as the model held them: what switching
+/// a kind of data back to `tables` does (ADR-0051 §8a). Plain inserts — the
+/// owner's rows left the tables when they moved.
+macro_rules! rows_restore {
+    ($($name:ident => $m:ident),* $(,)?) => {
+        impl DocumentsRepo {
+            $(
+                pub async fn $name(&self, owner: Uuid, rows: Vec<$m::Model>) -> Result<usize> {
+                    if rows.is_empty() {
+                        return Ok(0);
+                    }
+                    let conn = self.db.conn()?;
+                    let scope = AccessScope::for_tenant(owner);
+                    let n = rows.len();
+                    for chunk in rows.chunks(500) {
+                        $m::Entity::insert_many(
+                            chunk.iter().cloned().map(IntoActiveModel::into_active_model),
+                        )
+                        .secure()
+                        .scope_unchecked(&scope)?
+                        .exec(&conn)
+                        .await?;
+                    }
+                    Ok(n)
+                }
+            )*
+        }
+    };
+}
+
+rows_restore! {
+    restore_types => doc_type,
+    restore_docs => document,
+    restore_bindings => document_binding,
+    restore_analyses => analysis,
+    restore_extractions => spec_extraction,
+    restore_judgements => spec_judgement,
+    restore_spec_decisions => spec_decision,
+    restore_spec_reviews => spec_review,
+    restore_spec_terms => spec_term,
+    restore_parts => application_part,
+    restore_scopes => delivery_scope,
+    restore_limits => delivery_limit,
+    restore_scope_history => delivery_history,
+    restore_review_requests => review_request,
+    restore_approvals => approval,
+    restore_decisions => decision,
 }

@@ -39,8 +39,8 @@ database:
         # therefore not "four connections to pg_main" — it is four PER GEAR, and
         # this assembly configures fourteen gear databases: 13 x 4 = 52, plus
         # the gears with their own override below, Keycloak, the bootstrap Job,
-        # the CloudNativePG manager and the reserved slots, 87 in all. A second
-        # replica needs 154, which is why `max_connections` is 160;
+        # the CloudNativePG manager and the reserved slots, 89 in all. A second
+        # replica needs 158, which is why `max_connections` is 160;
         # deploy/k8s/cloudnative-pg/README.md carries the table and the memory
         # that pays for it. Lowering this is not the way to make room (at 3 two
         # replicas still need 128); raising it by one raises the ceiling by
@@ -581,6 +581,14 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_documents"
+    config:
+      # Where each kind of this gear's data is kept (ADR-0051): `model` as
+      # domain objects in the graph, read through POST /query; `tables` in
+      # this database. Rows of a kind switched to `model` move on first read.
+      storage:
+        process: "model"
+        reviews: "model"
+        documents: "model"
 
   studio-user:
     database:
@@ -612,6 +620,16 @@ gears:
       # (`backend.serviceSubject`). The same value goes to studio-session.
       service_account:
         subject: "${STUDIO_SERVICE_SUBJECT:-00000000-0000-4000-8000-00000000057d}"
+
+  # How a person without an organization comes by one (ADR-0051 §2): `open`
+  # creates it at once, `request` asks a platform administrator, `off` leaves
+  # them to be joined or invited. Per environment, from the chart
+  # (`backend.organizations`). A value that does not parse closes creation.
+  # max_owned is unquoted so that unset reads as null, which is no limit.
+  studio-organizations:
+    config:
+      self_service: "${STUDIO_ORG_SELF_SERVICE:-open}"
+      max_owned: ${STUDIO_ORG_MAX_OWNED:-}
 
   studio-credstore-pg:
     database:
@@ -730,6 +748,29 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_artifact_index"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config:
+      # The artifact graph as domain objects (ADR-0051 §8a): `model`, or
+      # `graph` for the gear's own graph types and the index above.
+      storage:
+        artifacts: "model"
+
+  # ── studio-domain-model (the domain read model) ──
+  # Every live domain object and relation as rows, so POST /query runs in
+  # Postgres with no bound on a type's size, follows relations both ways and
+  # counts by group (ADR-0051, src/domain_model/mirror.rs). Filled from the
+  # graph on a tenant's first query and kept current by every domain write.
+  # Drop the block and nothing is lost but speed and reach: queries read the
+  # graph, over at most 5 000 objects of a type.
+  studio-domain-model:
+    database:
+      server: "pg_main"
+      dbname: "studio_domain_model"
       pool:
         max_conns: 2
         min_conns: 0

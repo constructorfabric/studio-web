@@ -15,8 +15,66 @@
 //!
 //! The list rules are pure ([`with_request`], [`without_request`],
 //! [`normalize_curators`], [`is_curator`]) and tested with tables.
+//!
+//! Where the queue is kept is a setting (ADR-0051 §8a,
+//! `gears.studio-components-catalog.config.storage.publication_requests`):
+//! `model` keeps each request as an `approval-request` domain object in the
+//! platform's tenant, so the domain query reads the queue; `settings` keeps
+//! the array in the settings record. Under `model`, an array still in the
+//! record moves into the model the first time the queue is touched, and is
+//! emptied.
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::domain_model::port::{DomainObjects, OwnedObject, TypeNeed};
+
+/// Where the publication queue is kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestStorage {
+    /// `approval-request` domain objects (the default).
+    #[default]
+    Model,
+    /// The array in the platform's registry settings record.
+    Settings,
+}
+
+const REQUEST_TYPE: &str = "approval-request";
+const REQUEST_KIND: &str = "gear-publication";
+
+fn request_need() -> TypeNeed {
+    let f = |n: &str, t: &str| (n.to_string(), t.to_string(), String::new());
+    TypeNeed {
+        id: REQUEST_TYPE.to_string(),
+        fields: vec![
+            f("kind", "string"),
+            f("organization_id", "string"),
+            f("organization_name", "string?"),
+            f("name", "string"),
+            f("version", "string?"),
+            f("reason", "string?"),
+            f("requested_by", "string"),
+            f("requested_by_name", "string?"),
+            f("at", "timestamp"),
+        ],
+        ..Default::default()
+    }
+}
+
+fn request_object_id(organization_id: Uuid, name: &str) -> String {
+    format!("{REQUEST_KIND}:{organization_id}:{}", name.to_lowercase())
+}
+
+fn request_object(r: &PublicationRequest) -> anyhow::Result<OwnedObject> {
+    let mut payload = serde_json::to_value(r)?;
+    payload["kind"] = json!(REQUEST_KIND);
+    Ok(OwnedObject {
+        id: request_object_id(r.organization_id, &r.name),
+        scope: String::new(),
+        payload,
+    })
+}
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -143,11 +201,53 @@ impl CatalogService {
         am.get_tenant(ctx, tenant).await.ok().map(|t| t.name)
     }
 
+    /// The model's port when the queue is kept there.
+    fn request_port(&self) -> Option<std::sync::Arc<dyn DomainObjects>> {
+        if self.request_storage.get().copied().unwrap_or_default() != RequestStorage::Model {
+            return None;
+        }
+        self.hub.get()?.get::<dyn DomainObjects>().ok()
+    }
+
+    /// The queue as the model holds it, after moving what the settings record
+    /// still had into it.
+    async fn model_requests(
+        &self,
+        ctx: &SecurityContext,
+        port: &dyn DomainObjects,
+    ) -> anyhow::Result<Vec<PublicationRequest>> {
+        let (root, mut settings) = self.root_settings(ctx).await?;
+        port.ensure_type(&root, &request_need()).await?;
+        if !settings.publication_requests.is_empty() {
+            let objects = settings
+                .publication_requests
+                .iter()
+                .map(request_object)
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            port.put_objects(&root, REQUEST_TYPE, objects).await?;
+            settings.publication_requests.clear();
+            self.save_root_settings(&root, settings).await?;
+        }
+        let (rows, _) = port
+            .query(
+                &root,
+                json!({"type": REQUEST_TYPE, "where": {"kind": {"_eq": REQUEST_KIND}}, "order_by": [{"field": "at"}]}),
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|o| serde_json::from_value(o.payload).ok())
+            .collect())
+    }
+
     /// Every organization's open publication requests, oldest first.
     pub async fn publication_requests(
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<Vec<PublicationRequest>> {
+        if let Some(port) = self.request_port() {
+            return self.model_requests(ctx, port.as_ref()).await;
+        }
         Ok(self.root_settings(ctx).await?.1.publication_requests)
     }
 
@@ -171,6 +271,13 @@ impl CatalogService {
         ctx: &SecurityContext,
         request: PublicationRequest,
     ) -> anyhow::Result<()> {
+        if let Some(port) = self.request_port() {
+            self.model_requests(ctx, port.as_ref()).await?;
+            let root = registry::in_tenant(ctx, PLATFORM_TENANT)?;
+            port.put_objects(&root, REQUEST_TYPE, vec![request_object(&request)?])
+                .await?;
+            return Ok(());
+        }
         let (root, mut settings) = self.root_settings(ctx).await?;
         settings.publication_requests =
             with_request(std::mem::take(&mut settings.publication_requests), request);
@@ -184,6 +291,20 @@ impl CatalogService {
         organization_id: Uuid,
         name: &str,
     ) -> anyhow::Result<bool> {
+        if let Some(port) = self.request_port() {
+            let queue = self.model_requests(ctx, port.as_ref()).await?;
+            if !queue.iter().any(|r| same_request(r, organization_id, name)) {
+                return Ok(false);
+            }
+            let root = registry::in_tenant(ctx, PLATFORM_TENANT)?;
+            port.remove_objects(
+                &root,
+                REQUEST_TYPE,
+                vec![request_object_id(organization_id, name)],
+            )
+            .await?;
+            return Ok(true);
+        }
         let (root, mut settings) = self.root_settings(ctx).await?;
         let (queue, removed) = without_request(
             std::mem::take(&mut settings.publication_requests),

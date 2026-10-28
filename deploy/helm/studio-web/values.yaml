@@ -119,6 +119,13 @@ backend:
   # different subject on each Keycloak. Find one with
   #   GET /auth/admin/realms/studio/users?username=<name>&exact=true
   platformAdmins: ""
+  # How a person without an organization comes by one (ADR-0051 §2).
+  # selfService: open (create at once) | request (a platform administrator
+  # approves it) | off (joined or invited). maxOwned: how many organizations
+  # one person may own by creating or requesting them; empty is no limit.
+  organizations:
+    selfService: "open"
+    maxOwned: ""
   # The subject of Studio's service identity, the `studio-service` client's
   # service account (ADR-0030): what a shared IDE session acts as. Empty uses
   # the id fixed in the realm files, which holds for a realm Keycloak created

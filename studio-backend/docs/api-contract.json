@@ -250,6 +250,20 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-organizations/v1/project-types",
+      "operation_id": "studio_organizations.delete_project_types",
+      "tag": "StudioOrganizations",
+      "summary": "Drop a tenant's own project types",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-presence/v1/me",
       "operation_id": "studio_presence.delete_my_presence",
       "tag": "StudioPresence",
@@ -1731,6 +1745,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-domain-model/v1/type-counts",
+      "operation_id": "studio_domain_model.get_type_counts",
+      "tag": "StudioDomainModel",
+      "summary": "How many objects of each type the organization holds",
+      "authenticated": true,
+      "responses": [
+        "TypeCountsResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-domain-model/v1/types",
       "operation_id": "studio_domain_model.list_types",
       "tag": "StudioDomainModel",
@@ -2155,6 +2184,23 @@
         "400",
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-organizations/v1/project-types",
+      "operation_id": "studio_organizations.get_project_types",
+      "tag": "StudioOrganizations",
+      "summary": "The project types a tenant offers",
+      "authenticated": true,
+      "responses": [
+        "ProjectTypesDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },
@@ -4275,6 +4321,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-domain-model/v1/mutate",
+      "operation_id": "studio_domain_model.run_mutations",
+      "tag": "StudioDomainModel",
+      "summary": "Change domain objects and their relations in one batch",
+      "authenticated": true,
+      "request": "MutateObjectsRequest",
+      "responses": [
+        "MutateObjectsResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-domain-model/v1/objects",
       "operation_id": "studio_domain_model.create_object",
       "tag": "StudioDomainModel",
@@ -4329,6 +4393,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-domain-model/v1/types",
+      "operation_id": "studio_domain_model.create_type",
+      "tag": "StudioDomainModel",
+      "summary": "Add a type to the domain model",
+      "authenticated": true,
+      "request": "CreateTypeRequest",
+      "responses": [
+        "AddFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-domain-model/v1/types/{id}/fields",
       "operation_id": "studio_domain_model.add_field",
       "tag": "StudioDomainModel",
@@ -4342,6 +4424,25 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-domain-model/v1/types/{id}/tabs",
+      "operation_id": "studio_domain_model.create_tab",
+      "tag": "StudioDomainModel",
+      "summary": "Give a level a tab",
+      "authenticated": true,
+      "request": "AddTabRequest",
+      "responses": [
+        "AddFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -5806,6 +5907,24 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-organizations/v1/project-types",
+      "operation_id": "studio_organizations.upsert_project_types",
+      "tag": "StudioOrganizations",
+      "summary": "Set the project types a tenant offers",
+      "authenticated": true,
+      "request": "ProjectTypesDocDto",
+      "responses": [
+        "ProjectTypesDocDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },

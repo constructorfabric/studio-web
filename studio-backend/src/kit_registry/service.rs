@@ -12,6 +12,23 @@ use uuid::Uuid;
 pub const INSTALLATIONS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~";
 
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0051 §8a, `storage.metadata`).
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[Kind {
+        type_id: INSTALLATIONS_METADATA_TYPE,
+        gear: "studio-kits",
+        parts: &[Part {
+            field: "installations",
+            entity: "kit-installation",
+            name: "Kit Installation",
+            description: "A kit a project wants installed, at which version and how.",
+            key: &["kit_slug"],
+        }],
+    }]
+};
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct KitDescriptor {
     pub slug: String,
