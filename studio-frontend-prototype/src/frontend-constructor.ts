@@ -68,6 +68,39 @@ export function frontxSuggestion(projectRepos: readonly string[], sources: reado
   return projectRepos.find((r) => r.trim() && !read.has(repoKey(r))) ?? null;
 }
 
+/** `owner/repo` of a GitHub pull request link, or `null`. */
+function repoOfPullRequest(url: string | null | undefined): string | null {
+  const m = /github\.com\/([^/\s]+\/[^/\s]+)\/pull\//i.exec(url ?? "");
+  return m ? m[1] : null;
+}
+
+/** The project's repositories, the one a product is written to first: its
+ *  connected gear repository, its sources, the repository the product's last
+ *  pull request went to, and the repositories ingested as its artifacts. Each
+ *  once, in that order. A project need not have every record: one whose
+ *  repository was never ingested still names it as a source. */
+export function projectRepos(of: {
+  gearRepo?: string | null;
+  sources?: readonly { full_path: string }[];
+  writtenPrUrl?: string | null;
+  artifactRepos?: readonly string[];
+}): string[] {
+  const all = [
+    of.gearRepo,
+    ...(of.sources ?? []).map((s) => s.full_path),
+    repoOfPullRequest(of.writtenPrUrl),
+    ...(of.artifactRepos ?? []),
+  ];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of all) {
+    if (!r?.trim() || seen.has(repoKey(r))) continue;
+    seen.add(repoKey(r));
+    out.push(r.trim());
+  }
+  return out;
+}
+
 /** Catalogue kinds of a package that shows how to write a micro-frontend
  *  rather than being one a product mounts. */
 const TEMPLATE_KINDS = new Set(["template", "example"]);
