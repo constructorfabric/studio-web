@@ -19,10 +19,8 @@ product(
     # (GDL 1.1). The password is only ever a `${NAME}` the deployment
     # sets; change the host and user to the server you run.
     profiles = [
-        # `dev` is docker-compose's Postgres (127.0.0.1:5433, user studio), as
-        # scripts/product-gdl.mjs writes it and config/dev.yaml's pg_main reads it.
         embedded(id = "dev",
-                 database = postgres(host = "127.0.0.1", port = 5433, user = "studio", password = "${STUDIO_PG_PASSWORD}")),
+                 database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
         self_hosted(id = "local", host = "studio-web", worker_discovery = "directory",
                     target_dir = "target",
                     database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
@@ -71,7 +69,7 @@ product(
         use_gear("studio-tasks", source = "studio-backend"),
         use_gear("studio-usage", source = "studio-backend"),
         use_gear("studio-user", source = "studio-backend"),
-        use_gear("tenant-resolver", source = "gears-rust"),
+        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
         use_gear("types-registry", source = "gears-rust"),
         use_gear("usage-collector", source = "gears-rust", plugins = [plugin("postgres-usage-collector-plugin")]),
     ],
