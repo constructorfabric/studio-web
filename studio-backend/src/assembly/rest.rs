@@ -90,6 +90,31 @@ pub struct AssemblyManifestDto {
     pub session_image: Option<String>,
     /// Every linked gear, in start order.
     pub gears: Vec<AssemblyGearDto>,
+    /// Where each gear keeps its records, as this process runs (ADR-0051
+    /// §8a): its storage settings and the model types it holds.
+    pub data: Vec<AssemblyDataDto>,
+}
+
+/// One gear's records.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AssemblyDataDto {
+    pub gear: String,
+    /// Each kind of its records and where it lives now.
+    pub stores: Vec<AssemblyStoreDto>,
+    /// The domain-model types only this gear writes, listed as it writes
+    /// them after the process starts.
+    pub types: Vec<String>,
+}
+
+/// One kind of a gear's records and its `storage.<kind>` setting.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AssemblyStoreDto {
+    pub kind: String,
+    /// `model` (domain objects), or the store it was kept in before:
+    /// `tables`, `metadata`, `graph`, `sources`.
+    pub store: String,
 }
 
 fn manifest_of(snapshot: &Snapshot) -> AssemblyManifestDto {
@@ -101,6 +126,18 @@ fn manifest_of(snapshot: &Snapshot) -> AssemblyManifestDto {
         sessions_enabled: snapshot.sessions_enabled,
         session_image: snapshot.session_image.clone(),
         gears: gears_of(&snapshot.gears),
+        data: crate::data_places::snapshot()
+            .into_iter()
+            .map(|d| AssemblyDataDto {
+                gear: d.gear,
+                stores: d
+                    .stores
+                    .into_iter()
+                    .map(|(kind, store)| AssemblyStoreDto { kind, store })
+                    .collect(),
+                types: d.types,
+            })
+            .collect(),
     }
 }
 
@@ -198,6 +235,7 @@ mod tests {
         });
         let json = serde_json::to_value(&dto).expect("serializes");
         assert_eq!(json["build"]["commit"], "abc");
+        assert!(json["data"].is_array());
         assert_eq!(json["gears"][0]["name"], "types-registry");
         assert_eq!(json["gears"][0]["role"], "system");
         assert_eq!(json["gears"][1]["origin"], "studio");

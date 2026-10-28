@@ -173,7 +173,7 @@ impl AccessConfig {
                         .roles
                         .iter()
                         .find(|r| r.key == g.role_key)
-                        .is_some_and(|r| r.privileges.iter().any(|p| p == privilege)))
+                        .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege)))
         })
     }
 }
@@ -610,7 +610,7 @@ fn decide(
                 .roles
                 .iter()
                 .find(|r| r.key == g.role_key)
-                .is_some_and(|r| r.privileges.iter().any(|p| p == privilege));
+                .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege));
         if !role_has {
             continue;
         }

@@ -605,3 +605,171 @@
   .arch-research th:nth-child(2),
   .arch-research td:nth-child(2) { display: none; }
 }
+
+/* ── The data section ───────────────────────────────────────────────────── */
+.arch-data-steps {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.arch-data-step { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.arch-data-step p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; }
+.arch-data-n {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 650;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.arch-data-stats { margin-bottom: 0.75rem; }
+.arch-table-wrap { overflow-x: auto; margin-bottom: 0.5rem; }
+.arch-data-table td { vertical-align: top; }
+.arch-data-kind { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.arch-data-type { font-size: 11.5px; padding: 0 5px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+
+/* ── Studio in one picture, the legend, the tabs ────────────────────────── */
+.arch-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 1rem;
+  align-items: start;
+  margin-bottom: 1rem;
+}
+@media (max-width: 960px) {
+  .arch-top { grid-template-columns: minmax(0, 1fr); }
+}
+.arch-overview, .arch-legend-card { padding: 1rem 1.1rem; min-width: 0; }
+.arch-overview h2, .arch-legend-title { margin: 0 0 0.25rem; }
+.arch-legend-title { font-size: 15px; }
+.arch-ov { display: grid; gap: 4px; }
+.arch-ov-layer {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--foreground) 2%, var(--card));
+}
+@media (max-width: 640px) {
+  .arch-ov-layer { grid-template-columns: minmax(0, 1fr); }
+}
+.arch-ov-label { display: grid; gap: 2px; font-size: 12.5px; line-height: 1.3; }
+.arch-ov-label strong { font-size: 14px; }
+.arch-ov-boxes { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.arch-ov-box {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  max-width: 260px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--box-edge, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--box-fill, var(--card));
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+}
+button.arch-ov-box { cursor: pointer; }
+button.arch-ov-box:hover { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 35%, transparent); }
+button.arch-ov-box:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.arch-ov-box-title { display: inline-flex; gap: 6px; align-items: baseline; font-weight: 600; font-size: 13px; }
+.arch-ov-box-note {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+}
+.arch-ov-box-detail { font-size: 11.5px; line-height: 1.35; color: var(--muted-foreground); }
+.arch-ov-box.kind-studio {
+  --box-edge: color-mix(in oklab, var(--primary) 70%, transparent);
+  --box-fill: color-mix(in oklab, var(--primary) 10%, var(--card));
+}
+.arch-ov-box.kind-platform { --box-edge: color-mix(in oklab, var(--foreground) 25%, transparent); }
+.arch-ov-box.kind-data {
+  --box-edge: color-mix(in oklab, var(--chart-category-teal) 60%, transparent);
+  --box-fill: color-mix(in oklab, var(--chart-category-teal) 8%, var(--card));
+}
+.arch-ov-box.kind-outside { border-style: dashed; }
+.arch-ov-box.kind-people {
+  --box-edge: color-mix(in oklab, var(--chart-category-blue) 55%, transparent);
+}
+.arch-ov-link { padding-left: 170px; font-size: 11.5px; color: var(--muted-foreground); line-height: 1.6; }
+@media (max-width: 640px) {
+  .arch-ov-link { padding-left: 10px; }
+}
+.arch-ov-arrow { font-weight: 700; }
+
+.arch-key { display: grid; gap: 10px; margin: 0.5rem 0 0; }
+.arch-key > div { display: grid; gap: 4px; }
+.arch-key dt { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.arch-key dd { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted-foreground); }
+.arch-key .arch-gear { cursor: default; }
+
+.arch-tabs-wrap { display: grid; gap: 4px; }
+.arch-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.arch-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.arch-tab:hover { color: var(--foreground); }
+.arch-tab.is-active { color: var(--foreground); border-bottom-color: var(--primary); }
+.arch-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.arch-tab-hint { margin: 0; font-size: 12.5px; }
+
+.arch-howto {
+  margin: 0.25rem 0 0.9rem;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--primary) 6%, var(--card));
+  font-size: 13px;
+  line-height: 1.45;
+  max-width: 100ch;
+}
+.arch-howto ol { margin: 4px 0 0; padding-left: 1.2rem; display: grid; gap: 2px; }
+.arch-row-purpose {
+  display: block;
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+  text-align: left;
+  white-space: normal;
+}
+.arch-detail-guide { margin: 0.4rem 0 0; padding-left: 1.1rem; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted-foreground); }
+
+.arch-focus-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--primary) 6%, var(--card));
+  font-size: 13px;
+}

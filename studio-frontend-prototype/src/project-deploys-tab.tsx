@@ -21,6 +21,7 @@ import { KUBERNETES_PROFILES } from "./kits";
 import { deployableBuilds, latestByEnvironment, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
+import { useDomainRefresh } from "./domain-live";
 
 export function ProjectDeploys({
   token,
@@ -45,6 +46,7 @@ export function ProjectDeploys({
     setNotice(message);
     setRound((r) => r + 1);
   }, []);
+  useDomainRefresh(["deployment", "environment-binding", "product-build"], () => setRound((r) => r + 1));
 
   useEffect(() => {
     let live = true;

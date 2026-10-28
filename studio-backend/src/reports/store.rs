@@ -19,6 +19,11 @@ pub trait ReportStore: Send + Sync {
         report: &str,
     ) -> anyhow::Result<Option<ReportSource>>;
     async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()>;
+    /// Drop the organization's source for a report: what a move into the
+    /// domain model does to the copy it moved from.
+    async fn delete(&self, _ctx: &SecurityContext, _report: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Per tenant, per report. What a build without graph-storage keeps, and what
@@ -44,6 +49,14 @@ impl ReportStore for MemoryStore {
             .cloned())
     }
 
+    async fn delete(&self, ctx: &SecurityContext, report: &str) -> anyhow::Result<()> {
+        self.sources
+            .lock()
+            .map_err(|_| anyhow::anyhow!("report store poisoned"))?
+            .remove(&(ctx.subject_tenant_id(), report.to_string()));
+        Ok(())
+    }
+
     async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()> {
         let mut map = self
             .sources
@@ -59,6 +72,202 @@ impl ReportStore for MemoryStore {
 
 #[cfg(feature = "graph")]
 pub use graph::GraphStore;
+
+/// Report sources as domain objects (ADR-0051 §8a, `storage.sources`): one
+/// `report-source` object per organization and report, kept by this gear. A
+/// source the model has not seen is read from `legacy` once and copied in.
+pub struct ModelStore {
+    legacy: std::sync::Arc<dyn ReportStore>,
+    port: PortSource,
+    /// `storage.sources` set back: the model's copy returns to `legacy`.
+    returning: bool,
+}
+
+enum PortSource {
+    Hub(std::sync::Arc<toolkit::client_hub::ClientHub>),
+    #[cfg(test)]
+    Fixed(std::sync::Arc<dyn crate::domain_model::port::DomainObjects>),
+}
+
+const SOURCE_ENTITY: &str = "report-source";
+
+impl ModelStore {
+    pub fn new(
+        legacy: std::sync::Arc<dyn ReportStore>,
+        hub: std::sync::Arc<toolkit::client_hub::ClientHub>,
+    ) -> Self {
+        Self {
+            legacy,
+            port: PortSource::Hub(hub),
+            returning: false,
+        }
+    }
+
+    /// The old store, with a source the model holds moved back on first read.
+    pub fn returning(
+        legacy: std::sync::Arc<dyn ReportStore>,
+        hub: std::sync::Arc<toolkit::client_hub::ClientHub>,
+    ) -> Self {
+        Self {
+            returning: true,
+            ..Self::new(legacy, hub)
+        }
+    }
+
+    async fn back_to_legacy(&self, ctx: &SecurityContext, report: &str) {
+        let Some(port) = self.port() else {
+            return;
+        };
+        let id = Self::object_id(ctx.subject_tenant_id(), report);
+        let result = async {
+            let (found, _) = port
+                .query(ctx, serde_json::json!({"type": SOURCE_ENTITY, "where": {"id": {"_eq": id}}, "limit": 1}))
+                .await?;
+            let Some(o) = found.into_iter().next() else {
+                return anyhow::Ok(());
+            };
+            let mut v = o.payload;
+            if let Some(m) = v.as_object_mut() {
+                for f in ["report_tenant", "name", "_scope"] {
+                    m.remove(f);
+                }
+            }
+            self.legacy.put(ctx, &unpack(v)?).await?;
+            port.remove_objects(ctx, SOURCE_ENTITY, vec![id.clone()]).await?;
+            anyhow::Ok(())
+        }
+        .await;
+        if let Err(e) = result {
+            tracing::warn!(report, error = %e, "studio-reports: a source could not move back yet");
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_port(
+        legacy: std::sync::Arc<dyn ReportStore>,
+        port: std::sync::Arc<dyn crate::domain_model::port::DomainObjects>,
+    ) -> Self {
+        Self {
+            legacy,
+            port: PortSource::Fixed(port),
+            returning: false,
+        }
+    }
+
+    fn port(&self) -> Option<std::sync::Arc<dyn crate::domain_model::port::DomainObjects>> {
+        match &self.port {
+            PortSource::Hub(hub) => hub
+                .get::<dyn crate::domain_model::port::DomainObjects>()
+                .ok(),
+            #[cfg(test)]
+            PortSource::Fixed(port) => Some(std::sync::Arc::clone(port)),
+        }
+    }
+
+    fn need() -> crate::domain_model::port::TypeNeed {
+        let f = |n: &str, t: &str| (n.to_owned(), t.to_owned(), String::new());
+        crate::domain_model::port::TypeNeed {
+            id: SOURCE_ENTITY.to_owned(),
+            name: "Report Source".to_owned(),
+            description: "Where an organization's report reads from: its connection, plan file, board, and the plan as last read.".to_owned(),
+            extends: Some("record".to_owned()),
+            bucket: Some("operations".to_owned()),
+            fields: vec![
+                f("report", "string"),
+                f("report_tenant", "string"),
+                f("connection_id", "string?"),
+                f("plan_file", "string?"),
+                f("board", "string?"),
+                f("snapshot", "JSON?"),
+            ],
+            relations: Vec::new(),
+            held_by: Some("studio-reports".to_owned()),
+            searchable: false,
+        }
+    }
+
+    fn object_id(tenant: Uuid, report: &str) -> String {
+        format!("{SOURCE_ENTITY}:{tenant}:{report}")
+    }
+
+    async fn write(
+        &self,
+        ctx: &SecurityContext,
+        port: &dyn crate::domain_model::port::DomainObjects,
+        source: &ReportSource,
+    ) -> anyhow::Result<()> {
+        let tenant = ctx.subject_tenant_id();
+        let mut payload = pack(source)?;
+        payload["report_tenant"] = serde_json::json!(tenant);
+        payload["name"] = serde_json::json!(source.report);
+        port.put_objects(
+            ctx,
+            SOURCE_ENTITY,
+            vec![crate::domain_model::port::OwnedObject {
+                id: Self::object_id(tenant, &source.report),
+                scope: String::new(),
+                payload,
+            }],
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ReportStore for ModelStore {
+    async fn get(
+        &self,
+        ctx: &SecurityContext,
+        report: &str,
+    ) -> anyhow::Result<Option<ReportSource>> {
+        if self.returning {
+            self.back_to_legacy(ctx, report).await;
+            return self.legacy.get(ctx, report).await;
+        }
+        let Some(port) = self.port() else {
+            return self.legacy.get(ctx, report).await;
+        };
+        port.ensure_type(ctx, &Self::need()).await?;
+        let id = Self::object_id(ctx.subject_tenant_id(), report);
+        let (found, _) = port
+            .query(
+                ctx,
+                serde_json::json!({"type": SOURCE_ENTITY, "where": {"id": {"_eq": id}}, "limit": 1}),
+            )
+            .await?;
+        if let Some(o) = found.into_iter().next() {
+            let mut v = o.payload;
+            if let Some(m) = v.as_object_mut() {
+                for f in ["report_tenant", "name", "_scope"] {
+                    m.remove(f);
+                }
+            }
+            return Ok(Some(unpack(v)?));
+        }
+        let Some(old) = self.legacy.get(ctx, report).await? else {
+            return Ok(None);
+        };
+        self.write(ctx, port.as_ref(), &old).await?;
+        // Held once: the old store's copy goes.
+        if let Err(e) = self.legacy.delete(ctx, report).await {
+            tracing::warn!(report, error = %e, "studio-reports: the old store's copy of a moved source stays");
+        }
+        Ok(Some(old))
+    }
+
+    async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()> {
+        if self.returning {
+            self.back_to_legacy(ctx, &source.report).await;
+            return self.legacy.put(ctx, source).await;
+        }
+        let Some(port) = self.port() else {
+            return self.legacy.put(ctx, source).await;
+        };
+        port.ensure_type(ctx, &Self::need()).await?;
+        self.write(ctx, port.as_ref(), source).await
+    }
+}
 
 /// A source as a node payload: the plan's text deflated and base64'd, so a
 /// plan many times larger than graph-storage's 64 KB payload cap still fits.
@@ -181,6 +390,13 @@ mod graph {
             Ok(Some(super::unpack(payload)?))
         }
 
+        async fn delete(&self, ctx: &SecurityContext, report: &str) -> anyhow::Result<()> {
+            match self.client.delete_node(ctx, &gts::source_key(report)).await {
+                Ok(_) | Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(()),
+                Err(e) => Err(anyhow!("graph-storage delete: {e}")),
+            }
+        }
+
         async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()> {
             use crate::artifact_ingest::sdk::without_nul;
             use graph_storage_sdk::models::{IngestOptions, IngestRequest, NodeSpec};
@@ -222,6 +438,53 @@ mod tests {
 
     fn ctx(tenant: u128) -> SecurityContext {
         crate::reports::test_ctx(tenant)
+    }
+
+    #[tokio::test]
+    async fn a_source_moves_into_the_model_once_and_is_the_gears() {
+        let legacy = std::sync::Arc::new(MemoryStore::default());
+        let old = ReportSource {
+            report: "roadmap".into(),
+            board: Some("acme/7".into()),
+            ..ReportSource::default()
+        };
+        legacy.put(&ctx(1), &old).await.unwrap();
+        let port = crate::domain_model::port::in_memory();
+        let store = ModelStore::with_port(legacy.clone(), std::sync::Arc::clone(&port));
+        assert_eq!(
+            store.get(&ctx(1), "roadmap").await.unwrap(),
+            Some(old.clone())
+        );
+
+        let newer = ReportSource {
+            board: Some("acme/8".into()),
+            ..old.clone()
+        };
+        store.put(&ctx(1), &newer).await.unwrap();
+        assert_eq!(store.get(&ctx(1), "roadmap").await.unwrap(), Some(newer));
+        assert_eq!(
+            legacy.get(&ctx(1), "roadmap").await.unwrap(),
+            None,
+            "the old store's copy is gone once moved"
+        );
+        assert_eq!(
+            store.get(&ctx(2), "roadmap").await.unwrap(),
+            None,
+            "another organization's is not this one's"
+        );
+        let refused = port
+            .upsert(
+                &ctx(1),
+                "report-source",
+                "forged",
+                serde_json::json!({"report": "x"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("kept by studio-reports"),
+            "{refused}"
+        );
     }
 
     #[test]

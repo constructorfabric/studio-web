@@ -491,6 +491,14 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_documents"
+    config:
+      # Where each kind of this gear's data is kept (ADR-0051): `model` as
+      # domain objects in the graph, read through POST /query; `tables` in
+      # this database. Rows of a kind switched to `model` move on first read.
+      storage:
+        process: "model"
+        reviews: "model"
+        documents: "model"
 
   studio-user:
     database:
@@ -626,6 +634,29 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_artifact_index"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config:
+      # The artifact graph as domain objects (ADR-0051 §8a): `model`, or
+      # `graph` for the gear's own graph types and the index above.
+      storage:
+        artifacts: "model"
+
+  # ── studio-domain-model (the domain read model) ──
+  # Every live domain object and relation as rows, so POST /query runs in
+  # Postgres with no bound on a type's size, follows relations both ways and
+  # counts by group (ADR-0051, src/domain_model/mirror.rs). Filled from the
+  # graph on a tenant's first query and kept current by every domain write.
+  # Drop the block and nothing is lost but speed and reach: queries read the
+  # graph, over at most 5 000 objects of a type.
+  studio-domain-model:
+    database:
+      server: "pg_main"
+      dbname: "studio_domain_model"
       pool:
         max_conns: 2
         min_conns: 0

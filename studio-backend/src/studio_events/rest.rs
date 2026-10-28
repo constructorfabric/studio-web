@@ -12,7 +12,6 @@ use serde::Deserialize;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
-use toolkit_security::SecurityContext;
 
 use super::dto::{EventCatalogDto, EventKindDto, StudioEventDto, StudioEventPage};
 use super::hub::StudioEventHub;
@@ -71,7 +70,7 @@ pub struct SinceQuery {
 /// `kind`. Keep-alive comments come from the broadcaster every 15 s, which is
 /// what holds the connection open through idle-timeout intermediaries.
 async fn stream(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(channel): Extension<Channel>,
 ) -> axum::response::Response {
     match channel.hub() {
@@ -85,7 +84,7 @@ async fn stream(
 
 /// `GET /studio-events/v1/events?after_seq=N` — replay the gap.
 async fn events(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(channel): Extension<Channel>,
     Query(q): Query<SinceQuery>,
 ) -> ApiResult<JsonBody<StudioEventPage>> {
@@ -132,6 +131,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     hub: Option<Arc<StudioEventHub>>,
     store: Option<Arc<EventStore>>,
+    access: Option<crate::org_scope::OrgAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-events/v1/stream")
         .operation_id("studio_events.stream")
@@ -146,6 +146,12 @@ pub fn register_routes(
         .tag("StudioEvents")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed(
+            "organization_id",
+            false,
+            "The organization to listen to; the caller's home tenant when absent",
+            "string",
+        )
         .handler(stream)
         .sse_json::<StudioEventDto>(openapi, "Stream of studio events")
         .error_401(openapi)
@@ -164,6 +170,12 @@ pub fn register_routes(
         .tag("StudioEvents")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed(
+            "organization_id",
+            false,
+            "The organization to replay; the caller's home tenant when absent",
+            "string",
+        )
         .handler(events)
         .json_response_with_schema::<StudioEventPage>(openapi, StatusCode::OK, "Retained events")
         .error_401(openapi)
@@ -191,7 +203,13 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Channel { hub, store }))
+    let router = router.layer(Extension(Channel { hub, store }));
+    // `?organization_id=`: a platform administrator looking at an
+    // organization hears that organization's events, not the root's.
+    match access {
+        Some(access) => router.layer(Extension(access)),
+        None => router,
+    }
 }
 
 #[cfg(test)]

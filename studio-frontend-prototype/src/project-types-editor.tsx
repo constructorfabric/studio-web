@@ -14,6 +14,7 @@ import { errText } from "./problem";
 import type { ProjTab } from "./project-overview";
 import { BUILTIN_TYPES, PRESETS, RECIPES, keyFor, parseTypes, typesProblem } from "./project-types";
 import type { ProjectType } from "./project-types";
+import { useDomainRefresh } from "./domain-live";
 
 type Source = "workspace" | "organization" | "builtin";
 
@@ -37,6 +38,7 @@ export function ProjectTypesTab({
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  useDomainRefresh(["project-type"], () => setReload((n) => n + 1));
 
   useEffect(() => {
     let alive = true;

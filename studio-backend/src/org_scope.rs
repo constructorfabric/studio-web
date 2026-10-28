@@ -68,6 +68,58 @@ pub fn acting_in(
     b.build()
 }
 
+/// The platform's root tenant: an organization is one of its children.
+const ROOT: Uuid = Uuid::from_u128(1);
+
+/// The organization `tenant` belongs to (itself, for an organization or the
+/// root): where its records live in the domain model, whichever tenant the
+/// caller's token names. Cached: a tenant does not change organization.
+pub async fn org_of(
+    am: &dyn account_management_sdk::AccountManagementClient,
+    ctx: &SecurityContext,
+    tenant: Uuid,
+) -> Uuid {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Uuid, Uuid>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(org) = cache.lock().ok().and_then(|c| c.get(&tenant).copied()) {
+        return org;
+    }
+    let mut at = tenant;
+    for _ in 0..16 {
+        if at == ROOT {
+            break;
+        }
+        match am.get_tenant(ctx, at).await {
+            Ok(t) => match t.parent_id.map(|p| p.0) {
+                Some(parent) if parent != ROOT => at = parent,
+                _ => break,
+            },
+            // Unreadable: the tenant itself, which is what the caller named.
+            Err(_) => return tenant,
+        }
+    }
+    if let Ok(mut c) = cache.lock() {
+        c.insert(tenant, at);
+    }
+    at
+}
+
+/// The caller acting in the organization `tenant` belongs to — for a gear's
+/// records, which live in that organization's model. The gear has already
+/// decided the caller may touch them; the domain-object PDP asks again there.
+pub async fn in_org_of(
+    am: &dyn account_management_sdk::AccountManagementClient,
+    ctx: &SecurityContext,
+    tenant: Uuid,
+) -> SecurityContext {
+    let org = org_of(am, ctx, tenant).await;
+    if org == ctx.subject_tenant_id() {
+        return ctx.clone();
+    }
+    acting_in(ctx, org).unwrap_or_else(|_| ctx.clone())
+}
+
 /// The context a request works in, given the organization it names.
 pub async fn resolve(
     access: &dyn WorkspaceAccess,

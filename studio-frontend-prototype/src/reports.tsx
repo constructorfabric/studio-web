@@ -23,6 +23,7 @@ import {
   type ReportSchedule,
   type SourceDraft,
 } from "./reports-model";
+import { useDomainRefresh } from "./domain-live";
 
 const CARD: CSSProperties = {
   border: "1px solid var(--border)",
@@ -81,6 +82,7 @@ export function ReportsScreen({
       .then((r) => setReports(r.items))
       .catch((e) => setErr(errText(e)));
   }, [token, tenantId]);
+  useDomainRefresh(["report-source","org-unit","team","person","membership"], load);
 
   useEffect(load, [load]);
   useEffect(() => {

@@ -76,6 +76,8 @@ export interface SubscribeOptions {
    * are replayed on connect like any other gap.
    */
   fromSeq?: number;
+  /** The organization to listen to; the caller's home tenant when absent. */
+  organization?: string;
 }
 
 /** States a run never leaves. Polling past one is how a UI hangs. */
@@ -84,13 +86,105 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 /** Reconnect backoff in ms; the last value repeats. */
 const BACKOFF = [500, 1_000, 2_000, 5_000, 10_000];
 
+/** One subscriber of a shared stream, with its own cursor. */
+interface Subscriber {
+  onEvent: (event: StudioEvent) => void;
+  onStatus?: (status: StreamStatus) => void;
+  lastSeq: number;
+  /** Live events held while this subscriber's gap is replayed. */
+  held: StudioEvent[] | null;
+}
+
+/** One live connection per token, however many screens listen. */
+interface Shared {
+  subscribers: Set<Subscriber>;
+  status: StreamStatus;
+  stop: () => void;
+}
+
+const shared = new Map<string, Shared>();
+
+/** The stream for the organization on screen: one connection per token and
+ *  organization (`?organization_id=`, as the gears' own routes take it). */
+function withOrg(path: string, org: string | undefined): string {
+  if (!org) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}organization_id=${encodeURIComponent(org)}`;
+}
+
+function hand(sub: Subscriber, event: StudioEvent): void {
+  if (event.seq <= sub.lastSeq) return;
+  sub.lastSeq = event.seq;
+  sub.onEvent(event);
+}
+
 /**
  * Subscribe to the tenant's event stream. Returns an unsubscribe function —
  * call it on unmount, nothing else stops the loop.
+ *
+ * Every subscriber with the same token shares ONE connection. A browser keeps
+ * six HTTP/1.1 connections per host; a stream per widget (the run list, the
+ * inbox, the notifications, the live domain changes …) took them all, and
+ * every other request of the page queued behind them. A subscriber that asks
+ * for a cursor replays its own gap first, then joins the shared stream.
  */
 export function subscribeStudioEvents(
   token: string,
-  { onEvent, onStatus, fromSeq = 0 }: SubscribeOptions,
+  { onEvent, onStatus, fromSeq = 0, organization }: SubscribeOptions,
+): () => void {
+  const key = `${token}\u0000${organization ?? ""}`;
+  const sub: Subscriber = { onEvent, onStatus, lastSeq: fromSeq, held: fromSeq > 0 ? [] : null };
+  let line = shared.get(key);
+  if (!line) {
+    const created: Shared = { subscribers: new Set(), status: "connecting", stop: () => {} };
+    shared.set(key, created);
+    created.stop = openStream(token, {
+      organization,
+      onEvent: (event) => {
+        for (const s of [...created.subscribers]) {
+          if (s.held) s.held.push(event);
+          else hand(s, event);
+        }
+      },
+      onStatus: (status) => {
+        created.status = status;
+        for (const s of [...created.subscribers]) s.onStatus?.(status);
+      },
+    });
+    line = created;
+  } else {
+    onStatus?.(line.status);
+  }
+  line.subscribers.add(sub);
+  if (sub.held) {
+    void fetch(apiUrl(withOrg(`/studio-events/v1/events?after_seq=${fromSeq}`, organization)), {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const page = (await res.json()) as { events: StudioEvent[] };
+        for (const event of page.events) hand(sub, event);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        const queued = sub.held ?? [];
+        sub.held = null;
+        for (const event of queued) hand(sub, event);
+      });
+  }
+  const mine = line;
+  return () => {
+    mine.subscribers.delete(sub);
+    if (mine.subscribers.size === 0) {
+      mine.stop();
+      if (shared.get(key) === mine) shared.delete(key);
+    }
+  };
+}
+
+/** The one connection behind {@link subscribeStudioEvents}. */
+function openStream(
+  token: string,
+  { onEvent, onStatus, fromSeq = 0, organization }: SubscribeOptions,
 ): () => void {
   const abort = new AbortController();
   // Highest cursor handed to the caller: the resume point, and the
@@ -106,7 +200,7 @@ export function subscribeStudioEvents(
 
   // Everything published while we were away, oldest first.
   const catchUp = async (): Promise<void> => {
-    const res = await fetch(apiUrl(`/studio-events/v1/events?after_seq=${lastSeq}`), {
+    const res = await fetch(apiUrl(withOrg(`/studio-events/v1/events?after_seq=${lastSeq}`, organization)), {
       headers: { Authorization: `Bearer ${token}` },
       signal: abort.signal,
     });
@@ -119,7 +213,7 @@ export function subscribeStudioEvents(
     while (!abort.signal.aborted) {
       onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
       try {
-        const res = await fetch(apiUrl("/studio-events/v1/stream"), {
+        const res = await fetch(apiUrl(withOrg("/studio-events/v1/stream", organization)), {
           headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
           signal: abort.signal,
         });

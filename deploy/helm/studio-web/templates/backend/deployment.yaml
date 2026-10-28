@@ -197,6 +197,12 @@ spec:
             # this installation names no administrator.
             - name: STUDIO_PLATFORM_ADMINS
               value: {{ .Values.backend.platformAdmins | quote }}
+            - name: STUDIO_ORG_SELF_SERVICE
+              value: {{ .Values.backend.organizations.selfService | quote }}
+            # Empty is no limit: the config leaves max_owned unquoted, so it
+            # reads as null.
+            - name: STUDIO_ORG_MAX_OWNED
+              value: {{ .Values.backend.organizations.maxOwned | quote }}
             # Unset keeps the subject fixed in the realm files (ADR-0030). Set
             # only when given: the config keeps an empty variable as a value,
             # and an empty subject left shared sessions without an actor.

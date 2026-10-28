@@ -12,8 +12,9 @@ This README is what you need to work in the directory.
 
 ## In the assembly
 
-- Gear `studio-domain-model`, capabilities `[rest]`, deps `types_registry`; no
-  config section.
+- Gear `studio-domain-model`, capabilities `[db, rest]`, deps `types_registry`.
+  Its `database:` section enables the read model; without one every query
+  reads the graph.
 - Prefers the graph-storage gear (the default `graph` feature); without it
   (`--no-default-features`) the gear falls back to an in-memory store, so the
   create/read loop still runs.
@@ -48,5 +49,10 @@ node scripts/regen-domain-frontend.mjs /tmp/types.json --out regen-out \
   including the meta layer: `model`, `model_version`, `object_type` and the
   `revises` / `inherits` / `declares` edges
 - `store.rs` — `DomainStore` over the graph-storage SDK + in-memory fallback
+- `mirror.rs`, `entity.rs`, `migrations.rs` — the read model: objects and
+  relations as Postgres rows, written with the graph, filled from it (ADR-0051)
+- `query.rs`, `query/sql.rs` — `POST /query`, answered in SQL over the read
+  model or from the graph; `mirror_tests.rs` asks both and compares
+- `mutate.rs` — `POST /mutate`, the batch write
 - `service.rs` / `rest.rs` / `mod.rs` — orchestration, HTTP surface, gear wiring
 - `../../scripts/regen-domain-frontend.mjs` — model → model-UI file set

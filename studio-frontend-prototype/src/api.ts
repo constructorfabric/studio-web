@@ -22,8 +22,9 @@ import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
-import type { DomainQuery, DomainQueryResult } from "./domain-query";
+import type { DomainMutation, DomainMutationResult, DomainQuery, DomainQueryResult } from "./domain-query";
 import type { SpecModelBuildEstimate } from "./build-eta";
+import type { GtsCatalog } from "./domain-runtime";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -2648,6 +2649,11 @@ export function apiUrl(path: string): string {
 /** The organization on screen, as App resolves it. */
 let currentOrganization: string | undefined;
 
+/** The organization requests are scoped to now (see `orgScoped`). */
+export function currentRequestOrganization(): string | undefined {
+  return currentOrganization;
+}
+
 /** Called by App whenever the organization on screen changes. */
 export function setCurrentOrganization(id: string | undefined): void {
   currentOrganization = id;
@@ -2656,7 +2662,15 @@ export function setCurrentOrganization(id: string | undefined): void {
 /** Gears that keep their data per organization and take `?organization_id=`. */
 // studio-product too: its engine reads the organization's corpus -- its gear
 // repositories and its projects' own gears -- not the caller's home tenant's.
-const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/", "/studio-product/"];
+// studio-domain-model too: the records gears keep live in each organization's
+// model, and a platform administrator's home tenant is the root (ADR-0051).
+const ORG_SCOPED = [
+  "/studio-components-catalog/",
+  "/studio-reports/",
+  "/studio-spec-mapping/",
+  "/studio-product/",
+  "/studio-domain-model/",
+];
 
 /**
  * `path` with the organization on screen named, for a gear that keeps its
@@ -4813,41 +4827,32 @@ export const api = {
       { method: "PUT", body: JSON.stringify(value) },
     ),
 
-  /* ── Project types (AM tenant metadata, inherited) ── */
+  /* ── Project types (domain objects, inherited; ADR-0051) ── */
 
   /** The project types that apply at this tenant — its own, else the nearest
    *  ancestor's. `null`: nobody set any (the built-in types apply). */
-  projectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
-    const r = await request<{ resolved: boolean; value?: unknown }>(
-      `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}/resolved`,
+  projectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
+    (await request<{ resolved?: unknown | null }>(
+      `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
       token,
-    );
-    return r.resolved ? (r.value ?? null) : null;
-  },
+    )).resolved ?? null,
 
   /** What this tenant itself sets, ignoring its ancestors. `null`: nothing. */
-  ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
-    try {
-      const entry = await request<{ value: unknown }>(
-        `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`,
-        token,
-      );
-      return entry.value;
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return null;
-      throw e;
-    }
-  },
+  ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> =>
+    (await request<{ own?: unknown | null }>(
+      `/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`,
+      token,
+    )).own ?? null,
 
   putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTypesDoc) =>
-    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+    request<unknown>(`/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`, token, {
       method: "PUT",
       body: JSON.stringify(value),
     }),
 
   /** Drop this tenant's own types, so what it inherits applies again. */
   deleteProjectTypes: (token: string, tenantId: string) =>
-    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+    request<unknown>(`/studio-organizations/v1/project-types?tenant_id=${encodeURIComponent(tenantId)}`, token, {
       method: "DELETE",
     }),
 
@@ -5077,9 +5082,62 @@ export const api = {
       ontology: { entities: unknown[]; buckets?: unknown[] };
       /** Whether this caller may change the model (`domain.model`, ADR-0035). */
       can_edit_model: boolean;
+      /** The GTS ids each type and relation kind is registered under. */
+      gts?: GtsCatalog;
     }>(
       "/studio-domain-model/v1/types",
       token,
+    ),
+  /** How many objects of each type the organization holds; `complete: false`
+   *  while the read model is still being filled. */
+  domainTypeCounts: (token: string) =>
+    request<{ counts: Record<string, number>; complete: boolean }>("/studio-domain-model/v1/type-counts", token),
+  /** Add a type to the model (ADR-0051): it starts with no fields of its own. */
+  createDomainType: (
+    token: string,
+    body: { id: string; name?: string; description?: string; bucket?: string; extends?: string },
+  ) =>
+    request<{ entity: unknown; version: number }>("/studio-domain-model/v1/types", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** Add a field to a type; objects written from now on may carry it. */
+  addDomainField: (
+    token: string,
+    type: string,
+    field: { name: string; type: string; description?: string; required?: boolean },
+  ) =>
+    request<{ entity: unknown; version: number }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields`,
+      token,
+      { method: "POST", body: JSON.stringify(field) },
+    ),
+  /** Rename, retype, require or describe a field the type itself declares. */
+  editDomainField: (
+    token: string,
+    type: string,
+    name: string,
+    edit: { rename_to?: string; type?: string; required?: boolean; description?: string },
+  ) =>
+    request<{ entity: unknown; version: number; migrated?: number | null }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields/${encodeURIComponent(name)}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(edit) },
+    ),
+  /** Drop a field the type itself declares. Stored values stay in the objects. */
+  /** Give a level (organization, workspace, project) a tab: a `shows`
+   *  relation to the type it lists. Removed like a field. */
+  addDomainTab: (token: string, level: string, body: { name: string; label?: string; target: string }) =>
+    request<{ entity: unknown; version: number }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(level)}/tabs`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  removeDomainField: (token: string, type: string, name: string) =>
+    request<unknown>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields/${encodeURIComponent(name)}`,
+      token,
+      { method: "DELETE" },
     ),
   /** Materialize the model as a graph (object_type nodes + inherits/declares). */
   syncDomainModel: (token: string) =>
@@ -5094,6 +5152,13 @@ export const api = {
     request<DomainQueryResult<T>>("/studio-domain-model/v1/query", token, {
       method: "POST",
       body: JSON.stringify(query),
+    }),
+  /** Change domain objects and their relations in one batch, applied in order
+   *  and checked against the model and the caller's rights (ADR-0051). */
+  mutateDomain: (token: string, mutation: DomainMutation) =>
+    request<DomainMutationResult>("/studio-domain-model/v1/mutate", token, {
+      method: "POST",
+      body: JSON.stringify(mutation),
     }),
   /** Create or replace one domain object: the same `type` + `key` (+ project)
    *  is the same object, so saving again updates it. */

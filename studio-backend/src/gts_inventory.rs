@@ -531,7 +531,14 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 8] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 9] = [
+        (
+            "dev.yaml",
+            "studio-domain-model",
+            "the read model compiles queries to jsonb operators and orders by \
+             `COLLATE \"C\"`, both PostgreSQL only; without it every query reads \
+             the graph as it did before (ADR-0051)",
+        ),
         (
             "dev.yaml",
             "studio-credstore-pg",

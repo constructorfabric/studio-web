@@ -44,6 +44,24 @@ cannot update a stored type to declare the paths. The gaps and the migration
 are in `docs/upstream/graph-storage-requests.md`, item 5, "Status". When they close,
 delete the index rather than keep two mirrors in step.
 
+## Domain objects: one write path, two readers
+
+`POST /studio-domain-model/v1/query` answers from `studio_domain_objects` and
+`studio_domain_edges` (the read model, ADR-0051, `src/domain_model/mirror.rs`)
+once a tenant's is filled, and from the graph before that. The same rules as
+the artifact index follow from it:
+
+- **Write domain objects and relations only through `DomainStore`**, which
+  the gear wires as `IndexedDomainStore`. A write straight to the graph client
+  leaves the rows behind, and queries then miss it.
+- **A new write path on `DomainStore`** needs an override in
+  `IndexedDomainStore`, or a `withdraw` when the rows cannot follow.
+- **A new query feature** goes into both executors, `query.rs` (graph) and
+  `query/sql.rs` (SQL), and into `mirror_tests.rs`, which asks both the same
+  question and compares. It needs Docker: `cargo test -- domain_model::mirror`.
+- **Never delete a domain node** in graph-storage: its key could never be
+  written again. Mark it (`store::DELETED_FIELD`), as `POST /mutate` does.
+
 ## Gear databases
 
 - A gear with a `database:` section in one profile needs it in every profile,

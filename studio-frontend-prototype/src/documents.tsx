@@ -73,6 +73,8 @@ import {
   toggleAll,
   type BulkDecision,
 } from "./spec-bulk";
+import { useDomainRefresh } from "./domain-live";
+import { ModelFields } from "./object-attributes";
 
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -173,6 +175,7 @@ export function DocumentTypesTab({ token, workspaceId }: { token: string; worksp
       setErr(errText(e));
     }
   }, [token, workspaceId]);
+  useDomainRefresh(["document-type"], loadTypes);
 
   useEffect(() => {
     void loadTypes();
@@ -583,6 +586,7 @@ function IngestedDocumentsView({
     }
     return specs;
   }, [token, workspaceId, projectTenantId]);
+  useDomainRefresh(["studio-document","document-binding","document-analysis","review-request","approval","decision"], reload);
 
   /** Start a document from a template: it joins this list, and opens in the
    *  IDE with the template's sections to fill. A type with a questionnaire is
@@ -1919,6 +1923,7 @@ function IngestedDocumentsView({
           </div>
         </div>
         {findingsCard(STUDIO_DOC + doc.id)}
+        <ModelFields token={token} entity="studio-document" where={{ id: { _eq: `studio-document:${doc.id}` } }} />
       </div>
     );
   }

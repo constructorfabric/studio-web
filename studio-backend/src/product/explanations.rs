@@ -33,6 +33,27 @@ use crate::llm_proxy::port::CompletionRequest;
 pub const EXPLANATIONS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.product.gear_explanations.v1~";
 
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0051 §8a, `storage.metadata`).
+/// The gear's `storage.metadata` setting, read at init.
+pub(crate) static STORAGE: std::sync::OnceLock<crate::model_metadata::MetadataStorage> =
+    std::sync::OnceLock::new();
+
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[Kind {
+        type_id: EXPLANATIONS_METADATA_TYPE,
+        gear: "studio-product",
+        parts: &[Part {
+            field: "items",
+            entity: "gear-explanation",
+            name: "Gear Explanation",
+            description: "What a gear does in plain words, written for an organization's people.",
+            key: &[],
+        }],
+    }]
+};
+
 /// The subject this gear writes as. Fixed, so an audit of account-management
 /// says which gear changed the row.
 pub const SERVICE_SUBJECT_ID: Uuid = Uuid::from_u128(0x9d1e_57a2_0c4b_4e8f_a3d6_71b0_e2c5_8f14);

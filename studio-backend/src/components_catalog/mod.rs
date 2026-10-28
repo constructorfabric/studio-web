@@ -59,6 +59,21 @@ use service::CatalogService;
 /// `STUDIO_COMPONENTS_CATALOG_KEYWORD`.
 const DEFAULT_KEYWORD: &str = "constructorfabric";
 
+/// `gears.studio-components-catalog.config`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct CatalogConfig {
+    /// Where each kind of this gear's data is kept (ADR-0051 §8a).
+    pub storage: CatalogStorageConfig,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct CatalogStorageConfig {
+    /// The platform's publication queue: `model` or `settings`.
+    pub publication_requests: registry_curation::RequestStorage,
+}
+
 #[toolkit::gear(
     name = "studio-components-catalog",
     deps = [types_registry, account_management, credstore],
@@ -97,10 +112,29 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .unwrap_or_else(|| DEFAULT_KEYWORD.to_string());
         info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
-        let sink = crate::catalog_graph::build_sink_own_tenant(
+        let mut sink = crate::catalog_graph::build_sink_own_tenant(
             ctx.client_hub().as_ref(),
             "studio-components-catalog",
         );
+        // The catalogue as domain objects (ADR-0051 §8a, `storage.catalog`).
+        let held = Arc::new(
+            if crate::model_metadata::keeps_in_model(ctx, "studio-components-catalog", "catalog") {
+                crate::catalog_graph::ModelSink::new(
+                    sink,
+                    ctx.client_hub(),
+                    "studio-components-catalog",
+                )
+            } else {
+                // Kept in the graph store: what the model holds moves back.
+                crate::catalog_graph::ModelSink::returning(
+                    sink,
+                    ctx.client_hub(),
+                    "studio-components-catalog",
+                )
+            },
+        );
+        crate::model_sweep::register(held.clone());
+        sink = held;
         // The one connector service, resolved when a sync needs it: without a
         // GitHub connector the catalogue is crates.io only.
         let connectors = Some(crate::connectors::sdk::Connectors::new(ctx.client_hub()));
@@ -116,6 +150,15 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         // The registry walk (ADR-0041): an organization's projects, read for
         // the components they declare. Resolved through the hub when it runs.
         service.set_hub(ctx.client_hub());
+        let config: CatalogConfig = ctx.config_or_default()?;
+        crate::data_places::note(
+            "studio-components-catalog",
+            "publication_requests",
+            &crate::data_places::store_name(config.storage.publication_requests),
+        );
+        let _ = service
+            .request_storage
+            .set(config.storage.publication_requests);
         crate::tasks::sdk::register(Arc::new(registry_task::RegistryTask::new(
             Arc::clone(&service),
             ctx.client_hub(),

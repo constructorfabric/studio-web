@@ -327,8 +327,8 @@ export const FLOW_DOORS: FlowDoor[] = [
   {
     id: "domain",
     title: "Domain model",
-    gives: "The entities and relations read out of a project's specs, queried by type.",
-    paths: ["/cf/studio-domain-model/v1/query"],
+    gives: "The entities and relations read out of a project's specs: queried by type, changed in one batch.",
+    paths: ["/cf/studio-domain-model/v1/query", "/cf/studio-domain-model/v1/mutate"],
     state: "built",
   },
   {

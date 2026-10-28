@@ -1949,6 +1949,22 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.shows.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.shows.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -1985,48 +2001,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action_run.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -2111,132 +2085,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.actor.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent_role.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent_role.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ai_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ai_run.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -2369,132 +2217,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.attachment.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.attachment.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.audit_entry.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.audit_entry.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.automation_rule.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.automation_rule.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.branch.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -2537,90 +2259,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.candidate_object.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.candidate_object.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.canonical_identity.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.canonical_identity.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.check.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -2657,90 +2295,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.check.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.checklist.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.checklist.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.code_review.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.code_review.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -2915,468 +2469,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.connector_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.connector_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.construction_lifecycle.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.construction_lifecycle.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.context_package.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.context_package.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.control.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.control.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_budget.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_budget.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_metric.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_metric.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_retrospective.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_retrospective.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cross_tree_reference.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cross_tree_reference.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.data_policy.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.data_policy.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.delivery_metric.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.delivery_metric.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.dependency.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -3413,90 +2505,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.dependency.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.discussion_thread.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.discussion_thread.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.doc_space.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.doc_space.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -3545,90 +2553,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.document_conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.document_conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.domain_dictionary.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.domain_dictionary.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.edge.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -3665,48 +2589,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.edge.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.editing_worktree.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.editing_worktree.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -3839,48 +2721,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.field_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.field_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.finding.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -3965,216 +2805,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.glossary_term.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.glossary_term.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_alert.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_alert.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_evidence.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_evidence.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.identity_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.identity_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.inline_conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.inline_conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -4211,216 +2841,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_activation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_activation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_catalog.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_catalog.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_role.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_role.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.knowledge_graph.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.knowledge_graph.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.lifecycle_phase.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.lifecycle_phase.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -4511,48 +2931,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.local_overlay.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.local_overlay.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.managed_object.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -4595,132 +2973,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_document.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_document.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_section.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_section.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mcp_server.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mcp_server.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.membership.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -4757,48 +3009,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.membership.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mention.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mention.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -4973,90 +3183,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.model_routing_policy.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.model_routing_policy.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.new_content_knowledge_element.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.new_content_knowledge_element.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.node.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5141,48 +3267,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.object_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.object_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.object_type.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5225,48 +3309,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.objective.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.objective.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.org_unit.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5303,6 +3345,48 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.org_unit.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.organization.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/name",
+            "/payload"
+          ],
+          "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
+            "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
+            "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.organization.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -5477,48 +3561,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.person_profile.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.person_profile.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.policy.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5603,174 +3645,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project_profile.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project_profile.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.projection.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.projection.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.prompt_template.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.prompt_template.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.provenance.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.provenance.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.pull_request.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5807,48 +3681,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.pull_request.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.quality_gate.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.quality_gate.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -5897,48 +3729,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.reference_catalog.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.reference_catalog.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5975,132 +3765,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relationship_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relationship_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.rendered_view.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.rendered_view.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -6401,300 +4065,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.safety_constraint.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.safety_constraint.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.scm_app_installation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.scm_app_installation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.skill.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.skill.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_link.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_link.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_record.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_record.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_system.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_system.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_run.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_state.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -6731,48 +4101,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_state.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.synchronization_checkpoint.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.synchronization_checkpoint.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -6905,48 +4233,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.template_rule.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.template_rule.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tenant.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -6983,132 +4269,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tenant.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.term_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.term_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.terminology_override.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.terminology_override.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.text_chunk.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.text_chunk.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -7199,48 +4359,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tool_call.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tool_call.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.transition.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -7277,216 +4395,6 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.transition.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ui_extension.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ui_extension.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.usage_event.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.usage_event.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.user_projection.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.user_projection.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validation_status.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validation_status.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validator.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validator.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -7577,48 +4485,6 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.work_item_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.work_item_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.worker.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -7703,7 +4569,7 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_library.v1~",
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workspace.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
           {
@@ -7738,91 +4604,7 @@
           ]
         }
       },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_library.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_run.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "graph-storage",
-      "schema": {
-        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.write_back_capability.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "allOf": [
-          {
-            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
-          }
-        ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": [
-            "/name",
-            "/payload"
-          ],
-          "vector_search": [
-            "/payload/abstract",
-            "/payload/body",
-            "/payload/content",
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/full_name",
-            "/payload/goal",
-            "/payload/heading",
-            "/payload/headline",
-            "/payload/label",
-            "/payload/message",
-            "/payload/name",
-            "/payload/notes",
-            "/payload/purpose",
-            "/payload/rationale",
-            "/payload/statement",
-            "/payload/summary",
-            "/payload/title"
-          ]
-        }
-      },
-      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.write_back_capability.v1~"
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workspace.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -8675,19 +5457,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.action_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "One durable execution attempt for an action, preserving retry lineage, inputs, outputs, gate results, costs and evidence until a retry passes its Quality Gate or policy is exhausted.",
-        "title": "Action Run",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.action_run.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.activity.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Configured unit of work inside a lifecycle stage or workflow, with declared inputs and outputs and performed via actions.",
@@ -8708,45 +5477,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.actor.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.agent.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The configuration of an AI-assisted worker Studio runs: instructions, tools, model policy, budget and approval boundaries. The definition; its executions are AI Runs.",
-        "title": "Agent Definition",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.agent.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.agent_role.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Specialized role an AI agent plays in an activity, workflow or stage: analyst, implementer, reviewer, tester or summarizer.",
-        "title": "Agent Role",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.agent_role.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.ai_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "One execution by a model or agent with model, runtime, cost and token breakdown.",
-        "title": "AI Run",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.ai_run.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -8792,45 +5522,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.attachment.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The record that a project tree uses a shared object: who attached it, when, and whether it is still active. Attaching is a tenant-scope right.",
-        "title": "Attachment",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.attachment.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.audit_entry.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Immutable record of identity merges/splits, role grants, team membership changes, kit publications, approvals, write-backs and agent actions.",
-        "title": "Audit Entry",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.audit_entry.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.automation_rule.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Standing config rule that reacts to events, sync results or schedules and triggers workflows or actions.",
-        "title": "Automation Rule",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.automation_rule.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.branch.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A named movable reference to a commit in a repository.",
@@ -8844,32 +5535,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.candidate_object.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A proposed managed object, relation or content version produced by Studio or an agent but not yet accepted as authoritative.",
-        "title": "Candidate Object",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.candidate_object.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.canonical_identity.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Identity of a shared object: the stable id that reconciles equivalent records from external systems into one object per tenant, without losing their source-native identities. Never spans tree-scoped objects.",
-        "title": "Canonical Identity",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.canonical_identity.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.check.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "One verification step performed while producing a Report — a rule evaluated, a query run, a file scanned, a comparison made — recording what was done and its outcome, whether or not it produced a Finding.",
@@ -8877,32 +5542,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.check.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.checklist.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A versioned set of required or advisory checks used by people, workflows and quality gates.",
-        "title": "Checklist",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.checklist.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.code_review.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A review decision and discussion for a proposed repository change, including required reviewers and findings.",
-        "title": "Review",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.code_review.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -8961,149 +5600,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.connector_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A registered, versioned definition of an integration category, its normalized capabilities, supported auth mechanisms and event schema, used to configure and validate Connector instances.",
-        "title": "Connector Type",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.connector_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.construction_lifecycle.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Kit-defined lifecycle framework with phases, stages, activities and gates; the SDLC Kit ships Plan, Build and Operate.",
-        "title": "Construction Lifecycle",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.construction_lifecycle.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.context_package.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Selected set of objects, relations, content versions, immutable blobs, rules and evidence handed to an actor for one action or review.",
-        "title": "Context Package",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.context_package.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.control.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Governance, risk or compliance control represented as a managed object.",
-        "title": "Control",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.control.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A durable, scoped sequence of messages, context snapshots, tool calls and produced artifacts.",
-        "title": "Conversation",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.cost_budget.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Spend cap at tenant, project tree, project, workflow, agent or model scope.",
-        "title": "Cost Budget",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.cost_budget.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.cost_metric.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Studio-specific computed measurement such as AI cost per accepted change, rolled up per step, phase and workflow.",
-        "title": "Cost Metric",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.cost_metric.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.cost_retrospective.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Computed analysis of a workflow run or phase: plan vs actual tokens/cost, waste sources and cheaper-path recommendations.",
-        "title": "Cost Retrospective",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.cost_retrospective.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.cross_tree_reference.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A deliberately weak, one-way pointer from an object in one project tree to an object in another. Not a relation: traversal stops at it and workflows never see it.",
-        "title": "Cross-tree Reference",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.cross_tree_reference.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.data_policy.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Rule for sensitivity, retention, redaction, model usage and visibility over object types and sources.",
-        "title": "Data Policy",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.data_policy.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.delivery_metric.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Studio-computed delivery measurement read from transitions and relations, never entered by hand.",
-        "title": "Delivery Metric",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.delivery_metric.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.dependency.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A dated, attributed record that one object depends on another: what blocks what, since when, and how badly. A reified relationship, so its dates and criticality survive.",
@@ -9111,32 +5607,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.dependency.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.discussion_thread.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Ordered set of comments on one subject, resolvable from open to resolved.",
-        "title": "Discussion Thread",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.discussion_thread.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.doc_space.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A provider-owned hierarchy or collection of documents with access boundaries.",
-        "title": "Doc Space",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.doc_space.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9156,32 +5626,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.document_conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A page, section or document-level conversation used for specification review, design discussion and knowledge capture.",
-        "title": "Document Conversation",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.document_conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.domain_dictionary.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Configurable vocabulary of a tenant or project tree; project tree-level entries shadow tenant-level ones.",
-        "title": "Domain Dictionary",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.domain_dictionary.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.edge.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A typed directed connection between two Nodes in the same tenant graph.",
@@ -9189,19 +5633,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.edge.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.editing_worktree.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A per-person, per-task isolated filesystem checkout of a Branch that holds exclusive claims on the paths currently being edited, so no two people physically edit the same file at once outside a future co-editing mode.",
-        "title": "Editing Worktree",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.editing_worktree.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9247,19 +5678,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.field_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Mapping between source-record fields and managed-object attributes, configured per connector and object type.",
-        "title": "Field Mapping",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.field_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.finding.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.",
@@ -9286,71 +5704,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.glossary_term.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A term of the customer product domain with a definition; not an Object Type and not a Terminology Override.",
-        "title": "Glossary Term",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.glossary_term.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.governance_alert.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A signal raised when an event matches a configured Automation Rule condition over the graph — for example, a new Finding of a given kind being detected — routed for attention independent of the general operational/SLO alerting pipeline.",
-        "title": "Governance Alert",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.governance_alert.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.governance_evidence.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Organization governance evidence represented as a managed object, distinct from Studio execution Evidence.",
-        "title": "Governance Evidence",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.governance_evidence.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.identity_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Rule or confirmed fact that several source records are the same real entity in one importing project tree.",
-        "title": "Identity Mapping",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.identity_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.inline_conversation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A resolvable conversation anchored to a precise code, diff, document, checklist or generated-output location.",
-        "title": "Inline Conversation",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.inline_conversation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.kit.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A versioned Plan, Build or Operate package that introduces opinionated durable object types, roles, templates, controls, workflows and guidance without changing the core domain model.",
@@ -9358,71 +5711,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.kit.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.kit_activation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Versioned, audited project tree decision pinning the exact kit version and enabled capabilities.",
-        "title": "Kit Activation",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.kit_activation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.kit_catalog.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Transient composition of shipped and organization-published kits available in the current tenant context.",
-        "title": "Kit Catalog",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.kit_catalog.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.kit_role.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "An opinionated responsibility profile supplied by a Kit and implemented through the generic core Role and Role Assignment objects.",
-        "title": "Kit Role Definition",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.kit_role.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.knowledge_graph.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A transient application composition of the tenant's managed objects, relations and graph aggregates for an API or UI response.",
-        "title": "Knowledge Graph",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.knowledge_graph.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.lifecycle_phase.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A canonical software-construction phase used to classify objects, transitions, gates, evidence and feedback without forcing one methodology.",
-        "title": "Lifecycle Phase",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.lifecycle_phase.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9455,19 +5743,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.local_overlay.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A project tree's own attributes on a shared object. Visible only in that project tree and never changes the shared object.",
-        "title": "Local Overlay",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.local_overlay.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.managed_object.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Studio's representation of one real entity, typed by an Object Type which fixes its scope: shared (one per tenant, attached by project trees) or tree-scoped.",
@@ -9481,45 +5756,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.markdown_document.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A source-aware Markdown artifact with canonical text, dialect, front matter and heading structure that can be generated from a template or normalized from a document or repository file.",
-        "title": "Markdown Document",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.markdown_document.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.markdown_section.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A heading-bounded semantic section available only for Markdown content.",
-        "title": "Markdown Section",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.markdown_section.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.mcp_server.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A registered Model Context Protocol endpoint exposing discoverable tools, resources and prompts under policy.",
-        "title": "MCP Server",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.mcp_server.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.membership.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Dated participation of a Person in a tenant or a team, and the record that carries the right to enter Studio. A tenant membership is always authored in Studio.",
@@ -9527,19 +5763,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.membership.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.mention.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "An explicit reference to a person, team, role or actor inside a comment, message or document that can drive notification and follow-up.",
-        "title": "Mention",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.mention.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9598,32 +5821,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.model_routing_policy.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Rule selecting the AI model or tool per activity type, role, cost, risk or data policy.",
-        "title": "Model Routing Policy",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.model_routing_policy.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.new_content_knowledge_element.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Any file on file system, binary, text file, markdown, source code",
-        "title": "File",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.new_content_knowledge_element.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.node.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A typed, independently addressable node in the tenant Knowledge Graph.",
@@ -9650,19 +5847,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.object_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A versioned mapping from an external schema and lifecycle into canonical Studio object types, fields, states and relationships.",
-        "title": "Object Mapping",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.object_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.object_type.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A tenant-extensible definition of schema, states, relationships, validation and presentation for any lifecycle object.",
@@ -9676,19 +5860,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.objective.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A measurable business, product, engineering or operational outcome used to align strategy and delivery.",
-        "title": "Objective",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.objective.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.org_unit.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A hierarchical business, functional or geographic unit within an organization, independent of delivery-team topology.",
@@ -9696,6 +5867,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.org_unit.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.domain.organization.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "An organization, kept in account-management: the model holds what people record about it and the tabs its screens show.",
+        "title": "Organization",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domain.organization.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9754,19 +5938,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.person_profile.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A governed professional profile describing a person's experience, interests, availability and demonstrated skills.",
-        "title": "Person Profile",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.person_profile.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.policy.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "The organization's own normative document: a security regulation, a retention policy, a code of conduct. Content-backed and versioned; mirrored from a wiki or GRC tool, or authored in Studio. It states the commitment; Data Policy and Safety Constraint are what enforce it.",
@@ -9793,58 +5964,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.project_profile.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A kit-owned definition of mandatory project fields, lifecycle, connector classes, quality lamps and default views.",
-        "title": "Project Profile",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.project_profile.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.projection.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A transient application-level composition assembled from authoritative entities and aggregates for an API or UI response; it is never persisted or authoritative.",
-        "title": "Projection",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.projection.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.prompt_template.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A model-independent, versioned instruction template with typed variables, examples and evaluation history.",
-        "title": "Prompt Template",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.prompt_template.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.provenance.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Evidence describing where a graph fact came from, how it was derived and when it was observed.",
-        "title": "Provenance",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.provenance.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.pull_request.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A proposed repository change with review, discussion and merge state.",
@@ -9852,19 +5971,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.pull_request.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.quality_gate.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A required validation and/or approval checkpoint that controls advancement of an object or workflow state.",
-        "title": "Quality Gate",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.quality_gate.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -9884,19 +5990,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.reference_catalog.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Editable named set of allowed values for a field or dimension, with kit defaults and project tree edits.",
-        "title": "Reference Catalog",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.reference_catalog.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.relation.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A typed, directed link between exactly two managed objects, scoped shared or to one project tree, with origin, provenance and confidence.",
@@ -9904,45 +5997,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.relation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.relation_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Registered kind of relation that constrains which object types it may connect and mirrors organization-model primary relationships where applicable.",
-        "title": "Relation Type",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.relation_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.relationship_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Mapping between source-system links and Studio relation types, configured per connector.",
-        "title": "Relationship Mapping",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.relationship_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.rendered_view.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A transient API or UI composition produced by applying a saved View and viewer context to authoritative entities.",
-        "title": "Rendered View",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.rendered_view.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -10040,97 +6094,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.safety_constraint.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Rule preventing unsafe automation such as unauthorized write-back, sensitive-data exposure or uncontrolled model usage.",
-        "title": "Safety Constraint",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.safety_constraint.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.scm_app_installation.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Studio registered as an installed application on a source-control provider (e.g. a GitHub App), subscribed to webhook events for a set of repositories instead of polling them.",
-        "title": "SCM App Installation",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.scm_app_installation.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.skill.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A reusable human or agent capability with proficiency, evidence and applicability to roles, work and actions.",
-        "title": "Competency",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.skill.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.source_link.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The pair of managed object and source record where provenance and per-link sync state live.",
-        "title": "Source Link",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.source_link.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.source_record.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "One original record as fetched from a source system; maps to at most one managed object per project tree.",
-        "title": "Source Record",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.source_record.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.source_system.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "External system holding original records such as Jira, GitLab, Confluence, HRIS, CRM, CI/CD or monitoring.",
-        "title": "Source System",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.source_system.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.sync_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "One synchronization execution that imports, updates, reconciles and checks source records.",
-        "title": "Sync Run",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.sync_run.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.sync_state.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Synchronization status per source link answering whether Studio still matches the source.",
@@ -10138,19 +6101,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.sync_state.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.synchronization_checkpoint.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Configured point where Studio checks that handoffs, sources, work products and relations are in sync.",
-        "title": "Synchronization Checkpoint",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.synchronization_checkpoint.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -10196,19 +6146,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.template_rule.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A reusable matching and validation rule for a template, including required, optional or forbidden headings, heading levels, ordering, cardinality and content patterns.",
-        "title": "Template Rule",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.template_rule.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.tenant.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "An isolated commercial, operational and security boundary for one organization and its governed data.",
@@ -10216,45 +6153,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.tenant.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.term_mapping.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Tie between a glossary term and managed objects expressing it; drift raises findings.",
-        "title": "Term Mapping",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.term_mapping.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.terminology_override.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Project- or tenant-specific label for a canonical concept; changes labels, never semantics or relation meaning.",
-        "title": "Terminology Override",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.terminology_override.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.text_chunk.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A bounded segment used for retrieval and analysis, derived reproducibly from text or a section.",
-        "title": "Text Chunk",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.text_chunk.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -10287,19 +6185,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.tool_call.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "An auditable request and response for one tool invocation, including approval and side-effect status.",
-        "title": "Tool Call",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.tool_call.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.transition.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Immutable state-change record of a managed object, workflow run or action run; delivery metrics read from transitions.",
@@ -10307,71 +6192,6 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domain.transition.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.ui_extension.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Optional sandboxed, version-pinned UI extension shipped by a kit and restricted to authorized host APIs.",
-        "title": "UI Extension",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.ui_extension.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.usage_event.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Measured Studio activity projection over connector syncs, workflow executions, validations and member activity.",
-        "title": "Usage Event",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.usage_event.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.user_projection.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "The effective subset one member can see, computed from direct role grants plus grants via teams; every view renders through it.",
-        "title": "User Projection",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.user_projection.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.validation_status.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Whether an object, candidate or run currently satisfies the validators and quality gates that apply to it.",
-        "title": "Validation Status",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.validation_status.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.validator.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A reusable check that evaluates an object, candidate change or execution result against explicit criteria.",
-        "title": "Validator",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.validator.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -10404,19 +6224,6 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.work_item_type.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A configurable schema and lifecycle definition for a class of work, without imposing one delivery methodology.",
-        "title": "Work Item Type",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.work_item_type.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.domain.worker.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "An isolated executable unit that performs an action with explicit runtime, resource and identity boundaries.",
@@ -10443,39 +6250,13 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.domain.workflow_library.v1~",
+        "$id": "gts://gts.cf.studio.domain.workspace.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Transient catalog of workflows available to a project tree, composed for members to browse and run.",
-        "title": "Workflow Library",
+        "description": "A group of an organization's projects, kept in account-management. The model holds the attributes people record about it; its name comes from account-management.",
+        "title": "Workspace",
         "type": "object"
       },
-      "type_id": "gts.cf.studio.domain.workflow_library.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.workflow_run.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "A stateful, inspectable execution of one workflow version with retries, approvals and full evidence.",
-        "title": "Workflow Run",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.workflow_run.v1~"
-    },
-    {
-      "gear": "studio-domain-model",
-      "on_refusal": "boot_fails",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.domain.write_back_capability.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Configured ability to update a given source system per connector, object type and policy.",
-        "title": "Write-back Capability",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.domain.write_back_capability.v1~"
+      "type_id": "gts.cf.studio.domain.workspace.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -10619,6 +6400,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domainrel.references.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.domainrel.shows.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A relation between two domain objects.",
+        "title": "shows",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domainrel.shows.v1~"
     },
     {
       "gear": "studio-product",

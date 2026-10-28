@@ -28,13 +28,22 @@
 //! a pure ontology edit rather than a schema migration.
 
 mod access;
+mod entity;
+pub(crate) mod events;
 pub(crate) mod gts;
+#[cfg(test)]
+mod held_tests;
+mod migrations;
+mod mirror;
+mod mutate;
 pub(crate) mod ontology;
 pub mod port;
 mod query;
+mod rehome;
 mod rest;
 mod service;
 mod store;
+mod tenant_objects;
 pub(crate) mod validate;
 
 use std::sync::Arc;
@@ -43,7 +52,7 @@ use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
-use toolkit::contracts::RestApiCapability;
+use toolkit::contracts::{DatabaseCapability, RestApiCapability};
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
@@ -56,11 +65,21 @@ use store::{DomainStore, InMemoryDomainStore};
 #[toolkit::gear(
     name = "studio-domain-model",
     deps = [types_registry],
-    capabilities = [rest]
+    capabilities = [db, rest]
 )]
 #[derive(Default)]
 pub struct StudioDomainModelGear {
     service: std::sync::OnceLock<Arc<DomainModelService>>,
+    /// The read model (see [`mirror`]). `None` = no database configured, and
+    /// every query reads the graph as it did before the read model existed.
+    mirror: std::sync::OnceLock<Option<Arc<mirror::DomainMirror>>>,
+}
+
+impl DatabaseCapability for StudioDomainModelGear {
+    fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        use toolkit_db::sea_orm_migration::MigratorTrait;
+        migrations::Migrator::migrations()
+    }
 }
 
 #[async_trait]
@@ -94,6 +113,25 @@ impl Gear for StudioDomainModelGear {
         let results = registry.register(schemas).await?;
         RegisterResult::ensure_all_ok(&results)?;
         info!("studio-domain-model: domain types cataloged in the types-registry");
+
+        // Optional like the artifact index: without a `database:` section
+        // nothing is lost but speed, and queries read the graph (ADR-0051).
+        let mirror = match ctx.db_required() {
+            Ok(db) => {
+                info!(
+                    "studio-domain-model: read model enabled — queries run in Postgres once a tenant is filled"
+                );
+                Some(Arc::new(mirror::DomainMirror::new(db.db())))
+            }
+            Err(e) => {
+                warn!(
+                    "studio-domain-model: no database configured — no read model, every query \
+                     reads the graph. Add a `database:` section (server + dbname) to enable it: {e}"
+                );
+                None
+            }
+        };
+        let _ = self.mirror.set(mirror);
         Ok(())
     }
 }
@@ -147,13 +185,16 @@ fn build_policy(ctx: &GearCtx) -> Arc<dyn access::ObjectPolicy> {
             // organization: project-scoped grants then admit nothing, which
             // fails closed rather than open.
             warn!(error = %e, "studio-domain-model: no account-management client — project grants admit nothing");
-            return Arc::new(access::PdpPolicy::new(enforcer(authz), Arc::new(NoTree)));
+            return Arc::new(access::GearsKeepTheirOwn(Arc::new(access::PdpPolicy::new(
+                enforcer(authz),
+                Arc::new(NoTree),
+            ))));
         }
     };
-    Arc::new(access::PdpPolicy::new(
+    Arc::new(access::GearsKeepTheirOwn(Arc::new(access::PdpPolicy::new(
         enforcer(authz),
         Arc::new(AmTenants(am)),
-    ))
+    ))))
 }
 
 fn enforcer(
@@ -205,8 +246,33 @@ impl RestApiCapability for StudioDomainModelGear {
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
         let store = build_store(ctx);
+        // Every write goes through the read model's store, so the rows follow
+        // the graph (ADR-0051 §2).
+        let store: Arc<dyn DomainStore> = match self.mirror.get().cloned().flatten() {
+            Some(m) => Arc::new(mirror::IndexedDomainStore::new(store, m)),
+            None => store,
+        };
         let service = Arc::new(DomainModelService::new(store).with_policy(build_policy(ctx)));
         let _ = self.service.set(service.clone());
+        service.attach_events(ctx.client_hub());
+        crate::model_sweep::register(Arc::new(rehome::Rehome(service.clone())));
+        crate::model_sweep::register(Arc::new(rehome::StudioTypes(service.clone())));
+        // Every tenant's records moved ahead of their first request.
+        if let Ok(am) = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            crate::model_sweep::register(Arc::new(tenant_objects::TenantObjects {
+                service: service.clone(),
+                am: Arc::clone(&am),
+            }));
+            crate::model_sweep::start(
+                am,
+                // The platform root (`components_catalog::tiers::PLATFORM_TENANT`).
+                uuid::Uuid::from_u128(1),
+                std::time::Duration::from_secs(20),
+            );
+        }
         // What another gear writes and reads objects through (`port.rs`): the
         // same path as the REST routes, under its caller's context.
         ctx.client_hub()
@@ -226,6 +292,17 @@ impl RestApiCapability for StudioDomainModelGear {
                 );
             })
             .ok();
-        Ok(rest::register_routes(router, openapi, service, authority))
+        let access = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .ok()
+            .map(|am| {
+                crate::org_scope::OrgAccess(Arc::new(
+                    crate::studio_session::sdk::TenantMembership::new(am),
+                ))
+            });
+        Ok(rest::register_routes(
+            router, openapi, service, authority, access,
+        ))
     }
 }

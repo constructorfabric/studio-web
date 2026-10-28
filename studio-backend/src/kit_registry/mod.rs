@@ -34,7 +34,7 @@ impl Gear for StudioKitsGear {
         let account_management = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         self.service
             .set(Arc::new(KitRegistryService::new(
-                account_management,
+                crate::model_metadata::client_for(ctx, account_management, service::MODEL_KINDS),
                 ctx.client_hub(),
             )))
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;

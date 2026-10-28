@@ -157,7 +157,7 @@ sea-orm = { version = "2.0", default-features = false, features = [
     "with-json",
     "macros",
 ] }
-time = "0.3"
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
 # AES-256-GCM for values at rest, and the CSPRNG for nonces. Same crypto
 # library as the platform's TLS stack and credstore's own value fence, so a
 # `--features fips` build routes this through the validated module too.

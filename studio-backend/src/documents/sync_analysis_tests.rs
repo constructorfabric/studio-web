@@ -320,15 +320,18 @@ impl Rig {
     /// Record a verdict the way a finished (or refused) run does.
     async fn verdict(&self, path: &str, detector: &str, state: &str) {
         self.service
-            .record_detector_verdict(DetectorVerdict {
-                workspace_id: self.workspace,
-                binding_id: Some(self.binding(path)),
-                document_id: None,
-                detector: detector.to_owned(),
-                state: state.to_owned(),
-                task_id: None,
-                summary: format!("{detector}: test"),
-            })
+            .record_detector_verdict(
+                &self.ctx,
+                DetectorVerdict {
+                    workspace_id: self.workspace,
+                    binding_id: Some(self.binding(path)),
+                    document_id: None,
+                    detector: detector.to_owned(),
+                    state: state.to_owned(),
+                    task_id: None,
+                    summary: format!("{detector}: test"),
+                },
+            )
             .await
             .expect("record verdict");
     }
@@ -608,7 +611,14 @@ async fn a_named_binding_is_recorded_against_its_node_and_id() {
         .await;
     let spec = rig
         .service
-        .record_subjects(rig.workspace, None, &[rig.binding("docs/a.md")], &[], &[])
+        .record_subjects(
+            &rig.ctx,
+            rig.workspace,
+            None,
+            &[rig.binding("docs/a.md")],
+            &[],
+            &[],
+        )
         .await
         .unwrap();
     assert_eq!(spec.workspace_id, rig.workspace);
@@ -631,6 +641,7 @@ async fn an_inline_repository_path_is_its_binding() {
     let spec = rig
         .service
         .record_subjects(
+            &rig.ctx,
             rig.workspace,
             None,
             &[],
@@ -661,6 +672,7 @@ async fn a_studio_document_is_recorded_by_its_id_named_or_inline() {
     let spec = rig
         .service
         .record_subjects(
+            &rig.ctx,
             rig.workspace,
             None,
             &[],
@@ -721,7 +733,12 @@ async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
         async move {
             let (bindings, _) = rig
                 .service
-                .list_bindings(rig.workspace, None, crate::pagination::PageQuery::default())
+                .list_bindings(
+                    &rig.ctx,
+                    rig.workspace,
+                    None,
+                    crate::pagination::PageQuery::default(),
+                )
                 .await
                 .unwrap();
             bindings

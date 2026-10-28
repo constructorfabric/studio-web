@@ -78,6 +78,23 @@ pub const GEAR_REPOSITORY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~
 pub const CONNECTIONS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~";
 
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0051 §8a, `storage.metadata`).
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[Kind {
+        type_id: CONNECTIONS_METADATA_TYPE,
+        gear: "studio-connector",
+        parts: &[Part {
+            field: "items",
+            entity: "connector-connection",
+            name: "Connector Connection",
+            description: "A connection to a source system an organization or workspace set up; its token stays in credstore.",
+            key: &["id"],
+        }],
+    }]
+};
+
 /// Build the `PluginV1` registration document for a driver.
 ///
 /// Hand-built rather than via `PluginV1::build_registration` because that

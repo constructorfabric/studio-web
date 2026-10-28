@@ -4,6 +4,8 @@
 # `cargo test api_contract` fails until it is recorded, with a reason, in
 # docs/api-contract-breaks.txt. See docs/api-conventions.md, rule G4.
 
+event	domain.model_changed	domain_model
+event	domain.objects_changed	domain_type
 event	review_request.cancelled	review_request
 event	review_request.created	review_request
 event	review_request.decided	review_request
@@ -18,6 +20,11 @@ event	theia.operation	workspace
 event	theia.repositories-changed	workspace
 event	theia.workspace-activity	workspace
 event	theia.workspace-snapshot-changed	workspace
+event-field	domain.model_changed	op
+event-field	domain.model_changed	version
+event-field	domain.objects_changed	count
+event-field	domain.objects_changed	entity
+event-field	domain.objects_changed	op
 event-field	review_request.cancelled	due_at
 event-field	review_request.cancelled	id
 event-field	review_request.cancelled	outstanding
@@ -93,6 +100,8 @@ event-field	theia.workspace-snapshot-changed	event
 event-field	theia.workspace-snapshot-changed	sequence
 event-field	theia.workspace-snapshot-changed	session_id
 event-field	theia.workspace-snapshot-changed	workspace_id
+event-subject	domain_model
+event-subject	domain_type
 event-subject	review_request
 event-subject	task_run
 event-subject	workspace
@@ -521,6 +530,8 @@ request	POST /studio-documents/v1/workspaces/{}/types	sections.required	bool	req
 request	POST /studio-documents/v1/workspaces/{}/types	sections.title	String	required
 request	POST /studio-domain-model/v1/model/import	ontology	Value	required
 request	POST /studio-domain-model/v1/model/revert	to	u64	required
+request	POST /studio-domain-model/v1/mutate	operations	Vec<Value>	required
+request	POST /studio-domain-model/v1/mutate	validate	String	optional
 request	POST /studio-domain-model/v1/objects	if_absent	bool	optional
 request	POST /studio-domain-model/v1/objects	key	String	required
 request	POST /studio-domain-model/v1/objects	project_id	String	optional
@@ -528,6 +539,9 @@ request	POST /studio-domain-model/v1/objects	scope	String	optional
 request	POST /studio-domain-model/v1/objects	type	String	required
 request	POST /studio-domain-model/v1/objects	validate	String	optional
 request	POST /studio-domain-model/v1/objects	value	Value	required
+request	POST /studio-domain-model/v1/query	aggregate	{}	optional
+request	POST /studio-domain-model/v1/query	aggregate.group_by	Vec<String>	optional
+request	POST /studio-domain-model/v1/query	cursor	String	optional
 request	POST /studio-domain-model/v1/query	fields	Vec<String>	optional
 request	POST /studio-domain-model/v1/query	include	Value	optional
 request	POST /studio-domain-model/v1/query	limit	usize	optional
@@ -541,10 +555,18 @@ request	POST /studio-domain-model/v1/query	where	Value	optional
 request	POST /studio-domain-model/v1/relations	from	String	required
 request	POST /studio-domain-model/v1/relations	relation	String	required
 request	POST /studio-domain-model/v1/relations	to	String	required
+request	POST /studio-domain-model/v1/types	bucket	String	optional
+request	POST /studio-domain-model/v1/types	description	String	optional
+request	POST /studio-domain-model/v1/types	extends	String	optional
+request	POST /studio-domain-model/v1/types	id	String	required
+request	POST /studio-domain-model/v1/types	name	String	optional
 request	POST /studio-domain-model/v1/types/{}/fields	description	String	optional
 request	POST /studio-domain-model/v1/types/{}/fields	name	String	required
 request	POST /studio-domain-model/v1/types/{}/fields	required	bool	optional
 request	POST /studio-domain-model/v1/types/{}/fields	type	String	required
+request	POST /studio-domain-model/v1/types/{}/tabs	label	String	optional
+request	POST /studio-domain-model/v1/types/{}/tabs	name	String	required
+request	POST /studio-domain-model/v1/types/{}/tabs	target	String	required
 request	POST /studio-environments/v1/build-workflows	environment_id	Uuid	required
 request	POST /studio-environments/v1/build-workflows	product_file	String	optional
 request	POST /studio-environments/v1/build-workflows	profile	String	optional
@@ -823,6 +845,7 @@ request	PUT /studio-environments/v1/environments/{}	registry	String	optional
 request	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
+request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	required
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
 request	PUT /studio-product/v1/projects/{}/product	config	Value	optional
 request	PUT /studio-product/v1/projects/{}/product	gears	Vec<String>	optional
@@ -1069,6 +1092,12 @@ response	GET /studio-artifact-ingest/v1/source-activity	total	u32	always
 response	GET /studio-assembly/v1/manifest	build	{}	always
 response	GET /studio-assembly/v1/manifest	build.commit	String	optional
 response	GET /studio-assembly/v1/manifest	build.features	Vec<String>	always
+response	GET /studio-assembly/v1/manifest	data	Vec<{}>	always
+response	GET /studio-assembly/v1/manifest	data.gear	String	always
+response	GET /studio-assembly/v1/manifest	data.stores	Vec<{}>	always
+response	GET /studio-assembly/v1/manifest	data.stores.kind	String	always
+response	GET /studio-assembly/v1/manifest	data.stores.store	String	always
+response	GET /studio-assembly/v1/manifest	data.types	Vec<String>	always
 response	GET /studio-assembly/v1/manifest	gears	Vec<{}>	always
 response	GET /studio-assembly/v1/manifest	gears.capabilities	Vec<String>	always
 response	GET /studio-assembly/v1/manifest	gears.depends_on	Vec<String>	always
@@ -2379,7 +2408,10 @@ response	GET /studio-domain-model/v1/relations	relations.type_id	String	always
 response	GET /studio-domain-model/v1/relations	unresolved	Vec<{}>	always
 response	GET /studio-domain-model/v1/relations	unresolved.source	String	always
 response	GET /studio-domain-model/v1/relations	unresolved.target	String	always
+response	GET /studio-domain-model/v1/type-counts	complete	bool	always
+response	GET /studio-domain-model/v1/type-counts	counts	Value	always
 response	GET /studio-domain-model/v1/types	can_edit_model	bool	always
+response	GET /studio-domain-model/v1/types	gts	Value	always
 response	GET /studio-domain-model/v1/types	ontology	Value	always
 response	GET /studio-domain-model/v1/types/{}	ancestors	Vec<String>	always
 response	GET /studio-domain-model/v1/types/{}	bucket	String	always
@@ -2738,6 +2770,10 @@ response	GET /studio-organizations/v1/overview	workspaces.score	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.specs_failing	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.spend	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.stuck	u32	always
+response	GET /studio-organizations/v1/project-types	own	{}	optional
+response	GET /studio-organizations/v1/project-types	own.types	Vec<Value>	optional
+response	GET /studio-organizations/v1/project-types	resolved	{}	optional
+response	GET /studio-organizations/v1/project-types	resolved.types	Vec<Value>	optional
 response	GET /studio-organizations/v1/rollups	items	Vec<{}>	always
 response	GET /studio-organizations/v1/rollups	items.activity_days	u32	optional
 response	GET /studio-organizations/v1/rollups	items.brief	String	optional
@@ -4359,6 +4395,7 @@ response	POST /studio-domain-model/v1/model/sync	object_types	u64	always
 response	POST /studio-domain-model/v1/model/sync	pinned_types	Vec<String>	always
 response	POST /studio-domain-model/v1/model/sync	skipped_endpoints	u64	always
 response	POST /studio-domain-model/v1/model/sync	version	u64	always
+response	POST /studio-domain-model/v1/mutate	results	Vec<Value>	always
 response	POST /studio-domain-model/v1/objects	if_absent	bool	always
 response	POST /studio-domain-model/v1/objects	instance_id	String	always
 response	POST /studio-domain-model/v1/objects	type_id	String	always
@@ -4369,7 +4406,12 @@ response	POST /studio-domain-model/v1/objects	violations.detail	String	always
 response	POST /studio-domain-model/v1/objects	violations.field	String	always
 response	POST /studio-domain-model/v1/objects	violations.kind	String	always
 response	POST /studio-domain-model/v1/query	complete	bool	always
+response	POST /studio-domain-model/v1/query	groups	Vec<{}>	optional
+response	POST /studio-domain-model/v1/query	groups.count	u64	optional
+response	POST /studio-domain-model/v1/query	groups.key	Vec<Value>	optional
 response	POST /studio-domain-model/v1/query	items	Vec<Value>	always
+response	POST /studio-domain-model/v1/query	next_cursor	String	optional
+response	POST /studio-domain-model/v1/query	source	String	always
 response	POST /studio-domain-model/v1/query	total	u32	always
 response	POST /studio-domain-model/v1/query	warnings	Vec<String>	always
 response	POST /studio-domain-model/v1/relations	cardinality	String	optional
@@ -4379,8 +4421,12 @@ response	POST /studio-domain-model/v1/relations	name	String	optional
 response	POST /studio-domain-model/v1/relations	to	String	always
 response	POST /studio-domain-model/v1/relations	type_id	String	always
 response	POST /studio-domain-model/v1/relations	verb	String	always
+response	POST /studio-domain-model/v1/types	entity	Value	always
+response	POST /studio-domain-model/v1/types	version	u64	always
 response	POST /studio-domain-model/v1/types/{}/fields	entity	Value	always
 response	POST /studio-domain-model/v1/types/{}/fields	version	u64	always
+response	POST /studio-domain-model/v1/types/{}/tabs	entity	Value	always
+response	POST /studio-domain-model/v1/types/{}/tabs	version	u64	always
 response	POST /studio-environments/v1/build-workflows	branch	String	always
 response	POST /studio-environments/v1/build-workflows	path	String	always
 response	POST /studio-environments/v1/build-workflows	pr_url	String	optional
@@ -5076,6 +5122,7 @@ response	PUT /studio-environments/v1/environments/{}	updated_by	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
+response	PUT /studio-organizations/v1/project-types	types	Vec<Value>	always
 response	PUT /studio-product/v1/gear-explanations/{}	gear_id	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	source	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	text	String	always
@@ -5379,6 +5426,7 @@ route	DELETE /studio-environments/v1/environments/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
+route	DELETE /studio-organizations/v1/project-types
 route	DELETE /studio-presence/v1/me
 route	DELETE /studio-scheduler/v1/schedules/{}
 route	DELETE /studio-session/v1/desktop-sessions/{}
@@ -5472,6 +5520,7 @@ route	GET /studio-domain-model/v1/objects
 route	GET /studio-domain-model/v1/objects/graph
 route	GET /studio-domain-model/v1/objects/legacy-scopes
 route	GET /studio-domain-model/v1/relations
+route	GET /studio-domain-model/v1/type-counts
 route	GET /studio-domain-model/v1/types
 route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
@@ -5500,6 +5549,7 @@ route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
 route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
+route	GET /studio-organizations/v1/project-types
 route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online
 route	GET /studio-product/v1/gear-explanations
@@ -5628,10 +5678,13 @@ route	POST /studio-documents/v1/workspaces/{}/types
 route	POST /studio-domain-model/v1/model/import
 route	POST /studio-domain-model/v1/model/revert
 route	POST /studio-domain-model/v1/model/sync
+route	POST /studio-domain-model/v1/mutate
 route	POST /studio-domain-model/v1/objects
 route	POST /studio-domain-model/v1/query
 route	POST /studio-domain-model/v1/relations
+route	POST /studio-domain-model/v1/types
 route	POST /studio-domain-model/v1/types/{}/fields
+route	POST /studio-domain-model/v1/types/{}/tabs
 route	POST /studio-environments/v1/build-workflows
 route	POST /studio-environments/v1/builds
 route	POST /studio-environments/v1/deployments
@@ -5721,6 +5774,7 @@ route	PUT /studio-environments/v1/bindings
 route	PUT /studio-environments/v1/config-secrets/{}
 route	PUT /studio-environments/v1/environments/{}
 route	PUT /studio-organizations/v1/logo
+route	PUT /studio-organizations/v1/project-types
 route	PUT /studio-product/v1/gear-explanations/{}
 route	PUT /studio-product/v1/projects/{}/product
 route	PUT /studio-reports/v1/reports/{}/plan/lanes

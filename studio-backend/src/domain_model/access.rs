@@ -42,6 +42,8 @@ pub enum AccessError {
     Denied,
     /// The PDP could not be asked. Under the roles model that is not a yes.
     Unavailable(String),
+    /// The type's objects are a gear's records: only that gear writes them.
+    Held(String),
 }
 
 impl std::fmt::Display for AccessError {
@@ -49,6 +51,7 @@ impl std::fmt::Display for AccessError {
         match self {
             Self::Denied => f.write_str("not permitted on domain objects"),
             Self::Unavailable(m) => write!(f, "authorization unavailable: {m}"),
+            Self::Held(m) => write!(f, "{m}: change it through that gear"),
         }
     }
 }
@@ -87,6 +90,33 @@ impl ObjectPolicy for TenantOnly {
         _entity: Option<&str>,
     ) -> Result<Access, AccessError> {
         Ok(Access::new(ctx, AccessScope::allow_all(), None))
+    }
+}
+
+/// A gear acting as itself — a `service` subject minted in this process,
+/// which carries no bearer token — keeps its own records (ADR-0051 §8a): it
+/// has already decided who may change them, as it did when they were
+/// account-management rows only it wrote, so its reads and writes are
+/// tenant-scoped only. Every other caller is asked of `inner`. A token from
+/// outside always carries its bearer, so no request can pass as a gear.
+pub struct GearsKeepTheirOwn(pub Arc<dyn ObjectPolicy>);
+
+pub(crate) fn is_gear_itself(ctx: &SecurityContext) -> bool {
+    ctx.subject_type() == Some("service") && ctx.bearer_token().is_none()
+}
+
+#[async_trait]
+impl ObjectPolicy for GearsKeepTheirOwn {
+    async fn access(
+        &self,
+        ctx: &SecurityContext,
+        action: &str,
+        entity: Option<&str>,
+    ) -> Result<Access, AccessError> {
+        if is_gear_itself(ctx) {
+            return TenantOnly.access(ctx, action, entity).await;
+        }
+        self.0.access(ctx, action, entity).await
     }
 }
 
@@ -183,7 +213,7 @@ impl Access {
 
     /// Everything in the tenant, with nothing to narrow: the common answer,
     /// and one that needs no tenant reads.
-    fn is_unconstrained(&self) -> bool {
+    pub fn is_unconstrained(&self) -> bool {
         self.scope.is_unconstrained()
     }
 

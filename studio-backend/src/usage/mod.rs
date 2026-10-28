@@ -49,6 +49,36 @@ pub const PRICES_METADATA_TYPE: &str =
 pub const BUDGETS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.budgets.v1~";
 
+/// The documents this gear keeps as domain objects, each record of their
+/// lists an object (ADR-0051 §8a, `storage.metadata`).
+pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {
+    use crate::model_metadata::{Kind, Part};
+    &[
+        Kind {
+            type_id: PRICES_METADATA_TYPE,
+            gear: "studio-usage",
+            parts: &[Part {
+                field: "models",
+                entity: "model-price",
+                name: "Model Price",
+                description: "What an organization pays per million tokens of one provider's model.",
+                key: &["provider", "model"],
+            }],
+        },
+        Kind {
+            type_id: BUDGETS_METADATA_TYPE,
+            gear: "studio-usage",
+            parts: &[Part {
+                field: "items",
+                entity: "budget",
+                name: "Budget",
+                description: "A monthly spending limit for an organization or one of its workspaces or projects.",
+                key: &["tenant_id"],
+            }],
+        },
+    ]
+};
+
 #[toolkit::gear(
     name = "studio-usage",
     deps = [account_management],
@@ -67,7 +97,7 @@ impl Gear for StudioUsageGear {
         {
             ctx.client_hub()
                 .register::<dyn reader::OrganizationUsage>(Arc::new(reader::UsageReader::new(
-                    am,
+                    crate::model_metadata::client_for(ctx, am, MODEL_KINDS),
                     ctx.client_hub(),
                 )));
         }
@@ -89,7 +119,10 @@ impl RestApiCapability for StudioUsageGear {
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am)),
         ));
-        let service = Arc::new(service::UsageService::new(am, ctx.client_hub()));
+        let service = Arc::new(service::UsageService::new(
+            crate::model_metadata::client_for(ctx, am, MODEL_KINDS),
+            ctx.client_hub(),
+        ));
         let router = rest::register_routes(router, openapi, service);
         // `?organization_id=` resolves through it.
         Ok(router.layer(axum::Extension(access)))

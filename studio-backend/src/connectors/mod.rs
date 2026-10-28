@@ -265,7 +265,9 @@ impl Gear for StudioConnectorGear {
                  connection APIs will answer 503"
             );
             if let (Ok(am), Ok(credstore)) = (
-                ctx.client_hub().get::<dyn AccountManagementClient>(),
+                ctx.client_hub()
+                    .get::<dyn AccountManagementClient>()
+                    .map(|am| crate::model_metadata::client_for(ctx, am, gts::MODEL_KINDS)),
                 ctx.client_hub().get::<dyn CredStoreClientV1>(),
             ) {
                 ctx.client_hub()
@@ -274,7 +276,11 @@ impl Gear for StudioConnectorGear {
             return Ok(());
         }
 
-        let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
+        let am = crate::model_metadata::client_for(
+            ctx,
+            ctx.client_hub().get::<dyn AccountManagementClient>()?,
+            gts::MODEL_KINDS,
+        );
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
         // The one connector service of the process: the other gears hold a

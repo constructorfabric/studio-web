@@ -34,6 +34,14 @@ use crate::spec_mapping::sdk as reading;
 
 pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
+    /// Where the process catalogue's own entries live: domain objects or the
+    /// gear's tables, as configured (ADR-0051).
+    process: Arc<super::process_store::ProcessStore>,
+    /// Where review requests, verdicts and decisions live (ADR-0051).
+    reviews: Arc<super::review_store::ReviewStore>,
+    /// Where documents, bindings, verdicts, the spec model, parts and
+    /// delivery scopes live (ADR-0051 §8a).
+    data: Arc<super::data::DocumentsData>,
     account_management: Arc<dyn AccountManagementClient>,
     sync_analysis: Option<SyncAnalysis>,
     /// The last requirement trace of each project, for a while
@@ -64,11 +72,82 @@ impl DocumentsService {
         account_management: Arc<dyn AccountManagementClient>,
     ) -> Self {
         Self {
+            process: Arc::new(super::process_store::ProcessStore::new(
+                repo.clone(),
+                super::process_store::ProcessStorage::Tables,
+                None,
+            )),
+            reviews: Arc::new(super::review_store::ReviewStore::new(
+                repo.clone(),
+                super::review_store::ReviewStorage::Tables,
+                None,
+            )),
+            data: Arc::new(super::data::DocumentsData::new(
+                repo.clone(),
+                super::model_table::TableStorage::Tables,
+                None,
+            )),
             repo,
             account_management,
             sync_analysis: None,
             trace_cache: super::spec_model::trace::TraceCache::default(),
         }
+    }
+
+    /// Keep the process catalogue where `storage` says; the domain model's
+    /// port is found on `hub` when it is used.
+    #[must_use]
+    pub fn with_process_storage(
+        mut self,
+        storage: super::process_store::ProcessStorage,
+        hub: Arc<toolkit::client_hub::ClientHub>,
+    ) -> Self {
+        self.process = Arc::new(super::process_store::ProcessStore::new(
+            self.repo.clone(),
+            storage,
+            Some(hub),
+        ));
+        self
+    }
+
+    /// What moves this gear's records into (or out of) the model at start.
+    pub fn movers(&self) -> Vec<Arc<dyn crate::model_sweep::TenantMover>> {
+        vec![
+            self.data.clone(),
+            self.reviews.clone(),
+            self.process.clone(),
+        ]
+    }
+
+    /// Keep documents, bindings and the rest of the gear's records where
+    /// `storage` says.
+    #[must_use]
+    pub fn with_documents_storage(
+        mut self,
+        storage: super::model_table::TableStorage,
+        hub: Arc<toolkit::client_hub::ClientHub>,
+    ) -> Self {
+        self.data = Arc::new(super::data::DocumentsData::new(
+            self.repo.clone(),
+            storage,
+            Some(hub),
+        ));
+        self
+    }
+
+    /// Keep reviews, verdicts and decisions where `storage` says.
+    #[must_use]
+    pub fn with_review_storage(
+        mut self,
+        storage: super::review_store::ReviewStorage,
+        hub: Arc<toolkit::client_hub::ClientHub>,
+    ) -> Self {
+        self.reviews = Arc::new(super::review_store::ReviewStore::new(
+            self.repo.clone(),
+            storage,
+            Some(hub),
+        ));
+        self
     }
 
     /// Analyse what a sync changed. `None` leaves a sync to classify only.
@@ -238,7 +317,7 @@ impl DocumentsService {
         workspace_id: Uuid,
     ) -> Result<Vec<DocumentType>> {
         let chain = self.owner_chain(ctx, workspace_id).await?;
-        self.resolve_types(&chain, Some(workspace_id)).await
+        self.resolve_types(ctx, &chain, Some(workspace_id)).await
     }
 
     /// What an organization itself publishes: the platform catalogue overlaid
@@ -252,7 +331,7 @@ impl DocumentsService {
         organization_id: Uuid,
     ) -> Result<Vec<DocumentType>> {
         self.authorize(ctx, organization_id).await?;
-        self.resolve_types(&[organization_id], None).await
+        self.resolve_types(ctx, &[organization_id], None).await
     }
 
     /// Overlay the platform catalogue with each level in `chain`, in order.
@@ -262,10 +341,11 @@ impl DocumentsService {
     /// the organization's own editing view.
     async fn resolve_types(
         &self,
+        ctx: &SecurityContext,
         chain: &[Uuid],
         workspace_id: Option<Uuid>,
     ) -> Result<Vec<DocumentType>> {
-        let rows = self.repo.list_types(chain).await?;
+        let rows = self.data.list_types(ctx, chain).await?;
         let entries = rows
             .into_iter()
             .map(|row| {
@@ -295,13 +375,18 @@ impl DocumentsService {
     /// `owner`: publishing at organization level is authorized against the
     /// organization tenant, which is the whole access rule -- whoever may read
     /// the organization may change what every workspace under it inherits.
-    pub async fn upsert_type(&self, owner: Owner, mut ty: DocumentType) -> Result<DocumentType> {
+    pub async fn upsert_type(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        mut ty: DocumentType,
+    ) -> Result<DocumentType> {
         let owner_tenant_id = owner_tenant(owner.clone())?;
         ty.key = normalize_key(&ty.key)?;
         ty.owner = owner;
         ty.gts_type_id = TYPE_GTS_ID.to_string();
         ty.template.review = self
-            .settle_review(owner_tenant_id, &ty.key, ty.template.review.take())
+            .settle_review(ctx, owner_tenant_id, &ty.key, ty.template.review.take())
             .await?;
         let now = OffsetDateTime::now_utc();
         let model = doc_type::Model {
@@ -316,7 +401,7 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_type(model).await?;
+        self.data.upsert_type(ctx, model).await?;
         Ok(ty)
     }
 
@@ -326,6 +411,7 @@ impl DocumentsService {
     /// parts empty clears it, so the key's built-in guide applies again.
     async fn settle_review(
         &self,
+        ctx: &SecurityContext,
         owner_tenant_id: Uuid,
         key: &str,
         sent: Option<super::review_guide::ReviewGuide>,
@@ -334,7 +420,7 @@ impl DocumentsService {
             Some(g) if g.checklist.trim().is_empty() && g.rules.trim().is_empty() => None,
             Some(g) => Some(g),
             None => {
-                let rows = self.repo.list_types(&[owner_tenant_id]).await?;
+                let rows = self.data.list_types(ctx, &[owner_tenant_id]).await?;
                 match rows.into_iter().find(|r| r.key == key) {
                     Some(row) => {
                         serde_json::from_str::<TemplateSpec>(&row.template)
@@ -356,8 +442,13 @@ impl DocumentsService {
     /// a workspace that once replaced `prd` could never go back to the
     /// organization's, which would make the whole overlay a trap rather than a
     /// setting (ADR-0014 section 4).
-    pub async fn delete_type(&self, owner: Owner, key: &str) -> Result<bool> {
-        self.repo.delete_type(owner_tenant(owner)?, key).await
+    pub async fn delete_type(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        key: &str,
+    ) -> Result<bool> {
+        self.data.delete_type(ctx, owner_tenant(owner)?, key).await
     }
 
     // -- journey stages ------------------------------------------------------
@@ -373,7 +464,7 @@ impl DocumentsService {
         workspace_id: Uuid,
     ) -> Result<Vec<Stage>> {
         let chain = self.owner_chain(ctx, workspace_id).await?;
-        self.resolve_stages(&chain, Some(workspace_id)).await
+        self.resolve_stages(ctx, &chain, Some(workspace_id)).await
     }
 
     /// What an organization itself publishes, with no workspace level below it.
@@ -383,15 +474,16 @@ impl DocumentsService {
         organization_id: Uuid,
     ) -> Result<Vec<Stage>> {
         self.authorize(ctx, organization_id).await?;
-        self.resolve_stages(&[organization_id], None).await
+        self.resolve_stages(ctx, &[organization_id], None).await
     }
 
     async fn resolve_stages(
         &self,
+        ctx: &SecurityContext,
         chain: &[Uuid],
         workspace_id: Option<Uuid>,
     ) -> Result<Vec<Stage>> {
-        let rows = self.repo.list_stages(chain).await?;
+        let rows = self.process.list_stages(ctx, chain).await?;
         let entries = rows
             .into_iter()
             .map(|row| {
@@ -409,7 +501,12 @@ impl DocumentsService {
     }
 
     /// Define, replace or hide a stage at one level.
-    pub async fn upsert_stage(&self, owner: Owner, mut st: Stage) -> Result<Stage> {
+    pub async fn upsert_stage(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        mut st: Stage,
+    ) -> Result<Stage> {
         let owner_tenant_id = owner_tenant(owner.clone())?;
         st.key = normalize_key(&st.key)?;
         st.owner = owner;
@@ -428,14 +525,21 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_stage(model).await?;
+        self.process.upsert_stage(ctx, model).await?;
         Ok(st)
     }
 
     /// Drop this level's own stage entry for `key`. Same reasoning as
     /// [`Self::delete_type`].
-    pub async fn delete_stage(&self, owner: Owner, key: &str) -> Result<bool> {
-        self.repo.delete_stage(owner_tenant(owner)?, key).await
+    pub async fn delete_stage(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        key: &str,
+    ) -> Result<bool> {
+        self.process
+            .delete_stage(ctx, owner_tenant(owner)?, key)
+            .await
     }
 
     // -- capabilities --------------------------------------------------------
@@ -448,7 +552,8 @@ impl DocumentsService {
         workspace_id: Uuid,
     ) -> Result<Vec<Capability>> {
         let chain = self.owner_chain(ctx, workspace_id).await?;
-        self.resolve_capabilities(&chain, Some(workspace_id)).await
+        self.resolve_capabilities(ctx, &chain, Some(workspace_id))
+            .await
     }
 
     pub async fn list_organization_capabilities(
@@ -457,15 +562,17 @@ impl DocumentsService {
         organization_id: Uuid,
     ) -> Result<Vec<Capability>> {
         self.authorize(ctx, organization_id).await?;
-        self.resolve_capabilities(&[organization_id], None).await
+        self.resolve_capabilities(ctx, &[organization_id], None)
+            .await
     }
 
     async fn resolve_capabilities(
         &self,
+        ctx: &SecurityContext,
         chain: &[Uuid],
         workspace_id: Option<Uuid>,
     ) -> Result<Vec<Capability>> {
-        let rows = self.repo.list_capabilities(chain).await?;
+        let rows = self.process.list_capabilities(ctx, chain).await?;
         let entries = rows
             .into_iter()
             .map(|row| {
@@ -477,7 +584,12 @@ impl DocumentsService {
     }
 
     /// Define, replace or hide a capability at one level.
-    pub async fn upsert_capability(&self, owner: Owner, mut cap: Capability) -> Result<Capability> {
+    pub async fn upsert_capability(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        mut cap: Capability,
+    ) -> Result<Capability> {
         let owner_tenant_id = owner_tenant(owner.clone())?;
         cap.key = normalize_key(&cap.key)?;
         cap.owner = owner;
@@ -494,13 +606,20 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_capability(model).await?;
+        self.process.upsert_capability(ctx, model).await?;
         Ok(cap)
     }
 
     /// Drop this level's own capability entry for `key`.
-    pub async fn delete_capability(&self, owner: Owner, key: &str) -> Result<bool> {
-        self.repo.delete_capability(owner_tenant(owner)?, key).await
+    pub async fn delete_capability(
+        &self,
+        ctx: &SecurityContext,
+        owner: Owner,
+        key: &str,
+    ) -> Result<bool> {
+        self.process
+            .delete_capability(ctx, owner_tenant(owner)?, key)
+            .await
     }
 
     // -- analyses and the stage gate ------------------------------------------
@@ -510,8 +629,10 @@ impl DocumentsService {
     /// The gear does not run the analysis. `studio-spec-quality` is a
     /// passthrough whose task lifecycle the caller drives; this is where the
     /// answer lands afterwards, so that a stage can depend on it.
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_analysis(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         document_id: Uuid,
         detector: &str,
@@ -523,8 +644,8 @@ impl DocumentsService {
         // Refuse a verdict about a document this workspace does not have: the
         // row would be unreachable through every read path and would still
         // count against a stage gate.
-        self.repo
-            .get_doc(workspace_id, document_id)
+        self.data
+            .get_doc(ctx, workspace_id, document_id)
             .await?
             .context("no such document")?;
 
@@ -541,7 +662,7 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_analysis(model).await?;
+        self.data.upsert_analysis(ctx, model).await?;
         Ok(Analysis {
             document_id: Some(document_id),
             binding_id: None,
@@ -556,23 +677,24 @@ impl DocumentsService {
     /// Every verdict recorded for a project's effective documents.
     pub async fn list_analyses(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<Vec<Analysis>> {
         // A project's effective documents are both kinds now, so a listing that
         // read only one of them would answer half the question it is asked.
-        let docs = self.all_documents(workspace_id, project_id).await?;
+        let docs = self.all_documents(ctx, workspace_id, project_id).await?;
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let (binding_rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
             .await?;
         let binding_ids: Vec<Uuid> = binding_rows.iter().map(|b| b.id).collect();
 
-        let mut rows = self.repo.list_analyses(workspace_id, &doc_ids).await?;
+        let mut rows = self.data.list_analyses(ctx, workspace_id, &doc_ids).await?;
         rows.extend(
-            self.repo
-                .list_binding_analyses(workspace_id, &binding_ids)
+            self.data
+                .list_binding_analyses(ctx, workspace_id, &binding_ids)
                 .await?,
         );
         rows.into_iter().map(analysis_from_row).collect()
@@ -586,8 +708,10 @@ impl DocumentsService {
     /// question answered cheaply — did this detector pass for this document —
     /// and walking the graph to answer it, per stage, per requirement, is not
     /// the shape of that question.
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_binding_analysis(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         binding_id: Uuid,
         detector: &str,
@@ -599,8 +723,8 @@ impl DocumentsService {
         // Refuse a verdict about a binding this workspace does not have, for
         // the same reason the document path does: the row would be unreachable
         // through every read and would still count against a stage gate.
-        self.repo
-            .get_binding(workspace_id, binding_id)
+        self.data
+            .get_binding(ctx, workspace_id, binding_id)
             .await?
             .context("no such document binding")?;
 
@@ -617,7 +741,7 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_analysis(model).await?;
+        self.data.upsert_analysis(ctx, model).await?;
         Ok(Analysis {
             document_id: None,
             binding_id: Some(binding_id),
@@ -643,15 +767,17 @@ impl DocumentsService {
         evidence: &super::model::StageEvidence,
     ) -> Result<Vec<StageStatus>> {
         let stages = self.list_stages(ctx, workspace_id).await?;
-        let docs = self.all_documents(workspace_id, Some(project_id)).await?;
+        let docs = self
+            .all_documents(ctx, workspace_id, Some(project_id))
+            .await?;
         let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
-        let analyses = self.repo.list_analyses(workspace_id, &ids).await?;
+        let analyses = self.data.list_analyses(ctx, workspace_id, &ids).await?;
         // Every binding in scope, not a page: a stage asks whether the project
         // has a document of some type at all, and a page would answer about
         // whichever ones happened to sort first.
         let (binding_rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(Some(project_id)), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(Some(project_id)), 0, None)
             .await?;
         let binding_ids: Vec<Uuid> = binding_rows.iter().map(|b| b.id).collect();
         let bindings = binding_rows
@@ -659,12 +785,12 @@ impl DocumentsService {
             .map(binding_from_row)
             .collect::<Result<Vec<_>>>()?;
         let binding_analyses = self
-            .repo
-            .list_binding_analyses(workspace_id, &binding_ids)
+            .data
+            .list_binding_analyses(ctx, workspace_id, &binding_ids)
             .await?;
 
         let reviews = self
-            .reviews_with_verdicts(workspace_id, project_id, None)
+            .reviews_with_verdicts(ctx, workspace_id, project_id, None)
             .await?;
 
         Ok(stages
@@ -684,33 +810,39 @@ impl DocumentsService {
     /// request first; one document's when `subject_id` is given.
     pub async fn reviews_with_verdicts(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         subject_id: Option<Uuid>,
     ) -> Result<Vec<Review>> {
         let requests = self
-            .repo
-            .list_review_requests(workspace_id, Some(project_id), subject_id)
+            .reviews
+            .list_review_requests(ctx, workspace_id, Some(project_id), subject_id)
             .await?;
-        self.attach_verdicts(workspace_id, requests).await
+        self.attach_verdicts(ctx, workspace_id, requests).await
     }
 
     /// Every review request of a workspace, any project, with its verdicts.
-    pub async fn workspace_reviews(&self, workspace_id: Uuid) -> Result<Vec<Review>> {
+    pub async fn workspace_reviews(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> Result<Vec<Review>> {
         let requests = self
-            .repo
-            .list_review_requests(workspace_id, None, None)
+            .reviews
+            .list_review_requests(ctx, workspace_id, None, None)
             .await?;
-        self.attach_verdicts(workspace_id, requests).await
+        self.attach_verdicts(ctx, workspace_id, requests).await
     }
 
     async fn attach_verdicts(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         requests: Vec<super::entity::review_request::Model>,
     ) -> Result<Vec<Review>> {
         let ids: Vec<Uuid> = requests.iter().map(|r| r.id).collect();
-        let approvals = self.repo.list_approvals(workspace_id, &ids).await?;
+        let approvals = self.reviews.list_approvals(ctx, workspace_id, &ids).await?;
         Ok(requests
             .into_iter()
             .map(|request| {
@@ -727,8 +859,10 @@ impl DocumentsService {
     /// Ask for a review of one version of a document. An earlier open request
     /// on the same document is superseded. `types` are the types as the
     /// workspace sees them now: the review keeps its type's rules from them.
+    #[allow(clippy::too_many_arguments)]
     pub async fn request_review(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         ask: ReviewAsk,
@@ -752,16 +886,16 @@ impl DocumentsService {
         let (subject_project, type_key) = match ask.subject_kind.as_str() {
             "document" => {
                 let doc = self
-                    .repo
-                    .get_doc(workspace_id, ask.subject_id)
+                    .data
+                    .get_doc(ctx, workspace_id, ask.subject_id)
                     .await?
                     .context("no such document in this workspace")?;
                 (doc.project_id, Some(doc.type_key))
             }
             _ => {
                 let binding = self
-                    .repo
-                    .get_binding(workspace_id, ask.subject_id)
+                    .data
+                    .get_binding(ctx, workspace_id, ask.subject_id)
                     .await?
                     .context("no such document in this workspace")?;
                 (binding.project_id, binding.type_key)
@@ -813,7 +947,7 @@ impl DocumentsService {
             stakeholders: serde_json::to_value(&stakeholders)?,
             rules_snapshot: rules.map(serde_json::to_value).transpose()?,
         };
-        self.repo.put_review_request(model.clone()).await?;
+        self.reviews.put_review_request(ctx, model.clone()).await?;
         Ok(Review {
             request: model,
             verdicts: Vec::new(),
@@ -829,6 +963,7 @@ impl DocumentsService {
     #[allow(clippy::too_many_arguments)]
     pub async fn give_verdict(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         request_id: Uuid,
@@ -838,8 +973,8 @@ impl DocumentsService {
         note: Option<String>,
     ) -> Result<Option<(Review, super::entity::approval::Model)>> {
         let Some(request) = self
-            .repo
-            .get_review_request(workspace_id, request_id)
+            .reviews
+            .get_review_request(ctx, workspace_id, request_id)
             .await?
             .filter(|r| r.project_id == project_id)
         else {
@@ -858,7 +993,7 @@ impl DocumentsService {
         if !reviewers.iter().any(|r| r.person == approver.0) {
             bail!("only a reviewer named on the request can give a verdict");
         }
-        let checks = self.passed_checks(workspace_id, &request).await?;
+        let checks = self.passed_checks(ctx, workspace_id, &request).await?;
         let model = super::entity::approval::Model {
             id: Uuid::new_v4(),
             tenant_id: workspace_id,
@@ -874,15 +1009,15 @@ impl DocumentsService {
             checks: serde_json::to_value(&checks)?,
             decided_at: OffsetDateTime::now_utc(),
         };
-        self.repo.insert_approval(model.clone()).await?;
+        self.reviews.insert_approval(ctx, model.clone()).await?;
         let mut review = self
-            .attach_verdicts(workspace_id, vec![request])
+            .attach_verdicts(ctx, workspace_id, vec![request])
             .await?
             .pop()
             .context("the request was just read")?;
         if super::approvals::approved(&reviewers, &review.verdict_facts(), &review.stakeholders()) {
-            self.repo
-                .set_review_request_state(workspace_id, request_id, "approved")
+            self.reviews
+                .set_review_request_state(ctx, workspace_id, request_id, "approved")
                 .await?;
             review.request.state = "approved".to_string();
         }
@@ -902,12 +1037,14 @@ impl DocumentsService {
         reader: Option<&dyn crate::artifact_ingest::port::RepoFileReader>,
     ) -> Result<(Option<String>, Option<String>)> {
         if subject_kind == "document" {
-            return Ok(match self.repo.get_doc(workspace_id, subject_id).await? {
-                Some(doc) => (Some(content_digest(&doc.content)), Some(doc.content)),
-                None => (None, None),
-            });
+            return Ok(
+                match self.data.get_doc(ctx, workspace_id, subject_id).await? {
+                    Some(doc) => (Some(content_digest(&doc.content)), Some(doc.content)),
+                    None => (None, None),
+                },
+            );
         }
-        let Some(row) = self.repo.get_binding(workspace_id, subject_id).await? else {
+        let Some(row) = self.data.get_binding(ctx, workspace_id, subject_id).await? else {
             return Ok((None, None));
         };
         let text = match reader {
@@ -924,13 +1061,16 @@ impl DocumentsService {
     /// by subject id: what a review list compares its requests against.
     pub async fn subject_versions(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<std::collections::HashMap<Uuid, (String, Vec<String>)>> {
         let mut out = std::collections::HashMap::new();
-        let docs = self.all_documents(workspace_id, Some(project_id)).await?;
+        let docs = self
+            .all_documents(ctx, workspace_id, Some(project_id))
+            .await?;
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
-        let analyses = self.repo.list_analyses(workspace_id, &doc_ids).await?;
+        let analyses = self.data.list_analyses(ctx, workspace_id, &doc_ids).await?;
         for d in &docs {
             let passed = analyses
                 .iter()
@@ -941,9 +1081,14 @@ impl DocumentsService {
                 .collect();
             out.insert(d.id, (content_digest(&d.content), passed));
         }
-        let rows = self.all_bindings(workspace_id, Some(project_id)).await?;
+        let rows = self
+            .all_bindings(ctx, workspace_id, Some(project_id))
+            .await?;
         let ids: Vec<Uuid> = rows.iter().map(|b| b.id).collect();
-        let banalyses = self.repo.list_binding_analyses(workspace_id, &ids).await?;
+        let banalyses = self
+            .data
+            .list_binding_analyses(ctx, workspace_id, &ids)
+            .await?;
         for b in rows {
             let passed = banalyses
                 .iter()
@@ -959,14 +1104,15 @@ impl DocumentsService {
     /// `None` when the request is not `project_id`'s.
     pub async fn withdraw_review(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         request_id: Uuid,
         caller: &str,
     ) -> Result<Option<Review>> {
         let Some(mut request) = self
-            .repo
-            .get_review_request(workspace_id, request_id)
+            .reviews
+            .get_review_request(ctx, workspace_id, request_id)
             .await?
             .filter(|r| r.project_id == project_id)
         else {
@@ -976,13 +1122,13 @@ impl DocumentsService {
             bail!("only the person who asked for the review can withdraw it");
         }
         if request.state == "open" {
-            self.repo
-                .set_review_request_state(workspace_id, request_id, "withdrawn")
+            self.reviews
+                .set_review_request_state(ctx, workspace_id, request_id, "withdrawn")
                 .await?;
             request.state = "withdrawn".to_string();
         }
         Ok(self
-            .attach_verdicts(workspace_id, vec![request])
+            .attach_verdicts(ctx, workspace_id, vec![request])
             .await?
             .pop())
     }
@@ -991,6 +1137,7 @@ impl DocumentsService {
     /// documents of its type, in this project before.
     pub async fn suggest_reviewers(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         subject_id: Uuid,
@@ -998,8 +1145,8 @@ impl DocumentsService {
         caller: &str,
     ) -> Result<Vec<super::approvals::Reviewer>> {
         let requests = self
-            .repo
-            .list_review_requests(workspace_id, Some(project_id), None)
+            .reviews
+            .list_review_requests(ctx, workspace_id, Some(project_id), None)
             .await?;
         let reviewers: Vec<(String, Option<String>, Vec<super::approvals::Reviewer>)> = requests
             .iter()
@@ -1032,16 +1179,17 @@ impl DocumentsService {
     /// verdict records it was given against.
     async fn passed_checks(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         request: &super::entity::review_request::Model,
     ) -> Result<Vec<String>> {
         let analyses = if request.subject_kind == "document" {
-            self.repo
-                .list_analyses(workspace_id, &[request.subject_id])
+            self.data
+                .list_analyses(ctx, workspace_id, &[request.subject_id])
                 .await?
         } else {
-            self.repo
-                .list_binding_analyses(workspace_id, &[request.subject_id])
+            self.data
+                .list_binding_analyses(ctx, workspace_id, &[request.subject_id])
                 .await?
         };
         let mut passed: Vec<String> = analyses
@@ -1125,7 +1273,7 @@ impl DocumentsService {
             created_at: now,
             updated_at: now,
         };
-        self.repo.upsert_doc(model.clone()).await?;
+        self.data.upsert_doc(ctx, model.clone()).await?;
         doc_from_row(model)
     }
 
@@ -1136,12 +1284,14 @@ impl DocumentsService {
     /// workspace-level ones only.
     pub async fn list_documents(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         page: PageQuery,
     ) -> Result<(Vec<Document>, u32)> {
         let (documents, total) = self
             .read_documents(
+                ctx,
                 workspace_id,
                 project_id,
                 page.offset() as u64,
@@ -1172,6 +1322,7 @@ impl DocumentsService {
     /// deployment profile (`cpt-studio-fr-nfr-to-profile`).
     pub async fn declared_capabilities(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)> {
@@ -1204,7 +1355,10 @@ impl DocumentsService {
                 );
             }
         };
-        for doc in self.all_documents(workspace_id, Some(project_id)).await? {
+        for doc in self
+            .all_documents(ctx, workspace_id, Some(project_id))
+            .await?
+        {
             let source = CapabilitySource {
                 kind: "document".to_string(),
                 id: doc.id,
@@ -1224,8 +1378,8 @@ impl DocumentsService {
             }));
         }
         let (rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(Some(project_id)), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(Some(project_id)), 0, None)
             .await?;
         for binding in rows.into_iter().map(binding_from_row) {
             let binding = binding?;
@@ -1279,38 +1433,45 @@ impl DocumentsService {
     /// the first 200 bindings and called every other file "not scanned".
     pub async fn all_bindings(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<Vec<DocumentBinding>> {
         let (rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
             .await?;
         rows.into_iter().map(binding_from_row).collect()
     }
 
     /// Every binding under a workspace -- its own and all of its projects'.
-    pub async fn every_binding_under(&self, workspace_id: Uuid) -> Result<Vec<DocumentBinding>> {
+    pub async fn every_binding_under(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> Result<Vec<DocumentBinding>> {
         let (rows, _) = self
-            .repo
-            .list_bindings(workspace_id, DocScope::Everything, 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, DocScope::Everything, 0, None)
             .await?;
         rows.into_iter().map(binding_from_row).collect()
     }
 
     pub async fn all_documents(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<Vec<Document>> {
         Ok(self
-            .read_documents(workspace_id, project_id, 0, None)
+            .read_documents(ctx, workspace_id, project_id, 0, None)
             .await?
             .0)
     }
 
     async fn read_documents(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         offset: u64,
@@ -1321,8 +1482,8 @@ impl DocumentsService {
             None => DocScope::WorkspaceLevel,
         };
         let (rows, total) = self
-            .repo
-            .list_docs(workspace_id, scope, offset, limit)
+            .data
+            .list_docs(ctx, workspace_id, scope, offset, limit)
             .await?;
         let documents = rows
             .into_iter()
@@ -1331,8 +1492,13 @@ impl DocumentsService {
         Ok((documents, total))
     }
 
-    pub async fn get_document(&self, workspace_id: Uuid, id: Uuid) -> Result<Option<Document>> {
-        match self.repo.get_doc(workspace_id, id).await? {
+    pub async fn get_document(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Document>> {
+        match self.data.get_doc(ctx, workspace_id, id).await? {
             Some(row) => Ok(Some(doc_from_row(row)?)),
             None => Ok(None),
         }
@@ -1348,8 +1514,8 @@ impl DocumentsService {
         status: Option<DocStatus>,
     ) -> Result<Document> {
         let mut row = self
-            .repo
-            .get_doc(workspace_id, id)
+            .data
+            .get_doc(ctx, workspace_id, id)
             .await?
             .context("no such document")?;
         if let Some(t) = title {
@@ -1386,7 +1552,7 @@ impl DocumentsService {
         row.inferred_capabilities =
             serde_json::to_string(&inferred_for(&row.content, &vocabulary))?;
         row.updated_at = OffsetDateTime::now_utc();
-        self.repo.upsert_doc(row.clone()).await?;
+        self.data.upsert_doc(ctx, row.clone()).await?;
         doc_from_row(row)
     }
 
@@ -1397,8 +1563,8 @@ impl DocumentsService {
         id: Uuid,
     ) -> Result<ValidationReport> {
         let row = self
-            .repo
-            .get_doc(workspace_id, id)
+            .data
+            .get_doc(ctx, workspace_id, id)
             .await?
             .context("no such document")?;
         let ty = self
@@ -1408,8 +1574,13 @@ impl DocumentsService {
         Ok(validate(&row.content, &ty.template))
     }
 
-    pub async fn delete_document(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
-        self.repo.delete_doc(workspace_id, id).await
+    pub async fn delete_document(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        id: Uuid,
+    ) -> Result<bool> {
+        self.data.delete_doc(ctx, workspace_id, id).await
     }
 }
 
@@ -1739,6 +1910,7 @@ impl crate::documents::port::BindingNames for DocumentsService {
         // the map is one string per file.
         let (rows, _total) = self
             .list_bindings(
+                ctx,
                 workspace_id,
                 Some(project_id),
                 PageQuery {
@@ -1770,7 +1942,7 @@ impl crate::documents::port::BindingNames for DocumentsService {
 impl crate::documents::port::DocumentCounter for DocumentsService {
     async fn count_bindings(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> anyhow::Result<u32> {
@@ -1780,6 +1952,7 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
         // whole document set to render one cell.
         let (_rows, total) = self
             .list_bindings(
+                ctx,
                 workspace_id,
                 Some(project_id),
                 PageQuery {
@@ -1793,7 +1966,7 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
 
     async fn spec_summary(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> anyhow::Result<crate::documents::port::SpecSummary> {
@@ -1801,8 +1974,8 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
         // the first 200 and call that the project.
         // Two independent reads, asked together.
         let (bindings, documents) = tokio::try_join!(
-            self.all_bindings(workspace_id, Some(project_id)),
-            self.all_documents(workspace_id, Some(project_id)),
+            self.all_bindings(ctx, workspace_id, Some(project_id)),
+            self.all_documents(ctx, workspace_id, Some(project_id)),
         )?;
         Ok(super::spec_rows::summary(
             bindings.into_iter().map(|b| {
@@ -1854,21 +2027,21 @@ impl DocumentClassifier for DocumentsService {
 
     async fn forget_ingested(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         node_ids: Vec<String>,
     ) -> Result<usize> {
-        DocumentsService::forget_ingested(self, workspace_id, project_id, &node_ids).await
+        DocumentsService::forget_ingested(self, ctx, workspace_id, project_id, &node_ids).await
     }
 
     async fn existing_documents(
         &self,
-        _ctx: &SecurityContext,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         ids: Vec<Uuid>,
     ) -> Result<std::collections::HashSet<Uuid>> {
-        self.repo.existing_doc_ids(workspace_id, &ids).await
+        self.data.existing_doc_ids(ctx, workspace_id, &ids).await
     }
 }
 
@@ -1913,8 +2086,8 @@ impl DocumentsService {
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<Vec<quality::SpecDoc>> {
         let (rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
             .await?;
         let rows: Vec<_> = rows
             .into_iter()
@@ -2051,7 +2224,9 @@ impl DocumentsService {
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<ReadSources> {
         use super::spec_model::domain_doc::{DOMAIN_DOC_PATH, DOMAIN_DOC_TYPE, read_as};
-        let all = self.all_bindings(workspace_id, Some(project_id)).await?;
+        let all = self
+            .all_bindings(ctx, workspace_id, Some(project_id))
+            .await?;
         let domain_doc_bound = all.iter().any(|row| row.path == DOMAIN_DOC_PATH);
         // The documentation: every typed binding, and Studio's own domain
         // model document whatever its binding says.
@@ -2123,7 +2298,7 @@ impl DocumentsService {
         };
         let documents = documents.into_iter().chain(unbound_domain_doc);
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
-        documents.extend(self.studio_sources(workspace_id, project_id).await?);
+        documents.extend(self.studio_sources(ctx, workspace_id, project_id).await?);
         Ok(ReadSources {
             sources: super::spec_model::Sources {
                 documents,
@@ -2143,11 +2318,18 @@ impl DocumentsService {
     /// and is never mistaken for a repository file.
     async fn studio_sources(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::spec_model::SourceText>> {
         let (docs, _) = self
-            .read_documents(workspace_id, Some(project_id), 0, Some(STUDIO_SOURCES_MAX))
+            .read_documents(
+                ctx,
+                workspace_id,
+                Some(project_id),
+                0,
+                Some(STUDIO_SOURCES_MAX),
+            )
             .await?;
         Ok(docs
             .into_iter()
@@ -2166,16 +2348,18 @@ impl DocumentsService {
 
     pub async fn part_records(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::application_part::Model>> {
-        self.repo.list_parts(workspace_id, project_id).await
+        self.data.list_parts(ctx, workspace_id, project_id).await
     }
 
     /// Record (or replace) what is known about one part.
     #[allow(clippy::too_many_arguments)]
     pub async fn record_part(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         repo: &str,
@@ -2214,7 +2398,7 @@ impl DocumentsService {
             updated_by: by.to_string(),
             updated_at: OffsetDateTime::now_utc(),
         };
-        self.repo.put_part(model.clone()).await?;
+        self.data.put_part(ctx, model.clone()).await?;
         Ok(model)
     }
 
@@ -2223,11 +2407,12 @@ impl DocumentsService {
     /// The project's scopes with their limits and whether each is blocked.
     pub async fn delivery_scopes(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<ScopeView>> {
-        let scopes = self.repo.list_scopes(workspace_id, project_id).await?;
-        let limits = self.repo.list_limits(workspace_id, project_id).await?;
+        let scopes = self.data.list_scopes(ctx, workspace_id, project_id).await?;
+        let limits = self.data.list_limits(ctx, workspace_id, project_id).await?;
         let state_of: std::collections::BTreeMap<String, String> = scopes
             .iter()
             .map(|s| (s.id.to_string(), s.state.clone()))
@@ -2264,13 +2449,14 @@ impl DocumentsService {
 
     async fn scope_of(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         id: Uuid,
     ) -> Result<Option<super::entity::delivery_scope::Model>> {
         Ok(self
-            .repo
-            .list_scopes(workspace_id, project_id)
+            .data
+            .list_scopes(ctx, workspace_id, project_id)
             .await?
             .into_iter()
             .find(|s| s.id == id))
@@ -2278,6 +2464,7 @@ impl DocumentsService {
 
     pub async fn create_scope(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         fields: super::delivery::ScopeFields,
@@ -2303,20 +2490,21 @@ impl DocumentsService {
             updated_by: by.to_string(),
             updated_at: now,
         };
-        self.repo.put_scope(model.clone()).await?;
+        self.data.put_scope(ctx, model.clone()).await?;
         Ok(model)
     }
 
     /// Change a scope; the version it replaces is kept in its history.
     pub async fn update_scope(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         id: Uuid,
         patch: ScopePatch,
         by: &str,
     ) -> Result<Option<super::entity::delivery_scope::Model>> {
-        let Some(old) = self.scope_of(workspace_id, project_id, id).await? else {
+        let Some(old) = self.scope_of(ctx, workspace_id, project_id, id).await? else {
             return Ok(None);
         };
         let list = |v: &serde_json::Value| -> Vec<String> {
@@ -2337,15 +2525,18 @@ impl DocumentsService {
         })
         .map_err(|e| anyhow::anyhow!(e))?;
         let now = OffsetDateTime::now_utc();
-        self.repo
-            .insert_scope_history(super::entity::delivery_history::Model {
-                id: Uuid::new_v4(),
-                tenant_id: workspace_id,
-                scope_id: id,
-                snapshot: scope_snapshot(&old),
-                changed_by: by.to_string(),
-                changed_at: now,
-            })
+        self.data
+            .insert_scope_history(
+                ctx,
+                super::entity::delivery_history::Model {
+                    id: Uuid::new_v4(),
+                    tenant_id: workspace_id,
+                    scope_id: id,
+                    snapshot: scope_snapshot(&old),
+                    changed_by: by.to_string(),
+                    changed_at: now,
+                },
+            )
             .await?;
         let model = super::entity::delivery_scope::Model {
             title: f.title,
@@ -2361,37 +2552,50 @@ impl DocumentsService {
             updated_at: now,
             ..old
         };
-        self.repo.put_scope(model.clone()).await?;
+        self.data.put_scope(ctx, model.clone()).await?;
         Ok(Some(model))
     }
 
     pub async fn delete_scope(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         id: Uuid,
     ) -> Result<bool> {
-        if self.scope_of(workspace_id, project_id, id).await?.is_none() {
+        if self
+            .scope_of(ctx, workspace_id, project_id, id)
+            .await?
+            .is_none()
+        {
             return Ok(false);
         }
-        self.repo.delete_scope(workspace_id, id).await?;
+        self.data.delete_scope(ctx, workspace_id, id).await?;
         Ok(true)
     }
 
     pub async fn scope_history(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         id: Uuid,
     ) -> Result<Option<Vec<super::entity::delivery_history::Model>>> {
-        if self.scope_of(workspace_id, project_id, id).await?.is_none() {
+        if self
+            .scope_of(ctx, workspace_id, project_id, id)
+            .await?
+            .is_none()
+        {
             return Ok(None);
         }
-        Ok(Some(self.repo.list_scope_history(workspace_id, id).await?))
+        Ok(Some(
+            self.data.list_scope_history(ctx, workspace_id, id).await?,
+        ))
     }
 
     pub async fn add_limit(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         scope_id: Uuid,
@@ -2399,7 +2603,7 @@ impl DocumentsService {
         by: &str,
     ) -> Result<Option<super::entity::delivery_limit::Model>> {
         if self
-            .scope_of(workspace_id, project_id, scope_id)
+            .scope_of(ctx, workspace_id, project_id, scope_id)
             .await?
             .is_none()
         {
@@ -2421,7 +2625,7 @@ impl DocumentsService {
             created_by: by.to_string(),
             created_at: OffsetDateTime::now_utc(),
         };
-        self.repo.put_limit(model.clone()).await?;
+        self.data.put_limit(ctx, model.clone()).await?;
         Ok(Some(model))
     }
 
@@ -2430,6 +2634,7 @@ impl DocumentsService {
     #[allow(clippy::too_many_arguments)]
     pub async fn update_limit(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         scope_id: Uuid,
@@ -2439,8 +2644,8 @@ impl DocumentsService {
         by: &str,
     ) -> Result<Option<super::entity::delivery_limit::Model>> {
         let Some(mut limit) = self
-            .repo
-            .list_limits(workspace_id, project_id)
+            .data
+            .list_limits(ctx, workspace_id, project_id)
             .await?
             .into_iter()
             .find(|l| l.id == limit_id && l.scope_id == scope_id)
@@ -2462,7 +2667,7 @@ impl DocumentsService {
         if let Some(b) = blocking {
             limit.blocking = b;
         }
-        self.repo.put_limit(limit.clone()).await?;
+        self.data.put_limit(ctx, limit.clone()).await?;
         Ok(Some(limit))
     }
 
@@ -2470,6 +2675,7 @@ impl DocumentsService {
     #[allow(clippy::too_many_arguments)]
     pub async fn record_decision(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         statement: &str,
@@ -2506,27 +2712,31 @@ impl DocumentsService {
             decided_by_name: decided_by.1,
             decided_at: OffsetDateTime::now_utc(),
         };
-        self.repo.insert_decision(model.clone()).await?;
+        self.reviews.insert_decision(ctx, model.clone()).await?;
         Ok(model)
     }
 
     /// A project's decisions, newest first.
     pub async fn decisions(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::decision::Model>> {
-        self.repo.list_decisions(workspace_id, project_id).await
+        self.reviews
+            .list_decisions(ctx, workspace_id, project_id)
+            .await
     }
 
     /// The project's settled documents, path → type: what a check judges.
     pub async fn project_bindings(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<std::collections::BTreeMap<String, String>> {
         Ok(self
-            .all_bindings(workspace_id, Some(project_id))
+            .all_bindings(ctx, workspace_id, Some(project_id))
             .await?
             .into_iter()
             .filter(|b| matches!(b.state, BindingState::Confirmed | BindingState::Manual))
@@ -2548,15 +2758,19 @@ impl DocumentsService {
     /// Every extraction kept for the project, of any revision.
     pub async fn spec_extractions(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::spec_extraction::Model>> {
-        self.repo.list_extractions(workspace_id, project_id).await
+        self.data
+            .list_extractions(ctx, workspace_id, project_id)
+            .await
     }
 
     /// Keep what reading one document revision gave.
     pub async fn put_spec_extraction(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         path: &str,
@@ -2564,36 +2778,43 @@ impl DocumentsService {
         read: &super::spec_model::build::Read,
     ) -> Result<()> {
         let version = super::spec_model::extract::EXTRACTOR_VERSION;
-        self.repo
-            .put_extraction(super::entity::spec_extraction::Model {
-                id: super::repo::extraction_id(project_id, path, revision, version),
-                tenant_id: workspace_id,
-                project_id,
-                path: path.to_string(),
-                revision: revision.to_string(),
-                extractor_version: version.to_string(),
-                facts: serde_json::to_string(&read.extraction.facts)?,
-                dropped: i32::try_from(read.extraction.dropped).unwrap_or(i32::MAX),
-                error: read.error.clone(),
-                provider: read.provider.clone(),
-                model: read.model.clone(),
-                created_at: OffsetDateTime::now_utc(),
-            })
+        self.data
+            .put_extraction(
+                ctx,
+                super::entity::spec_extraction::Model {
+                    id: super::repo::extraction_id(project_id, path, revision, version),
+                    tenant_id: workspace_id,
+                    project_id,
+                    path: path.to_string(),
+                    revision: revision.to_string(),
+                    extractor_version: version.to_string(),
+                    facts: serde_json::to_string(&read.extraction.facts)?,
+                    dropped: i32::try_from(read.extraction.dropped).unwrap_or(i32::MAX),
+                    error: read.error.clone(),
+                    provider: read.provider.clone(),
+                    model: read.model.clone(),
+                    created_at: OffsetDateTime::now_utc(),
+                },
+            )
             .await
     }
 
     /// Every judgement kept for the project.
     pub async fn spec_judgements(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::spec_judgement::Model>> {
-        self.repo.list_judgements(workspace_id, project_id).await
+        self.data
+            .list_judgements(ctx, workspace_id, project_id)
+            .await
     }
 
     /// Keep what the judge said about one candidate at its sides' revisions.
     pub async fn put_spec_judgement(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         fingerprint: &str,
@@ -2601,38 +2822,45 @@ impl DocumentsService {
         finding: Option<&super::spec_model::finding::Finding>,
     ) -> Result<()> {
         let version = super::spec_model::judge::JUDGE_VERSION;
-        self.repo
-            .put_judgement(super::entity::spec_judgement::Model {
-                id: super::repo::judgement_id(project_id, fingerprint, revisions, version),
-                tenant_id: workspace_id,
-                project_id,
-                fingerprint: fingerprint.to_string(),
-                revisions: revisions.to_string(),
-                judge_version: version.to_string(),
-                conflict: finding.is_some(),
-                finding: finding.map(serde_json::to_string).transpose()?,
-                created_at: OffsetDateTime::now_utc(),
-            })
+        self.data
+            .put_judgement(
+                ctx,
+                super::entity::spec_judgement::Model {
+                    id: super::repo::judgement_id(project_id, fingerprint, revisions, version),
+                    tenant_id: workspace_id,
+                    project_id,
+                    fingerprint: fingerprint.to_string(),
+                    revisions: revisions.to_string(),
+                    judge_version: version.to_string(),
+                    conflict: finding.is_some(),
+                    finding: finding.map(serde_json::to_string).transpose()?,
+                    created_at: OffsetDateTime::now_utc(),
+                },
+            )
             .await
     }
 
     /// Every member decision on the project's glossary.
     pub async fn spec_terms(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::spec_term::Model>> {
-        self.repo.list_spec_terms(workspace_id, project_id).await
+        self.data
+            .list_spec_terms(ctx, workspace_id, project_id)
+            .await
     }
 
     /// The project's glossary decisions, as the glossary reads them.
     pub async fn glossary_choices(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::spec_model::glossary::Choice>> {
         Ok(self
-            .spec_terms(workspace_id, project_id)
+            .spec_terms(ctx, workspace_id, project_id)
             .await?
             .into_iter()
             .map(|t| super::spec_model::glossary::Choice {
@@ -2665,17 +2893,20 @@ impl DocumentsService {
             decided_by: ctx.subject_id(),
             decided_at: OffsetDateTime::now_utc(),
         };
-        self.repo.put_spec_term(model.clone()).await?;
+        self.data.put_spec_term(ctx, model.clone()).await?;
         Ok(model)
     }
 
     /// Every accept or reject members gave on the facts the model read.
     pub async fn spec_reviews(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::spec_review::Model>> {
-        self.repo.list_spec_reviews(workspace_id, project_id).await
+        self.data
+            .list_spec_reviews(ctx, workspace_id, project_id)
+            .await
     }
 
     /// Record a member's review of each fact: `accepted`, `rejected`, or
@@ -2690,8 +2921,8 @@ impl DocumentsService {
         let mut saved = Vec::new();
         for (fact_key, state, path, revision, note) in items {
             if state == "proposed" {
-                self.repo
-                    .delete_spec_review(workspace_id, project_id, &fact_key)
+                self.data
+                    .delete_spec_review(ctx, workspace_id, project_id, &fact_key)
                     .await?;
                 continue;
             }
@@ -2707,7 +2938,7 @@ impl DocumentsService {
                 decided_by: ctx.subject_id(),
                 decided_at: OffsetDateTime::now_utc(),
             };
-            self.repo.put_spec_review(model.clone()).await?;
+            self.data.put_spec_review(ctx, model.clone()).await?;
             saved.push(model);
         }
         Ok(saved)
@@ -2724,7 +2955,7 @@ impl DocumentsService {
         a: &str,
         b: &str,
     ) -> Result<()> {
-        let terms = self.spec_terms(workspace_id, project_id).await?;
+        let terms = self.spec_terms(ctx, workspace_id, project_id).await?;
         for (key, other) in [(a, b), (b, a)] {
             let mut apart = terms
                 .iter()
@@ -2745,7 +2976,7 @@ impl DocumentsService {
                 decided_by: ctx.subject_id(),
                 decided_at: OffsetDateTime::now_utc(),
             };
-            self.repo.put_spec_term_distinct(model).await?;
+            self.data.put_spec_term_distinct(ctx, model).await?;
         }
         Ok(())
     }
@@ -2753,11 +2984,12 @@ impl DocumentsService {
     /// Every member decision on the project's spec-model findings.
     pub async fn spec_decisions(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> Result<Vec<super::entity::spec_decision::Model>> {
-        self.repo
-            .list_spec_decisions(workspace_id, project_id)
+        self.data
+            .list_spec_decisions(ctx, workspace_id, project_id)
             .await
     }
 
@@ -2788,7 +3020,7 @@ impl DocumentsService {
             note,
             snapshot,
         };
-        self.repo.put_spec_decision(model.clone()).await?;
+        self.data.put_spec_decision(ctx, model.clone()).await?;
         Ok(model)
     }
 
@@ -2804,6 +3036,7 @@ impl DocumentsService {
     /// not name it.
     pub async fn record_subjects(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         binding_ids: &[Uuid],
@@ -2817,8 +3050,8 @@ impl DocumentsService {
         let repository_path = |p: &String| !p.starts_with("studio-doc/");
         if !binding_ids.is_empty() || paths.iter().any(repository_path) {
             let (rows, _) = self
-                .repo
-                .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+                .data
+                .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
                 .await?;
             for row in rows
                 .into_iter()
@@ -2868,6 +3101,7 @@ impl DocumentsService {
     /// a file with no text is.
     pub async fn quality_documents(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         ids: &[Uuid],
@@ -2876,7 +3110,7 @@ impl DocumentsService {
             return Ok(Vec::new());
         }
         Ok(self
-            .all_documents(workspace_id, Some(project_id))
+            .all_documents(ctx, workspace_id, Some(project_id))
             .await?
             .into_iter()
             .filter(|d| ids.contains(&d.id) && !d.content.trim().is_empty())
@@ -2898,7 +3132,7 @@ impl DocumentsService {
         id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<Option<String>> {
-        let Some(row) = self.repo.get_binding(workspace_id, id).await? else {
+        let Some(row) = self.data.get_binding(ctx, workspace_id, id).await? else {
             return Ok(None);
         };
         let tenants = checkout_tenants(std::iter::once(row.project_id), None, workspace_id);
@@ -2915,7 +3149,7 @@ impl DocumentsService {
         id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<Option<String>> {
-        let Some(row) = self.repo.get_binding(workspace_id, id).await? else {
+        let Some(row) = self.data.get_binding(ctx, workspace_id, id).await? else {
             return Ok(None);
         };
         if row.project_id.is_some_and(|owner| owner != project_id) {
@@ -3569,8 +3803,8 @@ impl DocumentsService {
         // whether each file was already ruled on, and a page would silently
         // re-guess the rest.
         let (rows, _) = self
-            .repo
-            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
             .await?;
         let existing: BTreeMap<Uuid, document_binding::Model> =
             rows.into_iter().map(|row| (row.id, row)).collect();
@@ -3581,8 +3815,8 @@ impl DocumentsService {
         // each document. Only read when there is analysis to start.
         let analysed: std::collections::BTreeSet<Uuid> = if self.sync_analysis.is_some() {
             let ids: Vec<Uuid> = existing.keys().copied().collect();
-            self.repo
-                .list_binding_analyses(workspace_id, &ids)
+            self.data
+                .list_binding_analyses(ctx, workspace_id, &ids)
                 .await?
                 .into_iter()
                 .filter(|a| a.detector == "purpose")
@@ -3788,7 +4022,7 @@ impl DocumentsService {
             });
         }
 
-        self.repo.upsert_bindings(&written).await?;
+        self.data.upsert_bindings(ctx, &written).await?;
         let bindings = written
             .into_iter()
             .map(binding_from_row)
@@ -3814,13 +4048,15 @@ impl DocumentsService {
     /// project is named — the same inheritance documents use.
     pub async fn list_bindings(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         page: PageQuery,
     ) -> Result<(Vec<DocumentBinding>, u32)> {
         let (rows, total) = self
-            .repo
+            .data
             .list_bindings(
+                ctx,
                 workspace_id,
                 binding_scope(project_id),
                 page.offset() as u64,
@@ -3838,12 +4074,13 @@ impl DocumentsService {
     /// [`DocumentsRepo::list_bindings_at`]).
     pub async fn list_bindings_at(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         paths: &[String],
     ) -> Result<Vec<DocumentBinding>> {
-        self.repo
-            .list_bindings_at(workspace_id, binding_scope(project_id), paths)
+        self.data
+            .list_bindings_at(ctx, workspace_id, binding_scope(project_id), paths)
             .await?
             .into_iter()
             .map(binding_from_row)
@@ -3864,8 +4101,8 @@ impl DocumentsService {
         decision: BindingDecision,
     ) -> Result<DocumentBinding> {
         let mut row = self
-            .repo
-            .get_binding(workspace_id, id)
+            .data
+            .get_binding(ctx, workspace_id, id)
             .await?
             .context("no such document binding")?;
         let types = self.list_types(ctx, workspace_id).await?;
@@ -3926,12 +4163,17 @@ impl DocumentsService {
             row.content_sha = content_digest(&content);
         }
         row.updated_at = OffsetDateTime::now_utc();
-        self.repo.upsert_binding(row.clone()).await?;
+        self.data.upsert_binding(ctx, row.clone()).await?;
         binding_from_row(row)
     }
 
-    pub async fn delete_binding(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
-        self.repo.delete_binding(workspace_id, id).await
+    pub async fn delete_binding(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        id: Uuid,
+    ) -> Result<bool> {
+        self.data.delete_binding(ctx, workspace_id, id).await
     }
 
     /// Delete the bindings of files a repository no longer has.
@@ -3950,6 +4192,7 @@ impl DocumentsService {
     /// about each binding go with it (see [`DocumentsRepo::delete_bindings`]).
     pub async fn forget_ingested(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
         node_ids: &[String],
@@ -3958,7 +4201,7 @@ impl DocumentsService {
             .iter()
             .map(|node| binding_row_id(workspace_id, project_id, node))
             .collect();
-        let deleted = self.repo.delete_bindings(workspace_id, &ids).await?;
+        let deleted = self.data.delete_bindings(ctx, workspace_id, &ids).await?;
         Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     }
 }
@@ -5047,6 +5290,7 @@ mod reclassification_tests {
 impl crate::documents::port::AnalysisRecorder for DocumentsService {
     async fn record_detector_verdict(
         &self,
+        ctx: &SecurityContext,
         verdict: crate::documents::port::DetectorVerdict,
     ) -> anyhow::Result<()> {
         let crate::documents::port::DetectorVerdict {
@@ -5064,6 +5308,7 @@ impl crate::documents::port::AnalysisRecorder for DocumentsService {
         match (binding_id, document_id) {
             (Some(binding), None) => {
                 self.record_binding_analysis(
+                    ctx,
                     workspace_id,
                     binding,
                     detector,
@@ -5074,8 +5319,16 @@ impl crate::documents::port::AnalysisRecorder for DocumentsService {
                 .await?;
             }
             (None, Some(document)) => {
-                self.record_analysis(workspace_id, document, detector, state, task_id, summary)
-                    .await?;
+                self.record_analysis(
+                    ctx,
+                    workspace_id,
+                    document,
+                    detector,
+                    state,
+                    task_id,
+                    summary,
+                )
+                .await?;
             }
             _ => anyhow::bail!("a verdict names exactly one of a binding and a document"),
         }
@@ -5122,10 +5375,12 @@ impl crate::documents::port::SpecNeeds for DocumentsService {
 
     async fn needs(
         &self,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> anyhow::Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)> {
-        self.declared_capabilities(workspace_id, project_id).await
+        self.declared_capabilities(ctx, workspace_id, project_id)
+            .await
     }
 }
 

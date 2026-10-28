@@ -332,7 +332,7 @@ error.
 
 - `cpt-studio-component-graph-storage` — rewrites nodes in
 
-#### Query (experimental)
+#### Query
 
 - [ ] `p3` - **ID**: `cpt-studio-component-domain-model-query`
 
@@ -343,31 +343,94 @@ the graph again for every relation it shows, so each change to the screen is
 a change to how it reads the backend. A query lets the screen say what it
 shows — the shape of a Hasura request over the model's own types — and the
 gear answers it. It sits beside `GET /objects` and `GET /objects/graph`, which
-keep working unchanged; screens move to it one at a time, and it stops being
-experimental when the first of them has.
+keep working unchanged; screens move to it one at a time.
 
 ##### Responsibility scope
 
 `query.rs`. `POST /query` takes a type, a `where` (`_eq _neq _gt _gte _lt _lte
 _in _nin _contains _is_null`, combined with `_and _or _not`), `order_by`,
-`fields`, `offset`/`limit`, and `include`: relations by their declared name,
-each with the same options, nested up to three levels. Every field and
-relation is checked against the model first, and a wrong one is a 400 naming
-what the type has. Each included relation costs one typed traversal per
-level, for all parent rows together, which returns the payloads with it.
+`fields`, `offset`/`limit`, `aggregate` (counts grouped by up to three
+fields) and `include`: relations by their declared name, or backwards from
+their target with a leading `~`, each with the same options, nested up to
+three levels. Every field and relation is checked against the model first, and
+a wrong one is a 400 naming what the type has. Two executors answer the same
+plan: SQL over the read model (`query/sql.rs`) once the tenant's is filled,
+and the graph before that. Each included relation costs one read per level,
+for all parent rows together.
 
 ##### Responsibility boundaries
 
-Filtering runs in the gear over at most 5,000 objects of the type, because
-domain types declare no payload indexes: graph-storage fixes a type's indexes
-at first registration and a domain type has to stay open to new fields.
-`complete` says whether the read saw every object. A relation is followed from
-its declaring side only. An edge does not say which declared relation it is,
-so two relations of one verb between overlapping types come back together;
-the answer's `warnings` names them. What the caller may read is applied at the
-root, at every `include` level and before `total` (the access component). What
-lifts each of these, and in what order screens move
-onto the query, is [the migration plan](../domain-query-migration.md).
+On the read model the whole question is SQL, with no bound on the type's
+size, and `source` says `read_model`. On the graph, filtering runs in the gear
+over at most 5,000 objects of the type, because domain types declare no
+payload indexes: graph-storage fixes a type's indexes at first registration
+and a domain type has to stay open to new fields; `complete` says whether the
+read saw every object. Either way an edge carries the declared relation it is
+(its discriminator), so two relations of one verb do not answer for each
+other. A traversal reports an edge's key but not its discriminator, and the SDK
+has no edge read, so the graph path and the fill derive the key graph-storage
+would give the wanted relation and compare (`gts::relation_of_key`). What the caller may read is applied at the root, at every `include`
+level and before `total` (the access component); on the read model it is a
+predicate on the object's owner. In what order screens move onto the query is
+[the migration plan](../domain-query-migration.md).
+
+#### Read model
+
+- [x] `p2` - **ID**: `cpt-studio-component-domain-model-read-model`
+
+##### Why this component exists
+
+Graph-storage cannot filter on a payload path a type did not declare at its
+first registration, has no count or offset, and walks a relation in one
+direction only ([ADR-0051](../adr/0051-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md)).
+The read model is every live object and relation as Postgres rows, so the
+query is answered by index.
+
+##### Responsibility scope
+
+`mirror.rs`. `IndexedDomainStore` wraps the graph store: every domain write
+changes the graph first, then the rows, in the same call. A tenant is served
+from the rows only once a fill has copied its graph in (`studio_domain_fill`);
+until then, or after a write the rows could not follow, queries read the graph
+and a fill runs in the background. The artifact index's protocol, for the same
+reasons.
+
+##### Responsibility boundaries
+
+The graph stays the source of truth: the rows can always be rebuilt from it.
+Only live objects have rows. The meta layer (`domainmeta.*`) is not mirrored.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-domain-model-query` — its SQL executor reads here
+
+#### Mutate
+
+- [x] `p2` - **ID**: `cpt-studio-component-domain-model-mutate`
+
+##### Why this component exists
+
+The write beside the query, so a screen saves with one request whatever it
+touches, through the same checks as `POST /objects` and `POST /relations`.
+
+##### Responsibility scope
+
+`mutate.rs`. `POST /mutate` takes up to 500 operations — `upsert`, `patch`,
+`delete`, `link`, `unlink` — checks the batch before writing (types, names,
+`$name` references to objects an earlier upsert named with `as`), then
+applies it in order.
+
+##### Responsibility boundaries
+
+The graph has no transactions: a failure part-way is a 400 naming the
+operation, and the ones before it stay applied. A delete marks the object
+(`_deleted`) rather than removing the node, because graph-storage never lets a
+deleted node's key be written again; every read leaves a marked object out, and
+writing the same type and key again brings it back.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-domain-model-access` — the rights each operation needs
 
 ##### Related components (by ID)
 
@@ -386,6 +449,7 @@ onto the query, is [the migration plan](../domain-query-migration.md).
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | `GET` | `/types` | The stored ontology, the frontend-regeneration source | unstable |
+| `POST` | `/types` | Add a type (`id`, `name`, `extends`, `bucket`); a versioned model edit | unstable |
 | `GET` | `/types/{id}` | One type with everything it inherits, and its relations | unstable |
 | `POST` | `/types/{id}/fields` | Add a field | unstable |
 | `PATCH` `DELETE` | `/types/{id}/fields/{name}` | Rename (with migration), retype, require; drop | unstable |
@@ -393,7 +457,8 @@ onto the query, is [the migration plan](../domain-query-migration.md).
 | `GET` | `/objects/legacy-scopes` | Objects whose scope names no project, so no project grant reaches them (ADR-0035) | unstable |
 | `POST` `GET` | `/objects` | Create or upsert an object (`validate`, `if_absent`); list by `type` | unstable |
 | `GET` | `/objects/graph` | Objects and their relations, `limit` 500 by default and at most 5,000, with `truncated` | unstable |
-| `POST` | `/query` | One type's objects filtered, ordered, projected, with declared relations followed (see the query component) | experimental |
+| `POST` | `/query` | One type's objects filtered, ordered, projected, counted by group, with declared relations followed either way (see the query component) | unstable |
+| `POST` | `/mutate` | A batch of upserts, patches, deletes, links and unlinks, applied in order (see the mutate component) | unstable |
 | `GET` `POST` | `/relations` | The relation catalogue with endpoint typing and `unresolved`; relate two objects | unstable |
 | `POST` | `/model/sync` | Store the model's structure as a graph; reports `version` and `pinned_types` | unstable |
 | `POST` | `/model/import` | Replace the active ontology with an uploaded document and register its types | unstable |
@@ -452,14 +517,19 @@ past.
 
 ### 3.7 Database schemas & tables
 
-None. The model, its versions, its objects and their relations are
-graph-storage nodes and edges (§3.1), owned by
-`cpt-studio-component-graph-storage`.
+The model, its versions, its objects and their relations are graph-storage
+nodes and edges (§3.1), owned by `cpt-studio-component-graph-storage`. The read
+model mirrors the objects and relations in the gear's own database
+(`studio_domain_model`, `migrations.rs`): `studio_domain_objects` (one row per
+live object: type, owner, scope, payload), `studio_domain_edges` (one row per
+relation, with the declared relation's name, indexed on both ends) and
+`studio_domain_fill` (the tenants it is complete for).
 
 ### 3.8 Deployment Topology
 
 In-process in the one `studio-backend` binary: gear `studio-domain-model`,
-capabilities `[rest]`, no config section.
+capabilities `[db, rest]`; its `database:` section enables the read model, and
+without one every query reads the graph.
 
 ## 4. Additional context
 

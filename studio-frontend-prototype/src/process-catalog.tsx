@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import type { Capability, JourneyStage } from "./api";
 import { errText } from "./format";
+import { useDomainRefresh } from "./domain-live";
 
 const CSS = `
 .pcat { display: flex; flex-direction: column; gap: 20px; }
@@ -89,6 +90,7 @@ export function ProcessCatalogTab({
       setErr(errText(e));
     }
   }, [token, workspaceId]);
+  useDomainRefresh(["lifecycle-stage","capability"], load);
 
   useEffect(() => {
     void load();
