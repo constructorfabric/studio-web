@@ -170,7 +170,7 @@ import {
   type RepoMode,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
-import { FrontendConstructor } from "./frontend-constructor-view";
+import { ProductFrontend, ProductSectionsHead } from "./product-sections-view";
 import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
@@ -5397,10 +5397,9 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // this tab makes of them is the product. The organization and the platform
   // keep "Components" for what they hold. The id stays, so links still open it.
   { id: "components", icon: "package", label: "Product" },
-  // The product's UI (ADR-0050): its FrontX shell and the micro-frontends
-  // mounted in it, checked against the gears Product composes. Right after
-  // Product, because a screen is only as good as the gears it calls.
-  { id: "frontend", icon: "grid", label: "Frontend" },
+  // The product's UI (ADR-0050) is a section of Product, not a tab: a product
+  // is one thing, with or without a frontend (product-sections.ts). An old
+  // `/…/frontend` address lands on Product › Frontend.
   // What the project is made of: the platform's and the organization's
   // components it takes, its own gears, its code that could become one, the
   // services that are not gears, and the gears its documents ask for that
@@ -5760,6 +5759,7 @@ function ProjectScreen({
         {tab === "artifacts" && (
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenTab={setTab} />
         )}
+        {tab === "components" && <ProductSectionsHead token={token} projectId={proj.id} />}
         {tab === "components" && (
           <ProjectKits
             token={token}
@@ -5769,7 +5769,7 @@ function ProjectScreen({
             onOpenTab={setTab}
           />
         )}
-        {tab === "frontend" && <FrontendConstructor token={token} projectId={proj.id} />}
+        {tab === "components" && <ProductFrontend token={token} projectId={proj.id} />}
         {tab === "parts" && (
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}

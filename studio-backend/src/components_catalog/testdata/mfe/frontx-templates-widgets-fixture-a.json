@@ -1,0 +1,66 @@
+{
+  "templateExample": true,
+  "manifest": {
+    "id": "gts.frontx.mfes.mfe.mf_manifest.v1~frontx.widgets.fixture_a.manifest.v1",
+    "remoteEntry": "http://localhost:3201/assets/remoteEntry.js"
+  },
+  "schemas": [
+    {
+      "$id": "gts://gts.frontx.mfes.comm.action.v1~frontx.widgets.test.widget_ping.v1~",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$comment": "Derived Action type for the duplicate-entry-instance stress test. Self-contained and closed: re-declares every property the base action.v1 would otherwise provide and rejects any undeclared field, on itself and on its own payload (cpt-frontx-dod-gts-type-provider-infra-schema-ownership) — no fields are added or narrowed beyond the base contract. The mediator routes by (extensionInstanceId, actionType) so an action targeted at one instance does not reach another; per-entry validation enforces that only entries declaring this action in their actions[] (fixture-a's entry) accept it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "x-gts-ref": "/$id",
+          "$comment": "Self-reference to this action's schema type ID"
+        },
+        "target": {
+          "x-gts-ref": "gts.frontx.mfes.ext.extension.v1~*",
+          "$comment": "Type ID of the target extension instance"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "$comment": "No payload fields — a ping carries nothing"
+        },
+        "timeout": {
+          "type": "number",
+          "minimum": 1,
+          "$comment": "Optional timeout override in milliseconds"
+        }
+      },
+      "required": ["type", "target"]
+    }
+  ],
+  "entries": [
+    {
+      "id": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~frontx.widgets.fixture_a.entry.v1",
+      "requiredProperties": [],
+      "actions": [
+        "gts.frontx.mfes.comm.action.v1~frontx.widgets.test.widget_ping.v1~"
+      ],
+      "domainActions": [
+        "gts.frontx.mfes.comm.action.v1~frontx.mfes.ext.mount_ext.v1~",
+        "gts.frontx.mfes.comm.action.v1~frontx.mfes.ext.unmount_ext.v1~"
+      ],
+      "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~frontx.widgets.fixture_a.manifest.v1",
+      "exposedModule": "./lifecycle"
+    }
+  ],
+  "extensions": [
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.widgets.fixture_a.widget_alpha.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.widgets.area.main.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~frontx.widgets.fixture_a.entry.v1",
+      "route": "/widget-alpha"
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.widgets.fixture_a.widget_beta.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.widgets.area.main.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~frontx.widgets.fixture_a.entry.v1",
+      "route": "/widget-beta"
+    }
+  ]
+}

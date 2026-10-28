@@ -650,10 +650,10 @@ export const SURFACES: Surface[] = [
   {
     id: "project-frontend",
     area: "project",
-    title: "Frontend",
-    does: "Compose the product's UI from micro-frontends in a FrontX shell, and see whether the product has the gears each screen calls.",
-    components: ["FrontendConstructor"],
-    gears: ["account-management", "studio-components-catalog", "studio-product"],
+    title: "Product › Frontend and Infrastructure",
+    does: "See where the product runs (its profile, environments and their databases); add a frontend from FrontX's shell template, or leave the product gears alone; compose the UI from micro-frontends in the shell, see whether the product has the gears each screen calls, and add FrontX's templates to the catalogue when it has no micro-frontend.",
+    components: ["FrontendConstructor", "ProductFrontend", "ProductSectionsHead"],
+    gears: ["account-management", "studio-components-catalog", "studio-environments", "studio-product"],
   },
   {
     id: "project-builds",

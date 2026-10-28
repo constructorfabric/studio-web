@@ -11,9 +11,43 @@
  * Pure, so it is tested without a backend.
  */
 
-import type { CatalogNode } from "./api";
+import type { CatalogNode, CatalogRepoSource } from "./api";
 
 export const FRONTX_NODE_TYPE = "gts.cf.studio.catalog.frontx.v1~";
+
+/** The FrontX repository the constructor offers when the catalogue has no
+ *  micro-frontend yet: FrontX's own templates, whose `template-mfe` carries
+ *  four micro-frontends with an `mfe.json` each (`_blank-mfe`, `demo-mfe`,
+ *  two widget fixtures). Public, so the organization's GitHub connection
+ *  reads it whatever it is scoped to. It is the constructor's counterpart of
+ *  the Gearbox corpus (`STUDIO_GEARBOX_CORPUS_URL`): a well-known starting
+ *  point, offered rather than imposed, and an ordinary catalogue source once
+ *  added. */
+export const SUGGESTED_FRONTX_SOURCE = {
+  repo: "constructorfabric/gears-frontx-templates",
+  git_ref: "main",
+  mode: "frontx",
+} as const;
+
+/** The nil tenant: in an organization's source it stands for the
+ *  organization itself, whose GitHub connection the sync reads through. */
+const ORG_TENANT = "00000000-0000-0000-0000-000000000000";
+
+const repoKey = (repo: string) =>
+  repo
+    .trim()
+    .toLowerCase()
+    .replace(/\.git$/, "");
+
+/** The organization's catalogue sources with the suggested FrontX one added
+ *  at the end, or `null` when it already reads that repository as FrontX
+ *  (at any ref): then there is nothing to add, only to sync. */
+export function withSuggestedFrontx(items: readonly CatalogRepoSource[]): CatalogRepoSource[] | null {
+  const want = repoKey(SUGGESTED_FRONTX_SOURCE.repo);
+  const has = items.some((s) => (s.mode || "gears") === SUGGESTED_FRONTX_SOURCE.mode && repoKey(s.repo) === want);
+  if (has) return null;
+  return [...items, { tenant: ORG_TENANT, connection_id: null, ...SUGGESTED_FRONTX_SOURCE }];
+}
 
 /** One place a micro-frontend takes in the shell. */
 export interface Placement {

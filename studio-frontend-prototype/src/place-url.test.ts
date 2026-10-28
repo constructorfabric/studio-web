@@ -51,6 +51,13 @@ describe("the portal's address", () => {
     expect(pathToPlace("/workspaces/ws1", "", KNOWN)).toMatchObject({ workspaceTab: "projects" });
   });
 
+  it("opens the Frontend tab's old address on Product, which now holds it", () => {
+    expect(pathToPlace("/workspaces/ws1/projects/p1/frontend", "", KNOWN)).toMatchObject({
+      crumb: { projectId: "ws1", nestedId: "p1" },
+      projectTab: "components",
+    });
+  });
+
   it("answers nothing for an address that is not a place of ours", () => {
     for (const path of ["/", "/space/5f6c1c9e-0000-4000-8000-000000000000", "/cf/studio-kits/v1/catalog", "/studio/abc", "/nowhere", "/components/extra", "/workspaces/ws1/projects/p1/unknown-tab", "/admin/nothing", "/workspaces/%E0%A4%A"]) {
       expect(pathToPlace(path, "", KNOWN), path).toBeUndefined();

@@ -44,7 +44,7 @@ describe("reading a stored list", () => {
 
   it("reads every preset back as it was written", () => {
     for (const preset of PRESETS) {
-      expect(parseTypes({ types: preset.types }, ["overview", "issues", "specs", "model", "components", "frontend", "parts", "builds", "tests", "deploys", "kits", "artifacts", "sources", "activity", "timeline", "people", "automation"]), preset.id).toEqual(preset.types);
+      expect(parseTypes({ types: preset.types }, ["overview", "issues", "specs", "model", "components", "parts", "builds", "tests", "deploys", "kits", "artifacts", "sources", "activity", "timeline", "people", "automation"]), preset.id).toEqual(preset.types);
       expect(typesProblem(preset.types), preset.id).toBeNull();
     }
   });

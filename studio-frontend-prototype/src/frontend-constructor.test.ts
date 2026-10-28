@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { CatalogNode } from "./api";
-import { FRONTX_NODE_TYPE, coverage, gearKey, mfesFrom, offersFor, placementLabel, zonesOf, type Mfe } from "./frontend-constructor";
+import type { CatalogNode, CatalogRepoSource } from "./api";
+import {
+  FRONTX_NODE_TYPE,
+  SUGGESTED_FRONTX_SOURCE,
+  coverage,
+  gearKey,
+  mfesFrom,
+  offersFor,
+  placementLabel,
+  withSuggestedFrontx,
+  zonesOf,
+  type Mfe,
+} from "./frontend-constructor";
 
 const node = (name: string, value: Record<string, unknown> = {}, type = FRONTX_NODE_TYPE): CatalogNode =>
   ({ type_id: type, instance_id: name, value: { name, ...value } }) as unknown as CatalogNode;
@@ -102,5 +113,41 @@ describe("whether the product has the gears its screens call", () => {
 
   it("finds the packages that could show a gear", () => {
     expect(offersFor("cf-gears-account-management", [people, specs]).map((m) => m.name)).toEqual(["@cs/people-mfe"]);
+  });
+});
+
+describe("the suggested FrontX source", () => {
+  const src = (repo: string, mode = "frontx", git_ref: string | null = "main"): CatalogRepoSource => ({
+    tenant: "t",
+    connection_id: null,
+    repo,
+    git_ref,
+    mode,
+  });
+
+  it("is FrontX's templates, read as micro-frontends", () => {
+    expect(SUGGESTED_FRONTX_SOURCE).toEqual({ repo: "constructorfabric/gears-frontx-templates", git_ref: "main", mode: "frontx" });
+  });
+
+  it("is added after the organization's own sources, through the organization's connection", () => {
+    const own = [src("constructorfabric/gears-rust", "gears", null)];
+    const next = withSuggestedFrontx(own);
+    expect(next).toHaveLength(2);
+    expect(next?.[0]).toBe(own[0]);
+    expect(next?.[1]).toEqual({
+      tenant: "00000000-0000-0000-0000-000000000000",
+      connection_id: null,
+      repo: "constructorfabric/gears-frontx-templates",
+      git_ref: "main",
+      mode: "frontx",
+    });
+  });
+
+  it("is not added twice, whatever its spelling or ref", () => {
+    expect(withSuggestedFrontx([src("Constructorfabric/Gears-Frontx-Templates.git", "frontx", "develop")])).toBeNull();
+  });
+
+  it("is still added when the repository is read only in another mode", () => {
+    expect(withSuggestedFrontx([src("constructorfabric/gears-frontx-templates", "gears")])).toHaveLength(2);
   });
 });
