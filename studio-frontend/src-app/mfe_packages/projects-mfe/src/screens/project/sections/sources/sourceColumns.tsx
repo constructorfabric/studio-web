@@ -1,10 +1,10 @@
 import React from 'react';
-import { Cloud } from 'lucide-react';
+import { Cloud, Upload } from 'lucide-react';
 import { useFormatters } from '@gears-frontx/react';
 import { Button, VisuallyHidden, type DataGridTableColumn } from '@gears-frontx/ui-kit';
 import type { Refusal, ScreenText } from '@constructor-studio/mfe-shared';
 import { useProjectText, useSourcesText } from '../../../../i18n';
-import type { SourceRow } from '../../../../model/sourceRows';
+import type { SourceRow, SourcesTableRow, UploadsRow } from '../../../../model/sourceRows';
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
 import { useDayTime } from '../../../../shared/dayTime';
 import { useDaysAgo } from '../../../../shared/daysAgo';
@@ -54,6 +54,23 @@ const SourceCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
 
 SourceCell.displayName = 'SourceCell';
 
+const UploadsCell: React.FC = () => {
+  const t = useSourcesText();
+  return (
+    <div className={styles.source}>
+      <span className={styles.providerTile} aria-hidden="true">
+        <Upload size={16} strokeWidth={1.5} aria-hidden="true" />
+      </span>
+      <span className={styles.sourceText}>
+        <span className={styles.sourceName}>{t('uploads_name')}</span>
+        <span className={styles.sourcePath}>{t('uploads_note')}</span>
+      </span>
+    </div>
+  );
+};
+
+UploadsCell.displayName = 'UploadsCell';
+
 const RoleCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({ row, actions }) =>
   row.provider === null ? (
     <span className={styles.muted}>{MISSING}</span>
@@ -66,17 +83,21 @@ const RoleCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({ row
 
 RoleCell.displayName = 'RoleCell';
 
-const SpecsCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({ row, actions }) => {
+const SpecsCell: React.FC<{ row: SourcesTableRow; actions: SourceRowActions }> = ({
+  row,
+  actions,
+}) => {
   const t = useSourcesText();
   if (row.specs === null || row.specs === 0) {
     return <span className={styles.muted}>{row.specs ?? MISSING}</span>;
   }
+  const uploads = row.kind === 'uploads';
   return (
     <Button
       variant="link"
       className={styles.specsLink}
-      title={t('menu_open_specs')}
-      onClick={() => actions.openSpecs(row)}
+      title={t(uploads ? 'menu_open_uploads' : 'menu_open_specs')}
+      onClick={() => (uploads ? actions.openUploads() : actions.openSpecs(row))}
     >
       {row.specs}
     </Button>
@@ -178,7 +199,20 @@ const LastSyncCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
 
 LastSyncCell.displayName = 'LastSyncCell';
 
-const HiddenHeader: React.FC<{ column: DataGridTableColumn<SourceRow> }> = ({ column }) => (
+const UploadedAtCell: React.FC<{ row: UploadsRow }> = ({ row }) => {
+  const { formatRelative } = useFormatters();
+  const dayTime = useDayTime();
+  if (row.lastAt === null) return <span className={styles.muted}>{MISSING}</span>;
+  return (
+    <div className={styles.lastSync}>
+      <span title={formatRelative(row.lastAt)}>{dayTime(row.lastAt)}</span>
+    </div>
+  );
+};
+
+UploadedAtCell.displayName = 'UploadedAtCell';
+
+const HiddenHeader: React.FC<{ column: DataGridTableColumn<SourcesTableRow> }> = ({ column }) => (
   <VisuallyHidden>
     {/* The kit types a label as `string | (() => string)`. */}
     {typeof column.label === 'function' ? column.label() : column.label}
@@ -193,7 +227,7 @@ export function sourceColumns({
   actions,
   scale,
   container,
-}: SourceColumnDeps): DataGridTableColumn<SourceRow>[] {
+}: SourceColumnDeps): DataGridTableColumn<SourcesTableRow>[] {
   const windowed = (key: string) =>
     windowDays === null ? t(key) : t.count(`${key}_window`, windowDays);
   return [
@@ -201,13 +235,19 @@ export function sourceColumns({
       id: 'source',
       label: t('col_source'),
       width: '22.5rem',
-      render: (row) => <SourceCell row={row} actions={actions} />,
+      render: (row) =>
+        row.kind === 'uploads' ? <UploadsCell /> : <SourceCell row={row} actions={actions} />,
     },
     {
       id: 'role',
       label: t('col_role'),
       width: '12rem',
-      render: (row) => <RoleCell row={row} actions={actions} />,
+      render: (row) =>
+        row.kind === 'uploads' ? (
+          <span className={styles.muted}>{MISSING}</span>
+        ) : (
+          <RoleCell row={row} actions={actions} />
+        ),
     },
     {
       id: 'specs',
@@ -218,14 +258,19 @@ export function sourceColumns({
     {
       id: 'pull_requests',
       label: windowed('col_pull_requests'),
-      render: (row) => <PullRequestsCell row={row} scale={scale} container={container} />,
+      render: (row) =>
+        row.kind === 'uploads' ? (
+          <span className={styles.prsUnavailable}>{t('not_applicable')}</span>
+        ) : (
+          <PullRequestsCell row={row} scale={scale} container={container} />
+        ),
     },
     {
       id: 'commits',
       label: windowed('col_commits'),
       width: '8.5rem',
       render: (row) =>
-        row.activity === null ? (
+        row.kind === 'uploads' || row.activity === null ? (
           <span className={styles.muted}>{MISSING}</span>
         ) : (
           row.activity.commits
@@ -235,7 +280,12 @@ export function sourceColumns({
       id: 'last_sync',
       label: t('col_last_sync'),
       width: '8rem',
-      render: (row) => <LastSyncCell row={row} actions={actions} />,
+      render: (row) =>
+        row.kind === 'uploads' ? (
+          <UploadedAtCell row={row} />
+        ) : (
+          <LastSyncCell row={row} actions={actions} />
+        ),
     },
     {
       id: 'actions',

@@ -29,7 +29,7 @@ vi.mock('../../../shared/useArtifactImport', () => ({
 }));
 vi.mock('../../../shared/useArtifacts', () => ({
   ARTIFACTS_PAGE_SIZE: 18,
-  useArtifacts: (_projectId: string, query: { offset: number }) => {
+  useArtifacts: (_projectId: string, _workspaceId: string | null, query: { offset: number }) => {
     artifacts.offsets.push(query.offset);
     return {
       rows: [],
@@ -46,6 +46,7 @@ vi.mock('../../../shared/useArtifacts', () => ({
     };
   },
 }));
+vi.mock('../upload/UploadPanel', () => ({ UploadPanel: () => null }));
 
 import { ArtifactsSection } from './ArtifactsSection';
 
@@ -55,12 +56,12 @@ const requestedOffset = () => artifacts.offsets[artifacts.offsets.length - 1];
 
 describe('artifacts section', () => {
   it('moves back to the last page when the total shrinks under the page on screen', () => {
-    const { rerender } = render(<ArtifactsSection projectId="p1" />);
+    const { rerender } = render(<ArtifactsSection projectId="p1" projectName="Billing" />);
     fireEvent.click(pageButton(3));
     expect(requestedOffset()).toBe(36);
 
     artifacts.total = 20;
-    rerender(<ArtifactsSection projectId="p1" />);
+    rerender(<ArtifactsSection projectId="p1" projectName="Billing" />);
     expect(requestedOffset()).toBe(18);
     expect(pageButton(2).getAttribute('aria-current')).toBe('page');
   });

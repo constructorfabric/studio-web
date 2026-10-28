@@ -3,6 +3,7 @@ import type { SourceRow } from './sourceRows';
 /** A synced GitHub source with nothing in flight */
 export function sourceRow(overrides: Partial<SourceRow> = {}): SourceRow {
   return {
+    kind: 'repository',
     id: 'c-github:acme/api',
     connectionId: 'c-github',
     provider: 'github',

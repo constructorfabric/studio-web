@@ -30,6 +30,9 @@ vi.mock('./useProjectConfig', () => ({
   useProjectConfig: () => ({ config: { sources: [] }, loading: false, failed: false }),
 }));
 vi.mock('./useArtifactImport', () => ({ useProjectImport: () => imported() }));
+vi.mock('./useProjectDocuments', () => ({
+  useProjectDocuments: () => ({ documents: [], own: [], loading: false, failed: false }),
+}));
 
 import { useArtifacts } from './useArtifacts';
 
@@ -52,7 +55,7 @@ beforeEach(() => {
 describe('the repository total in the header', () => {
   it('is the repository read, not the filtered page', () => {
     const { result } = renderHook(() =>
-      useArtifacts('p1', { repo: 'r-1', kind: 'issue', search: 'broken', offset: 0 })
+      useArtifacts('p1', 'w1', { repo: 'r-1', kind: 'issue', search: 'broken', offset: 0 })
     );
     expect(result.current.total).toBe(3);
     expect(result.current.repositoryTotal).toBe(96);
@@ -61,7 +64,7 @@ describe('the repository total in the header', () => {
 
   it('is absent with no repository chosen, and its read is the project count', () => {
     const { result } = renderHook(() =>
-      useArtifacts('p1', { repo: null, kind: null, search: '', offset: 0 })
+      useArtifacts('p1', 'w1', { repo: null, kind: null, search: '', offset: 0 })
     );
     expect(result.current.repositoryTotal).toBeNull();
     expect(result.current.projectTotal).toBe(1286);
@@ -73,7 +76,7 @@ describe('the repository total in the header', () => {
       isRepositoryTotal(params) ? { isLoading: false, isError: true } : ok(96)
     );
     const { result } = renderHook(() =>
-      useArtifacts('p1', { repo: 'r-1', kind: null, search: '', offset: 0 })
+      useArtifacts('p1', 'w1', { repo: 'r-1', kind: null, search: '', offset: 0 })
     );
     expect(result.current.repositoryTotal).toBeNull();
     expect(result.current.repositoryTotalFailed).toBe(true);
@@ -82,7 +85,7 @@ describe('the repository total in the header', () => {
 
   it('is asked again by refetch', () => {
     const { result } = renderHook(() =>
-      useArtifacts('p1', { repo: 'r-1', kind: null, search: '', offset: 0 })
+      useArtifacts('p1', 'w1', { repo: 'r-1', kind: null, search: '', offset: 0 })
     );
     result.current.refetch();
     expect(invalidate).toHaveBeenCalledWith({ params: { scope: 'p1', repo: 'r-1', limit: 1 } });
@@ -92,7 +95,7 @@ describe('the repository total in the header', () => {
 describe('a page on the way', () => {
   it('keeps the last total of the same project, and only of the same project', () => {
     const { result, rerender } = renderHook(
-      ({ projectId, search }) => useArtifacts(projectId, { repo: null, kind: null, search, offset: 0 }),
+      ({ projectId, search }) => useArtifacts(projectId, 'w1', { repo: null, kind: null, search, offset: 0 }),
       { initialProps: { projectId: 'p1', search: '' } }
     );
     // The first page answered 96; the search narrows it to 3.
@@ -116,12 +119,12 @@ describe('the type filter', () => {
     answer.mock.calls.map(([params]) => params).find((params) => params.sort === 'updated');
 
   it('sends the chosen kind as its full GTS id', () => {
-    renderHook(() => useArtifacts('p1', { repo: null, kind: 'issue', search: '', offset: 0 }));
+    renderHook(() => useArtifacts('p1', 'w1', { repo: null, kind: 'issue', search: '', offset: 0 }));
     expect(pageRequest()?.type).toBe(ARTIFACT_NODE_TYPES.issue);
   });
 
   it('sends no type for all types — the gear answers its default kinds', () => {
-    renderHook(() => useArtifacts('p1', { repo: null, kind: null, search: '', offset: 0 }));
+    renderHook(() => useArtifacts('p1', 'w1', { repo: null, kind: null, search: '', offset: 0 }));
     expect(pageRequest()).toBeDefined();
     expect(pageRequest()).not.toHaveProperty('type', expect.anything());
   });
@@ -146,7 +149,7 @@ describe('the re-read while an import runs', () => {
 
   it('happens at once when a sync starts or settles, and not again for the same statuses', () => {
     imported.mockReturnValue(importing(['queued', 0], ['queued', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
     imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
@@ -159,7 +162,7 @@ describe('the re-read while an import runs', () => {
 
   it('happens once in two seconds however often the stored count grows', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
     for (const stored of [1_000, 2_000, 3_000]) {
@@ -174,7 +177,7 @@ describe('the re-read while an import runs', () => {
 
   it('keeps happening every two seconds while the stored count keeps growing', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
     for (let second = 1; second <= 5; second += 1) {
@@ -189,7 +192,7 @@ describe('the re-read while an import runs', () => {
 
   it('drops the pending one when a status change re-reads at once', () => {
     imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
     imported.mockReturnValue(importing(['running', 1_000], ['queued', 0]));
@@ -203,7 +206,7 @@ describe('the re-read while an import runs', () => {
 
   it('does not happen once the hook is gone', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender, unmount } = renderHook(() => useArtifacts('p1', QUERY));
+    const { rerender, unmount } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
     imported.mockReturnValue(importing(['running', 1_000]));

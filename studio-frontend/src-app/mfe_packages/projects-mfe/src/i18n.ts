@@ -21,6 +21,7 @@ const WORKSPACE_SCREEN = 'workspace';
 const SPECS_SCREEN = 'specs';
 const SOURCES_SCREEN = 'sources';
 const CONNECT_SCREEN = 'connect';
+const UPLOAD_SCREEN = 'upload';
 
 export const PROJECT_LIST_NAMESPACE = `screen.${SCREENSET}.${LIST_SCREEN}`;
 export const PROJECT_NAMESPACE = `screen.${SCREENSET}.${PROJECT_SCREEN}`;
@@ -29,6 +30,7 @@ export const WORKSPACE_CREATE_NAMESPACE = `screen.${SCREENSET}.${WORKSPACE_SCREE
 export const SPECS_NAMESPACE = `screen.${SCREENSET}.${SPECS_SCREEN}`;
 export const SOURCES_NAMESPACE = `screen.${SCREENSET}.${SOURCES_SCREEN}`;
 export const SOURCES_CONNECT_NAMESPACE = `screen.${SCREENSET}.${CONNECT_SCREEN}`;
+export const UPLOAD_NAMESPACE = `screen.${SCREENSET}.${UPLOAD_SCREEN}`;
 
 type ModuleMap = TranslationModules;
 
@@ -40,6 +42,7 @@ const workspaceModules = import.meta.glob('./screens/workspace-create/i18n/*.jso
 const specsModules = import.meta.glob('./screens/project/sections/specs/i18n/*.json') as ModuleMap;
 const sourcesModules = import.meta.glob('./screens/project/sections/sources/i18n/*.json') as ModuleMap;
 const connectModules = import.meta.glob('./screens/sources-connect/i18n/*.json') as ModuleMap;
+const uploadModules = import.meta.glob('./screens/project/upload/i18n/*.json') as ModuleMap;
 
 
 const loadListTranslations = loadScreenTranslations(listModules, './screens/project-list/i18n');
@@ -49,6 +52,7 @@ const loadWorkspaceTranslations = loadScreenTranslations(workspaceModules, './sc
 const loadSpecsTranslations = loadScreenTranslations(specsModules, './screens/project/sections/specs/i18n');
 const loadSourcesTranslations = loadScreenTranslations(sourcesModules, './screens/project/sections/sources/i18n');
 const loadConnectTranslations = loadScreenTranslations(connectModules, './screens/sources-connect/i18n');
+const loadUploadTranslations = loadScreenTranslations(uploadModules, './screens/project/upload/i18n');
 
 /** Loads the list screen's dictionary. One call, in `ProjectListScreen`. */
 export function useProjectListScreenTranslations(): UseScreenTranslationsReturn {
@@ -91,6 +95,11 @@ export function useSourcesConnectScreenTranslations(): UseScreenTranslationsRetu
   return useScreenTranslations(SCREENSET, CONNECT_SCREEN, loadConnectTranslations);
 }
 
+/** Loads Upload documents' dictionary, in its button and its panel. */
+export function useUploadTranslations(): UseScreenTranslationsReturn {
+  return useScreenTranslations(SCREENSET, UPLOAD_SCREEN, loadUploadTranslations);
+}
+
 export const useProjectListText = createText(PROJECT_LIST_NAMESPACE);
 export const useProjectText = createText(PROJECT_NAMESPACE);
 export const useProjectCreateText = createText(PROJECT_CREATE_NAMESPACE);
@@ -98,3 +107,4 @@ export const useWorkspaceCreateText = createText(WORKSPACE_CREATE_NAMESPACE);
 export const useSpecsText = createText(SPECS_NAMESPACE);
 export const useSourcesText = createText(SOURCES_NAMESPACE);
 export const useSourcesConnectText = createText(SOURCES_CONNECT_NAMESPACE);
+export const useUploadText = createText(UPLOAD_NAMESPACE);

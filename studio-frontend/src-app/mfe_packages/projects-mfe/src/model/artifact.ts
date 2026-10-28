@@ -4,27 +4,27 @@ import {
   type ArtifactNodeDto,
   type ArtifactNodeValue,
 } from '../api/artifactTypes';
+import type { DocumentDto } from '../api/documentTypes';
 
 export type ArtifactProvenance = 'checkout' | 'tree' | 'upload' | 'repository';
 
 export interface ArtifactRow {
   id: string;
-  /** `null` when the gear sent a kind this portal does not draw — see below. */
-  kind: ArtifactKind | null;
+  kind: ArtifactKind | 'document' | null;
   name: string;
   repository: string;
   path: string;
   url: string | null;
-  sync: 'ingested';
+  sync: 'ingested' | 'uploaded';
   updatedAt: number | null;
   provenance: ArtifactProvenance | null;
 }
 
-/** A file opens in the editor; everything else opens where it came from */
+/** A file and a Studio document open in the editor; everything else opens where it came from */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
 export function opensInEditor(row: ArtifactRow): boolean {
-  return row.kind === 'file' && row.path !== '';
+  return row.kind === 'document' || (row.kind === 'file' && row.path !== '');
 }
 
 export interface ArtifactRepository {
@@ -136,6 +136,40 @@ export function buildArtifactRows(
   }
 
   return rows;
+}
+
+export function studioDocumentRow(document: DocumentDto): ArtifactRow {
+  const updatedAt = Date.parse(document.updated_at);
+  return {
+    id: document.id,
+    kind: 'document',
+    name: document.title,
+    repository: '',
+    path: '',
+    url: null,
+    sync: 'uploaded',
+    updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+    provenance: null,
+  };
+}
+
+export interface ArtifactPage<T> {
+  docRows: T[];
+  graphOffset: number;
+  graphLimit: number;
+}
+
+export function artifactPage<T>(
+  documents: readonly T[],
+  offset: number,
+  pageSize: number
+): ArtifactPage<T> {
+  const shown = documents.slice(offset, offset + pageSize);
+  return {
+    docRows: shown,
+    graphOffset: Math.max(0, offset - documents.length),
+    graphLimit: pageSize - shown.length,
+  };
 }
 
 /** An offset at or past the last row moves back to the start of the last page. */

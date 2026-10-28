@@ -73,8 +73,10 @@ rows the section's table shows (#685): each source joined to its repository in
 the graph, its week of pull requests and commits, its specs and its sync. Each
 row has a menu (#686): sync the source or cancel its sync, open its specs, open
 it at its provider. Disconnect is in the menu, disabled until the backend can
-take a source out of a project (#852). The table shows the rows (#688); uploading
-documents is added with #693.
+take a source out of a project (#852). The table shows the rows (#688). Upload
+documents (#693) adds Markdown and text files to the project as Studio
+documents; the section lists them as one more row, Uploaded files, after the
+sources.
 
 ### 1.2 Purpose
 
@@ -194,11 +196,16 @@ open:
   how a quiet week draws a flat line. The tooltip names the day.
 - **Last sync is a day and a time**, "3 Sept, 16:06", with the year only when
   it is not this one, and the relative time as its title.
-- **With no sources, the kit's empty state offers Connect source**, with no
-  column headers above it: the kit's grid hides the table when it has no rows
-  and no filter. A search that matches nothing says so and offers Clear search.
-- **With no workspace open the rows show**, and the footer's documents created
-  in Studio are missing. With no organization open the section says so.
+- **With no sources, the kit's empty state offers Upload documents and Connect
+  source**, with no column headers above it: the kit's grid hides the table when
+  it has no rows and no filter. A search that matches nothing says so and offers
+  Clear search.
+- **With no workspace open the rows show**, with no Uploaded files row, and the
+  footer's specs from sources are missing. With no organization open the
+  section says so.
+- **Every Studio document of the project reads as uploaded.** The backend keeps
+  no origin for a document, so one written in Studio by another client is in
+  the Uploaded files row too (#693).
 - **The search and the cells take the kit's sizes**, as Specs does: 40px and
   12px, where the prototype has 32px and 14px. Which one Studio's tables keep is
   open with design (#888).
@@ -218,7 +225,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 | **MFE** (`cpt-studio-actor-mfe`) | projects-mfe. Draws the dialog in one extension and the project screen, with each row's menu, in another; the screen syncs what the dialog attached. |
 | **Connector gear** (`cpt-studio-component-connector`) | Lists the organization's connections and each connection's repositories. |
 | **Artifact gear** (`cpt-studio-component-artifact-ingest`) | Syncs each new GitHub repository into the graph; answers each repository's node and its week of pull requests and commits. |
-| **Documents gear** (`cpt-studio-component-documents`) | Counts each repository's specs and the documents created in Studio. |
+| **Documents gear** (`cpt-studio-component-documents`) | Counts each repository's specs, and lists the project's Studio documents. |
 | **Event stream** (`cpt-studio-component-events`) | Carries the transitions of each sync the tab follows. |
 | **Tasks gear** (`cpt-studio-component-tasks`) | Cancels a source's sync run, and puts a failed or cancelled one back on the queue. |
 
@@ -232,7 +239,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Feature**: [Connect a source host](connection-create.md): the form Add connection opens
 - **Feature**: [The project's specs](project-specs.md): the section before this one, and the filter Open specs sets
 - **Feature**: [Levels in the shell](shell-levels.md): the section the MFE asks for, written into the address
-- **Decomposition entry** `cpt-studio-feature-documents`: the specs counted per repository and the documents created in Studio (no feature spec of its own)
+- **Decomposition entry** `cpt-studio-feature-documents`: the specs counted per repository and the project's Studio documents (no feature spec of its own)
 - **Issues**: #643 (the Specs and Sources sections), #687 (Connect source), #685 (the rows), #686 (the row menu), #709 (the config write), #711 (the Specs list's load), #688 (the table), #693 (uploading documents), #852 (Disconnect)
 
 ## 2. Actor Flows (CDSL)
@@ -300,7 +307,7 @@ extensions, the shell's overlay frame and connections-mfe.
 4. [ ] - `p1` - `API: GET /studio-connector/v1/connections?tenant={organization} (each source's connection)` - `inst-4`
 5. [ ] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/source-activity?scope={project} (pull requests and commits per repository)` - `inst-5`
 6. [ ] - `p1` - `API: GET /cf/studio-documents/v1/specs-per-source?scope={project} (specs per repository)` - `inst-6`
-7. [ ] - `p1` - `API: GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1 (the documents created in Studio)` - `inst-7`
+7. [ ] - `p1` - `API: GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=200&offset={read so far} (the project's Studio documents, every page)` - `inst-7`
 8. [ ] - `p1` - **IF** the config or the repository nodes cannot be read - `inst-8`
    1. [ ] - `p1` - **RETURN** the section says so - `inst-9`
 9. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-sources-rows` and `cpt-studiofrontend-algo-project-sources-footer` - `inst-10`
@@ -397,9 +404,9 @@ so it is found the next time the project screen reads the project.
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-sources-rows`
 
-**Input**: the project's sources; its repository nodes; the organization's connections, the activity and the specs per repository, each read or not; the import's lines for the project
+**Input**: the project's sources; its repository nodes; the organization's connections, the activity, the specs per repository and the project's own Studio documents, each read or not; the import's lines for the project
 
-**Output**: one row per source, in the config's order
+**Output**: one row per source, in the config's order, and the Uploaded files row after them
 
 **Steps**:
 1. [x] - `p1` - **FOR EACH** source in the config, in its order - `inst-1`
@@ -411,22 +418,22 @@ so it is found the next time the project screen reads the project.
    6. [x] - `p1` - **IF** the activity could not be read or the source has no node, its pull requests and commits are missing; **ELSE** they are its node's, none on every day of the window when the node is not listed - `inst-7`
    7. [x] - `p1` - Take its last sync: Not connected **IF** the connections were read and its connection is not among them; **ELSE** unavailable **IF** its provider cannot sync (`cpt-studiofrontend-dod-project-artifacts-syncable-providers`); **ELSE** the node's `synced_at` **IF** it has one; **ELSE** Not synced - `inst-8`
    8. [x] - `p1` - Take the sync this tab follows, from the import's line of the same path: in flight **IF** it is queued or running, with whether a cancel is pending and whether it can be cancelled; stopped **IF** it failed, was cancelled or was lost, with its reason and whether its run can be retried; none otherwise - `inst-9`
-2. [x] - `p1` - **RETURN** the rows - `inst-10`
+2. [x] - `p1` - **RETURN** the rows, and after them the Uploaded files row **IF** the project's own Studio documents were read and there is one: their number as its specs, the newest `created_at` as its last sync - `inst-10`
 
 ### Count the Sources footer
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-sources-footer`
 
-**Input**: every row, before the search; the Studio documents, read or not
+**Input**: every row, before the search, the Uploaded files row included; the project's own Studio documents, read or not
 
-**Output**: four counts, each a number or missing
+**Output**: three counts, each a number or missing
 
 **Steps**:
 1. [x] - `p1` - Sources: the number of rows - `inst-1`
 2. [x] - `p1` - Specs from sources: the sum of the rows' specs that are not missing; missing **IF** the specs could not be read or `files_known` is false - `inst-2`
-3. [x] - `p1` - Created in Studio: the `total` of the project's documents; missing **IF** they could not be read - `inst-3`
+3. [x] - `p1` - The Uploaded files row's documents are among them: the specs are missing **IF** the Studio documents could not be read - `inst-3`
 4. [x] - `p1` - Open pull requests: the sum of the rows' open pull requests that are not missing; missing **IF** the activity could not be read - `inst-4`
-5. [x] - `p1` - **RETURN** the four counts - `inst-5`
+5. [x] - `p1` - **RETURN** the three counts - `inst-5`
 
 ### Say what a row's menu offers
 
@@ -444,7 +451,7 @@ so it is found the next time the project screen reads the project.
    4. [x] - `p1` - **ELSE IF** the sync stopped and its run can be retried: Sync now, retrying that run - `inst-5`
    5. [x] - `p1` - **ELSE IF** the connections could not be read: Sync now, disabled with "The connections could not be read" - `inst-6`
    6. [x] - `p1` - **ELSE**: Sync now, requesting a new sync - `inst-7`
-2. [x] - `p1` - Take Open specs from this source, on every row - `inst-8`
+2. [x] - `p1` - Take Open specs from this source, on every source's row - `inst-8`
 3. [x] - `p1` - **IF** the row's provider is known and its clone URL is an `http` or `https` address, take `Open in {provider}`, at that address without its user, its password and a trailing `.git` - `inst-9`
 4. [x] - `p1` - Take Disconnect, after a separator, disabled with "Disconnect unavailable" - `inst-10`
 5. [x] - `p1` - **RETURN** the items - `inst-11`
@@ -530,9 +537,10 @@ the workspace. A domain that does not declare a property an entry requires
 refuses the entry, and with it every extension of the MFE.
 
 The header's actions belong to the section: the project screen draws the header
-and asks the open section for its actions: Check in Specs, Connect source in
-Sources. Upload documents joins them with #693. The header is the ui-kit page
-header, and the section's actions go in its actions slot.
+and asks the open section for its actions: Upload documents and Check in
+Specs, Upload documents and Connect source in Sources, Upload documents in
+Artifacts (#693). The header is the ui-kit page header, and the section's
+actions go in its actions slot.
 
 **Implements**:
 - `cpt-studiofrontend-flow-project-sources-connect`
@@ -796,10 +804,11 @@ repository nodes cannot be read, and **MUST** show the rows when another read
 fails, with what that read gives missing:
 
 - the specs per repository cannot be read, or `files_known` is false: every
-  row's specs and the footer's specs from sources;
-- the activity cannot be read: every row's pull requests and commits, and the
+  source's specs and the footer's specs from sources;
+- the activity cannot be read: every source's pull requests and commits, and the
   footer's open pull requests;
-- the Studio documents cannot be read: the footer's created in Studio;
+- the Studio documents cannot be read: the footer's specs from sources, and
+  there is no Uploaded files row;
 - the connections cannot be read: no row reads Not connected, and the rows take
   their provider from their node.
 
@@ -818,8 +827,8 @@ as `—` (#688).
 - `cpt-studiofrontend-flow-project-sources-list`
 
 **Touches**:
-- API: `GET /cf/studio-artifact-ingest/v1/source-activity?scope={project}`, `GET /cf/studio-documents/v1/specs-per-source?scope={project}`, `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1`
-- Entities: `model/sourceRows`, `shared/useSourcesLoad`
+- API: `GET /cf/studio-artifact-ingest/v1/source-activity?scope={project}`, `GET /cf/studio-documents/v1/specs-per-source?scope={project}`, `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents`
+- Entities: `model/sourceRows`, `shared/useSourcesLoad`, `shared/useProjectDocuments`
 
 ### The rows are searched by name and path, in the config's order
 
@@ -827,7 +836,8 @@ as `—` (#688).
 
 The system **MUST** keep the rows whose name or path contains the search text,
 ignoring case, and **MUST** keep them in the config's order: no column sorts the
-table, as in the design. The table pages the rows it keeps (#688).
+table, as in the design. The Uploaded files row is kept by its name, in the
+language shown, and stays last. The table pages the rows it keeps (#688).
 
 **Implements**:
 - `cpt-studiofrontend-flow-project-sources-list`
@@ -839,18 +849,19 @@ table, as in the design. The table pages the rows it keeps (#688).
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-footer`
 
-The system **MUST** count the footer over every source of the project, whatever
+The system **MUST** count the footer over every row of the project, whatever
 the search keeps: the sources; the specs from sources, the sum of the rows'
-specs; the documents created in Studio, the `total` of the project's documents
-read with `limit=1`; and the open pull requests, the sum of the rows' open pull
-requests. The project's documents include the workspace's documents the project
-sees, as the Specs list's Created in Studio rows do.
+specs; and the open pull requests, the sum of the rows' open pull requests. The
+Uploaded files row is one of the sources and its documents are among the specs,
+so the footer no longer says how many were created in Studio (#693). Only the
+project's own documents count: the workspace's, which the project also lists,
+are not uploaded to it.
 
 **Implements**:
 - `cpt-studiofrontend-algo-project-sources-footer`
 
 **Touches**:
-- API: `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents?limit=1`
+- API: `GET /cf/studio-documents/v1/workspaces/{workspace}/projects/{project}/documents`
 - Entities: `model/sourceRows`
 
 ### The section reads through the shared cache, and the table shows the rows it builds
@@ -909,7 +920,10 @@ the MFE's themed root. The kit takes the pointer off a disabled item, which woul
 hide its title, so the menu gives it back; Base UI still does not activate the
 item. Sync now carries the design's refresh icon and Open in its external-link
 icon. The table (#688) puts the menu in its Actions column,
-and the row's Specs number calls what Open specs calls.
+and the row's Specs number calls what Open specs calls. The Uploaded files row's
+menu holds Open uploaded documents, which moves to Artifacts, where they come
+first, and Disconnect, disabled; its Specs number does what Open uploaded
+documents does (#693).
 
 **Implements**:
 - `cpt-studiofrontend-flow-project-sources-row-menu`
@@ -983,7 +997,7 @@ shown.
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-sources-menu-specs`
 
-The system **MUST** offer Open specs from this source on every row, and on it
+The system **MUST** offer Open specs from this source on every source's row, and on it
 **MUST** set the Specs list's filter for the source's `full_path`
 (`cpt-studiofrontend-dod-project-specs-filter-state`) and ask the shell for the
 Specs section.
@@ -1085,11 +1099,11 @@ The rows (#685):
 - [ ] A row whose sync is in flight offers Cancel sync; a row whose last attempt failed offers Sync now, which retries that run.
 - [ ] When a source's sync settles, its row's last sync, pull requests, commits and specs are read again, without leaving the section.
 - [ ] After a reload, a source whose last attempt failed shows its last successful sync alone.
-- [ ] With `files_known` false, every row's specs and the footer's specs are missing; a repository node that specs per repository does not list has 0.
-- [ ] When the activity cannot be read, every row's pull requests and commits and the footer's open pull requests are missing, and the rows still show.
+- [ ] With `files_known` false, every source's specs and the footer's specs are missing; a repository node that specs per repository does not list has 0.
+- [ ] When the activity cannot be read, every source's pull requests and commits and the footer's open pull requests are missing, and the rows still show.
 - [ ] When the config or the repository nodes cannot be read, the section says so.
 - [ ] Searching keeps the rows whose name or path holds the text, ignoring case, in the config's order, and leaves the footer as it was.
-- [ ] The footer gives the number of sources, the specs from sources, the documents created in Studio and the open pull requests of the whole project.
+- [ ] The footer gives the number of sources and the specs from sources, the Uploaded files row included, and the open pull requests of the whole project.
 
 The row menu (#686):
 
@@ -1113,8 +1127,15 @@ The table (#688):
 - [ ] Last sync reads "3 Sept, 16:06", with the year only for another year, and its title gives the relative time.
 - [ ] With 25 sources there is no pager; with 26, the table shows 25 and offers 25, 50 or 100 a page.
 - [ ] A search that matches nothing says so and offers Clear search, which brings the rows back.
-- [ ] With no sources, the section shows an empty state with Connect source and no column headers.
+- [ ] With no sources, the section shows an empty state with Upload documents and Connect source, and no column headers.
 - [ ] While the organization loads, or the open organization's workspace, the section shows a skeleton; with no organization open it says so.
-- [ ] With no workspace open the rows show, and the footer's documents created in Studio are missing.
+- [ ] With no workspace open the rows show, with no Uploaded files row, and the footer's specs from sources are missing.
 - [ ] When the config or the repository nodes cannot be read, Try again reads both again.
 - [ ] The table's labels are in English and in Russian.
+
+Uploaded files (#693):
+
+- [ ] Once the project has a Studio document of its own, the table ends with an Uploaded files row: an upload tile, "Files added to this project", Role `—`, the number of documents as its Specs, Pull requests "Not applicable", Commits `—`, and the newest document's creation as its Last sync.
+- [ ] Its Specs number, and Open uploaded documents in its menu, move to Artifacts, where the uploaded documents are on the first page; its Disconnect is disabled.
+- [ ] Searching "upload" keeps the row; a search for a repository's path leaves it out.
+- [ ] A document of the workspace, which the project also lists, is not counted in the row.

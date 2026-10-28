@@ -4,13 +4,16 @@ import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import { ArtifactIngestApiService, type NodesParams } from '../api/ArtifactIngestApiService';
 import { ARTIFACT_NODE_TYPES, ARTIFACT_REPO_TYPE, type ArtifactKind } from '../api/artifactTypes';
 import {
+  artifactPage,
   buildArtifactRows,
   buildRepositories,
+  studioDocumentRow,
   type ArtifactRepository,
   type ArtifactRow,
 } from '../model/artifact';
 import { useProjectConfig } from './useProjectConfig';
 import { useProjectImport } from './useArtifactImport';
+import { useProjectDocuments } from './useProjectDocuments';
 
 export const ARTIFACTS_PAGE_SIZE = 18;
 
@@ -114,23 +117,40 @@ function useImportRefresh(projectId: string, refetch: () => void): void {
 
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-counters:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-page:p1
-export function useArtifacts(projectId: string, query: ArtifactsQuery): ArtifactsView {
+export function useArtifacts(
+  projectId: string,
+  workspaceId: string | null,
+  query: ArtifactsQuery
+): ArtifactsView {
   const ingest = apiRegistry.getService(ArtifactIngestApiService);
   const cache = useQueryCache();
   const pageSize = query.pageSize ?? ARTIFACTS_PAGE_SIZE;
   const search = query.search.trim();
 
+  // The project's own Studio documents come first. They have no repository and no kind,
+  // so either filter hides them; the search matches their title.
+  const studio = useProjectDocuments(workspaceId, projectId);
+  const documents = useMemo(() => {
+    if (query.repo || query.kind) return [];
+    const needle = search.toLowerCase();
+    return studio.own.filter((document) => document.title.toLowerCase().includes(needle));
+  }, [studio.own, query.repo, query.kind, search]);
+  const split = useMemo(
+    () => artifactPage(documents, query.offset, pageSize),
+    [documents, query.offset, pageSize]
+  );
+
   const pageParams = useMemo<NodesParams>(
     () => ({
       scope: projectId,
       sort: 'updated',
-      limit: pageSize,
-      offset: query.offset,
+      limit: Math.max(1, split.graphLimit),
+      offset: split.graphOffset,
       repo: query.repo ?? undefined,
       type: query.kind ? ARTIFACT_NODE_TYPES[query.kind] : undefined,
       q: search || undefined,
     }),
-    [projectId, pageSize, query.offset, query.repo, query.kind, search]
+    [projectId, split.graphLimit, split.graphOffset, query.repo, query.kind, search]
   );
 
   const repositoryParams = useMemo(() => repositoryNodesParams(projectId), [projectId]);
@@ -162,8 +182,11 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
     [repositories]
   );
   const rows = useMemo(
-    () => buildArtifactRows(page.data?.nodes ?? [], repoNames),
-    [page.data, repoNames]
+    () => [
+      ...split.docRows.map(studioDocumentRow),
+      ...buildArtifactRows(page.data?.nodes ?? [], repoNames).slice(0, split.graphLimit),
+    ],
+    [split.docRows, split.graphLimit, page.data, repoNames]
   );
 
   const refetch = useCallback(() => {
@@ -177,13 +200,17 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
 
   return {
     rows,
-    total: page.data?.total ?? held?.total ?? 0,
-    projectTotal: scope.total,
+    total: (page.data?.total ?? held?.total ?? 0) + documents.length,
+    projectTotal: scope.total + studio.own.length,
     repositoryTotal: query.repo && repositoryTotalNodes.data ? repositoryTotalNodes.data.total : null,
     repositoryTotalFailed: query.repo !== null && repositoryTotalNodes.isError,
     repositories,
     sources: scope.sources,
-    loading: (page.isLoading && held === null) || repositoryNodes.isLoading || scope.loading,
+    loading:
+      (page.isLoading && held === null) ||
+      repositoryNodes.isLoading ||
+      scope.loading ||
+      studio.loading,
     refreshing: page.isLoading && held !== null,
     failed: page.isError || repositoryNodes.isError || scope.failed,
     refetch,

@@ -17,6 +17,7 @@ export type SourceMenuItem =
   | { kind: 'sync_now'; retry: boolean; disabled: SyncDisabled | null }
   | { kind: 'open_specs' }
   | { kind: 'open_in'; url: string; provider: string }
+  | { kind: 'open_uploads' }
   | { kind: 'disconnect' };
 
 function cancelSyncItem(sync: Extract<SourceSync, { kind: 'in_flight' }>): SourceMenuItem {
@@ -85,4 +86,8 @@ export function sourceRowMenu(row: SourceRow, connectionsRead: boolean): SourceM
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-11
   return items;
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-11
+}
+
+export function uploadsRowMenu(): SourceMenuItem[] {
+  return [{ kind: 'open_uploads' }, { kind: 'disconnect' }];
 }

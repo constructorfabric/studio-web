@@ -172,3 +172,6 @@ input.search {
   width: 8rem;
 }
 
+.upload {
+  margin: var(--space-3) var(--space-3) 0;
+}

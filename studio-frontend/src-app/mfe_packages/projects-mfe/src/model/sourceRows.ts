@@ -13,7 +13,7 @@ import type {
   RepoActivityDto,
   SourceActivityListDto,
 } from '../api/artifactTypes';
-import type { SpecsPerSourceListDto } from '../api/documentTypes';
+import type { DocumentDto, SpecsPerSourceListDto } from '../api/documentTypes';
 import { canCancel, canRetry, inFlight, type RepoImportStatus } from './repoImport';
 import { SYNCABLE_PROVIDERS, pathKey, repoNodeOf } from './syncRequest';
 
@@ -41,6 +41,7 @@ export interface SourceActivity {
 }
 
 export interface SourceRow {
+  kind: 'repository';
   id: string;
   connectionId: string;
   provider: string | null;
@@ -54,6 +55,17 @@ export interface SourceRow {
   lastSync: SourceLastSync;
   sync: SourceSync;
 }
+
+/** The project's own Studio documents (#693), as the design's "Uploaded files" row. */
+export interface UploadsRow {
+  kind: 'uploads';
+  id: 'uploads';
+  specs: number;
+  /** The newest `created_at`. */
+  lastAt: string | null;
+}
+
+export type SourcesTableRow = SourceRow | UploadsRow;
 
 export interface SourceImportLine {
   repo: string;
@@ -70,12 +82,13 @@ export interface SourcesAnswers {
   activity: SourceActivityListDto | null;
   specs: SpecsPerSourceListDto | null;
   lines: readonly SourceImportLine[];
+  /** The project's own Studio documents; `null` when they could not be read. */
+  uploads: readonly Pick<DocumentDto, 'created_at'>[] | null;
 }
 
 export interface SourcesFooter {
   sources: number;
   specs: number | null;
-  createdInStudio: number | null;
   openPullRequests: number | null;
 }
 
@@ -130,14 +143,26 @@ function syncOf(line: SourceImportLine | undefined): SourceSync {
   return NO_SYNC;
 }
 
-export function buildSourceRows(answers: SourcesAnswers): SourceRow[] {
+function uploadsRow(uploads: SourcesAnswers['uploads']): UploadsRow | null {
+  if (!uploads?.length) return null;
+  const lastAt = uploads.reduce<string | null>(
+    (newest, document) =>
+      newest === null || Date.parse(document.created_at) > Date.parse(newest)
+        ? document.created_at
+        : newest,
+    null
+  );
+  return { kind: 'uploads', id: 'uploads', specs: uploads.length, lastAt };
+}
+
+export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
   const connections = answers.connections && new Map(answers.connections.map((c) => [c.id, c]));
   const specsKnown = answers.specs?.files_known === true;
   const specsByNode = new Map(answers.specs?.items.map((item) => [item.repo, item.specs]));
   const activityByNode = new Map(answers.activity?.items.map((item) => [item.repo, item]));
   const lines = new Map(answers.lines.map((line) => [pathKey(line.repo), line]));
 
-  const rows: SourceRow[] = [];
+  const rows: SourcesTableRow[] = [];
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-1
   for (const source of answers.sources) {
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-2
@@ -159,6 +184,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourceRow[] {
         : null;
     // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-7
     rows.push({
+      kind: 'repository',
       id: `${source.connection_id}:${source.full_path}`,
       connectionId: source.connection_id,
       provider,
@@ -182,45 +208,55 @@ export function buildSourceRows(answers: SourcesAnswers): SourceRow[] {
   }
   // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-1
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-10
+  const uploads = uploadsRow(answers.uploads);
+  if (uploads) rows.push(uploads);
   return rows;
   // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-10
 }
 
-export function filterSourceRows(rows: readonly SourceRow[], search: string): SourceRow[] {
+export function filterSourceRows(
+  rows: readonly SourcesTableRow[],
+  search: string,
+  uploadsName: string
+): SourcesTableRow[] {
   const needle = search.trim().toLowerCase();
-  return needle ? rows.filter((row) => row.fullPath.toLowerCase().includes(needle)) : [...rows];
+  if (!needle) return [...rows];
+  return rows.filter((row) =>
+    (row.kind === 'uploads' ? uploadsName : row.fullPath).toLowerCase().includes(needle)
+  );
 }
 
 const MIN_ACTIVITY_SCALE = 3;
 
 /** The top of every row's sparkline: one scale for the table, whatever page shows. */
-export function activityScale(rows: readonly SourceRow[]): number {
+export function activityScale(rows: readonly SourcesTableRow[]): number {
   return rows.reduce(
-    (top, row) => Math.max(top, ...(row.activity?.days ?? [])),
+    (top, row) => (row.kind === 'uploads' ? top : Math.max(top, ...(row.activity?.days ?? []))),
     MIN_ACTIVITY_SCALE
   );
 }
 
 export function sourcesFooter(
-  rows: readonly SourceRow[],
-  answers: Pick<SourcesAnswers, 'specs' | 'activity'>,
-  documents: number | null
+  rows: readonly SourcesTableRow[],
+  answers: Pick<SourcesAnswers, 'specs' | 'activity' | 'uploads'>
 ): SourcesFooter {
+  // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-2
+  let specs = answers.specs?.files_known
+    ? rows.reduce((sum, row) => sum + (row.specs ?? 0), 0)
+    : null;
+  // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-2
+  // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-3
+  // The uploads row counts among them: unread, the sum would be short.
+  if (answers.uploads === null) specs = null;
+  // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-3
   const footer: SourcesFooter = {
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-1
     sources: rows.length,
     // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-1
-    // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-2
-    specs: answers.specs?.files_known
-      ? rows.reduce((sum, row) => sum + (row.specs ?? 0), 0)
-      : null,
-    // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-2
-    // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-3
-    createdInStudio: documents,
-    // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-3
+    specs,
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-4
     openPullRequests: answers.activity
-      ? rows.reduce((sum, row) => sum + (row.activity?.open ?? 0), 0)
+      ? rows.reduce((sum, row) => sum + (row.kind === 'uploads' ? 0 : (row.activity?.open ?? 0)), 0)
       : null,
     // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-4
   };

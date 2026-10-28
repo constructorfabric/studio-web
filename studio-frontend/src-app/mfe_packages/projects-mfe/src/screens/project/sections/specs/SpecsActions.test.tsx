@@ -30,6 +30,11 @@ vi.mock('../../../../i18n', () => {
   };
 });
 vi.mock('../../../../actions/specsCheckActions', () => ({ requestSpecsCheck }));
+vi.mock('../../upload/UploadDocumentsButton', () => ({
+  UploadDocumentsButton: ({ projectId }: { projectId: string }) => (
+    <button type="button">{`upload ${projectId}`}</button>
+  ),
+}));
 
 import { SpecsActions } from './SpecsActions';
 
@@ -51,10 +56,10 @@ beforeEach(() => {
 });
 
 describe("the Specs header's Check", () => {
-  it('stays hidden until the table has written the rows it shows', () => {
+  it('stays hidden until the table has written the rows it shows; Upload documents does not wait', () => {
     given({ shown: null });
     const { container } = renderActions();
-    expect(container.textContent).toBe('');
+    expect(container.textContent).toBe('upload p-1');
   });
 
   it('checks every shown row when none is selected', () => {

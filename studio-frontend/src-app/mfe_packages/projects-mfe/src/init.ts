@@ -22,12 +22,14 @@ import { artifactSyncSlice } from './slices/artifactSyncSlice';
 import { sourcesConnectSlice } from './slices/sourcesConnectSlice';
 import { typeDecisionSlice } from './slices/typeDecisionSlice';
 import { specsCheckSlice } from './slices/specsCheckSlice';
+import { documentUploadSlice } from './slices/documentUploadSlice';
 import { initWizardEffects } from './effects/wizardEffects';
 import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { initSourcesConnectEffects } from './effects/sourcesConnectEffects';
 import { initTypeDecisionEffects } from './effects/typeDecisionEffects';
 import { initSpecsCheckEffects } from './effects/specsCheckEffects';
+import { initDocumentUploadEffects } from './effects/documentUploadEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
 import { SpecQualityApiService } from './api/SpecQualityApiService';
@@ -80,5 +82,7 @@ registerSlice(sourcesConnectSlice, (dispatch) => initSourcesConnectEffects(dispa
 registerSlice(typeDecisionSlice, (dispatch) => initTypeDecisionEffects(dispatch, mfeApp));
 // Check's runs, followed here so a check outlives a switch of section or project.
 registerSlice(specsCheckSlice, initSpecsCheckEffects);
+// Upload documents: the panel's rows are sent here, and the documents read invalidated on the app-bound QueryClient.
+registerSlice(documentUploadSlice, (dispatch) => initDocumentUploadEffects(dispatch, mfeApp));
 
 export { mfeApp };

@@ -34,6 +34,8 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useMfeBridge: () => bridge,
   useFormatters: () => ({ formatRelative: () => 'recently' }),
   useTranslation: () => ({ t: (key: string) => key, language: 'en' }),
+  useAppSelector: (select: (state: unknown) => unknown) =>
+    select({ 'projects/nav': { projectId: 'p-1', section: 'sources' } }),
 }));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
@@ -67,11 +69,11 @@ vi.mock('../../../../shared/useSourcesLoad', () => ({
       ready,
       failed,
       rows,
-      footer: { sources: rows.length, specs: 3, createdInStudio: 1, openPullRequests: 0 },
+      footer: { sources: rows.length, specs: 3, openPullRequests: 0 },
       windowDays: 7,
       retry,
       load: async (context: DataGridLoadContext) => {
-        const shown = filterSourceRows(rows, context.filters?.textSearch?.value ?? '');
+        const shown = filterSourceRows(rows, context.filters?.textSearch?.value ?? '', 'Uploaded files');
         const { page, limit } = context.pagination ?? { page: 1, limit: shown.length };
         return { results: shown.slice((page - 1) * limit, page * limit), total: shown.length };
       },
@@ -86,9 +88,16 @@ vi.mock('../../../../shared/useSourceRowActions', () => ({
     syncNow: vi.fn(),
     cancelSync: vi.fn(),
     openSpecs: vi.fn(),
+    openUploads: vi.fn(),
   }),
 }));
 vi.mock('../../../../shared/useSyncRefusals', () => ({ useSyncRefusals: () => undefined }));
+vi.mock('../../upload/UploadPanel', () => ({ UploadPanel: () => null }));
+vi.mock('../../upload/UploadDocumentsButton', () => ({
+  UploadDocumentsButton: ({ projectId }: { projectId: string }) => (
+    <button type="button">Upload documents to {projectId}</button>
+  ),
+}));
 vi.mock('../../../../actions/sourcesConnectActions', () => ({ openSourcesConnect }));
 
 import { SourcesSection } from './SourcesSection';
@@ -98,11 +107,11 @@ const rows = (count: number, name = (index: number) => `acme/repo-${index}`) =>
     sourceRow({ id: `c:${name(index)}`, name: name(index).split('/')[1], fullPath: name(index) })
   );
 
-const section = () => render(<SourcesSection projectId="p-1" />);
+const section = () => render(<SourcesSection projectId="p-1" projectName="Billing" />);
 
 const shownRows = () => screen.queryAllByRole('button', { name: /^Actions for / }).length;
 const search = () => screen.getByPlaceholderText('Search sources');
-const FOOTER = /sources · 3 specs from sources · 1 created in Studio · 0 open pull requests$/;
+const FOOTER = /sources · 3 specs from sources · 0 open pull requests$/;
 
 beforeEach(() => {
   stubResizeObserver();
@@ -169,7 +178,7 @@ describe('SourcesSection', () => {
     section();
 
     await waitFor(() => expect(shownRows()).toBe(2));
-    expect(loadArgs[0]).toEqual(['p-1', null, 'org-1']);
+    expect(loadArgs[0]).toEqual(['p-1', null, 'org-1', 'Uploaded files']);
   });
 
   it('says the sources could not be read, and Try again reads them again', () => {
@@ -183,10 +192,11 @@ describe('SourcesSection', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('with no sources, offers Connect source, and still counts', async () => {
+  it('with no sources, offers Upload documents and Connect source, and still counts', async () => {
     section();
 
     expect(await screen.findByText('No sources connected')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Upload documents to p-1' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Connect source' }));
     expect(openSourcesConnect).toHaveBeenCalledWith(bridge);
     expect(screen.getByText(FOOTER).textContent).toMatch(/^0 sources/);

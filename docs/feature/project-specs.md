@@ -36,7 +36,10 @@ owner: studio-team
 ### 1.1 Overview
 
 The Specs section of a project. It lists every document the project holds: the
-files its repositories bring in and the documents written in Studio. Each row
+files its repositories bring in and the Studio documents, written or uploaded,
+whose Source reads Uploaded to project: the backend keeps no origin for a
+document, so it cannot tell the two apart, and the workspace's documents the
+project also lists read the same (#693). Each row
 shows its type and review state. The section offers the actions the API has for
 them: confirm or change a type, check with Spec Quality, upload documents.
 

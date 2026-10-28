@@ -15,7 +15,6 @@ export const SourcesFooter: React.FC<{ footer: FooterCounts }> = ({ footer }) =>
       {[
         t.count('footer_sources', footer.sources),
         counted('footer_specs', footer.specs),
-        counted('footer_created', footer.createdInStudio),
         footer.openPullRequests === null
           ? t('prs_unavailable')
           : t.count('footer_open_prs', footer.openPullRequests),

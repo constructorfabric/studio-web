@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
-import { buildArtifactRows, buildRepositories, clampOffset, opensInEditor } from './artifact';
+import {
+  artifactPage,
+  buildArtifactRows,
+  buildRepositories,
+  clampOffset,
+  opensInEditor,
+  studioDocumentRow,
+} from './artifact';
 
 const REPOS = new Map([['repo-1', 'group/repo']]);
 
@@ -140,5 +147,63 @@ describe('clampOffset', () => {
     expect(clampOffset(18, 18, 18)).toBe(0);
     expect(clampOffset(36, 96, 18)).toBe(36);
     expect(clampOffset(36, 0, 18)).toBe(36);
+  });
+});
+
+describe('a Studio document', () => {
+  const document = {
+    id: 'doc-1',
+    type_key: 'prd',
+    title: 'Requirements.md',
+    inherited: false,
+    created_at: '2026-10-20T10:00:00Z',
+    updated_at: '2026-10-21T10:00:00Z',
+  };
+
+  it('is an uploaded row with no repository and no path, dated by its last edit', () => {
+    expect(studioDocumentRow(document)).toEqual({
+      id: 'doc-1',
+      kind: 'document',
+      name: 'Requirements.md',
+      repository: '',
+      path: '',
+      url: null,
+      sync: 'uploaded',
+      updatedAt: Date.parse('2026-10-21T10:00:00Z'),
+      provenance: null,
+    });
+  });
+
+  it('opens in the editor', () => {
+    expect(opensInEditor(studioDocumentRow(document))).toBe(true);
+  });
+});
+
+describe('artifactPage', () => {
+  const documents = Array.from({ length: 20 }, (_, index) => `doc-${index}`);
+
+  it('fills a page with documents, and still reads the graph for its total', () => {
+    expect(artifactPage(documents, 0, 18)).toEqual({
+      docRows: documents.slice(0, 18),
+      graphOffset: 0,
+      graphLimit: 0,
+    });
+  });
+
+  it('ends the documents and starts the graph on the same page', () => {
+    expect(artifactPage(documents, 18, 18)).toEqual({
+      docRows: ['doc-18', 'doc-19'],
+      graphOffset: 0,
+      graphLimit: 16,
+    });
+  });
+
+  it('pages the graph alone past the documents', () => {
+    expect(artifactPage(documents, 36, 18)).toEqual({
+      docRows: [],
+      graphOffset: 16,
+      graphLimit: 18,
+    });
+    expect(artifactPage([], 36, 18)).toEqual({ docRows: [], graphOffset: 36, graphLimit: 18 });
   });
 });

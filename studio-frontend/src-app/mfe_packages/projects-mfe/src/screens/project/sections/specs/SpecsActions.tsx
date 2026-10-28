@@ -22,13 +22,13 @@ import { CHECK_CONFIRM_ABOVE, checkTargets } from '../../../../model/specsCheck'
 import { SPECS_CHECK_SLICE_KEY, checkRunning } from '../../../../slices/specsCheckSlice';
 import { requestSpecsCheck } from '../../../../actions/specsCheckActions';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
+import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 
 interface SpecsActionsProps {
   projectId: string;
   projectName: string;
 }
 
-/** The Specs header's Check (#691): hidden until #692's table has written the shown rows. */
 export const SpecsActions: React.FC<SpecsActionsProps> = ({ projectId, projectName }) => {
   const { isLoaded } = useSpecsSectionTranslations();
   const everLoaded = useEverLoaded(isLoaded);
@@ -42,7 +42,8 @@ export const SpecsActions: React.FC<SpecsActionsProps> = ({ projectId, projectNa
   const [confirming, setConfirming] = useState(false);
   const [container, findThemedRoot] = useThemedRoot();
 
-  if (!everLoaded || shown === null || !workspace) return null;
+  const upload = <UploadDocumentsButton projectId={projectId} />;
+  if (!everLoaded || shown === null || !workspace) return upload;
 
   const targets = checkTargets(selected, shown);
   const start = (): void =>
@@ -60,40 +61,43 @@ export const SpecsActions: React.FC<SpecsActionsProps> = ({ projectId, projectNa
   const icon = <ListChecks />;
 
   return (
-    <span ref={findThemedRoot}>
-      {disabledBy ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button size="sm" icon={icon} disabled focusableWhenDisabled>
-                {label}
-              </Button>
-            }
-          />
-          <TooltipContent container={container ?? undefined}>{t(disabledBy)}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <Button
-          size="sm"
-          icon={icon}
-          onClick={() => (targets.length > CHECK_CONFIRM_ABOVE ? setConfirming(true) : start())}
-        >
-          {label}
-        </Button>
-      )}
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent container={container ?? undefined}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.count('check_confirm_title', targets.length)}</AlertDialogTitle>
-            <AlertDialogDescription>{t('check_confirm_note')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('check_cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={start}>{t('check_confirm')}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </span>
+    <>
+      {upload}
+      <span ref={findThemedRoot}>
+        {disabledBy ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button size="sm" icon={icon} disabled focusableWhenDisabled>
+                  {label}
+                </Button>
+              }
+            />
+            <TooltipContent container={container ?? undefined}>{t(disabledBy)}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            size="sm"
+            icon={icon}
+            onClick={() => (targets.length > CHECK_CONFIRM_ABOVE ? setConfirming(true) : start())}
+          >
+            {label}
+          </Button>
+        )}
+        <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          <AlertDialogContent container={container ?? undefined}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t.count('check_confirm_title', targets.length)}</AlertDialogTitle>
+              <AlertDialogDescription>{t('check_confirm_note')}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('check_cancel')}</AlertDialogCancel>
+              <AlertDialogAction onClick={start}>{t('check_confirm')}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </span>
+    </>
   );
 };
 

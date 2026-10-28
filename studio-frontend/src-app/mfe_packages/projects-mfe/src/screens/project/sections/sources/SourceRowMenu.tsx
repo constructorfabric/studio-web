@@ -10,9 +10,10 @@ import {
 } from '@gears-frontx/ui-kit';
 import { ExternalLink, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { useSourcesText } from '../../../../i18n';
-import type { SourceRow } from '../../../../model/sourceRows';
+import type { SourcesTableRow } from '../../../../model/sourceRows';
 import {
   sourceRowMenu,
+  uploadsRowMenu,
   type SourceMenuItem,
   type SyncDisabled,
 } from '../../../../model/sourceRowMenu';
@@ -20,7 +21,7 @@ import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
 import styles from './SourceRowMenu.module.css';
 
 export interface SourceRowMenuProps {
-  row: SourceRow;
+  row: SourcesTableRow;
   actions: SourceRowActions;
   container?: HTMLElement | null;
 }
@@ -47,33 +48,45 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
     switch (entry.kind) {
       case 'cancel_sync':
         return (
-          <DropdownMenuItem
-            key="sync"
-            className={styles.item}
-            disabled={entry.disabled !== null}
-            title={entry.disabled ? disabledTitle(entry.disabled) : undefined}
-            onClick={() => actions.cancelSync(row)}
-          >
-            {t('menu_cancel_sync')}
-          </DropdownMenuItem>
+          row.kind === 'repository' && (
+            <DropdownMenuItem
+              key="sync"
+              className={styles.item}
+              disabled={entry.disabled !== null}
+              title={entry.disabled ? disabledTitle(entry.disabled) : undefined}
+              onClick={() => actions.cancelSync(row)}
+            >
+              {t('menu_cancel_sync')}
+            </DropdownMenuItem>
+          )
         );
       case 'sync_now':
         return (
-          <DropdownMenuItem
-            key="sync"
-            className={styles.item}
-            disabled={entry.disabled !== null}
-            title={entry.disabled ? disabledTitle(entry.disabled) : undefined}
-            onClick={() => actions.syncNow(row, entry.retry)}
-          >
-            <RefreshCw />
-            {t('menu_sync_now')}
-          </DropdownMenuItem>
+          row.kind === 'repository' && (
+            <DropdownMenuItem
+              key="sync"
+              className={styles.item}
+              disabled={entry.disabled !== null}
+              title={entry.disabled ? disabledTitle(entry.disabled) : undefined}
+              onClick={() => actions.syncNow(row, entry.retry)}
+            >
+              <RefreshCw />
+              {t('menu_sync_now')}
+            </DropdownMenuItem>
+          )
         );
       case 'open_specs':
         return (
-          <DropdownMenuItem key="specs" onClick={() => actions.openSpecs(row)}>
-            {t('menu_open_specs')}
+          row.kind === 'repository' && (
+            <DropdownMenuItem key="specs" onClick={() => actions.openSpecs(row)}>
+              {t('menu_open_specs')}
+            </DropdownMenuItem>
+          )
+        );
+      case 'open_uploads':
+        return (
+          <DropdownMenuItem key="uploads" onClick={actions.openUploads}>
+            {t('menu_open_uploads')}
           </DropdownMenuItem>
         );
       case 'open_in':
@@ -110,13 +123,18 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
             variant="ghost"
             size="sm"
             className={styles.actionsButton}
-            aria-label={t('row_actions', { name: row.name })}
+            aria-label={t('row_actions', {
+              name: row.kind === 'uploads' ? t('uploads_name') : row.name,
+            })}
             icon={<MoreHorizontal size={16} strokeWidth={1.5} />}
           />
         }
       />
       <DropdownMenuContent align="end" container={container ?? undefined}>
-        {sourceRowMenu(row, actions.connectionsRead).map(item)}
+        {(row.kind === 'uploads'
+          ? uploadsRowMenu()
+          : sourceRowMenu(row, actions.connectionsRead)
+        ).map(item)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

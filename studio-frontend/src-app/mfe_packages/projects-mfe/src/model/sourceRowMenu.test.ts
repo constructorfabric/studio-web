@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SourceRow } from './sourceRows';
 import { sourceRow } from './sourceRows.fixture';
-import { sourceRowMenu } from './sourceRowMenu';
+import { sourceRowMenu, uploadsRowMenu } from './sourceRowMenu';
 
 
 const syncItem = (input: SourceRow, connectionsRead = true) => sourceRowMenu(input, connectionsRead)[0];
@@ -25,6 +25,12 @@ describe('the row menu', () => {
       false
     );
     expect(items.map((item) => item.kind)).toEqual(['sync_now', 'open_specs', 'disconnect']);
+  });
+});
+
+describe("the uploads row's menu", () => {
+  it('opens the uploaded documents, and offers Disconnect', () => {
+    expect(uploadsRowMenu()).toEqual([{ kind: 'open_uploads' }, { kind: 'disconnect' }]);
   });
 });
 

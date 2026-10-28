@@ -27,31 +27,31 @@ function footer(counts: FooterCounts, language: 'en' | 'ru' = 'en') {
 describe('SourcesFooter', () => {
   afterEach(cleanup);
 
-  it('counts the sources, their specs, the Studio documents and the open pull requests', () => {
-    expect(footer({ sources: 3, specs: 12, createdInStudio: 4, openPullRequests: 2 })).toBe(
-      '3 sources · 12 specs from sources · 4 created in Studio · 2 open pull requests'
+  it('counts the sources, their specs and the open pull requests', () => {
+    expect(footer({ sources: 3, specs: 12, openPullRequests: 2 })).toBe(
+      '3 sources · 12 specs from sources · 2 open pull requests'
     );
   });
 
   it('says one in the singular', () => {
-    expect(footer({ sources: 1, specs: 1, createdInStudio: 1, openPullRequests: 1 })).toBe(
-      '1 source · 1 spec from sources · 1 created in Studio · 1 open pull request'
+    expect(footer({ sources: 1, specs: 1, openPullRequests: 1 })).toBe(
+      '1 source · 1 spec from sources · 1 open pull request'
     );
   });
 
   it('takes the Russian forms for a few and for many', () => {
-    expect(footer({ sources: 3, specs: 22, createdInStudio: 5, openPullRequests: 2 }, 'ru')).toBe(
-      '3 источника · 22 спецификации из источников · 5 создано в Studio · 2 открытых пул-реквеста'
+    expect(footer({ sources: 3, specs: 22, openPullRequests: 2 }, 'ru')).toBe(
+      '3 источника · 22 спецификации из источников · 2 открытых пул-реквеста'
     );
     cleanup();
-    expect(footer({ sources: 5, specs: 11, createdInStudio: 1, openPullRequests: 0 }, 'ru')).toBe(
-      '5 источников · 11 спецификаций из источников · 1 создан в Studio · 0 открытых пул-реквестов'
+    expect(footer({ sources: 5, specs: 11, openPullRequests: 0 }, 'ru')).toBe(
+      '5 источников · 11 спецификаций из источников · 0 открытых пул-реквестов'
     );
   });
 
   it('shows a number that could not be read as missing, never as zero', () => {
-    expect(footer({ sources: 0, specs: null, createdInStudio: null, openPullRequests: null })).toBe(
-      '0 sources · — specs from sources · — created in Studio · Pull request activity unavailable'
+    expect(footer({ sources: 0, specs: null, openPullRequests: null })).toBe(
+      '0 sources · — specs from sources · Pull request activity unavailable'
     );
   });
 });

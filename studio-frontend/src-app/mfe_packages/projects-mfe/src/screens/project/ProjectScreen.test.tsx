@@ -51,6 +51,11 @@ vi.mock('./sections/specs/SpecsActions', () => ({
 }));
 vi.mock('./sections/sources/SourcesSection', () => ({ SourcesSection: () => null }));
 vi.mock('./sections/PlaceholderSection', () => ({ PlaceholderSection: () => null }));
+vi.mock('./upload/UploadDocumentsButton', () => ({
+  UploadDocumentsButton: ({ projectId }: { projectId: string }) => (
+    <button type="button">{`upload ${projectId}`}</button>
+  ),
+}));
 
 import { ProjectScreen } from './ProjectScreen';
 
@@ -79,6 +84,13 @@ describe('the project header', () => {
       expect(connectSource()).toBeNull();
     }
   );
+
+  it('offers Upload documents in Artifacts, for the open project', () => {
+    nav.section = 'artifacts';
+    render(<ProjectScreen projectId="p-1" />);
+
+    expect(screen.getByRole('button', { name: 'upload p-1' })).toBeTruthy();
+  });
 
   it('offers Check in Specs, for the open project', () => {
     nav.section = 'specs';

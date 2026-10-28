@@ -6,7 +6,10 @@ import { SectionSkeleton } from '../../../../components/SectionStates';
 import { PlaceholderSection } from '../PlaceholderSection';
 import { SourcesTable } from './SourcesTable';
 
-export const SourcesSection: React.FC<{ projectId: string }> = ({ projectId }) => {
+export const SourcesSection: React.FC<{ projectId: string; projectName: string }> = ({
+  projectId,
+  projectName,
+}) => {
   const { isLoaded, error } = useSourcesSectionTranslations();
   const everLoaded = useEverLoaded(isLoaded);
   const { org, loading: orgLoading } = useOrganization();
@@ -18,7 +21,14 @@ export const SourcesSection: React.FC<{ projectId: string }> = ({ projectId }) =
   if ((!everLoaded && !error) || orgLoading) return <SectionSkeleton />;
   if (!org) return <PlaceholderSection title={projectText('section_sources')} note={t('no_org')} />;
   if (workspaceLoading) return <SectionSkeleton />;
-  return <SourcesTable projectId={projectId} orgId={org.id} workspaceId={workspace?.id ?? null} />;
+  return (
+    <SourcesTable
+      projectId={projectId}
+      projectName={projectName}
+      orgId={org.id}
+      workspaceId={workspace?.id ?? null}
+    />
+  );
 };
 
 SourcesSection.displayName = 'SourcesSection';

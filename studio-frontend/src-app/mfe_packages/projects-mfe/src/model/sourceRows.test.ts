@@ -12,7 +12,9 @@ import {
   filterSourceRows,
   sourcesFooter,
   type SourceImportLine,
+  type SourceRow,
   type SourcesAnswers,
+  type SourcesTableRow,
 } from './sourceRows';
 import { sourceRow } from './sourceRows.fixture';
 
@@ -67,18 +69,21 @@ function answers(overrides: Partial<SourcesAnswers> = {}): SourcesAnswers {
     activity: ACTIVITY,
     specs: SPECS,
     lines: [],
+    uploads: [],
     ...overrides,
   };
 }
 
-const only = (input: SourcesAnswers) => {
+const only = (input: SourcesAnswers): SourceRow => {
   const [row] = buildSourceRows(input);
+  if (row.kind !== 'repository') throw new Error('Not a repository row');
   return row;
 };
 
 describe('a source in the config is a row', () => {
   it('joined to its repository node: last sync, specs, pull requests and commits', () => {
     expect(only(answers())).toEqual({
+      kind: 'repository',
       id: 'c-github:acme/api',
       connectionId: 'c-github',
       provider: 'github',
@@ -101,7 +106,7 @@ describe('a source in the config is a row', () => {
         nodes: [repoNode('n-api', 'acme/api'), repoNode('n-old', 'acme/old')],
       })
     );
-    expect(rows.map((row) => row.fullPath)).toEqual(['acme/web', 'acme/api']);
+    expect(rows.map((row) => row.kind === 'repository' && row.fullPath)).toEqual(['acme/web', 'acme/api']);
   });
 
   it('shows the branch only when the config has one', () => {
@@ -251,16 +256,28 @@ describe('the search', () => {
     answers({ sources: [source('acme/api'), source('Tools/Insight'), source('acme/web')] })
   );
 
+  const paths = (kept: readonly SourcesTableRow[]) =>
+    kept.map((row) => (row.kind === 'uploads' ? row.kind : row.fullPath));
+
   it('keeps the rows whose name or path holds the text, ignoring case, in their order', () => {
-    expect(filterSourceRows(rows, ' ACME ').map((row) => row.fullPath)).toEqual([
+    expect(paths(filterSourceRows(rows, ' ACME ', 'Uploaded files'))).toEqual([
       'acme/api',
       'acme/web',
     ]);
-    expect(filterSourceRows(rows, 'insight').map((row) => row.name)).toEqual(['Insight']);
+    expect(paths(filterSourceRows(rows, 'insight', 'Uploaded files'))).toEqual(['Tools/Insight']);
   });
 
   it('keeps every row when empty', () => {
-    expect(filterSourceRows(rows, '')).toHaveLength(3);
+    expect(filterSourceRows(rows, '', 'Uploaded files')).toHaveLength(3);
+  });
+
+  it('keeps the uploads row by the name the table gives it', () => {
+    const withUploads = buildSourceRows(
+      answers({ sources: [source('acme/api')], uploads: [{ created_at: '2026-10-20T10:00:00Z' }] })
+    );
+    expect(paths(filterSourceRows(withUploads, 'upload', 'Uploaded files'))).toEqual(['uploads']);
+    expect(paths(filterSourceRows(withUploads, 'загруж', 'Загруженные файлы'))).toEqual(['uploads']);
+    expect(paths(filterSourceRows(withUploads, 'acme', 'Uploaded files'))).toEqual(['acme/api']);
   });
 });
 
@@ -280,23 +297,55 @@ describe('the footer', () => {
   });
   const rows = buildSourceRows(input);
 
-  it('counts every source, the specs from them, the Studio documents and the open pull requests', () => {
-    expect(sourcesFooter(rows, input, 4)).toEqual({
-      sources: 3,
-      specs: 17,
-      createdInStudio: 4,
+  it('counts every source, the specs from them and the open pull requests', () => {
+    expect(sourcesFooter(rows, input)).toEqual({ sources: 3, specs: 17, openPullRequests: 5 });
+  });
+
+  it('counts the uploads row among the sources and its documents among the specs', () => {
+    const uploads = [{ created_at: '2026-10-20T10:00:00Z' }, { created_at: '2026-10-21T10:00:00Z' }];
+    const withUploads = { ...input, uploads };
+    expect(sourcesFooter(buildSourceRows(withUploads), withUploads)).toEqual({
+      sources: 4,
+      specs: 19,
       openPullRequests: 5,
     });
   });
 
   it('leaves out of a sum what is missing, and is missing what could not be read', () => {
-    expect(sourcesFooter(rows, { ...input, specs: null, activity: null }, null)).toEqual({
+    expect(sourcesFooter(rows, { ...input, specs: null, activity: null })).toEqual({
       sources: 3,
       specs: null,
-      createdInStudio: null,
       openPullRequests: null,
     });
-    expect(sourcesFooter(rows, { ...input, specs: { ...SPECS, files_known: false } }, 0).specs).toBeNull();
+    expect(sourcesFooter(rows, { ...input, specs: { ...SPECS, files_known: false } }).specs).toBeNull();
+    expect(sourcesFooter(rows, { ...input, uploads: null }).specs).toBeNull();
+  });
+});
+
+describe('the uploads row', () => {
+  const uploads = [
+    { created_at: '2026-10-20T10:00:00Z' },
+    { created_at: '2026-10-22T09:00:00Z' },
+    { created_at: '2026-10-21T10:00:00Z' },
+  ];
+
+  it('is absent while the project has no document of its own, or they could not be read', () => {
+    expect(buildSourceRows(answers({ uploads: [] })).map((row) => row.kind)).toEqual(['repository']);
+    expect(buildSourceRows(answers({ uploads: null })).map((row) => row.kind)).toEqual([
+      'repository',
+    ]);
+  });
+
+  it('comes last, with the number of documents and the newest one', () => {
+    const rows = buildSourceRows(answers({ sources: [source('acme/api'), source('acme/web')], uploads }));
+    expect(rows.map((row) => row.kind)).toEqual(['repository', 'repository', 'uploads']);
+    expect(rows[2]).toEqual({ kind: 'uploads', id: 'uploads', specs: 3, lastAt: '2026-10-22T09:00:00Z' });
+  });
+
+  it('shows on a project with no source', () => {
+    expect(buildSourceRows(answers({ sources: [], uploads })).map((row) => row.kind)).toEqual([
+      'uploads',
+    ]);
   });
 });
 

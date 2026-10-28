@@ -80,6 +80,10 @@ vi.mock('./slices/specsCheckSlice', () => ({
   specsCheckSlice: { name: 'projects/specsCheck' },
 }));
 
+vi.mock('./slices/documentUploadSlice', () => ({
+  documentUploadSlice: { name: 'projects/documentUpload' },
+}));
+
 vi.mock('./effects/wizardEffects', () => ({
   initWizardEffects: vi.fn(),
 }));
@@ -102,6 +106,10 @@ vi.mock('./effects/typeDecisionEffects', () => ({
 
 vi.mock('./effects/specsCheckEffects', () => ({
   initSpecsCheckEffects: vi.fn(),
+}));
+
+vi.mock('./effects/documentUploadEffects', () => ({
+  initDocumentUploadEffects: vi.fn(),
 }));
 
 describe('projects-mfe init', () => {
@@ -180,6 +188,11 @@ describe('projects-mfe init', () => {
     expect(registerSlice).toHaveBeenCalledWith(
       { name: 'projects/specsCheck' },
       initSpecsCheckEffects
+    );
+    // Upload documents; the effect invalidates the documents read on the app.
+    expect(registerSlice).toHaveBeenCalledWith(
+      { name: 'projects/documentUpload' },
+      expect.any(Function)
     );
     expect(module.mfeApp).toBe(expectedApp);
   });

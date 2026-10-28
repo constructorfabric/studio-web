@@ -4,6 +4,10 @@
   min-width: 0;
 }
 
+.upload {
+  margin-bottom: var(--space-4);
+}
+
 /* TODO(#888): the design draws a 32px search and 14px cells, the kit's DataGrid (and Specs)
  * 40px and 12px; check with the design which one Studio's tables keep. */
 .grid {

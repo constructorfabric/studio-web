@@ -1,10 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import {
-  apiRegistry,
-  useApiQuery,
-  useQueryCache,
-  type EndpointDescriptor,
-} from '@gears-frontx/react';
+import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import {
   useDataGrid,
   type DataGridLoadContext,
@@ -13,21 +8,21 @@ import {
 import { AccountsApiService, ConnectorsApiService } from '@constructor-studio/mfe-shared';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
-import type { DocumentListDto } from '../api/documentTypes';
 import { inFlight } from '../model/repoImport';
 import {
   buildSourceRows,
   filterSourceRows,
   sourcesFooter,
   type SourceImportLine,
-  type SourceRow,
   type SourcesAnswers,
   type SourcesFooter,
+  type SourcesTableRow,
 } from '../model/sourceRows';
 import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 import { useProjectImport } from './useArtifactImport';
 import { repositoryNodesParams } from './useArtifacts';
 import { projectConfigQuery, useProjectConfig } from './useProjectConfig';
+import { useProjectDocuments } from './useProjectDocuments';
 
 export const SOURCES_FILTER_KEYS = {
   search: TEXT_SEARCH_FILTER_KEY,
@@ -36,11 +31,11 @@ export const SOURCES_FILTER_KEYS = {
 export interface SourcesLoad {
   ready: boolean;
   failed: boolean;
-  rows: SourceRow[];
+  rows: SourcesTableRow[];
   footer: SourcesFooter;
   windowDays: number | null;
   retry: () => void;
-  load: (context: DataGridLoadContext) => Promise<DataGridLoadResult<SourceRow>>;
+  load: (context: DataGridLoadContext) => Promise<DataGridLoadResult<SourcesTableRow>>;
   rowsBridge: React.ReactElement;
 }
 
@@ -54,11 +49,6 @@ const RowsBridge: React.FC<{ rowsKey: string }> = ({ rowsKey }) => {
   }, [grid, rowsKey]);
   return null;
 };
-
-/** `useApiQuery` cannot be skipped, so a read with nothing to ask answers `null` at once. */
-function unasked<T>(what: string): EndpointDescriptor<T | null> {
-  return { key: ['projects-mfe', 'unasked', what], fetch: () => Promise.resolve(null) };
-}
 
 function settledSyncsOf(lines: readonly SourceImportLine[]): string {
   return lines
@@ -82,10 +72,12 @@ function useOnSyncSettled(projectId: string, settledSyncs: string, onSettled: ()
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-reads:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-gaps:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-search:p1
+/** `uploadsName` is the "Uploaded files" row's name, which the search matches. */
 export function useSourcesLoad(
   projectId: string,
   workspaceId: string | null,
-  orgId: string
+  orgId: string,
+  uploadsName: string
 ): SourcesLoad {
   const accounts = apiRegistry.getService(AccountsApiService);
   const ingest = apiRegistry.getService(ArtifactIngestApiService);
@@ -99,11 +91,7 @@ export function useSourcesLoad(
   const connections = useApiQuery(connectors.connections({ tenantId: orgId }));
   const activity = useApiQuery(ingest.sourceActivity({ scope: projectId }));
   const specs = useApiQuery(documents.specsPerSource({ scope: projectId }));
-  const studio = useApiQuery<DocumentListDto | null>(
-    workspaceId
-      ? documents.projectDocuments({ workspaceId, projectId, limit: 1 })
-      : unasked('documents')
-  );
+  const studio = useProjectDocuments(workspaceId, projectId);
   const { repos: lines } = useProjectImport(projectId);
 
   const answers = useMemo<SourcesAnswers>(
@@ -114,6 +102,8 @@ export function useSourcesLoad(
       activity: activity.isError ? null : (activity.data ?? null),
       specs: specs.isError ? null : (specs.data ?? null),
       lines,
+      // Without a workspace they cannot be read either.
+      uploads: workspaceId === null || studio.failed ? null : studio.own,
     }),
     [
       config.config,
@@ -125,14 +115,13 @@ export function useSourcesLoad(
       specs.isError,
       specs.data,
       lines,
+      workspaceId,
+      studio.failed,
+      studio.own,
     ]
   );
   const rows = useMemo(() => buildSourceRows(answers), [answers]);
-  const documentsTotal = studio.isError ? null : (studio.data?.total ?? null);
-  const footer = useMemo(
-    () => sourcesFooter(rows, answers, documentsTotal),
-    [rows, answers, documentsTotal]
-  );
+  const footer = useMemo(() => sourcesFooter(rows, answers), [rows, answers]);
 
   const rowsKey = useMemo(() => JSON.stringify(rows), [rows]);
 
@@ -150,14 +139,16 @@ export function useSourcesLoad(
   }, [cache, accounts, ingest, nodesParams, projectId]);
 
   const rowsRef = useRef(rows);
+  const uploadsNameRef = useRef(uploadsName);
   useLayoutEffect(() => {
     rowsRef.current = rows;
-  }, [rows]);
+    uploadsNameRef.current = uploadsName;
+  }, [rows, uploadsName]);
 
   const load = useCallback(
-    async (context: DataGridLoadContext): Promise<DataGridLoadResult<SourceRow>> => {
+    async (context: DataGridLoadContext): Promise<DataGridLoadResult<SourcesTableRow>> => {
       const search: string = context.filters?.[SOURCES_FILTER_KEYS.search]?.value ?? '';
-      const shown = filterSourceRows(rowsRef.current, search);
+      const shown = filterSourceRows(rowsRef.current, search, uploadsNameRef.current);
       const { page, limit } = context.pagination ?? { page: 1, limit: shown.length };
       return { results: shown.slice((page - 1) * limit, page * limit), total: shown.length };
     },
@@ -171,7 +162,7 @@ export function useSourcesLoad(
       !connections.isLoading &&
       !activity.isLoading &&
       !specs.isLoading &&
-      !studio.isLoading,
+      !studio.loading,
     failed: config.failed || nodes.isError,
     rows,
     footer,

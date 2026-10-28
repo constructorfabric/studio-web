@@ -46,6 +46,7 @@ const actions: SourceRowActions = {
   syncNow: vi.fn(),
   cancelSync: vi.fn(),
   openSpecs: vi.fn(),
+  openUploads: vi.fn(),
 };
 
 const WEEK = { open: 2, merged: 1, commits: 5, days: [0, 0, 1, 0, 0, 1, 0] };

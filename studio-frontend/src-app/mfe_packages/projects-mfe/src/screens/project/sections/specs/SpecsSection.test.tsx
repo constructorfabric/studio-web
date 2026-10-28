@@ -43,6 +43,12 @@ vi.mock('../../../../i18n', () => {
 vi.mock('./useTypeDecisionRefusals', () => ({ useTypeDecisionRefusals: () => undefined }));
 vi.mock('../../../../actions/artifactActions', () => ({ requestOpenSpec }));
 vi.mock('../../../../actions/sourcesConnectActions', () => ({ openSourcesConnect }));
+vi.mock('../../upload/UploadPanel', () => ({ UploadPanel: () => null }));
+vi.mock('../../upload/UploadDocumentsButton', () => ({
+  UploadDocumentsButton: ({ projectId }: { projectId: string }) => (
+    <button type="button">{`upload ${projectId}`}</button>
+  ),
+}));
 
 import { eventBus } from '@gears-frontx/react';
 import { specRowDto } from '../../../../model/specRows.fixture';
@@ -180,11 +186,12 @@ describe('the Specs section', () => {
     expect(lastPayload('setSpecsSearch')).toBe('api.md');
   });
 
-  it('says there are no specs yet and offers Connect source', async () => {
+  it('says there are no specs yet and offers Upload documents and Connect source', async () => {
     specRows.mockResolvedValue(answer([]));
     renderSection();
 
     expect(await screen.findByText('empty_title')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'upload p-1' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'empty_connect' }));
     expect(openSourcesConnect).toHaveBeenCalledWith('the-bridge');
   });

@@ -8,11 +8,14 @@ import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 type Query = { data?: unknown; isLoading: boolean; isError: boolean };
 type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents';
 
-const { queries, asked, config, lines, invalidate, triggerLoad } = vi.hoisted(() => ({
+const { queries, asked, config, lines, studio, invalidate, triggerLoad } = vi.hoisted(() => ({
   queries: { current: {} as Record<string, Query> },
   asked: [] as unknown[],
   config: { current: { config: null as unknown, loading: false, unset: false, failed: false } },
   lines: { current: [] as unknown[] },
+  studio: {
+    current: { own: [] as { created_at: string }[], loading: false, failed: false },
+  },
   invalidate: vi.fn(),
   triggerLoad: vi.fn(),
 }));
@@ -27,7 +30,6 @@ vi.mock('@gears-frontx/react', () => ({
       connections: descriptor('connections'),
       sourceActivity: descriptor('activity'),
       specsPerSource: descriptor('specs'),
-      projectDocuments: descriptor('documents'),
     }),
   },
   // A key that is not one of the services' is the hook's own read with nothing to ask.
@@ -52,10 +54,17 @@ vi.mock('./useProjectConfig', async (importOriginal) => ({
   useProjectConfig: () => config.current,
 }));
 vi.mock('./useArtifactImport', () => ({ useProjectImport: () => ({ repos: lines.current }) }));
+vi.mock('./useProjectDocuments', () => ({
+  useProjectDocuments: (workspaceId: string | null) => {
+    if (workspaceId) asked.push('documents');
+    return { documents: studio.current.own, ...studio.current };
+  },
+}));
 vi.mock('./useArtifacts', () => ({
   repositoryNodesParams: (scope: string) => ({ scope, type: 'repo', limit: 200 }),
 }));
 
+import type { SourceRow, SourcesTableRow } from '../model/sourceRows';
 import { SOURCES_FILTER_KEYS, useSourcesLoad, type SourcesLoad } from './useSourcesLoad';
 
 const answered = (data: unknown): Query => ({ data, isLoading: false, isError: false });
@@ -97,14 +106,18 @@ function answerAll() {
       days: 7,
     }),
     specs: answered({ items: [{ repo: 'n-api', specs: 12 }], total: 1, files_known: true }),
-    documents: answered({ items: [], total: 3 }),
   };
+  studio.current = { own: [], loading: false, failed: false };
 }
+
+const repositories = (rows: readonly SourcesTableRow[]) =>
+  rows.filter((row): row is SourceRow => row.kind === 'repository');
+const pathOf = (row: SourcesTableRow) => (row.kind === 'uploads' ? 'uploads' : row.fullPath);
 
 /** The hook, and its bridge rendered as the grid would. */
 function mount(workspaceId: string | null = 'ws-1') {
   let projectId = 'p-1';
-  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'org-1'), {
+  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'org-1', 'Uploaded files'), {
     initialProps: { projectId },
   });
   const grid = render(hook.result.current.rowsBridge);
@@ -143,12 +156,14 @@ describe('useSourcesLoad', () => {
 
     expect(view.ready).toBe(true);
     expect(view.failed).toBe(false);
-    expect(view.rows.map((row) => [row.fullPath, row.lastSync, row.specs, row.activity?.open])).toEqual([
+    expect(
+      repositories(view.rows).map((row) => [row.fullPath, row.lastSync, row.specs, row.activity?.open])
+    ).toEqual([
       ['acme/api', { kind: 'synced', at: '2026-10-14T10:52:00Z' }, 12, 2],
       ['acme/web', { kind: 'not_synced' }, null, undefined],
       ['lab/tool', { kind: 'unavailable', provider: 'gitlab' }, null, undefined],
     ]);
-    expect(view.footer).toEqual({ sources: 3, specs: 12, createdInStudio: 3, openPullRequests: 2 });
+    expect(view.footer).toEqual({ sources: 3, specs: 12, openPullRequests: 2 });
     expect(view.windowDays).toBe(7);
   });
 
@@ -156,11 +171,11 @@ describe('useSourcesLoad', () => {
     const { view } = mount();
 
     const searched = await view.load({ filters: { [SOURCES_FILTER_KEYS.search]: { value: 'ACME' } } });
-    expect(searched.results.map((row) => row.fullPath)).toEqual(['acme/api', 'acme/web']);
+    expect(searched.results.map(pathOf)).toEqual(['acme/api', 'acme/web']);
     expect(searched.total).toBe(2);
 
     const second = await view.load({ pagination: { page: 2, limit: 2 } });
-    expect(second.results.map((row) => row.fullPath)).toEqual(['lab/tool']);
+    expect(second.results.map(pathOf)).toEqual(['lab/tool']);
     expect(second.total).toBe(3);
     expect(view.footer.sources).toBe(3);
   });
@@ -169,6 +184,7 @@ describe('useSourcesLoad', () => {
     'is not ready until the %s read has answered or failed',
     (read) => {
       if (read === 'config') config.current.loading = true;
+      else if (read === 'documents') studio.current.loading = true;
       else queries.current[read] = pending;
       expect(mount().view.ready).toBe(false);
     }
@@ -177,17 +193,12 @@ describe('useSourcesLoad', () => {
   it('fails on the config or the repository nodes, and shows gaps for the other reads', () => {
     queries.current.activity = failedQuery;
     queries.current.specs = failedQuery;
-    queries.current.documents = failedQuery;
+    studio.current.failed = true;
     const sources = mount();
 
     expect(sources.view.failed).toBe(false);
     expect(sources.view.rows[0]).toMatchObject({ specs: null, activity: null });
-    expect(sources.view.footer).toEqual({
-      sources: 3,
-      specs: null,
-      createdInStudio: null,
-      openPullRequests: null,
-    });
+    expect(sources.view.footer).toEqual({ sources: 3, specs: null, openPullRequests: null });
 
     queries.current.nodes = failedQuery;
     sources.rerender();
@@ -214,7 +225,7 @@ describe('useSourcesLoad', () => {
     const { view } = mount();
 
     expect(view.failed).toBe(false);
-    expect(view.rows.map((row) => [row.provider, row.lastSync.kind])).toEqual([
+    expect(repositories(view.rows).map((row) => [row.provider, row.lastSync.kind])).toEqual([
       ['github', 'synced'],
       [null, 'not_synced'],
       [null, 'not_synced'],
@@ -262,19 +273,33 @@ describe('useSourcesLoad', () => {
     lines.current = [{ ...running, phase: 'fetching' }];
     sources.rerender();
     expect(triggerLoad).toHaveBeenCalledTimes(1);
-    expect(sources.view.rows[1].sync).toEqual({ kind: 'in_flight', cancelling: false, canCancel: true });
+    expect(repositories(sources.view.rows)[1].sync).toEqual({
+      kind: 'in_flight',
+      cancelling: false,
+      canCancel: true,
+    });
 
     lines.current = [{ ...running, phase: 'storing', stored: 40 }];
     sources.rerender();
     expect(triggerLoad).toHaveBeenCalledTimes(1);
   });
 
-  it('with no workspace, asks for no documents and leaves the Studio count missing', () => {
+  it('adds the Uploaded files row after the sources, found by its name, and counts it', async () => {
+    studio.current.own = [{ created_at: '2026-10-20T10:00:00Z' }, { created_at: '2026-10-21T10:00:00Z' }];
+    const { view } = mount();
+
+    expect(view.rows.map(pathOf)).toEqual(['acme/api', 'acme/web', 'lab/tool', 'uploads']);
+    expect(view.footer).toEqual({ sources: 4, specs: 14, openPullRequests: 2 });
+    const searched = await view.load({ filters: { [SOURCES_FILTER_KEYS.search]: { value: 'upload' } } });
+    expect(searched.results.map(pathOf)).toEqual(['uploads']);
+  });
+
+  it('with no workspace, asks for no documents and leaves the specs count missing', () => {
     const { view } = mount(null);
 
     expect(view.ready).toBe(true);
     expect(view.rows).toHaveLength(3);
-    expect(view.footer.createdInStudio).toBeNull();
+    expect(view.footer.specs).toBeNull();
     expect(asked).not.toContain('documents');
   });
 

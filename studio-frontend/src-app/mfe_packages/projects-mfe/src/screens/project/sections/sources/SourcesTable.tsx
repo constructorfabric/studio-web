@@ -1,6 +1,6 @@
 import React from 'react';
 import { Plug } from 'lucide-react';
-import { useMfeBridge } from '@gears-frontx/react';
+import { useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import {
   Button,
   DataGrid,
@@ -19,10 +19,13 @@ import {
 import { useSourcesText } from '../../../../i18n';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
 import { ReadFailed, SectionSkeleton } from '../../../../components/SectionStates';
-import { activityScale, type SourceRow } from '../../../../model/sourceRows';
+import { activityScale, type SourcesTableRow } from '../../../../model/sourceRows';
 import { useSourcesLoad } from '../../../../shared/useSourcesLoad';
 import { useSourceRowActions } from '../../../../shared/useSourceRowActions';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
+import { NAV_SLICE_KEY } from '../../../../slices/navSlice';
+import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
+import { UploadPanel } from '../../upload/UploadPanel';
 import { sourceColumns } from './sourceColumns';
 import { SourcesFooter } from './SourcesFooter';
 import styles from './SourcesSection.module.css';
@@ -33,8 +36,9 @@ const PAGE_LIMITS = [25, 50, 100];
 const SourcesEmpty: React.FC = () => {
   const t = useSourcesText();
   const bridge = useMfeBridge();
-  const grid = useDataGrid<SourceRow>();
+  const grid = useDataGrid<SourcesTableRow>();
   const filtered = grid.useStore((state) => state.hasActiveFilters);
+  const projectId = useAppSelector((state) => state[NAV_SLICE_KEY].projectId);
 
   if (filtered) {
     return (
@@ -62,6 +66,7 @@ const SourcesEmpty: React.FC = () => {
         <EmptyTitle className={empty.title}>{t('empty_title')}</EmptyTitle>
       </EmptyHeader>
       <EmptyActions>
+        {projectId && <UploadDocumentsButton projectId={projectId} />}
         <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
           {t('connect_source')}
         </Button>
@@ -74,13 +79,19 @@ SourcesEmpty.displayName = 'SourcesEmpty';
 
 interface SourcesTableProps {
   projectId: string;
+  projectName: string;
   orgId: string;
   workspaceId: string | null;
 }
 
-export const SourcesTable: React.FC<SourcesTableProps> = ({ projectId, orgId, workspaceId }) => {
+export const SourcesTable: React.FC<SourcesTableProps> = ({
+  projectId,
+  projectName,
+  orgId,
+  workspaceId,
+}) => {
   const t = useSourcesText();
-  const sources = useSourcesLoad(projectId, workspaceId, orgId);
+  const sources = useSourcesLoad(projectId, workspaceId, orgId, t('uploads_name'));
   const actions = useSourceRowActions(projectId, workspaceId, orgId);
   const [container, findThemedRoot] = useThemedRoot();
 
@@ -100,8 +111,9 @@ export const SourcesTable: React.FC<SourcesTableProps> = ({ projectId, orgId, wo
 
   return (
     <div ref={findThemedRoot} className={styles.section}>
+      <UploadPanel projectId={projectId} projectName={projectName} className={styles.upload} />
       <div className={styles.grid}>
-        <DataGrid<SourceRow>
+        <DataGrid<SourcesTableRow>
           key={projectId}
           name="project-sources"
           persistent="memory"

@@ -44,6 +44,9 @@ export interface DocumentDto {
   id: string;
   type_key: string;
   title: string;
+  inherited: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Mirrors `DocumentListDto`. `total` counts every page. */

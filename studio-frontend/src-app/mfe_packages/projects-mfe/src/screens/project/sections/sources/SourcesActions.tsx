@@ -6,9 +6,10 @@ import { Button } from '@gears-frontx/ui-kit';
 import { useEverLoaded } from '@constructor-studio/mfe-shared';
 import { useSourcesSectionTranslations, useSourcesText } from '../../../../i18n';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
+import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 
 /** The Sources header's actions */
-export const SourcesActions: React.FC = () => {
+export const SourcesActions: React.FC<{ projectId: string }> = ({ projectId }) => {
   const { isLoaded } = useSourcesSectionTranslations();
   const everLoaded = useEverLoaded(isLoaded);
   const t = useSourcesText();
@@ -16,9 +17,12 @@ export const SourcesActions: React.FC = () => {
 
   if (!everLoaded) return null;
   return (
-    <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
-      {t('connect_source')}
-    </Button>
+    <>
+      <UploadDocumentsButton projectId={projectId} />
+      <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
+        {t('connect_source')}
+      </Button>
+    </>
   );
 };
 

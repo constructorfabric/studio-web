@@ -24,6 +24,7 @@ const actions = (): SourceRowActions => ({
   syncNow: vi.fn(),
   cancelSync: vi.fn(),
   openSpecs: vi.fn(),
+  openUploads: vi.fn(),
 });
 
 async function openMenu(row: SourceRow, given: SourceRowActions) {

@@ -39,6 +39,7 @@ export interface ProjectParams {
 
 export interface ProjectDocumentsParams extends ProjectParams {
   limit?: number;
+  offset?: number;
 }
 
 const QUALITY_RUN = new RegExp(
@@ -50,9 +51,18 @@ export function startsQualityRun(url: string): boolean {
   return QUALITY_RUN.test(url);
 }
 
-function projectDocumentsPath({ workspaceId, projectId, limit }: ProjectDocumentsParams): string {
+function projectDocumentsPath({
+  workspaceId,
+  projectId,
+  limit,
+  offset,
+}: ProjectDocumentsParams): string {
   const path = `/workspaces/${workspaceId}/projects/${projectId}/documents`;
-  return limit === undefined ? path : `${path}?limit=${limit}`;
+  const query = new URLSearchParams();
+  if (limit !== undefined) query.set('limit', String(limit));
+  if (offset !== undefined) query.set('offset', String(offset));
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
 }
 
 export class DocumentsApiService extends BaseApiService {
@@ -87,7 +97,7 @@ export class DocumentsApiService extends BaseApiService {
     { scope: string }
   >(({ scope }) => `/specs-per-source?${new URLSearchParams({ scope })}`);
 
-  /** A project's documents, its own and the workspace's. `limit: 1` reads just `total`. */
+  /** A project's documents, its own and the workspace's, newest `updated_at` first. */
   readonly projectDocuments = this.protocol(RestEndpointProtocol).queryWith<
     DocumentListDto,
     ProjectDocumentsParams

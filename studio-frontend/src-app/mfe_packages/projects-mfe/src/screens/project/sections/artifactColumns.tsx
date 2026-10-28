@@ -21,7 +21,8 @@ import { opensInEditor, type ArtifactRow } from '../../../model/artifact';
 import { NameCell } from '../../../components/NameCell';
 import styles from './ArtifactsSection.module.css';
 
-const KIND_ICON: Record<ArtifactKind, React.ReactNode> = {
+const KIND_ICON: Record<ArtifactKind | 'document', React.ReactNode> = {
+  document: <FileText size={16} strokeWidth={1.3} />,
   repo: <GitBranch size={16} strokeWidth={1.3} />,
   file: <FileText size={16} strokeWidth={1.3} />,
   issue: <MessageSquare size={16} strokeWidth={1.3} />,
@@ -143,7 +144,9 @@ export function artifactColumns({
       key: 'repository',
       label: labels.repository,
       className: styles.colRepository,
-      render: (row) => <span className={styles.truncate}>{row.repository}</span>,
+      render: (row) => (
+        <span className={styles.truncate}>{row.kind === 'document' ? '—' : row.repository}</span>
+      ),
     },
     {
       key: 'path',
@@ -157,7 +160,7 @@ export function artifactColumns({
       className: styles.colSync,
       // TODO: plain text until ui-kit carries a plain status badge again (0.4
       // dropped Badge's `shape="plain"`/`dot`).
-      render: () => labels.ingested,
+      render: (row) => (row.sync === 'uploaded' ? labels.provenance.upload : labels.ingested),
     },
     {
       key: 'updated',

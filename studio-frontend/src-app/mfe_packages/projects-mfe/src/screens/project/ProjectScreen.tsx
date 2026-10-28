@@ -22,12 +22,14 @@ import { SpecsSection } from './sections/specs/SpecsSection';
 import { SourcesSection } from './sections/sources/SourcesSection';
 import { SourcesActions } from './sections/sources/SourcesActions';
 import { SpecsActions } from './sections/specs/SpecsActions';
+import { UploadDocumentsButton } from './upload/UploadDocumentsButton';
 import styles from './ProjectScreen.module.css';
 
 /** A section's buttons in the project header, given the open project. */
 const SECTION_ACTIONS: Partial<
   Record<ProjectSection, React.FC<{ projectId: string; projectName: string }>>
 > = {
+  artifacts: UploadDocumentsButton,
   specs: SpecsActions,
   sources: SourcesActions,
 };
@@ -127,11 +129,11 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
 
     switch (section) {
       case 'artifacts':
-        return <ArtifactsSection projectId={projectId} />;
+        return <ArtifactsSection projectId={projectId} projectName={project.name} />;
       case 'specs':
         return <SpecsSection projectId={projectId} projectName={project.name} />;
       case 'sources':
-        return <SourcesSection projectId={projectId} />;
+        return <SourcesSection projectId={projectId} projectName={project.name} />;
       default:
         return <PlaceholderSection title={t(`section_${section}`)} note={t('no_source_yet')} />;
     }

@@ -18,6 +18,7 @@ export interface SourceRowActions {
   syncNow: (row: SourceRow, retry: boolean) => void;
   cancelSync: (row: SourceRow) => void;
   openSpecs: (row: SourceRow) => void;
+  openUploads: () => void;
 }
 
 export function useSourceRowActions(
@@ -62,9 +63,11 @@ export function useSourceRowActions(
     [dispatch, bridge]
   );
 
+  const openUploads = useCallback(() => announceSection(bridge, 'artifacts'), [bridge]);
+
   const connectionsRead = !loading && !failed;
   return useMemo(
-    () => ({ connectionsRead, providerName, syncNow, cancelSync, openSpecs }),
-    [connectionsRead, providerName, syncNow, cancelSync, openSpecs]
+    () => ({ connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads }),
+    [connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads]
   );
 }

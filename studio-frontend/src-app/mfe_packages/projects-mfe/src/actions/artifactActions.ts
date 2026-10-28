@@ -36,15 +36,31 @@ export function requestOpenArtifact(
   );
 }
 
-/** A Specs row (#692): a repository file by its node, a Studio document by its id, its title where a file has its path. */
+/** A Studio document by its id, its title where a file has its path. */
+export function requestOpenDocument(
+  bridge: ChildMfeBridge | null,
+  projectId: string,
+  document: { id: string; title: string }
+): void {
+  requestOpenArtifact(bridge, projectId, {
+    id: document.id,
+    repository: '',
+    path: document.title,
+    kind: 'document',
+  });
+}
+
 export function requestOpenSpec(bridge: ChildMfeBridge | null, projectId: string, row: SpecRow): void {
   const { open } = row;
   if (!open) return;
-  requestOpenArtifact(
-    bridge,
-    projectId,
-    open.kind === 'file'
-      ? { id: open.nodeId, repository: open.repository, path: open.path, kind: 'file' }
-      : { id: open.documentId, repository: '', path: row.name, kind: 'document' }
-  );
+  if (open.kind === 'file') {
+    requestOpenArtifact(bridge, projectId, {
+      id: open.nodeId,
+      repository: open.repository,
+      path: open.path,
+      kind: 'file',
+    });
+  } else {
+    requestOpenDocument(bridge, projectId, { id: open.documentId, title: row.name });
+  }
 }

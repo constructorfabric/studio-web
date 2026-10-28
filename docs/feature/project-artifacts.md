@@ -58,6 +58,7 @@ owner: studio-team
 
 What a project works on, as one table: the repositories attached to it and the
 issues, pull requests and files pulled out of them by the artifact-ingest gear.
+The project's own Studio documents, the files uploaded to it (#693), come first.
 The table is the project's second section, reached from its Artifacts tab
 under the project's header (`cpt-studiofrontend-dod-shell-levels-shell-draws`).
 A project created from existing
@@ -297,7 +298,7 @@ Definitions of Done, which are traced.
 6. [ ] - `p1` - For each artifact node, derive its name, repository, path, sync state, and either a timestamp or the label naming where the row came from - `inst-7`
 7. [ ] - `p1` - Keep the order the gear answered in; it is global across pages and the client has no standing to re-sort it - `inst-8`
 8. [ ] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&limit=1` for the project's own total, which no filter may move - `inst-9`
-9. [ ] - `p1` - **RETURN** the page's rows, the filtered total the paginator counts against, and the project's total - `inst-10`
+9. [ ] - `p1` - **RETURN** the page's rows, after the project's own Studio documents that fall on the page, the filtered total the paginator counts against, and the project's total, both counting the documents - `inst-10`
 
 ### Decide whether this is a first import
 
@@ -535,7 +536,8 @@ Two columns carry a decision rather than a field:
 
 - **Repository** is a join. A node names its repository by instance id, not by
   name; the name is on the repository's own node in the same answer.
-- **Sync** is, on today's data, one value for every row. Its other values need
+- **Sync** is, on today's data, one value for every node, and Uploaded for a
+  Studio document (#693). Its other values need
   spec-quality findings, which nothing in this portal produces yet. The column
   stays because the mockup has it and it costs nothing, and because it lights up
   the day the detectors run — the same treatment the projects list gives its
@@ -589,6 +591,16 @@ it would order the fifteen rows in hand and silently disagree with every other
 page. The offset is clamped as well as reset, because a filtered set can shrink
 under a member who is standing on its last page.
 
+The project's own Studio documents (#693) come before the gear's nodes, newest
+first, so the uploaded ones are on the first page; the prototype lists them
+last, which with server paging is the last page. They are read whole from the
+documents gear (`inherited` ones, the workspace's, are left out), and a page
+cuts across both lists: the documents that fall on it, then the gear's nodes
+from the offset past the documents, as many as the page has room for. A page of
+documents only still asks the gear for one node, for its `total`. A repository
+or a kind filter hides the documents, which have neither; the search matches
+their title. The paginator counts both.
+
 **Implements**:
 - `cpt-studiofrontend-algo-project-artifacts-rows`
 
@@ -607,7 +619,8 @@ how many artifacts are complete or need attention.
 
 A search does not change what the project holds, so it must not move these
 numbers; the footer's range is what reports it, and the two disagreeing is
-intended. Keeping that true once the gear does the filtering costs a second
+intended. The project's own Studio documents count in the project's total, and
+in the empty state's decision (#693). Keeping that true once the gear does the filtering costs a second
 read: the page's `total` is the filtered count, so the project's own count is
 asked for separately and is the one the header uses. Choosing a repository is
 different in kind: the member has said which repository they are looking at, and
@@ -655,11 +668,13 @@ attention is not a missing number; it is a false assurance.
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-updated`
 
 The system **MUST** show a relative time for rows that have one, **MUST** name
-the row's provenance for rows that do not, **MUST** order by the underlying
-instant rather than by the rendered text, and **MUST** keep the rows without an
-instant at the end.
+the row's provenance for rows that do not, **MUST** order the gear's rows by the
+underlying instant rather than by the rendered text, and **MUST** keep the rows
+without an instant at the end. The project's own Studio documents, dated by
+their `updated_at`, come before the gear's rows, newest first among themselves
+(#693).
 
-Issues and pull requests are the only rows with an instant: their nodes carry a
+Among the gear's rows, issues and pull requests are the only ones with an instant: their nodes carry a
 created and an updated timestamp. Nothing else does. A repository node is
 `connector_id`, `provider` and `full_path` — the gear records no moment of
 cloning, syncing or ingesting, for any node type. File nodes carry no timestamp
@@ -950,7 +965,9 @@ checkout-relative path and its kind, and **MUST NOT** open anything or record
 the choice on its own; a chain the shell refuses **MUST** leave the table
 standing.
 
-Only a file asks the editor. The IDE's `studio.openInEditor` takes a
+Only a file and a Studio document ask the editor. A document goes as the Specs
+list sends one: its id, no repository, its title where a file has its path
+(#693). The IDE's `studio.openInEditor` takes a
 checkout-relative path, which only a file node carries, and an issue or a pull
 request has no meaning inside it — its home is the forge. So a file's name is a
 button, the way a project's name is in the projects list, and its row menu says
@@ -1023,7 +1040,7 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] The table has exactly the columns Name, Repository, Path, Sync and Updated, in that order.
 - [ ] Every row names the repository it came from by name, not by an identifier.
 - [ ] Rows for issues, pull requests, commits and comments show a relative time in Updated; files and repositories name where they came from instead; an author's row leaves it empty, since the gear gives an author no time.
-- [ ] Updated is marked as newest-first, offers no way to reverse it, and rows without a time sit at the bottom.
+- [ ] Updated is marked as newest-first, offers no way to reverse it, and rows without a time sit at the bottom; the project's Studio documents sit above the gear's rows, newest first among themselves.
 - [ ] The header states the number of artifacts, in the singular when there is one, and no number of repositories.
 - [ ] Narrowing by text changes the table and the footer, and leaves the header's totals as they were.
 - [ ] Choosing a repository restates the header as that repository's own total, names it, and starts the table again from the first page.
@@ -1033,8 +1050,8 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] The repository filter is shown whenever the table is, with one repository as with many, and opens on all repositories.
 - [ ] Every row on every page names its repository by name — except an author's, which belongs to none, and a row whose repository is not among the project's repositories, which is left blank rather than named by a guess.
 - [ ] The header states nothing about artifacts being complete or needing attention.
-- [ ] A project with no sources shows an empty state that says so and offers no sync.
-- [ ] A project with sources and nothing ingested shows an empty state that offers a sync.
+- [ ] A project with no sources and no Studio document shows an empty state that says so and offers no sync.
+- [ ] A project with sources, nothing ingested and no Studio document shows an empty state that offers a sync.
 - [ ] A search or filter that matches no artifact says so under the column headers and offers to clear the search and both filters.
 - [ ] Creating a project from selected repositories leaves the wizard closed, the project open, and the Artifacts section showing.
 - [ ] Rows appear in that table while the import is still running, without a reload and without the member acting.
@@ -1062,3 +1079,12 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] Choosing a type narrows the table to that kind through the request, and starts the table again from the first page.
 - [ ] Choosing Commits, Comments or Authors lists that kind; "All types" lists files, issues, pull requests and repositories only.
 - [ ] No row shows a document kind, a readiness percentage, or a per-file ingest status.
+
+Uploaded documents (#693):
+
+- [ ] Upload documents is in the section's header; the upload panel shows above the table with the files picked in Artifacts. Moving to Specs or Sources hides it, and coming back shows it as it was left, with what was added meanwhile.
+- [ ] The project's own Studio documents are listed first, newest first, with a document icon, Repository `—`, no path, Sync "Uploaded" and their last edit in Updated; the header's count includes them.
+- [ ] With 20 documents and 18 rows a page, page 2 shows the last 2 documents and then the first 16 nodes.
+- [ ] A document's name, and _Open in editor_ in its row menu, open it in the IDE, as from Specs.
+- [ ] Choosing a repository or a type hides the documents; a search matches their title.
+- [ ] A document of the workspace, which the project also lists, is not in the table.

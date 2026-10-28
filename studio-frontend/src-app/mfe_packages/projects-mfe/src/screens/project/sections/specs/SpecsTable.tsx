@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import {
   Alert,
@@ -27,6 +27,8 @@ import { useSpecsLoad } from '../../../../shared/useSpecsLoad';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
 import { specsShown } from '../../../../slices/specsCheckSlice';
 import { SPECS_FILTER_SLICE_KEY, setSpecsSearch } from '../../../../slices/specsFilterSlice';
+import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
+import { UploadPanel } from '../../upload/UploadPanel';
 import { SpecsCellsContext, specsColumns, type SpecsCells } from './specsColumns';
 import styles from './SpecsTable.module.css';
 
@@ -61,6 +63,7 @@ const SearchFromSlice: React.FC<{ read: boolean }> = ({ read }) => {
 const SpecsEmpty: React.FC = () => {
   const t = useSpecsText();
   const bridge = useMfeBridge();
+  const cells = useContext(SpecsCellsContext);
   const searching = useDataGrid().useStore((state) => state.hasActiveFilters);
   if (searching) {
     return (
@@ -80,8 +83,8 @@ const SpecsEmpty: React.FC = () => {
         <EmptyTitle>{t('empty_title')}</EmptyTitle>
         <EmptyDescription>{t('empty_note')}</EmptyDescription>
       </EmptyHeader>
-      {/* Upload documents joins it with #693. */}
       <EmptyActions>
+        {cells && <UploadDocumentsButton projectId={cells.projectId} />}
         <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
           {t('empty_connect')}
         </Button>
@@ -147,6 +150,7 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
   const footer = snapshot && specsFooter(snapshot.rows, snapshot.sources.reviews_known);
   return (
     <div ref={findThemedRoot} className={styles.section}>
+      <UploadPanel projectId={projectId} projectName={projectName} />
       {snapshot && !snapshot.sources.files_known && (
         <Alert className={styles.notice}>
           <AlertDescription>{t('files_unknown')}</AlertDescription>
