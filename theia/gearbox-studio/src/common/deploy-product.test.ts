@@ -1,5 +1,10 @@
 import {
+  buildStages,
   defaultTarget,
+  deploymentStateLabel,
+  nextStep,
+  type ProductBuild,
+  type ProductDeployment,
   deployAnswer,
   deployBuildRequest,
   deployCommands,
@@ -209,5 +214,61 @@ describe("a generated Dockerfile's build stage", () => {
     ]);
     expect(withBuildTools(fixed)).toBe(fixed);
     expect(withBuildTools("FROM debian:bookworm-slim\n")).toBe("FROM debian:bookworm-slim\n");
+  });
+});
+
+describe("the way a product goes out: builds and deploys", () => {
+  const build = (over: Partial<ProductBuild>): ProductBuild => ({
+    buildId: "studio-1", where: "studio", status: "passed", product: "shop", profile: "prod", shortSha: "abcdef0",
+    branch: "main", startedAt: "2026-10-28T10:00:00Z", failure: undefined, failureStep: undefined, step: undefined,
+    chartRef: "oci://ghcr.io/acme/charts/shop", chartVersion: "0.0.0-studio.1", images: [], ...over,
+  });
+  const deploy = (over: Partial<ProductDeployment>): ProductDeployment => ({
+    id: "d1", environmentId: "e1", environmentName: "dev", namespace: "shop-dev", profile: "prod", product: "shop",
+    action: "install", build: "studio-1", chartVersion: "0.0.0-studio.1", state: "succeeded", reason: undefined,
+    requestedAt: "2026-10-28T11:00:00Z", requestedBy: "Ann", ...over,
+  });
+  const ready = { environments: 1, bound: true, canBuildInStudio: true };
+
+  it("say how far a build got, stage by stage", () => {
+    expect(buildStages({ status: "passed", step: undefined, failureStep: undefined })).toEqual({ prepare: "done", images: "done", publish: "done" });
+    expect(buildStages({ status: "running", step: "build", failureStep: undefined })).toEqual({ prepare: "done", images: "running", publish: "waiting" });
+    expect(buildStages({ status: "failed", step: undefined, failureStep: "publish" })).toEqual({ prepare: "done", images: "done", publish: "failed" });
+    // An IDE's own step names (protoc, compile) are the images.
+    expect(buildStages({ status: "failed", step: undefined, failureStep: "protoc" })).toEqual({ prepare: "done", images: "failed", publish: "waiting" });
+    expect(buildStages({ status: "running", step: undefined, failureStep: undefined }).prepare).toBe("running");
+  });
+
+  it("put a running or failed build first, because a deploy names a build", () => {
+    expect(nextStep({ ...ready, builds: [build({ status: "running", step: "publish" })], deployments: [] })).toEqual({
+      text: "Build studio-1 is publishing; this panel follows it.", tone: "todo",
+    });
+    expect(nextStep({ ...ready, builds: [build({ status: "failed", failureStep: "build", failure: "protoc missing\nmore" })], deployments: [] })).toEqual({
+      text: "The last build failed while building the images: protoc missing. Fix it and build again.", tone: "failed",
+    });
+  });
+
+  it("ask for an environment, then a binding, then a build", () => {
+    expect(nextStep({ ...ready, environments: 0, builds: [], deployments: [] }).text).toMatch(/^No environment to deploy to yet/);
+    expect(nextStep({ ...ready, bound: false, builds: [], deployments: [] }).text).toMatch(/^Bind this profile/);
+    expect(nextStep({ ...ready, builds: [], deployments: [] }).text).toBe("Nothing built yet: Build in Studio, or Build images here and Publish them.");
+    expect(nextStep({ ...ready, canBuildInStudio: false, builds: [], deployments: [] }).text).toMatch(/needs an environment with a registry connection/);
+  });
+
+  it("offer a published build, and say what its deploy did", () => {
+    expect(nextStep({ ...ready, builds: [build({})], deployments: [] })).toEqual({ text: "0.0.0-studio.1 is published. Next: Deploy this build.", tone: "todo" });
+    expect(nextStep({ ...ready, builds: [build({ chartRef: undefined })], deployments: [] }).text).toMatch(/published no chart/);
+    expect(nextStep({ ...ready, builds: [build({})], deployments: [deploy({})] })).toEqual({ text: "Runs in dev (shop-dev): 0.0.0-studio.1.", tone: "done" });
+    expect(nextStep({ ...ready, builds: [build({})], deployments: [deploy({ state: "failed", reason: "ImagePullBackOff" })] })).toEqual({
+      text: "The last deploy to dev (shop-dev) failed: ImagePullBackOff.", tone: "failed",
+    });
+    expect(nextStep({ ...ready, builds: [build({})], deployments: [deploy({ state: "awaiting_approval" })] }).text).toBe("Waiting for approval: dev (shop-dev).");
+    // An older build's finished deploy is history once a newer build is ready.
+    expect(nextStep({ ...ready, builds: [build({ buildId: "studio-2" })], deployments: [deploy({})] }).text).toMatch(/Next: Deploy this build/);
+  });
+
+  it("word a deploy's state as the portal does", () => {
+    expect(deploymentStateLabel("running")).toBe("Deploying");
+    expect(deploymentStateLabel("something-new")).toBe("something-new");
   });
 });

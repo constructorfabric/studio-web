@@ -41,6 +41,10 @@ import { inject, injectable } from "@theia/core/shared/inversify";
 
 import { GearboxService, type ProductRef, type StudioSession } from "../../common/protocol";
 import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
+import { FileService } from "@theia/filesystem/lib/browser/file-service";
+import { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
+import URI from "@theia/core/lib/common/uri";
+import { configuredSourceRoots } from "../../common/gearbox-preferences";
 
 import { CatalogueStore } from "../catalogue-store";
 import {
@@ -131,6 +135,8 @@ export class ProductSessionService {
   @inject(StorageService) protected readonly storage!: StorageService;
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   @inject(GearSessionService) protected readonly gears!: GearSessionService;
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(PreferenceService) protected readonly preferences!: PreferenceService;
 
   /**
    * The open in flight, if any.
@@ -673,7 +679,10 @@ export class ProductSessionService {
     const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at), gitRoots);
     const usable = sourcesUsable(ref.label, sources, gitFailures);
     if (!usable.ok) return this.failDescribing(usable.reason, generation);
-    const roots = [...sources.roots];
+    // Constructor Studio: a declared root this machine lacks is read from its
+    // configured checkout instead, when it has one (`presentOrConfigured`).
+    const roots = await this.presentOrConfigured(ref.label, sources.roots);
+    if (!this.current(generation)) return false;
 
     // Step 3 and 4: the real session, then the catalogue and the product.
     this.enterStage("catalogue", generation);
@@ -741,6 +750,39 @@ export class ProductSessionService {
     } finally {
       this.scanHintClaimed = shown;
     }
+  }
+
+  /**
+   * The declared roots, with any this machine does not have replaced by the
+   * configured ones.
+   *
+   * A description says where *its author* keeps the gears --
+   * `path("../../../gears-rust")` beside the repository -- and another machine
+   * keeps its checkout somewhere else, under another name. The engine matches a
+   * product's gears by id, not by which root they came from, so a configured
+   * checkout of the same repository serves. Said out loud, because a product
+   * resolving against gears it did not name is a fact worth knowing; and only for
+   * a root that is missing, so a declared root that exists always wins.
+   */
+  protected async presentOrConfigured(label: string, declared: readonly string[]): Promise<string[]> {
+    const present: string[] = [];
+    const missing: string[] = [];
+    for (const root of declared) {
+      const exists = await this.files.exists(URI.fromFilePath(root)).catch(() => false);
+      (exists ? present : missing).push(root);
+    }
+    if (missing.length === 0) return present;
+    await this.preferences.ready;
+    const same = (a: string, b: string): boolean => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+    const configured = configuredSourceRoots(this.preferences).filter(
+      (root) => !present.some((p) => same(p, root)),
+    );
+    if (configured.length === 0) return [...declared];
+    void this.messages.info(
+      `${label} declares ${missing.join(", ")}, which is not on this machine; ` +
+        `its gears are read from ${configured.join(", ")} (gearbox.sourceRoots) instead.`,
+    );
+    return [...present, ...configured];
   }
 
   /**

@@ -127,4 +127,68 @@ describe("the Deploy panel", () => {
     expect(q("[data-deploy-install]")?.disabled).toBe(true);
     expect(host.querySelector("[data-deploy-note]")?.textContent).toBe("queued");
   });
+
+  describe("builds and deploys, as Studio records them", () => {
+    const prod = { id: "e-prod", name: "prod", namespace: "shop-prod", registry: "ghcr.io/acme", protected: false, registryLogin: true };
+    const build = {
+      buildId: "studio-1", where: "studio", status: "passed" as const, product: "shop", profile: "prod", shortSha: "abcdef0",
+      branch: "main", startedAt: "2026-10-28T10:00:00Z", failure: undefined, failureStep: undefined, step: undefined,
+      chartRef: "oci://ghcr.io/acme/charts/shop", chartVersion: "0.0.0-studio.1",
+      images: [{ app: "api", image: "ghcr.io/acme/gbx-api:studio-1" }],
+    };
+
+    it("show what is next, what each build published, and deploy a published build by its id", async () => {
+      const onDeployBuild = jest.fn();
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onDeployBuild,
+        flow: {
+          next: { text: "0.0.0-studio.1 is published. Next: Deploy this build.", tone: "todo" },
+          builds: [build, { ...build, buildId: "b-0", status: "failed", failure: "protoc missing\nmore", failureStep: "build", chartRef: undefined, chartVersion: undefined, images: [] }],
+          deployments: [{ id: "d1", environmentId: "e-prod", environmentName: "prod", namespace: "shop-prod", profile: "prod", product: "shop",
+            action: "install", build: "b-old", chartVersion: "0.0.0-old", state: "failed", reason: "ImagePullBackOff", requestedAt: "2026-10-27T10:00:00Z", requestedBy: "Ann" }],
+        },
+      });
+      expect(host.querySelector("[data-deploy-next]")?.textContent).toMatch(/Next: Deploy this build/);
+      expect(host.querySelector("[data-deploy-build-id=studio-1] [data-deploy-build-published]")?.textContent).toMatch(
+        /ghcr\.io\/acme\/gbx-api:studio-1; chart oci:\/\/ghcr\.io\/acme\/charts\/shop:0\.0\.0-studio\.1/,
+      );
+      expect(host.querySelector("[data-deploy-build-id=b-0] [data-deploy-stage=images]")?.getAttribute("data-deploy-stage-state")).toBe("failed");
+      expect(host.querySelector("[data-deploy-build-id=b-0] [data-deploy-build-failure]")?.textContent).toBe("protoc missing");
+      // Only a build that published a chart can be deployed by its id.
+      expect(q("[data-deploy-this-build=b-0]")).toBeNull();
+      await act(() => q("[data-deploy-this-build=studio-1]")?.click());
+      expect(onDeployBuild).toHaveBeenCalledWith("studio-1");
+      expect(host.querySelector("[data-deploy-history=d1]")?.textContent).toMatch(/Failed · prod \(shop-prod\) · 0\.0\.0-old · build b-old · Ann -- ImagePullBackOff/);
+    });
+
+    it("offer to bind an unbound profile, and say when Studio could not be asked", async () => {
+      const onBind = jest.fn();
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onBind,
+        flow: { next: { text: "Bind this profile", tone: "todo" }, builds: [], deployments: [], unbound: "prod" },
+      });
+      expect(q("[data-deploy-bind-apply]")?.disabled).toBe(true);
+      await act(() => {
+        const select = host.querySelector<HTMLSelectElement>('[aria-label="Environment for the prod profile"]');
+        if (select) {
+          select.value = "e-prod";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      await act(() => q("[data-deploy-bind-apply]")?.click());
+      expect(onBind).toHaveBeenCalledWith("e-prod");
+      await draw({ environments: [prod], flow: { next: { text: "x", tone: "todo" }, builds: [], deployments: [], error: "HTTP 503" } });
+      expect(host.querySelector("[data-deploy-flow-error]")?.textContent).toMatch(/HTTP 503/);
+      expect(host.querySelector("[data-deploy-next]")).toBeNull();
+    });
+
+    it("is not drawn where the IDE cannot ask Studio", async () => {
+      await draw({});
+      expect(host.querySelector("[data-deploy-flow]")).toBeNull();
+    });
+  });
 });

@@ -213,10 +213,39 @@ export class GearboxServiceImpl implements GearboxService {
    *  repository, each named by its source id, in the engine's order. */
   protected sharedCorpora: string[] = [];
 
-  /** What an engine opens by default: the workspace's own roots, and the shared corpus. */
+  /** The checkouts `useConfiguredRoots` named and this machine has. */
+  protected configuredRoots: string[] = [];
+
+  /** What an engine opens by default: the workspace's own roots, this machine's configured checkouts, and the shared corpus. */
   protected engineRoots(): string[] {
     const roots = this.defaultRoots();
-    return [...roots, ...this.sharedCorpora.filter((dir) => !roots.includes(dir))];
+    for (const dir of [...this.configuredRoots, ...this.sharedCorpora]) {
+      if (!roots.includes(dir)) roots.push(dir);
+    }
+    return roots;
+  }
+
+  async useConfiguredRoots(roots: readonly string[]): Promise<void> {
+    this.configuredRoots = roots
+      .filter((root) => typeof root === "string" && root.trim() !== "")
+      .map((root) => path.resolve(root.trim()))
+      .filter((root) => fs.existsSync(root));
+  }
+
+  async cloneSourceRepository(url: string, parent: string): Promise<string> {
+    const trimmed = url.trim();
+    if (trimmed === "") throw new Error("git clone URL is empty");
+    const name = path.basename(trimmed.replace(/\/+$/, "")).replace(/\.git$/, "") || "gears";
+    const target = path.join(parent, name);
+    // Refused rather than merged into: a directory already there is somebody's.
+    if (fs.existsSync(target)) throw new Error(`${target} already exists; choose it as a checkout instead`);
+    try {
+      await execFileAsync("git", ["clone", trimmed, target], { maxBuffer: 10 * 1024 * 1024 });
+    } catch (error) {
+      fs.rmSync(target, { recursive: true, force: true });
+      throw new Error(`git clone ${trimmed} failed: ${messageOfGit(error)}`);
+    }
+    return target;
   }
 
   protected client: GearboxClient | undefined;

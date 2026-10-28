@@ -17,9 +17,37 @@ import React from "@theia/core/shared/react";
 
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
 import type { InclusionReason } from "../../common/generated/InclusionReason";
+import type { Maturity } from "../../common/generated/Maturity";
 import { describeInclusion } from "../product/inclusion";
 import { RevealLink } from "../reveal-link";
 import type { RevealService } from "../reveal-service";
+
+/** What each level below `stable` says, as the tooltip and the screen-reader text. */
+const MATURITY_MEANS: Record<Exclude<Maturity, "stable">, string> = {
+  experimental: "experimental: its API and behaviour may change freely",
+  preview: "preview: usable, but not declared stable",
+  deprecated: "deprecated: still available, not for new products",
+};
+
+/**
+ * The gear's maturity, shown only below `stable`.
+ *
+ * Nothing for `stable`: a badge on every settled gear would be the noise that
+ * hides the ones that are not. One component for the catalogue row, the Add
+ * Gear list and the heading, so the three cannot say it three ways.
+ */
+export function MaturityBadge({ maturity }: { readonly maturity: Maturity }): React.ReactElement | null {
+  if (maturity === "stable") return null;
+  return (
+    <span
+      className={`gbx-badge gbx-maturity gbx-maturity-${maturity}`}
+      data-maturity={maturity}
+      title={MATURITY_MEANS[maturity]}
+    >
+      {maturity}
+    </span>
+  );
+}
 
 /**
  * The display name with the id beside it.

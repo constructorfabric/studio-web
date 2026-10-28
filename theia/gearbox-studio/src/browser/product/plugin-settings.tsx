@@ -45,7 +45,7 @@ export function PluginSettings({ selection, state, descriptor, edits, openGdl, r
   const profileIds = [...new Set([...Object.keys(state.intent!.profiles), ...profiles])];
   return <div data-plugin-settings={selection.id}>
     <h3>{selection.host} / {selection.id}</h3>
-    <p>Connection {selection.entryIndex + 1} · Profiles: {profiles.join(", ") || "All profiles"}</p>
+    <p className="gbx-settings-scope">Viewing <strong>{state.profile}</strong> · Changes affect: {profiles.join(", ") || "all profiles"}.</p>
     <p>{descriptor?.description || "Plugin descriptor unavailable. Saved settings remain editable."}</p>
     <ProfileScope profiles={profiles} available={profileIds} viewing={state.profile ?? undefined}
       declared={id => state.intent!.profiles[id] !== undefined} onChange={setProfiles} />

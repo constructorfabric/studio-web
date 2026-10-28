@@ -111,6 +111,45 @@ collab strip, Orca and the Explorer stay as they are.
   Postgres server (`127.0.0.1:5432`, user `postgres`, password from
   `GEARS_PG_PASSWORD`) and one database per gear; **Start a local Postgres**
   runs `postgres:18-alpine` in docker and creates them, only when asked.
+- **From Gearbox Studio's refresh** ([constructorfabric/gearbox#14](https://github.com/constructorfabric/gearbox/pull/14),
+  `139a18b`), frontend only -- no wire change, so it runs on the pinned engine:
+  - The catalogue and Add Gear share one tree (`catalogue/catalogue-model.ts`,
+    `catalogue-tree.tsx`): plugins grouped under their host's extension point,
+    or flat, by the `gearbox.catalogue.groupPlugins` setting; search over
+    names, ids, descriptions, scenarios and interfaces, which opens folded
+    branches. The catalogue keeps Studio's own blocks (the listed corpus and
+    **Bring the gears here**, failed roots, its diagnostics).
+  - Add Gear writes the source alias the product declares, not the catalogue's
+    directory name (`add-gear/product-source.ts`): a checkout under another
+    folder name no longer fails with GBX0102. A git source keeps its id, which
+    is the directory `node/git-sources.ts` brings it into. A plugin chosen
+    under a host the product lacks adds that host in the same preview.
+  - Diagnostics show errors and warnings first, information and hints folded,
+    and the code, location and evidence under **Details**.
+  - The Product view is one workspace: the product's name (Open another
+    product), the profile, a **Product** menu (settings, Add profile, Recheck,
+    Close, Open GDL), and four sections -- **Composition** (a searchable list of
+    the selected gears, plugins folded, settings beside it, the product's
+    summary before a choice), **Topology**, **Checks** and **Generate**.
+    Overview is **Product settings**. The status strip with Apply and Discard
+    stays under the name, in place of Gearbox Studio's bottom draft bar: one
+    Apply. Generate is the Generate widget itself, attached in the section
+    (`ProductWidget.mountGenerate`), so its Build, Run and Deploy come along;
+    every command that showed the view opens the section. A pending draft
+    blocks Generate's Apply.
+  - Catalogue diagnostics are a screen beside Conflicts, opened from the
+    Catalogue's count.
+  - **Gearbox: Configure Sources** (`shell/configure-sources-contribution.ts`)
+    chooses or clones a gears checkout into `gearbox.sourceRoots`; the
+    catalogue hands it to the backend before each load
+    (`useConfiguredRoots`), and an open reads it in place of a declared root
+    this machine lacks. Never asked at start: the Catalogue offers it when it
+    has no gears and no server to list them.
+  - In a Gearbox perspective the window names the open product or gear
+    (`shell/studio-window-title-updater.ts`); elsewhere the title is Theia's.
+  - Not taken: Gearbox Studio's Windows packaging (the desktop's own installer
+    does more) and its native title bar on Windows (to check on a Windows
+    desktop: theirs could not be dragged by the custom frame).
 - **Engine workarounds, each to go with the pin that fixes it:**
   - `node/sources-list.ts`: a product `product/create` wrote has no comma
     after its last source, and `add_source` appends without one (GBX0101).

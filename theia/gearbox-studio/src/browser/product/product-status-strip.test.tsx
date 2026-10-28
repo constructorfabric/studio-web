@@ -10,6 +10,7 @@ jest.mock("@theia/core/lib/browser", () => ({ ConfirmDialog: class {} }));
 jest.mock("@theia/monaco/lib/browser/monaco-text-model-service", () => ({ MonacoTextModelService: class {} }));
 jest.mock("../shell/unsaved", () => ({ hasUnsavedEdits: () => false }));
 jest.mock("../product-store", () => ({ ProductStore: class {} }));
+jest.mock("../catalogue-store", () => ({ CatalogueStore: class {} }));
 jest.mock("../shell/product-session-service", () => ({ ProductSessionService: class {} }));
 jest.mock("../shell/engine-connection-service", () => ({ EngineConnectionService: class {} }));
 jest.mock("../shell/studio-context-service", () => ({ StudioContextService: class {} }));

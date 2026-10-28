@@ -109,6 +109,7 @@ export const SCREENS: readonly Screen[] = [
   },
   { widgetId: "gearbox.graph", availableIn: ALL_KINDS, lifetime: "context-kind", focus: true },
   { widgetId: "gearbox.catalogue", availableIn: ALL_KINDS, lifetime: "global" },
+  { widgetId: "gearbox.catalogue-diagnostics", availableIn: ALL_KINDS, lifetime: "global" },
   { widgetId: "gearbox.inspector", availableIn: ALL_KINDS, lifetime: "global" },
 ];
 

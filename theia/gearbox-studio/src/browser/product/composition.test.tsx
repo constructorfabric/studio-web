@@ -2,7 +2,8 @@
  * @jest-environment jsdom
  */
 // The Composition tree: one plugin can be removed from beside it, without
-// taking its host and the host's other plugins along.
+// taking its host and the host's other plugins along. The host is expanded:
+// a host's plugins start folded (Gearbox Studio's composition list).
 import "reflect-metadata";
 
 jest.mock("../reveal-link", () => ({ RevealLink: () => null }));
@@ -59,7 +60,8 @@ describe("the Composition tree", () => {
           remove={remove}
           settings={null}
           reveals={{} as RevealService}
-          folded={new Set()}
+          expanded={new Set(["authn-resolver"])}
+          create={() => undefined}
           toggleFold={() => undefined}
         />,
       ),

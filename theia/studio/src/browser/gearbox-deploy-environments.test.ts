@@ -75,6 +75,75 @@ describe('the organization\'s environments, for the desktop\'s Deploy', () => {
         await expect(refused.pushToken('p', 'e', ['x'])).rejects.toThrow('no token service');
     });
 
+    it('list the project\'s builds as the portal does, with what each published, and leave Runs out', async () => {
+        let asked = '';
+        const source = new DeployEnvironments(async () => undefined, async path => {
+            asked = path;
+            return json(200, {
+                nodes: [
+                    { instance_id: 'n1', value: { build_id: 'b-old', status: 'failed', failure: 'no protoc', failure_step: 'build', started_at: '2026-10-27T10:00:00Z' } },
+                    { instance_id: 'n2', value: { action: 'run', status: 'passed', started_at: '2026-10-28T11:00:00Z' } },
+                    {
+                        instance_id: 'n3',
+                        value: {
+                            build_id: 'studio-1', where: 'studio', status: 'passed', commit: 'abcdef0123', started_at: '2026-10-28T10:00:00Z',
+                            chart: { reference: 'oci://ghcr.io/acme/charts/shop', version: '0.0.0-studio.1' },
+                            images: [{ app: 'api', image: 'ghcr.io/acme/gbx-api:studio-1' }, { app: '' }],
+                        },
+                    },
+                ],
+            });
+        });
+        const builds = await source.builds('p-1');
+        expect(asked).toBe('/studio-artifact-ingest/v1/nodes?type=build&scope=p-1&sort=updated&limit=20');
+        expect(builds.map(b => b.buildId)).toEqual(['studio-1', 'b-old']);
+        expect(builds[0]).toMatchObject({
+            where: 'studio', shortSha: 'abcdef0', chartRef: 'oci://ghcr.io/acme/charts/shop', chartVersion: '0.0.0-studio.1',
+            images: [{ app: 'api', image: 'ghcr.io/acme/gbx-api:studio-1' }],
+        });
+        expect(builds[1]).toMatchObject({ status: 'failed', failure: 'no protoc', failureStep: 'build' });
+        const refused = new DeployEnvironments(async () => undefined, async () => json(403, { detail: 'not a member' }));
+        await expect(refused.builds('p')).rejects.toThrow('not a member');
+    });
+
+    it('list the project\'s deploys, newest first', async () => {
+        const source = new DeployEnvironments(async () => undefined, async () => json(200, {
+            items: [
+                { id: 'd1', environment_id: 'e1', environment_name: 'dev', namespace: 'shop-dev', profile: 'prod', product: 'shop', action: 'install', state: 'succeeded', requested_at: '2026-10-27T10:00:00Z' },
+                { id: 'd2', environment_id: 'e1', environment_name: 'dev', namespace: 'shop-dev', profile: 'prod', product: 'shop', build: 'studio-1', chart_version: '0.1', state: 'failed', reason: 'ImagePullBackOff', requested_at: '2026-10-28T10:00:00Z' },
+            ],
+        }));
+        const deployments = await source.deployments('p-1');
+        expect(deployments.map(d => d.id)).toEqual(['d2', 'd1']);
+        expect(deployments[0]).toMatchObject({ environmentName: 'dev', build: 'studio-1', chartVersion: '0.1', reason: 'ImagePullBackOff', action: 'install' });
+    });
+
+    it('bind a profile without dropping another profile\'s binding or anyone\'s chart values', async () => {
+        const asked: { path: string; init?: RequestInit }[] = [];
+        const source = new DeployEnvironments(async () => undefined, async (path, init) => {
+            asked.push({ path, init });
+            if (init?.method === 'PUT') {
+                return json(200, { items: [], total: 0 });
+            }
+            return json(200, {
+                environments: [],
+                bindings: [
+                    { profile: 'dev', environment_id: 'e-dev', values: { replicas: 1 } },
+                    { profile: 'prod', environment_id: 'e-old', values: { replicas: 3 } },
+                ],
+            });
+        });
+        await source.bind('p-1', 'prod', 'e-prod');
+        expect(asked[0]?.path).toBe('/studio-environments/v1/targets?project_id=p-1');
+        expect(asked[1]?.path).toBe('/studio-environments/v1/bindings?project_id=p-1');
+        expect(JSON.parse(String(asked[1]?.init?.body))).toEqual({
+            items: [
+                { profile: 'dev', environment_id: 'e-dev', values: { replicas: 1 } },
+                { profile: 'prod', environment_id: 'e-prod', values: { replicas: 3 } },
+            ],
+        });
+    });
+
     it('start a build in Studio for the project (ADR-0048 §9)', async () => {
         let asked: { path: string; init?: RequestInit } | undefined;
         const source = new DeployEnvironments(async () => undefined, async (path, init) => {

@@ -22,6 +22,7 @@ import type { GenerateFileResult } from "../../common/generated/GenerateFileResu
 import { CatalogueStore } from "../catalogue-store";
 import { DiagnosticsList, selectionOf } from "../diagnostics/diagnostics-list";
 import { SelectionService } from "../shell/selection-service";
+import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GenerateService } from "./generate-service";
@@ -50,12 +51,15 @@ import {
   deployBuildRequest,
   deployCommands,
   deployRequest,
+  nextStep,
   publishPlan,
   publishStamp,
   targetEnvironment,
   type DeployInfo,
   type DeployTarget,
   type DeployTargets,
+  type ProductBuild,
+  type ProductDeployment,
 } from "../../common/deploy-product";
 
 const ACTION_ICON: Record<FileAction, string> = {
@@ -120,12 +124,21 @@ function countByAction(plans: readonly FilePlan[]): Partial<Record<FileAction, n
   return counts;
 }
 
+/** How often a running build is read again: the portal's Builds tab follows it as often. */
+const FLOW_FOLLOW_MS = 5000;
+
 @injectable()
 export class GenerateWidget extends ReactWidget {
   static readonly ID = "gearbox.generate";
   static readonly LABEL = "Gearbox Generate";
 
   @inject(ProductStore) protected readonly product!: ProductStore;
+  /**
+   * Constructor Studio, from Gearbox Studio (constructorfabric/gearbox#14): a
+   * pending draft blocks Apply. Generation reads the saved description, so
+   * applying beside unapplied edits writes a tree for a product nobody sees.
+   */
+  @inject(ProductEditService) protected readonly edits!: ProductEditService;
   @inject(GenerateService) protected readonly generate!: GenerateService;
   @inject(CatalogueStore) protected readonly catalogue!: CatalogueStore;
   // For the one way out of a failed plan. See the error branch in `render`.
@@ -177,6 +190,18 @@ export class GenerateWidget extends ReactWidget {
   /** The build Studio runs in an environment's cluster for this product (ADR-0048 §9): Deploy names it. */
   protected studioBuild: { readonly environmentId: string; readonly buildId: string } | undefined;
   protected startingBuild = false;
+  /**
+   * The project's builds and deploys, as the Studio server records them --
+   * what the portal's Builds and Deploys tabs show -- for the file they were
+   * read for. Followed every few seconds while a build runs.
+   */
+  protected flowFor: string | undefined;
+  protected flowBuilds: readonly ProductBuild[] = [];
+  protected flowDeployments: readonly ProductDeployment[] = [];
+  protected flowError: string | undefined;
+  protected flowTimer: ReturnType<typeof setTimeout> | undefined;
+  protected flowFollowing = false;
+  protected binding = false;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -199,6 +224,7 @@ export class GenerateWidget extends ReactWidget {
       }),
     );
     this.toDispose.push(this.generate.onChanged(() => this.update()));
+    this.toDispose.push(this.edits.onDraftChanged(() => this.update()));
     this.toDispose.push(this.catalogue.onChanged(() => this.update()));
     this.update();
   }
@@ -590,6 +616,7 @@ export class GenerateWidget extends ReactWidget {
         ...(where.branch !== undefined ? { ref: where.branch } : {}),
       });
       this.studioBuild = { environmentId: environment.id, buildId: started.build_id };
+      void this.refreshFlow();
       this.deployNote =
         `Studio is building ${started.build_id} in ${started.namespace} (about ten minutes; the project's Builds tab shows it). ` +
         `When it has passed, Deploy installs it into ${environment.name}.`;
@@ -665,6 +692,7 @@ export class GenerateWidget extends ReactWidget {
         }),
       );
       this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+      void this.refreshFlow();
     } catch (error) {
       this.deployNote = undefined;
       this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
@@ -696,6 +724,7 @@ export class GenerateWidget extends ReactWidget {
         deployBuildRequest({ environment, profile: this.product.current.profile ?? "", product: context.product, build: buildId }),
       );
       this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+      void this.refreshFlow();
     } catch (error) {
       this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -764,6 +793,7 @@ export class GenerateWidget extends ReactWidget {
       );
       this.published = undefined;
       this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+      void this.refreshFlow();
     } catch (error) {
       this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -772,9 +802,102 @@ export class GenerateWidget extends ReactWidget {
     }
   }
 
+  /**
+   * Constructor Studio: read the project's builds and deploys once for the open
+   * product -- whether or not this machine generated anything, because a build
+   * Studio ran deploys without it. The environments come with them when Deploy
+   * has not asked yet.
+   */
+  protected async askFlow(file: string): Promise<void> {
+    if (this.flowFor === file || this.environments?.builds === undefined) return;
+    this.flowFor = file;
+    if (this.deployTargets === undefined) {
+      try {
+        this.deployTargets = await this.environments.targets(file);
+      } catch {
+        this.deployTargets = undefined;
+      }
+      this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+    }
+    await this.refreshFlow();
+  }
+
+  /** Read the builds and deploys again; while a build runs, again in a few seconds. */
+  protected async refreshFlow(): Promise<void> {
+    const source = this.environments;
+    const projectId = this.deployTargets?.projectId;
+    if (source?.builds === undefined || projectId === undefined) return;
+    if (this.flowTimer !== undefined) clearTimeout(this.flowTimer);
+    this.flowTimer = undefined;
+    try {
+      const [builds, deployments] = await Promise.all([source.builds(projectId), source.deployments?.(projectId) ?? Promise.resolve([])]);
+      // A project can hold more than one product: this panel is about the open one.
+      const product = this.product.current.intent?.id;
+      this.flowBuilds = builds.filter((b) => b.product === undefined || product === undefined || b.product === product);
+      this.flowDeployments = deployments.filter((d) => product === undefined || d.product === product);
+      this.flowError = undefined;
+    } catch (error) {
+      this.flowError = error instanceof Error ? error.message : String(error);
+    }
+    if (this.flowBuilds.some((b) => b.status === "running") && !this.isDisposed) {
+      if (!this.flowFollowing) {
+        this.flowFollowing = true;
+        this.toDispose.push({ dispose: () => this.flowTimer !== undefined && clearTimeout(this.flowTimer) });
+      }
+      this.flowTimer = setTimeout(() => void this.refreshFlow(), FLOW_FOLLOW_MS);
+    }
+    this.update();
+  }
+
+  /** Bind the open profile to an environment, keeping the project's other bindings. */
+  protected async bindProfile(environmentId: string): Promise<void> {
+    const source = this.environments;
+    const profile = this.product.current.profile;
+    const file = this.product.current.open?.path;
+    if (source?.bind === undefined || this.deployTargets === undefined || profile === undefined || file === undefined) return;
+    this.binding = true;
+    this.update();
+    try {
+      await source.bind(this.deployTargets.projectId, profile, environmentId);
+      this.deployTargets = (await source.targets(file)) ?? this.deployTargets;
+      this.deployTarget = { kind: "environment", id: environmentId };
+      await this.refreshFlow();
+    } catch (error) {
+      this.messages.error(`The Studio server did not bind ${profile}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.binding = false;
+      this.update();
+    }
+  }
+
+  /** The builds-and-deploys section's props, when Studio can be asked for them. */
+  protected deployFlow(): React.ComponentProps<typeof DeployPanel>["flow"] {
+    if (this.environments?.builds === undefined || this.deployTargets === undefined) return undefined;
+    const profile = this.product.current.profile;
+    const environments = this.deployTargets.environments;
+    const bound = profile !== undefined && environments.some((e) => e.id === this.deployTargets?.bound[profile]);
+    return {
+      next: nextStep({
+        builds: this.flowBuilds,
+        deployments: this.flowDeployments,
+        environments: environments.length,
+        bound,
+        canBuildInStudio: environments.some((e) => e.registryLogin === true),
+      }),
+      builds: this.flowBuilds,
+      deployments: this.flowDeployments,
+      ...(this.flowError !== undefined ? { error: this.flowError } : {}),
+      ...(!bound && profile !== undefined && this.environments.bind !== undefined ? { unbound: profile } : {}),
+      binding: this.binding,
+    };
+  }
+
   protected renderDeploy(generated: boolean): React.ReactNode {
     const context = this.runContext();
     if (generated && context !== undefined) void this.askDeploy(context.cwd);
+    const file = this.product.current.open?.path;
+    if (file !== undefined) void this.askFlow(file);
+    const flow = this.deployFlow();
     const place = this.deployPlace();
     const deploy = this.deploy;
     return (
@@ -813,6 +936,9 @@ export class GenerateWidget extends ReactWidget {
           if (template !== undefined) void this.sendDeploy([template]);
         }}
         onDeploy={() => void this.confirmDeploy()}
+        {...(flow !== undefined ? { flow } : {})}
+        onDeployBuild={(buildId) => void this.requestStudioBuildDeploy(buildId)}
+        onBind={(environmentId) => void this.bindProfile(environmentId)}
       />
     );
   }
@@ -962,7 +1088,9 @@ export class GenerateWidget extends ReactWidget {
 
     const plans = gen.plan.plans;
     const counts = countByAction(plans);
-    const blocks = this.generate.blocks;
+    const blocks = this.edits.hasDraft()
+      ? [...this.generate.blocks, { id: "draft", reason: "the product has unapplied changes: apply or discard them first" }]
+      : this.generate.blocks;
     const selectedPlan = plans.find((p) => p.path === this.selected);
 
     return (
@@ -1025,7 +1153,7 @@ export class GenerateWidget extends ReactWidget {
           <button
             className="gbx-start-primary"
             type="button"
-            disabled={!this.generate.canApply}
+            disabled={!this.generate.canApply || this.edits.hasDraft()}
             data-apply="true"
             onClick={() => void this.generate.apply()}
           >

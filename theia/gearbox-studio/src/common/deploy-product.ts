@@ -343,3 +343,194 @@ export function deployAnswer(state: string, environment: string, namespace: stri
     ? `The deploy to ${environment} waits for an organization administrator's approval (Studio, organization → Environments).`
     : `The Studio server is deploying into ${environment} (namespace ${namespace}); the organization's Environments page shows how it went.`;
 }
+
+// ---------------------------------------------------------------------------
+// The way a product goes out, as the portal shows it (product, build, publish,
+// deploy): the project's builds and deploys, read from the Studio server so the
+// IDE and the project's Builds and Deploys tabs say the same thing about the
+// same records. A build here is any the server knows of -- one Studio ran in an
+// environment's cluster, or one an IDE reported -- and what it published is
+// what is in the environment's registry to deploy.
+// ---------------------------------------------------------------------------
+
+export type ProductBuildStatus = "running" | "passed" | "failed" | "cancelled" | "unknown";
+
+/** One build of the project's product (`build` artifact nodes, ADR-0045 / ADR-0048 §9). */
+export interface ProductBuild {
+  readonly buildId: string;
+  /** `studio` (a Job in an environment's cluster), `desktop` or `session`. */
+  readonly where: string;
+  readonly status: ProductBuildStatus;
+  readonly product: string | undefined;
+  readonly profile: string | undefined;
+  readonly shortSha: string | undefined;
+  readonly branch: string | undefined;
+  readonly startedAt: string | undefined;
+  readonly failure: string | undefined;
+  readonly failureStep: string | undefined;
+  /** The Job's container a running Studio build is in: `prepare`, `build` or `publish`. */
+  readonly step: string | undefined;
+  /** The chart it published (ADR-0048), when it published one. */
+  readonly chartRef: string | undefined;
+  readonly chartVersion: string | undefined;
+  /** The images it published, by application. */
+  readonly images: readonly { readonly app: string; readonly image: string }[];
+}
+
+export type DeploymentState = "awaiting_approval" | "declined" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** One deploy the server recorded (`GET /studio-environments/v1/deployments`). */
+export interface ProductDeployment {
+  readonly id: string;
+  readonly environmentId: string;
+  readonly environmentName: string;
+  readonly namespace: string;
+  readonly profile: string;
+  readonly product: string;
+  /** `install` | `uninstall`. */
+  readonly action: string;
+  readonly build: string | undefined;
+  readonly chartVersion: string | undefined;
+  readonly state: string;
+  readonly reason: string | undefined;
+  readonly requestedAt: string;
+  readonly requestedBy: string | undefined;
+}
+
+/** The portal's words for a deploy's state, so both say it the same way. */
+export const DEPLOYMENT_STATE_LABELS: Readonly<Record<DeploymentState, string>> = {
+  awaiting_approval: "Waiting for approval",
+  declined: "Declined",
+  queued: "Queued",
+  running: "Deploying",
+  succeeded: "Deployed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+export function deploymentStateLabel(state: string): string {
+  return DEPLOYMENT_STATE_LABELS[state as DeploymentState] ?? state;
+}
+
+/** A build's stages: the generated tree, the images, and their publishing. */
+export const BUILD_STAGES = ["prepare", "images", "publish"] as const;
+export type BuildStage = (typeof BUILD_STAGES)[number];
+export type StageState = "done" | "running" | "failed" | "waiting";
+
+/**
+ * The stage a step names. The Job's `build` container makes the images, and
+ * any step this does not know -- an IDE's `protoc` or `compile` -- is the
+ * images too.
+ */
+export function stageOf(step: string | undefined): BuildStage | undefined {
+  if (step === undefined || step === "") return undefined;
+  return step === "prepare" || step === "publish" ? step : "images";
+}
+
+/**
+ * How far a build got, stage by stage: a passed build did all three; a failed
+ * one those before the one it failed in; a running one those before the one it
+ * is in (the first, when it does not say).
+ */
+export function buildStages(build: Pick<ProductBuild, "status" | "step" | "failureStep">): Record<BuildStage, StageState> {
+  const at = (stage: BuildStage | undefined): number => (stage !== undefined ? BUILD_STAGES.indexOf(stage) : 0);
+  const out = {} as Record<BuildStage, StageState>;
+  BUILD_STAGES.forEach((stage, i) => {
+    if (build.status === "passed") out[stage] = "done";
+    else if (build.status === "failed") {
+      const failed = at(stageOf(build.failureStep));
+      out[stage] = i < failed ? "done" : i === failed ? "failed" : "waiting";
+    } else if (build.status === "running") {
+      const now = at(stageOf(build.step));
+      out[stage] = i < now ? "done" : i === now ? "running" : "waiting";
+    } else out[stage] = "waiting";
+  });
+  return out;
+}
+
+/** A build that can be deployed by its id alone: it passed and published a chart. */
+export function isDeployable(build: ProductBuild): boolean {
+  return build.status === "passed" && build.chartRef !== undefined && build.chartVersion !== undefined;
+}
+
+/** What comes next, in one line; `failed` when what failed is the next thing to look at. */
+export interface NextStep {
+  readonly text: string;
+  readonly tone: "todo" | "done" | "failed";
+}
+
+function stageWord(build: ProductBuild): string {
+  const stages = buildStages(build);
+  const at = BUILD_STAGES.find((s) => stages[s] === "running" || stages[s] === "failed");
+  return at === "prepare" ? "preparing" : at === "publish" ? "publishing" : "building the images";
+}
+
+/** A deploy the server has not finished with: it still says where the product is going. */
+function inFlight(state: string): boolean {
+  return state === "queued" || state === "running" || state === "awaiting_approval";
+}
+
+/**
+ * Where the product stands on its way out, and what to do next here -- the
+ * portal's Builds and Deploys lines (`pipeline.ts`) in one, worded for this
+ * panel: Build in Studio, Build images and Publish, Deploy.
+ *
+ * Builds first, because a deploy names a build: while the newest one runs or
+ * after it failed, that is the news. Then the environment side, as the
+ * Deploys tab says it.
+ */
+export function nextStep(input: {
+  /** Newest first. */
+  readonly builds: readonly ProductBuild[];
+  readonly deployments: readonly ProductDeployment[];
+  readonly environments: number;
+  /** Whether the open profile is bound to one of them. */
+  readonly bound: boolean;
+  /** An environment has a registry login, so Studio can build and Publish can push. */
+  readonly canBuildInStudio: boolean;
+}): NextStep {
+  const latest = input.builds[0];
+  if (latest?.status === "running") {
+    return { text: `Build ${latest.buildId} is ${stageWord(latest)}; this panel follows it.`, tone: "todo" };
+  }
+  if (latest?.status === "failed") {
+    const why = latest.failure !== undefined ? `: ${latest.failure.split("\n")[0]}` : "";
+    return { text: `The last build failed while ${stageWord(latest)}${why}. Fix it and build again.`, tone: "failed" };
+  }
+  if (input.environments === 0) {
+    return {
+      text: "No environment to deploy to yet: an organization administrator adds one in Studio (Organization › Environments). A kube context on this machine still works.",
+      tone: "todo",
+    };
+  }
+  if (!input.bound) return { text: "Bind this profile to an environment below, so a deploy knows where it goes.", tone: "todo" };
+  if (latest === undefined) {
+    return {
+      text: input.canBuildInStudio
+        ? "Nothing built yet: Build in Studio, or Build images here and Publish them."
+        : "Nothing built yet. Building in Studio needs an environment with a registry connection; here, Build images and Push, then Deploy.",
+      tone: "todo",
+    };
+  }
+  if (latest.status !== "passed") return { text: `The last build ended ${latest.status}. Build again.`, tone: "todo" };
+  if (!isDeployable(latest)) {
+    return { text: "The last build passed and published no chart, so there is nothing to deploy: Build in Studio, or Publish from here.", tone: "todo" };
+  }
+  const deploy = [...input.deployments].sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))[0];
+  // A deploy of an older build is history once a newer build is ready -- unless
+  // it is still under way, which is what a person needs to hear first.
+  if (deploy === undefined || (deploy.build !== latest.buildId && !inFlight(deploy.state))) {
+    return { text: `${latest.chartVersion} is published. Next: Deploy this build.`, tone: "todo" };
+  }
+  const where = `${deploy.environmentName} (${deploy.namespace})`;
+  switch (deploy.state) {
+    case "succeeded":
+      return deploy.action === "uninstall"
+        ? { text: `Uninstalled from ${where}.`, tone: "done" }
+        : { text: `Runs in ${where}${deploy.chartVersion !== undefined ? `: ${deploy.chartVersion}` : ""}.`, tone: "done" };
+    case "failed":
+      return { text: `The last deploy to ${where} failed${deploy.reason !== undefined ? `: ${deploy.reason}` : ""}.`, tone: "failed" };
+    default:
+      return { text: `${deploymentStateLabel(deploy.state)}: ${where}.`, tone: "todo" };
+  }
+}

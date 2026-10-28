@@ -874,11 +874,20 @@ what is ported and how). What is particular to a member's machine:
 - **Products** are found under `<repository>/products/<name>/product.gdl`,
   where New Product suggests one, as well as in each checkout. **Add gear**
   with no product open opens New Product.
+- **The Product view** has four sections: **Composition** (the selected
+  gears, searchable, with the chosen one's settings beside them),
+  **Topology**, **Checks** and **Generate** -- Generate with its Build, Run
+  and Deploy. The **Product** menu holds the product's settings and profiles.
 - **Editing.** Gear settings, features, plugin options and profile fields go
   into a draft; the strip at the head of the Product view writes it
   (**Apply changes**) or drops it (**Discard**), beside **Resolve** and
-  **Close**. The **Gearbox** menu and the ribbon's Check group (Resolve,
-  Conflicts, Lock, Generate) act on the open product.
+  **Close**. Generate does not apply while a draft is pending. The
+  **Gearbox** menu and the ribbon's Check group (Resolve, Conflicts, Lock,
+  Generate) act on the open product.
+- **No Studio server, or gears of your own.** **Gearbox: Configure Sources**
+  chooses or clones a gears checkout (`gearbox.sourceRoots`); the catalogue
+  reads it beside the workspace's, and a product whose declared corpus path
+  is not on this machine reads it instead.
 - **Opening** a product waits for the engine to read the gears it declares,
   and says how far it has got ("12 of 44 gears"). A cold open on Windows took
   about 90 seconds in the measurements of #520; a warm one about 7. An open
@@ -888,6 +897,14 @@ what is ported and how). What is particular to a member's machine:
   of the Visual Studio Build Tools; the panel checks both and links to what is
   missing. **Start a local Postgres** needs docker. What they write is listed
   [above](#how-it-connects-and-what-it-never-holds).
+- **Build, publish, deploy** for a kubernetes profile, in Generate's Deploy
+  panel, the way the portal's Builds and Deploys tabs go: **Build in Studio**
+  (a Job in the environment's cluster) or build here and **Publish** with a
+  push token, then **Deploy this build**. The panel lists the project's
+  builds with their stages, failure and what they published to the registry
+  (images and chart), the recent deploys, and the next step; it binds an
+  unbound profile to an environment. A running build is followed every 5 s.
+  A release's live workloads are on the portal's Environments page.
 
 ## Agent development (Orca)
 

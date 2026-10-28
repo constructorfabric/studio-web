@@ -16,7 +16,10 @@
 import { Emitter, Event } from "@theia/core/lib/common/event";
 import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
 import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
+import { PreferenceScope } from "@theia/core/lib/common/preferences/preference-scope";
+import { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
 
+import { configuredSourceRoots, GEARBOX_GROUP_PLUGINS } from "../common/gearbox-preferences";
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { gearIdOf, SelectionService } from "./shell/selection-service";
 
@@ -84,6 +87,8 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   @inject(WorkspaceService) @optional() protected readonly workspaceService?: WorkspaceService;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
   @inject(RemoteCatalogueSource) @optional() protected readonly remote?: RemoteCatalogueSource;
+
+  @inject(PreferenceService) protected readonly preferenceService!: PreferenceService;
 
   protected readonly onChangedEmitter = new Emitter<void>();
   readonly onChanged: Event<void> = this.onChangedEmitter.event;
@@ -162,6 +167,16 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
         void this.load();
       }
     });
+    this.preferenceService.onPreferenceChanged(event => {
+      if (event.preferenceName === GEARBOX_GROUP_PLUGINS) this.onChangedEmitter.fire();
+    });
+    void this.preferenceService.ready.then(() => this.onChangedEmitter.fire());
+  }
+
+  get groupPlugins(): boolean { return this.preferenceService.get<boolean>(GEARBOX_GROUP_PLUGINS, true); }
+
+  setGroupPlugins(value: boolean): Promise<void> {
+    return this.preferenceService.set(GEARBOX_GROUP_PLUGINS, value, PreferenceScope.User);
   }
 
   get current(): CatalogueState {
@@ -236,6 +251,11 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    */
   rootPaths(): string[] {
     return [...this.rootsById.values()];
+  }
+
+  /** Source identities and paths as reported by this engine session. */
+  resolvedRoots(): InitializeResult["roots"] {
+    return [...this.rootsById].map(([id, path]) => ({ id, path }));
   }
 
   /**
@@ -521,6 +541,10 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
 
   protected async announceOpenedWorkspace(): Promise<void> {
     await announceOpenedWorkspace(this.service, this.workspaceService);
+    // And this machine's own checkouts (Configure Sources), so the engine this
+    // load starts opens them too.
+    await this.preferenceService.ready;
+    await this.service.useConfiguredRoots(configuredSourceRoots(this.preferenceService));
   }
 
   /** One load, against the session decided when it was asked for. */

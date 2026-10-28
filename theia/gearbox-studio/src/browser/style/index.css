@@ -1313,9 +1313,6 @@
 .gbx-add-dialog-search label { display: flex; flex: 1; flex-direction: column; gap: 6px; }
 .gbx-add-dialog-columns { display: grid; grid-template-columns: minmax(230px, 36%) minmax(0, 1fr); gap: 24px; }
 .gbx-add-dialog-columns nav { max-height: 58vh; overflow: auto; }
-.gbx-catalogue-choice { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 12px; text-align: left; border: 1px solid transparent; background: transparent; color: var(--theia-foreground); cursor: pointer; }
-.gbx-catalogue-choice[aria-pressed="true"] { background: var(--theia-list-activeSelectionBackground); color: var(--theia-list-activeSelectionForeground); }
-.gbx-catalogue-choice small { margin-top: 4px; }
 .gbx-composition button, .gbx-add-dialog button { cursor: pointer; }
 .gbx-composition button:focus-visible, .gbx-add-dialog button:focus-visible { outline: 1px solid var(--theia-focusBorder); outline-offset: 2px; }
 .gbx-destination-full { display: block; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
@@ -1339,3 +1336,149 @@
 /* A preview that no longer matches the fields: kept on screen, so the pane does
    not flash on every keystroke, but visibly not the answer Create would act on. */
 .gbx-create-preview-stale { opacity: 0.55; }
+
+/* From Gearbox Studio (constructorfabric/gearbox#14): the shared catalogue tree,
+   the grouping switch, and diagnostics with information and details folded. */
+.gbx-badge.gbx-maturity {
+  background: transparent;
+  color: var(--theia-descriptionForeground);
+  border-color: var(--theia-descriptionForeground);
+}
+.gbx-badge.gbx-maturity-experimental,
+.gbx-badge.gbx-maturity-deprecated {
+  color: var(--theia-editorWarning-foreground);
+  border-color: var(--theia-editorWarning-foreground);
+}
+
+/* Text a person reads is text a person copies. Rows are draggable into the chat
+   by their code or id chip only, so everything else here selects normally. */
+.gbx-conflict-message,
+.gbx-conflict-help,
+.gbx-conflict-evidence,
+.gbx-conflict-related,
+.gbx-row-name {
+  user-select: text;
+  cursor: text;
+}
+.gbx-drag-handle { cursor: grab; }
+
+.gbx-diagnostic-notes { margin-top: 18px; }
+.gbx-diagnostic-notes > summary { cursor: pointer; padding: 10px 0; color: var(--theia-descriptionForeground); }
+.gbx-diagnostic-details { margin: 8px 0 0 18px; font-size: 12px; color: var(--theia-descriptionForeground); }
+.gbx-diagnostic-details > summary { cursor: pointer; }
+.gbx-diagnostic-metadata { padding-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.gbx-diagnostic-metadata .gbx-conflict-evidence { overflow-wrap: anywhere; }
+
+.gbx-catalogue-grouping { padding: 6px 0 10px; }
+.gbx-catalogue-grouping label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.gbx-catalogue-grouping input { accent-color: var(--theia-focusBorder); }
+.gbx-catalogue-results { color: var(--theia-descriptionForeground); font-size: 12px; padding: 4px 6px 8px; }
+.gbx-catalogue-browser { min-width: 0; }
+.gbx-catalogue-browser [role="treeitem"] { box-sizing: border-box; width: 100%; outline-offset: -2px; }
+.gbx-catalogue-browser [role="treeitem"]:focus { outline: 1px solid var(--theia-focusBorder); }
+.gbx-catalogue-browser .gbx-row, .gbx-catalogue-browser .gbx-tree-branch {
+  display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: start;
+  gap: 4px; padding: 8px 6px; border-bottom: 1px solid var(--theia-widget-border); cursor: pointer;
+}
+.gbx-catalogue-browser .gbx-tree-branch { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+.gbx-catalogue-browser [aria-level="1"] { font-weight: 600; margin-top: 8px; }
+.gbx-tree-disclosure { width: 18px; min-height: 16px; }
+.gbx-tree-disclosure button { border: 0; background: transparent; color: inherit; padding: 0 2px; cursor: pointer; }
+.gbx-tree-label { overflow-wrap: anywhere; }
+.gbx-catalogue-browser .gbx-catalogue-facts { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-width: 0; gap: 4px; }
+.gbx-catalogue-browser .gbx-row-name { font-weight: 600; overflow-wrap: anywhere; }
+.gbx-catalogue-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; color: var(--theia-descriptionForeground); }
+.gbx-catalogue-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; }
+.gbx-catalogue-technical { font-size: 11px; font-weight: normal; overflow-wrap: anywhere; }
+.gbx-catalogue-technical summary { color: var(--theia-descriptionForeground); cursor: pointer; }
+.gbx-catalogue-technical[open] { display: flex; flex-direction: column; gap: 4px; }
+.gbx-catalogue-technical > span, .gbx-catalogue-technical > code { display: block; white-space: normal; }
+.gbx-catalogue-technical button { margin-top: 4px; }
+.gbx-tree-hint { color: var(--theia-descriptionForeground); font-size: 12px; padding-inline: 24px 6px; }
+.gbx-add-context { font-size: 12px; overflow-wrap: anywhere; }
+.gbx-add-dialog-columns > nav { min-width: 0; }
+.gbx-catalogue-browser .gbx-row-action { margin-top: 0; }
+.gbx-widget-catalogue .gbx-catalogue-description { -webkit-line-clamp: 1; }
+
+/* From Gearbox Studio (constructorfabric/gearbox#14): the product workspace --
+   one subject, local actions, details on demand. Constructor Studio keeps its
+   status strip under the context row instead of a bottom draft bar. */
+.gbx-product { padding: 0; }
+.gbx-product-head { padding: 16px 24px 0; border-bottom: 1px solid var(--theia-panel-border); }
+.gbx-product-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; min-width: 0; }
+.gbx-product-name { display: inline-flex; align-items: center; gap: 10px; font: inherit; font-size: 18px; font-weight: 600; color: inherit; background: transparent; border: 0; padding: 4px 0; cursor: pointer; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.gbx-profile-selector { display: inline-flex; align-items: center; gap: 8px; color: var(--theia-descriptionForeground); }
+.gbx-profile-selector select { color: var(--theia-input-foreground); background: var(--theia-input-background); border: 1px solid var(--theia-input-border, var(--theia-panel-border)); padding: 6px 10px; font: inherit; min-width: 120px; }
+.gbx-product-menu { margin-left: auto; }
+.gbx-product-menu, .gbx-row-menu { position: relative; }
+.gbx-product-menu > summary, .gbx-row-menu > summary { cursor: pointer; padding: 6px 8px; list-style: none; border-radius: 4px; }
+.gbx-product-menu > summary::-webkit-details-marker, .gbx-row-menu > summary::-webkit-details-marker { display: none; }
+.gbx-menu-items { position: absolute; right: 0; top: 100%; min-width: 175px; z-index: 20; padding: 6px; border: 1px solid var(--theia-panel-border); background: var(--theia-menu-background); color: var(--theia-menu-foreground); }
+.gbx-menu-items button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.gbx-menu-items button:hover, .gbx-menu-items button:focus-visible { background: var(--theia-list-hoverBackground); }
+.gbx-product-nav { margin-top: 14px; gap: 8px; border: 0; padding: 0; align-items: stretch; }
+.gbx-product-nav .gbx-view-tab { background: transparent; color: var(--theia-descriptionForeground); padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 13px; }
+.gbx-product-nav .gbx-view-tab-on { color: var(--theia-foreground); border-bottom-color: var(--theia-focusBorder); font-weight: 600; }
+.gbx-product-body { padding: 20px 24px; }
+.gbx-product-body-fill { padding: 0; }
+.gbx-product-body-fill > .gbx-composition { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 0; }
+.gbx-composition-tree { padding: 0 12px 16px; }
+.gbx-composition-tools { position: sticky; top: 0; padding: 16px 0 12px; background: var(--theia-editor-background); z-index: 2; }
+.gbx-composition-tools-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.gbx-composition-tools-heading h3 { font-size: 12px; font-weight: 600; margin: 0 auto 0 0; }
+.gbx-composition-tools-heading .gbx-start-primary { padding: 6px 10px; font-size: 12px; margin: 0; }
+.gbx-composition-tools input { box-sizing: border-box; width: 100%; padding: 7px 9px; }
+.gbx-composition-host { padding: 4px 0; border: 0; }
+.gbx-composition-host-row { align-items: center; gap: 2px; border-radius: 4px; }
+.gbx-composition-host-row:hover { background: var(--theia-list-hoverBackground); }
+.gbx-composition-host-selected > .gbx-composition-host-row { background: var(--theia-list-activeSelectionBackground); color: var(--theia-list-activeSelectionForeground); }
+.gbx-composition-host-name { width: 100%; border: 0; padding: 10px 4px; background: transparent; color: inherit; text-align: left; font: inherit; font-weight: 500; cursor: pointer; overflow-wrap: anywhere; }
+.gbx-composition-host-name > span:nth-child(2) { flex: 1; min-width: 0; }
+.gbx-composition-host-name small { font-size: 11px; white-space: nowrap; font-weight: 400; }
+.gbx-twistie, .gbx-twistie-space { width: 18px; min-width: 18px; }
+.gbx-composition-settings { padding: 24px 32px; }
+.gbx-composition-settings > * { max-width: 900px; }
+.gbx-product-summary h2 { margin: 0 0 12px; font-size: 22px; }
+.gbx-product-summary > p { color: var(--theia-descriptionForeground); line-height: 1.6; }
+.gbx-composition-automatic { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--theia-panel-border); }
+.gbx-composition-automatic > summary { cursor: pointer; color: var(--theia-descriptionForeground); font-size: 12px; }
+.gbx-automatic-gear { padding: 10px 4px; }
+.gbx-automatic-gear details { margin-top: 6px; font-size: 12px; }
+.gbx-inactive-connections { margin-top: 10px; color: var(--theia-descriptionForeground); }
+.gbx-settings-scope { color: var(--theia-descriptionForeground); line-height: 1.6; padding-bottom: 12px; border-bottom: 1px solid var(--theia-panel-border); }
+.gbx-check-counts { display: inline-flex; gap: 5px; margin-left: 6px; }
+.gbx-stage-count { font-size: 10px; white-space: nowrap; }
+.gbx-stage-count-info, .gbx-stage-count-warning { background: transparent; color: var(--theia-descriptionForeground); }
+.gbx-conflict { padding: 14px 12px; margin-bottom: 10px; }
+.gbx-conflict-message { line-height: 1.5; }
+.gbx-conflict-help { margin-top: 6px; line-height: 1.5; color: var(--theia-descriptionForeground); }
+.gbx-topology-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.gbx-topology-head h2, .gbx-product-settings h2 { font-size: 18px; }
+.gbx-cluster-details { padding: 12px 8px; border-bottom: 1px solid var(--theia-panel-border); }
+.gbx-cluster-details > summary { cursor: pointer; }
+.gbx-cluster-details .gbx-kv { margin-top: 14px; }
+.gbx-embedded-generate[hidden] { display: none; }
+.gbx-embedded-generate > .gbx-generate, .gbx-embedded-generate > .theia-widget { padding: 0; height: auto; position: relative; }
+.gbx-product button:focus-visible, .gbx-product summary:focus-visible { outline: 2px solid var(--theia-focusBorder); outline-offset: 2px; }
+@container (max-width: 850px) {
+  .gbx-product-body-fill > .gbx-composition { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 35%) minmax(0, 1fr); }
+  .gbx-composition-tree { border-right: 0; border-bottom: 1px solid var(--theia-panel-border); }
+  .gbx-composition-settings { padding: 20px; }
+  .gbx-product-context { gap: 10px; }
+}
+.gbx-catalogue-diagnostics-link {
+  font: inherit; cursor: pointer;
+  margin-left: 6px; padding: 0; border: none; background: transparent;
+  color: var(--theia-textLink-foreground);
+}
+.gbx-catalogue-diagnostics-link:hover { text-decoration: underline; }
+
+/* Constructor Studio: the Deploy panel's builds and deploys (FULL-PROCESS-DEPOLOY). */
+.gbx-deploy-flow { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--theia-panel-border); }
+.gbx-deploy-builds, .gbx-deploy-history { list-style: none; margin: 6px 0 0; padding: 0; }
+.gbx-deploy-builds > li, .gbx-deploy-history > li { padding: 8px 0; border-bottom: 1px solid var(--theia-widget-border); overflow-wrap: anywhere; }
+.gbx-deploy-stages { display: inline-flex; gap: 4px; margin: 0 6px; }
+.gbx-deploy-stage-done { color: var(--theia-testing-iconPassed, var(--theia-descriptionForeground)); border-color: currentColor; }
+.gbx-deploy-stage-running { color: var(--theia-focusBorder); border-color: currentColor; }
+.gbx-deploy-stage-failed { color: var(--theia-errorForeground); border-color: currentColor; }
+.gbx-deploy-stage-waiting { opacity: 0.6; }

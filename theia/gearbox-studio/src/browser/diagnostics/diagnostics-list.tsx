@@ -132,19 +132,18 @@ export interface DiagnosticsListProps {
 export function DiagnosticsList(props: DiagnosticsListProps): React.ReactElement {
   const rows = props.sorted === true ? [...props.diagnostics] : worstFirst(props.diagnostics);
   const density = props.density ?? "comfortable";
-  return (
-    <ul className={`gbx-conflicts-list gbx-conflicts-${density}`}>
-      {rows.map((diagnostic, index) => (
-        <DiagnosticRow
-          key={`${diagnostic.code}-${index}`}
-          diagnostic={diagnostic}
-          onReveal={props.onReveal}
-          onExplain={props.onExplain}
-          onConfigure={props.onConfigure}
-        />
-      ))}
-    </ul>
-  );
+  const important = rows.filter(d => d.severity === "error" || d.severity === "warning");
+  const notes = rows.filter(d => d.severity === "info" || d.severity === "hint");
+  const list = (entries: readonly Diagnostic[]) => <ul className={`gbx-conflicts-list gbx-conflicts-${density}`}>
+    {entries.map((diagnostic, index) => <DiagnosticRow key={`${diagnostic.code}-${index}`} diagnostic={diagnostic}
+      onReveal={props.onReveal} onExplain={props.onExplain} onConfigure={props.onConfigure} />)}
+  </ul>;
+  return <div className="gbx-diagnostics">
+    {important.length > 0 && list(important)}
+    {notes.length > 0 && <details className="gbx-diagnostic-notes" data-diagnostic-notes>
+      <summary>Information and hints ({notes.length})</summary>{list(notes)}
+    </details>}
+  </div>;
 }
 
 export interface DiagnosticRowProps {
@@ -168,22 +167,9 @@ export function DiagnosticRow({
       data-conflict-code={diagnostic.code}
       data-conflict-severity={diagnostic.severity}
       data-conflict-subject={diagnostic.subject ?? ""}
-      // Draggable into the chat. The payload is the code alone: the chat's
-      // `#gearboxDiagnostics` already carries every occurrence, so what a drag
-      // adds is which one the person meant.
-      draggable
-      onDragStart={(event) => {
-        event.dataTransfer.setData(
-          GEARBOX_DRAG_MIME,
-          JSON.stringify({ kind: "diagnostic", code: diagnostic.code }),
-        );
-        event.dataTransfer.setData("text/plain", `${diagnostic.code}: ${diagnostic.message}`);
-        event.dataTransfer.effectAllowed = "copy";
-      }}
     >
       <div className="gbx-conflict-head">
         <span className={`${codicon(ICON[diagnostic.severity])} gbx-conflict-icon`} />
-        <span className="gbx-id">{diagnostic.code}</span>
         <span className="gbx-conflict-message">{diagnostic.message}</span>
       </div>
 
@@ -198,13 +184,9 @@ export function DiagnosticRow({
       )}
 
       <div className="gbx-conflict-links">
-        <Where location={diagnostic.location ?? undefined} preposition="in" onReveal={onReveal} />
-        {(diagnostic.related ?? []).map((related, at) => (
-          <span className="gbx-conflict-related" key={`${related.message}-${at}`}>
-            {related.message}{" "}
-            <Where location={related.location} preposition="at" onReveal={onReveal} />
-          </span>
-        ))}
+        {!(selection?.kind === "gear" && onConfigure) && diagnostic.location && onReveal &&
+          <button type="button" className="gbx-choice" data-diagnostic-open-gdl onClick={() => onReveal(diagnostic.location!)}>Open GDL</button>}
+
         {/* **The form, not the file and not the explanation.** Offered only for a
             gear, because a gear is the only subject with a settings form; an
             application and a binding are things the resolver made, and there is
@@ -223,6 +205,37 @@ export function DiagnosticRow({
             configure {diagnostic.config_key ? `${selection.id} · ${diagnostic.config_key}` : selection.id}
           </button>
         )}
+      </div>
+      <details className="gbx-diagnostic-details">
+        <summary>Details</summary>
+        <div className="gbx-diagnostic-metadata">
+        {/* Draggable into the chat by the code alone, not the whole row: a
+            draggable row turns every press-and-move into a drag, so its message
+            and help could not be selected and copied. The payload is the code:
+            the chat's `#gearboxDiagnostics` already carries every occurrence, so
+            what a drag adds is which one the person meant. */}
+        <span
+          className="gbx-id gbx-drag-handle"
+          title="Drag into the chat"
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData(
+              GEARBOX_DRAG_MIME,
+              JSON.stringify({ kind: "diagnostic", code: diagnostic.code }),
+            );
+            event.dataTransfer.setData("text/plain", `${diagnostic.code}: ${diagnostic.message}`);
+            event.dataTransfer.effectAllowed = "copy";
+          }}
+        >
+          {diagnostic.code}
+        </span>
+        <Where location={diagnostic.location ?? undefined} preposition="in" onReveal={onReveal} />
+        {(diagnostic.related ?? []).map((related, at) => (
+          <span className="gbx-conflict-related" key={`${related.message}-${at}`}>
+            {related.message}{" "}
+            <Where location={related.location} preposition="at" onReveal={onReveal} />
+          </span>
+        ))}
         {selection !== undefined && onExplain !== undefined && (
           <button
             type="button"
@@ -245,7 +258,8 @@ export function DiagnosticRow({
             {diagnostic.evidence}
           </span>
         )}
-      </div>
+        </div>
+      </details>
     </li>
   );
 }

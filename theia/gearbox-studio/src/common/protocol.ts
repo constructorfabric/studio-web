@@ -308,6 +308,22 @@ export interface GearboxService {
    */
   useSharedCorpora(origins: readonly CorpusOrigin[], fetch: boolean): Promise<string[] | undefined>;
 
+  /**
+   * Constructor Studio: this machine's own gear checkouts, from the
+   * `gearbox.sourceRoots` setting (**Gearbox: Configure Sources**) -- the way
+   * to a catalogue with no Studio server to list or bring one. An engine opens
+   * them beside the workspace's roots and the shared corpus; a path no longer
+   * there is left out. Said before each load, as the window's folder is.
+   */
+  useConfiguredRoots(roots: readonly string[]): Promise<void>;
+
+  /**
+   * Constructor Studio: `git clone <url>` into a new directory under `parent`;
+   * its absolute path. For **Configure Sources**, when this machine has no
+   * checkout of the gears yet. Refuses a directory already there.
+   */
+  cloneSourceRepository(url: string, parent: string): Promise<string>;
+
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */
   loadProduct(path: string): Promise<ProductLoadResult>;
@@ -777,6 +793,19 @@ export interface DeployEnvironmentsSource {
     environmentId: string,
     repositories: readonly string[],
   ): Promise<{ readonly registry: string; readonly prefix: string; readonly token: string; readonly expires_in?: number | null }>;
+  /**
+   * The project's builds, newest first: Studio's and the ones IDEs reported,
+   * with what each published -- what is in the registry to deploy. Rejects
+   * when the server could not be asked.
+   */
+  builds?(projectId: string): Promise<readonly import("./deploy-product").ProductBuild[]>;
+  /** The project's deploys, newest first. */
+  deployments?(projectId: string): Promise<readonly import("./deploy-product").ProductDeployment[]>;
+  /**
+   * Bind `profile` to an environment, keeping every other binding and its
+   * chart values; rejects with the server's words.
+   */
+  bind?(projectId: string, profile: string, environmentId: string): Promise<void>;
 }
 export interface RemoteCatalogueSource {
   /**

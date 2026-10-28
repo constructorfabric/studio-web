@@ -28,9 +28,19 @@ import { PreferenceContribution } from "@theia/core/lib/common/preferences/prefe
 import type { PreferenceSchema } from "@theia/core/lib/common/preferences/preference-schema";
 import type { PreferenceProxy } from "@theia/core/lib/common/preferences/preference-proxy";
 import { PreferenceScope } from "@theia/core/lib/common/preferences/preference-scope";
+import type { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
 
 /** The Anthropic key the chat agent's model is selected with. */
 export const GEARBOX_API_KEY = "gearbox.ai.apiKey";
+
+/** Present plugins beneath their compatible extension points in both catalogue surfaces. */
+export const GEARBOX_GROUP_PLUGINS = "gearbox.catalogue.groupPlugins";
+
+/** This machine's own gear checkouts, opened beside the workspace's (Configure Sources). */
+export const GEARBOX_SOURCE_ROOTS = "gearbox.sourceRoots";
+
+/** The gears repository Configure Sources offers to clone. */
+export const GEARBOX_SOURCE_REPOSITORY = "gearbox.defaultSourceRepository";
 
 /**
  * Marks a property whose value is a secret.
@@ -46,6 +56,28 @@ export interface GearboxSecretDetail {
 
 export const gearboxPreferenceSchema: PreferenceSchema = {
   properties: {
+    [GEARBOX_GROUP_PLUGINS]: {
+      type: "boolean", default: true, scope: PreferenceScope.User,
+      description: "Group catalogue plugins under compatible gears and extension points.",
+    },
+    // **Where this machine's checkouts are, which only this machine knows.** The
+    // window's folder and the corpus Studio lists stay the usual way to the
+    // gears; these are for a machine with its own checkout, or no Studio server.
+    [GEARBOX_SOURCE_ROOTS]: {
+      type: "array",
+      items: { type: "string" },
+      default: [],
+      scope: PreferenceScope.User,
+      markdownDescription:
+        "Local gears checkouts the catalogue also reads, as absolute paths -- usually one " +
+        "checkout of `gears-rust`. Run **Gearbox: Configure Sources** to choose or clone one.",
+    },
+    [GEARBOX_SOURCE_REPOSITORY]: {
+      type: "string",
+      default: "https://github.com/constructorfabric/gears-rust",
+      scope: PreferenceScope.User,
+      markdownDescription: "The gears repository **Gearbox: Configure Sources** offers to clone.",
+    },
     [GEARBOX_API_KEY]: {
       type: "string",
       default: "",
@@ -67,6 +99,9 @@ export const gearboxPreferenceSchema: PreferenceSchema = {
 
 /** The typed view of the schema above. One line per property. */
 export interface GearboxConfiguration {
+  [GEARBOX_GROUP_PLUGINS]: boolean;
+  [GEARBOX_SOURCE_ROOTS]: string[];
+  [GEARBOX_SOURCE_REPOSITORY]: string;
   [GEARBOX_API_KEY]: string;
 }
 
@@ -87,4 +122,11 @@ export function bindGearboxPreferences(bind: interfaces.Bind): void {
     )
     .inSingletonScope();
   bind(PreferenceContribution).toConstantValue({ schema: gearboxPreferenceSchema });
+}
+
+/** The configured checkouts, without blanks. Read in the browser, where settings are. */
+export function configuredSourceRoots(preferences: Pick<PreferenceService, "get">): string[] {
+  return preferences
+    .get<string[]>(GEARBOX_SOURCE_ROOTS, [])
+    .filter((root) => typeof root === "string" && root.trim() !== "");
 }

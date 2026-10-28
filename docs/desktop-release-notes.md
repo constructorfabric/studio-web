@@ -11,6 +11,29 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
 ## Next
 
+### Building
+
+- **One product workspace.** The Product view has four sections --
+  Composition, Topology, Checks and Generate -- and a Product menu for its
+  settings and profiles. Composition is a searchable list of the selected
+  gears with the chosen one's settings beside it; Generate, with Build, Run
+  and Deploy, is a section rather than a separate view, and does not apply
+  while changes are pending.
+- **The catalogue groups plugins** under the extension point of the gear they
+  plug into (or lists them flat: **Group plugins**), in the Catalogue and in
+  Add gear alike, and its search reads descriptions and interfaces too. Its
+  diagnostics open beside Conflicts.
+- **Add gear writes the source the product declares**, so a gears checkout in
+  a folder with another name no longer fails with GBX0102; choosing a plugin
+  under a gear the product lacks adds that gear too.
+- **Build, publish and deploy from Generate**, as in the portal: the project's
+  builds with their stages and what they published, the recent deploys, the
+  next step, and binding a profile to an environment.
+- **Gearbox: Configure Sources** uses a local gears checkout -- for working
+  without a Studio server, or with gears of your own.
+- Checks list errors and warnings first; information is folded, and a
+  diagnostic's code and location are under Details.
+
 ### macOS
 
 - **A Mac build.** Every release now carries

@@ -75,6 +75,13 @@ export const SHOW_CONFLICTS = {
   shortTitle: "Conflicts",
 };
 
+/** Open the catalogue load's diagnostics in the bottom area; opens, never toggles. */
+export const SHOW_CATALOGUE_DIAGNOSTICS = {
+  id: "gearbox.catalogue.diagnostics.show",
+  label: "Gearbox: Show Catalogue Diagnostics",
+  shortTitle: "Diagnostics",
+};
+
 /**
  * Show Generate, for a caller that means *show* it.
  *

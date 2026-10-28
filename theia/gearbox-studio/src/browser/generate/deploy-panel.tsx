@@ -12,7 +12,41 @@
 
 import React from "@theia/core/shared/react";
 
-import { parseTarget, targetValue, type DeployImage, type DeployTarget, type StudioEnvironment } from "../../common/deploy-product";
+import {
+  BUILD_STAGES,
+  buildStages,
+  deploymentStateLabel,
+  isDeployable,
+  parseTarget,
+  targetValue,
+  type DeployImage,
+  type DeployTarget,
+  type NextStep,
+  type ProductBuild,
+  type ProductDeployment,
+  type StudioEnvironment,
+} from "../../common/deploy-product";
+
+/**
+ * Constructor Studio: the project's builds and deploys as the Studio server
+ * records them -- the portal's Builds and Deploys tabs, beside the buttons that
+ * make them. Absent where the IDE cannot ask Studio.
+ */
+export interface DeployFlow {
+  readonly next: NextStep;
+  /** Newest first. */
+  readonly builds: readonly ProductBuild[];
+  /** Newest first. */
+  readonly deployments: readonly ProductDeployment[];
+  /** Why the server could not be asked, when it could not. */
+  readonly error?: string;
+  /** The open profile, when it is bound to no environment: Bind offers one. */
+  readonly unbound?: string;
+  readonly binding?: boolean;
+}
+
+/** How many of each the panel lists; the portal's tabs hold the rest. */
+const SHOWN = 5;
 
 export interface DeployPanelProps {
   /** Whether the generated tree is on disk (applied, or nothing left to write). */
@@ -49,6 +83,10 @@ export interface DeployPanelProps {
   readonly onPush: () => void;
   readonly onTemplate: () => void;
   readonly onDeploy: () => void;
+  readonly flow?: DeployFlow;
+  /** Deploy a build the server recorded, by its id, into the chosen environment. */
+  readonly onDeployBuild?: (buildId: string) => void;
+  readonly onBind?: (environmentId: string) => void;
 }
 
 export function DeployPanel(props: DeployPanelProps): React.ReactElement {
@@ -202,6 +240,143 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
           )}
         </>
       )}
+      {props.flow !== undefined && <FlowSection {...props} flow={props.flow} environment={environment} />}
     </div>
   );
+}
+
+/**
+ * Where the product stands on its way out: what to do next, the builds with
+ * how far each got and what it published -- the images and chart in the
+ * environment's registry -- and the deploys with how they went.
+ */
+function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; readonly environment: StudioEnvironment | undefined }): React.ReactElement {
+  const { flow, environment } = props;
+  const [bindTo, setBindTo] = React.useState("");
+  return (
+    <section className="gbx-deploy-flow" aria-label="Builds and deploys" data-deploy-flow>
+      <div className="gbx-group-label">Builds and deploys</div>
+      {flow.error !== undefined ? (
+        <p className="gbx-inline-error" data-deploy-flow-error>
+          Studio could not be asked for the project&apos;s builds and deploys: {flow.error}
+        </p>
+      ) : (
+        <p className={flow.next.tone === "failed" ? "gbx-inline-error" : "gbx-waiting"} data-deploy-next={flow.next.tone} role="status">
+          {flow.next.text}
+        </p>
+      )}
+      {flow.unbound !== undefined && props.environments.length > 0 && props.onBind !== undefined && (
+        <div className="gbx-generate-actions" data-deploy-bind={flow.unbound}>
+          <label>
+            Bind {flow.unbound} to{" "}
+            <select aria-label={`Environment for the ${flow.unbound} profile`} value={bindTo} onChange={(e) => setBindTo(e.target.value)}>
+              <option value="">choose an environment</option>
+              {props.environments.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="gbx-choice"
+            data-deploy-bind-apply
+            disabled={bindTo === "" || flow.binding === true}
+            onClick={() => props.onBind?.(bindTo)}
+          >
+            {flow.binding === true ? "Binding…" : "Bind"}
+          </button>
+        </div>
+      )}
+      {flow.builds.length > 0 && (
+        <ul className="gbx-deploy-builds" aria-label="Builds">
+          {flow.builds.slice(0, SHOWN).map((build) => {
+            const stages = buildStages(build);
+            const canDeploy = isDeployable(build) && environment !== undefined && props.onDeployBuild !== undefined;
+            return (
+              <li key={build.buildId} data-deploy-build-id={build.buildId} data-deploy-build-status={build.status}>
+                <div>
+                  <code>{build.buildId}</code> · {build.status} · {build.where}
+                  {build.shortSha !== undefined ? ` · ${build.shortSha}` : ""}
+                  {build.branch !== undefined ? ` on ${build.branch}` : ""}
+                </div>
+                <div className="gbx-deploy-stages" aria-label="Stages">
+                  {BUILD_STAGES.map((stage) => (
+                    <span
+                      key={stage}
+                      className={`gbx-badge gbx-deploy-stage-${stages[stage]}`}
+                      data-deploy-stage={stage}
+                      data-deploy-stage-state={stages[stage]}
+                      title={`${stage}: ${stages[stage]}`}
+                    >
+                      {stage} · {stages[stage]}
+                    </span>
+                  ))}
+                </div>
+                {build.status === "failed" && build.failure !== undefined && (
+                  <p className="gbx-inline-error" data-deploy-build-failure>
+                    {firstLine(build.failure)}
+                  </p>
+                )}
+                {(build.chartRef !== undefined || build.images.length > 0) && (
+                  <p data-deploy-build-published>
+                    Published:{" "}
+                    {build.images
+                      .map((i) => (
+                        <code key={i.app} title={i.app}>
+                          {i.image}
+                        </code>
+                      ))
+                      .reduce<React.ReactNode[]>((all, one, i) => (i === 0 ? [one] : [...all, ", ", one]), [])}
+                    {build.chartRef !== undefined && (
+                      <>
+                        {build.images.length > 0 ? "; chart " : "chart "}
+                        <code>
+                          {build.chartRef}
+                          {build.chartVersion !== undefined ? `:${build.chartVersion}` : ""}
+                        </code>
+                      </>
+                    )}
+                  </p>
+                )}
+                {canDeploy && (
+                  <button
+                    type="button"
+                    className="gbx-choice"
+                    data-deploy-this-build={build.buildId}
+                    disabled={props.requesting === true}
+                    aria-label={`Deploy build ${build.buildId} to ${environment.name}`}
+                    onClick={() => props.onDeployBuild?.(build.buildId)}
+                  >
+                    Deploy this build to {environment.name}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {flow.deployments.length > 0 && (
+        <ul className="gbx-deploy-history" aria-label="Deploys">
+          {flow.deployments.slice(0, SHOWN).map((d) => (
+            <li key={d.id} data-deploy-history={d.id} data-deploy-history-state={d.state}>
+              {deploymentStateLabel(d.state)} · {d.environmentName} ({d.namespace})
+              {d.action === "uninstall" ? " · uninstall" : d.chartVersion !== undefined ? ` · ${d.chartVersion}` : ""}
+              {d.build !== undefined ? ` · build ${d.build}` : ""}
+              {d.requestedBy !== undefined ? ` · ${d.requestedBy}` : ""}
+              {d.reason !== undefined && <span className={d.state === "failed" ? "gbx-inline-error" : undefined}> -- {d.reason}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* The release's live workloads are on the organization's Environments
+          page: that read needs the organization, which an IDE opened on a
+          project does not hold. */}
+    </section>
+  );
+}
+
+function firstLine(text: string): string {
+  return text.split(/\r?\n/)[0] ?? text;
 }

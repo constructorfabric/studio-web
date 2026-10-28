@@ -48,6 +48,8 @@ import type { ProductEdit } from "../common/generated/ProductEdit";
 import type { ResolveResult } from "../common/generated/ResolveResult";
 import { GearboxService } from "../common/protocol";
 import { isEngineGone, isOutcomeUnknown } from "./engine-failure";
+import { CatalogueStore } from "./catalogue-store";
+import { productSourceFor, type ProductSource } from "./add-gear/product-source";
 import { ProductStore } from "./product-store";
 import { ProductSessionService } from "./shell/product-session-service";
 import { identityOf, type ContextIdentity } from "./shell/screens";
@@ -88,6 +90,7 @@ export type CreateOutcome = false | "created" | "opened";
 export class ProductEditService {
   @inject(GearboxService) protected readonly service!: GearboxService;
   @inject(ProductStore) protected readonly product!: ProductStore;
+  @inject(CatalogueStore) protected readonly catalogue!: CatalogueStore;
   @inject(ProductSessionService) protected readonly session!: ProductSessionService;
   @inject(MonacoTextModelService) protected readonly models!: MonacoTextModelService;
   @inject(MessageService) protected readonly messages!: MessageService;
@@ -597,6 +600,18 @@ export class ProductEditService {
         `Open it again to finish the change.`,
     );
     return false;
+  }
+
+  /** Resolve a catalogue gear to the source alias this product declares. */
+  sourceForGear(gear: string): ProductSource {
+    const { open, intent } = this.product.current;
+    if (!open || !intent) return { ok: false, reason: "Open a readable product before adding gears." };
+    const source = this.catalogue.sourceOf(gear);
+    if (source === undefined) return { ok: false, reason: `The descriptor for ${gear} is unavailable. Wait for the catalogue or reconnect.` };
+    return productSourceFor(source, {
+      productPath: open.path, intent, roots: this.catalogue.resolvedRoots(),
+      sourceOf: id => this.catalogue.sourceOf(id),
+    });
   }
 
   /**
