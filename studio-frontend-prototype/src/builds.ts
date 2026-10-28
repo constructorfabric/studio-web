@@ -341,3 +341,32 @@ export function statusTone(s: BuildStatus): string {
       return "neutral";
   }
 }
+
+/** A Studio build's Job gives up after an hour; one still `running` this long
+ *  after it started has lost its watch, and nothing will say how it ended. */
+export const LOST_AFTER_MS = 65 * 60_000;
+
+/** A Studio build still `running` past its Job's deadline: lost, not running. */
+export function isLost(b: Pick<IdeBuild, "where" | "status" | "startedAt">, now = Date.now()): boolean {
+  if (b.where !== "studio" || b.status !== "running" || !b.startedAt) return false;
+  const started = Date.parse(b.startedAt);
+  return Number.isFinite(started) && now - started > LOST_AFTER_MS;
+}
+
+/** Whether any build is really running: a lost one is not, so the page stops
+ *  following it. */
+export function anyRunning(builds: readonly IdeBuild[], now = Date.now()): boolean {
+  return builds.some((b) => b.status === "running" && !isLost(b, now));
+}
+
+/** The ways to build the product, as the Builds tab offers them. */
+export const BUILD_SCENARIOS = ["studio", "desktop", "ci"] as const;
+export type BuildScenario = (typeof BUILD_SCENARIOS)[number];
+
+/** The scenario the Builds tab opens on: the one this member chose for the
+ *  project before, else Studio when an environment can take a Studio build,
+ *  else the desktop, which needs nothing from the organization. */
+export function openingScenario(stored: string | null, canBuildInStudio: boolean): BuildScenario {
+  if (stored && (BUILD_SCENARIOS as readonly string[]).includes(stored)) return stored as BuildScenario;
+  return canBuildInStudio ? "studio" : "desktop";
+}

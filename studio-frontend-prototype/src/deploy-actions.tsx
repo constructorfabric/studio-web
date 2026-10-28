@@ -4,9 +4,9 @@
  * the workflow that builds the product for it. The rules are in
  * `project-deploys.ts`; the server checks every one of them again. */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { api, type ConfigSecret, type ProjectProduct, type Deployment, type DeployEnvironment, type EnvironmentBinding } from "./api";
+import { api, type ConfigSecret, type Deployment, type DeployEnvironment, type EnvironmentBinding } from "./api";
 import type { IdeBuild } from "./builds";
 import { shortCommit } from "./environments";
 import { errText, relTime } from "./format";
@@ -297,149 +297,207 @@ export function EnvironmentConfig({
   );
 }
 
-/** Build the product for an environment: in Studio, as a Job in the
- *  environment's cluster; in the IDE; or by proposing a CI workflow to the
- *  repository. The Builds tab's first card. */
-export function BuildWorkflowProposal({
+/** What the Product step last wrote: the description's path, its branch and
+ *  pull request, the profile picked. What a build builds unless told
+ *  otherwise. */
+export interface SavedProduct {
+  path: string;
+  branch: string | null;
+  prUrl: string | null;
+  profile: string | null;
+}
+
+/** The environments a Studio build can push from: a registry prefix and a
+ *  login to push with. */
+export function buildableEnvironments(environments: readonly DeployEnvironment[]): DeployEnvironment[] {
+  return environments.filter((e) => e.registry.includes("/") && !!e.registry_connection_id);
+}
+
+/** Build in Studio: a Job in the environment's cluster clones the repository,
+ *  generates the product, builds its images and pushes them and the chart to
+ *  the environment's registry. Said as one sentence -- what is built, from
+ *  where, to where -- with Change for the member who wants another branch,
+ *  file, profile or environment. */
+export function BuildInStudio({
   token,
   projectId,
   environments,
   profiles,
+  saved,
   onChanged,
-  onOpenStudio,
 }: {
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
   profiles: string[];
+  saved: SavedProduct | null;
   onChanged?: (message: string) => void;
-  /** Open the project in the IDE, which builds on the member's machine. */
-  onOpenStudio?: () => void;
 }) {
-  const withRegistry = environments.filter((e) => e.registry.includes("/"));
+  const choices = buildableEnvironments(environments);
+  const [envId, setEnvId] = useState("");
+  const [productFile, setProductFile] = useState<string | null>(null);
+  const [gitRef, setGitRef] = useState<string | null>(null);
+  const [profile, setProfile] = useState<string | null>(null);
+  const [changing, setChanging] = useState(false);
   const [building, setBuilding] = useState(false);
-  const [envId, setEnvId] = useState(withRegistry[0]?.id ?? "");
-  const [profile, setProfile] = useState(profiles[0] ?? "prod");
-  const [productFile, setProductFile] = useState("product.gdl");
-  const [gitRef, setGitRef] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<ProjectProduct["written"] | null>(null);
-  // A new array every render; its contents are what the effect depends on.
-  const profileList = profiles.join(",");
-  // What to build is the Product step's answer: where it last committed
-  // product.gdl, on which branch, for which profile. A member only overrides it.
-  useEffect(() => {
-    let live = true;
-    api
-      .projectProduct(token, projectId)
-      .then((p) => {
-        if (!live || !p?.written) return;
-        setSaved(p.written);
-        if (p.written.path) setProductFile(p.written.path);
-        if (p.written.branch) setGitRef(p.written.branch);
-        if (p.profile && profileList.split(",").includes(p.profile)) setProfile(p.profile);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [token, projectId, profileList]);
-  if (withRegistry.length === 0) return null;
-  // The Job pushes with the environment's registry login, which a workflow in
-  // the repository's CI does not need: it brings its own.
-  const chosen = withRegistry.find((e) => e.id === envId);
-  const noLogin = !!chosen && !chosen.registry_connection_id;
-  return (
-    <div className="card" data-build-workflow>
-      <h3>Build</h3>
-      <p className="hint">
-        <b>Build in Studio</b> runs the build as a Job in the environment&apos;s cluster, on the organization&apos;s nodes: it
-        clones the repository, generates the profile with the Gearbox engine this Studio runs, builds the images and pushes
-        them and the chart under the environment&apos;s registry. Or propose a workflow that does the same in the
-        repository&apos;s CI on every push to main. Either way the build appears below with its stages, and is deployed once
-        it has published its chart.
+  if (choices.length === 0) {
+    return (
+      <p className="hint" data-build-studio-unavailable>
+        No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with
+        (Organization › Environments). Until then, build on your machine or in CI.
       </p>
-      {saved && (
-        <p className="hint" data-build-from-product>
-          From the Product step: <code>{saved.path ?? "product.gdl"}</code> on <code>{saved.branch}</code>
-          {saved.pr_url ? (
-            <>
-              {" "}
-              (<a href={saved.pr_url} target="_blank" rel="noreferrer">
-                its pull request
-              </a>
-              ; once it is merged, build the repository&apos;s own branch)
-            </>
-          ) : null}
-          .
-        </p>
+    );
+  }
+  // The Product step's answer unless the member changed it.
+  const env = choices.find((e) => e.id === envId) ?? choices[0];
+  const file = productFile ?? saved?.path ?? "product.gdl";
+  const branch = gitRef ?? saved?.branch ?? "";
+  const options = profiles.length ? profiles : ["prod"];
+  const prof = profile ?? (saved?.profile && options.includes(saved.profile) ? saved.profile : options[0]);
+  return (
+    <div data-build-in-studio>
+      <p data-build-summary>
+        Builds <code>{file}</code> from {branch ? <code>{branch}</code> : "the repository's own branch"}
+        {saved?.prUrl && branch === saved.branch ? (
+          <>
+            {" "}
+            (
+            <a href={saved.prUrl} target="_blank" rel="noreferrer">
+              the Product step&apos;s pull request
+            </a>
+            )
+          </>
+        ) : null}{" "}
+        for profile <code>{prof}</code>, and pushes its images and chart to <code>{env.registry}</code> of{" "}
+        <b>{env.name}</b>.{" "}
+        <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
+          {changing ? "Done" : "Change"}
+        </button>
+      </p>
+      {changing && (
+        <div className="row" data-build-fields>
+          <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
+            {choices.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.registry}
+              </option>
+            ))}
+          </select>
+          <input
+            value={file}
+            onChange={(e) => setProductFile(e.target.value)}
+            aria-label="Product description"
+            title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
+            placeholder="product.gdl"
+          />
+          <input
+            value={branch}
+            onChange={(e) => setGitRef(e.target.value)}
+            aria-label="Branch or tag"
+            title="The branch or tag to build; the repository's own branch when empty. Push it first: the Job clones from the repository, not from anybody's machine."
+            placeholder="the repository's own branch"
+          />
+          <select value={prof} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
+            {options.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </div>
       )}
       <div className="row">
-        <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
-          {withRegistry.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name} — {e.registry}
-            </option>
-          ))}
-        </select>
-        <input
-          value={productFile}
-          onChange={(e) => setProductFile(e.target.value)}
-          aria-label="Product description"
-          title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
-          placeholder="product.gdl"
-        />
-        <input
-          value={gitRef}
-          onChange={(e) => setGitRef(e.target.value)}
-          aria-label="Branch or tag"
-          title="The branch or tag to build; the repository's own branch when empty. Push it first: the Job clones from the repository, not from anybody's machine."
-          placeholder="branch (default)"
-        />
-        <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
-          {(profiles.length ? profiles : ["prod"]).map((p) => (
-            <option key={p}>{p}</option>
-          ))}
-        </select>
         <button
           type="button"
           className="primary"
-          disabled={building || !envId || noLogin}
-          title={noLogin ? `${chosen?.name} has no registry connection: the Job pushes with its login. Add one to the environment.` : undefined}
+          disabled={building}
           onClick={async () => {
             setBuilding(true);
             setError(null);
             try {
               const b = await api.startBuild(token, projectId, {
-                environment_id: envId,
-                profile,
-                product_file: productFile.trim() || "product.gdl",
-                ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
+                environment_id: env.id,
+                profile: prof,
+                product_file: file.trim() || "product.gdl",
+                ...(branch.trim() ? { ref: branch.trim() } : {}),
               });
-              onChanged?.(`Build ${b.build_id} started in ${b.namespace}: it shows under Builds, and under Deploy a build once it passes.`);
+              onChanged?.(`Build ${b.build_id} started in ${b.namespace}; it shows below as it goes.`);
             } catch (e) {
               setError(errText(e));
             } finally {
               setBuilding(false);
             }
           }}
+          data-build-start-studio
         >
           {building ? "Starting…" : "Build in Studio"}
         </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** Propose the workflow that builds the product in the repository's CI on
+ *  every push to main, as a pull request. What it proposed is said only right
+ *  after, in this visit: the pull request's own page says what became of it. */
+export function ProposeBuildWorkflow({
+  token,
+  projectId,
+  environments,
+  profiles,
+  saved,
+}: {
+  token: string;
+  projectId: string;
+  environments: DeployEnvironment[];
+  profiles: string[];
+  saved: SavedProduct | null;
+}) {
+  const choices = environments.filter((e) => e.registry.includes("/"));
+  const [envId, setEnvId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (choices.length === 0) {
+    return (
+      <p className="hint">
+        A CI workflow publishes to an environment&apos;s registry, and no environment of this project names one yet
+        (Organization › Environments).
+      </p>
+    );
+  }
+  const env = choices.find((e) => e.id === envId) ?? choices[0];
+  const options = profiles.length ? profiles : ["prod"];
+  const profile = saved?.profile && options.includes(saved.profile) ? saved.profile : options[0];
+  const file = saved?.path ?? "product.gdl";
+  return (
+    <div data-propose-workflow>
+      <div className="row">
+        {choices.length > 1 && (
+          <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
+            {choices.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.registry}
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="grow hint">
+          A workflow that builds <code>{file}</code> for profile <code>{profile}</code> and publishes to{" "}
+          <code>{env.registry}</code>, proposed to the repository as a pull request.
+        </span>
         <button
           type="button"
-          disabled={busy || !envId}
+          disabled={busy}
           onClick={async () => {
             setBusy(true);
             setError(null);
             try {
               setResult(
                 await api.proposeBuildWorkflow(token, projectId, {
-                  environment_id: envId,
+                  environment_id: env.id,
                   profile,
-                  product_file: productFile.trim() || "product.gdl",
+                  product_file: file,
                 }),
               );
             } catch (e) {
@@ -448,17 +506,13 @@ export function BuildWorkflowProposal({
               setBusy(false);
             }
           }}
+          data-propose-workflow-start
         >
           {busy ? "Proposing…" : "Propose a CI workflow"}
         </button>
-        {onOpenStudio && (
-          <button type="button" onClick={onOpenStudio} title="Build on your machine in the desktop IDE: Generate, then Build">
-            Open in the IDE
-          </button>
-        )}
       </div>
       {result && (
-        <p className="hint">
+        <p className="hint" data-propose-workflow-result>
           Proposed on <code>{result.branch}</code>
           {result.pr_url && (
             <>
@@ -469,7 +523,7 @@ export function BuildWorkflowProposal({
               </a>
             </>
           )}
-          . Merge it to build.
+          . Once it is merged, every push to main builds the product.
         </p>
       )}
       {error && <div className="error">{error}</div>}

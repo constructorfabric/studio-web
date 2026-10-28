@@ -170,7 +170,7 @@ import {
   type RepoMode,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
-import { ProductFrontend, ProductSectionsHead } from "./product-sections-view";
+import { ProductPage } from "./product-sections-view";
 import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
@@ -5759,17 +5759,21 @@ function ProjectScreen({
         {tab === "artifacts" && (
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenTab={setTab} />
         )}
-        {tab === "components" && <ProductSectionsHead token={token} projectId={proj.id} />}
         {tab === "components" && (
-          <ProjectKits
+          <ProductPage
             token={token}
             projectId={proj.id}
-            projectName={proj.name}
-            workspaceId={workspace.id}
-            onOpenTab={setTab}
+            backend={
+              <ProjectKits
+                token={token}
+                projectId={proj.id}
+                projectName={proj.name}
+                workspaceId={workspace.id}
+                onOpenTab={setTab}
+              />
+            }
           />
         )}
-        {tab === "components" && <ProductFrontend token={token} projectId={proj.id} />}
         {tab === "parts" && (
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}

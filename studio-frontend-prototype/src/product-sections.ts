@@ -104,3 +104,41 @@ export function infrastructureOf(
   }));
   return { profile, profileLabel, runsIn };
 }
+
+/** The Product page's header: the product in one line -- what it is, for
+ *  which profile, from how many gears, where it was last saved, whether it
+ *  resolved, and whether it has a frontend. */
+export interface ProductSummary {
+  id: string | null;
+  profile: string | null;
+  gears: number;
+  saved: { branch: string | null; prUrl: string | null } | null;
+  /** `ok`, `N errors`, or null before the first preview. */
+  preview: { ok: boolean; errors: number; warnings: number } | null;
+  frontend: boolean;
+}
+
+export function productSummary(
+  product: Pick<ProjectProduct, "product_id" | "profile" | "gears" | "written" | "last_preview"> | null,
+  cfg: ProjectConfig | null | undefined,
+): ProductSummary {
+  const profile = product?.profile ?? null;
+  return {
+    id: product?.product_id ?? null,
+    profile: profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null,
+    gears: product?.gears?.length ?? 0,
+    saved: product?.written ? { branch: product.written.branch || null, prUrl: product.written.pr_url ?? null } : null,
+    preview: product?.last_preview
+      ? { ok: product.last_preview.ok, errors: product.last_preview.errors, warnings: product.last_preview.warnings }
+      : null,
+    frontend: hasFrontend(cfg),
+  };
+}
+
+/** The section the Product page opens on: an old Frontend-tab address first,
+ *  then the one this member last looked at for the project, else Backend --
+ *  the gears, where a product starts. */
+export function openingSection(landing: ProductSectionId | null, stored: string | null): ProductSectionId {
+  if (landing) return landing;
+  return PRODUCT_SECTIONS.some((s) => s.id === stored) ? (stored as ProductSectionId) : "backend";
+}

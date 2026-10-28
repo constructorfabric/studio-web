@@ -97,7 +97,7 @@ describe("specQueues", () => {
 
 describe("TAB_HOWTO", () => {
   it("has a line for the tabs a new member needs", () => {
-    for (const tab of ["overview", "sources", "specs", "components", "builds", "kits", "people"] as const) {
+    for (const tab of ["overview", "sources", "specs", "components", "kits", "people"] as const) {
       expect(TAB_HOWTO[tab]?.lead, tab).toBeTruthy();
     }
   });

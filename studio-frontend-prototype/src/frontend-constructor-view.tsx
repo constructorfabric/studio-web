@@ -1,4 +1,4 @@
-/* The project's Frontend tab (ADR-0050): the product's UI as a FrontX shell
+/* The Product tab's Frontend section (ADR-0050): the product's UI as a FrontX shell
  * with micro-frontends mounted in it. The packages one can add on the left,
  * from the catalogue; the shell in the middle, drawn as the portal draws it —
  * navigation, the page, the sidebar, overlays and popups — filled with the
@@ -12,20 +12,32 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
 import { api } from "./api";
+import { repoPathsOf } from "./builds";
 import {
   SUGGESTED_FRONTX_SOURCE,
   coverage,
+  frontxSuggestion,
   mfesFrom,
   offersFor,
   placementLabel,
-  withSuggestedFrontx,
+  splitTemplates,
+  withFrontxSource,
   zonesOf,
   type Mfe,
   type Placement,
 } from "./frontend-constructor";
 import { errText } from "./problem";
 
-type Loaded = { mfes: Mfe[]; gears: string[] };
+type Loaded = {
+  /** The micro-frontends a product can add. */
+  mfes: Mfe[];
+  /** Templates and examples: where a new micro-frontend starts. */
+  templates: Mfe[];
+  gears: string[];
+  /** The project's repository to read micro-frontends from, when the
+   *  catalogue does not read it yet. */
+  suggestion: string | null;
+};
 
 /** A lucide icon id (`lucide:users`) as one letter in a circle: the shell's
  *  icons are not bundled here, and a letter says which item it is. */
@@ -52,6 +64,8 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [loads, setLoads] = useState(0);
   /** Where adding the suggested FrontX source has got to; `null` when idle. */
   const [suggesting, setSuggesting] = useState<string | null>(null);
+  /** The product's gears no picked screen calls, listed on demand. */
+  const [showUnseen, setShowUnseen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -60,15 +74,23 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       api.listComponentProfiles(token).catch(() => ({ nodes: [] })),
       api.projectProduct(token, projectId).catch(() => null),
       api.projectConfig(token, projectId).catch(() => null),
+      api.listArtifactNodes(token, "repo", projectId, undefined, 50).catch(() => ({ nodes: [] })),
+      api.catalogSources(token).catch(() => ({ items: [] })),
     ])
-      .then(([components, profiles, product, cfg]) => {
+      .then(([components, profiles, product, cfg, repos, sources]) => {
         if (!alive) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
           const name = typeof n.value.gear_name === "string" ? n.value.gear_name : "";
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
-        setData({ mfes: mfesFrom(components.nodes ?? [], byName), gears: product?.gears ?? [] });
+        const { addable, templates } = splitTemplates(mfesFrom(components.nodes ?? [], byName));
+        setData({
+          mfes: addable,
+          templates,
+          gears: product?.gears ?? [],
+          suggestion: frontxSuggestion([...repoPathsOf(repos.nodes ?? []).values()], sources.items ?? []),
+        });
         const own = cfg?.frontend?.mfes ?? [];
         setPicks(own);
         setSaved(own);
@@ -79,15 +101,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     };
   }, [token, projectId, loads]);
 
-  /** Add the suggested FrontX repository to the organization's catalogue
-   *  sources (unless it is there already) and sync them, the way a scheduled
-   *  sync does: no body, so the run reads every stored source. */
-  async function addSuggested() {
+  /** Add `repo` to the organization's catalogue sources as FrontX (unless it
+   *  is there already) and sync them, the way a scheduled sync does: no body,
+   *  so the run reads every stored source. */
+  async function addSource(repo: string) {
     setErr(null);
     setSuggesting("Adding the source…");
     try {
       const { items } = await api.catalogSources(token);
-      const next = withSuggestedFrontx(items ?? []);
+      const next = withFrontxSource(items ?? [], repo);
       if (next) await api.saveCatalogSources(token, next);
       setSuggesting("Syncing the catalogue…");
       const { run_id } = await api.syncComponents(token);
@@ -152,28 +174,60 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div className="pm-status" role="status">
-        {picked.length === 0 ? (
-          <span className="pm-pill">Empty</span>
-        ) : missingCount > 0 ? (
+        <span className="pm-summary" data-frontend-summary>
+          {picked.length} micro-frontend{picked.length === 1 ? "" : "s"} · {screens.length} screen
+          {screens.length === 1 ? "" : "s"}
+        </span>
+        {missingCount > 0 ? (
           <span className="pm-pill todo">
             {missingCount} gear{missingCount === 1 ? "" : "s"} the screens call {missingCount === 1 ? "is" : "are"} not in the product
           </span>
-        ) : (
+        ) : picked.length > 0 ? (
           <span className="pm-pill ok">✓ Every screen has its gears</span>
-        )}
+        ) : null}
         {cover.unseen.length > 0 && (
-          <span className="pm-pill todo" title={cover.unseen.join(", ")}>
-            {cover.unseen.length} product gear{cover.unseen.length === 1 ? " has" : "s have"} no screen
-          </span>
+          <button
+            type="button"
+            className="pm-pill todo"
+            aria-expanded={showUnseen}
+            onClick={() => setShowUnseen((v) => !v)}
+            data-unseen-chip
+          >
+            {cover.unseen.length} gear{cover.unseen.length === 1 ? " has" : "s have"} no screen {showUnseen ? "▾" : "▸"}
+          </button>
         )}
-        <span className="pm-summary">
-          {picked.length} package{picked.length === 1 ? "" : "s"} · {screens.length} screen{screens.length === 1 ? "" : "s"} ·{" "}
-          {data.gears.length} gears in the product
-        </span>
         <button type="button" className="primary" disabled={!dirty || busy} onClick={save}>
           {busy ? "Saving…" : dirty ? "Save" : "Saved"}
         </button>
       </div>
+      {showUnseen && cover.unseen.length > 0 && (
+        <div className="pm-box" data-unseen-list>
+          {cover.unseen.map((g) => {
+            const could = data.mfes.filter((m) => offersFor(g, [m]).length > 0);
+            return (
+              <div key={g} style={{ fontSize: 12.5 }}>
+                <code>{g}</code>
+                {could.length > 0 ? (
+                  <>
+                    {" "}
+                    — shown by{" "}
+                    {could.map((m, i) => (
+                      <span key={m.name}>
+                        {i > 0 && ", "}
+                        <button type="button" className="pm-link" onClick={() => add(m.name)}>
+                          {m.name}
+                        </button>
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  <span className="muted"> — no micro-frontend in the catalogue calls it</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="pm-work">
         <div className="pm-box pm-palette" aria-label="Micro-frontends you can add">
@@ -188,24 +242,30 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           {data.mfes.length === 0 && (
             <div className="muted" style={{ fontSize: 12, margin: 0, display: "grid", gap: 6 }} data-frontx-suggestion>
               <span>
-                The catalogue lists no micro-frontend yet. A micro-frontend is a FrontX package with an{" "}
-                <code>mfe.json</code> (under <code>src-app/mfe_packages/</code>); it lands here with its screens once
-                its repository is a <b>frontx</b> source of the catalogue and has been synced.
+                No micro-frontend to add yet: they come from a repository the catalogue reads as <b>frontx</b>, one
+                package with an <code>mfe.json</code> under <code>src-app/mfe_packages/</code> each.
               </span>
-              <span>
-                To start, add FrontX's own templates,{" "}
-                <a href={`https://github.com/${SUGGESTED_FRONTX_SOURCE.repo}`} target="_blank" rel="noreferrer">
-                  <code>{SUGGESTED_FRONTX_SOURCE.repo}</code>
-                </a>{" "}
-                at <code>{SUGGESTED_FRONTX_SOURCE.git_ref}</code>: it brings a blank micro-frontend, a demo with five
-                screens and two widgets. Your own FrontX repositories are added the same way, under Components ›
-                Repositories.
-              </span>
-              <span>
-                <button type="button" className="primary" disabled={suggesting !== null} onClick={() => void addSuggested()}>
-                  {suggesting ?? "Add and sync"}
-                </button>
-              </span>
+              {data.suggestion ? (
+                <>
+                  <span>
+                    Read this project&apos;s own repository, <code>{data.suggestion}</code>: its micro-frontends land here
+                    with their screens.
+                  </span>
+                  <span>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={suggesting !== null}
+                      onClick={() => data.suggestion && void addSource(data.suggestion)}
+                      data-frontx-add-own
+                    >
+                      {suggesting ?? "Add and sync"}
+                    </button>
+                  </span>
+                </>
+              ) : (
+                <span>Add a repository with micro-frontends under Components › Repositories, mode frontx, and sync.</span>
+              )}
             </div>
           )}
           {data.mfes
@@ -244,6 +304,36 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                 </p>
               </div>
             ))}
+          <details className="fc-templates" data-mfe-templates>
+            <summary>Start a new micro-frontend from a template</summary>
+            <p className="muted" style={{ fontSize: 12, margin: "6px 0" }}>
+              Copy a template into your repository&apos;s <code>src-app/mfe_packages/</code>, give it its screens, and
+              sync: it lands above as one to add.
+            </p>
+            {data.templates.length > 0 ? (
+              data.templates.map((t) => (
+                <div key={t.name} style={{ fontSize: 12.5 }}>
+                  <code>{t.name}</code>
+                  {t.kind ? <span className="muted"> · {t.kind}</span> : null}
+                  {t.placements.length > 0 ? (
+                    <span className="muted"> · {t.placements.map(placementLabel).join(", ")}</span>
+                  ) : null}
+                </div>
+              ))
+            ) : (
+              <div style={{ fontSize: 12.5 }}>
+                The templates are in{" "}
+                <a
+                  href={`https://github.com/${SUGGESTED_FRONTX_SOURCE.repo}/tree/${SUGGESTED_FRONTX_SOURCE.git_ref}/template-mfe/src-app/mfe_packages`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <code>{SUGGESTED_FRONTX_SOURCE.repo}</code>
+                </a>
+                : a blank one, a demo, two widgets.
+              </div>
+            )}
+          </details>
         </div>
 
         <div
@@ -288,9 +378,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
                     onOpen={() => setSelected(shown.mfe.name)}
                   />
                 ) : (
-                  <div className="fc-empty big">
-                    Drag a micro-frontend here, or press Add. Its screens join the navigation, its panels the sidebar.
-                  </div>
+                  <div className="fc-empty big">Drag a micro-frontend here, or press Add.</div>
                 )}
               </main>
               <aside className="fc-side" aria-label="Sidebar">
@@ -312,9 +400,7 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
         <Inspector
           mfe={selectedMfe}
           gears={data.gears}
-          mfes={data.mfes}
           missing={selectedMfe ? (cover.missing.get(selectedMfe.name) ?? []) : []}
-          unseen={cover.unseen}
           picked={selectedMfe ? picks.includes(selectedMfe.name) : false}
           onRemove={remove}
           onAdd={add}
@@ -390,18 +476,14 @@ function PageCard({
 function Inspector({
   mfe,
   gears,
-  mfes,
   missing,
-  unseen,
   picked,
   onRemove,
   onAdd,
 }: {
   mfe: Mfe | undefined;
   gears: string[];
-  mfes: Mfe[];
   missing: string[];
-  unseen: string[];
   picked: boolean;
   onRemove: (name: string) => void;
   onAdd: (name: string) => void;
@@ -409,42 +491,10 @@ function Inspector({
   if (!mfe) {
     return (
       <div className="pm-box pm-inspector" aria-label="About the selected micro-frontend">
-        <div className="pm-h">How it works</div>
-        <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, color: "var(--muted-foreground)" }}>
-          <li>Find a micro-frontend on the left by what the product should show.</li>
-          <li>Drag it onto the shell, or press Add. Its screens join the navigation, its panels the sidebar.</li>
-          <li>Each screen says which gears it calls: ✓ the product has it, ✗ it does not — add the gear on the Product tab.</li>
-          <li>A product gear no screen calls is listed here, with the packages that could show it.</li>
-        </ol>
-        {unseen.length > 0 && (
-          <section>
-            <div className="pm-h">Product gears with no screen</div>
-            {unseen.map((g) => {
-              const could = mfes.filter((m) => offersFor(g, [m]).length > 0);
-              return (
-                <div key={g} style={{ fontSize: 12.5 }}>
-                  <code>{g}</code>
-                  {could.length > 0 ? (
-                    <>
-                      {" "}
-                      — shown by{" "}
-                      {could.map((m, i) => (
-                        <span key={m.name}>
-                          {i > 0 && ", "}
-                          <button type="button" className="pm-link" onClick={() => onAdd(m.name)}>
-                            {m.name}
-                          </button>
-                        </span>
-                      ))}
-                    </>
-                  ) : (
-                    <span className="muted"> — no micro-frontend in the catalogue calls it</span>
-                  )}
-                </div>
-              );
-            })}
-          </section>
-        )}
+        <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+          Pick a screen or a micro-frontend to see where it shows and which gears it calls: ✓ the product has the gear,
+          ✗ add it under Backend.
+        </p>
       </div>
     );
   }

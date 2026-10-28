@@ -6,6 +6,8 @@ import {
   PRODUCT_SECTIONS,
   hasFrontend,
   infrastructureOf,
+  openingSection,
+  productSummary,
   sectionFromPath,
   withFrontend,
   withoutFrontend,
@@ -73,5 +75,48 @@ describe("where the product runs", () => {
 
   it("is nothing yet for a product never composed and never bound", () => {
     expect(infrastructureOf(null, null)).toEqual({ profile: null, profileLabel: null, runsIn: [] });
+  });
+});
+
+describe("the Product page's header", () => {
+  it("says the product in one line: id, profile, gears, where it was saved, whether it resolved, a frontend", () => {
+    const s = productSummary(
+      {
+        product_id: "studio-web",
+        profile: "prod",
+        gears: ["a", "b", "c"],
+        written: { branch: "product/studio-web-50fdd46f", commit_sha: "abc", pr_url: "https://x/pull/894" },
+        last_preview: { profile: "prod", ok: false, errors: 2, warnings: 5, applications: [], gears: [] },
+      },
+      { frontend: { mfes: [] } },
+    );
+    expect(s).toEqual({
+      id: "studio-web",
+      profile: "prod · Kubernetes",
+      gears: 3,
+      saved: { branch: "product/studio-web-50fdd46f", prUrl: "https://x/pull/894" },
+      preview: { ok: false, errors: 2, warnings: 5 },
+      frontend: true,
+    });
+  });
+
+  it("says nothing it does not know before the product is composed", () => {
+    expect(productSummary(null, null)).toEqual({
+      id: null,
+      profile: null,
+      gears: 0,
+      saved: null,
+      preview: null,
+      frontend: false,
+    });
+  });
+});
+
+describe("the section the Product page opens on", () => {
+  it("is an old Frontend address first, then the one last looked at, else Backend", () => {
+    expect(openingSection("frontend", "infrastructure")).toBe("frontend");
+    expect(openingSection(null, "infrastructure")).toBe("infrastructure");
+    expect(openingSection(null, "nonsense")).toBe("backend");
+    expect(openingSection(null, null)).toBe("backend");
   });
 });

@@ -5,7 +5,7 @@
  * `nextStep` in components-flow.ts. Derived from what the tab already read. */
 
 import type { Deployment } from "./api";
-import { BUILD_STAGES, buildStages, type IdeBuild } from "./builds";
+import { BUILD_STAGES, buildStages, isLost, type IdeBuild } from "./builds";
 import { STATE_LABELS } from "./environments";
 
 /** The project tabs a line can send a person to. */
@@ -29,7 +29,7 @@ function stageWord(b: IdeBuild): string {
 
 /** Where the Builds tab stands: its newest product build, or how to make one.
  *  `canBuildInStudio`: an environment has a registry login to push with. */
-export function buildsHint(builds: readonly IdeBuild[], canBuildInStudio: boolean): PipelineHint {
+export function buildsHint(builds: readonly IdeBuild[], canBuildInStudio: boolean, now = Date.now()): PipelineHint {
   const latest = builds.find((b) => b.action !== "run");
   if (!latest) {
     return {
@@ -37,6 +37,12 @@ export function buildsHint(builds: readonly IdeBuild[], canBuildInStudio: boolea
         ? "Nothing built yet: Build in Studio below, open the project in the IDE, or propose a CI workflow."
         : "Nothing built yet. Building in Studio needs an environment with a registry connection (Organization › Environments); the IDE and CI build without one.",
       tone: "todo",
+    };
+  }
+  if (isLost(latest, now)) {
+    return {
+      text: `Build ${latest.buildId} is lost: no word from its Job since ${new Date(latest.startedAt ?? 0).toLocaleString()}. Build again.`,
+      tone: "failed",
     };
   }
   switch (latest.status) {

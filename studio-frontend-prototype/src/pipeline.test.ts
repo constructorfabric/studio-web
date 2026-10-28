@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Deployment } from "./api";
-import { buildStages, stageOf, type IdeBuild } from "./builds";
+import { anyRunning, buildStages, isLost, openingScenario, stageOf, type IdeBuild } from "./builds";
 import { buildsHint, deploysHint } from "./pipeline";
 
 const build = (over: Partial<IdeBuild>): IdeBuild => ({
@@ -101,6 +101,14 @@ describe("where the Builds tab stands", () => {
     expect(hint.text).toBe("Build studio-1 is building the images; this page follows it.");
   });
 
+  it("calls a Studio build lost once its Job's hour is long past, and says to build again", () => {
+    const now = Date.parse("2026-10-28T16:00:00Z");
+    const stuck = build({ status: "running", step: "prepare", startedAt: "2026-10-28T14:00:00Z" });
+    const hint = buildsHint([stuck], true, now);
+    expect(hint.tone).toBe("failed");
+    expect(hint.text).toMatch(/^Build studio-1 is lost: no word from its Job since .+\. Build again\.$/);
+  });
+
   it("does not send a build without a chart to Deploys", () => {
     expect(buildsHint([build({ chartRef: null, chartVersion: null })], true).go).toBeUndefined();
   });
@@ -127,5 +135,33 @@ describe("where the Deploys tab stands", () => {
       "The last deploy to dev (shop-dev) failed: helm timed out.",
     );
     expect(deploysHint({ ...ready, deployments: [deployment({ state: "running" })] }).text).toBe("Deploying: dev (shop-dev).");
+  });
+});
+
+describe("a lost build", () => {
+  const now = Date.parse("2026-10-28T16:00:00Z");
+
+  it("is a Studio build running past its Job's deadline", () => {
+    expect(isLost(build({ status: "running", startedAt: "2026-10-28T14:00:00Z" }), now)).toBe(true);
+    expect(isLost(build({ status: "running", startedAt: "2026-10-28T15:30:00Z" }), now)).toBe(false);
+    // The desktop says when its build ends; an hour is nothing to it.
+    expect(isLost(build({ where: "desktop", status: "running", startedAt: "2026-10-28T14:00:00Z" }), now)).toBe(false);
+    expect(isLost(build({ status: "failed", startedAt: "2026-10-28T14:00:00Z" }), now)).toBe(false);
+    expect(isLost(build({ status: "running", startedAt: null }), now)).toBe(false);
+  });
+
+  it("is not followed: only a build really running keeps the page refreshing", () => {
+    const lost = build({ status: "running", startedAt: "2026-10-28T14:00:00Z" });
+    expect(anyRunning([lost], now)).toBe(false);
+    expect(anyRunning([lost, build({ status: "running", startedAt: "2026-10-28T15:55:00Z" })], now)).toBe(true);
+  });
+});
+
+describe("the scenario the Builds tab opens on", () => {
+  it("is the one chosen before, else Studio when it can build, else the desktop", () => {
+    expect(openingScenario("ci", true)).toBe("ci");
+    expect(openingScenario(null, true)).toBe("studio");
+    expect(openingScenario(null, false)).toBe("desktop");
+    expect(openingScenario("nonsense", true)).toBe("studio");
   });
 });

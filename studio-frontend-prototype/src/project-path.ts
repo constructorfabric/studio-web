@@ -141,14 +141,14 @@ export function specQueues(counts: readonly { queue: string; count: number }[]):
 }
 
 /** One line per project tab: what a person does there. Shown at the top of
- *  the tab, so a first visit is not spent guessing. Domain model is missing on
- *  purpose: each of its views already carries its own line. */
+ *  the tab, so a first visit is not spent guessing. Domain model and Builds are
+ *  missing on purpose: each of Domain model's views carries its own line, and
+ *  Builds opens on where the build stands and what comes next (pipeline.ts). */
 export const TAB_HOWTO: Partial<Record<ProjTab, { lead: string; rest: string }>> = {
   overview: { lead: "Where the project stands.", rest: "Follow the path below; each step opens the tab where it is done." },
   sources: { lead: "Connect the repositories.", rest: "A sync reads their documents, issues, pull requests and CI runs into the project." },
   specs: { lead: "Type the documents.", rest: "Confirm the template each file was written against; what Studio could not decide waits under Needs review." },
   components: { lead: "Compose the product.", rest: "Pick the gears the specs ask for, preview until it resolves, then save it to the repository." },
-  builds: { lead: "See what was built.", rest: "The CI runs of the project's repositories, newest first; a passing run on the main branch closes the path." },
   artifacts: { lead: "Take what the project produced.", rest: "Download the files its CI builds kept and its releases; its typed documents and the files kept in Studio are beside them." },
   kits: { lead: "Install the project's ways of working.", rest: "Kits add workflows and conventions to the repository, pinned to a version." },
   people: { lead: "Choose who works here.", rest: "Add people from the organization and give each a role on this project." },
