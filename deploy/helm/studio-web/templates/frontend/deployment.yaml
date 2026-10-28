@@ -27,7 +27,7 @@ spec:
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ required "frontend.image.tag is required (immutable, fixed at chart publication)" .Values.frontend.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports: [{ name: http, containerPort: {{ .Values.frontend.port }} }]
           # Runtime env.js (window.__STUDIO_ENV__) — one image per release,

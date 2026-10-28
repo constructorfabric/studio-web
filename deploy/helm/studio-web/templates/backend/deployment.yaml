@@ -149,7 +149,7 @@ spec:
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required (immutable, fixed at chart publication)" .Values.backend.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "run"]
           volumeMounts:
@@ -372,7 +372,7 @@ spec:
         {{- if .Values.backend.fileStorage.enabled }}
         - name: file-storage-sidecar
           image: "{{ .Values.backend.fileStorage.image.repository }}:{{ default .Values.backend.image.tag .Values.backend.fileStorage.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports: [{ name: file-storage, containerPort: 8087 }]
           env:
