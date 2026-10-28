@@ -12,6 +12,12 @@ backend:
     tag: "sha-REPLACE_ME"
   replicas: 1
   rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
+  # As on dev (values-dev.example.yaml says why): with the chart's 1Gi the
+  # backend was OOM-killed on test (2026-10-27) while a new organization's
+  # domain model was seeded; idle it sits near 700Mi.
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "2", memory: 4Gi }
   # ACCEPTED: this is a deploy outage window. One replica, and the old pod is
   # stopped before the new one starts, so the API is unavailable for the length
   # of a boot on every deploy. Two things keep it that way and neither is a
