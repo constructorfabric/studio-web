@@ -26,10 +26,14 @@ publish a release, but it never deploys automatically to an environment.
 
 ## Runners
 
-The Linux jobs run on the self-hosted runners of the org runner group
-`studio-runners`. Each job names one runner class in its `runs-on`. Every
-runner is **ephemeral**: it takes one job, then it is destroyed. Nothing a job
-leaves on disk, in Docker or in a build directory reaches the next job.
+The Linux build and test jobs of **Studio Delivery** and **Studio CLI
+extension** are routed to the self-hosted runners of the org runner group
+`studio-runners`: each names one runner class in its `runs-on`. They fall back
+to GitHub-hosted in the cases listed under [Routing and
+rollback](#routing-and-rollback). The deploy jobs and the Windows and macOS
+builds always run on GitHub-hosted. Every self-hosted runner is
+**ephemeral**: it takes one job, then it is destroyed. Nothing a job leaves on
+disk, in Docker or in a build directory reaches the next job.
 
 | Label | What it is | Size |
 | --- | --- | --- |
