@@ -1,4 +1,4 @@
-//! SeaORM migrations for the identity gear's four tables.
+//! SeaORM migrations for the identity gear's tables.
 //!
 //! Raw SQL, the same approach credstore_pg takes. Primary keys are
 //! deterministic v5 UUIDs of the natural key, so the PK itself enforces
@@ -27,6 +27,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0005::Migration),
             Box::new(m0006::Migration),
             Box::new(m0007::Migration),
+            Box::new(m0008::Migration),
         ]
     }
 }
@@ -464,6 +465,65 @@ CREATE INDEX IF NOT EXISTS idx_identity_capacity_allocation_week
                 .execute_unprepared(
                     "DROP TABLE IF EXISTS identity_capacity_allocation; DROP TABLE IF EXISTS identity_capacity_availability;",
                 )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0008 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0008_organization_request"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    // The partial unique index is the "one pending request per
+                    // person" rule (ADR-0051 §3), kept by the database so two
+                    // requests filed at once cannot both stand.
+                    r"
+CREATE TABLE IF NOT EXISTS identity_organization_request (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    requested_by UUID NOT NULL,
+    name TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    decided_by UUID,
+    decided_at TIMESTAMPTZ,
+    reason TEXT,
+    organization_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_organization_request_one_pending
+    ON identity_organization_request (requested_by) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_identity_organization_request_status
+    ON identity_organization_request (status, created_at);
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS identity_organization_request;")
                 .await?;
             Ok(())
         }

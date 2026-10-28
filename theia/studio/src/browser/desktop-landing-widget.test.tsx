@@ -272,6 +272,49 @@ describe('the desktop landing page', () => {
         expect(external).toEqual([STUDIO]);
     });
 
+    it('signed in with no organization, where the Studio lets them create one: points to the portal for it', async () => {
+        await mount(() => {
+            backend('signed-in');
+            fakeStudio.onboarding = { creation: 'open' };
+        });
+        expect(text()).toContain('Create your own or accept an invitation in the portal');
+    });
+
+    it('signed in with no organization, where they may ask for one: points to the portal, never offers to create', async () => {
+        await mount(() => {
+            backend('signed-in');
+            fakeStudio.onboarding = { creation: 'request' };
+        });
+        expect(text()).toContain('Ask for one in the portal');
+        expect(text()).not.toContain('Create your own');
+        expect(button('Open the portal')).toBeTruthy();
+    });
+
+    it('signed in with no organization and a request waiting: names it, and nothing else', async () => {
+        await mount(() => {
+            backend('signed-in');
+            fakeStudio.onboarding = { creation: 'request', request: { name: 'Acme', status: 'pending', created_at_ms: 1_767_225_600_000 } };
+        });
+        expect(text()).toContain('You asked for Acme');
+        expect(text()).toContain('reload once it is approved');
+    });
+
+    it('signed in with no organization and a request turned down: says why, and that they can ask again', async () => {
+        await mount(() => {
+            backend('signed-in');
+            fakeStudio.onboarding = {
+                creation: 'request', request: { name: 'Acme', status: 'rejected', reason: 'Use your work email.', created_at_ms: 1 },
+            };
+        });
+        expect(text()).toContain('Your request for Acme was not approved. Use your work email.');
+        expect(text()).toContain('You can ask again');
+    });
+
+    it('signed in with organizations: never asks how to get one', async () => {
+        await mount(signedIn);
+        expect(fakeStudio.calls).not.toContain('onboarding');
+    });
+
     it('signed in, projects out of reach: says so and offers to try again', async () => {
         await mount(() => {
             backend('signed-in');

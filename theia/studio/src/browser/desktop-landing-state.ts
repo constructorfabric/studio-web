@@ -195,3 +195,68 @@ export const ONBOARDING_STORAGE_KEY = 'studio.desktop.landing.onboarding-dismiss
 export function onboardingDismissed(stored: unknown): boolean {
     return stored === true;
 }
+
+/** What the Studio lets a person without an organization do (ADR-0051 §2). */
+export type OrganizationCreation = 'open' | 'request' | 'off';
+
+/** The member's newest organization request, as much of it as the landing shows. */
+export interface OwnOrganizationRequest {
+    name: string;
+    status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+    reason?: string | null;
+    created_at_ms: number;
+}
+
+/** What the landing knows about getting an organization, read only when the member has none. */
+export interface OrganizationOnboarding {
+    creation: OrganizationCreation;
+    /** The newest request, where creation is `request` and they have asked. */
+    request?: OwnOrganizationRequest;
+}
+
+/**
+ * The Studio's setting from `GET /studio-organizations/v1/capabilities`. A
+ * backend older than ADR-0051 answers only `self_service`, whose `true` and
+ * `false` meant what `open` and `off` mean now; anything unreadable is `off`.
+ */
+export function creationOf(capabilities: unknown): OrganizationCreation {
+    const answer = (capabilities ?? {}) as { organization_creation?: unknown; self_service?: unknown };
+    const creation = answer.organization_creation;
+    if (creation === 'open' || creation === 'request' || creation === 'off') {
+        return creation;
+    }
+    return answer.self_service === true ? 'open' : 'off';
+}
+
+/**
+ * What the "no organization" state tells the member to do. The landing never
+ * creates or asks itself -- the portal holds the forms, as it holds the
+ * invitations -- so this only names the way in the Studio allows, and the
+ * member's own request when there is one. `undefined` onboarding (not read
+ * yet, or unreadable) is today's wording: an invitation.
+ */
+export type NoOrganizationHint =
+    | { kind: 'invitation' }
+    | { kind: 'create' }
+    | { kind: 'ask' }
+    | { kind: 'pending'; name: string; askedAt: number }
+    | { kind: 'rejected'; name: string; reason?: string };
+
+export function noOrganizationHint(onboarding: OrganizationOnboarding | undefined): NoOrganizationHint {
+    switch (onboarding?.creation) {
+        case 'open':
+            return { kind: 'create' };
+        case 'request': {
+            const request = onboarding.request;
+            if (request?.status === 'pending') {
+                return { kind: 'pending', name: request.name, askedAt: request.created_at_ms };
+            }
+            if (request?.status === 'rejected') {
+                return { kind: 'rejected', name: request.name, ...(request.reason ? { reason: request.reason } : {}) };
+            }
+            return { kind: 'ask' };
+        }
+        default:
+            return { kind: 'invitation' };
+    }
+}

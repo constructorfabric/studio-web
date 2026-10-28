@@ -216,6 +216,40 @@ pub mod invitation {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+pub mod organization_request {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    /// A person asking to own an organization that does not exist yet
+    /// (ADR-0051 §3). Its id is the id the organization gets on approval.
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_organization_request")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        /// The person, never a login (ADR-0025).
+        pub requested_by: Uuid,
+        pub name: String,
+        pub note: String,
+        /// `pending`, `approved`, `rejected` or `withdrawn`.
+        pub status: String,
+        pub decided_by: Option<Uuid>,
+        pub decided_at: Option<OffsetDateTime>,
+        pub reason: Option<String>,
+        /// Set with `approved`: the organization the request became.
+        pub organization_id: Option<Uuid>,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// What a person did with one item of their inbox: done, or snoozed until a
 /// time. The items themselves are not stored — they are read from the facts
 /// (review requests, pull requests) every time — so a mark is all that is

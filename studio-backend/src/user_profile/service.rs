@@ -25,6 +25,7 @@ use super::alias_policy::{
 };
 use super::invitations;
 use super::leaving;
+use super::org_requests::{self, OrganizationRequest, RequestRefusal};
 use super::store::IdentityStore;
 use crate::connectors::sdk::{ConnectorService, Connectors};
 use crate::identity_directory::IdpDirectoryReader;
@@ -62,6 +63,11 @@ pub enum Offered<'a> {
     /// matching invitations to addresses they have proven.
     Id(&'a str),
 }
+
+/// `membership.source` for the owner row an approved organization request
+/// produced (ADR-0051 §4): ownership that a platform administrator said yes to,
+/// as opposed to ownership somebody took by creating the organization.
+pub const SOURCE_REQUEST: &str = "request";
 
 /// `membership.source` for a row the installation seeded from configuration.
 const SOURCE_BOOTSTRAP: &str = "bootstrap";
@@ -1749,6 +1755,239 @@ impl IdentityService {
         )
         .await?;
         self.sync_owner_grant(ctx, &user_id, org_id, true).await
+    }
+
+    /// How many organizations the caller owns because they made them: by
+    /// creating one or by an approved request. A platform administrator's
+    /// appointment does not count — it is not the person helping themselves
+    /// (ADR-0051 §2).
+    pub async fn self_made_ownerships(&self, ctx: &SecurityContext) -> Result<usize> {
+        let user_id = self.resolve_caller(ctx).await?;
+        Ok(self
+            .store
+            .memberships_of(&user_id)
+            .await?
+            .into_iter()
+            .filter(|m| {
+                m.role == crate::access_config::ROLE_OWNER
+                    && m.status == leaving::STATUS_ACTIVE
+                    && (m.source == SOURCE_CREATION || m.source == SOURCE_REQUEST)
+            })
+            .count())
+    }
+
+    /// File the caller's request for an organization. `name` and `note` are
+    /// already clean; the caller's gear decided the installation takes
+    /// requests at all.
+    pub async fn file_org_request(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        note: &str,
+    ) -> Result<Result<OrganizationRequest, RequestRefusal>> {
+        let user_id = self.resolve_caller(ctx).await?;
+        if let Some(pending) = self.pending_org_request_of(&user_id).await? {
+            return Ok(Err(RequestRefusal::AlreadyPending(pending.id)));
+        }
+        let request = OrganizationRequest {
+            id: Uuid::new_v4(),
+            requested_by: user_id.clone(),
+            name: name.to_owned(),
+            note: note.to_owned(),
+            status: org_requests::STATUS_PENDING.to_owned(),
+            decided_by: None,
+            decided_at_ms: None,
+            reason: None,
+            organization_id: None,
+            created_at_ms: now_ms(),
+            requester_name: None,
+            requester_email: None,
+        };
+        if let Err(error) = self.store.insert_org_request(&request).await {
+            // Two requests filed at once: the unique index let one through.
+            if let Some(pending) = self.pending_org_request_of(&user_id).await? {
+                return Ok(Err(RequestRefusal::AlreadyPending(pending.id)));
+            }
+            return Err(error);
+        }
+        Ok(Ok(request))
+    }
+
+    async fn pending_org_request_of(&self, user_id: &str) -> Result<Option<OrganizationRequest>> {
+        Ok(self
+            .store
+            .org_requests_of(user_id)
+            .await?
+            .into_iter()
+            .find(|r| r.status == org_requests::STATUS_PENDING))
+    }
+
+    /// The caller's own requests, newest first.
+    pub async fn org_requests_of_caller(
+        &self,
+        ctx: &SecurityContext,
+    ) -> Result<Vec<OrganizationRequest>> {
+        let user_id = self.resolve_caller(ctx).await?;
+        self.store.org_requests_of(&user_id).await
+    }
+
+    /// Every request, or those in one status. The caller's gear checks the
+    /// caller is a platform administrator.
+    pub async fn org_requests(&self, status: Option<&str>) -> Result<Vec<OrganizationRequest>> {
+        let mut out = Vec::new();
+        for request in self.store.org_requests(status).await? {
+            out.push(self.with_requester(request).await);
+        }
+        Ok(out)
+    }
+
+    pub async fn find_org_request(&self, id: Uuid) -> Result<Option<OrganizationRequest>> {
+        match self.store.find_org_request(id).await? {
+            Some(request) => Ok(Some(self.with_requester(request).await)),
+            None => Ok(None),
+        }
+    }
+
+    /// Name the requester for the administrator: their profile's name and an
+    /// address the identity provider verified. Best effort — a request whose
+    /// requester cannot be read is still a request to decide.
+    async fn with_requester(&self, mut request: OrganizationRequest) -> OrganizationRequest {
+        request.requester_name = self
+            .store
+            .get_user(&request.requested_by)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|p| p.display_name)
+            .filter(|n| !n.trim().is_empty());
+        request.requester_email = self
+            .verified_emails(&request.requested_by)
+            .await
+            .ok()
+            .and_then(|emails| emails.into_iter().next());
+        request
+    }
+
+    /// The caller withdraws their own pending request. Somebody else's reads
+    /// as not found.
+    pub async fn withdraw_org_request(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+    ) -> Result<Result<OrganizationRequest, RequestRefusal>> {
+        let user_id = self.resolve_caller(ctx).await?;
+        let Some(request) = self
+            .store
+            .find_org_request(id)
+            .await?
+            .filter(|r| r.requested_by == user_id)
+        else {
+            return Ok(Err(RequestRefusal::NotFound));
+        };
+        self.close_org_request(
+            request,
+            org_requests::STATUS_WITHDRAWN,
+            &user_id,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// A platform administrator rejects a pending request, with a reason the
+    /// requester will read.
+    pub async fn reject_org_request(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+        reason: Option<&str>,
+    ) -> Result<Result<OrganizationRequest, RequestRefusal>> {
+        let decider = self.resolve_caller(ctx).await?;
+        let Some(request) = self.store.find_org_request(id).await? else {
+            return Ok(Err(RequestRefusal::NotFound));
+        };
+        self.close_org_request(
+            request,
+            org_requests::STATUS_REJECTED,
+            &decider,
+            reason,
+            None,
+        )
+        .await
+    }
+
+    /// Settle an approval: the organization `org_id` exists, and its owner is
+    /// the person who asked for it (ADR-0051 §4).
+    ///
+    /// The membership first, then the owner grant (ADR-0040 §2), then the
+    /// request is marked approved — last, so a failure in between leaves it
+    /// pending and the same approval can be repeated. Each write is idempotent.
+    /// `ctx` is the deciding administrator's: the grant is written as them.
+    pub async fn settle_org_approval(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+        org_id: Uuid,
+    ) -> Result<Result<OrganizationRequest, RequestRefusal>> {
+        let decider = self.resolve_caller(ctx).await?;
+        let Some(request) = self.store.find_org_request(id).await? else {
+            return Ok(Err(RequestRefusal::NotFound));
+        };
+        match org_requests::may_approve(&request, org_id) {
+            Err(refusal) => return Ok(Err(refusal)),
+            Ok(false) => return Ok(Ok(request)),
+            Ok(true) => {}
+        }
+        self.record_membership(
+            &request.requested_by,
+            &org_id.to_string(),
+            crate::access_config::ROLE_OWNER,
+            SOURCE_REQUEST,
+        )
+        .await?;
+        self.sync_owner_grant(ctx, &request.requested_by, org_id, true)
+            .await?;
+        self.close_org_request(
+            request,
+            org_requests::STATUS_APPROVED,
+            &decider,
+            None,
+            Some(org_id),
+        )
+        .await
+    }
+
+    async fn close_org_request(
+        &self,
+        request: OrganizationRequest,
+        status: &str,
+        decided_by: &str,
+        reason: Option<&str>,
+        organization_id: Option<Uuid>,
+    ) -> Result<Result<OrganizationRequest, RequestRefusal>> {
+        if let Err(refusal) = org_requests::may_close(&request) {
+            return Ok(Err(refusal));
+        }
+        if !self
+            .store
+            .close_org_request(request.id, status, decided_by, reason, organization_id)
+            .await?
+        {
+            // Somebody closed it between the read and the write; say how.
+            let now = self.store.find_org_request(request.id).await?;
+            return Ok(match now {
+                Some(now) if now.status == status && now.organization_id == organization_id => {
+                    Ok(now)
+                }
+                Some(now) => Err(RequestRefusal::NotPending(now.status)),
+                None => Err(RequestRefusal::NotFound),
+            });
+        }
+        Ok(self
+            .store
+            .find_org_request(request.id)
+            .await?
+            .ok_or(RequestRefusal::NotFound))
     }
 
     /// Is the person behind `subject` a platform administrator?

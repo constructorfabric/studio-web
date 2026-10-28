@@ -31,6 +31,14 @@ public final class ConstructorGitHubIdentityProviderFactory extends GitHubIdenti
     @Override
     public List<ProviderConfigProperty> getConfigProperties() {
         List<ProviderConfigProperty> properties = new ArrayList<>(super.getConfigProperties());
+        ProviderConfigProperty requireOrganization = new ProviderConfigProperty();
+        requireOrganization.setName(ConstructorGitHubIdentityProvider.REQUIRE_ORGANIZATION_CONFIG);
+        requireOrganization.setLabel("Require GitHub organization membership");
+        requireOrganization.setHelpText(
+                "When off, any GitHub account may sign in and the organization below is not checked.");
+        requireOrganization.setType(ProviderConfigProperty.BOOLEAN_TYPE);
+        requireOrganization.setDefaultValue(true);
+        properties.add(requireOrganization);
         ProviderConfigProperty organization = new ProviderConfigProperty();
         organization.setName(ConstructorGitHubIdentityProvider.ORGANIZATION_CONFIG);
         organization.setLabel("Required GitHub organization");

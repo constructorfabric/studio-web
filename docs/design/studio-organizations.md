@@ -131,11 +131,16 @@ out of the access config itself.
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-organizations-self-service`
 
-`self_service` (default `true`) is the cloud: somebody arrives with no
-organization and makes their own. `false` is an installation inside one company,
-where people are joined on first sight (`studio-user`'s `on_first_login`) and
-creation is refused with `SELF_SERVICE_DISABLED`. The domain model and every
-authorization path are the same either way.
+`self_service: open` (the default; `true` reads the same) is the cloud:
+somebody arrives with no organization and makes their own. `off` (`false`) is
+an installation inside one company, where people are joined on first sight
+(`studio-user`'s `on_first_login`) and creation is refused with
+`SELF_SERVICE_DISABLED`. `request` is a cloud before billing (ADR-0051):
+creation is refused the same way, a person asks for an organization instead,
+and a platform administrator's approval creates it with the person who asked
+as its owner. `max_owned` caps how many organizations one person may own by
+creating or requesting them (unset: no limit). The domain model and every
+authorization path are the same in all three.
 
 ## 3. Technical Architecture
 

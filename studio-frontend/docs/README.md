@@ -38,7 +38,7 @@ exposes, a working example per use case, and **Traps**.
 | studio-events | `StudioEventsApiService` | [studio-events.md](studio-events.md) |
 | studio-session | `StudioSessionApiService` | — |
 | studio-tasks | `StudioTasksApiService` | — |
-| studio-organizations | `OrganizationsApiService` | — |
+| studio-organizations | `OrganizationsApiService` | [organization-requests.md](organization-requests.md) |
 | studio-user | `AccountsApiService` | — |
 | studio-identity | `IdentityApiService` | — |
 | studio-documents | `DocumentsApiService` | — |

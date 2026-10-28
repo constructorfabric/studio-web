@@ -544,3 +544,128 @@ async fn a_merge_carries_the_grants_that_named_the_merged_person() {
     assert_eq!(am.owner_keys(org), vec![into.clone()]);
     assert_eq!(store.memberships_of(&into).await.unwrap()[0].role, "owner");
 }
+
+#[tokio::test]
+async fn an_approved_request_makes_the_person_who_asked_the_owner_not_the_administrator() {
+    let (service, store, am) = service().await;
+    let (asker, admin) = (Uuid::new_v4(), Uuid::new_v4());
+
+    let request = service
+        .file_org_request(&caller(asker), "Acme", "we build rockets")
+        .await
+        .unwrap()
+        .unwrap();
+    let org = request.id;
+    let settled = service
+        .settle_org_approval(&caller(admin), request.id, org)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let person = service
+        .resolve_subject("keycloak", &asker.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    let decider = service
+        .resolve_subject("keycloak", &admin.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.status, "approved");
+    assert_eq!(settled.organization_id, Some(org));
+    assert_eq!(settled.decided_by.as_deref(), Some(decider.as_str()));
+    assert_eq!(am.owner_keys(org), vec![person.clone()]);
+    let memberships = store.memberships_of(&person).await.unwrap();
+    assert_eq!(memberships.len(), 1);
+    assert_eq!(memberships[0].role, "owner");
+    assert_eq!(memberships[0].source, "request");
+    assert!(store.memberships_of(&decider).await.unwrap().is_empty());
+    assert_eq!(
+        service.self_made_ownerships(&caller(asker)).await.unwrap(),
+        1
+    );
+
+    // Approving again is how a half-finished approval is finished; on a
+    // finished one it changes nothing.
+    let again = service
+        .settle_org_approval(&caller(admin), request.id, org)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.status, "approved");
+    assert_eq!(store.memberships_of(&person).await.unwrap().len(), 1);
+    // And it can never become a second organization.
+    assert!(
+        service
+            .settle_org_approval(&caller(admin), request.id, Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_person_has_one_pending_request_and_only_they_may_withdraw_it() {
+    use super::org_requests::RequestRefusal;
+
+    let (service, _, _) = service().await;
+    let (asker, other) = (Uuid::new_v4(), Uuid::new_v4());
+
+    let first = service
+        .file_org_request(&caller(asker), "Acme", "")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        service
+            .file_org_request(&caller(asker), "Acme again", "")
+            .await
+            .unwrap(),
+        Err(RequestRefusal::AlreadyPending(first.id))
+    );
+    // Somebody else's request is not there, as far as they can tell.
+    assert_eq!(
+        service
+            .withdraw_org_request(&caller(other), first.id)
+            .await
+            .unwrap(),
+        Err(RequestRefusal::NotFound)
+    );
+    let withdrawn = service
+        .withdraw_org_request(&caller(asker), first.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(withdrawn.status, "withdrawn");
+
+    // Withdrawn, a new one may be filed; rejected, it cannot be approved.
+    let second = service
+        .file_org_request(&caller(asker), "Acme", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let rejected = service
+        .reject_org_request(&caller(other), second.id, Some("not a company"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rejected.status, "rejected");
+    assert_eq!(rejected.reason.as_deref(), Some("not a company"));
+    assert_eq!(
+        service
+            .settle_org_approval(&caller(other), second.id, second.id)
+            .await
+            .unwrap(),
+        Err(RequestRefusal::NotPending("rejected".to_owned()))
+    );
+
+    let mine = service
+        .org_requests_of_caller(&caller(asker))
+        .await
+        .unwrap();
+    assert_eq!(mine.len(), 2);
+    assert_eq!(mine[0].id, second.id, "newest first");
+    let pending = service.org_requests(Some("pending")).await.unwrap();
+    assert!(pending.is_empty());
+}

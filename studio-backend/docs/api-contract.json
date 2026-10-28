@@ -2126,6 +2126,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/organization-requests",
+      "operation_id": "studio_organizations.list_organization_requests",
+      "tag": "StudioOrganizations",
+      "summary": "Organization requests: the caller's own, or every one for an administrator",
+      "authenticated": true,
+      "responses": [
+        "OrganizationRequestListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/overview",
       "operation_id": "studio_organizations.get_organization_overview",
       "tag": "StudioOrganizations",
@@ -4740,6 +4757,60 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-organizations/v1/organization-requests",
+      "operation_id": "studio_organizations.create_organization_request",
+      "tag": "StudioOrganizations",
+      "summary": "Ask for an organization to own",
+      "authenticated": true,
+      "request": "NewOrganizationRequestDto",
+      "responses": [
+        "OrganizationRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-organizations/v1/organization-requests/{id}/cancel",
+      "operation_id": "studio_organizations.cancel_organization_request",
+      "tag": "StudioOrganizations",
+      "summary": "Withdraw the caller's own pending organization request",
+      "authenticated": true,
+      "responses": [
+        "OrganizationRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-organizations/v1/organization-requests/{id}/decision",
+      "operation_id": "studio_organizations.decide_organization_request",
+      "tag": "StudioOrganizations",
+      "summary": "Approve or reject an organization request",
+      "authenticated": true,
+      "request": "OrganizationRequestDecisionDto",
+      "responses": [
+        "OrganizationRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },

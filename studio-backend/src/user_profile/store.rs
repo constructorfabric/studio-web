@@ -20,6 +20,7 @@ use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{self, ROOT_TENANT};
+use super::org_requests::OrganizationRequest;
 use super::service::{
     AliasRecord, AvatarRecord, DirectoryProfile, InvitationRecord, LoginView, MembershipView,
     UserProfile,
@@ -158,6 +159,42 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn accept_invitation(&self, id: &str, user_id: &str) -> Result<bool>;
     async fn delete_invitation(&self, id: &str, org_id: &str) -> Result<bool>;
 
+    // Organization requests (`m0008`, ADR-0051). Bodies so a test double with
+    // no use for them need not spell them out; the Postgres store overrides
+    // every one.
+
+    /// Store a new pending request. Fails if the person already has a pending
+    /// one — the partial unique index decides, not a prior read.
+    async fn insert_org_request(&self, _request: &OrganizationRequest) -> Result<()> {
+        Err(anyhow!("organization requests are not stored here"))
+    }
+    async fn find_org_request(&self, _id: Uuid) -> Result<Option<OrganizationRequest>> {
+        Ok(None)
+    }
+    /// One person's requests, newest first.
+    async fn org_requests_of(&self, _user_id: &str) -> Result<Vec<OrganizationRequest>> {
+        Ok(Vec::new())
+    }
+    /// Every request, or every one in `status`, oldest first — the order an
+    /// administrator works through them.
+    async fn org_requests(&self, _status: Option<&str>) -> Result<Vec<OrganizationRequest>> {
+        Ok(Vec::new())
+    }
+    /// Move a request out of `pending`, but only if it is still pending.
+    ///
+    /// Returns whether this call was the one that moved it: the database
+    /// decides, so a withdrawal and a decision racing cannot both take effect.
+    async fn close_org_request(
+        &self,
+        _id: Uuid,
+        _status: &str,
+        _decided_by: &str,
+        _reason: Option<&str>,
+        _organization_id: Option<Uuid>,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
     // The methods below came with `m0005`. Each has a body so a test double
     // that has no use for them need not spell them out; the Postgres store
     // overrides every one.
@@ -291,6 +328,23 @@ fn invitation_to_view(m: entity::invitation::Model) -> InvitationRecord {
         created_at_epoch_ms: to_ms(m.created_at),
         expires_at_epoch_ms: to_ms(m.expires_at),
         accepted_at_epoch_ms: m.accepted_at.map(to_ms),
+    }
+}
+
+fn org_request_to_view(m: entity::organization_request::Model) -> OrganizationRequest {
+    OrganizationRequest {
+        id: m.id,
+        requested_by: m.requested_by.to_string(),
+        name: m.name,
+        note: m.note,
+        status: m.status,
+        decided_by: m.decided_by.map(|id| id.to_string()),
+        decided_at_ms: m.decided_at.map(to_ms),
+        reason: m.reason,
+        organization_id: m.organization_id,
+        created_at_ms: to_ms(m.created_at),
+        requester_name: None,
+        requester_email: None,
     }
 }
 
@@ -959,6 +1013,140 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn insert_org_request(&self, request: &OrganizationRequest) -> Result<()> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let am = entity::organization_request::ActiveModel {
+            id: ActiveValue::Set(request.id),
+            tenant_id: ActiveValue::Set(ROOT_TENANT),
+            requested_by: ActiveValue::Set(parse_uuid(&request.requested_by)?),
+            name: ActiveValue::Set(request.name.clone()),
+            note: ActiveValue::Set(request.note.clone()),
+            status: ActiveValue::Set(request.status.clone()),
+            decided_by: ActiveValue::Set(None),
+            decided_at: ActiveValue::Set(None),
+            reason: ActiveValue::Set(None),
+            organization_id: ActiveValue::Set(None),
+            created_at: ActiveValue::Set(from_ms(request.created_at_ms)),
+        };
+        entity::organization_request::Entity::insert(am)
+            .secure()
+            .scope_unchecked(&scope())
+            .map_err(|e| anyhow!("organization request insert scope: {e}"))?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn find_org_request(&self, id: Uuid) -> Result<Option<OrganizationRequest>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::organization_request::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::organization_request::Column::Id.eq(id)))
+            .one(&conn)
+            .await?
+            .map(org_request_to_view))
+    }
+
+    async fn org_requests_of(&self, user_id: &str) -> Result<Vec<OrganizationRequest>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let mut out: Vec<OrganizationRequest> =
+            entity::organization_request::Entity::find()
+                .secure()
+                .scope_with(&scope())
+                .filter(Condition::all().add(
+                    entity::organization_request::Column::RequestedBy.eq(parse_uuid(user_id)?),
+                ))
+                .all(&conn)
+                .await?
+                .into_iter()
+                .map(org_request_to_view)
+                .collect();
+        out.sort_by_key(|r| std::cmp::Reverse(r.created_at_ms));
+        Ok(out)
+    }
+
+    async fn org_requests(&self, status: Option<&str>) -> Result<Vec<OrganizationRequest>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let mut filter = Condition::all();
+        if let Some(status) = status {
+            filter = filter.add(entity::organization_request::Column::Status.eq(status));
+        }
+        let mut out: Vec<OrganizationRequest> = entity::organization_request::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(filter)
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(org_request_to_view)
+            .collect();
+        out.sort_by_key(|r| r.created_at_ms);
+        Ok(out)
+    }
+
+    async fn close_org_request(
+        &self,
+        id: Uuid,
+        status: &str,
+        decided_by: &str,
+        reason: Option<&str>,
+        organization_id: Option<Uuid>,
+    ) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // `status = 'pending'` in the WHERE is what makes a decision final: the
+        // database decides which of two racing closes took effect.
+        let result = entity::organization_request::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::organization_request::Column::Id.eq(id))
+                    .add(
+                        entity::organization_request::Column::Status
+                            .eq(super::org_requests::STATUS_PENDING),
+                    ),
+            )
+            .col_expr(
+                entity::organization_request::Column::Status,
+                sea_orm::sea_query::Expr::value(status.to_owned()),
+            )
+            .col_expr(
+                entity::organization_request::Column::DecidedBy,
+                sea_orm::sea_query::Expr::value(parse_uuid(decided_by)?),
+            )
+            .col_expr(
+                entity::organization_request::Column::DecidedAt,
+                sea_orm::sea_query::Expr::value(OffsetDateTime::now_utc()),
+            )
+            .col_expr(
+                entity::organization_request::Column::Reason,
+                sea_orm::sea_query::Expr::value(reason.map(str::to_owned)),
+            )
+            .col_expr(
+                entity::organization_request::Column::OrganizationId,
+                sea_orm::sea_query::Expr::value(organization_id),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 
     async fn insert_invitation(&self, invitation: &InvitationRecord) -> Result<()> {

@@ -14,7 +14,8 @@ interface TestUser {
   avatarUrl?: string;
 }
 
-const { mockAuth, mockDispatch, mockEventBus, headerState } = vi.hoisted(() => ({
+const { mockAuth, mockDispatch, mockEventBus, headerState, mockApiRegistry } = vi.hoisted(() => ({
+  mockApiRegistry: { has: vi.fn(() => false), getService: vi.fn() },
   mockAuth: { logout: vi.fn() },
   mockEventBus: { emit: vi.fn() },
   mockDispatch: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useAppSelector: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({ 'layout/header': headerState }),
   eventBus: mockEventBus,
+  apiRegistry: mockApiRegistry,
 }));
 
 vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
@@ -47,6 +49,7 @@ describe('UserMenu', () => {
     headerState.user = { displayName: 'Alexander Johanson', email: 'alex@studio' };
     headerState.loading = false;
     mockAuth.logout.mockResolvedValue({ type: 'none' });
+    mockApiRegistry.has.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -125,5 +128,41 @@ describe('UserMenu', () => {
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://idp/logout'));
     vi.restoreAllMocks();
+  });
+
+  describe('organization requests (ADR-0051 §5)', () => {
+    function capabilities(decides: boolean) {
+      mockApiRegistry.has.mockReturnValue(true);
+      mockApiRegistry.getService.mockReturnValue({
+        capabilities: {
+          fetch: vi.fn().mockResolvedValue({ self_service: false, decides_requests: decides }),
+        },
+        organizationRequests: () => ({
+          fetch: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        }),
+      });
+    }
+
+    it('are offered to a platform administrator, and open over everything', async () => {
+      capabilities(true);
+      render(<UserMenu />);
+      // The capability answers after the first render.
+      await waitFor(() => expect(mockApiRegistry.getService).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      openMenu();
+      fireEvent.click(await screen.findByText('Organization requests'));
+      expect(await screen.findByRole('dialog')).toBeTruthy();
+      expect(await screen.findByText('Nobody is waiting for an answer.')).toBeTruthy();
+    });
+
+    it('are not offered to anybody else', async () => {
+      capabilities(false);
+      render(<UserMenu />);
+      await waitFor(() => expect(mockApiRegistry.getService).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      openMenu();
+      await screen.findByText('Sign out');
+      expect(screen.queryByText('Organization requests')).toBeNull();
+    });
   });
 });

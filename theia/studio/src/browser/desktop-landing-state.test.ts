@@ -1,7 +1,8 @@
 // Which view the desktop landing page shows, and when it shows at all.
 
 import {
-    LandingStatus, landingView, landingWanted, modeCards, onboardingDismissed, recentFolders, sameFolder, unreachable,
+    LandingStatus, creationOf, landingView, landingWanted, modeCards, noOrganizationHint, onboardingDismissed, recentFolders,
+    sameFolder, unreachable,
 } from './desktop-landing-state';
 import { MODES } from './studio-mode-bar';
 import type { Organization } from './desktop-projects';
@@ -122,5 +123,35 @@ describe('the onboarding cards', () => {
         expect(onboardingDismissed(undefined)).toBe(false);
         expect(onboardingDismissed(false)).toBe(false);
         expect(onboardingDismissed(true)).toBe(true);
+    });
+});
+
+describe('what a member with no organization is told (ADR-0051 §5)', () => {
+    it('reads the setting, and an older backend\'s self_service as open or off', () => {
+        expect(creationOf({ self_service: false, organization_creation: 'request' })).toBe('request');
+        expect(creationOf({ self_service: true, organization_creation: 'open' })).toBe('open');
+        expect(creationOf({ self_service: true })).toBe('open');
+        expect(creationOf({ self_service: false })).toBe('off');
+        expect(creationOf({ organization_creation: 'everything' })).toBe('off');
+        expect(creationOf(undefined)).toBe('off');
+    });
+
+    it('names the way the Studio allows: creating, asking, or an invitation', () => {
+        expect(noOrganizationHint({ creation: 'open' })).toEqual({ kind: 'create' });
+        expect(noOrganizationHint({ creation: 'request' })).toEqual({ kind: 'ask' });
+        expect(noOrganizationHint({ creation: 'off' })).toEqual({ kind: 'invitation' });
+        // Not read, or unreadable: invitations, which every setting allows.
+        expect(noOrganizationHint(undefined)).toEqual({ kind: 'invitation' });
+    });
+
+    it('shows their own request: pending, rejected with the reason, or none worth naming', () => {
+        const request = { name: 'Acme', created_at_ms: 1_767_225_600_000 };
+        expect(noOrganizationHint({ creation: 'request', request: { ...request, status: 'pending' } }))
+            .toEqual({ kind: 'pending', name: 'Acme', askedAt: 1_767_225_600_000 });
+        expect(noOrganizationHint({ creation: 'request', request: { ...request, status: 'rejected', reason: 'Use your work email.' } }))
+            .toEqual({ kind: 'rejected', name: 'Acme', reason: 'Use your work email.' });
+        expect(noOrganizationHint({ creation: 'request', request: { ...request, status: 'rejected', reason: null } }))
+            .toEqual({ kind: 'rejected', name: 'Acme' });
+        expect(noOrganizationHint({ creation: 'request', request: { ...request, status: 'withdrawn' } })).toEqual({ kind: 'ask' });
     });
 });

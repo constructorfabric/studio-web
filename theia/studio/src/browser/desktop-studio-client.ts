@@ -11,6 +11,7 @@ import { StudioApi } from './studio-api';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 import { Organization, projectsOf } from './desktop-projects';
 import { SourcesState, sourcesStateOf } from './desktop-studio-tree';
+import { OrganizationOnboarding, OwnOrganizationRequest, creationOf } from './desktop-landing-state';
 import type { OpenProgress } from '../common/desktop-open-progress';
 
 export interface DesktopStatus extends DesktopEnvironmentChoice {
@@ -76,6 +77,31 @@ export function loadProjects(): Promise<Organization[]> {
         }
         return answer.json();
     });
+}
+
+/**
+ * How a member with no organization gets one on this Studio (ADR-0051 §5): the
+ * setting, and their own newest request where the setting is `request`.
+ * `undefined` when the Studio could not say -- the landing then keeps to
+ * invitations, which every setting allows.
+ */
+export async function organizationOnboarding(): Promise<OrganizationOnboarding | undefined> {
+    try {
+        const capabilities = await StudioApi.fetch('/studio-organizations/v1/capabilities');
+        if (!capabilities.ok) {
+            return undefined;
+        }
+        const creation = creationOf(await capabilities.json());
+        if (creation !== 'request') {
+            return { creation };
+        }
+        const mine = await StudioApi.fetch('/studio-organizations/v1/organization-requests?scope=mine&limit=1');
+        const page = mine.ok ? await mine.json() as { items?: OwnOrganizationRequest[] } : undefined;
+        const request = page?.items?.[0];
+        return request ? { creation, request } : { creation };
+    } catch {
+        return undefined;
+    }
 }
 
 /** What a project's sources listing says: the listing the open itself starts with. */

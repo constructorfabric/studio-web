@@ -20,6 +20,7 @@ mod grants_tests;
 mod invitations;
 mod leaving;
 mod migrations;
+mod org_requests;
 mod rest;
 mod service;
 mod store;
@@ -373,6 +374,132 @@ impl AssignmentRecorder for IdentityService {
         org_id: uuid::Uuid,
     ) -> anyhow::Result<()> {
         IdentityService::record_creation(self, ctx, subject, org_id).await
+    }
+}
+
+pub use org_requests::{
+    OrganizationRequest, RequestRefusal, STATUS_APPROVED as REQUEST_APPROVED,
+    STATUS_PENDING as REQUEST_PENDING, clean_note as clean_request_note,
+    clean_reason as clean_request_reason,
+};
+
+/// The statuses an organization request can be in, for a gear validating a
+/// filter before it asks.
+pub const ORGANIZATION_REQUEST_STATUSES: [&str; 4] = org_requests::STATUSES;
+
+/// Organization requests (ADR-0051), for the gear that decides them.
+///
+/// studio-user keeps the record — a request is a person asking to own an
+/// organization, a fact about a person and a membership to be (ADR-0040 §1).
+/// studio-organizations owns the routes, because it knows whether this
+/// installation takes requests and it is what creates an organization on
+/// approval. Who may call what (the requester, a platform administrator) is
+/// decided there; every method here acts as `ctx`'s person.
+#[async_trait]
+pub trait OrganizationRequests: Send + Sync + 'static {
+    /// File the caller's request. Refused while they have a pending one.
+    async fn file_request(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        note: &str,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>>;
+
+    /// The caller's own requests, newest first.
+    async fn requests_of_caller(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Vec<OrganizationRequest>>;
+
+    /// Every request, or those in `status`, oldest first.
+    async fn requests(&self, status: Option<&str>) -> anyhow::Result<Vec<OrganizationRequest>>;
+
+    async fn find_request(&self, id: uuid::Uuid) -> anyhow::Result<Option<OrganizationRequest>>;
+
+    /// The caller withdraws their own pending request.
+    async fn withdraw_request(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>>;
+
+    /// The caller rejects a pending request.
+    async fn reject_request(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+        reason: Option<&str>,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>>;
+
+    /// The organization `org_id` exists: make the requester its owner — the
+    /// membership with source `request` and the owner grant — and mark the
+    /// request approved. Repeatable until it succeeds.
+    async fn settle_approval(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>>;
+
+    /// How many organizations the caller owns by creating one or by an
+    /// approved request, for the installation's `max_owned`.
+    async fn self_made_ownerships(&self, ctx: &SecurityContext) -> anyhow::Result<usize>;
+}
+
+#[async_trait]
+impl OrganizationRequests for IdentityService {
+    async fn file_request(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        note: &str,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>> {
+        self.file_org_request(ctx, name, note).await
+    }
+
+    async fn requests_of_caller(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Vec<OrganizationRequest>> {
+        self.org_requests_of_caller(ctx).await
+    }
+
+    async fn requests(&self, status: Option<&str>) -> anyhow::Result<Vec<OrganizationRequest>> {
+        self.org_requests(status).await
+    }
+
+    async fn find_request(&self, id: uuid::Uuid) -> anyhow::Result<Option<OrganizationRequest>> {
+        self.find_org_request(id).await
+    }
+
+    async fn withdraw_request(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>> {
+        self.withdraw_org_request(ctx, id).await
+    }
+
+    async fn reject_request(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+        reason: Option<&str>,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>> {
+        self.reject_org_request(ctx, id, reason).await
+    }
+
+    async fn settle_approval(
+        &self,
+        ctx: &SecurityContext,
+        id: uuid::Uuid,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<Result<OrganizationRequest, RequestRefusal>> {
+        self.settle_org_approval(ctx, id, org_id).await
+    }
+
+    async fn self_made_ownerships(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
+        IdentityService::self_made_ownerships(self, ctx).await
     }
 }
 
@@ -755,6 +882,12 @@ impl Gear for StudioUserGear {
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 evictor,
             );
+            let requests: Arc<dyn OrganizationRequests> = svc.clone();
+            ctx.client_hub()
+                .register_scoped::<dyn OrganizationRequests>(
+                    ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                    requests,
+                );
             let organizations: Arc<dyn OrganizationReader> = svc.clone();
             ctx.client_hub().register_scoped::<dyn OrganizationReader>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),

@@ -28,12 +28,12 @@ import {
 import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
 import {
     DesktopChange, DesktopStatus, announceDesktopChange, desktopStatus, loadProjects, onDesktopChange, openStudioProject,
-    sourcesOf, startSignIn,
+    organizationOnboarding, sourcesOf, startSignIn,
 } from './desktop-studio-client';
 import { StudioPicker } from './desktop-studio-picker';
 import {
-    LandingStatus, LandingView, ModeCard, ONBOARDING_STORAGE_KEY, RecentFolder, landingView, modeCards,
-    onboardingDismissed, recentFolders,
+    LandingStatus, LandingView, ModeCard, ONBOARDING_STORAGE_KEY, OrganizationOnboarding, RecentFolder, landingView, modeCards,
+    noOrganizationHint, onboardingDismissed, recentFolders,
 } from './desktop-landing-state';
 import { MODES } from './studio-mode-bar';
 
@@ -83,6 +83,8 @@ export class DesktopLandingWidget extends ReactWidget {
     protected loadError = '';
     protected sources = new Map<string, SourcesState>();
     protected sourcesGeneration = 0;
+    /** How to get an organization; read only once the member turns out to have none. */
+    protected organizationOnboarding: OrganizationOnboarding | undefined;
     protected filter = '';
 
     protected opening: { id: string; name: string } | undefined;
@@ -177,6 +179,7 @@ export class DesktopLandingWidget extends ReactWidget {
 
     protected forgetProjects(): void {
         this.organizations = undefined;
+        this.organizationOnboarding = undefined;
         this.loadError = '';
         this.sources = new Map();
         this.sourcesGeneration++;
@@ -203,6 +206,15 @@ export class DesktopLandingWidget extends ReactWidget {
                 return;
             }
             this.organizations = organizations;
+            if (organizations.length === 0) {
+                // Asked here, before the list is shown, so the page does not
+                // say "an invitation" and then change its mind.
+                const onboarding = await organizationOnboarding();
+                if (forKey !== this.projectsFor) {
+                    return;
+                }
+                this.organizationOnboarding = onboarding;
+            }
             void this.loadSources(organizations);
         } catch (error) {
             if (forKey === this.projectsFor) {
@@ -408,6 +420,39 @@ export class DesktopLandingWidget extends ReactWidget {
         }
     }
 
+    /**
+     * What to do with no organization, in the words the Studio's setting allows
+     * (ADR-0051 §5). The forms are the portal's; this names the way and, where
+     * the member asked, what became of it -- their own request, nobody else's.
+     */
+    protected renderNoOrganization(): React.ReactNode {
+        const host = this.hostOf();
+        const hint = noOrganizationHint(this.organizationOnboarding);
+        switch (hint.kind) {
+            case 'create':
+                return <p className='studio-landing__muted'>You belong to no organization on {host} yet.
+                    Create your own or accept an invitation in the portal, then reload.</p>;
+            case 'ask':
+                return <p className='studio-landing__muted'>You belong to no organization on {host} yet.
+                    Ask for one in the portal, where a platform administrator reviews it, or accept an invitation there; then reload.</p>;
+            case 'pending':
+                return <>
+                    <p className='studio-landing__muted'>You belong to no organization on {host} yet.</p>
+                    <p>You asked for <b>{hint.name}</b> on {new Date(hint.askedAt).toLocaleDateString()}.
+                        A platform administrator reviews it; reload once it is approved.</p>
+                </>;
+            case 'rejected':
+                return <>
+                    <p className='studio-landing__muted'>You belong to no organization on {host} yet.</p>
+                    <p>Your request for <b>{hint.name}</b> was not approved.{hint.reason && <> {hint.reason}</>}</p>
+                    <p className='studio-landing__muted'>You can ask again, or accept an invitation, in the portal.</p>
+                </>;
+            default:
+                return <p className='studio-landing__muted'>You belong to no organization on {host} yet.
+                    Accept an invitation in the portal, then reload.</p>;
+        }
+    }
+
     protected renderProjects(view: LandingView): React.ReactNode {
         const status = this.status!;
         const who = status.user?.name ?? status.user?.email ?? status.user?.sub;
@@ -441,8 +486,7 @@ export class DesktopLandingWidget extends ReactWidget {
         }
         if (view.kind === 'no-organizations') {
             return <>{head}{account}
-                <p className='studio-landing__muted'>You belong to no organization on {this.hostOf()} yet.
-                    Accept an invitation in the portal, then reload.</p>
+                {this.renderNoOrganization()}
                 <div className='studio-landing__actions'>
                     {status.studioUrl && <button className='studio-landing__btn' onClick={() => this.openPortal(status.studioUrl!)}>
                         <span className='codicon codicon-link-external' /> Open the portal

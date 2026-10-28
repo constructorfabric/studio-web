@@ -24,5 +24,6 @@
   "chain_search_projects": "Search projects…",
   "chain_no_projects": "No project matches",
   "user_menu_organization": "Organization",
+  "user_menu_organization_requests": "Organization requests",
   "user_menu_sign_out": "Sign out"
 }

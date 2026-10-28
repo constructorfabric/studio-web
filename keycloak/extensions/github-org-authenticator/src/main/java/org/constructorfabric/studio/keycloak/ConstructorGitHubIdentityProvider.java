@@ -19,6 +19,8 @@ import org.keycloak.social.github.GitHubIdentityProvider;
 public final class ConstructorGitHubIdentityProvider extends GitHubIdentityProvider {
     static final String ORGANIZATION_CONFIG = "organization";
     static final String DEFAULT_ORGANIZATION = "constructorfabric";
+    // Off only when set to "false": no installation opens by accident (ADR-0051).
+    static final String REQUIRE_ORGANIZATION_CONFIG = "requireOrganization";
     private static final String DEFAULT_API_URL = "https://api.github.com";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);
     private static final Logger LOG = Logger.getLogger(ConstructorGitHubIdentityProvider.class);
@@ -42,10 +44,19 @@ public final class ConstructorGitHubIdentityProvider extends GitHubIdentityProvi
     @Override
     protected BrokeredIdentityContext doGetFederatedIdentity(String accessToken) {
         BrokeredIdentityContext identity = super.doGetFederatedIdentity(accessToken);
+        requireMembership(identity.getUsername(), accessToken);
+        return identity;
+    }
+
+    void requireMembership(String username, String accessToken) {
+        if (!requiresOrganization()) {
+            return;
+        }
         String organization = getConfig().getConfig()
                 .getOrDefault(ORGANIZATION_CONFIG, DEFAULT_ORGANIZATION).trim();
         String apiUrl = getConfig().getConfig().getOrDefault("apiUrl", DEFAULT_API_URL).trim();
 
+        // A mistyped organization must not mean "everybody".
         if (organization.isBlank()) {
             throw new IdentityBrokerException("GitHub organization membership validation is not configured");
         }
@@ -54,11 +65,10 @@ public final class ConstructorGitHubIdentityProvider extends GitHubIdentityProvi
             HttpResponse<String> response = checkMembership(apiUrl, organization, accessToken);
             if (!GitHubMembershipResponse.isActive(response.statusCode(), response.body())) {
                 LOG.warnf("Denied GitHub login for %s: organization=%s status=%d",
-                        identity.getUsername(), organization, response.statusCode());
+                        username, organization, response.statusCode());
                 throw new IdentityBrokerException(
                         "Access is restricted to active members of the GitHub organization " + organization);
             }
-            return identity;
         } catch (IOException e) {
             LOG.warn("GitHub membership API request failed", e);
             throw new IdentityBrokerException("GitHub organization membership could not be verified", e);
@@ -66,6 +76,11 @@ public final class ConstructorGitHubIdentityProvider extends GitHubIdentityProvi
             Thread.currentThread().interrupt();
             throw new IdentityBrokerException("GitHub organization membership could not be verified", e);
         }
+    }
+
+    private boolean requiresOrganization() {
+        String value = getConfig().getConfig().get(REQUIRE_ORGANIZATION_CONFIG);
+        return value == null || !"false".equalsIgnoreCase(value.trim());
     }
 
     private HttpResponse<String> checkMembership(String apiUrl, String organization, String token)

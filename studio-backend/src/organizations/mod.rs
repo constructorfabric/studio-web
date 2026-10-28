@@ -11,6 +11,7 @@
 //! that those three are written by one operation, in an order that can be
 //! resumed (see `service`).
 
+mod creation;
 pub mod logo;
 mod overview;
 /// The logo document only this gear writes, for the PDP's gear-held list.
@@ -35,33 +36,40 @@ use uuid::Uuid;
 
 use serde::Deserialize;
 
+pub use creation::Creation;
 use service::OrganizationService;
 
 /// What this installation lets people do with organizations.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StudioOrganizationsConfig {
-    /// May a person create one?
+    /// May a person create one, ask for one, or neither?
     ///
-    /// `true` in the cloud: somebody arrives with no organization and makes
-    /// their own. `false` in an installation inside one company, where the
-    /// organization already exists and people are joined to it on first sight
-    /// (`studio-user.config.on_first_login`).
+    /// `open` (or `true`): somebody arrives with no organization and makes
+    /// their own. `request`: they ask, and a platform administrator approves
+    /// the organization (ADR-0051). `off` (or `false`): an installation inside
+    /// one company, where the organization already exists and people are
+    /// joined to it on first sight (`studio-user.config.on_first_login`).
     ///
     /// These two settings are the whole difference between the two ways Studio
     /// ships (ADR-0018 §4). The domain model does not change, and neither does
     /// any authorization path — only how a person comes by their first
     /// organization.
-    #[serde(default = "yes")]
-    pub self_service: bool,
-}
+    #[serde(default)]
+    pub self_service: Creation,
 
-const fn yes() -> bool {
-    true
+    /// How many organizations one person may own by creating them or by an
+    /// approved request. Unset is no limit; a platform administrator's
+    /// appointment never counts against it (ADR-0051 §2).
+    #[serde(default)]
+    pub max_owned: Option<usize>,
 }
 
 impl Default for StudioOrganizationsConfig {
     fn default() -> Self {
-        Self { self_service: true }
+        Self {
+            self_service: Creation::Open,
+            max_owned: None,
+        }
     }
 }
 
@@ -78,22 +86,42 @@ const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 #[derive(Default)]
 pub struct StudioOrganizationsGear {
     service: OnceLock<Option<Arc<OrganizationService>>>,
-    self_service: OnceLock<bool>,
+    creation: OnceLock<rest::CreationPolicy>,
 }
 
 #[async_trait]
 impl Gear for StudioOrganizationsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-        let cfg = ctx
-            .config_or_default::<StudioOrganizationsConfig>()
-            .unwrap_or_default();
-        if !cfg.self_service {
-            info!(
+        // A configuration that does not parse closes creation rather than
+        // falling back to the default: a mistyped `request` must not open it.
+        let cfg = match ctx.config_or_default::<StudioOrganizationsConfig>() {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                warn!(
+                    "studio-organizations: cannot read the configuration, so organization \
+                     creation is off: {error:#}"
+                );
+                StudioOrganizationsConfig {
+                    self_service: Creation::Off,
+                    max_owned: None,
+                }
+            }
+        };
+        match cfg.self_service {
+            Creation::Off => info!(
                 "studio-organizations: self-service creation is off — this installation's people \
                  are joined to an organization that already exists"
-            );
+            ),
+            Creation::Request => info!(
+                "studio-organizations: a person asks for an organization and a platform \
+                 administrator approves it (ADR-0051)"
+            ),
+            Creation::Open => {}
         }
-        let _ = self.self_service.set(cfg.self_service);
+        let _ = self.creation.set(rest::CreationPolicy {
+            mode: cfg.self_service,
+            max_owned: cfg.max_owned,
+        });
         // An organization's projects, for a gear that needs every one of them
         // (the components registry): published at init so it is there for
         // every gear's REST phase, whatever the order.
@@ -120,7 +148,7 @@ impl RestApiCapability for StudioOrganizationsGear {
     ) -> anyhow::Result<Router> {
         let service = build_service(ctx);
         let _ = self.service.set(service.clone());
-        let self_service = self.self_service.get().copied().unwrap_or(true);
+        let creation = self.creation.get().copied().unwrap_or_default();
         // The rollup's sources are resolved here, in the REST phase, because
         // that is when every gear has registered what it publishes. Each is
         // optional on purpose: a deployment without the documents database or
@@ -175,13 +203,7 @@ impl RestApiCapability for StudioOrganizationsGear {
             ))
         });
         Ok(rest::register_routes(
-            router,
-            openapi,
-            service,
-            rest::SelfService(self_service),
-            sources,
-            overview,
-            access,
+            router, openapi, service, creation, sources, overview, access,
         ))
     }
 }
@@ -228,11 +250,27 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
             crate::user_profile::IDENTITY_INSTANCE_ID,
         ))
         .ok()?;
+    // Optional: without them the request routes answer 503, and an
+    // installation that does not take requests loses nothing.
+    let requests = ctx
+        .client_hub()
+        .get_scoped::<dyn crate::user_profile::OrganizationRequests>(&ClientScope::gts_id(
+            crate::user_profile::IDENTITY_INSTANCE_ID,
+        ))
+        .ok();
+    let reader = ctx
+        .client_hub()
+        .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+            crate::user_profile::IDENTITY_INSTANCE_ID,
+        ))
+        .ok();
     Some(Arc::new(OrganizationService::new(
         am,
         memberships,
         evictions,
         authority,
+        requests,
+        reader,
         PLATFORM_ROOT_TENANT_ID,
     )))
 }

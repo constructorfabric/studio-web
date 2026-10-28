@@ -12,7 +12,8 @@ mount an environment-specific `realm-studio.json` from a Secret at
 - **Native social login**: Google / GitHub / Microsoft are Keycloak's built-in
   identity providers; the realm defines all three.
 - **Restricted GitHub provider**: login is accepted only for active members of
-  `constructorfabric`; see [`GITHUB_SSO.md`](GITHUB_SSO.md).
+  `constructorfabric` unless the realm sets `requireOrganization: "false"`;
+  see [`GITHUB_SSO.md`](GITHUB_SSO.md).
 - **Secrets stay out of the image**: social client id/secret are `${vault.*}`
   references resolved at runtime by the files-plaintext vault (`KC_VAULT=file`,
   `KC_VAULT_DIR`) from a mounted Secret. Files are named `studio_<key>`, e.g.

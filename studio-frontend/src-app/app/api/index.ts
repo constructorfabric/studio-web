@@ -12,6 +12,12 @@ export {
   type MembershipList,
   type Organization,
   type OrganizationCapabilities,
+  type OrganizationCreation,
+  type OrganizationRequest,
+  type OrganizationRequestDecision,
+  type OrganizationRequestList,
+  type OrganizationRequestStatus,
+  type OrganizationRequestsQuery,
   PLATFORM_ROOT_TENANT_ID,
 } from './types';
 export { identityMockMap, organizationsMockMap } from './mocks';

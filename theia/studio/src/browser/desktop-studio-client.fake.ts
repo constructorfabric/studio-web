@@ -11,6 +11,7 @@ import type * as Client from './desktop-studio-client';
 import type { DesktopStatus } from './desktop-studio-client';
 import type { Organization } from './desktop-projects';
 import type { SourcesState } from './desktop-studio-tree';
+import type { OrganizationOnboarding } from './desktop-landing-state';
 import type { OpenProgress } from '../common/desktop-open-progress';
 
 const actual = jest.requireActual<typeof Client>('./desktop-studio-client');
@@ -28,6 +29,8 @@ export class FakeDesktopStudio {
     projects: Organization[] | Error = [];
     /** Each project's sources listing; a project not named here is `unknown`. */
     sources: Record<string, SourcesState> = {};
+    /** How a member with no organization gets one; `undefined`, the Studio could not say. */
+    onboarding: OrganizationOnboarding | undefined = undefined;
     /** The project a folder is the clone of, by folder. */
     opened: Record<string, string> = {};
     /** What each route was asked, in order: `sign-in`, `open p-web Gears workspace - Studio-web`, `sources p-2`, … */
@@ -107,6 +110,11 @@ export async function sourcesOf(id: string): Promise<SourcesState> {
     return fakeStudio.sources[id] ?? { state: 'unknown' };
 }
 
+export async function organizationOnboarding(): Promise<OrganizationOnboarding | undefined> {
+    fakeStudio.calls.push('onboarding');
+    return fakeStudio.onboarding && JSON.parse(JSON.stringify(fakeStudio.onboarding));
+}
+
 export async function openedProject(root: string): Promise<string | undefined> {
     return fakeStudio.opened[root];
 }
@@ -123,7 +131,8 @@ export async function openStudioProject(workspaceId: string, folder: string | un
 
 // The fake answers every name the real module exports.
 const _complete: typeof Client = {
-    desktopUrl, desktopStatus, startSignIn, signOut, switchStudio, loadProjects, sourcesOf, openedProject, openStudioProject,
+    desktopUrl, desktopStatus, startSignIn, signOut, switchStudio, loadProjects, organizationOnboarding, sourcesOf, openedProject,
+    openStudioProject,
     onDesktopChange, announceDesktopChange,
 };
 void _complete;

@@ -14,6 +14,7 @@
         "clientSecret": "${vault.github-client-secret}",
         "defaultScope": "user:email read:org",
         "organization": "constructorfabric",
+        "requireOrganization": "true",
         "syncMode": "IMPORT",
         "useJwksUrl": "true"
       }

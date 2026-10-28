@@ -626,6 +626,11 @@ request	POST /studio-notify/v1/messages	text	String	required
 request	POST /studio-notify/v1/messages	title	String	optional
 request	POST /studio-notify/v1/messages	topic	String	optional
 request	POST /studio-notify/v1/messages	workspace_id	Uuid	optional
+request	POST /studio-organizations/v1/organization-requests	name	String	required
+request	POST /studio-organizations/v1/organization-requests	note	String	optional
+request	POST /studio-organizations/v1/organization-requests/{}/decision	decision	String	required
+request	POST /studio-organizations/v1/organization-requests/{}/decision	name	String	optional
+request	POST /studio-organizations/v1/organization-requests/{}/decision	reason	String	optional
 request	POST /studio-organizations/v1/organizations	name	String	required
 request	POST /studio-organizations/v1/organizations	organization_id	String	optional
 request	POST /studio-presence/v1/me	detail	String	optional
@@ -2621,10 +2626,25 @@ response	GET /studio-llm/v1/workspaces/{}/client-config	provider	String	optional
 response	GET /studio-llm/v1/workspaces/{}/client-config	reason	String	optional
 response	GET /studio-organizations/v1/access-catalogue	default_roles	Value	always
 response	GET /studio-organizations/v1/access-catalogue	privileges	Vec<String>	always
+response	GET /studio-organizations/v1/capabilities	decides_requests	bool	always
+response	GET /studio-organizations/v1/capabilities	organization_creation	String	always
 response	GET /studio-organizations/v1/capabilities	self_service	bool	always
 response	GET /studio-organizations/v1/logo	content_type	String	always
 response	GET /studio-organizations/v1/logo	data	String	always
 response	GET /studio-organizations/v1/logo	digest	String	always
+response	GET /studio-organizations/v1/organization-requests	items	Vec<{}>	always
+response	GET /studio-organizations/v1/organization-requests	items.created_at_ms	i64	always
+response	GET /studio-organizations/v1/organization-requests	items.decided_at_ms	i64	optional
+response	GET /studio-organizations/v1/organization-requests	items.id	String	always
+response	GET /studio-organizations/v1/organization-requests	items.name	String	always
+response	GET /studio-organizations/v1/organization-requests	items.note	String	always
+response	GET /studio-organizations/v1/organization-requests	items.organization_id	String	optional
+response	GET /studio-organizations/v1/organization-requests	items.reason	String	optional
+response	GET /studio-organizations/v1/organization-requests	items.requested_by	String	always
+response	GET /studio-organizations/v1/organization-requests	items.requester_email	String	optional
+response	GET /studio-organizations/v1/organization-requests	items.requester_name	String	optional
+response	GET /studio-organizations/v1/organization-requests	items.status	String	always
+response	GET /studio-organizations/v1/organization-requests	total	u32	always
 response	GET /studio-organizations/v1/overview	costs	String	always
 response	GET /studio-organizations/v1/overview	decisions	{}	optional
 response	GET /studio-organizations/v1/overview	decisions.candidates	u32	optional
@@ -4562,6 +4582,39 @@ response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	status	Stri
 response	POST /studio-kits/v1/projects/{}/installations/{}/reconcile	version	String	always
 response	POST /studio-notify/v1/messages	poll	String	always
 response	POST /studio-notify/v1/messages	run_id	Uuid	always
+response	POST /studio-organizations/v1/organization-requests	created_at_ms	i64	always
+response	POST /studio-organizations/v1/organization-requests	decided_at_ms	i64	optional
+response	POST /studio-organizations/v1/organization-requests	id	String	always
+response	POST /studio-organizations/v1/organization-requests	name	String	always
+response	POST /studio-organizations/v1/organization-requests	note	String	always
+response	POST /studio-organizations/v1/organization-requests	organization_id	String	optional
+response	POST /studio-organizations/v1/organization-requests	reason	String	optional
+response	POST /studio-organizations/v1/organization-requests	requested_by	String	always
+response	POST /studio-organizations/v1/organization-requests	requester_email	String	optional
+response	POST /studio-organizations/v1/organization-requests	requester_name	String	optional
+response	POST /studio-organizations/v1/organization-requests	status	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	created_at_ms	i64	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	decided_at_ms	i64	optional
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	id	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	name	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	note	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	organization_id	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	reason	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	requested_by	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	requester_email	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	requester_name	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/cancel	status	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	created_at_ms	i64	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	decided_at_ms	i64	optional
+response	POST /studio-organizations/v1/organization-requests/{}/decision	id	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	name	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	note	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	organization_id	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/decision	reason	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/decision	requested_by	String	always
+response	POST /studio-organizations/v1/organization-requests/{}/decision	requester_email	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/decision	requester_name	String	optional
+response	POST /studio-organizations/v1/organization-requests/{}/decision	status	String	always
 response	POST /studio-organizations/v1/organizations	id	String	always
 response	POST /studio-organizations/v1/organizations	name	String	always
 response	POST /studio-presence/v1/me	me	{}	always
@@ -5445,6 +5498,7 @@ route	GET /studio-llm/v1/workspaces/{}/providers/{}/{}
 route	GET /studio-organizations/v1/access-catalogue
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
+route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
 route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online
@@ -5603,6 +5657,9 @@ route	POST /studio-llm/v1/providers/{}/{}
 route	POST /studio-llm/v1/workspaces/{}/chat/completions
 route	POST /studio-llm/v1/workspaces/{}/providers/{}/{}
 route	POST /studio-notify/v1/messages
+route	POST /studio-organizations/v1/organization-requests
+route	POST /studio-organizations/v1/organization-requests/{}/cancel
+route	POST /studio-organizations/v1/organization-requests/{}/decision
 route	POST /studio-organizations/v1/organizations
 route	POST /studio-presence/v1/me
 route	POST /studio-presence/v1/messages

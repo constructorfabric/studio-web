@@ -25,5 +25,6 @@
   "chain_search_projects": "Найти проект…",
   "chain_no_projects": "Таких проектов нет",
   "user_menu_organization": "Организация",
+  "user_menu_organization_requests": "Запросы на организации",
   "user_menu_sign_out": "Выйти"
 }

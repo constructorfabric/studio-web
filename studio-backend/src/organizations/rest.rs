@@ -10,7 +10,9 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::service::{OrganizationService, Step};
+use super::creation::{Creation, within_limit};
+use super::service::{ApprovalError, OrganizationService, Step};
+use crate::user_profile::{OrganizationRequest, RequestRefusal};
 
 #[resource_error(gts_id!("cf.studio._.organizations.v1~"))]
 pub struct OrganizationError;
@@ -34,17 +36,100 @@ pub struct CreateOrganizationRequest {
     pub organization_id: Option<String>,
 }
 
-/// Whether this installation lets people create organizations.
-#[derive(Clone, Copy)]
-pub struct SelfService(pub bool);
+/// How a person without an organization comes by one here, and how many
+/// they may make (ADR-0051 §2).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CreationPolicy {
+    pub mode: Creation,
+    pub max_owned: Option<usize>,
+}
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct OrganizationCapabilitiesDto {
-    /// When false, a person with no organization is waiting for an invitation
-    /// or for the installation to join them — and the portal should not offer
-    /// a control that will be refused.
+    /// When false, a person with no organization cannot create one at once —
+    /// and the portal should not offer a control that will be refused. True
+    /// only when `organization_creation` is `open`; kept for the clients that
+    /// read it before that field existed.
     pub self_service: bool,
+    /// `open` — create one and own it; `request` — ask for one, and a platform
+    /// administrator decides (ADR-0051); `off` — wait for an invitation.
+    pub organization_creation: String,
+    /// Whether the caller is a platform administrator, so the portal shows
+    /// the organization requests to decide. Not an authority: every request
+    /// route checks for itself.
+    pub decides_requests: bool,
+}
+
+/// A person asking for an organization.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct NewOrganizationRequestDto {
+    /// The organization's name, as `POST /organizations` takes it.
+    pub name: String,
+    /// Who they are and what they want it for, for the administrator deciding.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// A request for an organization (ADR-0051).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationRequestDto {
+    /// Also the id the organization gets when the request is approved.
+    pub id: String,
+    /// The person who asked.
+    pub requested_by: String,
+    /// Who asked, as their profile names them; absent when it names nobody.
+    /// Filled for a platform administrator's listing.
+    pub requester_name: Option<String>,
+    /// An address the identity provider verified for whoever asked.
+    pub requester_email: Option<String>,
+    pub name: String,
+    pub note: String,
+    /// `pending`, `approved`, `rejected` or `withdrawn`.
+    pub status: String,
+    /// Why it was rejected, for the person who asked.
+    pub reason: Option<String>,
+    /// The organization it became, once approved.
+    pub organization_id: Option<String>,
+    /// Epoch milliseconds, the convention every `_ms` field here follows.
+    pub created_at_ms: i64,
+    pub decided_at_ms: Option<i64>,
+}
+
+/// A page of organization requests.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationRequestListDto {
+    pub items: Vec<OrganizationRequestDto>,
+    pub total: u32,
+}
+
+/// A platform administrator's decision on a request.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct OrganizationRequestDecisionDto {
+    /// `approve` or `reject`.
+    pub decision: String,
+    /// On approval: the name the organization gets, when it should differ
+    /// from the one asked for. The request keeps what was asked.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// On rejection: why, for the person who asked.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Whose requests a listing shows.
+#[derive(Debug, serde::Deserialize)]
+pub struct OrganizationRequestQuery {
+    /// `mine` (default) or `all` — every request, for a platform administrator.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Only requests in this status.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug)]
@@ -177,25 +262,71 @@ fn configured(service: Option<Arc<OrganizationService>>) -> ApiResult<Arc<Organi
 }
 
 async fn organization_capabilities(
-    Extension(self_service): Extension<SelfService>,
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Extension(creation): Extension<CreationPolicy>,
 ) -> ApiResult<JsonBody<OrganizationCapabilitiesDto>> {
+    let decides_requests = match service {
+        Some(service) => service.is_platform_admin(&ctx).await,
+        None => false,
+    };
     Ok(Json(OrganizationCapabilitiesDto {
-        self_service: self_service.0,
+        self_service: creation.mode == Creation::Open,
+        organization_creation: creation.mode.as_str().to_owned(),
+        decides_requests,
     }))
+}
+
+/// Refuse a person who already owns as many organizations as they may make.
+async fn check_limit(
+    ctx: &SecurityContext,
+    service: &OrganizationService,
+    creation: CreationPolicy,
+) -> ApiResult<()> {
+    let Some(max) = creation.max_owned else {
+        return Ok(());
+    };
+    let owned = service
+        .self_made_ownerships(ctx)
+        .await
+        .map_err(|error| CanonicalError::internal(format!("{error:#}")).create())?
+        // Nobody can count: refuse rather than let a limit go unenforced.
+        .ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail("studio-user cannot count the organizations this person owns")
+                .create()
+        })?;
+    if within_limit(owned, Some(max)) {
+        Ok(())
+    } else {
+        Err(OrganizationError::failed_precondition()
+            .with_precondition_violation(
+                "organization".to_owned(),
+                format!(
+                    "you already own {owned} organization(s), the most this installation allows"
+                ),
+                "ORGANIZATION_LIMIT_REACHED",
+            )
+            .create())
+    }
 }
 
 async fn create_organization(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<OrganizationService>>>,
-    Extension(self_service): Extension<SelfService>,
+    Extension(creation): Extension<CreationPolicy>,
     Json(req): Json<CreateOrganizationRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<OrganizationDto>)> {
-    if !self_service.0 {
+    if creation.mode != Creation::Open {
         return Err(OrganizationError::permission_denied()
             .with_reason("SELF_SERVICE_DISABLED")
             .create());
     }
     let service = configured(service)?;
+    // A resumed creation finishes an organization already counted.
+    if req.organization_id.is_none() {
+        check_limit(&ctx, &service, creation).await?;
+    }
     let resume = match req.organization_id.as_deref() {
         None => None,
         Some(raw) => Some(Uuid::parse_str(raw).map_err(|_| {
@@ -230,6 +361,214 @@ async fn create_organization(
         ))
         .create()),
         Err((_, error, None)) => Err(CanonicalError::internal(format!("{error:#}")).create()),
+    }
+}
+
+fn request_dto(r: OrganizationRequest) -> OrganizationRequestDto {
+    OrganizationRequestDto {
+        id: r.id.to_string(),
+        requested_by: r.requested_by,
+        requester_name: r.requester_name,
+        requester_email: r.requester_email,
+        name: r.name,
+        note: r.note,
+        status: r.status,
+        reason: r.reason,
+        organization_id: r.organization_id.map(|id| id.to_string()),
+        created_at_ms: r.created_at_ms,
+        decided_at_ms: r.decided_at_ms,
+    }
+}
+
+fn refusal(refusal: RequestRefusal) -> CanonicalError {
+    match refusal {
+        RequestRefusal::NotFound => OrganizationError::not_found(refusal.message())
+            .with_resource("organization_request".to_owned())
+            .create(),
+        RequestRefusal::AlreadyPending(_) => OrganizationError::failed_precondition()
+            .with_precondition_violation(
+                "organization_request".to_owned(),
+                refusal.message(),
+                "REQUEST_ALREADY_PENDING",
+            )
+            .create(),
+        RequestRefusal::NotPending(_) => OrganizationError::failed_precondition()
+            .with_precondition_violation(
+                "organization_request".to_owned(),
+                refusal.message(),
+                "REQUEST_NOT_PENDING",
+            )
+            .create(),
+    }
+}
+
+fn request_id(raw: &str) -> ApiResult<Uuid> {
+    Uuid::parse_str(raw).map_err(|_| {
+        OrganizationError::invalid_argument()
+            .with_constraint("request id must be a uuid")
+            .create()
+    })
+}
+
+fn admin_required() -> CanonicalError {
+    OrganizationError::permission_denied()
+        .with_reason("PLATFORM_ADMIN_REQUIRED")
+        .create()
+}
+
+fn requests_unavailable() -> CanonicalError {
+    CanonicalError::service_unavailable()
+        .with_detail("studio-user keeps no organization requests in this installation")
+        .create()
+}
+
+async fn create_organization_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Extension(creation): Extension<CreationPolicy>,
+    Json(req): Json<NewOrganizationRequestDto>,
+) -> ApiResult<(StatusCode, JsonBody<OrganizationRequestDto>)> {
+    if creation.mode != Creation::Request {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("REQUESTS_DISABLED")
+            .create());
+    }
+    let service = configured(service)?;
+    let requests = service
+        .requests()
+        .cloned()
+        .ok_or_else(requests_unavailable)?;
+    let name = super::service::clean_name(&req.name).map_err(|error| {
+        OrganizationError::invalid_argument()
+            .with_constraint(format!("{error:#}"))
+            .create()
+    })?;
+    let note = crate::user_profile::clean_request_note(req.note.as_deref().unwrap_or("")).map_err(
+        |why| {
+            OrganizationError::invalid_argument()
+                .with_constraint(why)
+                .create()
+        },
+    )?;
+    check_limit(&ctx, &service, creation).await?;
+    match requests.file_request(&ctx, &name, &note).await {
+        Ok(Ok(request)) => Ok((StatusCode::CREATED, Json(request_dto(request)))),
+        Ok(Err(why)) => Err(refusal(why)),
+        Err(error) => Err(CanonicalError::internal(format!("{error:#}")).create()),
+    }
+}
+
+async fn list_organization_requests(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<OrganizationRequestQuery>,
+    axum::extract::Query(page): axum::extract::Query<crate::pagination::PageQuery>,
+) -> ApiResult<JsonBody<OrganizationRequestListDto>> {
+    let service = configured(service)?;
+    let requests = service
+        .requests()
+        .cloned()
+        .ok_or_else(requests_unavailable)?;
+    let status = query
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(status) = status
+        && !crate::user_profile::ORGANIZATION_REQUEST_STATUSES.contains(&status)
+    {
+        return Err(OrganizationError::invalid_argument()
+            .with_constraint("status must be pending, approved, rejected or withdrawn")
+            .create());
+    }
+    let all = match query.scope.as_deref().map(str::trim) {
+        None | Some("" | "mine") => false,
+        Some("all") => true,
+        Some(_) => {
+            return Err(OrganizationError::invalid_argument()
+                .with_constraint("scope must be mine or all")
+                .create());
+        }
+    };
+    let found = if all {
+        if !service.is_platform_admin(&ctx).await {
+            return Err(admin_required());
+        }
+        requests.requests(status).await
+    } else {
+        requests.requests_of_caller(&ctx).await.map(|mine| {
+            mine.into_iter()
+                .filter(|r| status.is_none_or(|s| r.status == s))
+                .collect()
+        })
+    }
+    .map_err(|error| CanonicalError::internal(format!("{error:#}")).create())?;
+    let items: Vec<OrganizationRequestDto> = found.into_iter().map(request_dto).collect();
+    let (items, total) = crate::pagination::page_of(items, page);
+    Ok(Json(OrganizationRequestListDto { items, total }))
+}
+
+async fn cancel_organization_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<OrganizationRequestDto>> {
+    let service = configured(service)?;
+    let requests = service
+        .requests()
+        .cloned()
+        .ok_or_else(requests_unavailable)?;
+    match requests.withdraw_request(&ctx, request_id(&id)?).await {
+        Ok(Ok(request)) => Ok(Json(request_dto(request))),
+        Ok(Err(why)) => Err(refusal(why)),
+        Err(error) => Err(CanonicalError::internal(format!("{error:#}")).create()),
+    }
+}
+
+async fn decide_organization_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Path(id): Path<String>,
+    Json(req): Json<OrganizationRequestDecisionDto>,
+) -> ApiResult<JsonBody<OrganizationRequestDto>> {
+    let service = configured(service)?;
+    let requests = service
+        .requests()
+        .cloned()
+        .ok_or_else(requests_unavailable)?;
+    let id = request_id(&id)?;
+    if !service.is_platform_admin(&ctx).await {
+        return Err(admin_required());
+    }
+    match req.decision.trim() {
+        "approve" => match service.approve(&ctx, id, req.name.as_deref()).await {
+            Ok(request) => Ok(Json(request_dto(request))),
+            Err(ApprovalError::Refused(why)) => Err(refusal(why)),
+            Err(ApprovalError::BadName(error)) => Err(OrganizationError::invalid_argument()
+                .with_constraint(format!("{error:#}"))
+                .create()),
+            Err(ApprovalError::Failed(error)) => Err(CanonicalError::internal(format!(
+                "the approval did not finish: {error:#}. Approving again finishes it."
+            ))
+            .create()),
+        },
+        "reject" => {
+            let reason = crate::user_profile::clean_request_reason(req.reason.as_deref()).map_err(
+                |why| {
+                    OrganizationError::invalid_argument()
+                        .with_constraint(why)
+                        .create()
+                },
+            )?;
+            match requests.reject_request(&ctx, id, reason.as_deref()).await {
+                Ok(Ok(request)) => Ok(Json(request_dto(request))),
+                Ok(Err(why)) => Err(refusal(why)),
+                Err(error) => Err(CanonicalError::internal(format!("{error:#}")).create()),
+            }
+        }
+        _ => Err(OrganizationError::invalid_argument()
+            .with_constraint("decision must be approve or reject")
+            .create()),
     }
 }
 
@@ -721,7 +1060,7 @@ pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<OrganizationService>>,
-    self_service: SelfService,
+    creation: CreationPolicy,
     sources: Option<Arc<super::rollups::Sources>>,
     overview: Option<Arc<super::overview::Overview>>,
     access: Option<crate::org_scope::OrgAccess>,
@@ -730,10 +1069,12 @@ pub fn register_routes(
         .operation_id("studio_organizations.capabilities")
         .summary("What this installation lets people do with organizations")
         .description(
-            "One field today: whether a person may create an organization. The portal reads it \
-             so the no-organization screen offers creation where creation is possible and says \
-             `wait for an invitation` where it is not — rather than offering a control that \
-             answers 403.",
+            "How a person without an organization comes by one: `organization_creation` is \
+             `open` (create one), `request` (ask, and a platform administrator decides — \
+             ADR-0051) or `off` (wait for an invitation). The portal reads it so the \
+             no-organization screen offers what will work rather than a control that answers \
+             403. `self_service` is the older spelling of `open`. `decides_requests` says the \
+             caller is a platform administrator, so the portal can show the requests to decide.",
         )
         .tag("StudioOrganizations")
         .authenticated()
@@ -864,6 +1205,121 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::post("/studio-organizations/v1/organization-requests")
+        .operation_id("studio_organizations.create_organization_request")
+        .summary("Ask for an organization to own")
+        .description(
+            "Where the installation takes requests (`organization_creation` is `request`), a \
+             person without an organization asks for one here instead of creating it, with a \
+             name and a note for the platform administrator who decides (ADR-0051). One pending \
+             request per person: a second is refused with `REQUEST_ALREADY_PENDING` until the \
+             first is withdrawn or decided. Refused with `ORGANIZATION_LIMIT_REACHED` when the \
+             person already owns as many organizations as the installation allows, and with \
+             403 `REQUESTS_DISABLED` where requests are not taken. Answers 201 with the \
+             request; its id is the id the organization will have.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<NewOrganizationRequestDto>(openapi, "The organization asked for")
+        .handler(create_organization_request)
+        .json_response_with_schema::<OrganizationRequestDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The request",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-organizations/v1/organization-requests")
+        .operation_id("studio_organizations.list_organization_requests")
+        .summary("Organization requests: the caller's own, or every one for an administrator")
+        .description(
+            "`scope=mine` (the default) lists the caller's own requests, newest first — what \
+             the no-organization screen shows as the state of an ask. `scope=all` lists every \
+             request, oldest first, for a platform administrator working through them, with \
+             who asked; anybody else is refused. `status=` narrows to one status. Paged with \
+             `offset` and `limit`.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("scope", false, "`mine` (default) or `all`")
+        .query_param("status", false, "pending, approved, rejected or withdrawn")
+        .query_param("offset", false, "Zero-based index of the first row")
+        .query_param("limit", false, "Rows per page")
+        .handler(list_organization_requests)
+        .json_response_with_schema::<OrganizationRequestListDto>(
+            openapi,
+            StatusCode::OK,
+            "The requests",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router =
+        OperationBuilder::post("/studio-organizations/v1/organization-requests/{id}/cancel")
+            .operation_id("studio_organizations.cancel_organization_request")
+            .summary("Withdraw the caller's own pending organization request")
+            .description(
+                "The person who asked takes it back while it is pending; it reads `withdrawn` \
+             afterwards and a new request may be filed. Somebody else's request answers 404, \
+             a decided one `REQUEST_NOT_PENDING`. Answers 200 with the request as it now is.",
+            )
+            .tag("StudioOrganizations")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("id", "Organization request id")
+            .handler(cancel_organization_request)
+            .json_response_with_schema::<OrganizationRequestDto>(
+                openapi,
+                StatusCode::OK,
+                "The request, withdrawn",
+            )
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router =
+        OperationBuilder::post("/studio-organizations/v1/organization-requests/{id}/decision")
+            .operation_id("studio_organizations.decide_organization_request")
+            .summary("Approve or reject an organization request")
+            .description(
+                "Platform administrators only. `approve` creates the organization with the \
+             request's id — optionally under a corrected `name` — and makes the person who \
+             asked its owner, the membership with source `request` and the owner grant \
+             (ADR-0051 §4). If a step fails the request stays pending and approving again \
+             finishes the same organization; approving one already approved answers it as it \
+             is. `reject` closes it with a `reason` the person who asked will read. A decided \
+             or withdrawn request answers `REQUEST_NOT_PENDING`. Answers 200 with the request \
+             as it now is; once approved, `organization_id` is set.",
+            )
+            .tag("StudioOrganizations")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("id", "Organization request id")
+            .json_request::<OrganizationRequestDecisionDto>(openapi, "The decision")
+            .handler(decide_organization_request)
+            .json_response_with_schema::<OrganizationRequestDto>(
+                openapi,
+                StatusCode::OK,
+                "The request, decided",
+            )
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_403(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-organizations/v1/access-catalogue")
         .operation_id("studio_organizations.get_access_catalogue")
         .summary("The privileges a role may carry, and the seeded ladder")
@@ -961,7 +1417,7 @@ Labels are deliberately              absent: what a privilege is called belongs 
 
     let router = router
         .layer(Extension(service))
-        .layer(Extension(self_service))
+        .layer(Extension(creation))
         .layer(Extension(sources))
         .layer(Extension(overview));
     match access {

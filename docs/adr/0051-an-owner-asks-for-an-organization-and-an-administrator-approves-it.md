@@ -117,7 +117,7 @@ sees §5.
 studio-organizations:
   config:
     self_service: request   # open | request | off
-    max_owned: 1            # organizations one person may own through this path
+    max_owned: 1            # organizations one person may own through this path; unset = no limit
 ```
 
 | value | the person without an organization may | used by |
@@ -129,12 +129,18 @@ studio-organizations:
 `true` and `false` keep reading as `open` and `off`, so no existing
 configuration changes meaning. `max_owned` counts active `owner` memberships
 whose `source` is a creation or an approved request; a platform
-administrator's appointment (option 4) does not count against it.
+administrator's appointment (option 4) does not count against it. Unset is
+no limit, so an installation that says nothing keeps today's behaviour; a
+cloud running `request` sets it. A configuration that does not parse closes
+creation (`off`) rather than falling back to the default: a mistyped
+`request` must not open it.
 
 `GET /studio-organizations/v1/capabilities` answers
 `organization_creation: "open" | "request" | "off"` and keeps
 `self_service: bool` (true only for `open`) for clients that read it today,
-the portal's gate and the desktop's landing widget.
+the portal's gate and the desktop's landing widget. It also answers
+`decides_requests`, whether the caller is a platform administrator, so the
+portal knows to show the requests; it authorizes nothing.
 
 ### 3. An organization request is a record studio-user keeps
 
@@ -155,40 +161,41 @@ organization_request
   created_at
 ```
 
-- A person has **at most one pending request**, and none at all while they own
-  `max_owned` organizations. A second request is a 409 naming the first.
+- A person has **at most one pending request** (a partial unique index keeps
+  it), and none at all while they own `max_owned` organizations. A second
+  request is refused with `REQUEST_ALREADY_PENDING`, naming the first.
 - The requester may **withdraw** a pending request.
 - A rejection carries a reason the requester sees. A rejected person may ask
   again; there is no ban list here. Keeping somebody out is admission's job
   (§1) or the account's suspension.
 
-Routes, under studio-user:
+The routes are studio-organizations', not studio-user's: that gear knows
+whether the installation takes requests and creates the organization on
+approval, so one gear decides the whole flow. It reads and writes the
+record only through the `OrganizationRequests` interface studio-user
+publishes on the ClientHub, never its tables.
 
 | route | who |
 |---|---|
-| `POST /studio-user/v1/me/organization-requests` | the person; refused unless creation is `request` |
-| `GET /studio-user/v1/me/organization-requests` | the person; their own, newest first |
-| `POST /studio-user/v1/me/organization-requests/{id}/withdraw` | the person, while pending |
-| `GET /studio-user/v1/organization-requests?status=pending` | platform administrator |
-| `POST /studio-user/v1/organization-requests/{id}/reject` | platform administrator |
-
-Approval is §4's, because it creates an organization.
+| `POST /studio-organizations/v1/organization-requests` | the person; refused unless creation is `request` |
+| `GET /studio-organizations/v1/organization-requests?scope=mine` | the person; their own, newest first |
+| `GET /studio-organizations/v1/organization-requests?scope=all&status=pending` | platform administrator; oldest first, with who asked |
+| `POST /studio-organizations/v1/organization-requests/{id}/cancel` | the person, while pending |
+| `POST /studio-organizations/v1/organization-requests/{id}/decision` | platform administrator: `approve` (§4) or `reject` with a reason |
 
 ### 4. Approval creates the organization on the requester's behalf
 
-`POST /studio-organizations/v1/organization-requests/{id}/approve`, platform
-administrator only. studio-organizations is what creates organizations, so it
-approves; it reads and settles the request through a studio-user interface on
-the ClientHub (`OrganizationRequests`), never its tables.
+`decision: approve` on the request, platform administrator only.
 
 - The organization is created with **the request's id as its id**. Approval
   then resumes the way `create` already resumes with `organization_id`: a
   repeated approve after a partial failure finishes the same organization and
   can never make a second one.
-- The owner is **the requester, not the caller**. `record_creation` today makes
-  the caller the owner; it gains a form that names the owner person, used only
-  here. The membership's `source` is `request`, and the owner grant is written
-  by `sync_owner_grant` as ADR-0040 §2 requires.
+- The owner is **the requester, not the caller**. `record_creation` makes the
+  caller the owner, so approval does not use it: studio-user's
+  `settle_approval` records the requester's membership with `source:
+  request`, and the owner grant is written by `sync_owner_grant` as ADR-0040
+  §2 requires.
 - The administrator may correct the name on approval. The request keeps what
   was asked for; the organization gets what was approved.
 - The request is marked `approved` with the organization's id only after the
@@ -235,9 +242,9 @@ the organization rather than the person.
   never-active, membership-less persons is a follow-up.
 - (−) The administrator learns about a request from the list, not a message,
   until §More Information step 5 is done. A request can sit unnoticed.
-- (−) `record_creation` gains an "on behalf of" form. It is the one path where
-  a caller makes somebody else an owner, and it must stay reachable only from
-  approval.
+- (−) `settle_approval` is the one path where a caller makes somebody else an
+  owner. It is reachable only from the decision route, behind the platform
+  administrator check.
 
 ## More Information
 

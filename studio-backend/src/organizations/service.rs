@@ -31,7 +31,10 @@ use gts::GtsTypeId;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::user_profile::{AssignmentRecorder, MembershipEvictor, OrgAuthority};
+use crate::user_profile::{
+    AssignmentRecorder, MembershipEvictor, OrgAuthority, OrganizationReader, OrganizationRequest,
+    OrganizationRequests, RequestRefusal,
+};
 
 /// The tenant type an organization has.
 ///
@@ -92,8 +95,23 @@ pub struct OrganizationService {
     memberships: Arc<dyn AssignmentRecorder>,
     evictions: Arc<dyn MembershipEvictor>,
     authority: Arc<dyn OrgAuthority>,
+    /// Organization requests (ADR-0051). Optional: without them the request
+    /// routes answer 503 and everything else works.
+    requests: Option<Arc<dyn OrganizationRequests>>,
+    reader: Option<Arc<dyn OrganizationReader>>,
     /// The tenant every organization is created under.
     platform_root: Uuid,
+}
+
+/// Why an approval did not finish.
+#[derive(Debug)]
+pub enum ApprovalError {
+    /// The request is not there, or not pending.
+    Refused(RequestRefusal),
+    /// The name the administrator gave is not a name.
+    BadName(anyhow::Error),
+    /// Something failed past the first write. Approving again finishes it.
+    Failed(anyhow::Error),
 }
 
 impl OrganizationService {
@@ -102,6 +120,8 @@ impl OrganizationService {
         memberships: Arc<dyn AssignmentRecorder>,
         evictions: Arc<dyn MembershipEvictor>,
         authority: Arc<dyn OrgAuthority>,
+        requests: Option<Arc<dyn OrganizationRequests>>,
+        reader: Option<Arc<dyn OrganizationReader>>,
         platform_root: Uuid,
     ) -> Self {
         Self {
@@ -109,7 +129,97 @@ impl OrganizationService {
             memberships,
             evictions,
             authority,
+            requests,
+            reader,
             platform_root,
+        }
+    }
+
+    /// The request store, when studio-user publishes it.
+    pub fn requests(&self) -> Option<&Arc<dyn OrganizationRequests>> {
+        self.requests.as_ref()
+    }
+
+    /// Is the caller a platform administrator? `false` when nobody can say.
+    pub async fn is_platform_admin(&self, ctx: &SecurityContext) -> bool {
+        match &self.reader {
+            Some(reader) => reader
+                .is_platform_admin(&ctx.subject_id().to_string())
+                .await
+                .unwrap_or(false),
+            None => false,
+        }
+    }
+
+    /// How many organizations the caller owns because they made them, for
+    /// the installation's `max_owned`. `None` when studio-user cannot say.
+    pub async fn self_made_ownerships(&self, ctx: &SecurityContext) -> Result<Option<usize>> {
+        match &self.requests {
+            Some(requests) => Ok(Some(requests.self_made_ownerships(ctx).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Approve a request: create the organization with the request's id and
+    /// make the requester its owner (ADR-0051 §4).
+    ///
+    /// The tenant first, under the request's id — so a repeated approval finds
+    /// the tenant it created rather than making a second one — then
+    /// studio-user's half: the owner membership, the owner grant, and the
+    /// request marked approved, in that order. `name` overrides the requested
+    /// name; the request keeps what was asked for.
+    pub async fn approve(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+        name: Option<&str>,
+    ) -> Result<OrganizationRequest, ApprovalError> {
+        let requests = self
+            .requests
+            .as_ref()
+            .ok_or_else(|| ApprovalError::Failed(anyhow!("studio-user keeps no requests here")))?;
+        let request = requests
+            .find_request(id)
+            .await
+            .map_err(ApprovalError::Failed)?
+            .ok_or(ApprovalError::Refused(RequestRefusal::NotFound))?;
+        if request.status == crate::user_profile::REQUEST_APPROVED
+            && request.organization_id == Some(id)
+        {
+            return Ok(request);
+        }
+        if request.status != crate::user_profile::REQUEST_PENDING {
+            return Err(ApprovalError::Refused(RequestRefusal::NotPending(
+                request.status,
+            )));
+        }
+        let name = clean_name(name.unwrap_or(&request.name)).map_err(ApprovalError::BadName)?;
+
+        match self.am.get_tenant(ctx, id).await {
+            Ok(tenant) => {
+                if tenant.tenant_type.as_deref() != Some(ORGANIZATION_TENANT_TYPE) {
+                    return Err(ApprovalError::Failed(anyhow!(
+                        "{id} exists and is not an organization"
+                    )));
+                }
+            }
+            Err(_) => {
+                let create = CreateTenantRequest::new(
+                    id,
+                    self.platform_root,
+                    name,
+                    GtsTypeId::new(ORGANIZATION_TENANT_TYPE),
+                );
+                self.am.create_tenant(ctx, create).await.map_err(|e| {
+                    ApprovalError::Failed(anyhow!("cannot create organization {id}: {e}"))
+                })?;
+            }
+        }
+
+        match requests.settle_approval(ctx, id, id).await {
+            Ok(Ok(request)) => Ok(request),
+            Ok(Err(refusal)) => Err(ApprovalError::Refused(refusal)),
+            Err(error) => Err(ApprovalError::Failed(error)),
         }
     }
 
