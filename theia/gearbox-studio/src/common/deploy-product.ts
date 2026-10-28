@@ -174,9 +174,39 @@ export interface StudioEnvironment {
 /** Where the open product can be deployed, from the Studio server. */
 export interface DeployTargets {
   readonly projectId: string;
+  /** The project's organization: a deploy's live status is read in it. */
+  readonly organizationId?: string;
   readonly environments: readonly StudioEnvironment[];
   /** profile id -> environment id, as the project bound them. */
   readonly bound: Readonly<Record<string, string>>;
+  /** The secret keys of the release's configuration, per environment; the values never come back. */
+  readonly secrets?: readonly ConfigSecret[];
+}
+
+/** A secret of the release's configuration in one environment (ADR-0048 §7): its key only. */
+export interface ConfigSecret {
+  readonly environmentId: string;
+  readonly key: string;
+}
+
+/** A deployed release as its cluster reports it now. */
+export interface DeploymentStatus {
+  readonly workloads: readonly { readonly name: string; readonly ready: number; readonly desired: number; readonly images: readonly string[] }[];
+  /** Hosts the release's ingresses answer on. */
+  readonly hosts: readonly string[];
+}
+
+/** The CI workflow Studio proposed to the project's repository (ADR-0048 §5). */
+export interface BuildWorkflow {
+  /** `.github/workflows/studio-build-<product>.yml`. */
+  readonly path: string;
+  readonly branch: string;
+  readonly prUrl: string | undefined;
+}
+
+/** A configuration secret's key: what the release reads as an environment variable. */
+export function validSecretKey(key: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
 }
 
 /** What Deploy aims at: one of the organization's environments, or a kube context of this machine. */

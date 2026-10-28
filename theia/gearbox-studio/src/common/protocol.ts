@@ -793,6 +793,15 @@ export interface DeployEnvironmentsSource {
     environmentId: string,
     repositories: readonly string[],
   ): Promise<{ readonly registry: string; readonly prefix: string; readonly token: string; readonly expires_in?: number | null }>;
+  /** A deployed release's workloads and hosts, read from its cluster now; rejects with the server's words. */
+  status?(organizationId: string, deploymentId: string): Promise<import("./deploy-product").DeploymentStatus>;
+  /** Propose the product's CI build workflow to the project's repository as a pull request (ADR-0048 §5). */
+  proposeBuildWorkflow?(
+    projectId: string,
+    body: { readonly environment_id: string; readonly profile: string; readonly product_file: string },
+  ): Promise<import("./deploy-product").BuildWorkflow>;
+  /** Set (a value) or remove (`undefined`) a secret of the release's configuration in one environment. */
+  configSecret?(projectId: string, environmentId: string, key: string, value: string | undefined): Promise<void>;
   /**
    * The project's builds, newest first: Studio's and the ones IDEs reported,
    * with what each published -- what is in the registry to deploy. Rejects

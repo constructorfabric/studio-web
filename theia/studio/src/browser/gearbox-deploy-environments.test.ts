@@ -29,6 +29,7 @@ describe('the organization\'s environments, for the desktop\'s Deploy', () => {
             projectId: 'p-1',
             environments: [{ id: 'e1', name: 'prod', namespace: 'shop-prod', registry: 'ghcr.io/acme', protected: true, registryLogin: false }],
             bound: { prod: 'e1' },
+            secrets: [],
         });
         expect(asked).toEqual(['/studio-environments/v1/targets?project_id=p-1']);
     });
@@ -142,6 +143,58 @@ describe('the organization\'s environments, for the desktop\'s Deploy', () => {
                 { profile: 'prod', environment_id: 'e-prod', values: { replicas: 3 } },
             ],
         });
+    });
+
+    it("carry the project's organization and its secret keys, never values", async () => {
+        const source = new DeployEnvironments(
+            async () => ({ kind: 'project', workspaceId: 'w', projectId: 'p-1' }),
+            async () => json(200, { organization_id: 'org-1', environments: [], bindings: [], secrets: [{ environment_id: 'e1', key: 'STRIPE_KEY' }] }),
+        );
+        await expect(source.targets('/p/product.gdl')).resolves.toMatchObject({
+            organizationId: 'org-1',
+            secrets: [{ environmentId: 'e1', key: 'STRIPE_KEY' }],
+        });
+    });
+
+    it("read a release's live status in the project's organization", async () => {
+        let asked = '';
+        const source = new DeployEnvironments(async () => undefined, async path => {
+            asked = path;
+            return json(200, { deployment: {}, workloads: [{ name: 'shop-api', ready: 1, desired: 2, images: ['r/shop-api:1'] }], hosts: ['shop.example.com'] });
+        });
+        await expect(source.status('org-1', 'd-1')).resolves.toEqual({
+            workloads: [{ name: 'shop-api', ready: 1, desired: 2, images: ['r/shop-api:1'] }],
+            hosts: ['shop.example.com'],
+        });
+        expect(asked).toBe('/studio-environments/v1/deployments/d-1/status?organization_id=org-1');
+    });
+
+    it('propose the CI build workflow as a pull request', async () => {
+        let asked: { path: string; init?: RequestInit } | undefined;
+        const source = new DeployEnvironments(async () => undefined, async (path, init) => {
+            asked = { path, init };
+            return json(200, { path: '.github/workflows/studio-build-shop.yml', branch: 'studio/build-shop', pr_url: 'https://github.com/a/b/pull/7' });
+        });
+        await expect(source.proposeBuildWorkflow('p-1', { environment_id: 'e1', profile: 'prod', product_file: 'product.gdl' })).resolves.toEqual({
+            path: '.github/workflows/studio-build-shop.yml', branch: 'studio/build-shop', prUrl: 'https://github.com/a/b/pull/7',
+        });
+        expect(asked?.path).toBe('/studio-environments/v1/build-workflows?project_id=p-1');
+        expect(JSON.parse(String(asked?.init?.body))).toEqual({ environment_id: 'e1', profile: 'prod', product_file: 'product.gdl' });
+    });
+
+    it('set a configuration secret, and remove one', async () => {
+        const asked: { path: string; init?: RequestInit }[] = [];
+        const source = new DeployEnvironments(async () => undefined, async (path, init) => {
+            asked.push({ path, init });
+            return json(init?.method === 'DELETE' ? 204 : 200, {});
+        });
+        await source.configSecret('p-1', 'e1', 'STRIPE_KEY', 's3cret');
+        await source.configSecret('p-1', 'e1', 'STRIPE_KEY', undefined);
+        expect(asked.map(a => `${a.init?.method} ${a.path}`)).toEqual([
+            'PUT /studio-environments/v1/config-secrets/STRIPE_KEY?project_id=p-1&environment_id=e1',
+            'DELETE /studio-environments/v1/config-secrets/STRIPE_KEY?project_id=p-1&environment_id=e1',
+        ]);
+        expect(JSON.parse(String(asked[0]?.init?.body))).toEqual({ value: 's3cret' });
     });
 
     it('start a build in Studio for the project (ADR-0048 §9)', async () => {

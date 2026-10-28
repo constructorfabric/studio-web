@@ -28,7 +28,11 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   under a gear the product lacks adds that gear too.
 - **Build, publish and deploy from Generate**, as in the portal: the project's
   builds with their stages and what they published, the recent deploys, the
-  next step, and binding a profile to an environment.
+  next step, and binding a profile to an environment. A deploy's **Status**
+  reads its pods (ready of desired) and the hosts it answers on from the
+  cluster; **Build in CI…** proposes the build workflow to the repository;
+  the release's configuration secrets of an environment are set and removed
+  there, and never shown.
 - **Gearbox: Configure Sources** uses a local gears checkout -- for working
   without a Studio server, or with gears of your own.
 - Checks list errors and warnings first; information is folded, and a

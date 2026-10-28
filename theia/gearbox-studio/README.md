@@ -148,8 +148,10 @@ collab strip, Orca and the Explorer stay as they are.
   - In a Gearbox perspective the window names the open product or gear
     (`shell/studio-window-title-updater.ts`); elsewhere the title is Theia's.
   - Not taken: Gearbox Studio's Windows packaging (the desktop's own installer
-    does more) and its native title bar on Windows (to check on a Windows
-    desktop: theirs could not be dragged by the custom frame).
+    does more) and its native title bar on Windows: theirs could not be
+    dragged because their toolbar covered the custom frame; Studio's header
+    leaves the gap between the menu and the collaboration strip to drag by
+    (`studio-mode-bar.tsx`, #422).
 - **Engine workarounds, each to go with the pin that fixes it:**
   - `node/sources-list.ts`: a product `product/create` wrote has no comma
     after its last source, and `add_source` appends without one (GBX0101).

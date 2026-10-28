@@ -19,7 +19,10 @@ import {
   isDeployable,
   parseTarget,
   targetValue,
+  validSecretKey,
+  type BuildWorkflow,
   type DeployImage,
+  type DeploymentStatus,
   type DeployTarget,
   type NextStep,
   type ProductBuild,
@@ -87,7 +90,29 @@ export interface DeployPanelProps {
   /** Deploy a build the server recorded, by its id, into the chosen environment. */
   readonly onDeployBuild?: (buildId: string) => void;
   readonly onBind?: (environmentId: string) => void;
+  /** A deploy's live status, by deployment id, once asked for. */
+  readonly statuses?: Readonly<Record<string, DeployStatusView>>;
+  /** Read a deploy's live status from its cluster; absent where Studio cannot be asked. */
+  readonly onStatus?: (deploymentId: string) => void;
+  /** Open a release's host, or a pull request, in the browser. */
+  readonly onOpen?: (url: string) => void;
+  /** The CI build workflow proposed for the chosen environment, once proposed. */
+  readonly workflow?: BuildWorkflow;
+  readonly proposingWorkflow?: boolean;
+  /** Propose the CI build workflow to the project's repository; absent where Studio cannot. */
+  readonly onProposeWorkflow?: () => void;
+  /** The chosen environment's configuration secret keys; the values never come back. */
+  readonly secrets?: readonly string[];
+  readonly savingSecret?: boolean;
+  /** Set (`value`) or remove (`undefined`) a configuration secret in the chosen environment. */
+  readonly onSecret?: (key: string, value: string | undefined) => void;
 }
+
+/** A deploy's live status as the panel holds it: asked, answered, or refused. */
+export type DeployStatusView =
+  | { readonly kind: "loading" }
+  | { readonly kind: "status"; readonly status: DeploymentStatus }
+  | { readonly kind: "error"; readonly error: string };
 
 export function DeployPanel(props: DeployPanelProps): React.ReactElement {
   const { images, target } = props;
@@ -366,14 +391,159 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
               {d.build !== undefined ? ` · build ${d.build}` : ""}
               {d.requestedBy !== undefined ? ` · ${d.requestedBy}` : ""}
               {d.reason !== undefined && <span className={d.state === "failed" ? "gbx-inline-error" : undefined}> -- {d.reason}</span>}
+              {props.onStatus !== undefined && d.action !== "uninstall" && d.state === "succeeded" && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="gbx-choice"
+                    data-deploy-status={d.id}
+                    disabled={props.statuses?.[d.id]?.kind === "loading"}
+                    aria-label={`Live status of the deploy to ${d.environmentName}`}
+                    onClick={() => props.onStatus?.(d.id)}
+                  >
+                    {props.statuses?.[d.id]?.kind === "loading" ? "Reading…" : "Status"}
+                  </button>
+                </>
+              )}
+              {renderStatus(props.statuses?.[d.id], props.onOpen)}
             </li>
           ))}
         </ul>
       )}
-      {/* The release's live workloads are on the organization's Environments
-          page: that read needs the organization, which an IDE opened on a
-          project does not hold. */}
+      {environment !== undefined && <EnvironmentExtras {...props} environment={environment} />}
     </section>
+  );
+}
+
+/** What the cluster says of a release now: each workload's pods ready of desired, and where it answers. */
+function renderStatus(view: DeployStatusView | undefined, open: ((url: string) => void) | undefined): React.ReactNode {
+  if (view === undefined || view.kind === "loading") return null;
+  if (view.kind === "error") {
+    return (
+      <p className="gbx-inline-error" data-deploy-status-error>
+        The cluster could not be read: {view.error}
+      </p>
+    );
+  }
+  const { workloads, hosts } = view.status;
+  return (
+    <div className="gbx-deploy-status" data-deploy-status-view>
+      {workloads.length === 0 ? (
+        <p className="gbx-waiting">No workloads of this release run in the namespace.</p>
+      ) : (
+        <ul aria-label="Workloads">
+          {workloads.map((w) => (
+            <li key={w.name} data-deploy-workload={w.name} data-deploy-workload-ready={w.ready === w.desired ? "true" : "false"}>
+              <code>{w.name}</code> · {w.ready}/{w.desired} ready
+              {w.images.length > 0 && <> · {w.images.map((i) => <code key={i}>{i}</code>)}</>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {hosts.length > 0 && (
+        <p data-deploy-hosts>
+          Answers on:{" "}
+          {hosts.map((host) => (
+            <button key={host} type="button" className="gbx-link" data-deploy-host={host} onClick={() => open?.(`https://${host}`)}>
+              {host}
+            </button>
+          ))}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What else a project keeps per environment: the CI workflow that builds and
+ * publishes into its registry, and the secrets its release reads. Shown for
+ * the environment chosen above.
+ */
+function EnvironmentExtras(props: DeployPanelProps & { readonly environment: StudioEnvironment }): React.ReactElement | null {
+  const { environment } = props;
+  const [key, setKey] = React.useState("");
+  const [value, setValue] = React.useState("");
+  if (props.onProposeWorkflow === undefined && props.onSecret === undefined) return null;
+  const keyOk = validSecretKey(key);
+  const prUrl = props.workflow?.prUrl;
+  return (
+    <div className="gbx-deploy-extras" data-deploy-extras={environment.id}>
+      {props.onProposeWorkflow !== undefined && (
+        <div className="gbx-generate-actions" data-deploy-workflow>
+          <button
+            type="button"
+            className="gbx-choice"
+            data-deploy-propose-workflow
+            disabled={props.proposingWorkflow === true}
+            title={`A GitHub workflow in the project's repository that builds the product and publishes it to ${environment.registry || environment.name}`}
+            onClick={() => props.onProposeWorkflow?.()}
+          >
+            {props.proposingWorkflow === true ? "Proposing…" : "Build in CI…"}
+          </button>
+          {props.workflow !== undefined && (
+            <span data-deploy-workflow-proposed>
+              Proposed <code>{props.workflow.path}</code> on <code>{props.workflow.branch}</code>
+              {prUrl !== undefined && (
+                <>
+                  {" "}
+                  <button type="button" className="gbx-link" onClick={() => props.onOpen?.(prUrl)}>
+                    open the pull request
+                  </button>
+                </>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+      {props.onSecret !== undefined && (
+        <section aria-label={`Configuration secrets in ${environment.name}`} data-deploy-secrets>
+          <div className="gbx-group-label">Secrets in {environment.name}</div>
+          {(props.secrets ?? []).length === 0 ? (
+            <p className="gbx-waiting">None. A deploy writes each into the release&apos;s configuration; the values never come back.</p>
+          ) : (
+            <ul>
+              {(props.secrets ?? []).map((k) => (
+                <li key={k} data-deploy-secret={k}>
+                  <code>{k}</code>{" "}
+                  <button
+                    type="button"
+                    className="gbx-choice"
+                    disabled={props.savingSecret === true}
+                    aria-label={`Remove the secret ${k}`}
+                    onClick={() => props.onSecret?.(k, undefined)}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            className="gbx-generate-actions"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!keyOk || value === "") return;
+              props.onSecret?.(key, value);
+              setValue("");
+            }}
+          >
+            <input aria-label="Secret name" placeholder="NAME" value={key} onChange={(e) => setKey(e.target.value)} />
+            <input
+              aria-label="Secret value"
+              type="password"
+              autoComplete="off"
+              placeholder="value"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <button type="submit" className="gbx-choice" data-deploy-secret-set disabled={!keyOk || value === "" || props.savingSecret === true}>
+              {props.savingSecret === true ? "Saving…" : "Set"}
+            </button>
+          </form>
+        </section>
+      )}
+    </div>
   );
 }
 

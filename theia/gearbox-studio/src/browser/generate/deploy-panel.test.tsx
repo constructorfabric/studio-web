@@ -186,6 +186,64 @@ describe("the Deploy panel", () => {
       expect(host.querySelector("[data-deploy-next]")).toBeNull();
     });
 
+    const succeeded = {
+      id: "d2", environmentId: "e-prod", environmentName: "prod", namespace: "shop-prod", profile: "prod", product: "shop",
+      action: "install", build: "studio-1", chartVersion: "0.0.0-studio.1", state: "succeeded", reason: undefined,
+      requestedAt: "2026-10-28T10:00:00Z", requestedBy: "Ann",
+    };
+
+    it("read a succeeded deploy's live status: pods ready of desired, and the hosts it answers on", async () => {
+      const onStatus = jest.fn();
+      const onOpen = jest.fn();
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onStatus,
+        onOpen,
+        flow: { next: { text: "Runs in prod", tone: "done" }, builds: [], deployments: [succeeded] },
+        statuses: { d2: { kind: "status", status: { workloads: [{ name: "shop-api", ready: 1, desired: 2, images: [] }], hosts: ["shop.example.com"] } } },
+      });
+      await act(() => q("[data-deploy-status=d2]")?.click());
+      expect(onStatus).toHaveBeenCalledWith("d2");
+      expect(host.querySelector("[data-deploy-workload=shop-api]")?.textContent).toMatch(/shop-api · 1\/2 ready/);
+      expect(host.querySelector("[data-deploy-workload=shop-api]")?.getAttribute("data-deploy-workload-ready")).toBe("false");
+      await act(() => q("[data-deploy-host='shop.example.com']")?.click());
+      expect(onOpen).toHaveBeenCalledWith("https://shop.example.com");
+    });
+
+    it("propose the CI workflow, and set and remove a secret of the chosen environment without showing values", async () => {
+      const onProposeWorkflow = jest.fn();
+      const onSecret = jest.fn();
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onProposeWorkflow,
+        onSecret,
+        secrets: ["STRIPE_KEY"],
+        workflow: { path: ".github/workflows/studio-build-shop.yml", branch: "studio/build-shop", prUrl: "https://github.com/a/b/pull/7" },
+        flow: { next: { text: "x", tone: "todo" }, builds: [], deployments: [] },
+      });
+      await act(() => q("[data-deploy-propose-workflow]")?.click());
+      expect(onProposeWorkflow).toHaveBeenCalled();
+      expect(host.querySelector("[data-deploy-workflow-proposed]")?.textContent).toMatch(/studio-build-shop\.yml on studio\/build-shop/);
+      await act(() => q('[aria-label="Remove the secret STRIPE_KEY"]')?.click());
+      expect(onSecret).toHaveBeenCalledWith("STRIPE_KEY", undefined);
+      const type = (label: string, value: string): void => {
+        const input = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`);
+        if (!input) return;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      // A name an environment variable cannot have is not offered.
+      await act(() => type("Secret name", "1BAD"));
+      await act(() => type("Secret value", "s3cret"));
+      expect(q("[data-deploy-secret-set]")?.disabled).toBe(true);
+      await act(() => type("Secret name", "DB_PASSWORD"));
+      await act(() => q("[data-deploy-secret-set]")?.click());
+      expect(onSecret).toHaveBeenCalledWith("DB_PASSWORD", "s3cret");
+      expect(host.textContent).not.toMatch(/s3cret/);
+    });
+
     it("is not drawn where the IDE cannot ask Studio", async () => {
       await draw({});
       expect(host.querySelector("[data-deploy-flow]")).toBeNull();

@@ -44,7 +44,7 @@ import {
 } from "../../common/run-product";
 import { ProductTerminals } from "./product-terminals";
 import { RunPanel, type PostgresState } from "./run-panel";
-import { DeployPanel } from "./deploy-panel";
+import { DeployPanel, type DeployStatusView } from "./deploy-panel";
 import {
   defaultTarget,
   deployAnswer,
@@ -58,6 +58,7 @@ import {
   type DeployInfo,
   type DeployTarget,
   type DeployTargets,
+  type BuildWorkflow,
   type ProductBuild,
   type ProductDeployment,
 } from "../../common/deploy-product";
@@ -202,6 +203,12 @@ export class GenerateWidget extends ReactWidget {
   protected flowTimer: ReturnType<typeof setTimeout> | undefined;
   protected flowFollowing = false;
   protected binding = false;
+  /** Each deploy's live status, as last read from its cluster. */
+  protected statuses: Record<string, DeployStatusView> = {};
+  /** The CI build workflow proposed, by environment. */
+  protected workflows: Record<string, BuildWorkflow> = {};
+  protected proposingWorkflow = false;
+  protected savingSecret = false;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -870,6 +877,73 @@ export class GenerateWidget extends ReactWidget {
     }
   }
 
+  /** Read a deploy's release from its cluster now, in the project's organization. */
+  protected async readStatus(deploymentId: string): Promise<void> {
+    const source = this.environments;
+    const organization = this.deployTargets?.organizationId;
+    if (source?.status === undefined || organization === undefined) return;
+    this.statuses = { ...this.statuses, [deploymentId]: { kind: "loading" } };
+    this.update();
+    try {
+      const status = await source.status(organization, deploymentId);
+      this.statuses = { ...this.statuses, [deploymentId]: { kind: "status", status } };
+    } catch (error) {
+      this.statuses = { ...this.statuses, [deploymentId]: { kind: "error", error: error instanceof Error ? error.message : String(error) } };
+    }
+    this.update();
+  }
+
+  /**
+   * Propose the product's CI build workflow to its repository, publishing into
+   * the chosen environment's registry: the product file as the repository
+   * names it, which is what the workflow checks out and builds.
+   */
+  protected async proposeWorkflow(): Promise<void> {
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    const file = this.product.current.open?.path;
+    if (environment === undefined || source?.proposeBuildWorkflow === undefined || this.deployTargets === undefined || file === undefined) return;
+    const where = await this.service.repositoryPathOf(file);
+    if (where === undefined) {
+      this.messages.error("This product is not in a git repository Studio can propose a workflow to.");
+      return;
+    }
+    this.proposingWorkflow = true;
+    this.update();
+    try {
+      const workflow = await source.proposeBuildWorkflow(this.deployTargets.projectId, {
+        environment_id: environment.id,
+        profile: this.product.current.profile ?? "prod",
+        product_file: where.path,
+      });
+      this.workflows = { ...this.workflows, [environment.id]: workflow };
+    } catch (error) {
+      this.messages.error(`The Studio server did not propose the workflow: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.proposingWorkflow = false;
+      this.update();
+    }
+  }
+
+  /** Set or remove a configuration secret in the chosen environment, then read the keys again. */
+  protected async configSecret(key: string, value: string | undefined): Promise<void> {
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    const file = this.product.current.open?.path;
+    if (environment === undefined || source?.configSecret === undefined || this.deployTargets === undefined || file === undefined) return;
+    this.savingSecret = true;
+    this.update();
+    try {
+      await source.configSecret(this.deployTargets.projectId, environment.id, key, value);
+      this.deployTargets = (await source.targets(file)) ?? this.deployTargets;
+    } catch (error) {
+      this.messages.error(`The Studio server did not ${value === undefined ? "remove" : "set"} ${key}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.savingSecret = false;
+      this.update();
+    }
+  }
+
   /** The builds-and-deploys section's props, when Studio can be asked for them. */
   protected deployFlow(): React.ComponentProps<typeof DeployPanel>["flow"] {
     if (this.environments?.builds === undefined || this.deployTargets === undefined) return undefined;
@@ -939,6 +1013,21 @@ export class GenerateWidget extends ReactWidget {
         {...(flow !== undefined ? { flow } : {})}
         onDeployBuild={(buildId) => void this.requestStudioBuildDeploy(buildId)}
         onBind={(environmentId) => void this.bindProfile(environmentId)}
+        statuses={this.statuses}
+        {...(this.environments?.status !== undefined && this.deployTargets?.organizationId !== undefined
+          ? { onStatus: (id: string) => void this.readStatus(id) }
+          : {})}
+        onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
+        {...(this.deployTarget?.kind === "environment" && this.workflows[this.deployTarget.id] !== undefined
+          ? { workflow: this.workflows[this.deployTarget.id] }
+          : {})}
+        proposingWorkflow={this.proposingWorkflow}
+        {...(this.environments?.proposeBuildWorkflow !== undefined ? { onProposeWorkflow: () => void this.proposeWorkflow() } : {})}
+        secrets={(this.deployTargets?.secrets ?? [])
+          .filter((secret) => this.deployTarget?.kind === "environment" && secret.environmentId === this.deployTarget.id)
+          .map((secret) => secret.key)}
+        savingSecret={this.savingSecret}
+        {...(this.environments?.configSecret !== undefined ? { onSecret: (key: string, value: string | undefined) => void this.configSecret(key, value) } : {})}
       />
     );
   }

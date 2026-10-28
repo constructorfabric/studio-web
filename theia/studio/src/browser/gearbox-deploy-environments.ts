@@ -20,8 +20,23 @@ export interface StudioEnvironment {
 
 export interface DeployTargets {
     readonly projectId: string;
+    readonly organizationId?: string;
     readonly environments: readonly StudioEnvironment[];
     readonly bound: Readonly<Record<string, string>>;
+    readonly secrets?: readonly { readonly environmentId: string; readonly key: string }[];
+}
+
+/** A release as its cluster reports it now; mirrors `DeploymentStatus` there. */
+export interface DeploymentStatus {
+    readonly workloads: readonly { readonly name: string; readonly ready: number; readonly desired: number; readonly images: readonly string[] }[];
+    readonly hosts: readonly string[];
+}
+
+/** A proposed CI build workflow; mirrors `BuildWorkflow` there. */
+export interface BuildWorkflow {
+    readonly path: string;
+    readonly branch: string;
+    readonly prUrl: string | undefined;
 }
 
 /** One build of the project's product; mirrors `ProductBuild` there. */
@@ -158,9 +173,13 @@ export class DeployEnvironments {
                 namespace: string;
             }[];
             bindings?: { profile: string; environment_id: string }[];
+            organization_id?: string;
+            secrets?: { environment_id: string; key: string }[];
         };
         return {
             projectId: scope.projectId,
+            ...(typeof body.organization_id === 'string' ? { organizationId: body.organization_id } : {}),
+            secrets: (body.secrets ?? []).map(x => ({ environmentId: x.environment_id, key: x.key })),
             environments: (body.environments ?? []).map(t => ({
                 id: t.environment.id,
                 name: t.environment.name,
@@ -268,6 +287,59 @@ export class DeployEnvironments {
             method: 'PUT',
             body: JSON.stringify({ items }),
         });
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+    }
+
+    /**
+     * A deployed release's workloads and the hosts its ingresses answer on,
+     * read from the environment's cluster now -- in the organization `targets`
+     * named, as the portal's Environments page asks.
+     */
+    async status(organizationId: string, deploymentId: string): Promise<DeploymentStatus> {
+        const res = await this.fetchApi(
+            `/studio-environments/v1/deployments/${encodeURIComponent(deploymentId)}/status?organization_id=${encodeURIComponent(organizationId)}`,
+        );
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        const body = await res.json() as { workloads?: { name?: string; ready?: number; desired?: number; images?: string[] }[]; hosts?: string[] };
+        return {
+            workloads: (body.workloads ?? []).map(w => ({
+                name: w.name ?? '',
+                ready: typeof w.ready === 'number' ? w.ready : 0,
+                desired: typeof w.desired === 'number' ? w.desired : 0,
+                images: Array.isArray(w.images) ? w.images.filter((i): i is string => typeof i === 'string') : [],
+            })),
+            hosts: (body.hosts ?? []).filter((h): h is string => typeof h === 'string'),
+        };
+    }
+
+    /** Propose `.github/workflows/studio-build-<product>.yml` to the project's repository as a pull request (ADR-0048 §5). */
+    async proposeBuildWorkflow(
+        projectId: string,
+        body: { environment_id: string; profile: string; product_file: string },
+    ): Promise<BuildWorkflow> {
+        const res = await this.fetchApi(`/studio-environments/v1/build-workflows?project_id=${encodeURIComponent(projectId)}`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        const answer = await res.json() as { path: string; branch: string; pr_url?: string | null };
+        return { path: answer.path, branch: answer.branch, prUrl: text(answer.pr_url ?? undefined) };
+    }
+
+    /**
+     * Set a secret of the release's configuration in one environment, or remove
+     * it (`value` undefined). The value goes to credstore and never comes back.
+     */
+    async configSecret(projectId: string, environmentId: string, key: string, value: string | undefined): Promise<void> {
+        const query = new URLSearchParams({ project_id: projectId, environment_id: environmentId });
+        const res = await this.fetchApi(`/studio-environments/v1/config-secrets/${encodeURIComponent(key)}?${query}`,
+            value === undefined ? { method: 'DELETE' } : { method: 'PUT', body: JSON.stringify({ value }) });
         if (!res.ok) {
             throw new Error(await refusal(res));
         }

@@ -1482,3 +1482,10 @@
 .gbx-deploy-stage-running { color: var(--theia-focusBorder); border-color: currentColor; }
 .gbx-deploy-stage-failed { color: var(--theia-errorForeground); border-color: currentColor; }
 .gbx-deploy-stage-waiting { opacity: 0.6; }
+.gbx-deploy-status { margin: 6px 0 0 12px; font-size: 12px; }
+.gbx-deploy-status ul { list-style: none; margin: 0; padding: 0; }
+.gbx-deploy-status [data-deploy-workload-ready="false"] { color: var(--theia-editorWarning-foreground); }
+.gbx-deploy-extras { margin-top: 12px; }
+.gbx-deploy-extras form input { padding: 4px 6px; }
+.gbx-link { font: inherit; padding: 0 4px 0 0; border: 0; background: transparent; color: var(--theia-textLink-foreground); cursor: pointer; }
+.gbx-link:hover { text-decoration: underline; }

@@ -904,7 +904,12 @@ what is ported and how). What is particular to a member's machine:
   builds with their stages, failure and what they published to the registry
   (images and chart), the recent deploys, and the next step; it binds an
   unbound profile to an environment. A running build is followed every 5 s.
-  A release's live workloads are on the portal's Environments page.
+  **Status** on a deploy that succeeded reads its workloads (pods ready of
+  desired) and the hosts its ingresses answer on, in the organization
+  `GET /targets` names. **Build in CI…** proposes
+  `.github/workflows/studio-build-<product>.yml` to the project's repository
+  as a pull request; **Secrets in <environment>** sets and removes the
+  release's configuration secrets there -- keys only come back.
 
 ## Agent development (Orca)
 
