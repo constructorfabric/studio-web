@@ -38,7 +38,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    # studio-small-vm: the publishing token (contents: write) keeps it off the
+    # pods. Hosted fallback as in studio-delivery.yml (see its runner note).
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login))) && 'ubuntu-24.04' || 'studio-small-vm' }}
     permissions:
       contents: write
     env:
