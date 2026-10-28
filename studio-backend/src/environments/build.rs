@@ -967,6 +967,35 @@ fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Give the generated workspace the lock of the sources it builds, when it
+/// has none of its own: the product's own code first (a source in the
+/// repository), else a fetched one. Without it cargo locks every crate to its
+/// latest version, and the first build on a cluster mixed two releases of the
+/// platform's toolkit crates whose traits no longer met; cargo keeps what the
+/// lock names and adds only what it lacks.
+fn seed_lock(roots: &[PathBuf], repo: &Path, out: &Path) -> anyhow::Result<()> {
+    let target = out.join("Cargo.lock");
+    if target.exists() {
+        return Ok(());
+    }
+    let in_repo = |r: &PathBuf| {
+        r.canonicalize()
+            .map(|c| c.starts_with(repo.canonicalize().unwrap_or_else(|_| repo.to_owned())))
+            .unwrap_or(false)
+    };
+    let own = roots.iter().filter(|r| in_repo(r));
+    let fetched = roots.iter().filter(|r| !in_repo(r));
+    if let Some(lock) = own
+        .chain(fetched)
+        .map(|r| r.join("Cargo.lock"))
+        .find(|l| l.is_file())
+    {
+        std::fs::copy(&lock, &target)
+            .with_context(|| format!("{} could not be copied into the tree", lock.display()))?;
+    }
+    Ok(())
+}
+
 /// A tool's output reduced to its `error` diagnostics, each with the lines
 /// indented under it, or all of it when it names none. gearbox prints every
 /// `info` and `warning` before it gives up, and a whole product's of them
@@ -1121,6 +1150,7 @@ pub fn prepare(
         .arg("--out")
         .arg(&out);
     run(&mut generate, "gearbox generate")?;
+    seed_lock(&roots, &repo, &out)?;
 
     // The tree, made buildable (constructorfabric/gearbox#12).
     let docker = out.join("docker");
@@ -1337,6 +1367,36 @@ mod tests {
             stuck(&p),
             Some(("prepare".into(), "ImagePullBackOff: no such image".into()))
         );
+    }
+
+    #[test]
+    fn the_tree_gets_the_lock_of_the_products_own_code_before_a_fetched_ones() {
+        let work = std::env::temp_dir().join(format!("studio-seed-lock-{}", Uuid::new_v4()));
+        let repo = work.join("repo");
+        let own = repo.join("studio-backend");
+        let fetched = work.join("sources").join("gears-rust");
+        let out = repo.join(".gearbox").join("out");
+        for d in [&own, &fetched, &out] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(fetched.join("Cargo.lock"), "fetched").unwrap();
+        std::fs::write(own.join("Cargo.lock"), "own").unwrap();
+
+        seed_lock(&[fetched.clone(), own.clone()], &repo, &out).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(out.join("Cargo.lock")).unwrap(),
+            "own"
+        );
+
+        // A lock the engine wrote is the tree's own, and stays.
+        std::fs::write(out.join("Cargo.lock"), "generated").unwrap();
+        seed_lock(&[own], &repo, &out).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(out.join("Cargo.lock")).unwrap(),
+            "generated"
+        );
+
+        std::fs::remove_dir_all(&work).ok();
     }
 
     #[test]
