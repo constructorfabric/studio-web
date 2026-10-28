@@ -139,7 +139,8 @@ export function alsoCovers(plan: readonly PlanRow[]): Record<string, string[]> {
 
 // ── The next step ────────────────────────────────────────────────────────
 
-export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "build" | "open";
+/** `builds`: the product is written; building it is the Builds tab's. */
+export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "build" | "open" | "builds";
 
 export interface NextStep {
   text: string;
@@ -200,7 +201,11 @@ export function nextStep(s: FlowState): NextStep {
       ? ` ${plural(s.open, "capability", "capabilities")} the specs ask for ${s.open === 1 ? "is" : "are"} not closed yet.`
       : "";
   if (!s.written) return { text: `The product resolves: build it in Studio-ide.${gap}`, action: "build", tone: gap ? "warn" : "todo" };
-  return { text: `Built: product.gdl is in the repository. Open it in Studio-ide.${gap}`, action: "open", tone: gap ? "warn" : "done" };
+  return {
+    text: `Composed: product.gdl is in the repository. Next: build it, in Studio, the IDE or CI.${gap}`,
+    action: "builds",
+    tone: gap ? "warn" : "done",
+  };
 }
 
 /** One step of the way from the specs to a built product. */

@@ -31,7 +31,7 @@ spec:
       containers:
         - name: database-bootstrap
           image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required for database bootstrap" .Values.backend.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "bootstrap", "--apply"]
           resources: {{- toYaml .Values.backend.bootstrap.resources | nindent 12 }}

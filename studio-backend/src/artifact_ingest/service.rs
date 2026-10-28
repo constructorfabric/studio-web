@@ -2987,6 +2987,7 @@ impl super::port::BuildRecords for IngestService {
             finished_at: None,
             failure: o.failure.clone(),
             failure_step: o.failure_step.clone(),
+            step: o.step.clone(),
             outputs: o.images.iter().map(|(_, i)| i.clone()).collect(),
             images: o.images.clone(),
             chart_ref: o.chart_ref.clone(),

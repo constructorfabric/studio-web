@@ -28,7 +28,7 @@ spec:
       containers:
         - name: frontend-prototype
           image: "{{ .Values.frontendPrototype.image.repository }}:{{ required "frontendPrototype.image.tag is required when the prototype is enabled" .Values.frontendPrototype.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports: [{ name: http, containerPort: {{ .Values.frontendPrototype.port }} }]
           env:

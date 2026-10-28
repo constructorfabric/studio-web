@@ -684,7 +684,7 @@ async fn start_build(
             q.project_id,
             body.environment_id,
             body.profile.as_deref().unwrap_or("prod"),
-            body.product_file.as_deref().unwrap_or("product.gdl"),
+            body.product_file.as_deref(),
             body.git_ref,
         )
         .await

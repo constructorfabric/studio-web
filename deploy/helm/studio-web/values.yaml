@@ -286,6 +286,13 @@ backend:
   # What has not happened is two real replicas against a real cluster. Until
   # someone runs that on studio-dev, the guard stays — lifting it is then a
   # one-line change here.
+  # A build in an organization's cluster (studio-environments, ADR-0048 §9)
+  # runs as a Job of three steps. `prepare` and `publish` run in this backend's
+  # own image (backend.image above, so a cluster that admits only its own
+  # registry's proxy gets the image through it); `build` runs rootless BuildKit
+  # from buildkitImage. Point that at the same proxy where such a policy holds.
+  builds:
+    buildkitImage: "moby/buildkit:v0.20.0-rootless"
   sessions:
     enabled: false
     # One checkout, read by the IDE and by the analyses.

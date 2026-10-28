@@ -5,6 +5,10 @@
 
 import { useRef, useState } from "react";
 
+// What the cluster's administrator applies once, read from the repository at
+// build time so the form never shows a copy that has drifted from it.
+import BOOTSTRAP from "../../deploy/k8s/studio-environments/bootstrap.yaml?raw";
+
 import { api, type Connection } from "./api";
 import { errText } from "./format";
 import { clusterHost, kubeconfigServer } from "./kubeconfig";
@@ -124,6 +128,22 @@ export function AddCluster({
         A kubeconfig with the cluster&apos;s CA and a service-account token, or a bare token for a cluster whose certificate a
         public CA signed. Stored in credstore for the organization; only the server uses it, to deploy.
       </p>
+      <details data-cluster-bootstrap>
+        <summary>Prepare the cluster once, as its administrator</summary>
+        <p className="hint">
+          Every project gets its own namespace, <code>&lt;project&gt;-&lt;environment&gt;</code>, made by the first deploy
+          into it. This manifest lets the <code>studio-environments/deployer</code> account make those namespaces and
+          give itself <code>admin</code> in them, and nothing else. Apply it with <code>kubectl apply -f</code>, then paste the
+          token the comment at its top shows how to read. Kubernetes 1.30 or newer.
+        </p>
+        <div className="row">
+          <span className="grow hint">bootstrap.yaml</span>
+          <button type="button" onClick={() => void navigator.clipboard?.writeText(BOOTSTRAP).catch(() => {})}>
+            Copy
+          </button>
+        </div>
+        <pre style={{ maxHeight: 240, overflow: "auto", fontSize: 12 }}>{BOOTSTRAP}</pre>
+      </details>
       <KubeconfigField
         value={credential}
         reveal={reveal}

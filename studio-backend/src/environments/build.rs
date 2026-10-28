@@ -44,7 +44,9 @@ use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 pub const TASK_TYPE: &str = "environments.build";
 pub const WATCH_TASK_TYPE: &str = "environments.build.watch";
 
-/// The image BuildKit runs in, rootless.
+/// The image BuildKit runs in, rootless, unless `STUDIO_BUILDKIT_IMAGE` names
+/// another: a cluster that admits only its own registry's images wants the
+/// same image through that registry's proxy.
 pub const BUILDKIT_IMAGE: &str = "moby/buildkit:v0.20.0-rootless";
 
 /// How long a build may take before the cluster stops it.
@@ -85,6 +87,14 @@ pub struct BuildPayload {
     pub git_ref: Option<String>,
     /// The image `prepare` and `publish` run in: this Studio's backend.
     pub builder_image: String,
+    /// The image the `build` step runs BuildKit in. Absent from a build
+    /// queued before it was recorded, which gets the default.
+    #[serde(default = "default_buildkit_image")]
+    pub buildkit_image: String,
+}
+
+fn default_buildkit_image() -> String {
+    BUILDKIT_IMAGE.to_owned()
 }
 
 /// What a watch run carries: the Job to follow.
@@ -101,6 +111,9 @@ pub struct WatchPayload {
     /// How many watch runs came before this one.
     #[serde(default)]
     pub round: u32,
+    /// The step last recorded as running, so a step is recorded once.
+    #[serde(default)]
+    pub step: Option<String>,
 }
 
 /// The Job's name for a build: a DNS label.
@@ -124,6 +137,15 @@ pub fn git_secret_name(build_id: &str) -> String {
         .chars()
         .take(63)
         .collect()
+}
+
+/// The image BuildKit runs in: `STUDIO_BUILDKIT_IMAGE`, else [`BUILDKIT_IMAGE`].
+pub fn buildkit_image() -> String {
+    std::env::var("STUDIO_BUILDKIT_IMAGE")
+        .ok()
+        .map(|image| image.trim().to_owned())
+        .filter(|image| !image.is_empty())
+        .unwrap_or_else(default_buildkit_image)
 }
 
 /// The image `prepare` and `publish` run in: `STUDIO_BUILDER_IMAGE`, else the
@@ -226,7 +248,7 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
                         },
                         {
                             "name": "build",
-                            "image": BUILDKIT_IMAGE,
+                            "image": p.buildkit_image,
                             "command": ["sh", "-c", BUILD_SCRIPT],
                             "env": [
                                 { "name": "PREFIX", "value": p.prefix },
@@ -476,6 +498,7 @@ impl BuildTask {
             repository: p.repo.repo.clone(),
             profile: p.profile.clone(),
             round: 0,
+            step: None,
         };
         enqueue(
             &self.hub,
@@ -557,6 +580,53 @@ fn pod_messages(pod: &Pod) -> (Option<String>, Option<(String, String)>) {
     (publish, failed)
 }
 
+/// The step the build's pod is in: the first container, init or not, that
+/// has not ended.
+fn current_step(pod: &Pod) -> Option<String> {
+    let status = pod.status.as_ref()?;
+    status
+        .init_container_statuses
+        .iter()
+        .flatten()
+        .chain(status.container_statuses.iter().flatten())
+        .find(|c| c.state.as_ref().is_none_or(|s| s.terminated.is_none()))
+        .map(|c| c.name.clone())
+}
+
+/// A container that waits for what will not come: an image that cannot be
+/// pulled, a configuration that cannot be made. Its step, and why.
+fn stuck(pod: &Pod) -> Option<(String, String)> {
+    const HOPELESS: [&str; 5] = [
+        "ErrImagePull",
+        "ImagePullBackOff",
+        "InvalidImageName",
+        "CreateContainerConfigError",
+        "CreateContainerError",
+    ];
+    let status = pod.status.as_ref()?;
+    status
+        .init_container_statuses
+        .iter()
+        .flatten()
+        .chain(status.container_statuses.iter().flatten())
+        .find_map(|c| {
+            let waiting = c.state.as_ref()?.waiting.as_ref()?;
+            let reason = waiting.reason.as_deref()?;
+            HOPELESS.contains(&reason).then(|| {
+                (
+                    c.name.clone(),
+                    format!(
+                        "{reason}: {}",
+                        waiting
+                            .message
+                            .as_deref()
+                            .unwrap_or("the container cannot start")
+                    ),
+                )
+            })
+        })
+}
+
 /// The last `n` characters of `s`: a failure's end says most.
 fn tail(s: &str, n: usize) -> String {
     let chars: Vec<char> = s.trim().chars().collect();
@@ -599,6 +669,8 @@ impl WatchTask {
         let client = access.client().await?;
         let jobs: kube::Api<Job> = kube::Api::namespaced(client.clone(), &p.namespace);
         let started = std::time::Instant::now();
+        let pods: kube::Api<Pod> = kube::Api::namespaced(client.clone(), &p.namespace);
+        let mut step = p.step.clone();
         loop {
             let Some(job) = jobs
                 .get_opt(&p.job)
@@ -615,31 +687,64 @@ impl WatchTask {
                 return Ok("the build Job is gone".into());
             };
             match job_state(&job) {
-                JobState::Running if started.elapsed() < WATCH_FOR => {
-                    ctx.progress(format!("building in {}", p.namespace)).await;
+                JobState::Running => {
+                    let pod = pods
+                        .list(&ListParams::default().labels(&format!("job-name={}", p.job)))
+                        .await
+                        .ok()
+                        .and_then(|l| l.items.into_iter().next());
+                    // A pod that cannot start never fails the Job: it waits
+                    // out the deadline. Say why now instead.
+                    if let Some((at, why)) = pod.as_ref().and_then(stuck) {
+                        let said = format!("failed in {at}: {why}");
+                        self.finish(ctx, &client, p, Err((at, why))).await?;
+                        let _ = jobs.delete(&p.job, &DeleteParams::background()).await;
+                        return Ok(said);
+                    }
+                    let now = pod.as_ref().and_then(current_step);
+                    if now.is_some() && now != step {
+                        let mut running = crate::artifact_ingest::port::BuildOutcome::running(
+                            &p.build_id,
+                            &p.repository,
+                            &p.profile,
+                        );
+                        running.step = now.clone();
+                        if let Err(e) =
+                            record(&self.hub, &ctx.security, p.project_id, running).await
+                        {
+                            warn!(build = %p.build_id, "studio-environments: the build's step could not be recorded ({e})");
+                        }
+                        step = now;
+                    }
+                    if started.elapsed() >= WATCH_FOR {
+                        let next = WatchPayload {
+                            round: p.round + 1,
+                            step: step.clone(),
+                            ..p.clone()
+                        };
+                        enqueue(
+                            &self.hub,
+                            p.organization_id,
+                            WATCH_TASK_TYPE,
+                            serde_json::to_value(&next)?,
+                            &format!("build-watch:{}", p.build_id),
+                            &format!("{}:watch:{}", p.build_id, next.round),
+                        )
+                        .await?;
+                        return Ok("still building; watching on".into());
+                    }
+                    ctx.progress(format!(
+                        "building in {}: {}",
+                        p.namespace,
+                        step.as_deref().unwrap_or("starting")
+                    ))
+                    .await;
                     tokio::select! {
                         () = tokio::time::sleep(WATCH_EVERY) => {}
                         () = ctx.cancel.cancelled() => bail!("the watch was cancelled"),
                     }
                 }
-                JobState::Running => {
-                    let next = WatchPayload {
-                        round: p.round + 1,
-                        ..p.clone()
-                    };
-                    enqueue(
-                        &self.hub,
-                        p.organization_id,
-                        WATCH_TASK_TYPE,
-                        serde_json::to_value(&next)?,
-                        &format!("build-watch:{}", p.build_id),
-                        &format!("{}:watch:{}", p.build_id, next.round),
-                    )
-                    .await?;
-                    return Ok("still building; watching on".into());
-                }
                 state => {
-                    let pods: kube::Api<Pod> = kube::Api::namespaced(client.clone(), &p.namespace);
                     let pod = pods
                         .list(&ListParams::default().labels(&format!("job-name={}", p.job)))
                         .await
@@ -854,9 +959,38 @@ fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
         String::from_utf8_lossy(&out.stderr)
     );
     if !out.status.success() {
-        bail!("{what} failed: {}", tail(&text, 1500));
+        // The whole output to the container's log; the failure itself carries
+        // what went wrong, which the run records as the build's reason.
+        eprintln!("{text}");
+        bail!("{what} failed: {}", tail(&errors_first(&text), 1500));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// A tool's output reduced to its `error` diagnostics, each with the lines
+/// indented under it, or all of it when it names none. gearbox prints every
+/// `info` and `warning` before it gives up, and a whole product's of them
+/// pushed the one `error` out of the tail a failure keeps.
+fn errors_first(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut in_error = false;
+    for line in text.lines() {
+        if line.starts_with(char::is_whitespace) {
+            if in_error {
+                kept.push(line);
+            }
+        } else {
+            in_error = line.starts_with("error");
+            if in_error {
+                kept.push(line);
+            }
+        }
+    }
+    if kept.is_empty() {
+        text.to_owned()
+    } else {
+        kept.join("\n")
+    }
 }
 
 fn gearbox() -> String {
@@ -1156,7 +1290,70 @@ mod tests {
             },
             git_ref: None,
             builder_image: "ghcr.io/acme/studio-backend:sha-1".into(),
+            buildkit_image: BUILDKIT_IMAGE.into(),
         }
+    }
+
+    fn pod(init: serde_json::Value, main: serde_json::Value) -> Pod {
+        serde_json::from_value(serde_json::json!({
+            "metadata": { "name": "studio-build-1" },
+            "status": { "initContainerStatuses": init, "containerStatuses": main },
+        }))
+        .unwrap()
+    }
+
+    fn done(name: &str) -> serde_json::Value {
+        serde_json::json!({ "name": name, "ready": false, "restartCount": 0, "image": "i", "imageID": "",
+            "state": { "terminated": { "exitCode": 0 } } })
+    }
+
+    fn waiting(name: &str, reason: &str) -> serde_json::Value {
+        serde_json::json!({ "name": name, "ready": false, "restartCount": 0, "image": "i", "imageID": "",
+            "state": { "waiting": { "reason": reason, "message": "no such image" } } })
+    }
+
+    #[test]
+    fn the_step_is_the_first_container_that_has_not_ended() {
+        let p = pod(
+            serde_json::json!([done("prepare"), waiting("build", "PodInitializing")]),
+            serde_json::json!([waiting("publish", "PodInitializing")]),
+        );
+        assert_eq!(current_step(&p).as_deref(), Some("build"));
+        let p = pod(
+            serde_json::json!([done("prepare"), done("build")]),
+            serde_json::json!([waiting("publish", "ContainerCreating")]),
+        );
+        assert_eq!(current_step(&p).as_deref(), Some("publish"));
+        assert_eq!(stuck(&p), None);
+    }
+
+    #[test]
+    fn an_image_that_cannot_be_pulled_fails_the_build_at_once() {
+        let p = pod(
+            serde_json::json!([waiting("prepare", "ImagePullBackOff")]),
+            serde_json::json!([waiting("publish", "PodInitializing")]),
+        );
+        assert_eq!(
+            stuck(&p),
+            Some(("prepare".into(), "ImagePullBackOff: no such image".into()))
+        );
+    }
+
+    #[test]
+    fn a_failure_keeps_its_errors_however_many_notes_come_before_them() {
+        let notes = "info [GBX0517] two plugins share a vendor\n    help: give them priorities\n"
+            .repeat(40);
+        let text = format!(
+            "{notes}error [GBX0511] gear `tenant-resolver` has no implementation\n    \
+             help: pick one\nwarning [GBX0315] no gRPC services\nerror: resolution reported errors"
+        );
+        let kept = errors_first(&text);
+        assert_eq!(
+            kept,
+            "error [GBX0511] gear `tenant-resolver` has no implementation\n    help: pick one\n\
+             error: resolution reported errors"
+        );
+        assert_eq!(errors_first("fatal: no such ref"), "fatal: no such ref");
     }
 
     #[test]

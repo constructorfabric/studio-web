@@ -15,8 +15,10 @@ use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use base64::Engine;
 use k8s_openapi::api::apps::v1::Deployment as KubeDeployment;
+use k8s_openapi::api::authentication::v1::SelfSubjectReview;
 use k8s_openapi::api::core::v1::{LocalObjectReference, Namespace, Secret, ServiceAccount};
 use k8s_openapi::api::networking::v1::Ingress;
+use k8s_openapi::api::rbac::v1::{RoleBinding, RoleRef, Subject};
 use kube::api::{ListParams, ObjectMeta, Patch, PatchParams, PostParams};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -398,7 +400,6 @@ pub(super) async fn prepare_namespace(
             namespaces
                 .create(&PostParams::default(), &ns)
                 .await
-                .map(|_| ())
                 .map_err(|e| {
                     anyhow!(
                         "namespace {} does not exist and the cluster connection may not \
@@ -406,13 +407,91 @@ pub(super) async fn prepare_namespace(
                          create namespaces ({e})",
                         namespace
                     )
-                })
+                })?;
+            grant_self_admin(client, namespace).await
         }
         Err(kube::Error::Api(status)) if status.code == 403 => {
             warn!(namespace = %namespace, "studio-environments: cannot read namespaces; assuming it exists");
             Ok(())
         }
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),
+    }
+}
+
+/// The RoleBinding that gives the connection `admin` in a namespace it made.
+pub const SELF_ADMIN_BINDING: &str = "constructor-studio";
+
+/// Give the connection's own account `admin` in the namespace it just made.
+/// Creating a namespace gives its creator nothing inside it, so a connection
+/// that may create namespaces (and bind `admin`: the cluster's bootstrap
+/// manifest, `deploy/k8s/studio-environments/`) would otherwise make one it
+/// cannot deploy into. Every project of the organization gets its namespace
+/// this way, without anybody preparing it.
+async fn grant_self_admin(client: &kube::Client, namespace: &str) -> anyhow::Result<()> {
+    let review = kube::Api::<SelfSubjectReview>::all(client.clone())
+        .create(&PostParams::default(), &SelfSubjectReview::default())
+        .await
+        .map_err(|e| anyhow!("the cluster did not say who the connection is: {e}"))?;
+    let username = review
+        .status
+        .and_then(|s| s.user_info)
+        .and_then(|u| u.username)
+        .ok_or_else(|| anyhow!("the cluster did not say who the connection is"))?;
+    let binding = RoleBinding {
+        metadata: ObjectMeta {
+            name: Some(SELF_ADMIN_BINDING.to_owned()),
+            labels: Some(
+                [(
+                    "app.kubernetes.io/managed-by".to_owned(),
+                    FIELD_MANAGER.to_owned(),
+                )]
+                .into(),
+            ),
+            ..ObjectMeta::default()
+        },
+        role_ref: RoleRef {
+            api_group: "rbac.authorization.k8s.io".to_owned(),
+            kind: "ClusterRole".to_owned(),
+            name: "admin".to_owned(),
+        },
+        subjects: Some(vec![subject_for(&username)]),
+    };
+    kube::Api::<RoleBinding>::namespaced(client.clone(), namespace)
+        .patch(
+            SELF_ADMIN_BINDING,
+            &PatchParams::apply(FIELD_MANAGER).force(),
+            &Patch::Apply(&binding),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| {
+            anyhow!(
+                "namespace {namespace} was created, but the cluster connection may not give \
+                 itself admin there: apply the cluster's bootstrap manifest, which lets it \
+                 bind admin in the namespaces it makes ({e})"
+            )
+        })
+}
+
+/// The RBAC subject a username names: a service account's
+/// `system:serviceaccount:<namespace>:<name>`, else a user.
+fn subject_for(username: &str) -> Subject {
+    match username
+        .strip_prefix("system:serviceaccount:")
+        .and_then(|rest| rest.split_once(':'))
+    {
+        Some((namespace, name)) => Subject {
+            kind: "ServiceAccount".to_owned(),
+            name: name.to_owned(),
+            namespace: Some(namespace.to_owned()),
+            api_group: None,
+        },
+        None => Subject {
+            kind: "User".to_owned(),
+            name: username.to_owned(),
+            namespace: None,
+            api_group: Some("rbac.authorization.k8s.io".to_owned()),
+        },
     }
 }
 
@@ -796,6 +875,20 @@ pub async fn rollout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_service_account_binds_as_itself_and_anybody_else_as_a_user() {
+        let sa = subject_for("system:serviceaccount:studio-environments:deployer");
+        assert_eq!(sa.kind, "ServiceAccount");
+        assert_eq!(sa.name, "deployer");
+        assert_eq!(sa.namespace.as_deref(), Some("studio-environments"));
+        assert_eq!(sa.api_group, None);
+
+        let user = subject_for("kubernetes-admin");
+        assert_eq!(user.kind, "User");
+        assert_eq!(user.name, "kubernetes-admin");
+        assert_eq!(user.api_group.as_deref(), Some("rbac.authorization.k8s.io"));
+    }
 
     fn payload() -> DeployPayload {
         DeployPayload {

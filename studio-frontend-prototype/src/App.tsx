@@ -5766,6 +5766,7 @@ function ProjectScreen({
             projectId={proj.id}
             projectName={proj.name}
             workspaceId={workspace.id}
+            onOpenTab={setTab}
           />
         )}
         {tab === "components" && <ProductFrontend token={token} projectId={proj.id} />}
@@ -5773,13 +5774,13 @@ function ProjectScreen({
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
         {tab === "builds" && (
-          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
           <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
         )}
         {tab === "deploys" && (
-          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
         )}
         {tab === "kits" && (
           <ProjectKits

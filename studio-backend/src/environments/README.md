@@ -23,7 +23,7 @@ All under `/studio-environments/v1`. An organization is named with
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind the product's kubernetes profiles to environments |
 | `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); 202 `queued` or `awaiting_approval` |
-| `POST /builds?project_id=` | member | build the product in the environment's cluster: a Job in the project's namespace (prepare, rootless BuildKit, publish), watched until it ends and recorded as a `studio` build (ADR-0048 §9); 202 with `build_id` |
+| `POST /builds?project_id=` | member | build the product in the environment's cluster: a Job in the project's namespace (prepare, rootless BuildKit, publish), watched until it ends and recorded as a `studio` build (ADR-0048 §9); naming neither `product_file` nor `ref` builds what the Product step last wrote, on its branch; 202 with `build_id` |
 | `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-build-<product>.yml` for the product `product_file` describes (default `product.gdl`) to the project's repository as a pull request (ADR-0048 §5) |
 | `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
 | `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
@@ -47,6 +47,15 @@ of studio-user through `OrgAuthority`.
   `insecure-skip-tls-verify`, and a kubeconfig for another server than the
   connection's address. An environment refuses a personal connection: the run
   acts as the service, which cannot read one.
+- A project's namespace (`<project>-<environment>` by default) is made by the
+  first build or deploy into it when it is missing, labelled
+  `app.kubernetes.io/managed-by=constructor-studio`, and the connection then
+  binds itself `admin` there (the `constructor-studio` RoleBinding, as the
+  user a `SelfSubjectReview` names). A cluster administrator makes that
+  possible once with `deploy/k8s/studio-environments/bootstrap.yaml`: the
+  account may create namespaces and bind `admin`, and an admission policy holds
+  it to the namespaces labelled as Studio's. The prototype's "Connect a
+  cluster" form shows the same file.
 - An environment may name a `registry` connection (`connectors/registry.rs`,
   plugin gear `registry-connector-plugin`; ADR-0048), on the host its registry
   prefix names, organization-held like the cluster. Every deploy then writes
@@ -112,7 +121,9 @@ once the run ends.
 - `build.rs` — a build in the organization's cluster: the Job, the start and
   watch runs, and the Job's own steps (`studio-backend build-prepare`,
   `build-publish`), which run in this Studio's backend image
-  (`STUDIO_BUILDER_IMAGE`, else `…/studio-backend:sha-<commit>`).
+  (`STUDIO_BUILDER_IMAGE`, else `…/studio-backend:sha-<commit>`); BuildKit
+  runs in `STUDIO_BUILDKIT_IMAGE`, else `moby/buildkit:v0.20.0-rootless`. The
+  chart sets both (`backend.image`, `backend.builds.buildkitImage`).
 - `rest.rs` — the routes.
 
 ## Not yet

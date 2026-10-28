@@ -171,6 +171,8 @@ jobs:
               - '.github/workflows/studio-delivery.yml'
             prototype:
               - 'studio-frontend-prototype/**'
+              # Shown in its "Connect a cluster" form, read at build time.
+              - 'deploy/k8s/studio-environments/**'
               - '.github/workflows/studio-delivery.yml'
             theia:
               - 'theia/**'

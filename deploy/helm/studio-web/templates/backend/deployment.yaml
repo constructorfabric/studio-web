@@ -149,7 +149,7 @@ spec:
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ required "backend.image.tag is required (immutable, fixed at chart publication)" .Values.backend.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args: ["--config", "config/{{ .Values.backend.configProfile }}.yaml", "run"]
           volumeMounts:
@@ -255,6 +255,10 @@ spec:
               value: {{ .Values.backend.telemetry.tracing | quote }}
             - name: STUDIO_OTLP_ENDPOINT
               value: {{ .Values.backend.telemetry.endpoint | quote }}
+            - name: STUDIO_BUILDER_IMAGE
+              value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+            - name: STUDIO_BUILDKIT_IMAGE
+              value: {{ .Values.backend.builds.buildkitImage | quote }}
             - name: STUDIO_SESSION_ENABLED
               value: {{ .Values.backend.sessions.enabled | quote }}
             - name: STUDIO_SESSION_IMAGE
@@ -368,7 +372,7 @@ spec:
         {{- if .Values.backend.fileStorage.enabled }}
         - name: file-storage-sidecar
           image: "{{ .Values.backend.fileStorage.image.repository }}:{{ default .Values.backend.image.tag .Values.backend.fileStorage.image.tag }}"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports: [{ name: file-storage, containerPort: 8087 }]
           env:

@@ -782,6 +782,7 @@ async fn upsert_build(
         finished_at: req.finished_at,
         failure: req.failure,
         failure_step: req.failure_step,
+        step: None,
         outputs: req.outputs,
         images: req.images.into_iter().map(|i| (i.app, i.image)).collect(),
         chart_ref: req.chart_ref,
