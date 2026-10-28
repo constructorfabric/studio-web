@@ -24,7 +24,8 @@ The engine is the language server. `gearbox rpc --stdio` answers LSP
 
 - **Where it runs.** The extension host (node), as an ordinary VS Code extension.
   It needs the engine on the PATH or in `gearbox.gdl.enginePath`; the session
-  image builds one at a pinned commit (`STUDIO_GEARBOX_REF`) for `gearbox-studio`.
+  image ships one from a pinned release (`STUDIO_GEARBOX_RELEASE`, at the commit
+  `STUDIO_GEARBOX_REF`) for `gearbox-studio`.
 - **Source roots.** The repository around each `gear.gdl` in the workspace
   (nearest `.git`), not the workspace folder: a managed workspace is a container
   of checkouts, and the engine should see each as its own source.

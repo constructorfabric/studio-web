@@ -200,6 +200,7 @@ try {
       [
         "embedded(",
         '            id = "dev",',
+        "            development = True,",
         "            database = postgres(",
         '                host = "127.0.0.1",',
         "                port = 5433,",

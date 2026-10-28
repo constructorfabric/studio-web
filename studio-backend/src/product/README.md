@@ -69,7 +69,12 @@ This README is what you need to work in the directory.
 ## Working here
 
 - The engine is a CLI read as JSON (`--format json`); the backend, session and
-  desktop images build it at the same `STUDIO_GEARBOX_REF`. Bump them together.
+  desktop images download it from the same constructorfabric/gearbox release
+  (`STUDIO_GEARBOX_RELEASE`, its commit `STUDIO_GEARBOX_REF`, each archive's
+  SHA-256 pinned). Bump them together, then run the ignored
+  `the_pinned_engine_reads_the_corpus_and_resolves_what_studio_writes` with the
+  new binary and the corpus: the parsers default what they do not find, so a
+  changed output shape shows up only there.
 - The deprecated paths go once no supported desktop release reads them; the IDE
   already asks `/studio-product/v1/gearbox/catalogue` first.
 - `ComponentCatalog::engine_completion`, which spec-mapping calls, still lives

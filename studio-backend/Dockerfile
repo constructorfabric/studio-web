@@ -40,30 +40,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /tmp/helm.tgz /tmp/linux-amd64
 
 # The Gearbox engine behind the gear catalogue and product previews
-# (product/gearbox.rs). The same repository and commit as
-# Dockerfile.src and the session image's `gearbox` stage (theia/Dockerfile),
-# which the desktop build reads too: the portal, the IDE and the desktop must
-# say the same thing about the same product.gdl, so move all three together.
-# Built on bookworm (glibc 2.36); it runs on the trixie runtime below.
-# The commit is on MikeFalcon77/gearbox `feature/gdl-extensible`, not on
-# constructorfabric/gearbox: GDL 1.0 (`gdl_version`, git sources, the
-# implementation axis) has no upstream pull request yet, and the corpus the
-# portal reads (gears-rust `feature/gearbox`) is written in it since
-# 2026-10-17. Move back to constructorfabric/gearbox once it lands there.
-# The engine builds with Rust 1.98 (its rust-toolchain.toml).
-FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
-ARG STUDIO_GEARBOX_REF=6d60603f8db36ef30ee50e1ff7008f3ee24a2501
-WORKDIR /src
-RUN git init -q . \
-    && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \
-    && git checkout -q FETCH_HEAD
-RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
-    cargo build --release --locked -p gearbox-cli \
-    && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
-    && mkdir -p /usr/local/share/gearbox \
-    && git rev-parse HEAD > /usr/local/share/gearbox/REVISION \
-    && gearbox --version
+# (product/gearbox.rs), downloaded from the same constructorfabric/gearbox
+# release as Dockerfile.src and the session image's `gearbox` stage
+# (theia/Dockerfile), which the desktop build reads too: the portal, the IDE
+# and the desktop must say the same thing about the same product.gdl, so move
+# all three together. theia/Dockerfile says why it is a release and not a
+# build. The archive is checked against the SHA-256 from the release's
+# SHA256SUMS; the binary is built for glibc 2.35 and runs on the runtime below.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS gearbox
+ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox
+ARG STUDIO_GEARBOX_RELEASE=snapshot-cf63925
+ARG STUDIO_GEARBOX_VERSION=0.1.0-cf63925
+ARG STUDIO_GEARBOX_REF=cf639255c2e63002bfb76764f3e397a5c61877de
+ARG STUDIO_GEARBOX_SHA256=04c21dd6187abc70f401fb34b78717e7c46576b2d847ede6a17dc801df4dd92d
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
+ && curl -sSL --fail -o /tmp/gearbox.tar.gz \
+      "${STUDIO_GEARBOX_REPO}/releases/download/${STUDIO_GEARBOX_RELEASE}/${name}.tar.gz" \
+ && echo "${STUDIO_GEARBOX_SHA256}  /tmp/gearbox.tar.gz" | sha256sum --check \
+ && tar xzf /tmp/gearbox.tar.gz -C /tmp \
+ && install -m 0755 "/tmp/${name}/gearbox" /usr/local/bin/gearbox \
+ && mkdir -p /usr/local/share/gearbox \
+ && echo "${STUDIO_GEARBOX_REF}" > /usr/local/share/gearbox/REVISION \
+ && rm -rf /tmp/gearbox.tar.gz "/tmp/${name}" \
+ && gearbox --version
 
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 

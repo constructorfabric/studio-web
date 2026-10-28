@@ -200,7 +200,7 @@ jobs:
       # way, from the release studio-cli.yml publishes for the version
       # theia/cfs.json pins; until that release exists the build warns and
       # ships without it. So does the gearbox engine, from the release
-      # gearbox-engine.yml builds for the revision theia/Dockerfile pins.
+      # gearbox-engine.yml packs from the engine release theia/Dockerfile pins.
       - name: Assistant extensions manifest (Claude Code, Codex)
         shell: bash
         run: |

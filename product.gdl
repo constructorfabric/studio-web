@@ -21,9 +21,11 @@ product(
     profiles = [
         # `dev` is docker-compose's Postgres (127.0.0.1:5433, user studio), as
         # scripts/product-gdl.mjs writes it and config/dev.yaml's pg_main reads it.
-        embedded(id = "dev",
+        # `dev` and `local` run on a machine: development profiles, where the
+        # production rules warn instead of failing (GBX0325).
+        embedded(id = "dev", development = True,
                  database = postgres(host = "127.0.0.1", port = 5433, user = "studio", password = "${STUDIO_PG_PASSWORD}")),
-        self_hosted(id = "local", host = "studio-web", worker_discovery = "directory",
+        self_hosted(id = "local", development = True, host = "studio-web", worker_discovery = "directory",
                     target_dir = "target",
                     database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
         kubernetes(id = "prod", discovery = "static", namespace = "studio-web",

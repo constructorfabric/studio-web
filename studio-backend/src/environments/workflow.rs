@@ -316,8 +316,8 @@ mod tests {
             product: "studio-web".into(),
             profile: "prod".into(),
             prefix: "ghcr.io/acme".into(),
-            engine_repo: "https://github.com/MikeFalcon77/gearbox.git".into(),
-            engine_rev: "6d60603f8db36ef30ee50e1ff7008f3ee24a2501".into(),
+            engine_repo: "https://github.com/constructorfabric/gearbox".into(),
+            engine_rev: "cf639255c2e63002bfb76764f3e397a5c61877de".into(),
         }
     }
 
@@ -326,7 +326,7 @@ mod tests {
         let y = render(&params()).unwrap();
         assert!(y.contains("PREFIX: \"ghcr.io/acme\""));
         assert!(y.contains("REGISTRY: \"ghcr.io\""));
-        assert!(y.contains("GEARBOX_REV: \"6d60603f8db36ef30ee50e1ff7008f3ee24a2501\""));
+        assert!(y.contains("GEARBOX_REV: \"cf639255c2e63002bfb76764f3e397a5c61877de\""));
         assert!(y.contains("name: studio-build"));
         assert!(y.contains("PRODUCT_FILE: \"products/sample/product.gdl\""));
         for placeholder in [

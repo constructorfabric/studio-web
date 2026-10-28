@@ -176,28 +176,46 @@ RUN --mount=type=secret,id=github_token \
 
 # ── Gearbox engine ──
 # `gearbox rpc --stdio` serves gearbox-studio: the gear catalogue, products and
-# their resolution, and the `.gdl` language (diagnostics, completion, hover). Built
-# from source at a pinned commit: the repository publishes no release and no
-# crate. Linked against glibc only, so the bookworm build runs on the
-# bookworm-slim runtime. Debug info is stripped: 92 MB with it.
-# The commit is on MikeFalcon77/gearbox `feature/gdl-extensible`, not on
-# constructorfabric/gearbox: GDL 1.0 (`gdl_version`, git sources, the
-# implementation axis) has no upstream pull request yet, and the corpus the
-# portal reads (gears-rust `feature/gearbox`) is written in it since
-# 2026-10-17. Move back to constructorfabric/gearbox once it lands there.
-# The engine builds with Rust 1.98 (its rust-toolchain.toml).
-FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
-ARG STUDIO_GEARBOX_REF=6d60603f8db36ef30ee50e1ff7008f3ee24a2501
-WORKDIR /src
-RUN git init -q . \
-    && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \
-    && git checkout -q FETCH_HEAD
-RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
-    cargo build --release --locked -p gearbox-cli \
-    && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
+# their resolution, and the `.gdl` language (diagnostics, completion, hover).
+# Downloaded from a constructorfabric/gearbox release, not built: its Release
+# binaries workflow publishes one archive per platform and SHA256SUMS, and
+# compiling the engine here cost every image build several minutes of Rust.
+# The archive is checked against the SHA-256 pinned below (copied from that
+# release's SHA256SUMS), so a release asset that changes fails the build
+# instead of shipping. The Linux binary is built on ubuntu-22.04 (glibc 2.35)
+# and runs on the bookworm-slim runtime.
+#
+# This stage is the one pin. studio-backend/Dockerfile and Dockerfile.src
+# download the same release, and gearbox-engine.yml packs the desktop's engine
+# extension from it, reading the ref and the two desktop hashes below: the
+# portal, the IDE and the desktop must say the same thing about the same
+# product.gdl, so move all of them together.
+#
+# STUDIO_GEARBOX_REF is the release's commit. `gearbox --version` says only the
+# crate's version, so the commit is written to REVISION, where studio-product
+# and scripts/product-gdl.mjs read it. A `snapshot-<commit>` release is what
+# the workflow publishes for a commit before it is tagged; once the engine
+# tags versions, pin a `v<version>` release the same way.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS gearbox
+ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox
+ARG STUDIO_GEARBOX_RELEASE=snapshot-cf63925
+ARG STUDIO_GEARBOX_VERSION=0.1.0-cf63925
+ARG STUDIO_GEARBOX_REF=cf639255c2e63002bfb76764f3e397a5c61877de
+ARG STUDIO_GEARBOX_SHA256=04c21dd6187abc70f401fb34b78717e7c46576b2d847ede6a17dc801df4dd92d
+# Not used here: gearbox-engine.yml reads them for the desktop's archives.
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=3cccce0b1b4cd9ca49d6fd8853e96e30a52187ebd0d91cc53e6df2ac0966d693
+ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=3ba42bd8f244c6d6de2df80262df9ac100b2388a0456ab55c6a1ceee05fa31b1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \
+    && curl -sSL --fail -o /tmp/gearbox.tar.gz \
+        "${STUDIO_GEARBOX_REPO}/releases/download/${STUDIO_GEARBOX_RELEASE}/${name}.tar.gz" \
+    && echo "${STUDIO_GEARBOX_SHA256}  /tmp/gearbox.tar.gz" | sha256sum --check \
+    && tar xzf /tmp/gearbox.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/${name}/gearbox" /usr/local/bin/gearbox \
     && mkdir -p /usr/local/share/gearbox \
-    && git rev-parse HEAD > /usr/local/share/gearbox/REVISION \
+    && echo "${STUDIO_GEARBOX_REF}" > /usr/local/share/gearbox/REVISION \
+    && rm -rf /tmp/gearbox.tar.gz "/tmp/${name}" \
     && gearbox --version
 
 # ── Runtime ──

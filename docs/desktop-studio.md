@@ -458,9 +458,9 @@ native modules compile: `windows-2022` for the Windows installer and zip,
 artifact of the run (`constructor-studio-windows-<version>`,
 `constructor-studio-macos-<version>`); a `desktop-v*` tag publishes both into
 one release. Intel Macs are not built: that would be a second Mac build and a
-`darwin-x64` CLI and engine. The workflow no longer builds the `gearbox`
-engine; `gearbox-engine.yml` does, once per revision and platform (*The gearbox
-engine* below). It runs
+`darwin-x64` CLI and engine. The workflow no longer ships the `gearbox`
+engine; `gearbox-engine.yml` packs it from the engine's release, once per
+revision and platform (*The gearbox engine* below). It runs
 for PRs changing `theia/electron-app/**` or the workflow, for matching pushes to
 `main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop build → Run workflow**).
 New commits cancel older PR/main builds; release tags and manual builds are not
@@ -583,12 +583,14 @@ Both are shared with the portal session, which has the same modes.
 
 The `gearbox` executable behind the gear catalogue, products and `.gdl` is not
 in the installer either. It is the extension `constructorfabric.gearbox-engine`
-(`theia/gearbox-engine`): the executable at `extension/bin/gearbox.exe`, built
-from source at the repository, revision and Rust that `theia/Dockerfile`'s
-`gearbox` stage pins for the session image -- one pin for both.
+(`theia/gearbox-engine`): the executable at `extension/bin/gearbox.exe`, from
+the constructorfabric/gearbox release that `theia/Dockerfile`'s `gearbox` stage
+pins for the session image -- one pin for both. That stage also names the
+SHA-256 of the Windows and macOS archives (from the release's `SHA256SUMS`).
 
-- `.github/workflows/gearbox-engine.yml` builds it on `windows-2022`
-  (`win32-x64`) and `macos-15` (`darwin-arm64`), and publishes each version
+- `.github/workflows/gearbox-engine.yml` downloads the archive for `win32-x64`
+  and `darwin-arm64`, checks it against that SHA-256, packs it (nothing is
+  compiled), and publishes each version
   once, into a release `gearbox-engine-v<version>` holding a VSIX per
   platform; a platform added later goes into the release that exists. The
   version is `theia/gearbox-engine/package.json`'s (raised when the packaging

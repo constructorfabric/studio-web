@@ -2,12 +2,13 @@ name: Gearbox engine extension
 
 # The gearbox engine (gear catalogue, products, `.gdl`) as an extension a
 # desktop fetches on first start (theia/gearbox-engine), instead of inside the
-# installer. Built at the revision and with the Rust the session image uses:
-# theia/Dockerfile's `gearbox` stage is the one pin. The repository publishes
-# no release, so it is built from source.
+# installer. The engine is the constructorfabric/gearbox release the session
+# image uses: theia/Dockerfile's `gearbox` stage is the one pin, and names the
+# SHA-256 of each platform's archive (from that release's SHA256SUMS), so this
+# only downloads, checks and packs; nothing is compiled.
 #
 # Each version -- theia/gearbox-engine/package.json's version plus the
-# revision, e.g. 0.1.0-3b64969 -- is published once, into its own release
+# revision, e.g. 0.1.0-cf63925 -- is published once, into its own release
 # `gearbox-engine-v<version>`, with one VSIX per desktop platform (win32-x64,
 # darwin-arm64), and never replaced: installed apps pin its SHA-256. A new
 # revision in the Dockerfile is a new release; a change to the packaging alone
@@ -45,15 +46,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # windows-2022 for the same reason as desktop.yml: its toolchain.
-          - runner: windows-2022
-            target: win32-x64
+          # `archive` is the engine release's target; `sha256` the
+          # theia/Dockerfile argument that pins its archive.
+          - target: win32-x64
+            archive: x86_64-pc-windows-msvc.zip
+            sha256: STUDIO_GEARBOX_SHA256_WIN32_X64
             engine: gearbox.exe
-          - runner: macos-15
-            target: darwin-arm64
+          - target: darwin-arm64
+            archive: aarch64-apple-darwin.tar.gz
+            sha256: STUDIO_GEARBOX_SHA256_DARWIN_ARM64
             engine: gearbox
     name: build (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+    # Packing is platform-neutral now that nothing is compiled.
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -63,19 +68,21 @@ jobs:
         run: |
           set -euo pipefail
           # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
-          pin() { tr -d '\r' < theia/Dockerfile | sed -n "$1"; }
-          repo=$(pin 's/^ARG STUDIO_GEARBOX_REPO=//p')
-          ref=$(pin 's/^ARG STUDIO_GEARBOX_REF=//p')
-          rust=$(pin 's/^FROM rust:\([0-9.]*\)-.* AS gearbox$/\1/p')
-          if [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$rust" ]; then
+          pin() { tr -d '\r' < theia/Dockerfile | sed -n "s/^ARG $1=//p"; }
+          repo=$(pin STUDIO_GEARBOX_REPO)
+          release=$(pin STUDIO_GEARBOX_RELEASE)
+          engine_version=$(pin STUDIO_GEARBOX_VERSION)
+          ref=$(pin STUDIO_GEARBOX_REF)
+          sha256=$(pin ${{ matrix.sha256 }})
+          if [ -z "$repo" ] || [ -z "$release" ] || [ -z "$engine_version" ] || [ -z "$ref" ] || [ -z "$sha256" ]; then
             echo "::error::theia/Dockerfile no longer pins the gearbox engine the way this step reads it"
             exit 1
           fi
           version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
           {
-            echo "GEARBOX_REPO=$repo"
+            echo "GEARBOX_URL=$repo/releases/download/$release/gearbox-$engine_version-${{ matrix.archive }}"
+            echo "GEARBOX_SHA256=$sha256"
             echo "GEARBOX_REF=$ref"
-            echo "GEARBOX_RUST=$rust"
             echo "ENGINE_VERSION=$version"
             echo "ENGINE_TAG=gearbox-engine-v$version"
           } >> "$GITHUB_ENV"
@@ -89,31 +96,24 @@ jobs:
             echo "$vsix is already published in $ENGINE_TAG; nothing to build"
             echo "done=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/cache@v4
-        if: steps.published.outputs.done != 'true'
-        with:
-          path: |
-            gearbox-src/target
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: gearbox-${{ matrix.target }}-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
-      - name: Build the engine
+      - name: Download the engine
         if: steps.published.outputs.done != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p gearbox-src && cd gearbox-src
-          [ -d .git ] || git init -q .
-          git fetch -q --depth 1 "$GEARBOX_REPO" "$GEARBOX_REF"
-          git checkout -q --force FETCH_HEAD
-          rustup toolchain install "$GEARBOX_RUST" --profile minimal
-          CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
-            cargo "+$GEARBOX_RUST" build --release --locked -p gearbox-cli
-          ./target/release/${{ matrix.engine }} --version
+          archive="$RUNNER_TEMP/${{ matrix.archive }}"
+          curl -sSL --fail -o "$archive" "$GEARBOX_URL"
+          echo "$GEARBOX_SHA256  $archive" | sha256sum --check
+          mkdir -p gearbox-bin
+          case "$archive" in
+            *.zip) unzip -q -j "$archive" '*/${{ matrix.engine }}' -d gearbox-bin ;;
+            *) tar xzf "$archive" -C gearbox-bin --strip-components=1 --wildcards '*/${{ matrix.engine }}' ;;
+          esac
+          ls -la gearbox-bin
       - name: Pack
         if: steps.published.outputs.done != 'true'
         shell: bash
-        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} theia/gearbox-engine/build_vsix.py --engine gearbox-src/target/release/${{ matrix.engine }} --ref "$GEARBOX_REF" --target ${{ matrix.target }} --out dist
+        run: python3 theia/gearbox-engine/build_vsix.py --engine gearbox-bin/${{ matrix.engine }} --ref "$GEARBOX_REF" --target ${{ matrix.target }} --out dist
       - uses: actions/upload-artifact@v6
         if: steps.published.outputs.done != 'true'
         with:

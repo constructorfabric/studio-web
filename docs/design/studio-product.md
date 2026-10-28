@@ -102,8 +102,9 @@ as a hint: a `stable` gear that runs nowhere, and an `experimental` (or
 
 - [x] `p2` - **ID**: `cpt-studio-principle-product-one-engine`
 
-The backend image, the session image and the desktop's engine extension build
-the Gearbox engine at the same commit (`STUDIO_GEARBOX_REF`), and the preview
+The backend image, the session image and the desktop's engine extension take
+the Gearbox engine from the same constructorfabric/gearbox release
+(`STUDIO_GEARBOX_RELEASE`, its commit `STUDIO_GEARBOX_REF`), and the preview
 reads the CLI's JSON (`catalogue`, `validate`, `resolve` with `--format json`),
 its stable contract for tooling. The gear holds no composition rule of its own
 beyond one: a plugin is written under the host whose extension point it fills,

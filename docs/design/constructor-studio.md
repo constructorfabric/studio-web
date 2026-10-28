@@ -1371,7 +1371,7 @@ The IDE a session runs.
 
 ##### Responsibility scope
 
-`theia/Dockerfile` builds Eclipse Theia 1.74.0 from `theia/browser-app/` with the Studio extensions, the built-in VS Code plugins under `theia/plugins/` and the Gearbox engine at `STUDIO_GEARBOX_REF`; `theia/docker/entrypoint.sh` clones sources and starts the IDE. Published to GHCR; built locally as `cf-studio-theia:local` by the Compose `session-image` service.
+`theia/Dockerfile` builds Eclipse Theia 1.74.0 from `theia/browser-app/` with the Studio extensions, the built-in VS Code plugins under `theia/plugins/` and the Gearbox engine from the constructorfabric/gearbox release `STUDIO_GEARBOX_RELEASE` (commit `STUDIO_GEARBOX_REF`, archive SHA-256 pinned); `theia/docker/entrypoint.sh` clones sources and starts the IDE. Published to GHCR; built locally as `cf-studio-theia:local` by the Compose `session-image` service.
 
 ##### Responsibility boundaries
 
@@ -1675,7 +1675,7 @@ All inter-gear communication goes through SDK clients on the ClientHub or plugin
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| `studio-product`, `theia/gearbox-studio` | The `gearbox` CLI and `gearbox rpc` at `STUDIO_GEARBOX_REF` | Product composition, resolution and the `.gdl` language |
+| `studio-product`, `theia/gearbox-studio` | The `gearbox` CLI and `gearbox rpc` from the release `STUDIO_GEARBOX_RELEASE` (commit `STUDIO_GEARBOX_REF`) | Product composition, resolution and the `.gdl` language |
 
 #### S3 object storage
 

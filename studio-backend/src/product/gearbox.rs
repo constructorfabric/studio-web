@@ -1790,10 +1790,13 @@ pub fn render_product_gdl_from(
          \x20   # Where the gears that keep data keep it: one Postgres per profile\n\
          \x20   # (GDL 1.1). The password is only ever a `${{NAME}}` the deployment\n\
          \x20   # sets; change the host and user to the server you run.\n\
+         \x20   # `dev` and `local` run on a machine: development profiles, so the\n\
+         \x20   # production rules (accept-all sign-in, ...) warn there instead of\n\
+         \x20   # failing. `prod` is held to them.\n\
          \x20   profiles = [\n\
-         \x20       embedded(id = \"dev\",\n\
+         \x20       embedded(id = \"dev\", development = True,\n\
          \x20                database = {local_db}),\n\
-         \x20       self_hosted(id = \"local\", host = {id}, worker_discovery = \"directory\",\n\
+         \x20       self_hosted(id = \"local\", development = True, host = {id}, worker_discovery = \"directory\",\n\
          \x20                   target_dir = \"target\",\n\
          \x20                   database = {local_db}),\n\
          \x20       kubernetes(id = \"prod\", discovery = \"static\", namespace = {id},\n\
@@ -3514,8 +3517,9 @@ impl Gearbox {
 }
 
 /// Where the image records the engine's commit: the `gearbox` stage writes it
-/// beside the binary it builds, because `gearbox --version` says only the
-/// crate's version, which has stayed `0.1.0` across every commit.
+/// beside the binary it downloads (the release's commit), because
+/// `gearbox --version` says only the crate's version, which has stayed `0.1.0`
+/// across every commit.
 const ENGINE_REVISION_FILE: &str = "/usr/local/share/gearbox/REVISION";
 
 /// The engine's commit: `STUDIO_GEARBOX_REV`, else the image's record.
@@ -3535,7 +3539,7 @@ pub fn engine_pin() -> (String, Option<String>) {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://github.com/MikeFalcon77/gearbox.git".to_owned());
+        .unwrap_or_else(|| "https://github.com/constructorfabric/gearbox".to_owned());
     (repo, engine_revision())
 }
 
@@ -4530,8 +4534,12 @@ mod tests {
         assert!(gdl.contains("id = \"my-shop\""));
         assert!(gdl.contains("name = \"My \\\"Shop\\\"\""));
         assert!(gdl.contains("source(id = \"gears-rust\", at = path(\"../gears-rust\"))"));
-        assert!(gdl.contains("embedded(id = \"dev\","));
-        assert!(gdl.contains("self_hosted(id = \"local\", host = \"my-shop\""));
+        assert!(gdl.contains("embedded(id = \"dev\", development = True,"));
+        assert!(gdl.contains("self_hosted(id = \"local\", development = True, host = \"my-shop\""));
+        assert!(
+            gdl.contains("kubernetes(id = \"prod\", discovery"),
+            "prod stays a production profile"
+        );
         assert!(gdl.contains("kubernetes(id = \"prod\""));
         // Every profile names its Postgres (GBX0306 otherwise), with the
         // password as a reference only.
@@ -5196,5 +5204,118 @@ mod tests {
         }
         assert_eq!(kept.entries.len(), EVALUATIONS_KEPT, "bounded");
         assert!(kept.get(&k).is_none(), "the oldest answer went first");
+    }
+
+    /// The engine the images pin, run for real over a gear corpus and read
+    /// the way the portal reads it: the catalogue, a description Studio
+    /// writes, its validation and resolution in every profile, and a
+    /// scaffold. The parsers above take what they find and default the rest,
+    /// so an engine whose output changed shape shows up as empty fields, not
+    /// as an error; this asserts the fields are there.
+    ///
+    /// Ignored: it needs the engine and a checkout of the corpus. Run it when
+    /// the pin moves, with `GEARBOX_E2E_BIN` the release's `gearbox` and
+    /// `GEARBOX_E2E_CORPUS` a gears-rust checkout in a directory named
+    /// `gears-rust`: `cargo test pinned_engine -- --ignored`.
+    #[test]
+    #[ignore = "needs GEARBOX_E2E_BIN and GEARBOX_E2E_CORPUS"]
+    fn the_pinned_engine_reads_the_corpus_and_resolves_what_studio_writes() {
+        let var = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k}")));
+        let bin = var("GEARBOX_E2E_BIN");
+        let corpus = var("GEARBOX_E2E_CORPUS");
+        let roots = vec![(CORPUS_SOURCE_ID.to_string(), corpus.clone())];
+
+        let args: Vec<String> = vec![
+            "catalogue".into(),
+            "--root".into(),
+            corpus.to_string_lossy().into_owned(),
+            "--format".into(),
+            "json".into(),
+        ];
+        let out = run_engine(&bin, &args, None).expect("the engine runs");
+        let raw: Value = serde_json::from_str(&out.stdout)
+            .unwrap_or_else(|e| panic!("the catalogue is not JSON ({e}): {}", out.stderr_tail()));
+        let catalogue: EngineCatalogue =
+            serde_json::from_value(raw).expect("the catalogue has the expected shape");
+        assert!(
+            catalogue.unreadable_root(&roots).is_none(),
+            "{:?}",
+            catalogue.unreadable_root(&roots)
+        );
+        assert!(
+            catalogue.gears.len() > 20,
+            "{} gears",
+            catalogue.gears.len()
+        );
+        let gateway = &catalogue.gears["api-gateway"];
+        assert!(!gateway.package.crate_name.is_empty());
+        assert_eq!(gateway.source.as_deref(), Some(CORPUS_SOURCE_ID));
+        let plugin = &catalogue.gears["static-tr-plugin"];
+        assert_eq!(
+            catalogue.host_of(plugin).map(|g| g.id.as_str()),
+            Some("tenant-resolver")
+        );
+
+        // A sign-in a production profile accepts: static-authn-plugin in
+        // `accept_all` mode is refused there (GBX0325), as it should be.
+        let picked = names(&["api-gateway", "simple-user-settings", "oidc-authn-plugin"]);
+        let composition = compose(&catalogue, &picked);
+        for profile in PROFILES {
+            let gdl = render_product_gdl(
+                "my-shop",
+                "product.gdl",
+                "My Shop",
+                &composition,
+                profile,
+                None,
+                &BTreeMap::new(),
+            );
+            let resolution = evaluate(&bin, &roots, "my-shop", "product.gdl", &gdl, profile)
+                .expect("the engine evaluates the description");
+            assert!(
+                !resolution
+                    .diagnostics
+                    .iter()
+                    .any(EngineDiagnostic::is_error),
+                "{profile}: {:#?}\n{gdl}",
+                resolution.diagnostics
+            );
+            assert!(
+                !resolution.applications.is_empty(),
+                "{profile}: no applications"
+            );
+            assert!(
+                resolution
+                    .applications
+                    .iter()
+                    .all(|a| !a.name.is_empty() && !a.kind.is_empty() && !a.gears.is_empty()),
+                "{profile}: {:#?}",
+                resolution.applications
+            );
+            let resolved = resolution
+                .gears
+                .iter()
+                .find(|g| g.id == "api-gateway")
+                .unwrap_or_else(|| panic!("{profile}: api-gateway is not resolved"));
+            assert!(!resolved.crate_name.is_empty(), "{profile}");
+            assert!(!resolved.reasons.is_empty(), "{profile}");
+        }
+
+        let scratch = std::env::temp_dir().join(format!("gearbox-e2e-{}", uuid::Uuid::new_v4()));
+        let root = scratch.join(CORPUS_SOURCE_ID);
+        std::fs::create_dir_all(&root).expect("scratch");
+        let params = json!({
+            "id": "my-gear",
+            "name": "My gear",
+            "version": "0.1.0",
+            "kind": "service",
+            "plugin": null,
+            "destination_dir": scratch.join("gear").to_string_lossy(),
+            "dry_run": true,
+        });
+        let answer = rpc_once(&bin, &root, &scratch, "gearbox/gear/scaffold", params);
+        let _ = std::fs::remove_dir_all(&scratch);
+        let gdl = answer_gdl(&answer.expect("the engine answers")).expect("a scaffold");
+        assert!(gdl.contains("my-gear"), "{gdl}");
     }
 }

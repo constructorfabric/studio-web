@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack a built gearbox engine as the extension a desktop fetches.
+"""Pack a gearbox engine as the extension a desktop fetches.
 
     python gearbox-engine/build_vsix.py --engine target/release/gearbox.exe \\
         --ref <STUDIO_GEARBOX_REF> --target win32-x64 --out dist

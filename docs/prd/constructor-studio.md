@@ -888,7 +888,7 @@ Business-level acceptance criteria for the PRD as a whole. Each is observable on
 | Docker daemon or Kubernetes API | Where sessions run (`studio-session` drivers) | p1 |
 | Source hosts, model providers, chat platforms | Repositories, models and message delivery through connections | p2 |
 | Spec-quality service | The four detectors behind `studio-spec-quality` | p2 |
-| Gearbox engine | Product resolution and the `.gdl` language, pinned by `STUDIO_GEARBOX_REF` | p2 |
+| Gearbox engine | Product resolution and the `.gdl` language, a constructorfabric/gearbox release pinned by `STUDIO_GEARBOX_RELEASE` | p2 |
 | crates.io | The public API the gear catalogue sync reads | p2 |
 | Constructor Insight | Read-only SQL endpoint behind `studio-insight` | p3 |
 | GHCR | Published images and the session image | p1 |

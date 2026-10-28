@@ -1,7 +1,7 @@
 {
   "name": "gearbox-engine",
   "displayName": "Gearbox engine",
-  "description": "The gearbox engine behind the gear catalogue, products and .gdl: the revision theia/Dockerfile pins for the session image",
+  "description": "The gearbox engine behind the gear catalogue, products and .gdl: the release theia/Dockerfile pins for the session image",
   "publisher": "constructorfabric",
   "version": "0.1.0",
   "license": "Apache-2.0",

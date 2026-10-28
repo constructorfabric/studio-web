@@ -115,7 +115,9 @@ pins the session image already uses:
 - **The CLI:** `theia/cfs.json`, which the Dockerfile also reads. The version is
   `<engine>-<ref>.<build>`.
 - **The engine:** the Dockerfile's `STUDIO_GEARBOX_REF`. The version is
-  `<packaging>-<ref>`.
+  `<packaging>-<ref>`. (Since 2026-10-27 the engine is a constructorfabric/gearbox
+  release, `STUDIO_GEARBOX_RELEASE`, which `gearbox-engine.yml` repacks
+  instead of building.)
 
 `studio-cli.yml` and `gearbox-engine.yml` publish each version once, into its
 own release, and never replace it. The installer's manifest pins that asset's
