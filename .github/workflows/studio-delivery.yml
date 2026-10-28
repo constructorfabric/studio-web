@@ -919,10 +919,22 @@ jobs:
       # builder, and `ci-cache-buildx-args <image>` for the builds below. On a
       # GitHub-hosted runner it does nothing and the helper prints nothing, so
       # the builds run uncached on the default builder, as before.
-      - uses: ./.github/actions/ci-cache
+      #
+      # The action comes from this workflow's own commit, not from SOURCE_SHA:
+      # a manual build of an older commit has no .github/actions/ci-cache.
+      - uses: actions/checkout@v6
         with:
-          rw-key-id: ${{ secrets.CI_CACHE_RW_KEY_ID }}
-          rw-secret: ${{ secrets.CI_CACHE_RW_SECRET }}
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .workflow-rev
+          sparse-checkout: .github/actions/ci-cache
+      # The key only on our runners: a hosted runner (STUDIO_FORCE_GITHUB_HOSTED)
+      # has no cache endpoint, and with a key the action would fail rather
+      # than build uncached.
+      - uses: ./.workflow-rev/.github/actions/ci-cache
+        with:
+          rw-key-id: ${{ runner.environment == 'self-hosted' && secrets.CI_CACHE_RW_KEY_ID || '' }}
+          rw-secret: ${{ runner.environment == 'self-hosted' && secrets.CI_CACHE_RW_SECRET || '' }}
           trusted: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           buildkit: true
 
