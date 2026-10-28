@@ -4,9 +4,9 @@
  * the workflow that builds the product for it. The rules are in
  * `project-deploys.ts`; the server checks every one of them again. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { api, type ConfigSecret, type Deployment, type DeployEnvironment, type EnvironmentBinding } from "./api";
+import { api, type ConfigSecret, type ProjectProduct, type Deployment, type DeployEnvironment, type EnvironmentBinding } from "./api";
 import type { IdeBuild } from "./builds";
 import { shortCommit } from "./environments";
 import { errText, relTime } from "./format";
@@ -325,6 +325,27 @@ export function BuildWorkflowProposal({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<ProjectProduct["written"] | null>(null);
+  // A new array every render; its contents are what the effect depends on.
+  const profileList = profiles.join(",");
+  // What to build is the Product step's answer: where it last committed
+  // product.gdl, on which branch, for which profile. A member only overrides it.
+  useEffect(() => {
+    let live = true;
+    api
+      .projectProduct(token, projectId)
+      .then((p) => {
+        if (!live || !p?.written) return;
+        setSaved(p.written);
+        if (p.written.path) setProductFile(p.written.path);
+        if (p.written.branch) setGitRef(p.written.branch);
+        if (p.profile && profileList.split(",").includes(p.profile)) setProfile(p.profile);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, profileList]);
   if (withRegistry.length === 0) return null;
   // The Job pushes with the environment's registry login, which a workflow in
   // the repository's CI does not need: it brings its own.
@@ -340,6 +361,21 @@ export function BuildWorkflowProposal({
         repository&apos;s CI on every push to main. Either way the build appears below with its stages, and is deployed once
         it has published its chart.
       </p>
+      {saved && (
+        <p className="hint" data-build-from-product>
+          From the Product step: <code>{saved.path ?? "product.gdl"}</code> on <code>{saved.branch}</code>
+          {saved.pr_url ? (
+            <>
+              {" "}
+              (<a href={saved.pr_url} target="_blank" rel="noreferrer">
+                its pull request
+              </a>
+              ; once it is merged, build the repository&apos;s own branch)
+            </>
+          ) : null}
+          .
+        </p>
+      )}
       <div className="row">
         <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
           {withRegistry.map((e) => (

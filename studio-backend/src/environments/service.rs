@@ -1075,9 +1075,28 @@ impl EnvironmentService {
         project: Uuid,
         environment: Uuid,
         profile: &str,
-        product_file: &str,
+        product_file: Option<&str>,
         git_ref: Option<String>,
     ) -> Result<BuildStarted> {
+        // Naming neither builds what the Product step last wrote, where it
+        // wrote it: the description's path and its branch.
+        let saved = if product_file.is_none() && git_ref.is_none() {
+            match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
+                Ok(products) => products
+                    .saved_description(ctx, &project.to_string())
+                    .await
+                    .ok()
+                    .flatten(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let product_file = product_file
+            .map(str::to_owned)
+            .or_else(|| saved.as_ref().map(|s| s.path.clone()))
+            .unwrap_or_else(|| "product.gdl".to_owned());
+        let git_ref = git_ref.or_else(|| saved.and_then(|s| s.branch));
         let org = self.organization_of_project(ctx, project).await?;
         let env = self.environment(ctx, org, environment).await?;
         if !env.admits(project) {
