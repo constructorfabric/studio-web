@@ -1,10 +1,11 @@
 /* The project's builds (ADR-0045): the CI runs the artifact sync reads from
- * the project's repositories (phase 1), and the builds the IDE ran and
- * reported -- in a member's desktop or a session (phase 2).
+ * the project's repositories (phase 1), and the product's builds -- the ones
+ * the IDE ran and reported, in a member's desktop or a session (phase 2), and
+ * the ones Studio ran as a Job in the organization's cluster (ADR-0048 §9).
  *
- * The portal does not build. CI and the IDE do; this is what was built,
- * where, and how it went. Build starts the project's build workflow in CI
- * (phase 3). */
+ * This is what was built, where, and how it went; a build's stages say how far
+ * it got: prepare (the generated tree), images, publish (images and chart in
+ * the environment's registry). Build starts one in Studio or in CI. */
 
 import type { ArtifactNode } from "./api";
 
@@ -231,6 +232,9 @@ export interface IdeBuild {
   chartVersion: string | null;
   /** The images it published, by application. */
   images: { app: string; image: string }[];
+  /** The step a Studio build is in while it runs: `prepare`, `build` or
+   *  `publish`, the Job's containers. */
+  step: string | null;
 }
 
 /** The `build` nodes as builds, newest first. */
@@ -268,9 +272,42 @@ export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
               return app && image ? [{ app, image }] : [];
             })
           : [],
+        step: str(v.step),
       };
     })
     .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
+}
+
+/** A product build's stages, in order. */
+export const BUILD_STAGES = ["prepare", "images", "publish"] as const;
+export type BuildStage = (typeof BUILD_STAGES)[number];
+export type StageState = "done" | "running" | "failed" | "waiting";
+
+/** The stage a step names: the Job's `build` container makes the images; any
+ *  step this does not know (an IDE's `protoc`, `compile`) is the images too. */
+export function stageOf(step: string | null): BuildStage | null {
+  if (!step) return null;
+  if (step === "prepare" || step === "publish") return step;
+  return "images";
+}
+
+/** How far a build got, stage by stage: a passed build did all three; a
+ *  failed one did those before the one it failed in; a running one those
+ *  before the one it is in (the first, when it does not say). */
+export function buildStages(b: Pick<IdeBuild, "status" | "step" | "failureStep">): Record<BuildStage, StageState> {
+  const at = (stage: BuildStage | null) => (stage ? BUILD_STAGES.indexOf(stage) : 0);
+  const out = {} as Record<BuildStage, StageState>;
+  BUILD_STAGES.forEach((stage, i) => {
+    if (b.status === "passed") out[stage] = "done";
+    else if (b.status === "failed") {
+      const failed = at(stageOf(b.failureStep));
+      out[stage] = i < failed ? "done" : i === failed ? "failed" : "waiting";
+    } else if (b.status === "running") {
+      const now = at(stageOf(b.step));
+      out[stage] = i < now ? "done" : i === now ? "running" : "waiting";
+    } else out[stage] = "waiting";
+  });
+  return out;
 }
 
 /** How long an IDE build took, or has been running. */

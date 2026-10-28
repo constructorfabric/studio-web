@@ -221,3 +221,23 @@ fn a_workflow_is_named_by_its_file_or_its_id() {
     assert!(checked_ref(Some("../main")).is_err());
     assert!(checked_ref(Some("a b")).is_err());
 }
+
+#[test]
+fn a_running_build_says_its_step_and_an_ended_one_does_not() {
+    let now = at("2026-10-15T10:00:00Z");
+    let running = BuildReport {
+        r#where: "studio".into(),
+        step: Some("build".into()),
+        ..start()
+    };
+    let v = record(&running, "p1", None, "studio", now, None).expect("running");
+    assert_eq!(v["step"], "build");
+    let end = BuildReport {
+        r#where: "studio".into(),
+        status: "passed".into(),
+        step: Some("publish".into()),
+        ..start()
+    };
+    let v = record(&end, "p1", None, "studio", now, Some(&v)).expect("passed");
+    assert!(v["step"].is_null());
+}

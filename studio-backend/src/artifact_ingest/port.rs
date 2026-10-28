@@ -532,6 +532,8 @@ pub struct BuildOutcome {
     pub lock_hash: Option<String>,
     pub failure: Option<String>,
     pub failure_step: Option<String>,
+    /// The step a running build is in.
+    pub step: Option<String>,
     pub images: Vec<(String, String)>,
     pub chart_ref: Option<String>,
     pub chart_version: Option<String>,

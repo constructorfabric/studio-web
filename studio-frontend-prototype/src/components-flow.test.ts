@@ -121,7 +121,7 @@ describe("the next step", () => {
     const gap = nextStep({ ...base, open: 2 });
     expect(gap.tone).toBe("warn");
     expect(gap.text).toContain("2 capabilities the specs ask for are not closed yet.");
-    expect(nextStep({ ...base, written: true }).action).toBe("open");
+    expect(nextStep({ ...base, written: true }).action).toBe("builds");
   });
 });
 

@@ -65,6 +65,9 @@ pub struct BuildReport {
     pub failure: Option<String>,
     /// The step it failed in (`protoc`, `compile`, `link`).
     pub failure_step: Option<String>,
+    /// The step it is in while it runs: a Studio build's `prepare`, `build`
+    /// or `publish`. Dropped once it ends.
+    pub step: Option<String>,
     /// The images it built, `name:tag` or with a digest.
     pub outputs: Vec<String>,
     /// The images it published, by application: `(app, image)`, the image
@@ -131,6 +134,7 @@ pub fn manifest_report(
         finished_at: None,
         failure: None,
         failure_step: None,
+        step: None,
         outputs: m.images.iter().map(|i| i.image.clone()).collect(),
         images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
         chart_ref: m.chart.as_ref().map(|c| c.reference.clone()),
@@ -434,6 +438,14 @@ pub fn record(
             clean(report.failure_step.as_deref(), "failure_step", 100)?
         } else {
             None
+        }),
+    );
+    put(
+        "step",
+        json!(if finished {
+            None
+        } else {
+            clean(report.step.as_deref(), "step", 100)?
         }),
     );
     if !outputs.is_empty() {

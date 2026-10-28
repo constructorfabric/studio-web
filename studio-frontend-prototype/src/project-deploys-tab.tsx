@@ -4,30 +4,35 @@
  * then the bindings of the product's kubernetes profiles and the history,
  * which `ProjectEnvironments` already draws.
  *
- * Builds before it, because a deploy takes what a build made. The portal
- * never builds: a pipeline (the workflow proposed here) or the IDE publishes a
- * build's images and chart, and Deploy a build names it; the server installs
- * it with the environment's connection (ADR-0048). */
+ * The last step of the product's way out: Builds before it publishes a
+ * build's images and chart -- in Studio, the IDE or CI -- and Deploy a build
+ * names it; the server installs it with the environment's connection
+ * (ADR-0048). It opens on one line saying where the project stands. */
 
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
-import { BuildWorkflowProposal, EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
+import { EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
 import { ProjectEnvironments } from "./environments-screen";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { errText, relTime } from "./format";
 import { KUBERNETES_PROFILES } from "./kits";
-import { latestByEnvironment, profilesBoundTo } from "./project-deploys";
+import { deployableBuilds, latestByEnvironment, profilesBoundTo } from "./project-deploys";
+import { deploysHint, type PipelineTab } from "./pipeline";
+import { PipelineLine } from "./pipeline-line";
 
 export function ProjectDeploys({
   token,
   projectId,
   onOpenStudio,
+  onOpenTab,
 }: {
   token: string;
   projectId: string;
   onOpenStudio: () => void;
+  /** Open another tab of the project: Builds, when nothing is published. */
+  onOpenTab?: (tab: PipelineTab) => void;
 }) {
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -77,8 +82,19 @@ export function ProjectDeploys({
       <p className="subtitle">
         Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments); the
         project picks which of them its product goes to. A deploy names a build that published its images and chart -- from
-        the workflow below or the IDE -- and the server installs it with the environment&apos;s cluster connection.
+        the Builds tab or the IDE -- and the server installs it with the environment&apos;s cluster connection.
       </p>
+      {targets && (
+        <PipelineLine
+          hint={deploysHint({
+            environments: targets.environments.length,
+            bound: targets.bindings.length,
+            deployable: deployableBuilds(builds).length,
+            deployments,
+          })}
+          onOpenTab={onOpenTab}
+        />
+      )}
       {error && <div className="error">{error}</div>}
       {notice && (
         <div className="notice" data-deploy-notice>
@@ -162,17 +178,16 @@ export function ProjectDeploys({
         </div>
       )}
       {targets && targets.environments.length > 0 && (
-        <BuildWorkflowProposal
-          token={token}
-          projectId={projectId}
-          environments={targets.environments.map((t) => t.environment)}
-          profiles={[...new Set(targets.bindings.map((b) => b.profile))]}
-          onChanged={changed}
-        />
-      )}
-      {targets && targets.environments.length > 0 && (
         <div className="row deploy-how">
-          <span className="grow hint">Or from the desktop: open the project in the IDE, Generate, then Deploy to a bound environment.</span>
+          <span className="grow hint">
+            Builds come from the Builds tab. Or from the desktop: open the project in the IDE, Generate, then Deploy to a
+            bound environment.
+          </span>
+          {onOpenTab && (
+            <button type="button" onClick={() => onOpenTab("builds")}>
+              Builds
+            </button>
+          )}
           <button type="button" onClick={onOpenStudio}>
             Open in IDE
           </button>

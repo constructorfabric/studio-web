@@ -70,6 +70,7 @@ const build = (over: Partial<IdeBuild>): IdeBuild => ({
   chartRef: "oci://ghcr.io/acme/charts/shop",
   chartVersion: "0.1.0-sha.1",
   images: [],
+  step: null,
   ...over,
 });
 

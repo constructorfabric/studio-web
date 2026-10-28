@@ -1,17 +1,22 @@
-// A project's Builds tab (ADR-0045): the CI runs of its repositories, as the
-// artifact sync reads them (phase 1); the builds the IDE ran and reported,
-// in a member's desktop or a session (phase 2); and Build, which starts the
-// project's build workflow in CI, beside Open in the IDE (phase 3). The
-// portal does not build; this is what was built, where and how it went.
+// A project's Builds tab (ADR-0045, ADR-0048 §9): the second step of the
+// product's way out, after Product composed it and before Deploys installs it.
+// Build first -- in Studio, as a Job in the organization's cluster; in the
+// IDE; or by a CI workflow -- then the product's builds with how far each got
+// (prepare, images, publish) and, once one published its chart, Deploy; then
+// the CI runs of the project's repositories, as the artifact sync reads them.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type ProjectConfig } from "./api";
+import { api, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
 import {
+  BUILD_STAGES,
   type BuildRun,
+  type BuildStage,
   type BuildWorkflow,
   type IdeBuild,
+  type StageState,
   buildDuration,
+  buildStages,
   buildWorkflowOf,
   buildsHeadline,
   buildsOf,
@@ -23,21 +28,30 @@ import {
   statusTone,
   workflowsOf,
 } from "./builds";
+import { BuildWorkflowProposal, DeployBuildTo } from "./deploy-actions";
 import { errText } from "./format";
+import { buildsHint, type PipelineTab } from "./pipeline";
+import { PipelineLine } from "./pipeline-line";
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
 const LIMIT = 200;
 
+/** How often the product's builds are read again while one runs. */
+const FOLLOW_MS = 10_000;
+
 export function ProjectBuilds({
   token,
   projectId,
   onOpenStudio,
+  onOpenTab,
 }: {
   token: string;
   projectId: string;
   /** Open the project in the IDE, where Build, Run and Deploy run. */
   onOpenStudio?: () => void;
+  /** Open another tab of the project: Deploys, once a build is published. */
+  onOpenTab?: (tab: PipelineTab) => void;
 }) {
   const [runs, setRuns] = useState<BuildRun[] | null>(null);
   const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
@@ -50,6 +64,16 @@ export function ProjectBuilds({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Where the product can be built and deployed: the organization's
+  // environments this project may use, its bindings, its deploys.
+  const [environments, setEnvironments] = useState<DeployEnvironment[]>([]);
+  const [profiles, setProfiles] = useState<string[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [round, setRound] = useState(0);
+  const changed = useCallback((message: string) => {
+    setNote(message);
+    setRound((r) => r + 1);
+  }, []);
 
   // The repositories say whether their CI could be read at all: no runs and
   // "could not read the runs" are different answers. They also name the
@@ -68,10 +92,42 @@ export function ProjectBuilds({
       .projectConfig(token, projectId)
       .then((c) => live && setConfig(c))
       .catch(() => live && setConfig(null));
+    api
+      .projectTargets(token, projectId)
+      .then((t) => {
+        if (!live) return;
+        setEnvironments(t.environments.map((e) => e.environment));
+        setProfiles([...new Set(t.bindings.map((b) => b.profile))]);
+      })
+      .catch(() => live && setEnvironments([]));
     return () => {
       live = false;
     };
   }, [token, projectId]);
+
+  // The product's builds and the deploys of them, again after an action and,
+  // while a build runs, every FOLLOW_MS -- a Studio build reports its stages
+  // as it goes.
+  useEffect(() => {
+    let live = true;
+    api
+      .listArtifactNodes(token, "build", projectId, undefined, LIMIT, { sort: "updated" })
+      .then((page) => live && setIdeBuilds(ideBuildsOf(page.nodes ?? [])))
+      .catch(() => live && setIdeBuilds([]));
+    api
+      .deployments(token, { project: projectId })
+      .then((d) => live && setDeployments(d.items))
+      .catch(() => live && setDeployments([]));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, round]);
+  const running = ideBuilds.some((b) => b.status === "running");
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setRound((r) => r + 1), FOLLOW_MS);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   useEffect(() => {
     let live = true;
@@ -81,10 +137,6 @@ export function ProjectBuilds({
       .listArtifactNodes(token, "workflow_run", projectId, undefined, LIMIT, { sort: "updated" })
       .then((page) => live && setRuns(buildsOf(page.nodes ?? [])))
       .catch((e: unknown) => live && setError(errText(e)));
-    api
-      .listArtifactNodes(token, "build", projectId, undefined, LIMIT, { sort: "updated" })
-      .then((page) => live && setIdeBuilds(ideBuildsOf(page.nodes ?? [])))
-      .catch(() => live && setIdeBuilds([]));
     return () => {
       live = false;
     };
@@ -144,10 +196,15 @@ export function ProjectBuilds({
     <>
       <h1>Builds</h1>
       <p className="subtitle">
-        What the project&apos;s product was built into, where, and how it went. Studio does not build: CI and the
-        IDE do. This reads the CI runs of the project&apos;s repositories on every sync, and the builds the IDE reports
-        as they start and end.
+        The product Product composed, built into images and published with its chart to an environment&apos;s
+        registry, ready for Deploys. Studio builds it as a Job in the organization&apos;s cluster; the IDE builds it on
+        a member&apos;s machine; CI builds it on every push. Below: each build&apos;s stages as it goes, then the CI runs
+        of the project&apos;s repositories on every sync.
       </p>
+      <PipelineLine
+        hint={buildsHint(ideBuilds, environments.some((e) => !!e.registry_connection_id))}
+        onOpenTab={onOpenTab}
+      />
       {error && <div className="error">{error}</div>}
       {failures.map((f) => (
         <div key={f.repo} className="error" data-builds-ci-error>
@@ -165,7 +222,36 @@ export function ProjectBuilds({
           {note}
         </div>
       )}
-      <IdeBuilds builds={ideBuilds} onOpenStudio={onOpenStudio} />
+      {environments.length > 0 ? (
+        <BuildWorkflowProposal
+          token={token}
+          projectId={projectId}
+          environments={environments}
+          profiles={profiles}
+          onChanged={changed}
+          onOpenStudio={onOpenStudio}
+        />
+      ) : (
+        <div className="card row" data-build-without-environment>
+          <span className="grow hint">
+            Building in Studio or by a CI workflow publishes to an environment&apos;s registry, and this project has no
+            environment yet (Organization › Environments). The IDE builds without one.
+          </span>
+          {onOpenStudio && (
+            <button type="button" onClick={onOpenStudio}>
+              Open in the IDE
+            </button>
+          )}
+        </div>
+      )}
+      <ProductBuilds
+        token={token}
+        projectId={projectId}
+        builds={ideBuilds}
+        environments={environments}
+        deployments={deployments}
+        onChanged={changed}
+      />
       {!error && runs === null && <div className="empty">Loading…</div>}
       {runs && runs.length === 0 && (
         <div className="empty" data-builds-empty>
@@ -284,26 +370,37 @@ export function ProjectBuilds({
   );
 }
 
-/** The builds the IDE ran, newest first: a failed one with its first error,
- *  so the next member does not rebuild to find it; a passed one is deployed
- *  from the IDE, where its chart is. */
-function IdeBuilds({ builds, onOpenStudio }: { builds: IdeBuild[]; onOpenStudio?: () => void }) {
+/** The product's builds, newest first -- run by Studio, the IDE or CI -- each
+ *  with how far it got: a failed one with its first error, so the next member
+ *  does not rebuild to find it; a published one with its images and chart, and
+ *  Deploy. */
+function ProductBuilds({
+  token,
+  projectId,
+  builds,
+  environments,
+  deployments,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  builds: IdeBuild[];
+  environments: DeployEnvironment[];
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+}) {
   if (builds.length === 0) return null;
   return (
-    <section className="card" data-ide-builds>
+    <section className="card" data-product-builds>
       <div className="card-head">
         <div>
-          <h2>In the IDE</h2>
+          <h2>Product builds</h2>
           <p className="subtitle">
-            Build and Run in a member&apos;s desktop or a session, as the IDE reported them. A passed build is
-            deployed from the IDE&apos;s Generate view, where its chart is made; the deploy names the build.
+            In Studio, in a member&apos;s desktop or a session, or in CI, as each reported itself. A build prepares the
+            product&apos;s tree, builds its images, then publishes them and the chart; a published one deploys from
+            here or from Deploys.
           </p>
         </div>
-        {onOpenStudio && (
-          <button type="button" onClick={onOpenStudio}>
-            Open in the IDE
-          </button>
-        )}
       </div>
       <div style={{ overflowX: "auto" }}>
         <table className="table" data-ide-builds-table>
@@ -311,6 +408,7 @@ function IdeBuilds({ builds, onOpenStudio }: { builds: IdeBuild[]; onOpenStudio?
             <tr>
               <th>Status</th>
               <th>What</th>
+              <th>Stages</th>
               <th>Commit</th>
               <th>Where</th>
               <th>When</th>
@@ -323,17 +421,44 @@ function IdeBuilds({ builds, onOpenStudio }: { builds: IdeBuild[]; onOpenStudio?
                 <td>
                   <span className={`badge ${statusTone(b.status)}`}>{b.status}</span>
                 </td>
-                <td style={{ minWidth: 240 }}>
+                <td style={{ minWidth: 260 }}>
                   {b.action === "run" ? "Run" : "Build"} {b.product ?? "the product"}
                   {b.profile ? <span className="sub"> · {b.profile}</span> : null}
                   {b.status === "failed" && b.failure ? (
-                    <div className="error" style={{ marginTop: 4 }} data-ide-build-failure>
+                    <div className="error" style={{ marginTop: 4, whiteSpace: "pre-wrap" }} data-ide-build-failure>
                       {b.failureStep ? `${b.failureStep}: ` : ""}
                       {b.failure}
                     </div>
                   ) : null}
-                  {b.outputs.length > 0 ? <div className="sub">{b.outputs.join(", ")}</div> : null}
+                  {b.images.length > 0 ? (
+                    <ul className="sub" style={{ margin: "4px 0 0", paddingLeft: 16 }} data-build-images>
+                      {b.images.map((i) => (
+                        <li key={i.app}>
+                          {i.app} → <code>{i.image}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : b.outputs.length > 0 ? (
+                    <div className="sub">{b.outputs.join(", ")}</div>
+                  ) : null}
+                  {b.chartRef ? (
+                    <div className="sub" data-build-chart>
+                      chart <code>{b.chartRef}</code>
+                      {b.chartVersion ? <>:{b.chartVersion}</> : null}
+                    </div>
+                  ) : null}
+                  {b.status === "passed" && b.chartRef && b.chartVersion && (
+                    <DeployBuildTo
+                      token={token}
+                      projectId={projectId}
+                      build={b}
+                      environments={environments}
+                      deployments={deployments}
+                      onChanged={onChanged}
+                    />
+                  )}
                 </td>
+                <td>{b.action === "run" ? "—" : <StageLane stages={buildStages(b)} />}</td>
                 <td>
                   {b.shortSha ? <code>{b.shortSha}</code> : "—"}
                   {b.branch ? <span className="sub"> · {b.branch}</span> : null}
@@ -347,5 +472,24 @@ function IdeBuilds({ builds, onOpenStudio }: { builds: IdeBuild[]; onOpenStudio?
         </table>
       </div>
     </section>
+  );
+}
+
+const STAGE_TONE: Record<StageState, string> = { done: "ok", running: "info", failed: "danger", waiting: "neutral" };
+const STAGE_MARK: Record<StageState, string> = { done: "✓", running: "…", failed: "✕", waiting: "" };
+
+/** prepare → images → publish, each as a badge in its state. */
+function StageLane({ stages }: { stages: Record<BuildStage, StageState> }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "center", whiteSpace: "nowrap" }} data-build-stages>
+      {BUILD_STAGES.map((stage, i) => (
+        <span key={stage} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          {i > 0 && <span className="sub">→</span>}
+          <span className={`badge ${STAGE_TONE[stages[stage]]}`} data-stage={stage} data-stage-state={stages[stage]}>
+            {STAGE_MARK[stages[stage]]} {stage}
+          </span>
+        </span>
+      ))}
+    </span>
   );
 }
