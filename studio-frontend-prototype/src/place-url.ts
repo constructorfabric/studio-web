@@ -19,6 +19,11 @@
  * are not this module's; `pathToPlace` answers nothing for them.
  */
 
+// Project tabs that became a section of another (the Frontend tab is now
+// Product › Frontend): an old address opens the tab that holds it, and the
+// section scrolls itself into view (product-sections-view.tsx).
+import { MOVED_PROJECT_TABS } from "./product-sections";
+
 /** What of the shell's Place an address carries. */
 export interface UrlPlace {
   view: string;
@@ -117,7 +122,7 @@ export function pathToPlace(pathname: string, search: string, known: KnownPlaces
     if (!ID.test(ws)) return undefined;
     if (second === "projects" && project !== undefined) {
       if (!ID.test(project) || rest.length > 4) return undefined;
-      const projectTab = tab ?? DEFAULT_PROJECT_TAB;
+      const projectTab = (tab !== undefined ? MOVED_PROJECT_TABS[tab]?.tab : undefined) ?? tab ?? DEFAULT_PROJECT_TAB;
       if (!known.projectTabs.includes(projectTab)) return undefined;
       return withOrg({ view: "projects", adminOpen: false, crumb: { projectId: ws, nestedId: project }, projectTab });
     }

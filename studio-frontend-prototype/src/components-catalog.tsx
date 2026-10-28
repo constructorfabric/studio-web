@@ -1525,7 +1525,7 @@ function SourcesPanel({
       />
       <RepoSourceEditor
         title="FrontX (micro-frontends)"
-        note="Every package in the FrontX monorepo — packages/* plus the root-level scaffolding templates (template-shell, template-mfe). FrontX develops on `develop`."
+        note="Every package in a FrontX repository, wherever it sits, and every micro-frontend under src-app/mfe_packages/ with its mfe.json screens. gears-frontx holds the libraries; the micro-frontends the frontend constructor offers come from constructorfabric/gears-frontx-templates (main) or your own FrontX app."
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
         connections={connections}

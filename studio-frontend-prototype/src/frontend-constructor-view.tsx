@@ -12,7 +12,17 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
 import { api } from "./api";
-import { coverage, mfesFrom, offersFor, placementLabel, zonesOf, type Mfe, type Placement } from "./frontend-constructor";
+import {
+  SUGGESTED_FRONTX_SOURCE,
+  coverage,
+  mfesFrom,
+  offersFor,
+  placementLabel,
+  withSuggestedFrontx,
+  zonesOf,
+  type Mfe,
+  type Placement,
+} from "./frontend-constructor";
 import { errText } from "./problem";
 
 type Loaded = { mfes: Mfe[]; gears: string[] };
@@ -38,6 +48,10 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Bumped to read the catalogue again, after the suggested source synced. */
+  const [loads, setLoads] = useState(0);
+  /** Where adding the suggested FrontX source has got to; `null` when idle. */
+  const [suggesting, setSuggesting] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -63,7 +77,36 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
     return () => {
       alive = false;
     };
-  }, [token, projectId]);
+  }, [token, projectId, loads]);
+
+  /** Add the suggested FrontX repository to the organization's catalogue
+   *  sources (unless it is there already) and sync them, the way a scheduled
+   *  sync does: no body, so the run reads every stored source. */
+  async function addSuggested() {
+    setErr(null);
+    setSuggesting("Adding the source…");
+    try {
+      const { items } = await api.catalogSources(token);
+      const next = withSuggestedFrontx(items ?? []);
+      if (next) await api.saveCatalogSources(token, next);
+      setSuggesting("Syncing the catalogue…");
+      const { run_id } = await api.syncComponents(token);
+      const deadline = Date.now() + 10 * 60 * 1000;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const t = await api.componentsCatalogTask(token, run_id);
+        if (t.status === "succeeded") break;
+        if (t.status === "failed" || t.status === "cancelled") throw new Error(t.message || `The sync ${t.status}.`);
+        if (Date.now() > deadline) throw new Error("The sync is still running; come back to this tab when it is done.");
+        setSuggesting(`Syncing the catalogue: ${(t.message || t.status).replace(/…$/, "")}…`);
+      }
+      setSuggesting(null);
+      setLoads((n) => n + 1);
+    } catch (e) {
+      setSuggesting(null);
+      setErr(errText(e));
+    }
+  }
 
   const picked = useMemo(
     () => (data ? picks.map((n) => data.mfes.find((m) => m.name === n)).filter((m): m is Mfe => !!m) : []),
@@ -143,10 +186,27 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
             aria-label="Find a micro-frontend"
           />
           {data.mfes.length === 0 && (
-            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              The catalogue lists no micro-frontend yet. Add a FrontX repository as a source of the catalogue and sync
-              it: a package with an <code>mfe.json</code> lands here with its screens.
-            </p>
+            <div className="muted" style={{ fontSize: 12, margin: 0, display: "grid", gap: 6 }} data-frontx-suggestion>
+              <span>
+                The catalogue lists no micro-frontend yet. A micro-frontend is a FrontX package with an{" "}
+                <code>mfe.json</code> (under <code>src-app/mfe_packages/</code>); it lands here with its screens once
+                its repository is a <b>frontx</b> source of the catalogue and has been synced.
+              </span>
+              <span>
+                To start, add FrontX's own templates,{" "}
+                <a href={`https://github.com/${SUGGESTED_FRONTX_SOURCE.repo}`} target="_blank" rel="noreferrer">
+                  <code>{SUGGESTED_FRONTX_SOURCE.repo}</code>
+                </a>{" "}
+                at <code>{SUGGESTED_FRONTX_SOURCE.git_ref}</code>: it brings a blank micro-frontend, a demo with five
+                screens and two widgets. Your own FrontX repositories are added the same way, under Components ›
+                Repositories.
+              </span>
+              <span>
+                <button type="button" className="primary" disabled={suggesting !== null} onClick={() => void addSuggested()}>
+                  {suggesting ?? "Add and sync"}
+                </button>
+              </span>
+            </div>
           )}
           {data.mfes
             .filter((m) => !picks.includes(m.name))

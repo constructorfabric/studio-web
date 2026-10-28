@@ -134,7 +134,7 @@ a gear" does for the backend.
 
 | Phase | What | Owner |
 |---|---|---|
-| 1 | The scan records `mfe_extensions` and `mfe_calls`; the Frontend tab composes and checks; the pick in `project.config` | Studio |
+| 1 | The scan records `mfe_extensions` and `mfe_calls` (every `src-app/mfe_packages/*`, at any depth); Product › Frontend composes and checks, and is optional ("Add a frontend" from `gears-frontx-templates`' `template-shell`); the pick in `project.config` | Studio |
 | 2 | `frontend` block in GDL, the shell as an application, generate builds and charts the frontend | Gearbox, Studio |
 | 3 | Per-gear npm SDKs from OpenAPI, `mfe.json` declares the gears it calls | Studio, FrontX |
 | 4 | Screens from specs, "Create a micro-frontend"; the backend serves the manifests | Studio, FrontX |
@@ -156,4 +156,8 @@ a gear" does for the backend.
 - The scan: `studio-backend/src/components_catalog/repo_enrich.rs`
   (`frontx_component`, `mfe_extensions`, `gears_called`).
 - The constructor: `studio-frontend-prototype/src/frontend-constructor.ts`,
-  `frontend-constructor-view.tsx`.
+  `frontend-constructor-view.tsx`, inside the Product tab's sections
+  (`product-sections.ts`, `product-sections-view.tsx`).
+- The first source of micro-frontends: `constructorfabric/gears-frontx-templates`
+  (`template-mfe/src-app/mfe_packages/*`), which the constructor offers to add
+  to the organization's catalogue when it lists none.

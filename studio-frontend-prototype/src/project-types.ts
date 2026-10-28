@@ -83,7 +83,7 @@ export const PRESETS: { id: string; title: string; types: ProjectType[] }[] = [
         description:
           "Pick gears from the catalogue and put them together in an IDE session with an agent. A repository is created for you.",
         recipe: "product",
-        tabs: ["overview", "components", "frontend", "parts", "sources", "builds", "kits", "people"],
+        tabs: ["overview", "components", "parts","sources", "builds", "kits", "people"],
         first_tab: "overview",
       },
       {

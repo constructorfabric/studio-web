@@ -493,7 +493,8 @@ impl RepoEnricher {
     /// body: both root templates declare their `src-app/**` packages as npm
     /// workspaces, which makes those bodies siblings of the container rather
     /// than nested under a component. `src-app` is in [`SKIP_SEGMENTS`] for
-    /// exactly that reason — see the note there.
+    /// exactly that reason — except its `mfe_packages/*`, the micro-frontends
+    /// themselves; see the note there.
     async fn discover_frontx(&self, src: &Repository, paths: &[&str]) -> Result<Vec<RepoGear>> {
         // Every manifest in the tree, shallowest first, so a container is
         // always seen before the packages it contains.
@@ -1998,6 +1999,14 @@ fn docstate(state: &str, link: Option<&str>) -> Value {
 /// which makes those bodies siblings of the container rather than nested under
 /// a component — so they were catalogued as components in their own right. A
 /// template's real packages live in its `packages/`, and those still are.
+///
+/// One part of `src-app` is not skeleton: `src-app/mfe_packages/<name>/` is
+/// where a FrontX app keeps its micro-frontends, each with the `mfe.json`
+/// the frontend constructor (ADR-0050) reads its screens from. Skipping it
+/// left the constructor with nothing to offer: every micro-frontend there is
+/// (`gears-frontx-templates`' `template-mfe`, this repository's own
+/// `studio-frontend`) lives under it. So that one directory is let through
+/// ([`MFE_PACKAGES`]); `verify_packages` and the rest of `src-app` are not.
 const SKIP_SEGMENTS: [&str; 10] = [
     "node_modules",
     "dist",
@@ -2011,9 +2020,21 @@ const SKIP_SEGMENTS: [&str; 10] = [
     "src-app",
 ];
 
+/// The directory under `src-app` that holds a FrontX app's micro-frontends,
+/// one package each: the exception to skipping `src-app`.
+const MFE_PACKAGES: &str = "mfe_packages";
+
 /// True when a repository path lies inside a directory we never catalogue.
+///
+/// `src-app` is skipped unless the next segment is [`MFE_PACKAGES`]; every
+/// other skipped segment still applies inside it, so a micro-frontend's own
+/// `node_modules` or `dist` stays out.
 fn skip_path(path: &str) -> bool {
-    path.split('/').any(|seg| SKIP_SEGMENTS.contains(&seg))
+    let segs: Vec<&str> = path.split('/').collect();
+    segs.iter().enumerate().any(|(i, seg)| {
+        SKIP_SEGMENTS.contains(seg)
+            && !(*seg == "src-app" && segs.get(i + 1) == Some(&MFE_PACKAGES))
+    })
 }
 
 /// True when a `package.json` is an npm/pnpm/yarn **workspace container** — it
@@ -2719,6 +2740,11 @@ pub(crate) fn gears_called(body: &str) -> BTreeSet<String> {
 /// The shell placements an `mfe.json` declares, one per extension: the
 /// domain it mounts in (the last segment of the domain's type id, e.g.
 /// `screen`), and its presentation as the shell draws it.
+///
+/// Two layouts are in use for the route: this repository's micro-frontends
+/// put it in `presentation` beside the label, while FrontX's own
+/// (`gears-frontx-templates`' `template-mfe`) put it on the extension itself.
+/// The presentation's wins when both are there.
 pub(crate) fn mfe_extensions(body: &str) -> Vec<Value> {
     let Ok(v) = serde_json::from_str::<Value>(body) else {
         return Vec::new();
@@ -2741,12 +2767,20 @@ pub(crate) fn mfe_extensions(body: &str) -> Vec<Value> {
                     .filter(|x| !x.is_null())
                     .unwrap_or(Value::Null)
             };
+            let route = match s("route") {
+                Value::Null => e
+                    .get("route")
+                    .filter(|r| r.is_string())
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                r => r,
+            };
             Some(json!({
                 "id": id,
                 "domain": domain,
                 "label": s("label"),
                 "icon": s("icon"),
-                "route": s("route"),
+                "route": route,
                 "order": s("order"),
                 "level": s("level"),
             }))
@@ -3009,6 +3043,92 @@ mod tests {
         assert!(ext[1]["label"].is_null());
         assert!(mfe_extensions("not json").is_empty());
         assert!(mfe_extensions("{}").is_empty());
+    }
+
+    /// Real `mfe.json` files, copied verbatim into `testdata/mfe/`: this
+    /// repository's (`studio-frontend/src-app/mfe_packages/*`, route and
+    /// level in `presentation`) and FrontX's own (`gears-frontx-templates`'
+    /// `template-mfe`, route on the extension, extra `schemas` and
+    /// `domains`). Each reads to one placement per extension, with its route.
+    #[test]
+    fn real_mfe_manifests_read_to_their_placements() {
+        let cases: [(&str, &str, usize, &str, &str); 6] = [
+            (
+                "studio people",
+                include_str!("testdata/mfe/studio-people-mfe.json"),
+                1,
+                "screen",
+                "/people",
+            ),
+            (
+                "studio projects",
+                include_str!("testdata/mfe/studio-projects-mfe.json"),
+                12,
+                "screen",
+                "/projects",
+            ),
+            (
+                "studio connections",
+                include_str!("testdata/mfe/studio-connections-mfe.json"),
+                2,
+                "screen",
+                "/connections",
+            ),
+            (
+                "frontx blank",
+                include_str!("testdata/mfe/frontx-templates-blank-mfe.json"),
+                1,
+                "screen",
+                "/blank-home",
+            ),
+            (
+                "frontx demo",
+                include_str!("testdata/mfe/frontx-templates-demo-mfe.json"),
+                5,
+                "screen",
+                "/widgets-host",
+            ),
+            (
+                "frontx widgets fixture",
+                include_str!("testdata/mfe/frontx-templates-widgets-fixture-a.json"),
+                2,
+                "main",
+                "/widget-alpha",
+            ),
+        ];
+        for (what, body, n, domain, route) in cases {
+            let ext = mfe_extensions(body);
+            assert_eq!(ext.len(), n, "{what}: extensions");
+            assert_eq!(ext[0]["domain"], domain, "{what}: domain");
+            assert_eq!(ext[0]["route"], route, "{what}: route");
+            assert!(
+                ext.iter().all(|e| e["route"].is_string()),
+                "{what}: every extension has a route"
+            );
+        }
+        let projects = mfe_extensions(include_str!("testdata/mfe/studio-projects-mfe.json"));
+        assert_eq!(projects[0]["level"], "workspace");
+        assert_eq!(
+            projects.iter().filter(|e| e["domain"] == "overlay").count(),
+            3
+        );
+        let demo = mfe_extensions(include_str!("testdata/mfe/frontx-templates-demo-mfe.json"));
+        assert_eq!(demo[1]["label"], "Hello World");
+        assert_eq!(demo[1]["order"], 10);
+    }
+
+    #[test]
+    fn a_route_in_presentation_wins_over_one_on_the_extension() {
+        let body = r#"{"extensions": [
+          {"id": "a", "domain": "x~frontx.screensets.layout.screen.v1", "route": "/outer",
+           "presentation": {"route": "/inner"}},
+          {"id": "b", "domain": "x~frontx.screensets.layout.screen.v1", "route": "/outer"},
+          {"id": "c", "domain": "x~frontx.screensets.layout.screen.v1", "route": 7}
+        ]}"#;
+        let ext = mfe_extensions(body);
+        assert_eq!(ext[0]["route"], "/inner");
+        assert_eq!(ext[1]["route"], "/outer");
+        assert!(ext[2]["route"].is_null());
     }
 
     #[test]
@@ -3386,20 +3506,27 @@ has_extension_point = true
         assert_eq!(got.first(), Some(&"package.json"));
     }
 
-    /// The whole point of the `src-app` rule: a template's generated skeleton
-    /// is not a set of components, while the packages beside it are.
+    /// The `src-app` rule: a template's generated skeleton is not a set of
+    /// components, while the packages beside it are -- and so are the
+    /// micro-frontends in its `mfe_packages`, which is what the frontend
+    /// constructor offers (ADR-0050).
     #[test]
     fn generated_app_skeletons_are_not_components() {
         let tree = frontx_tree();
         let got = frontx_manifest_paths(&tree);
-        for phantom in [
+        assert!(
+            !got.contains(
+                &"template-design-guardrails/src-app/verify_packages/design-verify/package.json"
+            ),
+            "a verification package is skeleton, not a component"
+        );
+        for mfe in [
             "template-mfe/src-app/mfe_packages/_blank-mfe/package.json",
             "template-mfe/src-app/mfe_packages/demo-mfe/package.json",
             "template-mfe/src-app/mfe_packages/widgets-fixture-a/package.json",
             "template-mfe/src-app/mfe_packages/widgets-fixture-b/package.json",
-            "template-design-guardrails/src-app/verify_packages/design-verify/package.json",
         ] {
-            assert!(!got.contains(&phantom), "not skipped: {phantom}");
+            assert!(got.contains(&mfe), "micro-frontend skipped: {mfe}");
         }
         // The six real packages the shell template carries are kept.
         for kept in [
@@ -3451,6 +3578,99 @@ has_extension_point = true
         assert_eq!(normalize_ref(""), "HEAD");
         // A branch that merely starts with the word is left alone.
         assert_eq!(normalize_ref("originals"), "originals");
+    }
+
+    /// Every `package.json` and `mfe.json` in
+    /// `constructorfabric/gears-frontx-templates` at `main` (2026-10-28), as
+    /// the trees API lists them: the repository the frontend constructor
+    /// suggests as its first FrontX source.
+    fn frontx_templates_tree() -> Vec<&'static str> {
+        vec![
+            "package.json",
+            "template-design-guardrails/src-app/verify_packages/design-verify/package.json",
+            "template-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/_blank-mfe/mfe.json",
+            "template-mfe/src-app/mfe_packages/_blank-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/demo-mfe/mfe.json",
+            "template-mfe/src-app/mfe_packages/demo-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-a/mfe.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-a/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-b/mfe.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-b/package.json",
+            "template-shell/__tests__/build/fixtures/shared-chunk-css/mfe.json",
+            "template-shell/package.json",
+            "template-shell/packages/auth/package.json",
+            "template-shell/packages/framework/package.json",
+            "template-shell/packages/i18n/package.json",
+            "template-shell/packages/react/package.json",
+            "template-shell/packages/state/package.json",
+            "template-shell/packages/studio/package.json",
+        ]
+    }
+
+    /// The micro-frontends sit in a subfolder (`template-mfe/src-app/...`),
+    /// not at the root: the scan finds them there.
+    #[test]
+    fn micro_frontends_in_a_nested_app_are_found() {
+        let tree = frontx_templates_tree();
+        let got = frontx_manifest_paths(&tree);
+        let mfes: Vec<&str> = got
+            .iter()
+            .copied()
+            .filter(|p| p.contains("/mfe_packages/"))
+            .collect();
+        assert_eq!(
+            mfes,
+            [
+                "template-mfe/src-app/mfe_packages/_blank-mfe/package.json",
+                "template-mfe/src-app/mfe_packages/demo-mfe/package.json",
+                "template-mfe/src-app/mfe_packages/widgets-fixture-a/package.json",
+                "template-mfe/src-app/mfe_packages/widgets-fixture-b/package.json",
+            ]
+        );
+        assert!(!got.iter().any(|p| p.contains("verify_packages")));
+    }
+
+    /// This repository's own frontend: `studio-frontend/src-app/mfe_packages/*`,
+    /// the screens the portal is made of, plus the shared library they call
+    /// the backend through.
+    #[test]
+    fn this_repositorys_micro_frontends_are_found() {
+        let tree = [
+            "studio-frontend/package.json",
+            "studio-frontend/packages/react/package.json",
+            "studio-frontend/src-app/mfe_packages/people-mfe/package.json",
+            "studio-frontend/src-app/mfe_packages/people-mfe/mfe.json",
+            "studio-frontend/src-app/mfe_packages/projects-mfe/package.json",
+            "studio-frontend/src-app/mfe_packages/shared/package.json",
+            "studio-frontend/src-app/mfe_packages/people-mfe/node_modules/x/package.json",
+            "studio-frontend/src-app/mfe_packages/people-mfe/dist/package.json",
+        ];
+        let got = frontx_manifest_paths(&tree);
+        assert_eq!(
+            got,
+            [
+                "studio-frontend/package.json",
+                "studio-frontend/packages/react/package.json",
+                "studio-frontend/src-app/mfe_packages/people-mfe/package.json",
+                "studio-frontend/src-app/mfe_packages/projects-mfe/package.json",
+                "studio-frontend/src-app/mfe_packages/shared/package.json",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_mfe_packages_is_let_through_src_app() {
+        assert!(!skip_path("src-app/mfe_packages/a/package.json"));
+        assert!(!skip_path("app/src-app/mfe_packages/a/src/api/x.ts"));
+        assert!(skip_path("src-app/verify_packages/a/package.json"));
+        assert!(skip_path("src-app/package.json"));
+        assert!(skip_path(
+            "src-app/mfe_packages/a/node_modules/b/package.json"
+        ));
+        assert!(skip_path(
+            "packages/cli/fixtures/src-app/mfe_packages/a/package.json"
+        ));
     }
 
     #[test]
