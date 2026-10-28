@@ -53,6 +53,9 @@ use tracing::warn;
 pub const CORPUS_SOURCE_ID: &str = "gears-rust";
 
 const DEFAULT_CORPUS_REF: &str = "main";
+
+/// Previews run one at a time; see [`Gearbox::preview`].
+static PREVIEW_TURNS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 const DEFAULT_REFRESH: Duration = Duration::from_secs(600);
 /// How often the platform's gear repositories are listed again. A list read
 /// is one metadata row; a change is checked out on the next use.
@@ -3386,6 +3389,14 @@ impl Gearbox {
                 PROFILES.join(", ")
             );
         }
+        // One preview at a time: a product of some sixty gears takes about
+        // 1.5 GB to resolve, and the Product page asks again as picks change,
+        // so two at once took the backend past its 4 GiB limit on dev
+        // (OOMKilled). The next waits; a repeat is answered from `evaluations`.
+        let _turn = PREVIEW_TURNS
+            .acquire()
+            .await
+            .context("the preview queue is closed")?;
         let started = Instant::now();
         let loaded = self.ensure(scope).await?;
         let corpus_ms = started.elapsed().as_millis();

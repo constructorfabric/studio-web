@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
+import { api, type BuildLog, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
 import {
   BUILD_STAGES,
   type BuildRun,
@@ -31,6 +31,7 @@ import {
   openingScenario,
   repoPathsOf,
   statusTone,
+  stepToShow,
   workflowsOf,
 } from "./builds";
 import {
@@ -41,6 +42,7 @@ import {
   buildableEnvironments,
 } from "./deploy-actions";
 import { errText } from "./format";
+import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 
@@ -81,13 +83,13 @@ function storeScenario(projectId: string, s: BuildScenario) {
 export function ProjectBuilds({
   token,
   projectId,
-  onOpenStudio,
+  projectName,
   onOpenTab,
 }: {
   token: string;
   projectId: string;
-  /** Open the project in the IDE, where Build, Run and Deploy run. */
-  onOpenStudio?: () => void;
+  /** What the desktop app calls the project it opens. */
+  projectName?: string;
   /** Open another tab of the project: Deploys, once a build is published. */
   onOpenTab?: (tab: PipelineTab) => void;
 }) {
@@ -207,7 +209,7 @@ export function ProjectBuilds({
             onChanged={changed}
           />
         )}
-        {scenario === "desktop" && <OnMyMachine onOpenStudio={onOpenStudio} />}
+        {scenario === "desktop" && <OnMyMachine projectId={projectId} projectName={projectName} saved={saved} />}
         {scenario === "ci" && (
           <InCi
             token={token}
@@ -234,8 +236,28 @@ export function ProjectBuilds({
 
 /** The desktop builds on the member's machine: Generate, Build, then Publish
  *  with a push-only token Studio gives for the environment's registry. Each
- *  build reports itself, so it shows below as `desktop`. */
-function OnMyMachine({ onOpenStudio }: { onOpenStudio?: () => void }) {
+ *  build reports itself, so it shows below as `desktop`. Open in the IDE
+ *  hands the project to the desktop app, with the product the Product step
+ *  saved and its branch, so it opens where Generate starts. */
+function OnMyMachine({
+  projectId,
+  projectName,
+  saved,
+}: {
+  projectId: string;
+  projectName?: string;
+  saved: SavedProduct | null;
+}) {
+  const { launch, missing } = useDesktopLauncher();
+  const open = () =>
+    launch(
+      desktopLink({
+        id: projectId,
+        name: projectName,
+        product: saved?.path,
+        branch: saved?.branch ?? undefined,
+      }),
+    );
   return (
     <div data-build-on-my-machine>
       <p>
@@ -243,13 +265,18 @@ function OnMyMachine({ onOpenStudio }: { onOpenStudio?: () => void }) {
         then <b>Publish</b> them and the chart to an environment&apos;s registry with a push-only token Studio gives for
         it. Each build reports itself and shows below, where it says <code>desktop</code>.
       </p>
-      {onOpenStudio && (
-        <div className="row">
-          <button type="button" className="primary" onClick={onOpenStudio} data-builds-open-ide>
-            Open in the IDE
-          </button>
-        </div>
-      )}
+      <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="primary"
+          onClick={open}
+          title="Open this project in the Constructor Studio app on your machine"
+          data-builds-open-ide
+        >
+          Open in the IDE
+        </button>
+        {missing && <DesktopMissingHint />}
+      </div>
     </div>
   );
 }
@@ -646,6 +673,9 @@ function BuildCard({
           the hour a build may take. How it ended is not known; build again.
         </p>
       )}
+      {b.where === "studio" && (
+        <BuildLogPanel token={token} projectId={projectId} buildId={b.buildId} running={b.status === "running"} />
+      )}
       {b.status === "failed" && b.failure && (
         <div className="error" style={{ marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-ide-build-failure>
           {b.failureStep ? `${b.failureStep}: ` : ""}
@@ -682,6 +712,112 @@ function BuildCard({
     </div>
   );
 }
+
+/** A build Studio runs, step by step with the end of each step's log, read
+ *  from its pod on demand and again every LOG_FOLLOW_MS while it runs. The
+ *  pod is the truth here: a step that failed shows failed even before the
+ *  build's record says so. */
+function BuildLogPanel({
+  token,
+  projectId,
+  buildId,
+  running,
+}: {
+  token: string;
+  projectId: string;
+  buildId: string;
+  running: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [log, setLog] = useState<BuildLog | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<string | null>(null);
+  const live = !log || log.steps.some((s) => s.state === "running" || (running && s.state === "waiting"));
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    let timer: number | undefined;
+    const read = () =>
+      api
+        .buildLog(token, projectId, buildId)
+        .then((l) => {
+          if (!alive) return;
+          setLog(l);
+          setError(null);
+        })
+        .catch((e: unknown) => alive && setError(errText(e)))
+        .finally(() => {
+          if (alive && live) timer = window.setTimeout(() => void read(), LOG_FOLLOW_MS);
+        });
+    void read();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [open, token, projectId, buildId, live]);
+
+  const shown = step ?? stepToShow(log?.steps ?? []);
+  const text = log?.steps.find((s) => s.step === shown)?.log ?? "";
+  return (
+    <div style={{ marginTop: 8 }} data-build-log={buildId}>
+      <button type="button" className="linklike" onClick={() => setOpen((o) => !o)} data-build-log-toggle>
+        {open ? "Hide the log" : "Show the log"}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {error && <div className="error">{error}</div>}
+          {!log && !error && <div className="hint">Reading the build&apos;s pod…</div>}
+          {log && (
+            <>
+              <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div className="doc-views" role="tablist" aria-label="Build steps" style={{ marginBottom: 6 }}>
+                  {log.steps.map((s) => (
+                    <button
+                      key={s.step}
+                      type="button"
+                      role="tab"
+                      aria-selected={shown === s.step}
+                      className={`doc-view${shown === s.step ? " on" : ""}`}
+                      disabled={s.state === "waiting"}
+                      onClick={() => setStep(s.step)}
+                      data-build-log-step={s.step}
+                      data-build-log-state={s.state}
+                    >
+                      {STAGE_MARK[STEP_STAGE[s.state] ?? "waiting"]} {s.step}
+                    </button>
+                  ))}
+                </div>
+                <span className="sub">
+                  {log.environment} · <code>{log.namespace}</code>
+                  {live ? " · following" : ""}
+                </span>
+              </div>
+              {shown ? (
+                <pre className="build-log" data-build-log-text>
+                  {text || "(nothing written yet)"}
+                </pre>
+              ) : (
+                <div className="hint">No step has started yet.</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A pod step's state as a stage's, for its mark. */
+const STEP_STAGE: Record<string, StageState> = {
+  passed: "done",
+  running: "running",
+  failed: "failed",
+  waiting: "waiting",
+};
+
+/** How often an open log is read again while its build runs. */
+const LOG_FOLLOW_MS = 5_000;
 
 /** The build's status; a lost one says so, in a warning's tone. */
 function StatusBadge({ build: b }: { build: IdeBuild }) {

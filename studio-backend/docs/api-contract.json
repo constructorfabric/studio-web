@@ -1779,6 +1779,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/builds/{build_id}/log",
+      "operation_id": "studio_environments.get_build_log",
+      "tag": "",
+      "summary": "A build Studio runs, step by step with the end of each step's log",
+      "authenticated": true,
+      "responses": [
+        "BuildLogDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.list_deployments",
       "tag": "",

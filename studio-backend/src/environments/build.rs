@@ -30,7 +30,7 @@ use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use k8s_openapi::api::batch::v1::Job;
 use k8s_openapi::api::core::v1::{Pod, Secret};
-use kube::api::{DeleteParams, ListParams, Patch, PatchParams};
+use kube::api::{DeleteParams, ListParams, LogParams, Patch, PatchParams};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use toolkit::client_hub::{ClientHub, ClientScope};
@@ -91,6 +91,13 @@ pub struct BuildPayload {
     /// queued before it was recorded, which gets the default.
     #[serde(default = "default_buildkit_image")]
     pub buildkit_image: String,
+    /// The tenant the build's record was started in: the caller's. Every
+    /// later record of it is written there too, or the page that reads the
+    /// caller's records keeps the first one, `running`, for ever. Absent from
+    /// a build queued before it was recorded, whose records go to the run's
+    /// own tenant.
+    #[serde(default)]
+    pub records_in: Option<Uuid>,
 }
 
 fn default_buildkit_image() -> String {
@@ -114,6 +121,9 @@ pub struct WatchPayload {
     /// The step last recorded as running, so a step is recorded once.
     #[serde(default)]
     pub step: Option<String>,
+    /// See [`BuildPayload::records_in`].
+    #[serde(default)]
+    pub records_in: Option<Uuid>,
 }
 
 /// The Job's name for a build: a DNS label.
@@ -369,17 +379,23 @@ pub async fn enqueue(
         .await
 }
 
-/// Record a build's outcome in the project's graph.
+/// Record a build's outcome in the project's graph: in `records_in`, the
+/// tenant its first record went to, when it names one; else in the run's.
 async fn record(
     hub: &Arc<ClientHub>,
     ctx: &toolkit_security::SecurityContext,
+    records_in: Option<Uuid>,
     project: Uuid,
     outcome: crate::artifact_ingest::port::BuildOutcome,
 ) -> anyhow::Result<()> {
     let builds = hub
         .get::<dyn crate::artifact_ingest::port::BuildRecords>()
         .map_err(|_| anyhow!("builds are not available in this deployment"))?;
-    builds.record(ctx, &project.to_string(), &outcome).await
+    let there = match records_in {
+        Some(tenant) if tenant != ctx.subject_tenant_id() => super::store::service_context(tenant)?,
+        _ => ctx.clone(),
+    };
+    builds.record(&there, &project.to_string(), &outcome).await
 }
 
 #[async_trait]
@@ -409,6 +425,7 @@ impl TaskHandler for BuildTask {
                 let _ = record(
                     &self.hub,
                     &ctx.security,
+                    p.records_in,
                     p.project_id,
                     crate::artifact_ingest::port::BuildOutcome::failed(
                         &p.build_id,
@@ -499,6 +516,7 @@ impl BuildTask {
             profile: p.profile.clone(),
             round: 0,
             step: None,
+            records_in: p.records_in,
         };
         enqueue(
             &self.hub,
@@ -709,8 +727,14 @@ impl WatchTask {
                             &p.profile,
                         );
                         running.step = now.clone();
-                        if let Err(e) =
-                            record(&self.hub, &ctx.security, p.project_id, running).await
+                        if let Err(e) = record(
+                            &self.hub,
+                            &ctx.security,
+                            p.records_in,
+                            p.project_id,
+                            running,
+                        )
+                        .await
                         {
                             warn!(build = %p.build_id, "studio-environments: the build's step could not be recorded ({e})");
                         }
@@ -807,7 +831,14 @@ impl WatchTask {
                 &step,
             ),
         };
-        record(&self.hub, &ctx.security, p.project_id, record_of).await?;
+        record(
+            &self.hub,
+            &ctx.security,
+            p.records_in,
+            p.project_id,
+            record_of,
+        )
+        .await?;
         // The repository's token goes with the build.
         let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
         if let Err(e) = secrets
@@ -819,6 +850,93 @@ impl WatchTask {
         }
         Ok(())
     }
+}
+
+/* ── a build's log, read from its pod ── */
+
+/// How much of a step's log is read: its end, where a failure says why.
+const LOG_LINES: i64 = 500;
+const LOG_BYTES: i64 = 256 * 1024;
+
+/// One step of a build, as its pod shows it now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepLog {
+    /// `prepare`, `build` or `publish`.
+    pub step: String,
+    /// `waiting` | `running` | `passed` | `failed`.
+    pub state: String,
+    /// The end of what it wrote; empty while it has not started.
+    pub log: String,
+}
+
+/// Each step of the build's pod, in the order they run, and whether it has
+/// started: what is read of a step's log.
+fn steps_of(pod: &Pod) -> Vec<(String, &'static str)> {
+    let Some(status) = pod.status.as_ref() else {
+        return Vec::new();
+    };
+    status
+        .init_container_statuses
+        .iter()
+        .flatten()
+        .chain(status.container_statuses.iter().flatten())
+        .map(|c| {
+            let state = match c.state.as_ref() {
+                Some(s) if s.running.is_some() => "running",
+                Some(s) => match &s.terminated {
+                    Some(t) if t.exit_code == 0 => "passed",
+                    Some(_) => "failed",
+                    None => "waiting",
+                },
+                None => "waiting",
+            };
+            (c.name.clone(), state)
+        })
+        .collect()
+}
+
+/// The build's steps and the end of each one's log, as its pod in
+/// `namespace` has them; `None` when there is no such pod there (another
+/// environment's, or gone a day after the build ended).
+pub async fn step_logs(
+    client: &kube::Client,
+    namespace: &str,
+    build_id: &str,
+) -> anyhow::Result<Option<Vec<StepLog>>> {
+    let pods: kube::Api<Pod> = kube::Api::namespaced(client.clone(), namespace);
+    let Some(pod) = pods
+        .list(&ListParams::default().labels(&format!("job-name={}", job_name(build_id))))
+        .await
+        .map_err(|e| anyhow!("the cluster did not answer: {e}"))?
+        .items
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let name = pod.metadata.name.clone().unwrap_or_default();
+    let mut out = Vec::new();
+    for (step, state) in steps_of(&pod) {
+        let log = if state == "waiting" {
+            String::new()
+        } else {
+            let params = LogParams {
+                container: Some(step.clone()),
+                tail_lines: Some(LOG_LINES),
+                limit_bytes: Some(LOG_BYTES),
+                ..LogParams::default()
+            };
+            pods.logs(&name, &params)
+                .await
+                .unwrap_or_else(|e| format!("(the log could not be read: {e})"))
+        };
+        out.push(StepLog {
+            step,
+            state: state.to_owned(),
+            log,
+        });
+    }
+    Ok(Some(out))
 }
 
 /* ── the Job side: `studio-backend build-prepare` and `build-publish` ── */
@@ -1321,7 +1439,26 @@ mod tests {
             git_ref: None,
             builder_image: "ghcr.io/acme/studio-backend:sha-1".into(),
             buildkit_image: BUILDKIT_IMAGE.into(),
+            records_in: None,
         }
+    }
+
+    #[test]
+    fn a_watch_queued_before_records_in_still_reads_and_carries_it_on() {
+        // A run queued by the release before: no `records_in`.
+        let old: WatchPayload = serde_json::from_value(serde_json::json!({
+            "build_id": "studio-0123456789ab", "organization_id": Uuid::nil(),
+            "project_id": Uuid::nil(), "connection_id": Uuid::nil(),
+            "namespace": "studio-web-dev", "job": "studio-build-0123456789ab",
+            "repository": "acme/shop", "profile": "prod",
+        }))
+        .unwrap();
+        assert_eq!(old.records_in, None);
+        let mut b = payload();
+        let tenant = Uuid::from_u128(1);
+        b.records_in = Some(tenant);
+        let back: BuildPayload = serde_json::from_value(serde_json::to_value(&b).unwrap()).unwrap();
+        assert_eq!(back.records_in, Some(tenant));
     }
 
     fn pod(init: serde_json::Value, main: serde_json::Value) -> Pod {
@@ -1355,6 +1492,32 @@ mod tests {
         );
         assert_eq!(current_step(&p).as_deref(), Some("publish"));
         assert_eq!(stuck(&p), None);
+    }
+
+    #[test]
+    fn each_step_says_whether_it_ran_so_only_a_started_ones_log_is_read() {
+        let failed = serde_json::json!({ "name": "prepare", "ready": false, "restartCount": 0,
+            "image": "i", "imageID": "", "state": { "terminated": { "exitCode": 1 } } });
+        let running = serde_json::json!({ "name": "build", "ready": true, "restartCount": 0,
+            "image": "i", "imageID": "", "state": { "running": {} } });
+        let p = pod(
+            serde_json::json!([failed, waiting("build", "PodInitializing")]),
+            serde_json::json!([waiting("publish", "PodInitializing")]),
+        );
+        assert_eq!(
+            steps_of(&p),
+            vec![
+                ("prepare".to_owned(), "failed"),
+                ("build".to_owned(), "waiting"),
+                ("publish".to_owned(), "waiting"),
+            ]
+        );
+        let p = pod(
+            serde_json::json!([done("prepare"), running]),
+            serde_json::json!([waiting("publish", "PodInitializing")]),
+        );
+        assert_eq!(steps_of(&p)[0], ("prepare".to_owned(), "passed"));
+        assert_eq!(steps_of(&p)[1], ("build".to_owned(), "running"));
     }
 
     #[test]

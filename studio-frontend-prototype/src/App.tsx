@@ -5778,7 +5778,7 @@ function ProjectScreen({
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
         {tab === "builds" && (
-          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
+          <ProjectBuilds token={token} projectId={proj.id} projectName={proj.name} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
           <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />

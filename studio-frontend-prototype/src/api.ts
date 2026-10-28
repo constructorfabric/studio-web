@@ -2978,6 +2978,16 @@ export interface ScaffoldFile {
   content: string;
 }
 
+/** A build Studio runs, as its pod shows it now (`GET …/builds/{id}/log`). */
+export interface BuildLog {
+  build_id: string;
+  /** The environment it runs in. */
+  environment: string;
+  namespace: string;
+  /** prepare, build, publish: in the order they run. */
+  steps: { step: string; state: "waiting" | "running" | "passed" | "failed" | string; log: string }[];
+}
+
 export interface ProjectGearRepo {
   project_id?: string;
   tenant?: string;
@@ -4412,6 +4422,13 @@ export const api = {
       `/studio-environments/v1/builds?project_id=${encodeURIComponent(projectId)}`,
       token,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** A build Studio runs, step by step with the end of each step's log, read
+   *  from its pod now; 404 once the pod is gone, a day after it ended. */
+  buildLog: (token: string, projectId: string, buildId: string) =>
+    request<BuildLog>(
+      `/studio-environments/v1/builds/${encodeURIComponent(buildId)}/log?project_id=${encodeURIComponent(projectId)}`,
+      token,
     ),
   /** Propose the workflow that builds the product for an environment, as a
    *  pull request to the project's repository. */

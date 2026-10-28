@@ -2415,6 +2415,13 @@ response	GET /studio-domain-model/v1/types/{}/conformance	violations	Vec<{}>	alw
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.count	u64	always
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.field	String	always
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.kind	String	optional
+response	GET /studio-environments/v1/builds/{}/log	build_id	String	always
+response	GET /studio-environments/v1/builds/{}/log	environment	String	always
+response	GET /studio-environments/v1/builds/{}/log	namespace	String	always
+response	GET /studio-environments/v1/builds/{}/log	steps	Vec<{}>	always
+response	GET /studio-environments/v1/builds/{}/log	steps.log	String	always
+response	GET /studio-environments/v1/builds/{}/log	steps.state	String	always
+response	GET /studio-environments/v1/builds/{}/log	steps.step	String	always
 response	GET /studio-environments/v1/deployments	items	Vec<{}>	always
 response	GET /studio-environments/v1/deployments	items.action	String	always
 response	GET /studio-environments/v1/deployments	items.build	String	optional
@@ -5475,6 +5482,7 @@ route	GET /studio-domain-model/v1/relations
 route	GET /studio-domain-model/v1/types
 route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
+route	GET /studio-environments/v1/builds/{}/log
 route	GET /studio-environments/v1/deployments
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments

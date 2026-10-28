@@ -1186,6 +1186,7 @@ impl EnvironmentService {
             git_ref,
             builder_image,
             buildkit_image: build::buildkit_image(),
+            records_in: Some(ctx.subject_tenant_id()),
         };
         if let Ok(builds) = self
             .hub
@@ -1488,6 +1489,87 @@ impl EnvironmentService {
         d.pending_chart = None;
         Ok((d, rollout))
     }
+
+    /// A build Studio runs, step by step with the end of each step's log, as
+    /// its pod has them now. The build must be one of the project's the
+    /// caller can see; its pod is looked for in the project's namespace of
+    /// each environment the project may use, the build not naming which.
+    pub async fn build_log(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        build_id: &str,
+    ) -> Result<BuildLog> {
+        let records = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+            .map_err(|_| {
+                Refusal::Unavailable("builds are not available in this deployment".into())
+            })?;
+        let missing = || {
+            Refusal::NotFound(
+                build_id.to_owned(),
+                format!("project {project} has no build {build_id}"),
+            )
+        };
+        records
+            .build(ctx, &project.to_string(), build_id)
+            .await
+            .map_err(|e| Refusal::Internal(format!("{e:#}")))?
+            .ok_or_else(missing)?;
+        let org = self.organization_of_project(ctx, project).await?;
+        let project_name = self.store.tenant_name(ctx, project).await;
+        let svc = self.service(org)?;
+        let mut unreachable = None;
+        for env in self.environments(ctx, org).await?.items {
+            if !env.admits(project) {
+                continue;
+            }
+            let Ok(namespace) =
+                model::namespace_for(&env.namespace_pattern, &project_name, &env.name)
+            else {
+                continue;
+            };
+            let found = match deploy::cluster_access(&self.hub, &svc, org, env.connection_id).await
+            {
+                Ok(access) => match access.client().await {
+                    Ok(client) => build::step_logs(&client, &namespace, build_id).await,
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            };
+            match found {
+                Ok(Some(steps)) => {
+                    return Ok(BuildLog {
+                        environment: env.name,
+                        namespace,
+                        steps,
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => unreachable = Some(format!("{}: {e:#}", env.name)),
+            }
+        }
+        Err(match unreachable {
+            Some(why) => Refusal::Precondition("ENVIRONMENT_CLUSTER_UNREACHABLE", why),
+            None => Refusal::NotFound(
+                build_id.to_owned(),
+                format!(
+                    "build {build_id} has no pod left in any of the project's environments: \
+                     a build's pod is kept for a day after it ends"
+                ),
+            ),
+        })
+    }
+}
+
+/// A build's steps, read from its pod.
+#[derive(Debug, Clone)]
+pub struct BuildLog {
+    /// The environment it runs in.
+    pub environment: String,
+    pub namespace: String,
+    pub steps: Vec<build::StepLog>,
 }
 
 #[cfg(test)]
