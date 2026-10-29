@@ -44,6 +44,11 @@ describe("the link that opens a project on the desktop", () => {
     expect(url.searchParams.get("branch")).toBe("product/studio-web-1a2b");
   });
 
+  it("asks the desktop to build the product only when it names one", () => {
+    expect(new URL(desktopLink({ id: "p-1", product: "product.gdl", build: true })).searchParams.get("build")).toBe("1");
+    expect(new URL(desktopLink({ id: "p-1", build: true })).searchParams.has("build")).toBe(false);
+  });
+
   it("asks for no product when it is only opening the project", () => {
     const url = new URL(desktopLink({ id: "p-1" }));
     expect(url.searchParams.has("product")).toBe(false);

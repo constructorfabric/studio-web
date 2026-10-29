@@ -36,6 +36,7 @@ import { ProductSessionService } from "./shell/product-session-service";
 import {
   ADD_GEAR,
   BROWSE_CATALOGUE,
+  GENERATE_AND_BUILD,
   SHOW_CONFLICTS,
   SHOW_CATALOGUE_DIAGNOSTICS,
   SHOW_GENERATE,
@@ -1094,6 +1095,14 @@ export class GenerateViewContribution extends ScopedViewContribution<GenerateWid
       isEnabled: () => this.availableHere() && this.engine.isConnected,
       disabledReason: () => (!this.availableHere() ? NO_PRODUCT : this.engine.isConnected ? undefined : ENGINE_DOWN),
     }));
+    // The portal's "On my machine" (a `cfstudio://` link with `build=1`): Generate
+    // shown, so the person sees the plan it applies and the Build it presses.
+    commands.registerCommand(GENERATE_AND_BUILD, {
+      execute: async () => {
+        await commands.executeCommand(SHOW_PRODUCT.id, "generate");
+        await (await this.widget).generateAndBuild();
+      },
+    });
   }
 
   override registerMenus(menus: MenuModelRegistry): void {

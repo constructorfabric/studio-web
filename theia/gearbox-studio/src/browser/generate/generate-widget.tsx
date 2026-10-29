@@ -9,6 +9,7 @@
 import { codicon, ConfirmDialog, ReactWidget } from "@theia/core/lib/browser";
 import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
+import { Disposable, DisposableCollection } from "@theia/core/lib/common/disposable";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
@@ -127,6 +128,9 @@ function countByAction(plans: readonly FilePlan[]): Partial<Record<FileAction, n
 
 /** How often a running build is read again: the portal's Builds tab follows it as often. */
 const FLOW_FOLLOW_MS = 5000;
+
+/** How long Generate and Build waits for a product just opened to resolve and plan. */
+const PLAN_WAIT_MS = 3 * 60_000;
 
 @injectable()
 export class GenerateWidget extends ReactWidget {
@@ -306,6 +310,80 @@ export class GenerateWidget extends ReactWidget {
         ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
         : {};
     return { ...(this.toolchain?.env ?? {}), ...pg };
+  }
+
+  /**
+   * Constructor Studio: Generate and Build in one step (`GENERATE_AND_BUILD`),
+   * for the portal's Builds tab: wait for the plan of the product on screen,
+   * Apply it when it writes anything, then press the Build this profile shows
+   * -- Build images for a kubernetes profile, `cargo build` otherwise. It stops,
+   * and says why, wherever a person pressing the buttons would be stopped.
+   */
+  async generateAndBuild(): Promise<void> {
+    const settled = await this.planSettled(PLAN_WAIT_MS);
+    if (settled === "timeout") {
+      this.messages.warn(
+        `Nothing was built: the product's plan did not come within ${PLAN_WAIT_MS / 60_000} minutes. Press Apply and Build when it does.`,
+      );
+      return;
+    }
+    if (settled === "error") {
+      this.messages.error(`Nothing was built: ${this.generate.current.error ?? this.product.current.error ?? "the product did not resolve"}.`);
+      return;
+    }
+    // `nothing` is "generation is up to date": the tree is already there to build.
+    const blocks = this.generate.blocks.filter((block) => block.id !== "nothing");
+    if (blocks.length > 0) {
+      this.messages.warn(`Nothing was built: ${blocks.map((block) => block.reason).join("; ")}.`);
+      return;
+    }
+    if (this.edits.hasDraft()) {
+      this.messages.warn("Nothing was built: the product has unsaved edits. Save them, then Apply and Build.");
+      return;
+    }
+    if (this.generate.canApply && (await this.generate.apply()) === undefined) return;
+    if (this.kubernetes() !== undefined) {
+      await this.buildImages();
+      return;
+    }
+    await this.toolchainKnown();
+    const chosen = this.chosenTarget(this.runTargets());
+    if (chosen === undefined) {
+      this.messages.warn("Nothing was built: the product has no application to build.");
+      return;
+    }
+    await this.build(chosen);
+  }
+
+  /** Until the product on screen has a plan, or cannot have one. */
+  protected planSettled(ms: number): Promise<"ready" | "error" | "timeout"> {
+    return new Promise((resolve) => {
+      const listening = new DisposableCollection();
+      const settle = (outcome: "ready" | "error" | "timeout") => {
+        listening.dispose();
+        resolve(outcome);
+      };
+      const check = () => {
+        const product = this.product.current.status;
+        const gen = this.generate.current;
+        if (product === "error" || gen.status === "error") settle("error");
+        else if (product === "ready" && gen.status === "ready" && gen.plan !== undefined) settle("ready");
+        else if (product === "ready") void this.generate.ensurePlan();
+      };
+      const timer = setTimeout(() => settle("timeout"), ms);
+      listening.push(Disposable.create(() => clearTimeout(timer)));
+      listening.push(this.product.onChanged(check));
+      listening.push(this.generate.onChanged(check));
+      check();
+    });
+  }
+
+  /** The toolchain, asked for if nobody is asking: Build's terminal needs its environment. */
+  protected async toolchainKnown(): Promise<void> {
+    for (let tries = 0; this.toolchain === undefined && tries < 60; tries++) {
+      if (this.askingToolchain) await new Promise((resolve) => setTimeout(resolve, 500));
+      else await this.askToolchain();
+    }
   }
 
   protected async build(target: RunTarget): Promise<void> {

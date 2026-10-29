@@ -52,6 +52,7 @@ describe('the desktop link handler', () => {
     const commands = { executeCommand: jest.fn(async (..._args: unknown[]) => undefined as unknown), getCommand: () => undefined, isEnabled: () => true };
     const messages = {
         info: jest.fn(),
+        warn: jest.fn(),
         error: jest.fn(),
         showProgress: jest.fn(async () => ({ id: 'p', report: jest.fn(), cancel: jest.fn(), result: Promise.resolve('') })),
     };
@@ -90,6 +91,7 @@ describe('the desktop link handler', () => {
         fakeStudio.reset();
         messages.error.mockClear();
         messages.info.mockClear();
+        messages.warn.mockClear();
         commands.executeCommand.mockReset();
         commands.executeCommand.mockImplementation(async () => undefined);
         messages.showProgress.mockClear();
@@ -190,6 +192,30 @@ describe('the desktop link handler', () => {
         expect(messages.error).not.toHaveBeenCalled();
         expect(roots.map(r => r.resource.path.toString())).toEqual([FOLDER]);
         expect(commands.executeCommand).toHaveBeenCalledWith('gearbox.product.openAt', 'product.gdl', 'product/studio-web-1a2b3c4d');
+    });
+
+    it('generates and builds the product when the link asks, once Gearbox has it open', async () => {
+        fakeStudio.open = async () => FOLDER;
+        commands.executeCommand.mockImplementation(async (id: unknown) => id === 'gearbox.product.openAt' ? true : undefined);
+        const uri = new URI(desktopLink({ studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio`, project: PROJECT, product: 'product.gdl', build: true }));
+
+        await React.act(async () => { await handler.open(uri); });
+        await settle();
+
+        expect(messages.error).not.toHaveBeenCalled();
+        expect(commands.executeCommand.mock.calls.map(call => call[0]).filter(id => String(id).startsWith('gearbox.'))).toEqual(['gearbox.product.openAt', 'gearbox.product.generateAndBuild']);
+    });
+
+    it('does not build a product Gearbox could not open, and says so', async () => {
+        fakeStudio.open = async () => FOLDER;
+        commands.executeCommand.mockImplementation(async () => false);
+        const uri = new URI(desktopLink({ studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio`, project: PROJECT, product: 'product.gdl', build: true }));
+
+        await React.act(async () => { await handler.open(uri); });
+        await settle();
+
+        expect(commands.executeCommand).not.toHaveBeenCalledWith('gearbox.product.generateAndBuild');
+        expect(messages.warn).toHaveBeenCalledWith(expect.stringContaining('not built'));
     });
 
     it('says where the product is when nothing can open it', async () => {
