@@ -10,6 +10,7 @@ import {
   environmentsByConnection,
   namespaceFor,
   registryConnections,
+  researchConnections,
   registryHost,
   runningNow,
   slug,
@@ -174,5 +175,21 @@ describe("cluster cards", () => {
       ["A cluster this page cannot see", 1, 1, "2026-09-01T00:00:00Z"],
     ]);
     expect(cards[0].running).toHaveLength(2);
+  });
+});
+
+describe("a Constructor Research environment (ADR-0049)", () => {
+  const research = { ...emptyEnvironment(), name: "ml", kind: "research" as const, connection_id: "r1", research_project: "p1" };
+
+  it("names its connection and project, and nothing of a cluster", () => {
+    expect(environmentProblem(research, [])).toBeNull();
+    expect(environmentProblems({ ...research, research_project: " " }, []).research_project).toMatch(/Research project/);
+    expect(environmentProblems({ ...research, connection_id: "" }, []).connection_id).toMatch(/Research connection/);
+    expect(environmentProblem({ ...research, namespace_pattern: "fixed" }, [])).toBeNull();
+  });
+
+  it("is chosen from the organization's Research connections, not a personal sign-in", () => {
+    const c = (id: string, provider: string, scope: string) => ({ id, provider, scope }) as Connection;
+    expect(researchConnections([c("a", "research", "organization"), c("b", "research", "personal"), c("k", "kubernetes", "organization")]).map((x) => x.id)).toEqual(["a"]);
   });
 });

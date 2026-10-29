@@ -1603,12 +1603,20 @@ export interface BudgetStatus {
 
 /** One place an organization's products run: a cluster reached through a
  *  `kubernetes` connection, a registry, a namespace per project. */
+/** What runs an environment's products: a cluster, or Constructor Research (ADR-0049). */
+export type EnvironmentKind = "kubernetes" | "research";
+
 export interface DeployEnvironment {
   id: string;
   name: string;
   description: string;
-  /** The organization's `kubernetes` connection. */
+  /** Absent on environments written before kinds: a cluster. */
+  kind?: EnvironmentKind;
+  /** The organization's `kubernetes` connection, or its `research` one. */
   connection_id: string;
+  /** For `research`: the Research project products run in, and the hardware. */
+  research_project?: string | null;
+  research_hardware?: string | null;
   /** Image registry prefix (`ghcr.io/acme`); empty: images as generated. */
   registry: string;
   /** The organization's `registry` connection: the cluster pulls with it and
@@ -1634,7 +1642,10 @@ export interface DeployEnvironment {
 export interface DeployEnvironmentInput {
   name: string;
   description: string;
+  kind?: EnvironmentKind;
   connection_id: string;
+  research_project?: string | null;
+  research_hardware?: string | null;
   registry: string;
   registry_connection_id?: string | null;
   namespace_pattern?: string;
@@ -1643,6 +1654,19 @@ export interface DeployEnvironmentInput {
   protected: boolean;
   promote_from?: string | null;
   projects?: string[] | null;
+}
+
+/** A Constructor Research project, as its integration service names it. */
+export interface ResearchProject {
+  id: string;
+  name: string;
+}
+
+/** A hardware configuration of a Research project; a trial one Research ends by its rules. */
+export interface ResearchHardware {
+  id: string;
+  name: string;
+  trial: boolean;
 }
 
 /** A project's product profile bound to an environment. */
@@ -4396,6 +4420,18 @@ export const api = {
       `/studio-environments/v1/environments/${encodeURIComponent(id)}/test?organization_id=${encodeURIComponent(org)}`,
       token,
       { method: "POST" },
+    ),
+  /** The Research projects an organization's `research` connection may run products in. */
+  researchProjects: (token: string, org: string, connectionId: string) =>
+    request<{ items: ResearchProject[] }>(
+      `/studio-environments/v1/research/projects?${new URLSearchParams({ organization_id: org, connection_id: connectionId })}`,
+      token,
+    ),
+  /** The hardware a Research project's services may run on. */
+  researchHardware: (token: string, org: string, connectionId: string, project: string) =>
+    request<{ items: ResearchHardware[] }>(
+      `/studio-environments/v1/research/projects/${encodeURIComponent(project)}/hardware?${new URLSearchParams({ organization_id: org, connection_id: connectionId })}`,
+      token,
     ),
   /** Where a project's product can be deployed, and its profile bindings. */
   projectTargets: (token: string, projectId: string) =>

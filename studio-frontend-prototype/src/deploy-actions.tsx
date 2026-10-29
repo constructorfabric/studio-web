@@ -114,7 +114,7 @@ export function EnvironmentActions({
   const [picking, setPicking] = useState(false);
   const request = useDeployRequest(token, projectId, onChanged);
   const { busy, error } = request;
-  const candidates = deployableBuilds(builds);
+  const candidates = deployableBuilds(builds, env);
   const back = rollbackTarget(deployments, env.id);
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
     if (await request.ask(body, what)) setPicking(false);
@@ -130,7 +130,9 @@ export function EnvironmentActions({
             type="button"
             disabled={busy}
             title={`Install again what was deployed ${relTime(back.requested_at)}`}
-            onClick={() => void ask({ environment_id: env.id, redeploy_of: back.id }, `Rollback to ${back.chart_version ?? "the earlier build"}`)}
+            onClick={() =>
+              void ask({ environment_id: env.id, redeploy_of: back.id }, `Rollback to ${back.chart_version ?? back.build ?? "the earlier build"}`)
+            }
           >
             Roll back
           </button>
@@ -153,7 +155,9 @@ export function EnvironmentActions({
         <div className="deploy-pick" data-build-picker>
           {candidates.length === 0 ? (
             <p className="hint">
-              No build has published a chart yet: build in the Builds tab, or publish from the IDE&apos;s Deploy.
+              {isResearch(env)
+                ? "No build made in Constructor Research yet: Build in Research in the Builds tab."
+                : "No build has published a chart yet: build in the Builds tab, or publish from the IDE's Deploy."}
             </p>
           ) : (
             <ul className="rows">
@@ -162,7 +166,7 @@ export function EnvironmentActions({
                 return (
                   <li key={b.id}>
                     <div className="grow">
-                      <b>{b.chartVersion}</b> <span className="sub">{b.where}</span>{" "}
+                      <b>{b.chartVersion ?? b.buildId}</b> <span className="sub">{b.where}</span>{" "}
                       {b.commit && <code>{shortCommit(b.commit)}</code>}{" "}
                       <span className="sub">{relTime(b.finishedAt ?? b.startedAt ?? "")}</span>
                       {gap && <div className="sub warn">{gap}</div>}
@@ -170,7 +174,7 @@ export function EnvironmentActions({
                     <button
                       type="button"
                       disabled={busy || !!gap}
-                      onClick={() => void ask({ environment_id: env.id, build: b.buildId }, `Deploy ${b.chartVersion}`)}
+                      onClick={() => void ask({ environment_id: env.id, build: b.buildId }, `Deploy ${b.chartVersion ?? b.buildId}`)}
                     >
                       Deploy
                     </button>
@@ -310,7 +314,20 @@ export interface SavedProduct {
 /** The environments a Studio build can push from: a registry prefix and a
  *  login to push with. */
 export function buildableEnvironments(environments: readonly DeployEnvironment[]): DeployEnvironment[] {
-  return environments.filter((e) => e.registry.includes("/") && !!e.registry_connection_id);
+  return environments.filter(
+    (e) =>
+      (e.kind === "research" && !!e.research_project) || (e.registry.includes("/") && !!e.registry_connection_id),
+  );
+}
+
+/** Whether an environment is a Constructor Research one (ADR-0049). */
+export function isResearch(e: Pick<DeployEnvironment, "kind">): boolean {
+  return e.kind === "research";
+}
+
+/** Where an environment keeps what a build makes, said in a few words. */
+export function buildTarget(e: DeployEnvironment): string {
+  return isResearch(e) ? `Research project ${e.research_project}` : e.registry;
 }
 
 /** Build in Studio: a Job in the environment's cluster clones the repository,
@@ -344,8 +361,8 @@ export function BuildInStudio({
   if (choices.length === 0) {
     return (
       <p className="hint" data-build-studio-unavailable>
-        No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with
-        (Organization › Environments). Until then, build on your machine or in CI.
+        No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with,
+        or a Constructor Research project (Organization › Environments). Until then, build on your machine or in CI.
       </p>
     );
   }
@@ -369,8 +386,17 @@ export function BuildInStudio({
             )
           </>
         ) : null}{" "}
-        for profile <code>{prof}</code>, and pushes its images and chart to <code>{env.registry}</code> of{" "}
-        <b>{env.name}</b>.{" "}
+        for profile <code>{prof}</code>
+        {isResearch(env) ? (
+          <>
+            : Studio prepares it, and Constructor Research builds the images in <code>{env.research_project}</code> for{" "}
+            <b>{env.name}</b>.{" "}
+          </>
+        ) : (
+          <>
+            , and pushes its images and chart to <code>{env.registry}</code> of <b>{env.name}</b>.{" "}
+          </>
+        )}
         <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
           {changing ? "Done" : "Change"}
         </button>
@@ -380,7 +406,7 @@ export function BuildInStudio({
           <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
             {choices.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.name} — {e.registry}
+                {e.name} — {buildTarget(e)}
               </option>
             ))}
           </select>
@@ -429,7 +455,7 @@ export function BuildInStudio({
           }}
           data-build-start-studio
         >
-          {building ? "Starting…" : "Build in Studio"}
+          {building ? "Starting…" : isResearch(env) ? "Build in Research" : "Build in Studio"}
         </button>
       </div>
       {error && <div className="error">{error}</div>}

@@ -767,8 +767,8 @@ export const SURFACES: Surface[] = [
     id: "environments",
     area: "organization",
     title: "Environments",
-    does: "Declare where the organization's products run -- a cluster connection, a registry, a namespace per project, approval for protected ones -- approve deploys, and see what runs where.",
-    components: ["OrgEnvironments", "EnvironmentForm", "AddCluster", "AddRegistry"],
+    does: "Declare where the organization's products run -- a cluster connection, a registry, a namespace per project, or a Constructor Research project and its hardware; approval for protected ones -- approve deploys, and see what runs where.",
+    components: ["OrgEnvironments", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry"],
     gears: ["account-management", "studio-connector", "studio-environments"],
   },
   {

@@ -22,6 +22,8 @@ import {
   type DeploymentStatus,
   type EnvironmentBinding,
   type ProjectTargets,
+  type ResearchHardware,
+  type ResearchProject,
   type Tenant,
 } from "./api";
 import {
@@ -36,6 +38,7 @@ import {
   environmentInput,
   environmentProblems,
   registryConnections,
+  researchConnections,
   namespaceFor,
   shortCommit,
   stateTone,
@@ -133,6 +136,152 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
   );
 }
 
+/** A Research environment's place: the organization's Research connection,
+ *  one of its projects and, optionally, a hardware configuration, as the
+ *  integration service lists them (ADR-0049 §2). Typed by hand when Research
+ *  cannot be asked. */
+function ResearchFields({
+  token,
+  org,
+  input,
+  researches,
+  set,
+  shown,
+}: {
+  token: string;
+  org: string;
+  input: DeployEnvironmentInput;
+  researches: Connection[];
+  set: <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => void;
+  shown: (f: EnvironmentField) => string | null;
+}) {
+  const [projects, setProjects] = useState<ResearchProject[] | null>(null);
+  const [hardware, setHardware] = useState<ResearchHardware[] | null>(null);
+  const [unreachable, setUnreachable] = useState<string | null>(null);
+  const connection = input.connection_id;
+  const project = input.research_project ?? "";
+  useEffect(() => {
+    if (!connection) return;
+    let live = true;
+    setProjects(null);
+    setUnreachable(null);
+    api
+      .researchProjects(token, org, connection)
+      .then((r) => live && setProjects(r.items))
+      .catch((e) => live && (setProjects([]), setUnreachable(errText(e))));
+    return () => {
+      live = false;
+    };
+  }, [token, org, connection]);
+  useEffect(() => {
+    if (!connection || !project || unreachable) return;
+    let live = true;
+    setHardware(null);
+    api
+      .researchHardware(token, org, connection, project)
+      .then((r) => live && setHardware(r.items))
+      .catch(() => live && setHardware([]));
+    return () => {
+      live = false;
+    };
+  }, [token, org, connection, project, unreachable]);
+  const typed = unreachable !== null || (projects !== null && projects.length === 0);
+  return (
+    <>
+      <label className="field">
+        Constructor Research connection
+        <select
+          value={connection}
+          onChange={(e) => set("connection_id", e.target.value)}
+          aria-label="Constructor Research connection"
+          aria-invalid={shown("connection_id") ? true : undefined}
+          data-research-connection
+        >
+          <option value="">{researches.length === 0 ? "No Research connection yet" : "Choose a connection"}</option>
+          {researches.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <span className="sub">
+          Sign in to Research once in Organization › Connections, shared with the organization: builds and deploys run as
+          its service.
+        </span>
+        {shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
+      </label>
+      {connection && (
+        <label className="field">
+          Research project
+          {typed ? (
+            <input
+              value={project}
+              onChange={(e) => set("research_project", e.target.value)}
+              placeholder="the Research project's id"
+              aria-label="Research project"
+              aria-invalid={shown("research_project") ? true : undefined}
+              data-research-project
+            />
+          ) : (
+            <select
+              value={project}
+              onChange={(e) => {
+                set("research_project", e.target.value);
+                set("research_hardware", null);
+              }}
+              aria-label="Research project"
+              aria-invalid={shown("research_project") ? true : undefined}
+              data-research-project
+            >
+              <option value="">{projects === null ? "Asking Research…" : "Choose a project"}</option>
+              {(projects ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.id}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="sub">
+            Each Studio project runs there as one application per environment, named{" "}
+            <code>{"{project}-" + (input.name || "env")}</code>.
+          </span>
+          {unreachable && <span className="hint">Research could not list the projects ({unreachable}); type the id.</span>}
+          {shown("research_project") && <span className="env-field-error">{shown("research_project")}</span>}
+        </label>
+      )}
+      {connection && project && (
+        <label className="field">
+          Hardware
+          {hardware && hardware.length > 0 ? (
+            <select
+              value={input.research_hardware ?? ""}
+              onChange={(e) => set("research_hardware", e.target.value || null)}
+              aria-label="Hardware"
+              data-research-hardware
+            >
+              <option value="">Research&apos;s default</option>
+              {hardware.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name || h.id}
+                  {h.trial ? " — trial: Research ends what runs on it by its own rules" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={input.research_hardware ?? ""}
+              onChange={(e) => set("research_hardware", e.target.value || null)}
+              placeholder="Research's default"
+              aria-label="Hardware"
+              data-research-hardware
+            />
+          )}
+        </label>
+      )}
+    </>
+  );
+}
+
 /** Add or change one environment. */
 function EnvironmentForm({
   token,
@@ -141,6 +290,7 @@ function EnvironmentForm({
   others,
   clusters,
   registries,
+  researches,
   projects,
   onDone,
   onCancel,
@@ -156,6 +306,8 @@ function EnvironmentForm({
   clusters: Connection[];
   /** The organization's registry connections (ADR-0048). */
   registries: Connection[];
+  /** The organization's Constructor Research connections (ADR-0049). */
+  researches: Connection[];
   projects: Tenant[];
   onDone: () => void;
   onCancel: () => void;
@@ -164,7 +316,9 @@ function EnvironmentForm({
   const [input, setInput] = useState<DeployEnvironmentInput>(() =>
     editing
       ? environmentInput(editing)
-      : { ...emptyEnvironment(), connection_id: initialCluster || (clusters.length === 1 ? clusters[0].id : "") },
+      : researches.some((c) => c.id === initialCluster)
+        ? { ...emptyEnvironment(), kind: "research", connection_id: initialCluster ?? "" }
+        : { ...emptyEnvironment(), connection_id: initialCluster || (clusters.length === 1 ? clusters[0].id : "") },
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +334,15 @@ function EnvironmentForm({
   const touch = (f: EnvironmentField) => setTouched((t) => (t.has(f) ? t : new Set(t).add(f)));
   const set = <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => {
     setInput((i) => ({ ...i, [k]: v }));
-    if (k !== "description" && k !== "database" && k !== "protected" && k !== "database_image" && k !== "promote_from")
+    if (
+      k !== "description" &&
+      k !== "database" &&
+      k !== "protected" &&
+      k !== "database_image" &&
+      k !== "promote_from" &&
+      k !== "kind" &&
+      k !== "research_hardware"
+    )
       touch(k as EnvironmentField);
   };
   const patternIsDefault = (input.namespace_pattern ?? "").trim() === "" || input.namespace_pattern === DEFAULT_NAMESPACE_PATTERN;
@@ -201,6 +363,20 @@ function EnvironmentForm({
     }
   };
   const restricted = input.projects != null;
+  const research = input.kind === "research";
+  // Switching what runs the products starts its own fields over: a cluster's
+  // registry means nothing to Research, and Research's project nothing to a cluster.
+  const runOn = (kind: "kubernetes" | "research") =>
+    setInput((i) => ({
+      ...i,
+      kind,
+      connection_id: kind === "research" ? (researches.length === 1 ? researches[0].id : "") : clusters.length === 1 ? clusters[0].id : "",
+      registry: "",
+      registry_connection_id: null,
+      research_project: null,
+      research_hardware: null,
+      database: i.database === "shared" ? "none" : i.database,
+    }));
   return (
     <form
       className="card env-form"
@@ -227,6 +403,21 @@ function EnvironmentForm({
         Description
         <input value={input.description} onChange={(e) => set("description", e.target.value)} placeholder="optional" />
       </label>
+      <label className="field">
+        Runs on
+        <select
+          value={research ? "research" : "kubernetes"}
+          onChange={(e) => runOn(e.target.value as "kubernetes" | "research")}
+          aria-label="Runs on"
+          data-environment-kind
+        >
+          <option value="kubernetes">A Kubernetes cluster of the organization</option>
+          <option value="research">Constructor Research: its hardware, its registry, its addresses</option>
+        </select>
+      </label>
+      {research && <ResearchFields token={token} org={org} input={input} researches={researches} set={set} shown={shown} />}
+      {!research && (
+      <>
       <label className="field">
         Cluster
         <select
@@ -334,6 +525,8 @@ function EnvironmentForm({
           {shown("namespace_pattern") && <span className="env-field-error">{shown("namespace_pattern")}</span>}
         </label>
       </details>
+      </>
+      )}
       <label className="field">
         Database
         <select
@@ -342,8 +535,14 @@ function EnvironmentForm({
           aria-label="Database"
         >
           <option value="none">None: the product brings its own</option>
-          <option value="namespace">A Postgres of the product&apos;s own, in its namespace, with the databases its gears keep</option>
-          <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
+          <option value="namespace">
+            {research
+              ? "A Postgres service of the product's own in its Research application, with the databases its gears keep"
+              : "A Postgres of the product's own, in its namespace, with the databases its gears keep"}
+          </option>
+          {!research && (
+            <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
+          )}
         </select>
       </label>
       {input.database === "namespace" && (
@@ -489,7 +688,10 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
 
   const clusters = useMemo(() => clusterConnections(connections), [connections]);
   const registries = useMemo(() => registryConnections(connections), [connections]);
-  const cards = useMemo(() => clusterCards(clusters, environments ?? [], deployments), [clusters, environments, deployments]);
+  const researches = useMemo(() => researchConnections(connections), [connections]);
+  // A Research connection is a place products run, beside the clusters.
+  const places = useMemo(() => [...clusters, ...researches], [clusters, researches]);
+  const cards = useMemo(() => clusterCards(places, environments ?? [], deployments), [places, environments, deployments]);
   const current: ClusterCard | null = cards.find((c) => c.id === selected) ?? cards[0] ?? null;
   const check = useCallback(
     (id: string) => {
@@ -744,6 +946,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
               others={environments ?? []}
               clusters={clusters}
               registries={registries}
+              researches={researches}
               projects={projects}
               initialCluster={current.id}
               onCancel={() => setEditing(null)}

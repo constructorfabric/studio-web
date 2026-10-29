@@ -21,7 +21,7 @@ import { ProjectEnvironments } from "./environments-screen";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { errText, relTime } from "./format";
 import { KUBERNETES_PROFILES } from "./kits";
-import { deployableBuilds, latestByEnvironment, profilesBoundTo } from "./project-deploys";
+import { deployableBuilds, latestByEnvironment, productUrls, profilesBoundTo } from "./project-deploys";
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 
@@ -86,8 +86,9 @@ export function ProjectDeploys({
       <style>{DEPLOYS_CSS}</style>
       <h1>Deploys</h1>
       <p className="subtitle">
-        Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments); a
-        deploy installs a build that published its images and chart with the environment&apos;s cluster connection.
+        Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments): a
+        cluster, where a deploy installs a build&apos;s published chart, or Constructor Research, where it runs a build made
+        there as the project&apos;s application.
       </p>
       {targets && (
         <PipelineLine
@@ -144,12 +145,32 @@ export function ProjectDeploys({
                   </div>
                 ),
               },
-              { id: "namespace", header: "Namespace", cell: (t) => <code>{t.namespace}</code> },
+              {
+                id: "namespace",
+                header: "Runs as",
+                cell: ({ environment: e, namespace }) =>
+                  e.kind === "research" ? (
+                    <span data-deploy-research>
+                      application <code>{namespace}</code> <span className="sub">in Research project</span>{" "}
+                      <code>{e.research_project}</code>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="sub">namespace</span> <code>{namespace}</code>
+                    </>
+                  ),
+              },
               {
                 id: "images",
                 header: "Images from",
                 cell: ({ environment: e }) =>
-                  e.registry ? <code>{e.registry}</code> : <span className="sub">where the chart says</span>,
+                  e.kind === "research" ? (
+                    <span className="sub">built in Constructor Research</span>
+                  ) : e.registry ? (
+                    <code>{e.registry}</code>
+                  ) : (
+                    <span className="sub">where the chart says</span>
+                  ),
               },
               {
                 id: "profiles",
@@ -172,6 +193,14 @@ export function ProjectDeploys({
                     <>
                       <span className={`badge deploy-${stateTone(d.state)}`}>{STATE_LABELS[d.state] ?? d.state}</span>{" "}
                       {d.commit && <code>{shortCommit(d.commit)}</code>} <span className="sub">{relTime(d.requested_at)}</span>
+                      {d.state === "succeeded" &&
+                        productUrls(d.outcome).map((u) => (
+                          <div key={u}>
+                            <a href={u} target="_blank" rel="noreferrer" data-product-url>
+                              Open the product ↗
+                            </a>
+                          </div>
+                        ))}
                     </>
                   ) : (
                     <span className="sub">nothing deployed yet</span>
