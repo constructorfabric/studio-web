@@ -13,7 +13,7 @@ product(
     id = "studio-web",
     name = "Studio-web",
     version = "0.1.0",
-    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "b90bea456f0894dc703cf7e9b546397e8fcda215")),
+    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "c14f0fb5dd420fbed2476768064962e0b4c74d48")),
                    source(id = "studio-backend", at = path("studio-backend"))],
     # Where the gears that keep data keep it: one Postgres per profile
     # (GDL 1.1). The password is only ever a `${NAME}` the deployment
