@@ -73,24 +73,22 @@ concurrency:
   group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.environment || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.operation != 'Deploy existing images' && github.event.inputs.operation != 'Build, publish and deploy') }}
 
-# Where the Linux build and test jobs run. The repository variable
-# STUDIO_RUNNER holds the self-hosted labels as JSON,
-# ["self-hosted","Linux","X64","studio-large"] (the org group studio-runners,
-# INFRA-5037); unset, every job keeps its GitHub-hosted image, so deleting the
-# variable is the rollback. The self-hosted runners are persistent: what one
-# job leaves in Docker or the build caches, the next one inherits. So only
-# main, tags, same-repository pull requests and pull requests from the forks
-# of the team's own developers (pull requests reach no publishing job) run
-# there. The repository variable STUDIO_RUNNER_FORK_OWNERS lists those fork
-# owners as JSON, e.g. ["AndrejK666"]: people who can push to this repository
-# anyway and work from a fork. Any other fork's pull request, a push or
-# manual run on any other branch, and a manual run given a source_ref (any
-# commit, checked out by every routed job) stay on GitHub-hosted. Checkouts on the routed jobs do not keep the
-# job token on disk, where a dependency's build script could read it —
-# except build-service-images, which pushes the delivery/edge tag and builds
-# only inside BuildKit containers. Not routed at all: the
-# deploy-* jobs (the runners hold no deploy credentials and cannot reach 10.x
-# networks) and the two GitHub-release jobs (publication stays on hosted).
+# Where the Linux build and test jobs run. Each job names its runner class
+# (the org group studio-runners), the platform's ephemeral runners: every job
+# starts on a fresh machine, so nothing one job leaves behind reaches the next.
+#   studio-small     a pod: no Docker, and a token without write permissions
+#                    (hence the job-level `contents: read` on those jobs)
+#   studio-small-vm  a small VM: short jobs that need a write permission
+#   studio-large     a large VM with Docker: compiles, image builds, compose
+# Three cases stay on GitHub-hosted: the repository variable
+# STUDIO_FORCE_GITHUB_HOSTED set to `true` (the rollback, for every routed job
+# at once), any run inside a fork (it cannot use the organisation's runners),
+# and every pull request from a fork. To use the self-hosted runners, push a
+# branch to this repository.
+# Checkouts on the routed jobs do not keep the job token on disk, where a
+# dependency's build script could read it -- except build-service-images,
+# which pushes the delivery/edge tag. Not routed at all: the deploy-* jobs
+# (the runners hold no deploy credentials and cannot reach the deploy networks).
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
@@ -102,7 +100,9 @@ jobs:
   test-changes:
     name: Detect changed components
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     outputs:
       # A release tag is an explicit reproducibility point. Test every service
       # operand for v* and infrastructure operands for infra-v*, rather than
@@ -196,7 +196,7 @@ jobs:
   test-backend:
     needs: test-changes
     if: needs.test-changes.outputs.backend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
     defaults:
       run:
         working-directory: studio-backend
@@ -215,7 +215,7 @@ jobs:
           ref: ${{ github.event.inputs.source_ref || github.sha }}
 
       # The self-hosted runners have these preinstalled and no sudo, so the
-      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
+      # step is for GitHub-hosted images only (see the runner note at the top).
       - name: System dependencies
         if: runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
@@ -265,7 +265,7 @@ jobs:
   test-frontend:
     needs: test-changes
     if: needs.test-changes.outputs.frontend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
     defaults:
       run:
         working-directory: studio-frontend
@@ -302,7 +302,9 @@ jobs:
   test-prototype:
     needs: test-changes
     if: needs.test-changes.outputs.prototype == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: studio-frontend-prototype
@@ -336,7 +338,9 @@ jobs:
   test-theia-session-gate:
     needs: test-changes
     if: needs.test-changes.outputs.theia == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -367,7 +371,9 @@ jobs:
     name: Contract — both portals call endpoints that exist
     # No `needs` and no filter: it must not inherit the component selection that
     # is exactly what lets this drift through.
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -403,7 +409,7 @@ jobs:
   test-infra:
     needs: test-changes
     if: needs.test-changes.outputs.infra == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -431,7 +437,9 @@ jobs:
   test-deployment-config:
     needs: test-changes
     if: needs.test-changes.outputs.deployment == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-small' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -563,7 +571,9 @@ jobs:
       (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
       (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
       (needs.test-deployment-config.result == 'success' || needs.test-deployment-config.result == 'skipped')
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     steps:
       - run: echo "Test stage completed successfully."
   build-require-ci:
@@ -578,7 +588,7 @@ jobs:
       needs.test-complete.result == 'success' &&
       needs.test-changes.result == 'success' &&
       ((github.event_name == 'push' && github.repository == 'constructorfabric/studio-web') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Build and publish' || github.event.inputs.operation == 'Build, publish and deploy')))
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-small' }}
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
       test_run_id: ${{ steps.tests.outputs.run_id }}
@@ -663,7 +673,7 @@ jobs:
     # least as new. `ubuntu-latest` moving to a newer glibc than trixie would
     # resurrect "version GLIBC_X.YY not found" at container start — bump the
     # runner and the runtime base TOGETHER.
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       # Cargo.lock pins every gear's crates.io version, so rebuilding the same
       # commit resolves the same Rust sources.
@@ -673,7 +683,7 @@ jobs:
           ref: ${{ env.SOURCE_SHA }}
 
       # The self-hosted runners have these preinstalled and no sudo, so the
-      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
+      # step is for GitHub-hosted images only (see the runner note at the top).
       - name: System dependencies
         if: runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
@@ -706,7 +716,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-large' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -743,7 +753,7 @@ jobs:
           key: file-storage-sidecar-${{ steps.gear.outputs.version }}-rust-1.97.0-ubuntu-24.04
 
       # The self-hosted runners have these preinstalled and no sudo, so the
-      # step is for GitHub-hosted images only (see the STUDIO_RUNNER note).
+      # step is for GitHub-hosted images only (see the runner note at the top).
       - name: System dependencies
         if: steps.cache.outputs.cache-hit != 'true' && runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
@@ -771,7 +781,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       actions: read
       contents: read
@@ -822,7 +832,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
     permissions:
       actions: read
       contents: read
@@ -876,7 +886,10 @@ jobs:
       # that consume it (`test-e2e`). Derived here rather than recomputed
       # there, so a dispatch with a `source_ref` cannot disagree with itself.
       immutable: ${{ steps.tags.outputs.immutable }}
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    # Only a push to main enters ci-trusted, whose key lets ci-cache write the
+    # BuildKit cache; every other build reads it.
+    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'ci-trusted' || '' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
     permissions:
       # write: `Record the delivered commit` moves the delivery/edge tag.
       contents: write
@@ -911,6 +924,29 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # BuildKit's S3 layer cache on the platform's runners: a docker-container
+      # builder, and `ci-cache-buildx-args <image>` for the builds below. On a
+      # GitHub-hosted runner it does nothing and the helper prints nothing, so
+      # the builds run uncached on the default builder, as before.
+      #
+      # The action comes from this workflow's own commit, not from SOURCE_SHA:
+      # a manual build of an older commit has no .github/actions/ci-cache.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .workflow-rev
+          sparse-checkout: .github/actions/ci-cache
+      # The key only on our runners: a hosted runner (STUDIO_FORCE_GITHUB_HOSTED)
+      # has no cache endpoint, and with a key the action would fail rather
+      # than build uncached.
+      - uses: ./.workflow-rev/.github/actions/ci-cache
+        with:
+          rw-key-id: ${{ runner.environment == 'self-hosted' && secrets.CI_CACHE_RW_KEY_ID || '' }}
+          rw-secret: ${{ runner.environment == 'self-hosted' && secrets.CI_CACHE_RW_SECRET || '' }}
+          trusted: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          buildkit: true
 
       # ghcr rejects any reference with an uppercase letter, and
       # `github.repository` carries the owner's name exactly as registered —
@@ -957,19 +993,16 @@ jobs:
           echo "immutable=$immutable" >> "$GITHUB_OUTPUT"
           echo "promotions=$promotions" >> "$GITHUB_OUTPUT"
 
-      - name: Build backend image
+      # `buildx build --push`, not `build` then `push`: the docker-container
+      # builder keeps its result to itself unless told to push it.
+      - name: Build & push immutable backend image
         if: needs.build-require-ci.outputs.backend == 'true'
         run: |
           set -euo pipefail
           tag="${{ steps.tags.outputs.immutable }}"
-          docker build -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
-
-      - name: Push immutable backend image
-        if: needs.build-require-ci.outputs.backend == 'true'
-        run: |
-          set -euo pipefail
-          tag="${{ steps.tags.outputs.immutable }}"
-          docker push "$IMAGE_PREFIX/studio-backend:$tag"
+          # shellcheck disable=SC2046 # the helper's arguments are meant to split
+          docker buildx build $(ci-cache-buildx-args studio-backend) --push \
+            -f studio-backend/Dockerfile -t "$IMAGE_PREFIX/studio-backend:$tag" studio-backend
 
       - name: Build and push file-storage sidecar image
         if: needs.build-require-ci.outputs.backend == 'true'
@@ -978,17 +1011,19 @@ jobs:
           tag="${{ steps.tags.outputs.immutable }}"
           mv studio-backend/.release/file-storage-sidecar-download/sidecar \
             studio-backend/.release/file-storage-sidecar
-          docker build -f studio-backend/Dockerfile.file-storage-sidecar \
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args file-storage-sidecar) --push \
+            -f studio-backend/Dockerfile.file-storage-sidecar \
             -t "$IMAGE_PREFIX/file-storage-sidecar:$tag" studio-backend
-          docker push "$IMAGE_PREFIX/file-storage-sidecar:$tag"
 
       - name: Build & push frontend image
         if: needs.build-require-ci.outputs.frontend == 'true'
         run: |
           set -euo pipefail
           tag="${{ steps.tags.outputs.immutable }}"
-          docker build -f studio-frontend/Dockerfile -t "$IMAGE_PREFIX/studio-frontend:$tag" studio-frontend
-          docker push "$IMAGE_PREFIX/studio-frontend:$tag"
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args studio-frontend) --push \
+            -f studio-frontend/Dockerfile -t "$IMAGE_PREFIX/studio-frontend:$tag" studio-frontend
 
       # Same nginx runtime recipe as the main frontend, its own dist and name.
       - name: Build & push frontend prototype image
@@ -996,8 +1031,9 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.tags.outputs.immutable }}"
-          docker build -f studio-frontend-prototype/Dockerfile -t "$IMAGE_PREFIX/studio-frontend-prototype:$tag" studio-frontend-prototype
-          docker push "$IMAGE_PREFIX/studio-frontend-prototype:$tag"
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args studio-frontend-prototype) --push \
+            -f studio-frontend-prototype/Dockerfile -t "$IMAGE_PREFIX/studio-frontend-prototype:$tag" studio-frontend-prototype
 
       # buildx, for the Theia image's layer cache below. The default `docker`
       # driver cannot export a cache; `docker-container` can.
@@ -1121,7 +1157,7 @@ jobs:
     # always(): without it GitHub adds success(), which treats the test jobs
     # the change filter skipped as failed ancestors and skips the build.
     if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'infra'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-24.04"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-24.04' || 'studio-large' }}
     permissions:
       contents: read
       packages: write
@@ -1211,7 +1247,7 @@ jobs:
       needs.build-backend-binary.result == 'success' &&
       needs.build-frontend-dist.result == 'success' &&
       needs.build-service-images.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small-vm' }}
     permissions:
       contents: write
     steps:
@@ -1237,7 +1273,7 @@ jobs:
       github.ref_type == 'tag' &&
       needs.build-require-ci.outputs.scope == 'infra' &&
       needs.build-infra-images.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small-vm' }}
     permissions:
       contents: write
     steps:
@@ -1269,7 +1305,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.build-require-ci.result == 'success' &&
       needs.build-service-images.result == 'success'
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
     permissions:
       contents: read
       packages: read
@@ -1295,9 +1331,9 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$STUDIO_IMAGE_TAG"
-          # A self-hosted runner is persistent: a cancelled run leaves its
-          # stack, ports and volumes behind for the next one. The project name
-          # is the checkout directory, the same on every run, so this finds it.
+          # A no-op on a fresh runner; it clears what a reused machine would
+          # carry over from a cancelled run. The project name is the checkout
+          # directory, the same on every run, so this finds it.
           docker compose down --volumes --remove-orphans
           docker compose pull --quiet
           # `--wait` returns once backend and frontend, and everything they
@@ -1350,7 +1386,9 @@ jobs:
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
       (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped') &&
       (needs.test-e2e.result == 'success' || needs.test-e2e.result == 'skipped')
-    runs-on: ${{ fromJSON((vars.STUDIO_RUNNER == '' || (github.event.pull_request.head.repo.fork && !contains(fromJSON(vars.STUDIO_RUNNER_FORK_OWNERS || '[]'), github.event.pull_request.head.repo.owner.login)) || github.event.inputs.source_ref != '' || (github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))) && '"ubuntu-latest"' || vars.STUDIO_RUNNER) }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    permissions:
+      contents: read
     steps:
       - run: echo "Build & Publish stage completed successfully."
 
