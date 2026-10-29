@@ -255,26 +255,29 @@ function OnMyMachine({
       desktopLink({
         id: projectId,
         name: projectName,
-        product: saved?.path,
+        // The desktop builds only a product it has open, so one is always named.
+        product: saved?.path ?? "product.gdl",
         branch: saved?.branch ?? undefined,
+        build: true,
       }),
     );
   return (
     <div data-build-on-my-machine>
       <p>
-        The desktop IDE builds on your machine: open the project, <b>Generate</b> the product, <b>Build</b> its images,
-        then <b>Publish</b> them and the chart to an environment&apos;s registry with a push-only token Studio gives for
-        it. Each build reports itself and shows below, where it says <code>desktop</code>.
+        The desktop IDE builds on your machine: it opens the project, <b>Generates</b> the product and starts{" "}
+        <b>Build</b> by itself. <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry
+        with a push-only token Studio gives for it. Each build reports itself and shows below, where it says{" "}
+        <code>desktop</code>.
       </p>
       <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <button
           type="button"
           className="primary"
           onClick={open}
-          title="Open this project in the Constructor Studio app on your machine"
+          title="Open this project in the Constructor Studio app on your machine and build it"
           data-builds-open-ide
         >
-          Open in the IDE
+          Build in the IDE
         </button>
         {missing && <DesktopMissingHint />}
       </div>
