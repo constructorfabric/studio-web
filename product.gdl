@@ -1,11 +1,11 @@
 # The product this project ships, as Gearbox composes it.
 #
 # Written by Constructor Studio from the gears picked for the project. The
-# gears come from `gears-rust`, `studio-backend` at the commit this was checked against;
+# gears come from `gears-frontx`, `gears-rust`, `studio-backend` at the commit this was checked against;
 # the Studio IDE brings that commit in when it opens the product. From a
-# checkout of `gears-rust`, `studio-backend` at that commit, resolve it with
+# checkout of `gears-frontx`, `gears-rust`, `studio-backend` at that commit, resolve it with
 #
-#   gearbox resolve --root ../gears-rust --root ../studio-backend --product product.gdl --profile dev
+#   gearbox resolve --root ../gears-frontx --root ../gears-rust --root ../studio-backend --product product.gdl --profile dev
 #
 # Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
 
@@ -13,18 +13,18 @@ product(
     id = "studio-web",
     name = "Studio-web",
     version = "0.1.0",
-    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "b90bea456f0894dc703cf7e9b546397e8fcda215")),
+    sources = [source(id = "gears-frontx", at = git(url = "https://github.com/constructorfabric/gears-frontx.git", rev = "b9dfcdf7b93f6b459dfe8b032165ff9abaf4955d")),
+                   source(id = "gears-rust", at = git(url = "https://github.com/constructorfabric/gears-rust.git", rev = "7c8809c670e86ccef8173ff6eb4badd3c4dad3f3")),
                    source(id = "studio-backend", at = path("studio-backend"))],
     # Where the gears that keep data keep it: one Postgres per profile
     # (GDL 1.1). The password is only ever a `${NAME}` the deployment
     # sets; change the host and user to the server you run.
+    # `dev` and `local` run on a machine: development profiles, so the
+    # production rules (accept-all sign-in, ...) warn there instead of
+    # failing. `prod` is held to them.
     profiles = [
-        # `dev` is docker-compose's Postgres (127.0.0.1:5433, user studio), as
-        # scripts/product-gdl.mjs writes it and config/dev.yaml's pg_main reads it.
-        # `dev` and `local` run on a machine: development profiles, where the
-        # production rules warn instead of failing (GBX0325).
         embedded(id = "dev", development = True,
-                 database = postgres(host = "127.0.0.1", port = 5433, user = "studio", password = "${STUDIO_PG_PASSWORD}")),
+                 database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
         self_hosted(id = "local", development = True, host = "studio-web", worker_discovery = "directory",
                     target_dir = "target",
                     database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
@@ -32,11 +32,12 @@ product(
                    database = postgres(host = "postgres", user = "app", password = "${GEARS_PG_PASSWORD}",
                                        existing_secret = "studio-web-db")),
     ],
-    default_profile = "local",
+    default_profile = "prod",
     gears = [
+        use_gear("studio-connector", source = "studio-backend", plugins = [plugin("anthropic-connector-plugin"), plugin("bitbucket-connector-plugin"), plugin("discord-connector-plugin"), plugin("discord-webhook-connector-plugin"), plugin("gear-repository-connector-plugin"), plugin("github-connector-plugin"), plugin("gitlab-connector-plugin"), plugin("kubernetes-connector-plugin"), plugin("openai-connector-plugin"), plugin("registry-connector-plugin"), plugin("research-connector-plugin"), plugin("slack-connector-plugin"), plugin("slack-webhook-connector-plugin"), plugin("zulip-connector-plugin"), plugin("zulip-webhook-connector-plugin")]),
         use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin", config = {"vendor": "constructorfabric"}), plugin("static-idp-plugin")]),
         use_gear("api-gateway", source = "gears-rust"),
-        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("oidc-authn-plugin"), plugin("static-authn-plugin")]),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("static-authn-plugin")]),
         use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("static-authz-plugin"), plugin("studio-authz-plugin")]),
         use_gear("credstore", source = "gears-rust", plugins = [plugin("static-credstore-plugin"), plugin("studio-credstore-pg")]),
         use_gear("file-storage", source = "gears-rust"),
@@ -47,10 +48,12 @@ product(
         use_gear("oagw", source = "gears-rust"),
         use_gear("resource-group", source = "gears-rust"),
         use_gear("simple-user-settings", source = "gears-rust"),
+        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("usage-collector", source = "gears-rust", plugins = [plugin("postgres-usage-collector-plugin")]),
         use_gear("studio-artifact-ingest", source = "studio-backend"),
         use_gear("studio-assembly", source = "studio-backend"),
         use_gear("studio-components-catalog", source = "studio-backend"),
-        use_gear("studio-connector", source = "studio-backend", plugins = [plugin("anthropic-connector-plugin"), plugin("bitbucket-connector-plugin"), plugin("discord-connector-plugin"), plugin("discord-webhook-connector-plugin"), plugin("gear-repository-connector-plugin"), plugin("github-connector-plugin"), plugin("gitlab-connector-plugin"), plugin("kubernetes-connector-plugin"), plugin("openai-connector-plugin"), plugin("registry-connector-plugin"), plugin("research-connector-plugin"), plugin("slack-connector-plugin"), plugin("slack-webhook-connector-plugin"), plugin("zulip-connector-plugin"), plugin("zulip-webhook-connector-plugin")]),
         use_gear("studio-documents", source = "studio-backend"),
         use_gear("studio-domain-model", source = "studio-backend"),
         use_gear("studio-environments", source = "studio-backend"),
@@ -71,10 +74,8 @@ product(
         use_gear("studio-spec-mapping", source = "studio-backend"),
         use_gear("studio-spec-quality", source = "studio-backend"),
         use_gear("studio-tasks", source = "studio-backend"),
+        use_gear("studio-theia", source = "studio-backend"),
         use_gear("studio-usage", source = "studio-backend"),
         use_gear("studio-user", source = "studio-backend"),
-        use_gear("tenant-resolver", source = "gears-rust", plugins = [plugin("rg-tr-plugin")]),
-        use_gear("types-registry", source = "gears-rust"),
-        use_gear("usage-collector", source = "gears-rust", plugins = [plugin("postgres-usage-collector-plugin")]),
     ],
 )
