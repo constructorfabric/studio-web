@@ -41,6 +41,7 @@ import {
   type SavedProduct,
   buildableEnvironments,
 } from "./deploy-actions";
+import { DataTable, When } from "./data-table";
 import { errText } from "./format";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
@@ -528,10 +529,10 @@ function InCi({
   );
 }
 
-/** The product's builds, newest first -- run by Studio, the IDE or CI. The
- *  newest is open: its stages, what failed or what it published, and Deploy;
- *  an older one opens on a click. A Studio build whose Job's hour is long past
- *  without word is lost, not running. */
+/** The product's builds, newest first -- run by Studio, the IDE or CI -- as
+ *  one table. The newest is open under its row: its log, what failed or what
+ *  it published, and Deploy; another opens on a click. A Studio build whose
+ *  Job's hour is long past without word is lost, not running. */
 function ProductBuilds({
   token,
   projectId,
@@ -547,89 +548,84 @@ function ProductBuilds({
   deployments: Deployment[];
   onChanged: (message: string) => void;
 }) {
-  const [open, setOpen] = useState<string | null>(null);
   const product = builds.filter((b) => b.action !== "run");
+  // `undefined`: the newest, until the reader opens or closes one.
+  const [open, setOpen] = useState<string | null | undefined>(undefined);
+  const shown = open === undefined ? (product[0]?.id ?? null) : open;
   if (product.length === 0) return null;
-  const [newest, ...older] = product;
   return (
     <section className="card" data-product-builds>
-      <h2>Builds</h2>
-      <BuildCard
-        build={newest}
-        token={token}
-        projectId={projectId}
-        environments={environments}
-        deployments={deployments}
-        onChanged={onChanged}
+      <DataTable<IdeBuild>
+        list="product-builds"
+        title="Builds"
+        rows={product}
+        rowKey={(b) => b.id}
+        rowLabel={(b) => `${b.product ?? "The product"} ${b.shortSha ?? b.buildId}`}
+        onOpen={(b) => setOpen(shown === b.id ? null : b.id)}
+        detail={(b) =>
+          b.id === shown ? (
+            <BuildDetails
+              build={b}
+              token={token}
+              projectId={projectId}
+              environments={environments}
+              deployments={deployments}
+              onChanged={onChanged}
+            />
+          ) : null
+        }
+        searchText={(b) => [b.product, b.profile, b.where, b.branch, b.shortSha, b.status]}
+        defaultView="table"
+        empty={{ title: "No build yet." }}
+        columns={[
+          {
+            id: "status",
+            header: "Status",
+            cell: (b) => (
+              <span data-ide-build-status={isLost(b) ? "lost" : b.status}>
+                <StatusBadge build={b} />
+              </span>
+            ),
+          },
+          {
+            id: "build",
+            header: "Build",
+            cell: (b) => (
+              <b>
+                {b.product ?? "The product"}
+                {b.profile ? <span className="sub"> · {b.profile}</span> : null}
+              </b>
+            ),
+          },
+          { id: "stages", header: "Stages", cell: (b) => <StageLane build={b} /> },
+          { id: "where", header: "Where", cell: (b) => b.where },
+          {
+            id: "commit",
+            header: "Commit",
+            cell: (b) => (b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")),
+          },
+          {
+            id: "when",
+            header: "When",
+            compare: (a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""),
+            cell: (b) => <When iso={b.startedAt} />,
+          },
+          { id: "took", header: "Took", num: true, cell: (b) => (isLost(b) ? "—" : (ideBuildDuration(b) ?? "—")) },
+        ]}
       />
-      {older.length > 0 && (
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table className="table" data-ide-builds-table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Stages</th>
-                <th>Where</th>
-                <th>Commit</th>
-                <th>When</th>
-                <th>Took</th>
-              </tr>
-            </thead>
-            <tbody>
-              {older.map((b) =>
-                open === b.id ? (
-                  <tr key={b.id} data-ide-build-status={b.status}>
-                    <td colSpan={6}>
-                      <BuildCard
-                        build={b}
-                        token={token}
-                        projectId={projectId}
-                        environments={environments}
-                        deployments={deployments}
-                        onChanged={onChanged}
-                        onClose={() => setOpen(null)}
-                      />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr
-                    key={b.id}
-                    data-ide-build-status={b.status}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => setOpen(b.id)}
-                    title="Open this build"
-                  >
-                    <td>
-                      <StatusBadge build={b} />
-                    </td>
-                    <td>
-                      <StageLane build={b} />
-                    </td>
-                    <td>{b.where}</td>
-                    <td>{b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")}</td>
-                    <td>{b.startedAt ? new Date(b.startedAt).toLocaleString() : "—"}</td>
-                    <td>{isLost(b) ? "—" : (ideBuildDuration(b) ?? "—")}</td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
     </section>
   );
 }
 
-/** One build, open: what and where, its stages, what failed or what it
+/** One build, open under its row: its log, what failed or what it
  *  published, and Deploy once it published a chart. */
-function BuildCard({
+function BuildDetails({
   build: b,
   token,
   projectId,
   environments,
   deployments,
   onChanged,
-  onClose,
 }: {
   build: IdeBuild;
   token: string;
@@ -637,36 +633,15 @@ function BuildCard({
   environments: DeployEnvironment[];
   deployments: Deployment[];
   onChanged: (message: string) => void;
-  onClose?: () => void;
 }) {
   const lost = isLost(b);
   return (
     <div data-build-card={b.buildId} data-build-card-status={lost ? "lost" : b.status}>
-      <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <StatusBadge build={b} />
-        <b>
-          {b.product ?? "The product"}
-          {b.profile ? <span className="sub"> · {b.profile}</span> : null}
-        </b>
-        <StageLane build={b} />
-        <span className="grow sub">
-          {b.where}
-          {b.branch ? <> · {b.branch}</> : null}
-          {b.shortSha ? (
-            <>
-              {" "}
-              · <code>{b.shortSha}</code>
-            </>
-          ) : null}
-          {b.startedAt ? <> · {new Date(b.startedAt).toLocaleString()}</> : null}
-          {!lost && ideBuildDuration(b) ? <> · {ideBuildDuration(b)}</> : null}
-        </span>
-        {onClose && (
-          <button type="button" className="linklike" onClick={onClose}>
-            Close
-          </button>
-        )}
-      </div>
+      {b.branch && (
+        <div className="sub">
+          from <code>{b.branch}</code>
+        </div>
+      )}
       {lost && (
         <p className="hint" data-build-lost>
           Lost: no word from its Job since {b.startedAt ? new Date(b.startedAt).toLocaleString() : "it started"}, past
