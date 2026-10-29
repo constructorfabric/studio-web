@@ -58,6 +58,7 @@ import {
   codeFor,
   codeGears,
   fixesFrom,
+  productionFixes,
   nextStep,
   productSteps,
   type ProductStep,
@@ -1550,8 +1551,8 @@ function ProductCard({
     let live = true;
     api
       .completeProduct(token, picks, product.config)
-      .then((done) => live && setFixes(fixesFrom(picks, product.config, done)))
-      .catch(() => live && setFixes([]));
+      .then((done) => live && setFixes([...fixesFrom(picks, product.config, done), ...productionFixes(picks, preview.diagnostics)]))
+      .catch(() => live && setFixes(productionFixes(picks, preview.diagnostics)));
     return () => {
       live = false;
     };
@@ -1814,7 +1815,13 @@ function ProductCard({
             <b>
               How to make it resolve — {fixes.length} fix{fixes.length === 1 ? "" : "es"} from the engine
             </b>
-            <button className="primary" style={{ marginLeft: "auto" }} disabled={busy !== null} onClick={() => void product.complete()}>
+            <button
+              className="primary"
+              style={{ marginLeft: "auto" }}
+              disabled={busy !== null}
+              // A swap is not the engine's completion: alone, it is applied as itself.
+              onClick={() => (fixes.every((f) => f.kind === "replace") ? fixes.forEach(applyOne) : void product.complete())}
+            >
               Apply all
             </button>
           </div>
@@ -1833,6 +1840,11 @@ function ProductCard({
                   {f.kind === "remove" && (
                     <>
                       Take out <ComponentLink nav={nav} name={f.gear} />
+                    </>
+                  )}
+                  {f.kind === "replace" && (
+                    <>
+                      Replace <ComponentLink nav={nav} name={f.gear} /> with <ComponentLink nav={nav} name={f.with} />
                     </>
                   )}
                   {f.kind === "config" && (
