@@ -67,7 +67,7 @@ import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
 import type { DeployInfo } from "../common/deploy-product";
-import { deployInfo } from "./deploy-support";
+import { deployInfo, seedLock } from "./deploy-support";
 import { packChart } from "./chart-package";
 import { withBuildTools } from "../common/deploy-product";
 import { buildToolchain, containerOnPort, exec, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
@@ -1142,6 +1142,17 @@ export class GearboxServiceImpl implements GearboxService {
       if (fixed !== text) await fs.promises.writeFile(file, fixed);
       if (ignore !== undefined) await fs.promises.writeFile(`${file}.dockerignore`, ignore);
     }
+    await this.lockBuildTree(tree);
+  }
+
+  async lockBuildTree(outRoot: string): Promise<string | undefined> {
+    const tree = path.resolve(outRoot);
+    if (!/\/\.gearbox\//.test(tree.replace(/\\/g, "/"))) {
+      throw new Error(`refusing to change files outside a generated tree: ${tree}`);
+    }
+    const lock = await seedLock(tree);
+    if (lock !== undefined) this.logger.info(`gearbox: ${tree} builds with the crate versions of ${lock}`);
+    return lock;
   }
 
   async writeRegistryConfig(host: string, token: string): Promise<string> {

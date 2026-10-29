@@ -565,6 +565,12 @@ export interface GearboxService {
    * tree only.
    */
   prepareImageBuild(outRoot: string): Promise<void>;
+  /**
+   * Give the generated tree the `Cargo.lock` of the sources it builds when it
+   * has none (gearbox writes none): the product's own code's first, else a
+   * fetched one's. Inside a generated tree only; the lock copied, if any.
+   */
+  lockBuildTree(outRoot: string): Promise<string | undefined>;
   /** Where `file` is in its git repository, and the branch checked out: what a build in Studio clones. */
   repositoryPathOf(file: string): Promise<{ readonly path: string; readonly branch?: string } | undefined>;
 

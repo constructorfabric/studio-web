@@ -389,6 +389,7 @@ export class GenerateWidget extends ReactWidget {
   protected async build(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
+    await this.lockTree(context.cwd);
     const terminal = await this.terminals.send("build", context.product, context.cwd, buildCommand(target), this.terminalEnv(target));
     void this.reportBuild("build", context.product, terminal);
   }
@@ -467,6 +468,7 @@ export class GenerateWidget extends ReactWidget {
     const context = this.runContext();
     if (context === undefined) return;
     let config = target.config;
+    await this.lockTree(context.cwd);
     try {
       const written = await this.service.writeRunConfig(context.cwd, target.app, [...target.dbGears]);
       config = written.config;
@@ -575,6 +577,13 @@ export class GenerateWidget extends ReactWidget {
       registry: place.registry,
       ...(kubeContext !== undefined ? { kubeContext } : {}),
     });
+  }
+
+  /** The tree locked to its sources' crate versions before cargo runs in it; a build without it still starts. */
+  protected async lockTree(cwd: string): Promise<void> {
+    await this.service.lockBuildTree(cwd).catch((error) =>
+      this.messages.warn(`Cargo.lock could not be added to the tree: ${error instanceof Error ? error.message : String(error)}`),
+    );
   }
 
   /** Build images: the tree made buildable first (see `prepareImageBuild`), then `docker build` per application. */
