@@ -205,8 +205,7 @@ function ResearchFields({
           ))}
         </select>
         <span className="sub">
-          Sign in to Research once in Organization › Connections, shared with the organization: builds and deploys run as
-          its service.
+          Your own sign-in to Research (Connections): builds and deploys run there with it, in your Research.
         </span>
         {shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
       </label>

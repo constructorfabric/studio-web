@@ -157,10 +157,11 @@ export function clusterConnections(connections: readonly Connection[]): Connecti
   return connections.filter((c) => c.provider === "kubernetes" && c.scope !== "personal");
 }
 
-/** The Constructor Research connections an environment can run on: the
- *  organization's, since builds and deploys run as its service (ADR-0049). */
+/** The Constructor Research connections an environment can run on: a
+ *  member's own sign-in, which its builds and deploys use for the member who
+ *  asks (ADR-0049 §5). */
 export function researchConnections(connections: readonly Connection[]): Connection[] {
-  return connections.filter((c) => c.provider === "research" && c.scope !== "personal");
+  return connections.filter((c) => c.provider === "research");
 }
 
 /** A deployment's state, as a person reads it. */

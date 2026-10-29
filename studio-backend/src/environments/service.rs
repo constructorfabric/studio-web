@@ -430,7 +430,7 @@ impl EnvironmentService {
                 .map(|r| r.project.clone())
                 .unwrap_or_default();
             let projects = self
-                .research_api(org, env.connection_id)
+                .research_api(ctx, org, env.connection_id)
                 .await?
                 .projects()
                 .await
@@ -1288,15 +1288,15 @@ impl EnvironmentService {
 
     /* ── Constructor Research (ADR-0049) ── */
 
-    /// The Research connector's calls through the organization's connection,
-    /// as its service.
+    /// The Research connector's calls through a connection, as the caller:
+    /// a member's own sign-in is readable only by them (ADR-0049 §5).
     async fn research_api(
         &self,
+        ctx: &SecurityContext,
         org: Uuid,
         connection_id: Uuid,
     ) -> Result<crate::connectors::sdk::research::ResearchApi> {
-        let svc = self.service(org)?;
-        research::api(&self.hub, &svc, org, connection_id)
+        research::api(&self.hub, ctx, org, connection_id, None)
             .await
             .map_err(|e| Refusal::Precondition("ENVIRONMENT_RESEARCH_UNUSABLE", format!("{e:#}")))
     }
@@ -1310,7 +1310,7 @@ impl EnvironmentService {
         connection_id: Uuid,
     ) -> Result<Vec<crate::connectors::sdk::research::Project>> {
         self.require_manage(ctx, org).await?;
-        self.research_api(org, connection_id)
+        self.research_api(ctx, org, connection_id)
             .await?
             .projects()
             .await
@@ -1328,7 +1328,7 @@ impl EnvironmentService {
         project: &str,
     ) -> Result<Vec<crate::connectors::sdk::research::Hardware>> {
         self.require_manage(ctx, org).await?;
-        self.research_api(org, connection_id)
+        self.research_api(ctx, org, connection_id)
             .await?
             .hardware(project)
             .await
@@ -1369,6 +1369,7 @@ impl EnvironmentService {
             repo: repo.clone(),
             git_ref,
             records_in: Some(ctx.subject_tenant_id()),
+            requested_by: Some(research::Requester::of(ctx)),
         };
         if let Ok(builds) = self
             .hub
@@ -1554,6 +1555,7 @@ impl EnvironmentService {
                 product_file,
                 profile,
                 commit: commit.unwrap_or_default(),
+                requested_by: Some(research::Requester::of(ctx)),
             }),
         };
         if d.action == DeploymentAction::Install {
@@ -1816,7 +1818,7 @@ impl EnvironmentService {
         let d = self.deployment(ctx, org, id).await?;
         let env = self.environment(ctx, org, d.environment_id).await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.research_api(org, env.connection_id).await?;
+            let api = self.research_api(ctx, org, env.connection_id).await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
                 .await
                 .map_err(|e| {

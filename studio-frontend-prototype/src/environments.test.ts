@@ -188,8 +188,8 @@ describe("a Constructor Research environment (ADR-0049)", () => {
     expect(environmentProblem({ ...research, namespace_pattern: "fixed" }, [])).toBeNull();
   });
 
-  it("is chosen from the organization's Research connections, not a personal sign-in", () => {
+  it("is chosen from Research sign-ins, a member's own among them", () => {
     const c = (id: string, provider: string, scope: string) => ({ id, provider, scope }) as Connection;
-    expect(researchConnections([c("a", "research", "organization"), c("b", "research", "personal"), c("k", "kubernetes", "organization")]).map((x) => x.id)).toEqual(["a"]);
+    expect(researchConnections([c("a", "research", "organization"), c("b", "research", "personal"), c("k", "kubernetes", "organization")]).map((x) => x.id)).toEqual(["a", "b"]);
   });
 });

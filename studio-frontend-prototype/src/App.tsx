@@ -8332,7 +8332,10 @@ function AddConnector({
           const group = providers.filter(
             (p) => p.category === key && (!q || `${p.display_name} ${p.provider} ${title}`.toLowerCase().includes(q)),
           );
-          if (group.length === 0) return null;
+          // Research's tile stays in sight while this Studio cannot offer it
+          // yet, saying what it waits for (ADR-0049 §1).
+          const researchPending = key === "compute" && !providers.some((p) => p.provider === "research") && !q;
+          if (group.length === 0 && !researchPending) return null;
           return (
             <section key={key} className="conn-picker-group">
               <h3 className="group">{title}</h3>
@@ -8359,7 +8362,29 @@ function AddConnector({
                     <span className="name">{p.display_name}</span>
                   </button>
                 ))}
+                {researchPending && (
+                  <button
+                    type="button"
+                    className="conn-picker-tile"
+                    disabled
+                    data-research-pending
+                    title="This Studio has no Constructor sign-in client and no Research integration service address yet (research-connector-plugin: issuer, client_id, client_secret, redirect_uri, api_url)."
+                  >
+                    <span className="conn-logo-slot" aria-hidden>
+                      <ConnectorLogo provider="research" label="Constructor Research" />
+                    </span>
+                    <span className="name">Constructor Research</span>
+                    <span className="sub">not set up on this Studio yet</span>
+                  </button>
+                )}
               </div>
+              {researchPending && (
+                <p className="hint" data-research-pending-why>
+                  Constructor Research appears here once this Studio is registered with the Constructor sign-in and knows
+                  Research&apos;s integration service. Then: sign in with your Constructor account, and add an environment that runs on
+                  Research.
+                </p>
+              )}
             </section>
           );
         })}

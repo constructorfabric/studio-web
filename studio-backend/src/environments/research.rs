@@ -13,8 +13,11 @@
 //! result as one application (`research_app`). The deploy's record ends with
 //! where the product opens.
 //!
-//! The connection is the organization's: these run in the background as its
-//! service, which cannot read a member's personal sign-in.
+//! The connection is the member's own, signed in personally (ADR-0049 §5).
+//! A background run is the organization's service, which cannot read a
+//! personal sign-in, so a run carries who asked ([`Requester`]) and reads
+//! that member's connection as them -- that one credential, for the build or
+//! deploy they asked for, and nothing else.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,20 +38,56 @@ use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 pub const BUILD_TASK_TYPE: &str = "environments.research.build";
 
+/// The member a Research run acts for: whose sign-in it reads, in the tenant
+/// they asked in (where their personal connection's token was stored).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Requester {
+    pub subject_id: Uuid,
+    pub tenant_id: Uuid,
+}
+
+impl Requester {
+    pub fn of(ctx: &SecurityContext) -> Self {
+        Self {
+            subject_id: ctx.subject_id(),
+            tenant_id: ctx.subject_tenant_id(),
+        }
+    }
+
+    /// The member as a reader of their own connection.
+    fn context(&self) -> anyhow::Result<SecurityContext> {
+        SecurityContext::builder()
+            .subject_id(self.subject_id)
+            .subject_type("user")
+            .subject_tenant_id(self.tenant_id)
+            .build()
+            .map_err(|e| anyhow!("cannot act for the member who asked: {e}"))
+    }
+}
+
 /// How long a Research build is followed before Studio gives up on it.
 const BUILD_FOR: Duration = Duration::from_secs(60 * 60);
 /// How long a deploy waits for every service to run.
 const START_FOR: Duration = Duration::from_secs(10 * 60);
 const POLL_EVERY: Duration = Duration::from_secs(15);
 
-/// The Research connector's calls, signed in as the organization's
-/// connection `connection_id`.
+/// The Research connector's calls through connection `connection_id`, read
+/// as `ctx` -- or, for a background run, as the member who asked.
 pub async fn api(
     hub: &Arc<ClientHub>,
     ctx: &SecurityContext,
     org: Uuid,
     connection_id: Uuid,
+    requester: Option<&Requester>,
 ) -> anyhow::Result<ResearchApi> {
+    let member;
+    let ctx = match requester {
+        Some(r) => {
+            member = r.context()?;
+            &member
+        }
+        None => ctx,
+    };
     let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub))
         .get()
         .ok_or_else(|| anyhow!("connections are not available in this deployment"))?;
@@ -202,6 +241,9 @@ pub struct ResearchBuildPayload {
     pub git_ref: Option<String>,
     #[serde(default)]
     pub records_in: Option<Uuid>,
+    /// Whose Research sign-in the build uses.
+    #[serde(default)]
+    pub requested_by: Option<Requester>,
 }
 
 pub struct ResearchBuildTask {
@@ -251,9 +293,15 @@ impl ResearchBuildTask {
             let step = step.to_owned();
             move |e: anyhow::Error| (step, format!("{e:#}"))
         };
-        let api = api(&self.hub, &ctx.security, p.organization_id, p.connection_id)
-            .await
-            .map_err(fail("start"))?;
+        let api = api(
+            &self.hub,
+            &ctx.security,
+            p.organization_id,
+            p.connection_id,
+            p.requested_by.as_ref(),
+        )
+        .await
+        .map_err(fail("start"))?;
 
         self.step(ctx, p, "prepare").await;
         let tree = prepare(
@@ -378,6 +426,9 @@ pub struct ResearchDeploy {
     pub product_file: String,
     pub profile: String,
     pub commit: String,
+    /// Whose Research sign-in the deploy uses.
+    #[serde(default)]
+    pub requested_by: Option<Requester>,
 }
 
 /// The credstore reference of a database server's password: kept, since the
@@ -448,7 +499,14 @@ pub async fn deploy(
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
 ) -> anyhow::Result<String> {
-    let api = api(hub, &ctx.security, p.organization_id, p.connection_id).await?;
+    let api = api(
+        hub,
+        &ctx.security,
+        p.organization_id,
+        p.connection_id,
+        r.requested_by.as_ref(),
+    )
+    .await?;
     if p.action == super::model::DeploymentAction::Uninstall {
         ctx.progress(format!("removing application {}", p.namespace))
             .await;
