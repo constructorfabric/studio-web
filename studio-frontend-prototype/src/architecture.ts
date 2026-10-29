@@ -895,7 +895,7 @@ export const SURFACES: Surface[] = [
     id: "desktop",
     area: "outside",
     title: "Desktop app (Electron)",
-    does: "Everything the IDE does, on your machine — plus your projects and kits from Studio, the gear catalogue for Gearbox, Git through Studio's proxy, a lease on a session, and the builds Build and Run report.",
+    does: "Everything the IDE does, on your machine — plus your projects and kits from Studio, the gear catalogue for Gearbox, Git through Studio's proxy, a lease on a session, Claude Code and Codex on the member's profile key, and the builds Build and Run report.",
     sources: ["theia/studio/src/{browser,node}/desktop-*.ts", "theia/studio/src/browser/gearbox-*.ts"],
     gears: [
       "account-management",
@@ -904,6 +904,7 @@ export const SURFACES: Surface[] = [
       "studio-environments",
       "studio-git",
       "studio-kits",
+      "studio-llm-proxy",
       "studio-organizations",
       "studio-product",
       "studio-session",
