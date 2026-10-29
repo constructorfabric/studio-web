@@ -39,9 +39,19 @@ export function avatarCss(src: string): string {
 .theia-sidebar-menu-item > i.codicon-account::before { content: ''; }`;
 }
 
+/** How often the sign-in is looked at again: a local call, and a sign-in can finish without any view announcing it. */
+const WATCH_MS = 15_000;
+
+/** Who the photo is of: a change of Studio, of person or of state is another photo, or none. */
+export function photoKey(status: { state?: string; studioUrl?: string; user?: { sub?: string } } | undefined): string {
+    return status?.state === 'signed-in' ? `${status.studioUrl ?? ''}|${status.user?.sub ?? ''}` : '';
+}
+
 @injectable()
 export class DesktopAccountAvatar implements FrontendApplicationContribution {
     protected readonly style = document.createElement('style');
+    /** The person the photo on show is of, once it was found; `undefined` asks again. */
+    protected shown: string | undefined;
 
     onStart(): void {
         void desktopStatus().then(status => {
@@ -49,27 +59,34 @@ export class DesktopAccountAvatar implements FrontendApplicationContribution {
                 return;
             }
             document.head.appendChild(this.style);
-            // A sign-in, a sign-out or another Studio is another photo, or none.
+            // The views announce a sign-in they started, but the window's own
+            // sign-in at launch, or one finished in the browser, may pass
+            // unannounced: the photo stayed the generic glyph. So the state is
+            // also read on a timer, and the profile only when it changed.
             onDesktopChange(() => void this.refresh());
+            setInterval(() => void this.refresh(), WATCH_MS);
             void this.refresh();
         });
     }
 
     protected async refresh(): Promise<void> {
-        const src = await this.photo().catch(() => undefined);
+        const status = await desktopStatus().catch(() => undefined);
+        const key = photoKey(status);
+        if (key === this.shown) {
+            return;
+        }
+        const src = key && status ? await this.photo(status.studioUrl).catch(() => undefined) : undefined;
         this.style.textContent = src ? avatarCss(src) : '';
+        // A photo that could not be read yet is asked for again next time.
+        this.shown = src || !key ? key : undefined;
     }
 
-    protected async photo(): Promise<string | undefined> {
-        const status = await desktopStatus();
-        if (status?.state !== 'signed-in') {
-            return undefined;
-        }
+    protected async photo(studioUrl: string | undefined): Promise<string | undefined> {
         const res = await StudioApi.fetch('/studio-user/v1/me');
         if (!res.ok) {
             return undefined;
         }
         const me = await res.json() as { avatar_url?: string | null };
-        return avatarSource(me.avatar_url, status.studioUrl);
+        return avatarSource(me.avatar_url, studioUrl);
     }
 }
