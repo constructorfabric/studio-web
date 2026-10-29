@@ -1,11 +1,11 @@
 # The product this project ships, as Gearbox composes it.
 #
 # Written by Constructor Studio from the gears picked for the project. The
-# gears come from `gears-rust`, `studio-backend` at the commit this was checked against;
+# gears come from `gears-frontx`, `gears-rust`, `studio-backend` at the commit this was checked against;
 # the Studio IDE brings that commit in when it opens the product. From a
-# checkout of `gears-rust`, `studio-backend` at that commit, resolve it with
+# checkout of `gears-frontx`, `gears-rust`, `studio-backend` at that commit, resolve it with
 #
-#   gearbox resolve --root ../gears-rust --root ../studio-backend --product product.gdl --profile dev
+#   gearbox resolve --root ../gears-frontx --root ../gears-rust --root ../studio-backend --product product.gdl --profile dev
 #
 # Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
 
@@ -13,18 +13,18 @@ product(
     id = "studio-web",
     name = "Studio-web",
     version = "0.1.0",
-    sources = [source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "c14f0fb5dd420fbed2476768064962e0b4c74d48")),
+    sources = [source(id = "gears-frontx", at = git(url = "https://github.com/constructorfabric/gears-frontx.git", rev = "783b2b9c3e393b51e60329a002d34ff3a7cd08ea")),
+                   source(id = "gears-rust", at = git(url = "https://github.com/constructorfabric/gears-rust.git", rev = "7c8809c670e86ccef8173ff6eb4badd3c4dad3f3")),
                    source(id = "studio-backend", at = path("studio-backend"))],
     # Where the gears that keep data keep it: one Postgres per profile
     # (GDL 1.1). The password is only ever a `${NAME}` the deployment
     # sets; change the host and user to the server you run.
+    # `dev` and `local` run on a machine: development profiles, so the
+    # production rules (accept-all sign-in, ...) warn there instead of
+    # failing. `prod` is held to them.
     profiles = [
-        # `dev` is docker-compose's Postgres (127.0.0.1:5433, user studio), as
-        # scripts/product-gdl.mjs writes it and config/dev.yaml's pg_main reads it.
-        # `dev` and `local` run on a machine: development profiles, where the
-        # production rules warn instead of failing (GBX0325).
         embedded(id = "dev", development = True,
-                 database = postgres(host = "127.0.0.1", port = 5433, user = "studio", password = "${STUDIO_PG_PASSWORD}")),
+                 database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
         self_hosted(id = "local", development = True, host = "studio-web", worker_discovery = "directory",
                     target_dir = "target",
                     database = postgres(host = "127.0.0.1", user = "app", password = "${GEARS_PG_PASSWORD}")),
@@ -32,11 +32,11 @@ product(
                    database = postgres(host = "postgres", user = "app", password = "${GEARS_PG_PASSWORD}",
                                        existing_secret = "studio-web-db")),
     ],
-    default_profile = "local",
+    default_profile = "prod",
     gears = [
         use_gear("account-management", source = "gears-rust", plugins = [plugin("keycloak-idp-plugin", config = {"vendor": "constructorfabric"}), plugin("static-idp-plugin")]),
         use_gear("api-gateway", source = "gears-rust"),
-        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("oidc-authn-plugin"), plugin("static-authn-plugin")]),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [plugin("oidc-authn-plugin", config = {"jwt": {"claim_mapping": {"subject_id": "sub", "subject_tenant_id": "tenant_id", "token_scopes": "scope"}, "first_party_clients": ["studio-portal", "studio-desktop"], "require_audience": False, "supported_algorithms": ["RS256", "ES256"], "trusted_issuers": [{"issuer": "${STUDIO_OIDC_ISSUER}"}]}, "priority": 100, "s2s_oauth": {"default_subject_type": "gts.cf.core.security.subject_service.v1~", "discovery_url": "${STUDIO_OIDC_ISSUER}"}, "vendor": "constructorfabric"})]),
         use_gear("authz-resolver", source = "gears-rust", plugins = [plugin("static-authz-plugin"), plugin("studio-authz-plugin")]),
         use_gear("credstore", source = "gears-rust", plugins = [plugin("static-credstore-plugin"), plugin("studio-credstore-pg")]),
         use_gear("file-storage", source = "gears-rust"),
