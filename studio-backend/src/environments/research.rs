@@ -1,17 +1,21 @@
 //! Building and running a product on Constructor Research (ADR-0049 §3, §4),
-//! through the Research connector and the integration service Research runs.
+//! through the Research connector and Research's own public API.
 //!
 //! **Build.** Studio prepares the product on its own server -- the same
 //! `prepare` a cluster build's Job runs: clone, `gearbox generate`, a
-//! buildable tree -- packs the tree, and hands it to the integration service
-//! with each image's Dockerfile. Research compiles and keeps the images; the
-//! build's record says `where: research` and names them by Research's
-//! reference. Research keeps no chart, so none is published.
+//! buildable tree -- and renders its chart as the deploy will, to learn what
+//! each image must carry that a Research service cannot be given: the files
+//! the chart mounts from ConfigMaps, the command and the scratch folders
+//! (`research_app`). Each generated Dockerfile gains those lines, the tree
+//! goes into a desk of the Research project (WebDAV), and Research builds one
+//! image per Dockerfile there. The build's record says `where: research` and
+//! names each image as `research-image/<bake>/<name>:<id>`. Research keeps no
+//! chart, so none is published.
 //!
 //! **Deploy.** A deploy prepares the product again at the build's commit,
-//! renders its chart with the build's images (`helm template`) and puts the
-//! result as one application (`research_app`). The deploy's record ends with
-//! where the product opens.
+//! renders its chart with the build's images (`helm template`) and makes the
+//! environment's application run exactly those services, one call each. The
+//! deploy's record ends with where the product opens.
 //!
 //! The connection is the member's own, signed in personally (ADR-0049 §5).
 //! A background run is the organization's service, which cannot read a
@@ -22,21 +26,24 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
 use async_trait::async_trait;
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::build::{self, RepoRef};
-use super::research_app::{self, Application};
-use crate::connectors::sdk::research::{BuildImage, ResearchApi};
+use super::research_app::{self, Application, Inputs};
+use crate::connectors::sdk::research::{ImageBuild, Pace, Renew, ResearchApi};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 pub const BUILD_TASK_TYPE: &str = "environments.research.build";
+
+/// Where in the build context Studio lays out what an image carries.
+const OVERLAY_DIR: &str = "studio-research";
 
 /// The member a Research run acts for: whose sign-in it reads, in the tenant
 /// they asked in (where their personal connection's token was stored).
@@ -65,30 +72,15 @@ impl Requester {
     }
 }
 
-/// How long a Research build is followed before Studio gives up on it.
-const BUILD_FOR: Duration = Duration::from_secs(60 * 60);
-/// How long a deploy waits for every service to run.
-const START_FOR: Duration = Duration::from_secs(10 * 60);
-const POLL_EVERY: Duration = Duration::from_secs(15);
-
-/// The Research connector's calls through connection `connection_id`, read
-/// as `ctx` -- or, for a background run, as the member who asked.
-pub async fn api(
-    hub: &Arc<ClientHub>,
+/// The access token of connection `connection_id`, read as `ctx`: each read
+/// trades the stored refresh token for a fresh one.
+async fn token(
+    hub: Arc<ClientHub>,
     ctx: &SecurityContext,
     org: Uuid,
     connection_id: Uuid,
-    requester: Option<&Requester>,
-) -> anyhow::Result<ResearchApi> {
-    let member;
-    let ctx = match requester {
-        Some(r) => {
-            member = r.context()?;
-            &member
-        }
-        None => ctx,
-    };
-    let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub))
+) -> anyhow::Result<(String, String)> {
+    let connectors = crate::connectors::sdk::Connectors::new(hub)
         .get()
         .ok_or_else(|| anyhow!("connections are not available in this deployment"))?;
     let (_, auth, connection) = connectors
@@ -101,11 +93,31 @@ pub async fn api(
             connection.label
         );
     }
-    Ok(ResearchApi::new(
-        reqwest::Client::new(),
-        auth.root(),
-        auth.token.clone(),
-    ))
+    Ok((auth.root().to_owned(), auth.token))
+}
+
+/// The Research connector's calls through connection `connection_id`, read
+/// as `ctx` -- or, for a background run, as the member who asked. A token
+/// Research stops accepting (they last an hour; a build may take longer) is
+/// renewed from the connection.
+pub async fn api(
+    hub: &Arc<ClientHub>,
+    ctx: &SecurityContext,
+    org: Uuid,
+    connection_id: Uuid,
+    requester: Option<&Requester>,
+) -> anyhow::Result<ResearchApi> {
+    let ctx = match requester {
+        Some(r) => r.context()?,
+        None => ctx.clone(),
+    };
+    let (root, first) = token(Arc::clone(hub), &ctx, org, connection_id).await?;
+    let hub = Arc::clone(hub);
+    let renew: Renew = Arc::new(move || -> BoxFuture<'static, anyhow::Result<String>> {
+        let (hub, ctx) = (Arc::clone(&hub), ctx.clone());
+        Box::pin(async move { Ok(token(hub, &ctx, org, connection_id).await?.1) })
+    });
+    Ok(ResearchApi::new(reqwest::Client::new(), &root, first).renewing(renew))
 }
 
 /// A product prepared on this server, in a folder removed with it.
@@ -169,8 +181,54 @@ async fn prepare(
     }
 }
 
+/// The prepared chart rendered as `release` in `namespace` with `values`.
+async fn render(
+    tree: &Tree,
+    release: &str,
+    namespace: &str,
+    values: &serde_json::Value,
+) -> anyhow::Result<String> {
+    let file = tree
+        .work
+        .join(format!("values-{}.json", Uuid::new_v4().simple()));
+    tokio::fs::write(&file, serde_json::to_vec(values)?).await?;
+    let out = tokio::process::Command::new(super::deploy::helm_binary())
+        .args([
+            "template",
+            release,
+            &tree.prepared.chart_dir,
+            "--namespace",
+            namespace,
+            "--values",
+        ])
+        .arg(&file)
+        .env("HELM_CACHE_HOME", tree.work.join(".helm/cache"))
+        .env("HELM_CONFIG_HOME", tree.work.join(".helm/config"))
+        .env("HELM_DATA_HOME", tree.work.join(".helm/data"))
+        .output()
+        .await
+        .context("helm could not be run")?;
+    if !out.status.success() {
+        bail!(
+            "helm template failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    String::from_utf8(out.stdout).context("helm's output is not text")
+}
+
+/// One image `prepare` listed: its Dockerfile and context, relative to the
+/// work folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildImage {
+    pub app: String,
+    pub name: String,
+    pub dockerfile: String,
+    pub context: String,
+}
+
 /// The images `prepare` listed in `apps` (`app name dockerfile-dir context`),
-/// their paths made relative to the work folder the archive holds.
+/// their paths made relative to the work folder.
 pub fn build_images(apps: &str, work: &Path) -> anyhow::Result<Vec<BuildImage>> {
     let rel = |p: &str| -> anyhow::Result<String> {
         let rel = Path::new(p)
@@ -203,24 +261,133 @@ pub fn build_images(apps: &str, work: &Path) -> anyhow::Result<Vec<BuildImage>> 
         .collect()
 }
 
-/// The prepared tree as a `.tar.gz`, without the repository's history.
-async fn archive(work: &Path) -> anyhow::Result<Vec<u8>> {
-    let out = work.with_extension("tar.gz");
-    let status = tokio::process::Command::new("tar")
-        .arg("-czf")
-        .arg(&out)
-        .args(["--exclude=.git", "--exclude=target", "-C"])
-        .arg(work)
-        .arg("repo")
-        .status()
-        .await
-        .context("tar could not be run")?;
-    if !status.success() {
-        bail!("the prepared tree could not be packed ({status})");
+/// The values a build renders the chart with: the binding's, each
+/// application at a placeholder image, and the configuration secret --
+/// what the deploy's values are but for the images (`model::deploy_values`).
+fn build_values(
+    binding: Option<&serde_json::Value>,
+    images: &[BuildImage],
+    secret_keys: &[String],
+    release: &str,
+) -> serde_json::Value {
+    let mut values = binding
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    for i in images {
+        super::model::merge(
+            &mut values,
+            serde_json::json!({ i.app.clone(): { "image": {
+                "repository": format!("{}/{}", research_app::PENDING_IMAGE, i.app),
+                "tag": "build",
+            }}}),
+        );
+        if !secret_keys.is_empty() {
+            super::model::merge(
+                &mut values,
+                serde_json::json!({ i.app.clone(): {
+                    "existingSecret": super::model::config_secret_name(release),
+                    "secretKeys": secret_keys,
+                }}),
+            );
+        }
     }
-    let bytes = tokio::fs::read(&out).await?;
-    let _ = tokio::fs::remove_file(&out).await;
-    Ok(bytes)
+    values
+}
+
+/// Write `text` at `path`, making its folder.
+fn write(path: &Path, text: &str) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, text).with_context(|| format!("{} could not be written", path.display()))
+}
+
+/// What a build lays out for Research in `root` (the uploaded folder): per
+/// image a Dockerfile in its context folder -- Research builds with the
+/// Dockerfile's folder as the context -- with what the chart mounts and runs
+/// baked in, and the database servers' Postgres images. The images to build
+/// and the digest of what each carries.
+fn lay_out(
+    work: &Path,
+    root: &Path,
+    images: &[BuildImage],
+    app: &Application,
+    database_image: &str,
+) -> anyhow::Result<(Vec<ImageBuild>, BTreeMap<String, String>)> {
+    let rel = |p: &Path| -> anyhow::Result<String> {
+        Ok(p.strip_prefix(root)
+            .map_err(|_| anyhow!("{} is outside the uploaded tree", p.display()))?
+            .to_string_lossy()
+            .replace('\\', "/"))
+    };
+    let mut builds = Vec::new();
+    let mut bakes = BTreeMap::new();
+    for i in images {
+        let pending = format!("{}/{}:build", research_app::PENDING_IMAGE, i.app);
+        let spec = app.services.iter().find(|s| s.image == pending);
+        let context = work.join(&i.context);
+        let source = work.join(&i.dockerfile);
+        let mut text = std::fs::read_to_string(&source)
+            .with_context(|| format!("no Dockerfile for {}", i.app))?;
+        let dir = format!("{OVERLAY_DIR}/{}", i.app);
+        if let Some(spec) = spec {
+            text.push_str(&spec.overlay(&dir));
+            for (path, content) in spec.overlay_files() {
+                write(&context.join(&dir).join(path), &content)?;
+            }
+        }
+        let dockerfile = context.join(format!("Dockerfile.studio-{}", i.app));
+        write(&dockerfile, &text)?;
+        // The generated ignore file sits beside the generated Dockerfile; it
+        // goes beside this one, and keeps what Studio lays out.
+        let keep = format!("\n!{OVERLAY_DIR}/\n!{OVERLAY_DIR}/**\n");
+        let generated = source.with_file_name("Dockerfile.dockerignore");
+        let ignore = std::fs::read_to_string(&generated).ok();
+        if let Some(ignore) = &ignore {
+            write(
+                &dockerfile.with_file_name(format!("Dockerfile.studio-{}.dockerignore", i.app)),
+                &format!("{ignore}{keep}"),
+            )?;
+        }
+        let context_ignore = context.join(".dockerignore");
+        match std::fs::read_to_string(&context_ignore) {
+            Ok(own) if !own.contains(&keep) => write(&context_ignore, &format!("{own}{keep}"))?,
+            Ok(_) => {}
+            Err(_) => {
+                if let Some(ignore) = &ignore {
+                    write(&context_ignore, &format!("{ignore}{keep}"))?;
+                }
+            }
+        }
+        builds.push(ImageBuild {
+            key: i.app.clone(),
+            name: research_app::image_name(&i.name),
+            dockerfile: rel(&dockerfile)?,
+        });
+        bakes.insert(
+            i.app.clone(),
+            spec.map(|s| s.bake()).unwrap_or_else(|| "none".into()),
+        );
+    }
+    for db in app.services.iter().filter(|s| s.database) {
+        let dir = root.join(format!("{OVERLAY_DIR}-db")).join(&db.name);
+        let mut text = format!("FROM {database_image}\n");
+        text.push_str(&db.overlay("."));
+        for (path, content) in db.overlay_files() {
+            write(&dir.join(path), &content)?;
+        }
+        let dockerfile = dir.join("Dockerfile");
+        write(&dockerfile, &text)?;
+        let key = research_app::database_key(&db.name);
+        builds.push(ImageBuild {
+            key: key.clone(),
+            name: research_app::image_name(&format!("studio-db-{}", db.name)),
+            dockerfile: rel(&dockerfile)?,
+        });
+        bakes.insert(key, db.bake());
+    }
+    Ok((builds, bakes))
 }
 
 /* ── build ── */
@@ -244,6 +411,18 @@ pub struct ResearchBuildPayload {
     /// Whose Research sign-in the build uses.
     #[serde(default)]
     pub requested_by: Option<Requester>,
+    /// The application a deploy puts the build in, which is also the
+    /// namespace its chart is rendered for. The build renders the chart as
+    /// that deploy will, with the binding's values and secret keys.
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub values: Option<serde_json::Value>,
+    #[serde(default)]
+    pub secret_keys: Vec<String>,
+    /// What a database server's Postgres image is built from.
+    #[serde(default)]
+    pub database_image: Option<String>,
 }
 
 pub struct ResearchBuildTask {
@@ -317,53 +496,67 @@ impl ResearchBuildTask {
         let apps = std::fs::read_to_string(tree.work.join("apps"))
             .map_err(|e| fail("prepare")(e.into()))?;
         let images = build_images(&apps, &tree.work).map_err(fail("prepare"))?;
-        let context = archive(&tree.work).await.map_err(fail("prepare"))?;
+
+        // The chart as the deploy will render it: what each image carries.
+        let release = tree.prepared.product.clone();
+        let values = build_values(p.values.as_ref(), &images, &p.secret_keys, &release);
+        let rendered = render(&tree, &release, &p.namespace, &values)
+            .await
+            .map_err(fail("prepare"))?;
+        let database_image = p
+            .database_image
+            .clone()
+            .unwrap_or_else(|| super::database::DEFAULT_IMAGE.to_owned());
+        let any_secret = |_: &str, _: &str| Some(String::new());
+        let no_password = |_: &str| String::new();
+        let app = research_app::application_of(
+            &rendered,
+            &Inputs {
+                hardware: None,
+                secret: &any_secret,
+                database_password: &no_password,
+                database_image: &database_image,
+                namespace: &p.namespace,
+            },
+        )
+        .map_err(|e| fail("prepare")(e.into()))?;
+        let root = tree.work.join("repo");
+        let (builds, bakes) =
+            lay_out(&tree.work, &root, &images, &app, &database_image).map_err(fail("prepare"))?;
 
         self.step(ctx, p, "images").await;
-        let id = api
-            .start_build(&p.research_project, &images, context)
+        let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
+        let cancelled = || ctx.cancel.is_cancelled();
+        let built = api
+            .build_in_desk(
+                &p.research_project,
+                &root,
+                &p.build_id,
+                &builds,
+                Pace::RESEARCH,
+                &progress,
+                &cancelled,
+            )
             .await
             .map_err(fail("images"))?;
-        let until = tokio::time::Instant::now() + BUILD_FOR;
-        loop {
-            if ctx.cancel.is_cancelled() {
-                return Err(("images".into(), "the build was cancelled".into()));
-            }
-            let state = api.build(&id).await.map_err(fail("images"))?;
-            match state.state.as_str() {
-                "succeeded" => {
-                    return Ok(BuildOutcome {
-                        build_id: p.build_id.clone(),
-                        status: "passed".into(),
-                        product: Some(tree.prepared.product.clone()),
-                        profile: Some(p.profile.clone()),
-                        repository: Some(p.repo.repo.clone()),
-                        commit: Some(tree.prepared.commit.clone()),
-                        lock_hash: tree.prepared.lock_hash.clone(),
-                        images: state
-                            .images
-                            .into_iter()
-                            .map(|i| (i.app, i.reference))
-                            .collect(),
-                        ..BuildOutcome::default()
-                    });
-                }
-                "failed" => {
-                    let why = state
-                        .log_tail
-                        .unwrap_or_else(|| "Constructor Research says the build failed".into());
-                    return Err((state.step.unwrap_or_else(|| "images".into()), why));
-                }
-                _ => {}
-            }
-            if tokio::time::Instant::now() >= until {
-                return Err((
-                    "images".into(),
-                    format!("Constructor Research's build {id} did not end within an hour"),
-                ));
-            }
-            tokio::time::sleep(POLL_EVERY).await;
-        }
+        Ok(BuildOutcome {
+            build_id: p.build_id.clone(),
+            status: "passed".into(),
+            product: Some(tree.prepared.product.clone()),
+            profile: Some(p.profile.clone()),
+            repository: Some(p.repo.repo.clone()),
+            commit: Some(tree.prepared.commit.clone()),
+            lock_hash: tree.prepared.lock_hash.clone(),
+            images: built
+                .into_iter()
+                .map(|b| {
+                    let bake = bakes.get(&b.key).cloned().unwrap_or_default();
+                    let reference = research_app::image_reference(&bake, &b.name, &b.id);
+                    (b.key, reference)
+                })
+                .collect(),
+            ..BuildOutcome::default()
+        })
     }
 }
 
@@ -492,6 +685,74 @@ async fn database_passwords(
     Ok(out)
 }
 
+/// The image a deploy's values give `key` (`{key: {image: {repository, tag}}}`).
+fn values_image(values: &serde_json::Value, key: &str) -> Option<String> {
+    let image = values.get(key)?.get("image")?;
+    let repository = image.get("repository")?.as_str()?;
+    Some(match image.get("tag").and_then(|t| t.as_str()) {
+        Some(tag) => format!("{repository}:{tag}"),
+        None => repository.to_owned(),
+    })
+}
+
+/// Each service of `app` as Research's API takes it, on `hardware`, with its
+/// image read back from the build: what the person should know beside.
+fn service_bodies(
+    app: &Application,
+    values: &serde_json::Value,
+    hardware: &str,
+) -> anyhow::Result<(
+    Vec<crate::connectors::sdk::research::ServiceBody>,
+    Vec<String>,
+)> {
+    let mut bodies = Vec::new();
+    let mut notes = Vec::new();
+    let mut secrets = 0;
+    for spec in &app.services {
+        let reference = if spec.database {
+            values_image(values, &research_app::database_key(&spec.name))
+        } else {
+            Some(spec.image.clone())
+        };
+        let image = reference
+            .as_deref()
+            .and_then(research_app::image_ref)
+            .ok_or_else(|| {
+                anyhow!(
+                    "{} would run {}, which is not an image Constructor Research built for this \
+                     product: deploy a build made in Research (a build made before Studio called \
+                     Research's own API must be made again)",
+                    spec.name,
+                    reference.as_deref().unwrap_or("no image")
+                )
+            })?;
+        if image.bake != spec.bake() {
+            bail!(
+                "what {} carries in its image -- the files the chart mounts, its command, its \
+                 scratch folders -- is not what this deploy's chart asks for: the product's \
+                 configuration for this environment changed since the build. Build again, then \
+                 deploy that build",
+                spec.name
+            );
+        }
+        secrets += spec.secret_env.len();
+        let (body, more) = spec.body(&image.id, hardware)?;
+        notes.extend(more);
+        bodies.push(body);
+    }
+    if secrets > 0 {
+        notes.insert(
+            0,
+            format!(
+                "{secrets} secret value(s) are plain environment variables in Constructor \
+                 Research: its public API keeps no secret variables, and shows them to whoever \
+                 can open the service"
+            ),
+        );
+    }
+    Ok((bodies, notes))
+}
+
 /// Install `p` into its Research environment; where the product opens.
 pub async fn deploy(
     hub: &Arc<ClientHub>,
@@ -507,12 +768,23 @@ pub async fn deploy(
         r.requested_by.as_ref(),
     )
     .await?;
+    let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
     if p.action == super::model::DeploymentAction::Uninstall {
         ctx.progress(format!("removing application {}", p.namespace))
             .await;
-        api.delete_application(&r.research_project, &p.namespace, false)
-            .await?;
-        return Ok(format!("{} removed from Constructor Research", p.namespace));
+        return match api
+            .application_named(&r.research_project, &p.namespace)
+            .await?
+        {
+            Some(app) => {
+                api.delete_application(&app.id).await?;
+                Ok(format!("{} removed from Constructor Research", p.namespace))
+            }
+            None => Ok(format!(
+                "{} was not in Constructor Research: nothing to remove",
+                p.namespace
+            )),
+        };
     }
 
     ctx.progress(format!(
@@ -532,31 +804,7 @@ pub async fn deploy(
     .await?;
 
     ctx.progress("rendering the chart").await;
-    let values = tree.work.join("values.json");
-    tokio::fs::write(&values, serde_json::to_vec(&p.values)?).await?;
-    let out = tokio::process::Command::new(super::deploy::helm_binary())
-        .args([
-            "template",
-            &p.release,
-            &tree.prepared.chart_dir,
-            "--namespace",
-            &p.namespace,
-            "--values",
-        ])
-        .arg(&values)
-        .env("HELM_CACHE_HOME", tree.work.join(".helm/cache"))
-        .env("HELM_CONFIG_HOME", tree.work.join(".helm/config"))
-        .env("HELM_DATA_HOME", tree.work.join(".helm/data"))
-        .output()
-        .await
-        .context("helm could not be run")?;
-    if !out.status.success() {
-        bail!(
-            "helm template failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    let rendered = String::from_utf8(out.stdout).context("helm's output is not text")?;
+    let rendered = render(&tree, &p.release, &p.namespace, &p.values).await?;
 
     let credstore = hub
         .get::<dyn credstore_sdk::CredStoreClientV1>()
@@ -590,73 +838,80 @@ pub async fn deploy(
         .unwrap_or_else(|| super::database::DEFAULT_IMAGE.to_owned());
     let app: Application = research_app::application_of(
         &rendered,
-        &research_app::Inputs {
+        &Inputs {
             hardware: r.hardware.as_deref(),
             secret: &secret,
             database_password: &password,
             database_image: &image,
+            namespace: &p.namespace,
         },
     )?;
 
-    ctx.progress(format!(
-        "putting application {} ({} services)",
-        p.namespace,
-        app.services.len()
-    ))
-    .await;
-    let revision = api
-        .put_application(&r.research_project, &p.namespace, &app)
-        .await?;
-    let until = tokio::time::Instant::now() + START_FOR;
-    loop {
-        let state = api.application(&r.research_project, &p.namespace).await?;
-        if let Some(failed) = state.failed() {
-            bail!(
-                "{} did not start in Constructor Research: {}",
-                failed.name,
-                failed.message.clone().unwrap_or_else(|| "it failed".into())
-            );
+    let hardware = match &r.hardware {
+        Some(h) => h.clone(),
+        None => {
+            let offered = api.hardware(&r.research_project).await?;
+            let h = crate::connectors::sdk::research::smallest(&offered).ok_or_else(|| {
+                anyhow!("the Research project offers no hardware to run the services on")
+            })?;
+            ctx.progress(format!(
+                "the environment names no hardware: the services run on {}",
+                h.name
+            ))
+            .await;
+            h.id.clone()
         }
-        if state.running() {
-            let urls = state.public_urls();
-            let at = if urls.is_empty() {
-                "no public address".to_owned()
-            } else {
-                urls.join(", ")
-            };
-            return Ok(format!(
-                "{} runs in Constructor Research{}: {at}",
-                p.namespace,
-                revision
-                    .map(|r| format!(" (revision {r})"))
-                    .unwrap_or_default()
-            ));
-        }
-        if tokio::time::Instant::now() >= until {
-            bail!(
-                "{} did not start in Constructor Research within ten minutes",
-                p.namespace
-            );
-        }
-        tokio::time::sleep(POLL_EVERY).await;
+    };
+    let (bodies, notes) = service_bodies(&app, &p.values, &hardware)?;
+    for note in &notes {
+        ctx.progress(note.clone()).await;
     }
+    let running = api
+        .put_application(
+            &r.research_project,
+            &p.namespace,
+            &bodies,
+            Pace::RESEARCH,
+            &progress,
+        )
+        .await?;
+    let links = running.links();
+    let at = if links.is_empty() {
+        "no public address".to_owned()
+    } else {
+        links.join(", ")
+    };
+    let noted = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" (note: {})", notes.join("; "))
+    };
+    Ok(format!(
+        "{} runs in Constructor Research: {at}{noted}",
+        p.namespace
+    ))
 }
 
 /// A Research application as a release's rollout: each service a workload,
-/// its public addresses the hosts.
+/// its public links the hosts.
 pub async fn rollout(
     api: &ResearchApi,
     project: &str,
     application: &str,
 ) -> anyhow::Result<super::deploy::Rollout> {
-    let state = api.application(project, application).await?;
+    let Some(app) = api.application_named(project, application).await? else {
+        return Ok(super::deploy::Rollout {
+            hosts: Vec::new(),
+            workloads: Vec::new(),
+        });
+    };
     Ok(super::deploy::Rollout {
-        hosts: state.public_urls(),
-        workloads: state
+        hosts: app.links(),
+        workloads: app
             .services
             .into_iter()
             .map(|s| super::deploy::Workload {
-                ready: i32::from(s.state == "running"),
+                ready: i32::from(s.status == "running"),
                 desired: 1,
                 name: s.name,
                 images: Vec::new(),
@@ -670,7 +925,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_images_prepare_listed_are_named_inside_the_archive() {
+    fn the_images_prepare_listed_are_named_inside_the_tree() {
         let work = Path::new("/tmp/studio-research-1");
         let apps = "api-gateway gbx-api-gateway /tmp/studio-research-1/repo/.gearbox/out/docker/api-gateway /tmp/studio-research-1/repo\n";
         let images = build_images(apps, work).unwrap();
@@ -685,5 +940,143 @@ mod tests {
         );
         assert!(build_images("api /elsewhere/docker /elsewhere x\n", work).is_err());
         assert!(build_images("api gbx /tmp/studio-research-1/a /etc\n", work).is_err());
+    }
+
+    const CHART: &str = r#"
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: shop-config }
+data:
+  shop.yaml: |
+    database:
+      host: postgres
+      port: 5432
+    listen: 0.0.0.0:8087
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: shop }
+spec:
+  template:
+    metadata: { labels: { app: shop } }
+    spec:
+      securityContext: { runAsUser: 65532 }
+      containers:
+        - name: shop
+          image: studio-research-pending/shop:build
+          command: [gbx-shop]
+          args: [--config, /etc/shop/shop.yaml]
+          ports: [{ name: rest, containerPort: 8087 }]
+          env:
+            - { name: DATABASE_URL, value: "postgres://app@postgres:5432/shop" }
+          volumeMounts:
+            - { name: config, mountPath: /etc/shop/shop.yaml, subPath: shop.yaml }
+            - { name: home, mountPath: /var/lib/shop }
+      volumes:
+        - { name: config, configMap: { name: shop-config } }
+        - { name: home, emptyDir: {} }
+"#;
+
+    fn shop(image: &str) -> Application {
+        let none = |_: &str, _: &str| None;
+        let pw = |_: &str| "pw".to_owned();
+        research_app::application_of(
+            &CHART.replace("studio-research-pending/shop:build", image),
+            &Inputs {
+                hardware: None,
+                secret: &none,
+                database_password: &pw,
+                database_image: "postgres:18",
+                namespace: "shop-dev",
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_build_lays_out_a_dockerfile_in_the_context_with_what_the_chart_mounts_baked_in() {
+        let work = std::env::temp_dir().join(format!("research-lay-{}", Uuid::new_v4().simple()));
+        let docker = work.join("repo/out/docker/shop");
+        std::fs::create_dir_all(&docker).unwrap();
+        std::fs::write(docker.join("Dockerfile"), "FROM debian:bookworm-slim\n").unwrap();
+        std::fs::write(docker.join("Dockerfile.dockerignore"), "*\n!src\n").unwrap();
+        let images = [BuildImage {
+            app: "shop".into(),
+            name: "gbx-shop".into(),
+            dockerfile: "repo/out/docker/shop/Dockerfile".into(),
+            context: "repo".into(),
+        }];
+        let app = shop("studio-research-pending/shop:build");
+        let (builds, bakes) =
+            lay_out(&work, &work.join("repo"), &images, &app, "postgres:18").unwrap();
+        let read = |p: &str| std::fs::read_to_string(work.join(p)).unwrap();
+        let dockerfile = read("repo/Dockerfile.studio-shop");
+        let config = read("repo/studio-research/shop/files/etc/shop/shop.yaml");
+        let ignore = read("repo/.dockerignore");
+        let _ = std::fs::remove_dir_all(&work);
+
+        assert_eq!(
+            builds,
+            [ImageBuild {
+                key: "shop".into(),
+                name: "gbx-shop".into(),
+                dockerfile: "Dockerfile.studio-shop".into(),
+            }]
+        );
+        assert_eq!(bakes["shop"], app.services[0].bake());
+        assert!(dockerfile.starts_with("FROM debian:bookworm-slim\n"));
+        assert!(
+            dockerfile.contains("COPY [\"studio-research/shop/files/\",\"/\"]\n"),
+            "{dockerfile}"
+        );
+        assert!(
+            dockerfile.contains(
+                "COPY --chown=65532:65532 [\"studio-research/shop/scratch/\",\"/var/lib/shop/\"]\n"
+            ),
+            "{dockerfile}"
+        );
+        assert!(
+            dockerfile.ends_with(
+                "ENTRYPOINT [\"gbx-shop\"]\nCMD [\"--config\",\"/etc/shop/shop.yaml\"]\n"
+            )
+        );
+        assert!(config.contains("listen: 0.0.0.0:8087"));
+        assert!(ignore.starts_with("*\n!src\n") && ignore.contains("!studio-research/**"));
+    }
+
+    #[test]
+    fn a_deploy_runs_the_build_s_image_and_refuses_one_whose_baked_files_changed() {
+        let built = shop("studio-research-pending/shop:build");
+        let bake = built.services[0].bake();
+        let app = shop(&research_app::image_reference(&bake, "gbx-shop", "img-7"));
+        assert_eq!(
+            app.services[0].bake(),
+            bake,
+            "the image does not change what is baked"
+        );
+        let (bodies, notes) = service_bodies(&app, &serde_json::json!({}), "cpu-s").unwrap();
+        assert_eq!(bodies[0].image_id, "img-7");
+        assert_eq!(bodies[0].hardware_configuration_id, "cpu-s");
+        assert_eq!(
+            bodies[0].environment_variables[0].value, "postgres://app@postgres:5432/shop",
+            "postgres is not one of this chart's services"
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+
+        let stale = shop(&research_app::image_reference(
+            "0badbeef0bad",
+            "gbx-shop",
+            "img-7",
+        ));
+        let e = service_bodies(&stale, &serde_json::json!({}), "cpu-s")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Build again"), "{e}");
+
+        let foreign = shop("ghcr.io/acme/shop:1");
+        let e = service_bodies(&foreign, &serde_json::json!({}), "cpu-s")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not an image Constructor Research built"), "{e}");
     }
 }

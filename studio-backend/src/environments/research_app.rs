@@ -6,23 +6,37 @@
 //!
 //! - each Deployment is a service, named as the Service in front of it is,
 //!   since that is the name the other applications reach it by;
-//! - a ConfigMap mounted as a file stays a file (`files`), and an
-//!   environment variable read from a Secret is a secret variable, which
-//!   Research keeps and never echoes back;
 //! - a port an Ingress routes to is public; with no Ingress, the ports named
 //!   `http` or `rest` are, since that is where a gear's REST API listens;
 //! - a database server the configuration names (`database::needs`) is one
 //!   more service, a Postgres with a volume and no public port.
 //!
+//! Research's public API takes a service's image, ports, variables, volumes
+//! and hardware -- no files, no command, no secret variables. So:
+//!
+//! - what the chart mounts from a ConfigMap, its command and arguments and
+//!   its scratch folders (`emptyDir`) are **baked into the image** when
+//!   Research builds it ([`ServiceSpec::overlay`]); the image's reference
+//!   carries a digest of them ([`ServiceSpec::bake`]), and a deploy whose
+//!   chart asks for other ones refuses and asks for a new build;
+//! - an environment variable read from a Secret is passed as a plain
+//!   variable, which Research shows to whoever can open the service -- the
+//!   deploy says so;
+//! - Research reaches a service at `svc-<name>`, not `<name>`: an address of
+//!   another service in a variable or a YAML file is rewritten to it.
+//!
 //! What Research has no equivalent for (a CronJob, a StatefulSet, a sidecar,
-//! a custom resource) refuses the deploy and is named, rather than dropped.
+//! a Secret mounted as files, a custom resource) refuses the deploy and is
+//! named, rather than dropped.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize as _, Serialize};
 use serde_yaml::Value;
+use sha2::Digest as _;
 
 use super::database::{self, ServerNeed};
+use crate::connectors::sdk::research::{EnvBody, PortBody, ServiceBody, VolumeBody};
 
 /// Kinds that mean nothing outside Kubernetes: the identity a Pod runs as, its
 /// permissions, its network policy. Read past, not refused.
@@ -41,7 +55,7 @@ const PUBLIC_PORT_NAMES: &[&str] = &["http", "rest"];
 /// Where the Postgres service keeps its data.
 const PG_DATA: &str = "/var/lib/postgresql/data";
 
-/// The body of `PUT /projects/{p}/applications/{name}`.
+/// The services a chart runs as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Application {
     pub services: Vec<ServiceSpec>,
@@ -58,11 +72,19 @@ pub struct ServiceSpec {
     pub args: Vec<String>,
     pub ports: Vec<PortSpec>,
     pub env: BTreeMap<String, String>,
+    /// Variables the chart reads from a Secret. Research keeps no secret
+    /// variables: they reach it as plain ones.
     pub secret_env: BTreeMap<String, String>,
-    /// Files written into the container before it starts: a configuration
-    /// the chart mounts from a ConfigMap. (An addition to the §6 contract.)
+    /// Files the chart mounts from a ConfigMap: baked into the image.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<FileSpec>,
+    /// Folders the chart gives the container to write in (`emptyDir`):
+    /// made in the image, writable by the user it runs as.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scratch: Vec<String>,
+    /// The user the Pod runs as (`runAsUser`), who owns the scratch folders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_as: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub volumes: Vec<VolumeSpec>,
     pub replicas: u32,
@@ -70,6 +92,10 @@ pub struct ServiceSpec {
     pub hardware: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthSpec>,
+    /// A database server's Postgres: built `FROM` the environment's database
+    /// image, not from the product's sources.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub database: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -111,6 +137,9 @@ pub struct Inputs<'a> {
     pub database_password: &'a dyn Fn(&str) -> String,
     /// The Postgres image.
     pub database_image: &'a str,
+    /// The namespace the chart is rendered for: `<name>.<namespace>` and its
+    /// `.svc` forms are another service's address too.
+    pub namespace: &'a str,
 }
 
 /// Why a chart cannot run as a Research application.
@@ -263,6 +292,10 @@ pub fn application_of(rendered: &str, inputs: &Inputs<'_>) -> Result<Application
             ));
         }
     }
+    let names: BTreeSet<String> = services.iter().map(|s| s.name.clone()).collect();
+    for svc in &mut services {
+        readdress(svc, &names, inputs.namespace);
+    }
     Ok(Application { services })
 }
 
@@ -401,6 +434,7 @@ fn service_of(
 
     // Volumes: a ConfigMap mounted is a file; a claim is a volume; emptyDir is scratch.
     let mut files = Vec::new();
+    let mut scratch = Vec::new();
     let mut volumes = Vec::new();
     let pod_volumes: BTreeMap<String, &Value> = seq(&pod, &["volumes"])
         .iter()
@@ -416,6 +450,7 @@ fn service_of(
             ));
         };
         if v.get("emptyDir").is_some() {
+            scratch.push(path.to_owned());
             continue;
         }
         if let Some(cm) = s(v, &["configMap", "name"]) {
@@ -494,10 +529,16 @@ fn service_of(
         env,
         secret_env,
         files,
+        scratch,
+        run_as: at(c, &["securityContext", "runAsUser"])
+            .or_else(|| at(&pod, &["securityContext", "runAsUser"]))
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok()),
         volumes,
         replicas,
         hardware: inputs.hardware.map(str::to_owned),
         health,
+        database: false,
     })
 }
 
@@ -548,6 +589,8 @@ fn postgres(need: &ServerNeed, inputs: &Inputs<'_>) -> Result<ServiceSpec, Refus
             path: "/docker-entrypoint-initdb.d/studio-databases.sql".to_owned(),
             content: script,
         }],
+        scratch: Vec::new(),
+        run_as: None,
         volumes: vec![VolumeSpec {
             name: "data".to_owned(),
             path: PG_DATA.to_owned(),
@@ -556,7 +599,381 @@ fn postgres(need: &ServerNeed, inputs: &Inputs<'_>) -> Result<ServiceSpec, Refus
         replicas: 1,
         hardware: inputs.hardware.map(str::to_owned),
         health: None,
+        database: true,
     })
+}
+
+/* ── what an image carries, and how a deploy names it ── */
+
+/// The repository a build's image reference starts with: Research names an
+/// image by an id, which a chart's `repository:tag` carries as
+/// `research-image/<bake>/<name>:<id>`.
+pub const IMAGE_PREFIX: &str = "research-image";
+
+/// The repository a build renders the chart with before its images exist.
+pub const PENDING_IMAGE: &str = "studio-research-pending";
+
+/// An image as a build records it.
+pub fn image_reference(bake: &str, name: &str, id: &str) -> String {
+    format!("{IMAGE_PREFIX}/{bake}/{name}:{id}")
+}
+
+/// A build's image, read back from the reference a chart renders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageRef {
+    /// [`ServiceSpec::bake`] of what was baked into it.
+    pub bake: String,
+    pub name: String,
+    /// Research's id of the image.
+    pub id: String,
+}
+
+pub fn image_ref(image: &str) -> Option<ImageRef> {
+    let rest = image.strip_prefix(IMAGE_PREFIX)?.strip_prefix('/')?;
+    let (repo, id) = rest.rsplit_once(':')?;
+    let (bake, name) = repo.split_once('/')?;
+    (!id.is_empty() && !bake.is_empty()).then(|| ImageRef {
+        bake: bake.to_owned(),
+        name: name.to_owned(),
+        id: id.to_owned(),
+    })
+}
+
+/// What a build records a database server's Postgres image under, beside
+/// the applications' (a values key no chart reads).
+pub fn database_key(host: &str) -> String {
+    format!("studio-database-{host}")
+}
+
+/// A name Research accepts for an image: ASCII letters, digits and hyphens,
+/// at most 30.
+pub fn image_name(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .take(30)
+        .collect();
+    match clean.trim_matches('-') {
+        "" => "studio".to_owned(),
+        n => n.to_owned(),
+    }
+}
+
+impl ServiceSpec {
+    /// Whether the image has anything baked in.
+    fn baked(&self) -> bool {
+        !(self.command.is_empty()
+            && self.args.is_empty()
+            && self.files.is_empty()
+            && self.scratch.is_empty())
+    }
+
+    /// A digest of what [`Self::overlay`] bakes in: the build records it in
+    /// the image's reference and a deploy compares.
+    pub fn bake(&self) -> String {
+        let what = serde_json::json!({
+            "command": self.command,
+            "args": self.args,
+            "files": self.files.iter().map(|f| [&f.path, &f.content]).collect::<Vec<_>>(),
+            "scratch": self.scratch,
+            "run_as": self.run_as,
+        });
+        hex::encode(&sha2::Sha256::digest(what.to_string().as_bytes())[..6])
+    }
+
+    /// The files to lay out under the folder [`Self::overlay`] copies from,
+    /// each a path relative to it and the content.
+    pub fn overlay_files(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .files
+            .iter()
+            .map(|f| {
+                (
+                    format!("files/{}", f.path.trim_start_matches('/')),
+                    f.content.clone(),
+                )
+            })
+            .collect();
+        if !self.scratch.is_empty() {
+            out.push(("scratch/.keep".to_owned(), String::new()));
+        }
+        out
+    }
+
+    /// Dockerfile lines that bake into the image what the chart would mount
+    /// and run, from `dir` (a folder of the build context holding
+    /// [`Self::overlay_files`]); empty when there is nothing to bake.
+    /// Kubernetes' `command` replaces the image's entrypoint and `args` its
+    /// command, and so do these.
+    pub fn overlay(&self, dir: &str) -> String {
+        if !self.baked() {
+            return String::new();
+        }
+        let json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+        let mut out = String::from(
+            "\n# Constructor Studio (ADR-0049): what the chart mounts and runs, baked in,\n\
+             # since a Constructor Research service takes neither files nor a command.\n",
+        );
+        if !self.files.is_empty() {
+            out.push_str(&format!(
+                "COPY {}\n",
+                json(&[format!("{dir}/files/"), "/".to_owned()])
+            ));
+        }
+        for path in &self.scratch {
+            let owner = self
+                .run_as
+                .map(|u| format!("--chown={u}:{u} "))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "COPY {owner}{}\n",
+                json(&[
+                    format!("{dir}/scratch/"),
+                    format!("{}/", path.trim_end_matches('/'))
+                ])
+            ));
+        }
+        if !self.command.is_empty() {
+            out.push_str(&format!("ENTRYPOINT {}\n", json(&self.command)));
+            out.push_str(&format!("CMD {}\n", json(&self.args)));
+        } else if !self.args.is_empty() {
+            out.push_str(&format!("CMD {}\n", json(&self.args)));
+        }
+        out
+    }
+
+    /// The service as Research's API takes it, and what the person should
+    /// know of the difference.
+    pub fn body(
+        &self,
+        image_id: &str,
+        hardware: &str,
+    ) -> Result<(ServiceBody, Vec<String>), Refusal> {
+        let name = &self.name;
+        if name.len() > 55 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return refuse(format!(
+                "{name} cannot name a Constructor Research service \
+                 (ASCII letters, digits and hyphens, at most 55)"
+            ));
+        }
+        let mut notes = Vec::new();
+        // Research has no secret variables: a Secret's value is a plain one.
+        let mut vars = self.env.clone();
+        vars.extend(self.secret_env.clone());
+        let mut empty = Vec::new();
+        let mut environment_variables = Vec::new();
+        for (k, v) in vars {
+            let ok = k
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !ok {
+                return refuse(format!(
+                    "{name} reads variable {k}, a name Constructor Research does not accept \
+                     (letters, digits and _, not starting with a digit)"
+                ));
+            }
+            if v.is_empty() {
+                empty.push(k);
+                continue;
+            }
+            environment_variables.push(EnvBody { name: k, value: v });
+        }
+        if !empty.is_empty() {
+            notes.push(format!(
+                "{name}: {} left unset, since Constructor Research takes no empty variable",
+                empty.join(", ")
+            ));
+        }
+        if self.replicas > 1 {
+            notes.push(format!(
+                "{name} runs one replica in Constructor Research, not {}",
+                self.replicas
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let ports = self
+            .ports
+            .iter()
+            .filter(|p| seen.insert(p.port))
+            .map(|p| PortBody {
+                number: p.port,
+                expose_to_internet: p.public,
+            })
+            .collect();
+        let volumes = self
+            .volumes
+            .iter()
+            .map(|v| VolumeBody {
+                name: volume_name(&v.name),
+                mount_point: v.path.clone(),
+                size_gb: size_gb(&v.size),
+            })
+            .collect();
+        Ok((
+            ServiceBody {
+                name: name.clone(),
+                image_id: image_id.to_owned(),
+                hardware_configuration_id: hardware.to_owned(),
+                volumes,
+                ports,
+                environment_variables,
+            },
+            notes,
+        ))
+    }
+}
+
+/// A volume name Research accepts: lowercase letters, digits and hyphens,
+/// at most 30.
+fn volume_name(name: &str) -> String {
+    let clean: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .take(30)
+        .collect();
+    match clean.trim_matches('-') {
+        "" => "data".to_owned(),
+        n => n.to_owned(),
+    }
+}
+
+/// A Kubernetes size (`10Gi`, `512Mi`, `1Ti`) in whole gigabytes, at least 1.
+fn size_gb(size: &str) -> u32 {
+    let s = size.trim();
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let Ok(n) = s[..split].parse::<u32>() else {
+        return 10;
+    };
+    let gb = match &s[split..] {
+        "Ti" | "T" => n.saturating_mul(1024),
+        "Mi" | "M" => n.div_ceil(1024),
+        "Ki" | "K" | "" => 1,
+        _ => n,
+    };
+    gb.max(1)
+}
+
+/* ── addresses ── */
+
+/// The host Research gives a service (its Kubernetes Service's name).
+pub fn research_host(name: &str) -> String {
+    format!("svc-{}", name.to_ascii_lowercase())
+}
+
+/// Research's host for `host` when it names one of `names`: bare, or with
+/// the chart's namespace and its `.svc` forms.
+fn service_host(host: &str, names: &BTreeSet<String>, namespace: &str) -> Option<String> {
+    let (first, rest) = match host.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (host, None),
+    };
+    if !names.contains(first) {
+        return None;
+    }
+    let ok = match rest {
+        None => true,
+        Some(rest) => {
+            !namespace.is_empty()
+                && (rest == namespace
+                    || rest == format!("{namespace}.svc")
+                    || rest == format!("{namespace}.svc.cluster.local"))
+        }
+    };
+    ok.then(|| research_host(first))
+}
+
+/// `host[:port]` split at a port of digits.
+fn split_port(s: &str) -> (&str, &str) {
+    match s.rfind(':') {
+        Some(c) if c + 1 < s.len() && s[c + 1..].bytes().all(|b| b.is_ascii_digit()) => {
+            s.split_at(c)
+        }
+        _ => (s, ""),
+    }
+}
+
+/// `value` with another service's address made Research's: the host of a
+/// URL, `host:port`, or -- where the key says it is one -- a bare host.
+fn readdressed(
+    key: &str,
+    value: &str,
+    names: &BTreeSet<String>,
+    namespace: &str,
+) -> Option<String> {
+    if let Some(i) = value.find("://") {
+        let (scheme, after) = value.split_at(i + 3);
+        let end = after.find(['/', '?', '#']).unwrap_or(after.len());
+        let (authority, tail) = after.split_at(end);
+        let (userinfo, hostport) = match authority.rfind('@') {
+            Some(a) => authority.split_at(a + 1),
+            None => ("", authority),
+        };
+        let (host, port) = split_port(hostport);
+        let host = service_host(host, names, namespace)?;
+        return Some(format!("{scheme}{userinfo}{host}{port}{tail}"));
+    }
+    let (host, port) = split_port(value);
+    if !port.is_empty() {
+        return service_host(host, names, namespace).map(|h| format!("{h}{port}"));
+    }
+    let k = key.to_ascii_lowercase();
+    if ["host", "addr", "server", "endpoint"]
+        .iter()
+        .any(|w| k.contains(w))
+    {
+        return service_host(value, names, namespace);
+    }
+    None
+}
+
+fn readdress_yaml(v: &mut Value, key: &str, names: &BTreeSet<String>, namespace: &str) -> bool {
+    match v {
+        Value::String(s) => match readdressed(key, s, names, namespace) {
+            Some(n) => {
+                *s = n;
+                true
+            }
+            None => false,
+        },
+        Value::Mapping(m) => {
+            let mut changed = false;
+            for (k, v) in m.iter_mut() {
+                let k = k.as_str().unwrap_or(key).to_owned();
+                changed |= readdress_yaml(v, &k, names, namespace);
+            }
+            changed
+        }
+        Value::Sequence(items) => items.iter_mut().fold(false, |changed, v| {
+            readdress_yaml(v, key, names, namespace) | changed
+        }),
+        Value::Tagged(t) => readdress_yaml(&mut t.value, key, names, namespace),
+        _ => false,
+    }
+}
+
+/// Another service's address, in a variable or a YAML file, as Research's.
+fn readdress(svc: &mut ServiceSpec, names: &BTreeSet<String>, namespace: &str) {
+    for (k, v) in svc.env.iter_mut().chain(svc.secret_env.iter_mut()) {
+        if let Some(n) = readdressed(k, v, names, namespace) {
+            *v = n;
+        }
+    }
+    for f in &mut svc.files {
+        if !(f.path.ends_with(".yaml") || f.path.ends_with(".yml")) {
+            continue;
+        }
+        let Ok(mut doc) = serde_yaml::from_str::<Value>(&f.content) else {
+            continue;
+        };
+        if readdress_yaml(&mut doc, "", names, namespace)
+            && let Ok(text) = serde_yaml::to_string(&doc)
+        {
+            f.content = text;
+        }
+    }
 }
 
 fn scalar(v: &Value) -> String {

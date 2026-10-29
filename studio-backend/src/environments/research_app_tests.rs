@@ -18,6 +18,7 @@ fn inputs<'a>(secret: &'a dyn Fn(&str, &str) -> Option<String>) -> Inputs<'a> {
         secret,
         database_password: &password,
         database_image: "pgvector/pgvector:pg18",
+        namespace: "studio-web-prod",
     }
 }
 
@@ -49,8 +50,18 @@ fn studio_webs_own_product_is_its_host_and_a_postgres() {
     );
     assert_eq!(host.files.len(), 1);
     assert_eq!(host.files[0].path, "/etc/gearbox/api-gateway.yaml");
-    assert!(host.files[0].content.contains("host: postgres"));
-    assert!(host.volumes.is_empty(), "the home emptyDir is scratch");
+    assert!(
+        host.files[0].content.contains("host: svc-postgres"),
+        "Research reaches the Postgres service at svc-postgres: {}",
+        host.files[0].content
+    );
+    assert_eq!(
+        host.scratch,
+        ["/var/lib/gearbox"],
+        "the home emptyDir is made in the image"
+    );
+    assert_eq!(host.run_as, Some(65532));
+    assert!(host.volumes.is_empty(), "the home emptyDir is not a volume");
     assert_eq!(host.env["POD_NAME"], "api-gateway");
     assert_eq!(
         host.health,
@@ -179,14 +190,139 @@ spec:
 }
 
 #[test]
-fn the_body_research_receives_leaves_out_what_is_empty() {
+fn what_the_host_carries_is_baked_into_its_image() {
     let app = application_of(STUDIO_WEB, &inputs(&no_secret)).unwrap();
-    let body = serde_json::to_value(&app).unwrap();
-    let host = &body["services"][0];
+    let host = &app.services[0];
+    let overlay = host.overlay("studio-research/api-gateway");
+    assert!(overlay.contains(
+        "COPY [\"studio-research/api-gateway/files/\",\"/\"]
+"
+    ));
+    assert!(overlay.contains(
+        "COPY --chown=65532:65532 [\"studio-research/api-gateway/scratch/\",\"/var/lib/gearbox/\"]
+"
+    ));
+    assert!(overlay.ends_with(
+        "ENTRYPOINT [\"gbx-api-gateway\"]
+CMD [\"--config\",\"/etc/gearbox/api-gateway.yaml\"]
+"
+    ));
+    let files: Vec<String> = host.overlay_files().into_iter().map(|(p, _)| p).collect();
     assert_eq!(
-        host["ports"][1],
-        serde_json::json!({ "name": "rest", "port": 8087, "public": true })
+        files,
+        ["files/etc/gearbox/api-gateway.yaml", "scratch/.keep"]
     );
-    assert!(host.get("volumes").is_none());
-    assert_eq!(host["secret_env"]["GEARS_PG_PASSWORD"], "pw-postgres");
+
+    // The digest follows what is baked, not the image or the variables.
+    let mut other = host.clone();
+    other.image = "research-image/x/y:z".into();
+    other.secret_env.insert("NEW".into(), "v".into());
+    assert_eq!(other.bake(), host.bake());
+    other.files[0].content.push_str(
+        "
+log: debug
+",
+    );
+    assert_ne!(other.bake(), host.bake());
+
+    let pg = &app.services[1];
+    assert!(pg.database);
+    assert!(pg.overlay(".").contains("COPY [\"./files/\",\"/\"]"));
+    assert!(
+        !pg.overlay(".").contains("ENTRYPOINT"),
+        "Postgres keeps its own entrypoint"
+    );
+}
+
+#[test]
+fn a_build_s_image_reference_round_trips_through_a_chart() {
+    let r = image_reference(
+        "0a1b2c3d4e5f",
+        "gbx-api-gateway",
+        "54b131f0569249959ef106cde49a0e69",
+    );
+    let (repository, tag) = super::super::model::split_image(&r);
+    assert_eq!(tag.as_deref(), Some("54b131f0569249959ef106cde49a0e69"));
+    let back = image_ref(&format!("{repository}:{}", tag.unwrap())).unwrap();
+    assert_eq!(
+        back,
+        ImageRef {
+            bake: "0a1b2c3d4e5f".into(),
+            name: "gbx-api-gateway".into(),
+            id: "54b131f0569249959ef106cde49a0e69".into(),
+        }
+    );
+    assert_eq!(image_ref("ghcr.io/acme/shop:1"), None);
+    assert_eq!(
+        image_name("gbx_api.gateway-with-a-very-long-name-indeed"),
+        "gbx-api-gateway-with-a-very-lo"
+    );
+}
+
+#[test]
+fn the_body_research_receives_is_its_api_s_and_says_what_differs() {
+    let mut app = application_of(STUDIO_WEB, &inputs(&no_secret)).unwrap();
+    app.services[0].replicas = 2;
+    app.services[0].env.insert("EMPTY".into(), String::new());
+    let (body, notes) = app.services[0].body("img-1", "cpu-s").unwrap();
+    assert_eq!(body.image_id, "img-1");
+    assert_eq!(
+        body.ports,
+        [
+            PortBody {
+                number: 50051,
+                expose_to_internet: false
+            },
+            PortBody {
+                number: 8087,
+                expose_to_internet: true
+            },
+        ]
+    );
+    let vars: BTreeMap<_, _> = body
+        .environment_variables
+        .iter()
+        .map(|v| (v.name.as_str(), v.value.as_str()))
+        .collect();
+    assert_eq!(
+        vars["GEARS_PG_PASSWORD"], "pw-postgres",
+        "a secret is a plain variable"
+    );
+    assert!(!vars.contains_key("EMPTY"));
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[0].contains("EMPTY left unset"));
+    assert!(notes[1].contains("one replica"));
+
+    let (pg, _) = app.services[1].body("img-2", "cpu-s").unwrap();
+    assert_eq!(
+        pg.volumes,
+        [VolumeBody {
+            name: "data".into(),
+            mount_point: "/var/lib/postgresql/data".into(),
+            size_gb: 10
+        }]
+    );
+}
+
+#[test]
+fn another_service_s_address_is_research_s() {
+    let names: BTreeSet<String> = ["postgres".to_owned(), "api".to_owned()].into();
+    let r = |k: &str, v: &str| readdressed(k, v, &names, "shop-dev");
+    assert_eq!(
+        r("DATABASE_URL", "postgres://app:pw@postgres:5432/db").as_deref(),
+        Some("postgres://app:pw@svc-postgres:5432/db")
+    );
+    assert_eq!(
+        r("UPSTREAM", "http://api.shop-dev.svc.cluster.local:8087/v1").as_deref(),
+        Some("http://svc-api:8087/v1")
+    );
+    assert_eq!(r("REDIS", "api:6379").as_deref(), Some("svc-api:6379"));
+    assert_eq!(r("PGHOST", "postgres").as_deref(), Some("svc-postgres"));
+    assert_eq!(
+        r("PGUSER", "postgres"),
+        None,
+        "a user named postgres is not an address"
+    );
+    assert_eq!(r("SITE", "https://postgres.com/"), None);
+    assert_eq!(r("TIME", "12:30"), None);
 }
