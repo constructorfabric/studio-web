@@ -32,6 +32,8 @@ import {
 /** gearbox-studio's product command, by id -- the one `studio.openProduct`
  *  runs (portal-bridge-contribution.ts), without depending on either package. */
 const GEARBOX_OPEN_PRODUCT_COMMAND_ID = 'gearbox.product.openAt';
+/** gearbox-studio's Generate-then-Build, by id for the same reason. */
+const GEARBOX_GENERATE_AND_BUILD_COMMAND_ID = 'gearbox.product.generateAndBuild';
 
 /** How long a link waits for the member to finish signing in, in the browser. */
 const SIGN_IN_BUDGET_MS = 5 * 60_000;
@@ -100,7 +102,27 @@ export class DesktopLinkHandler implements OpenHandler {
             progress.cancel();
         }
         if (link.product) {
-            await this.openProduct(path, link.product, link.branch);
+            const inGearbox = await this.openProduct(path, link.product, link.branch);
+            if (link.build) {
+                await this.build(inGearbox, link.product);
+            }
+        }
+    }
+
+    /**
+     * The Builds tab's "On my machine": generate the product and press its
+     * Build, which reports itself to the portal. Only once Gearbox has it
+     * open -- a description opened as a file has no Build to press.
+     */
+    protected async build(inGearbox: boolean, product: string): Promise<void> {
+        if (!inGearbox) {
+            this.messages.warn(`Studio: ${product} is not open in Gearbox, so it was not built. Open it there and press Build.`);
+            return;
+        }
+        try {
+            await this.commands.executeCommand(GEARBOX_GENERATE_AND_BUILD_COMMAND_ID);
+        } catch (error) {
+            this.messages.error(`Studio: ${product} could not be built — ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -110,12 +132,13 @@ export class DesktopLinkHandler implements OpenHandler {
      * path under the project's checkouts and brings `branch` in beside the
      * checkout when the description was saved there. Without Gearbox the
      * description opens as a file -- under the project folder or one of its
-     * checkouts -- and failing that the person is told where it is.
+     * checkouts -- and failing that the person is told where it is. True
+     * when Gearbox has it.
      */
-    protected async openProduct(projectPath: string, product: string, branch: string | undefined): Promise<void> {
+    protected async openProduct(projectPath: string, product: string, branch: string | undefined): Promise<boolean> {
         try {
-            await this.commands.executeCommand(GEARBOX_OPEN_PRODUCT_COMMAND_ID, product, branch);
-            return;
+            const opened = await this.commands.executeCommand<boolean>(GEARBOX_OPEN_PRODUCT_COMMAND_ID, product, branch);
+            return opened === true;
         } catch (error) {
             console.warn('[studio] desktop link: Gearbox could not open the product', error);
         }
@@ -126,6 +149,7 @@ export class DesktopLinkHandler implements OpenHandler {
                 `Studio: the project is open. Its product description is ${product}${branch ? ` on the branch ${branch}` : ''}.`,
             );
         }
+        return false;
     }
 
     /** Connect to the Studio the link names: one this build offers without a

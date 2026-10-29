@@ -97,6 +97,17 @@ export const SHOW_GENERATE = {
 };
 
 /**
+ * Constructor Studio: Generate the open product and press the Build its
+ * profile shows -- `cargo build` for a local one, Build images for a
+ * kubernetes one. The portal's Builds tab runs it through a `cfstudio://`
+ * link with `build=1` ("On my machine").
+ */
+export const GENERATE_AND_BUILD = {
+  id: "gearbox.product.generateAndBuild",
+  label: "Gearbox: Generate and Build",
+};
+
+/**
  * Constructor Studio: show the Resolution Lock, for a caller that means *show*
  * it -- the ribbon and the Gearbox menu. Same reason as `SHOW_CONFLICTS`:
  * `gearbox.lock.toggle` closes an open lock, which is right in `View > Views`

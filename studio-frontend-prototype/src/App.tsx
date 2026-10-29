@@ -5784,7 +5784,7 @@ function ProjectScreen({
           <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
         )}
         {tab === "deploys" && (
-          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
+          <ProjectDeploys token={token} projectId={proj.id} onOpenTab={setTab} />
         )}
         {tab === "kits" && (
           <ProjectKits

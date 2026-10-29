@@ -26,6 +26,14 @@ describe('the desktop link', () => {
         expect(parseDesktopLink(desktopLink(link))).toEqual(link);
     });
 
+    it('asks to build the product only with build=1, and only with a product', () => {
+        const link = { project: PROJECT, product: 'product.gdl', build: true };
+        expect(parseDesktopLink(desktopLink(link))).toEqual(link);
+        expect(parseDesktopLink(`cfstudio://open?project=${PROJECT}&product=product.gdl&build=true`)?.build).toBeUndefined();
+        expect(parseDesktopLink(`cfstudio://open?project=${PROJECT}&build=1`)?.build).toBeUndefined();
+        expect(desktopLink({ project: PROJECT, build: true })).not.toContain('build');
+    });
+
     it('drops a product path that leaves the repository, and a branch that is not one', () => {
         for (const product of ['/etc/passwd', '../product.gdl', 'a/../../b.gdl', 'a//b.gdl', 'C:\\x.gdl', 'p d.gdl']) {
             const raw = `cfstudio://open?project=${PROJECT}&product=${encodeURIComponent(product)}`;

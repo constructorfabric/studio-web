@@ -1,13 +1,14 @@
 // The link the portal opens a project in the desktop Studio with (ADR-0027 §6).
 //
 //   cfstudio://open?studio=<Studio address>&issuer=<OIDC issuer>&project=<id>&name=<name>
-//                  [&product=<path of a product.gdl>&branch=<branch it was saved on>]
+//                  [&product=<path of a product.gdl>&branch=<branch it was saved on>[&build=1]]
 //
 // `product` is the portal's Components tab handing a composed product on:
 // once the project is cloned and open, the desktop opens that description in
 // the Gearbox perspective -- the same command a portal session runs for
 // `studio.openProduct` -- and `branch` is where the portal saved it when that
-// is not the branch a checkout opens.
+// is not the branch a checkout opens. `build=1` is the Builds tab's "On my
+// machine": once the product is open, generate it and press its Build.
 //
 // It names a Studio and a project and carries no token: whatever it asks for
 // is done with the member's own sign-in, the same way a click in the desktop's
@@ -35,6 +36,8 @@ export interface DesktopLink {
     readonly product?: string;
     /** The branch `product` was saved on. */
     readonly branch?: string;
+    /** Generate `product` and build it once it is open; meaningless without one. */
+    readonly build?: boolean;
 }
 
 /** A repository-relative path: no root, no `..`, nothing outside a
@@ -89,13 +92,15 @@ export function parseDesktopLink(raw: string): DesktopLink | undefined {
         return undefined;
     }
     const web = (value: string | undefined) => (value && /^https?:\/\/[^/\s]+/.test(value) ? value : undefined);
+    const product = repoPath(url.searchParams.get('product'));
     return {
         project,
         name: url.searchParams.get('name')?.trim() || undefined,
         studioUrl: web(trimSlash(url.searchParams.get('studio'))),
         issuer: web(trimSlash(url.searchParams.get('issuer'))),
-        product: repoPath(url.searchParams.get('product')),
+        product,
         branch: branchName(url.searchParams.get('branch')),
+        ...(product && url.searchParams.get('build') === '1' ? { build: true } : {}),
     };
 }
 
@@ -117,6 +122,9 @@ export function desktopLink(link: DesktopLink): string {
     }
     if (link.branch) {
         params.set('branch', link.branch);
+    }
+    if (link.product && link.build) {
+        params.set('build', '1');
     }
     return `${DESKTOP_LINK_SCHEME}://${DESKTOP_LINK_OPEN}?${params.toString()}`;
 }

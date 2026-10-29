@@ -860,7 +860,18 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
 }
 
 /** A project's environments, on its product card: bindings and deployments. */
-export function ProjectEnvironments({ token, projectId, profiles }: { token: string; projectId: string; profiles: readonly string[] }) {
+export function ProjectEnvironments({
+  token,
+  projectId,
+  profiles,
+  title = "Environments",
+}: {
+  token: string;
+  projectId: string;
+  profiles: readonly string[];
+  /** The heading: where the bindings sit decides what they are called. */
+  title?: string;
+}) {
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -912,7 +923,7 @@ export function ProjectEnvironments({ token, projectId, profiles }: { token: str
     <div className="envs env-project" data-project-environments>
       <style>{ENV_CSS}</style>
       <div className="card-head">
-        <h3>Environments</h3>
+        <h3>{title}</h3>
       </div>
       {error && <div className="error">{error}</div>}
       {targets === null ? (
