@@ -2731,6 +2731,19 @@ async function requestBlob(path: string, token: string): Promise<Blob> {
   return res.blob();
 }
 
+/** How many more times a product preview is asked after a gateway timeout. */
+const PREVIEW_RETRIES = 3;
+
+async function retryOnTimeout<T>(ask: () => Promise<T>, retries: number): Promise<T> {
+  for (let left = retries; ; left--) {
+    try {
+      return await ask();
+    } catch (e) {
+      if (left === 0 || !(e instanceof ApiError) || e.status !== 504) throw e;
+    }
+  }
+}
+
 /** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
 const MAX_PAGE = 200;
 
@@ -2976,6 +2989,16 @@ export interface DocValidation {
 export interface ScaffoldFile {
   path: string;
   content: string;
+}
+
+/** A build Studio runs, as its pod shows it now (`GET …/builds/{id}/log`). */
+export interface BuildLog {
+  build_id: string;
+  /** The environment it runs in. */
+  environment: string;
+  namespace: string;
+  /** prepare, build, publish: in the order they run. */
+  steps: { step: string; state: "waiting" | "running" | "passed" | "failed" | string; log: string }[];
 }
 
 export interface ProjectGearRepo {
@@ -4412,6 +4435,13 @@ export const api = {
       `/studio-environments/v1/builds?project_id=${encodeURIComponent(projectId)}`,
       token,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** A build Studio runs, step by step with the end of each step's log, read
+   *  from its pod now; 404 once the pod is gone, a day after it ended. */
+  buildLog: (token: string, projectId: string, buildId: string) =>
+    request<BuildLog>(
+      `/studio-environments/v1/builds/${encodeURIComponent(buildId)}/log?project_id=${encodeURIComponent(projectId)}`,
+      token,
     ),
   /** Propose the workflow that builds the product for an environment, as a
    *  pull request to the project's repository. */
@@ -5863,12 +5893,19 @@ export const api = {
       /** Commit onto the base branch, whatever the share mode. */
       onto_base?: boolean;
     },
-  ) =>
-    request<ProductPreview>(
-      `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product/preview`,
-      token,
-      { method: "POST", body: JSON.stringify(body) },
-    ),
+  ) => {
+    const ask = () =>
+      request<ProductPreview>(
+        `/studio-product/v1/projects/${encodeURIComponent(projectId)}/product/preview`,
+        token,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+    // A large product resolves past the gateway's 30 s; the backend finishes
+    // the run and keeps its answer, so asking again (a read only -- a write
+    // is never repeated) picks it up instead of reporting a timeout.
+    if (body.write) return ask();
+    return retryOnTimeout(ask, PREVIEW_RETRIES);
+  },
   /** Create a new repository via the connector and set it as the project's gear repo. */
   createProjectRepo: (
     token: string,

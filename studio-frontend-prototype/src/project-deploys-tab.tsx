@@ -1,8 +1,10 @@
-/* A project's Deploys tab (ADR-0043): where its product runs. One card per
- * environment the organization lets the project deploy to -- the namespace it
- * gets there, the images' registry, what was deployed last and how it went --
- * then the bindings of the product's kubernetes profiles and the history,
- * which `ProjectEnvironments` already draws.
+/* A project's Deploys tab (ADR-0043): where its product runs. One table row
+ * per environment the organization lets the project deploy to -- the
+ * namespace it gets there, the images' registry, the profiles bound to it,
+ * what was deployed last and how it went -- with Deploy a build and the
+ * release's configuration under the open row; then the bindings of the
+ * product's kubernetes profiles and the history, which `ProjectEnvironments`
+ * already draws.
  *
  * The last step of the product's way out: Builds before it publishes a
  * build's images and chart -- in Studio, the IDE or CI -- and Deploy a build
@@ -11,8 +13,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, api, type Deployment, type ProjectTargets } from "./api";
+import { ApiError, api, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
+import { DataTable } from "./data-table";
 import { EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
 import { ProjectEnvironments } from "./environments-screen";
 import { STATE_LABELS, shortCommit, stateTone } from "./environments";
@@ -22,15 +25,15 @@ import { deployableBuilds, latestByEnvironment, profilesBoundTo } from "./projec
 import { deploysHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 
+type Target = { environment: DeployEnvironment; namespace: string };
+
 export function ProjectDeploys({
   token,
   projectId,
-  onOpenStudio,
   onOpenTab,
 }: {
   token: string;
   projectId: string;
-  onOpenStudio: () => void;
   /** Open another tab of the project: Builds, when nothing is published. */
   onOpenTab?: (tab: PipelineTab) => void;
 }) {
@@ -41,6 +44,8 @@ export function ProjectDeploys({
   const [notice, setNotice] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [round, setRound] = useState(0);
+  // `undefined`: the first environment, until the reader opens or closes one.
+  const [open, setOpen] = useState<string | null | undefined>(undefined);
   const changed = useCallback((message: string) => {
     setNotice(message);
     setRound((r) => r + 1);
@@ -74,15 +79,15 @@ export function ProjectDeploys({
   const envName = (id: string) => targets?.environments.find((t) => t.environment.id === id)?.environment.name ?? id;
 
   const latest = latestByEnvironment(deployments);
+  const shown = open === undefined ? (targets?.environments[0]?.environment.id ?? null) : open;
 
   return (
     <div className="project-deploys" data-project-deploys>
       <style>{DEPLOYS_CSS}</style>
       <h1>Deploys</h1>
       <p className="subtitle">
-        Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments); the
-        project picks which of them its product goes to. A deploy names a build that published its images and chart -- from
-        the Builds tab or the IDE -- and the server installs it with the environment&apos;s cluster connection.
+        Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments); a
+        deploy installs a build that published its images and chart with the environment&apos;s cluster connection.
       </p>
       {targets && (
         <PipelineLine
@@ -113,89 +118,98 @@ export function ProjectDeploys({
           </p>
         </div>
       ) : (
-        <div className="deploy-envs">
-          {targets.environments.map(({ environment: e, namespace }) => {
-            const d = latest.get(e.id);
-            const profiles = profilesBoundTo(targets.bindings, e.id);
-            return (
-              <section key={e.id} className="card deploy-env" data-deploy-environment={e.name}>
-                <div className="deploy-env-head">
-                  <b>{e.name}</b>
-                  {e.protected && <span className="badge">needs approval</span>}
-                </div>
-                {e.description && <div className="sub">{e.description}</div>}
-                <dl>
-                  <dt>Namespace</dt>
-                  <dd>
-                    <code>{namespace}</code>
-                  </dd>
-                  <dt>Images from</dt>
-                  <dd>{e.registry ? <code>{e.registry}</code> : <span className="sub">where the chart says</span>}</dd>
-                  <dt>Profiles</dt>
-                  <dd>
-                    {profiles.length ? profiles.map((p) => <code key={p}>{p} </code>) : <span className="sub">none bound yet</span>}
-                  </dd>
-                  <dt>Last deploy</dt>
-                  <dd>
-                    {d ? (
-                      <>
-                        <span className={`badge deploy-${stateTone(d.state)}`}>{STATE_LABELS[d.state] ?? d.state}</span>{" "}
-                        {d.commit && <code>{shortCommit(d.commit)}</code>} <span className="sub">{relTime(d.requested_at)}</span>
-                      </>
-                    ) : (
-                      <span className="sub">nothing deployed yet</span>
-                    )}
-                  </dd>
-                  {e.promote_from && (
+        <section className="card" data-deploy-environments>
+          <DataTable<Target>
+            list="project-deploy-environments"
+            title="Where it runs"
+            rows={targets.environments}
+            rowKey={(t) => t.environment.id}
+            rowLabel={(t) => t.environment.name}
+            onOpen={(t) => setOpen(shown === t.environment.id ? null : t.environment.id)}
+            defaultView="table"
+            empty={{ title: "No environment yet." }}
+            columns={[
+              {
+                id: "environment",
+                header: "Environment",
+                compare: (x, y) => x.environment.name.localeCompare(y.environment.name),
+                cell: ({ environment: e }) => (
+                  <div data-deploy-environment={e.name}>
+                    <div className="deploy-env-head">
+                      <b>{e.name}</b>
+                      {e.protected && <span className="badge">needs approval</span>}
+                    </div>
+                    {e.description && <div className="sub">{e.description}</div>}
+                    {e.promote_from && <div className="sub">takes from {envName(e.promote_from)}</div>}
+                  </div>
+                ),
+              },
+              { id: "namespace", header: "Namespace", cell: (t) => <code>{t.namespace}</code> },
+              {
+                id: "images",
+                header: "Images from",
+                cell: ({ environment: e }) =>
+                  e.registry ? <code>{e.registry}</code> : <span className="sub">where the chart says</span>,
+              },
+              {
+                id: "profiles",
+                header: "Profiles",
+                cell: ({ environment: e }) => {
+                  const profiles = profilesBoundTo(targets.bindings, e.id);
+                  return profiles.length ? (
+                    profiles.map((p) => <code key={p}>{p} </code>)
+                  ) : (
+                    <span className="sub">none bound yet</span>
+                  );
+                },
+              },
+              {
+                id: "last",
+                header: "Last deploy",
+                cell: ({ environment: e }) => {
+                  const d = latest.get(e.id);
+                  return d ? (
                     <>
-                      <dt>Takes from</dt>
-                      <dd>{envName(e.promote_from)}</dd>
+                      <span className={`badge deploy-${stateTone(d.state)}`}>{STATE_LABELS[d.state] ?? d.state}</span>{" "}
+                      {d.commit && <code>{shortCommit(d.commit)}</code>} <span className="sub">{relTime(d.requested_at)}</span>
                     </>
-                  )}
-                </dl>
-                <EnvironmentActions
-                  token={token}
-                  projectId={projectId}
-                  env={e}
-                  latest={d}
-                  deployments={deployments}
-                  builds={builds}
-                  envName={envName}
-                  onChanged={changed}
-                />
-                <EnvironmentConfig
-                  key={`${e.id}-${round}`}
-                  token={token}
-                  projectId={projectId}
-                  env={e}
-                  bindings={targets.bindings}
-                  secrets={targets.secrets ?? []}
-                  onChanged={changed}
-                />
-              </section>
-            );
-          })}
-        </div>
-      )}
-      {targets && targets.environments.length > 0 && (
-        <div className="row deploy-how">
-          <span className="grow hint">
-            Builds come from the Builds tab. Or from the desktop: open the project in the IDE, Generate, then Deploy to a
-            bound environment.
-          </span>
-          {onOpenTab && (
-            <button type="button" onClick={() => onOpenTab("builds")}>
-              Builds
-            </button>
-          )}
-          <button type="button" onClick={onOpenStudio}>
-            Open in IDE
-          </button>
-        </div>
+                  ) : (
+                    <span className="sub">nothing deployed yet</span>
+                  );
+                },
+              },
+            ]}
+            detail={({ environment: e }) =>
+              e.id === shown ? (
+                <div className="deploy-env">
+                  <EnvironmentActions
+                    token={token}
+                    projectId={projectId}
+                    env={e}
+                    latest={latest.get(e.id)}
+                    deployments={deployments}
+                    builds={builds}
+                    envName={envName}
+                    onChanged={changed}
+                  />
+                  <EnvironmentConfig
+                    key={`${e.id}-${round}`}
+                    token={token}
+                    projectId={projectId}
+                    env={e}
+                    bindings={targets.bindings}
+                    secrets={targets.secrets ?? []}
+                    onChanged={changed}
+                  />
+                </div>
+              ) : null
+            }
+          />
+        </section>
       )}
       {!unavailable && (
         <div className="card">
-          <ProjectEnvironments token={token} projectId={projectId} profiles={KUBERNETES_PROFILES} />
+          <ProjectEnvironments token={token} projectId={projectId} profiles={KUBERNETES_PROFILES} title="Which environment each profile deploys to" />
         </div>
       )}
     </div>
@@ -203,21 +217,16 @@ export function ProjectDeploys({
 }
 
 const DEPLOYS_CSS = `
-.project-deploys .deploy-envs { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px; margin:12px 0; }
 .project-deploys .deploy-env { margin:0; }
 .project-deploys .deploy-env-head { display:flex; gap:8px; align-items:baseline; }
-.project-deploys .deploy-env dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:10px 0 0; font-size:13px; }
-.project-deploys .deploy-env dt { color:var(--muted-foreground); }
 .project-deploys .deploy-actions { margin-top:10px; }
 .project-deploys .deploy-actions .row { gap:6px; flex-wrap:wrap; }
 .project-deploys .deploy-pick { margin-top:8px; }
 .project-deploys .deploy-config { margin-top:10px; font-size:13px; }
 .project-deploys .deploy-config textarea { width:100%; font-family:var(--font-mono, monospace); font-size:12px; }
 .project-deploys .warn { color:var(--warning, #b45309); }
-.project-deploys .deploy-env dd { margin:0; overflow-wrap:anywhere; }
 .project-deploys .sub { color:var(--muted-foreground); font-size:12px; }
 .project-deploys .deploy-ok { background:color-mix(in srgb, #16a34a 18%, transparent); }
 .project-deploys .deploy-warn { background:color-mix(in srgb, #d97706 18%, transparent); }
 .project-deploys .deploy-bad { background:color-mix(in srgb, #dc2626 18%, transparent); }
-.project-deploys .deploy-how { margin:0 0 12px; align-items:center; }
 `;

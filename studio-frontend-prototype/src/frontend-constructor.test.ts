@@ -10,6 +10,7 @@ import {
   mfesFrom,
   offersFor,
   placementLabel,
+  projectRepos,
   splitTemplates,
   withFrontxSource,
   withSuggestedFrontx,
@@ -194,6 +195,22 @@ describe("the repository to read micro-frontends from", () => {
   it("is nothing once every repository is read, or the project has none", () => {
     expect(frontxSuggestion(["acme/a"], [src("acme/a")])).toBeNull();
     expect(frontxSuggestion([], [])).toBeNull();
+  });
+
+  it("finds the project's repository where it is recorded, not only among ingested artifacts", () => {
+    // A product written to studio-web, a project with no ingested repository.
+    expect(
+      projectRepos({ writtenPrUrl: "https://github.com/constructorfabric/studio-web/pull/912", artifactRepos: [] }),
+    ).toEqual(["constructorfabric/studio-web"]);
+    expect(
+      projectRepos({
+        gearRepo: "acme/gears",
+        sources: [{ full_path: "acme/app" }, { full_path: "Acme/Gears.git" }],
+        writtenPrUrl: "https://github.com/acme/gears/pull/1",
+        artifactRepos: ["acme/app", "acme/docs"],
+      }),
+    ).toEqual(["acme/gears", "acme/app", "acme/docs"]);
+    expect(projectRepos({})).toEqual([]);
   });
 
   it("is added as a FrontX source through the organization's connection", () => {

@@ -20,6 +20,7 @@ import {
   mfesFrom,
   offersFor,
   placementLabel,
+  projectRepos,
   splitTemplates,
   withFrontxSource,
   zonesOf,
@@ -76,8 +77,9 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
       api.projectConfig(token, projectId).catch(() => null),
       api.listArtifactNodes(token, "repo", projectId, undefined, 50).catch(() => ({ nodes: [] })),
       api.catalogSources(token).catch(() => ({ items: [] })),
+      api.getProjectGearRepo(token, projectId).catch(() => ({ nodes: [] })),
     ])
-      .then(([components, profiles, product, cfg, repos, sources]) => {
+      .then(([components, profiles, product, cfg, repos, sources, gearRepo]) => {
         if (!alive) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -89,7 +91,15 @@ export function FrontendConstructor({ token, projectId }: { token: string; proje
           mfes: addable,
           templates,
           gears: product?.gears ?? [],
-          suggestion: frontxSuggestion([...repoPathsOf(repos.nodes ?? []).values()], sources.items ?? []),
+          suggestion: frontxSuggestion(
+            projectRepos({
+              gearRepo: gearRepo.nodes?.[0]?.value.repo,
+              sources: cfg?.sources,
+              writtenPrUrl: product?.written?.pr_url,
+              artifactRepos: [...repoPathsOf(repos.nodes ?? []).values()],
+            }),
+            sources.items ?? [],
+          ),
         });
         const own = cfg?.frontend?.mfes ?? [];
         setPicks(own);

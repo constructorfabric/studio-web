@@ -259,6 +259,28 @@ pub struct StudioBuildDto {
 }
 
 #[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BuildStepLogDto {
+    /// `prepare`, `build` or `publish`.
+    pub step: String,
+    /// `waiting`, `running`, `passed` or `failed`.
+    pub state: String,
+    /// The end of what the step wrote; empty while it has not started.
+    pub log: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BuildLogDto {
+    pub build_id: String,
+    /// The environment the build runs in.
+    pub environment: String,
+    pub namespace: String,
+    /// In the order they run.
+    pub steps: Vec<BuildStepLogDto>,
+}
+
+#[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct BuildWorkflowRequest {
     /// The environment whose registry the workflow publishes to.
@@ -699,6 +721,33 @@ async fn start_build(
     ))
 }
 
+async fn get_build_log(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(build_id): Path<String>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<BuildLogDto>> {
+    let log = envs
+        .0
+        .build_log(&ctx, q.project_id, &build_id)
+        .await
+        .map_err(problem)?;
+    Ok(Json(BuildLogDto {
+        build_id,
+        environment: log.environment,
+        namespace: log.namespace,
+        steps: log
+            .steps
+            .into_iter()
+            .map(|s| BuildStepLogDto {
+                step: s.step,
+                state: s.state,
+                log: s.log,
+            })
+            .collect(),
+    }))
+}
+
 async fn scaffold_build_workflow(
     Extension(ctx): Extension<SecurityContext>,
     Extension(envs): Extension<Environments>,
@@ -1099,6 +1148,30 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/builds/{build_id}/log")
+        .operation_id("studio_environments.get_build_log")
+        .summary("A build Studio runs, step by step with the end of each step's log")
+        .description(
+            "For `?project_id=`: one of the project's builds the caller can see. Reads the \
+             build's pod in the environment's cluster, through the environment's connection: \
+             each step (prepare, build, publish), whether it waits, runs, passed or failed, \
+             and the last lines it wrote. Asked on demand: the cluster is not polled. 404 \
+             once the pod is gone, a day after the build ended.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("build_id", "Build id")
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(get_build_log)
+        .json_response_with_schema::<BuildLogDto>(openapi, StatusCode::OK, "The build's steps")
+        .error_400(openapi)
+        .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)

@@ -659,8 +659,8 @@ export const SURFACES: Surface[] = [
     id: "project-builds",
     area: "project",
     title: "Builds",
-    does: "Build the composed product and publish it: in Studio as a Job in the organization's cluster, in the IDE, or by proposing a CI workflow; follow each build's stages (prepare, images, publish), a failed one with its first error, a published one with its images and chart; deploy a published build to an environment; and read the CI runs of the project's repositories.",
-    components: ["ProjectBuilds", "BuildInStudio", "InCi", "ProposeBuildWorkflow", "DeployBuildTo"],
+    does: "Build the composed product and publish it: in Studio as a Job in the organization's cluster, on the member's machine in the desktop IDE, or by proposing a CI workflow; follow each build's stages (prepare, images, publish) and read the end of each step's log from its pod, a failed one with its first error, a published one with its images and chart; deploy a published build to an environment; and read the CI runs of the project's repositories.",
+    components: ["ProjectBuilds", "BuildInStudio", "BuildLogPanel", "InCi", "ProposeBuildWorkflow", "DeployBuildTo"],
     gears: ["account-management", "studio-artifact-ingest", "studio-environments", "studio-product"],
   },
   {

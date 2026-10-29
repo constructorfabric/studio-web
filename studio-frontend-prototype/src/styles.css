@@ -2833,3 +2833,12 @@ div.dm-block { padding-left: 0; }
   .fc-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
   .fc-side { border-left: 0; border-top: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; }
 }
+
+/* A build's step log (Builds tab): the end of what the step wrote. */
+.build-log {
+  margin: 0; max-height: 360px; overflow: auto;
+  padding: 8px 10px; border-radius: var(--radius-md);
+  background: var(--muted); color: var(--foreground);
+  font: 11px/1.45 var(--font-mono);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}

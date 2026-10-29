@@ -370,3 +370,14 @@ export function openingScenario(stored: string | null, canBuildInStudio: boolean
   if (stored && (BUILD_SCENARIOS as readonly string[]).includes(stored)) return stored as BuildScenario;
   return canBuildInStudio ? "studio" : "desktop";
 }
+
+/** The step of a build's log to show first: the one that failed, else the
+ *  one running, else the last that started; `null` when none has. */
+export function stepToShow(steps: readonly { step: string; state: string }[]): string | null {
+  return (
+    steps.find((s) => s.state === "failed")?.step ??
+    steps.find((s) => s.state === "running")?.step ??
+    [...steps].reverse().find((s) => s.state !== "waiting")?.step ??
+    null
+  );
+}

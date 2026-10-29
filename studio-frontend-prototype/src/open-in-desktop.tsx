@@ -23,8 +23,9 @@ export const DESKTOP_DOWNLOAD_URL =
  *
  *  `product`/`branch`: a product.gdl to open in the Gearbox perspective once
  *  the project is cloned and open, and the branch it was saved on -- the
- *  Components tab handing on what it composed. */
-export function desktopLink(project: { id: string; name?: string; product?: string; branch?: string }): string {
+ *  Components tab handing on what it composed. `build`: generate that product
+ *  and build it there -- the Builds tab's "On my machine". */
+export function desktopLink(project: { id: string; name?: string; product?: string; branch?: string; build?: boolean }): string {
   const params = new URLSearchParams();
   params.set("studio", window.location.origin);
   // The issuer this portal actually signs in with -- its default included, which
@@ -34,6 +35,7 @@ export function desktopLink(project: { id: string; name?: string; product?: stri
   if (project.name) params.set("name", project.name);
   if (project.product) params.set("product", project.product);
   if (project.branch) params.set("branch", project.branch);
+  if (project.product && project.build) params.set("build", "1");
   return `cfstudio://open?${params.toString()}`;
 }
 

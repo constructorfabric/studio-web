@@ -53,6 +53,9 @@ use tracing::warn;
 pub const CORPUS_SOURCE_ID: &str = "gears-rust";
 
 const DEFAULT_CORPUS_REF: &str = "main";
+
+/// Previews run one at a time; see [`Gearbox::preview`].
+static PREVIEW_TURNS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 const DEFAULT_REFRESH: Duration = Duration::from_secs(600);
 /// How often the platform's gear repositories are listed again. A list read
 /// is one metadata row; a change is checked out on the next use.
@@ -1432,16 +1435,19 @@ fn answer_gdl(result: &Value) -> anyhow::Result<String> {
 /// request, shut down. Returns the request's whole response. Blocking.
 fn rpc_once(
     bin: &Path,
-    root: &Path,
+    roots: &[&Path],
     workspace: &Path,
     method: &str,
     params: Value,
 ) -> anyhow::Result<Value> {
     use std::io::{BufRead, BufReader, Write};
 
-    let mut child = Command::new(bin)
-        .args(["rpc", "--stdio", "--root"])
-        .arg(root)
+    let mut cmd = Command::new(bin);
+    cmd.args(["rpc", "--stdio"]);
+    for root in roots {
+        cmd.arg("--root").arg(root);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1512,7 +1518,7 @@ fn rpc_once(
     let outcome = (|| {
         send(
             serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "roots": [root.to_string_lossy()],
+                "roots": roots.iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>(),
                 "workspace": workspace.to_string_lossy(),
                 "allow_writes": true,
             }}),
@@ -2620,8 +2626,9 @@ pub struct Gearbox {
     /// `gearbox --version`, asked once: the binary does not change under a
     /// running process, and the status page asked it on every load.
     version: std::sync::OnceLock<String>,
-    /// Recent previews' answers.
-    evaluations: std::sync::Mutex<Evaluations>,
+    /// Recent previews' answers, shared with the engine task that keeps one
+    /// after its request is gone.
+    evaluations: Arc<std::sync::Mutex<Evaluations>>,
 }
 
 /// A project's own product description, as its repository holds it.
@@ -2706,7 +2713,7 @@ impl Gearbox {
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_files: std::sync::Mutex::new(HashMap::new()),
             version: std::sync::OnceLock::new(),
-            evaluations: std::sync::Mutex::new(Evaluations::default()),
+            evaluations: Arc::new(std::sync::Mutex::new(Evaluations::default())),
         }
     }
 
@@ -3363,7 +3370,7 @@ impl Gearbox {
                 "destination_dir": scratch.join("gear").to_string_lossy(),
                 "dry_run": true,
             });
-            let answer = rpc_once(&bin, &root, &scratch, "gearbox/gear/scaffold", params);
+            let answer = rpc_once(&bin, &[&root], &scratch, "gearbox/gear/scaffold", params);
             let _ = std::fs::remove_dir_all(&scratch);
             answer
         })
@@ -3386,6 +3393,14 @@ impl Gearbox {
                 PROFILES.join(", ")
             );
         }
+        // One preview at a time: a product of some sixty gears takes about
+        // 1.5 GB to resolve, and the Product page asks again as picks change,
+        // so two at once took the backend past its 4 GiB limit on dev
+        // (OOMKilled). The next waits; a repeat is answered from `evaluations`.
+        let turn = PREVIEW_TURNS
+            .acquire()
+            .await
+            .context("the preview queue is closed")?;
         let started = Instant::now();
         let loaded = self.ensure(scope).await?;
         let corpus_ms = started.elapsed().as_millis();
@@ -3486,18 +3501,24 @@ impl Gearbox {
                 let product_id = input.product_id.clone();
                 let product_path = input.product_path.clone();
                 let profile = input.profile.clone();
-                let r = tokio::task::spawn_blocking(move || {
-                    evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)
+                let evaluations = Arc::clone(&self.evaluations);
+                // The engine outlives a request the gateway gave up on (its
+                // limit is 30 s; a product of sixty gears can take longer):
+                // the run keeps its turn and its answer, so the person's
+                // retry is answered from `evaluations` instead of starting over.
+                tokio::task::spawn_blocking(move || {
+                    let _turn = turn;
+                    let r = evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)?;
+                    if let Some(k) = key {
+                        evaluations
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .put(k, r.clone());
+                    }
+                    anyhow::Ok(r)
                 })
                 .await
-                .context("engine task")??;
-                if let Some(k) = key {
-                    self.evaluations
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .put(k, r.clone());
-                }
-                r
+                .context("engine task")??
             }
         };
         tracing::info!(
@@ -3587,67 +3608,68 @@ fn evaluate(
         if let Some(dir) = product_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let mut root_args: Vec<String> = Vec::new();
+        let mut links: Vec<PathBuf> = Vec::new();
         for (id, dir) in roots {
             let link = scratch.join(id);
             link_dir(dir, &link)?;
-            root_args.push("--root".into());
-            root_args.push(link.to_string_lossy().into_owned());
+            links.push(link);
         }
         std::fs::write(&product_file, gdl)?;
-        let product = product_file.to_string_lossy().into_owned();
-
-        let mut args: Vec<String> = vec!["validate".into()];
-        args.extend(root_args.iter().cloned());
-        args.extend([
-            "--product".into(),
-            product.clone(),
-            "--format".into(),
-            "json".into(),
-        ]);
-        let mut resolve_args: Vec<String> = vec!["resolve".into()];
-        resolve_args.extend(root_args);
-        resolve_args.extend([
-            "--product".into(),
-            product,
-            "--profile".into(),
-            profile.into(),
-            "--format".into(),
-            "json".into(),
-        ]);
-        // One engine run at a time: both work in `scratch`, and two at once
-        // double the engine's peak memory inside the backend's own limit.
-        let validate = run_engine(bin, &args, Some(&scratch))?;
-        let parsed: Value = serde_json::from_str(&validate.stdout).with_context(|| {
-            format!(
-                "the engine's validation is not JSON: {}",
-                validate.stderr_tail()
-            )
-        })?;
-        let diagnostics = parse_diagnostics(&parsed, &scratch);
-        let diagnostics = relabel(diagnostics);
-        if diagnostics.iter().any(EngineDiagnostic::is_error) {
-            return Ok(Resolution {
-                diagnostics,
-                ..Resolution::default()
-            });
-        }
-
-        let resolve = run_engine(bin, &resolve_args, Some(&scratch))?;
-        let parsed: Value = serde_json::from_str(&resolve.stdout).with_context(|| {
-            format!(
-                "the engine's resolution is not JSON: {}",
-                resolve.stderr_tail()
-            )
-        })?;
-        let mut resolution = parse_resolution(&parsed, &scratch);
-        let mut all = diagnostics;
-        all.extend(relabel(resolution.diagnostics));
-        resolution.diagnostics = all;
-        Ok(resolution)
+        // One session, one request: `gearbox/product/resolve` answers what
+        // `validate` and then `resolve` did, from one scan of the roots. The
+        // scan is nearly all of the time (some 15 s for studio-web's roots);
+        // the two commands each made their own.
+        let links: Vec<&Path> = links.iter().map(PathBuf::as_path).collect();
+        let answer = rpc_once(
+            bin,
+            &links,
+            &scratch,
+            "gearbox/product/resolve",
+            serde_json::json!({
+                "path": product_file.to_string_lossy(),
+                "profile": profile,
+            }),
+        )?;
+        resolution_of(&answer, &scratch)
     })();
     let _ = std::fs::remove_dir_all(&scratch);
     result
+}
+
+/// A `gearbox/product/resolve` response as a resolution: `product` is what
+/// `gearbox resolve` prints, and `diagnostics` beside it every finding,
+/// validation's as well. A product the engine cannot evaluate is an error that
+/// still carries its diagnostics.
+fn resolution_of(answer: &Value, scratch: &Path) -> anyhow::Result<Resolution> {
+    if let Some(error) = answer.get("error") {
+        let Some(found) = error.pointer("/data/diagnostics") else {
+            bail!(
+                "the engine did not resolve the product: {}",
+                error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no message")
+            );
+        };
+        return Ok(Resolution {
+            diagnostics: relabel(parse_diagnostics(found, scratch)),
+            ..Resolution::default()
+        });
+    }
+    let result = answer
+        .get("result")
+        .ok_or_else(|| anyhow!("the engine's resolution has no result"))?;
+    let product = result
+        .get("product")
+        .ok_or_else(|| anyhow!("the engine's resolution has no product"))?;
+    let mut resolution = parse_resolution(product, scratch);
+    resolution.diagnostics = relabel(
+        result
+            .get("diagnostics")
+            .map(|d| parse_diagnostics(d, scratch))
+            .unwrap_or_default(),
+    );
+    Ok(resolution)
 }
 
 /// The scratch product file is `<id>/product.gdl`; the person knows it as the
@@ -5136,6 +5158,44 @@ mod tests {
     }
 
     #[test]
+    fn one_rpc_answer_carries_every_finding_and_a_broken_product_still_says_why() {
+        let scratch = Path::new("/tmp/studio-gearbox-x");
+        let finding = |code: &str, severity: &str, uri: &str| {
+            json!({ "code": code, "severity": severity, "message": code,
+                    "location": { "uri": uri, "range": { "start": { "line": 3 } } } })
+        };
+        let answer = json!({ "result": {
+            "diagnostics": [
+                finding("GBX0215", "warning", "file:///var/lib/roots/a/gear.gdl"),
+                finding("GBX0325", "error", "file:///tmp/studio-gearbox-x/shop/product.gdl"),
+            ],
+            "product": {
+                "applications": [{ "name": "host", "kind": "host", "gears": ["a"] }],
+                "diagnostics": [finding("GBX0325", "error", "file:///tmp/studio-gearbox-x/shop/product.gdl")],
+            },
+        }});
+        let r = resolution_of(&answer, scratch).expect("a resolution");
+        assert_eq!(r.applications.len(), 1);
+        let codes: Vec<_> = r.diagnostics.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["GBX0215", "GBX0325"],
+            "validation's findings too, once each"
+        );
+        assert_eq!(r.diagnostics[1].file.as_deref(), Some("product.gdl"));
+        assert_eq!(r.diagnostics[1].line, Some(4));
+
+        let broken = json!({ "error": { "code": -32053, "message": "could not be evaluated",
+            "data": { "diagnostics": [finding("GBX0102", "error", "file:///tmp/studio-gearbox-x/shop/product.gdl")] } } });
+        let r = resolution_of(&broken, scratch).expect("its findings");
+        assert!(r.applications.is_empty());
+        assert_eq!(r.diagnostics[0].code, "GBX0102");
+
+        let refused = json!({ "error": { "code": -32600, "message": "no session" } });
+        assert!(resolution_of(&refused, scratch).is_err());
+    }
+
+    #[test]
     fn a_catalogue_is_reused_while_every_root_is_at_the_commit_it_was_read_at() {
         let before = [checked_out("a", Some("1")), checked_out("b", Some("2"))];
         assert!(same_checkouts(&before, &before, true));
@@ -5313,7 +5373,7 @@ mod tests {
             "destination_dir": scratch.join("gear").to_string_lossy(),
             "dry_run": true,
         });
-        let answer = rpc_once(&bin, &root, &scratch, "gearbox/gear/scaffold", params);
+        let answer = rpc_once(&bin, &[&root], &scratch, "gearbox/gear/scaffold", params);
         let _ = std::fs::remove_dir_all(&scratch);
         let gdl = answer_gdl(&answer.expect("the engine answers")).expect("a scaffold");
         assert!(gdl.contains("my-gear"), "{gdl}");

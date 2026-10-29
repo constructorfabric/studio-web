@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ArtifactNode } from "./api";
 import {
   buildDuration,
+  stepToShow,
   buildStatus,
   buildWorkflowOf,
   buildsHeadline,
@@ -141,5 +142,19 @@ describe("builds", () => {
     expect(b).toMatchObject({ chartRef: "oci://ghcr.io/acme/charts/shop", chartVersion: "0.1.0-sha.1", where: "ci" });
     expect(b.images).toEqual([{ app: "api", image: "ghcr.io/acme/gbx-api:sha-1@sha256:ab" }]);
     expect(ideBuildsOf([node("2", { build_id: "b" })])[0].chartRef).toBeNull();
+  });
+});
+
+describe("stepToShow", () => {
+  const s = (step: string, state: string) => ({ step, state });
+  it("opens a build's log on the step that failed, else the one running", () => {
+    expect(stepToShow([s("prepare", "failed"), s("build", "waiting"), s("publish", "waiting")])).toBe("prepare");
+    expect(stepToShow([s("prepare", "passed"), s("build", "running"), s("publish", "waiting")])).toBe("build");
+    expect(stepToShow([s("prepare", "passed"), s("build", "passed"), s("publish", "passed")])).toBe("publish");
+  });
+
+  it("is nothing before any step started", () => {
+    expect(stepToShow([s("prepare", "waiting")])).toBeNull();
+    expect(stepToShow([])).toBeNull();
   });
 });

@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
+import { api, type BuildLog, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
 import {
   BUILD_STAGES,
   type BuildRun,
@@ -31,6 +31,7 @@ import {
   openingScenario,
   repoPathsOf,
   statusTone,
+  stepToShow,
   workflowsOf,
 } from "./builds";
 import {
@@ -40,7 +41,9 @@ import {
   type SavedProduct,
   buildableEnvironments,
 } from "./deploy-actions";
+import { DataTable, When } from "./data-table";
 import { errText } from "./format";
+import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
 
@@ -81,13 +84,13 @@ function storeScenario(projectId: string, s: BuildScenario) {
 export function ProjectBuilds({
   token,
   projectId,
-  onOpenStudio,
+  projectName,
   onOpenTab,
 }: {
   token: string;
   projectId: string;
-  /** Open the project in the IDE, where Build, Run and Deploy run. */
-  onOpenStudio?: () => void;
+  /** What the desktop app calls the project it opens. */
+  projectName?: string;
   /** Open another tab of the project: Deploys, once a build is published. */
   onOpenTab?: (tab: PipelineTab) => void;
 }) {
@@ -207,7 +210,7 @@ export function ProjectBuilds({
             onChanged={changed}
           />
         )}
-        {scenario === "desktop" && <OnMyMachine onOpenStudio={onOpenStudio} />}
+        {scenario === "desktop" && <OnMyMachine projectId={projectId} projectName={projectName} saved={saved} />}
         {scenario === "ci" && (
           <InCi
             token={token}
@@ -234,22 +237,50 @@ export function ProjectBuilds({
 
 /** The desktop builds on the member's machine: Generate, Build, then Publish
  *  with a push-only token Studio gives for the environment's registry. Each
- *  build reports itself, so it shows below as `desktop`. */
-function OnMyMachine({ onOpenStudio }: { onOpenStudio?: () => void }) {
+ *  build reports itself, so it shows below as `desktop`. Open in the IDE
+ *  hands the project to the desktop app, with the product the Product step
+ *  saved and its branch, so it opens where Generate starts. */
+function OnMyMachine({
+  projectId,
+  projectName,
+  saved,
+}: {
+  projectId: string;
+  projectName?: string;
+  saved: SavedProduct | null;
+}) {
+  const { launch, missing } = useDesktopLauncher();
+  const open = () =>
+    launch(
+      desktopLink({
+        id: projectId,
+        name: projectName,
+        // The desktop builds only a product it has open, so one is always named.
+        product: saved?.path ?? "product.gdl",
+        branch: saved?.branch ?? undefined,
+        build: true,
+      }),
+    );
   return (
     <div data-build-on-my-machine>
       <p>
-        The desktop IDE builds on your machine: open the project, <b>Generate</b> the product, <b>Build</b> its images,
-        then <b>Publish</b> them and the chart to an environment&apos;s registry with a push-only token Studio gives for
-        it. Each build reports itself and shows below, where it says <code>desktop</code>.
+        The desktop IDE builds on your machine: it opens the project, <b>Generates</b> the product and starts{" "}
+        <b>Build</b> by itself. <b>Publish</b> then pushes the images and the chart to an environment&apos;s registry
+        with a push-only token Studio gives for it. Each build reports itself and shows below, where it says{" "}
+        <code>desktop</code>.
       </p>
-      {onOpenStudio && (
-        <div className="row">
-          <button type="button" className="primary" onClick={onOpenStudio} data-builds-open-ide>
-            Open in the IDE
-          </button>
-        </div>
-      )}
+      <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="primary"
+          onClick={open}
+          title="Open this project in the Constructor Studio app on your machine and build it"
+          data-builds-open-ide
+        >
+          Build in the IDE
+        </button>
+        {missing && <DesktopMissingHint />}
+      </div>
     </div>
   );
 }
@@ -501,10 +532,10 @@ function InCi({
   );
 }
 
-/** The product's builds, newest first -- run by Studio, the IDE or CI. The
- *  newest is open: its stages, what failed or what it published, and Deploy;
- *  an older one opens on a click. A Studio build whose Job's hour is long past
- *  without word is lost, not running. */
+/** The product's builds, newest first -- run by Studio, the IDE or CI -- as
+ *  one table. The newest is open under its row: its log, what failed or what
+ *  it published, and Deploy; another opens on a click. A Studio build whose
+ *  Job's hour is long past without word is lost, not running. */
 function ProductBuilds({
   token,
   projectId,
@@ -520,89 +551,84 @@ function ProductBuilds({
   deployments: Deployment[];
   onChanged: (message: string) => void;
 }) {
-  const [open, setOpen] = useState<string | null>(null);
   const product = builds.filter((b) => b.action !== "run");
+  // `undefined`: the newest, until the reader opens or closes one.
+  const [open, setOpen] = useState<string | null | undefined>(undefined);
+  const shown = open === undefined ? (product[0]?.id ?? null) : open;
   if (product.length === 0) return null;
-  const [newest, ...older] = product;
   return (
     <section className="card" data-product-builds>
-      <h2>Builds</h2>
-      <BuildCard
-        build={newest}
-        token={token}
-        projectId={projectId}
-        environments={environments}
-        deployments={deployments}
-        onChanged={onChanged}
+      <DataTable<IdeBuild>
+        list="product-builds"
+        title="Builds"
+        rows={product}
+        rowKey={(b) => b.id}
+        rowLabel={(b) => `${b.product ?? "The product"} ${b.shortSha ?? b.buildId}`}
+        onOpen={(b) => setOpen(shown === b.id ? null : b.id)}
+        detail={(b) =>
+          b.id === shown ? (
+            <BuildDetails
+              build={b}
+              token={token}
+              projectId={projectId}
+              environments={environments}
+              deployments={deployments}
+              onChanged={onChanged}
+            />
+          ) : null
+        }
+        searchText={(b) => [b.product, b.profile, b.where, b.branch, b.shortSha, b.status]}
+        defaultView="table"
+        empty={{ title: "No build yet." }}
+        columns={[
+          {
+            id: "status",
+            header: "Status",
+            cell: (b) => (
+              <span data-ide-build-status={isLost(b) ? "lost" : b.status}>
+                <StatusBadge build={b} />
+              </span>
+            ),
+          },
+          {
+            id: "build",
+            header: "Build",
+            cell: (b) => (
+              <b>
+                {b.product ?? "The product"}
+                {b.profile ? <span className="sub"> · {b.profile}</span> : null}
+              </b>
+            ),
+          },
+          { id: "stages", header: "Stages", cell: (b) => <StageLane build={b} /> },
+          { id: "where", header: "Where", cell: (b) => b.where },
+          {
+            id: "commit",
+            header: "Commit",
+            cell: (b) => (b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")),
+          },
+          {
+            id: "when",
+            header: "When",
+            compare: (a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""),
+            cell: (b) => <When iso={b.startedAt} />,
+          },
+          { id: "took", header: "Took", num: true, cell: (b) => (isLost(b) ? "—" : (ideBuildDuration(b) ?? "—")) },
+        ]}
       />
-      {older.length > 0 && (
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table className="table" data-ide-builds-table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Stages</th>
-                <th>Where</th>
-                <th>Commit</th>
-                <th>When</th>
-                <th>Took</th>
-              </tr>
-            </thead>
-            <tbody>
-              {older.map((b) =>
-                open === b.id ? (
-                  <tr key={b.id} data-ide-build-status={b.status}>
-                    <td colSpan={6}>
-                      <BuildCard
-                        build={b}
-                        token={token}
-                        projectId={projectId}
-                        environments={environments}
-                        deployments={deployments}
-                        onChanged={onChanged}
-                        onClose={() => setOpen(null)}
-                      />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr
-                    key={b.id}
-                    data-ide-build-status={b.status}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => setOpen(b.id)}
-                    title="Open this build"
-                  >
-                    <td>
-                      <StatusBadge build={b} />
-                    </td>
-                    <td>
-                      <StageLane build={b} />
-                    </td>
-                    <td>{b.where}</td>
-                    <td>{b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")}</td>
-                    <td>{b.startedAt ? new Date(b.startedAt).toLocaleString() : "—"}</td>
-                    <td>{isLost(b) ? "—" : (ideBuildDuration(b) ?? "—")}</td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
     </section>
   );
 }
 
-/** One build, open: what and where, its stages, what failed or what it
+/** One build, open under its row: its log, what failed or what it
  *  published, and Deploy once it published a chart. */
-function BuildCard({
+function BuildDetails({
   build: b,
   token,
   projectId,
   environments,
   deployments,
   onChanged,
-  onClose,
 }: {
   build: IdeBuild;
   token: string;
@@ -610,41 +636,23 @@ function BuildCard({
   environments: DeployEnvironment[];
   deployments: Deployment[];
   onChanged: (message: string) => void;
-  onClose?: () => void;
 }) {
   const lost = isLost(b);
   return (
     <div data-build-card={b.buildId} data-build-card-status={lost ? "lost" : b.status}>
-      <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <StatusBadge build={b} />
-        <b>
-          {b.product ?? "The product"}
-          {b.profile ? <span className="sub"> · {b.profile}</span> : null}
-        </b>
-        <StageLane build={b} />
-        <span className="grow sub">
-          {b.where}
-          {b.branch ? <> · {b.branch}</> : null}
-          {b.shortSha ? (
-            <>
-              {" "}
-              · <code>{b.shortSha}</code>
-            </>
-          ) : null}
-          {b.startedAt ? <> · {new Date(b.startedAt).toLocaleString()}</> : null}
-          {!lost && ideBuildDuration(b) ? <> · {ideBuildDuration(b)}</> : null}
-        </span>
-        {onClose && (
-          <button type="button" className="linklike" onClick={onClose}>
-            Close
-          </button>
-        )}
-      </div>
+      {b.branch && (
+        <div className="sub">
+          from <code>{b.branch}</code>
+        </div>
+      )}
       {lost && (
         <p className="hint" data-build-lost>
           Lost: no word from its Job since {b.startedAt ? new Date(b.startedAt).toLocaleString() : "it started"}, past
           the hour a build may take. How it ended is not known; build again.
         </p>
+      )}
+      {b.where === "studio" && (
+        <BuildLogPanel token={token} projectId={projectId} buildId={b.buildId} running={b.status === "running"} />
       )}
       {b.status === "failed" && b.failure && (
         <div className="error" style={{ marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-ide-build-failure>
@@ -682,6 +690,112 @@ function BuildCard({
     </div>
   );
 }
+
+/** A build Studio runs, step by step with the end of each step's log, read
+ *  from its pod on demand and again every LOG_FOLLOW_MS while it runs. The
+ *  pod is the truth here: a step that failed shows failed even before the
+ *  build's record says so. */
+function BuildLogPanel({
+  token,
+  projectId,
+  buildId,
+  running,
+}: {
+  token: string;
+  projectId: string;
+  buildId: string;
+  running: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [log, setLog] = useState<BuildLog | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<string | null>(null);
+  const live = !log || log.steps.some((s) => s.state === "running" || (running && s.state === "waiting"));
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    let timer: number | undefined;
+    const read = () =>
+      api
+        .buildLog(token, projectId, buildId)
+        .then((l) => {
+          if (!alive) return;
+          setLog(l);
+          setError(null);
+        })
+        .catch((e: unknown) => alive && setError(errText(e)))
+        .finally(() => {
+          if (alive && live) timer = window.setTimeout(() => void read(), LOG_FOLLOW_MS);
+        });
+    void read();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [open, token, projectId, buildId, live]);
+
+  const shown = step ?? stepToShow(log?.steps ?? []);
+  const text = log?.steps.find((s) => s.step === shown)?.log ?? "";
+  return (
+    <div style={{ marginTop: 8 }} data-build-log={buildId}>
+      <button type="button" className="linklike" onClick={() => setOpen((o) => !o)} data-build-log-toggle>
+        {open ? "Hide the log" : "Show the log"}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {error && <div className="error">{error}</div>}
+          {!log && !error && <div className="hint">Reading the build&apos;s pod…</div>}
+          {log && (
+            <>
+              <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div className="doc-views" role="tablist" aria-label="Build steps" style={{ marginBottom: 6 }}>
+                  {log.steps.map((s) => (
+                    <button
+                      key={s.step}
+                      type="button"
+                      role="tab"
+                      aria-selected={shown === s.step}
+                      className={`doc-view${shown === s.step ? " on" : ""}`}
+                      disabled={s.state === "waiting"}
+                      onClick={() => setStep(s.step)}
+                      data-build-log-step={s.step}
+                      data-build-log-state={s.state}
+                    >
+                      {STAGE_MARK[STEP_STAGE[s.state] ?? "waiting"]} {s.step}
+                    </button>
+                  ))}
+                </div>
+                <span className="sub">
+                  {log.environment} · <code>{log.namespace}</code>
+                  {live ? " · following" : ""}
+                </span>
+              </div>
+              {shown ? (
+                <pre className="build-log" data-build-log-text>
+                  {text || "(nothing written yet)"}
+                </pre>
+              ) : (
+                <div className="hint">No step has started yet.</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A pod step's state as a stage's, for its mark. */
+const STEP_STAGE: Record<string, StageState> = {
+  passed: "done",
+  running: "running",
+  failed: "failed",
+  waiting: "waiting",
+};
+
+/** How often an open log is read again while its build runs. */
+const LOG_FOLLOW_MS = 5_000;
 
 /** The build's status; a lost one says so, in a warning's tone. */
 function StatusBadge({ build: b }: { build: IdeBuild }) {
