@@ -583,6 +583,20 @@ request	POST /studio-environments/v1/environments	registry_connection_id	Uuid	op
 request	POST /studio-environments/v1/environments	research_hardware	String	optional
 request	POST /studio-environments/v1/environments	research_project	String	optional
 request	POST /studio-environments/v1/environments/{}/push-tokens	repositories	Vec<String>	required
+request	POST /studio-environments/v1/project-environments	connection_id	Uuid	required
+request	POST /studio-environments/v1/project-environments	database	String	optional
+request	POST /studio-environments/v1/project-environments	database_image	String	optional
+request	POST /studio-environments/v1/project-environments	description	String	optional
+request	POST /studio-environments/v1/project-environments	kind	String	optional
+request	POST /studio-environments/v1/project-environments	name	String	required
+request	POST /studio-environments/v1/project-environments	namespace_pattern	String	optional
+request	POST /studio-environments/v1/project-environments	projects	Vec<Uuid>	optional
+request	POST /studio-environments/v1/project-environments	promote_from	Uuid	optional
+request	POST /studio-environments/v1/project-environments	protected	bool	optional
+request	POST /studio-environments/v1/project-environments	registry	String	optional
+request	POST /studio-environments/v1/project-environments	registry_connection_id	Uuid	optional
+request	POST /studio-environments/v1/project-environments	research_hardware	String	optional
+request	POST /studio-environments/v1/project-environments	research_project	String	optional
 request	POST /studio-identity/v1/users/{}/assignment	role	String	required
 request	POST /studio-identity/v1/users/{}/assignment	tenant_id	Uuid	required
 request	POST /studio-insight/v1/components/metrics	bucket	String	optional
@@ -827,6 +841,21 @@ request	PUT /studio-environments/v1/environments/{}	registry	String	optional
 request	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
 request	PUT /studio-environments/v1/environments/{}	research_hardware	String	optional
 request	PUT /studio-environments/v1/environments/{}	research_project	String	optional
+request	PUT /studio-environments/v1/open-clusters	connection_ids	Vec<Uuid>	required
+request	PUT /studio-environments/v1/project-environments/{}	connection_id	Uuid	required
+request	PUT /studio-environments/v1/project-environments/{}	database	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	description	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	kind	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	name	String	required
+request	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	projects	Vec<Uuid>	optional
+request	PUT /studio-environments/v1/project-environments/{}	promote_from	Uuid	optional
+request	PUT /studio-environments/v1/project-environments/{}	protected	bool	optional
+request	PUT /studio-environments/v1/project-environments/{}	registry	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	registry_connection_id	Uuid	optional
+request	PUT /studio-environments/v1/project-environments/{}	research_hardware	String	optional
+request	PUT /studio-environments/v1/project-environments/{}	research_project	String	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
@@ -2504,6 +2533,7 @@ response	GET /studio-environments/v1/environments	items.id	Uuid	always
 response	GET /studio-environments/v1/environments	items.kind	String	always
 response	GET /studio-environments/v1/environments	items.name	String	always
 response	GET /studio-environments/v1/environments	items.namespace_pattern	String	always
+response	GET /studio-environments/v1/environments	items.project_id	Uuid	optional
 response	GET /studio-environments/v1/environments	items.projects	Vec<Uuid>	optional
 response	GET /studio-environments/v1/environments	items.promote_from	Uuid	optional
 response	GET /studio-environments/v1/environments	items.protected	bool	always
@@ -2514,7 +2544,31 @@ response	GET /studio-environments/v1/environments	items.research_project	String	
 response	GET /studio-environments/v1/environments	items.updated_at	String	always
 response	GET /studio-environments/v1/environments	items.updated_by	String	always
 response	GET /studio-environments/v1/environments	may_manage	bool	always
+response	GET /studio-environments/v1/environments	open_clusters	{}	always
+response	GET /studio-environments/v1/environments	open_clusters.connection_ids	Vec<Uuid>	always
 response	GET /studio-environments/v1/environments	total	u32	always
+response	GET /studio-environments/v1/project-environments	items	Vec<{}>	always
+response	GET /studio-environments/v1/project-environments	items.connection_id	Uuid	always
+response	GET /studio-environments/v1/project-environments	items.database	String	always
+response	GET /studio-environments/v1/project-environments	items.database_image	String	optional
+response	GET /studio-environments/v1/project-environments	items.description	String	always
+response	GET /studio-environments/v1/project-environments	items.id	Uuid	always
+response	GET /studio-environments/v1/project-environments	items.kind	String	always
+response	GET /studio-environments/v1/project-environments	items.name	String	always
+response	GET /studio-environments/v1/project-environments	items.namespace_pattern	String	always
+response	GET /studio-environments/v1/project-environments	items.project_id	Uuid	optional
+response	GET /studio-environments/v1/project-environments	items.projects	Vec<Uuid>	optional
+response	GET /studio-environments/v1/project-environments	items.promote_from	Uuid	optional
+response	GET /studio-environments/v1/project-environments	items.protected	bool	always
+response	GET /studio-environments/v1/project-environments	items.registry	String	always
+response	GET /studio-environments/v1/project-environments	items.registry_connection_id	Uuid	optional
+response	GET /studio-environments/v1/project-environments	items.research_hardware	String	optional
+response	GET /studio-environments/v1/project-environments	items.research_project	String	optional
+response	GET /studio-environments/v1/project-environments	items.updated_at	String	always
+response	GET /studio-environments/v1/project-environments	items.updated_by	String	always
+response	GET /studio-environments/v1/project-environments	open_clusters	{}	always
+response	GET /studio-environments/v1/project-environments	open_clusters.connection_ids	Vec<Uuid>	always
+response	GET /studio-environments/v1/project-environments	total	u32	always
 response	GET /studio-environments/v1/research/projects	items	Vec<{}>	always
 response	GET /studio-environments/v1/research/projects	items.id	String	always
 response	GET /studio-environments/v1/research/projects	items.name	String	always
@@ -2538,6 +2592,7 @@ response	GET /studio-environments/v1/targets	environments.environment.id	Uuid	al
 response	GET /studio-environments/v1/targets	environments.environment.kind	String	always
 response	GET /studio-environments/v1/targets	environments.environment.name	String	always
 response	GET /studio-environments/v1/targets	environments.environment.namespace_pattern	String	always
+response	GET /studio-environments/v1/targets	environments.environment.project_id	Uuid	optional
 response	GET /studio-environments/v1/targets	environments.environment.projects	Vec<Uuid>	optional
 response	GET /studio-environments/v1/targets	environments.environment.promote_from	Uuid	optional
 response	GET /studio-environments/v1/targets	environments.environment.protected	bool	always
@@ -4481,6 +4536,7 @@ response	POST /studio-environments/v1/environments	id	Uuid	always
 response	POST /studio-environments/v1/environments	kind	String	always
 response	POST /studio-environments/v1/environments	name	String	always
 response	POST /studio-environments/v1/environments	namespace_pattern	String	always
+response	POST /studio-environments/v1/environments	project_id	Uuid	optional
 response	POST /studio-environments/v1/environments	projects	Vec<Uuid>	optional
 response	POST /studio-environments/v1/environments	promote_from	Uuid	optional
 response	POST /studio-environments/v1/environments	protected	bool	always
@@ -4495,6 +4551,25 @@ response	POST /studio-environments/v1/environments/{}/push-tokens	prefix	String	
 response	POST /studio-environments/v1/environments/{}/push-tokens	registry	String	always
 response	POST /studio-environments/v1/environments/{}/push-tokens	token	String	always
 response	POST /studio-environments/v1/environments/{}/test	message	String	always
+response	POST /studio-environments/v1/project-environments	connection_id	Uuid	always
+response	POST /studio-environments/v1/project-environments	database	String	always
+response	POST /studio-environments/v1/project-environments	database_image	String	optional
+response	POST /studio-environments/v1/project-environments	description	String	always
+response	POST /studio-environments/v1/project-environments	id	Uuid	always
+response	POST /studio-environments/v1/project-environments	kind	String	always
+response	POST /studio-environments/v1/project-environments	name	String	always
+response	POST /studio-environments/v1/project-environments	namespace_pattern	String	always
+response	POST /studio-environments/v1/project-environments	project_id	Uuid	optional
+response	POST /studio-environments/v1/project-environments	projects	Vec<Uuid>	optional
+response	POST /studio-environments/v1/project-environments	promote_from	Uuid	optional
+response	POST /studio-environments/v1/project-environments	protected	bool	always
+response	POST /studio-environments/v1/project-environments	registry	String	always
+response	POST /studio-environments/v1/project-environments	registry_connection_id	Uuid	optional
+response	POST /studio-environments/v1/project-environments	research_hardware	String	optional
+response	POST /studio-environments/v1/project-environments	research_project	String	optional
+response	POST /studio-environments/v1/project-environments	updated_at	String	always
+response	POST /studio-environments/v1/project-environments	updated_by	String	always
+response	POST /studio-environments/v1/project-environments/{}/test	message	String	always
 response	POST /studio-identity/v1/memberships/backfill	failed	i64	always
 response	POST /studio-identity/v1/memberships/backfill	recorded	i64	always
 response	POST /studio-insight/v1/components/metrics	bucket	String	optional
@@ -5098,6 +5173,7 @@ response	PUT /studio-environments/v1/environments/{}	id	Uuid	always
 response	PUT /studio-environments/v1/environments/{}	kind	String	always
 response	PUT /studio-environments/v1/environments/{}	name	String	always
 response	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	always
+response	PUT /studio-environments/v1/environments/{}	project_id	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	projects	Vec<Uuid>	optional
 response	PUT /studio-environments/v1/environments/{}	promote_from	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	protected	bool	always
@@ -5107,6 +5183,25 @@ response	PUT /studio-environments/v1/environments/{}	research_hardware	String	op
 response	PUT /studio-environments/v1/environments/{}	research_project	String	optional
 response	PUT /studio-environments/v1/environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_by	String	always
+response	PUT /studio-environments/v1/open-clusters	connection_ids	Vec<Uuid>	always
+response	PUT /studio-environments/v1/project-environments/{}	connection_id	Uuid	always
+response	PUT /studio-environments/v1/project-environments/{}	database	String	always
+response	PUT /studio-environments/v1/project-environments/{}	database_image	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	description	String	always
+response	PUT /studio-environments/v1/project-environments/{}	id	Uuid	always
+response	PUT /studio-environments/v1/project-environments/{}	kind	String	always
+response	PUT /studio-environments/v1/project-environments/{}	name	String	always
+response	PUT /studio-environments/v1/project-environments/{}	namespace_pattern	String	always
+response	PUT /studio-environments/v1/project-environments/{}	project_id	Uuid	optional
+response	PUT /studio-environments/v1/project-environments/{}	projects	Vec<Uuid>	optional
+response	PUT /studio-environments/v1/project-environments/{}	promote_from	Uuid	optional
+response	PUT /studio-environments/v1/project-environments/{}	protected	bool	always
+response	PUT /studio-environments/v1/project-environments/{}	registry	String	always
+response	PUT /studio-environments/v1/project-environments/{}	registry_connection_id	Uuid	optional
+response	PUT /studio-environments/v1/project-environments/{}	research_hardware	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	research_project	String	optional
+response	PUT /studio-environments/v1/project-environments/{}	updated_at	String	always
+response	PUT /studio-environments/v1/project-environments/{}	updated_by	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
@@ -5410,6 +5505,7 @@ route	DELETE /studio-documents/v1/workspaces/{}/types/{}
 route	DELETE /studio-domain-model/v1/types/{}/fields/{}
 route	DELETE /studio-environments/v1/config-secrets/{}
 route	DELETE /studio-environments/v1/environments/{}
+route	DELETE /studio-environments/v1/project-environments/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
@@ -5513,6 +5609,7 @@ route	GET /studio-environments/v1/builds/{}/log
 route	GET /studio-environments/v1/deployments
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
+route	GET /studio-environments/v1/project-environments
 route	GET /studio-environments/v1/research/projects
 route	GET /studio-environments/v1/research/projects/{}/hardware
 route	GET /studio-environments/v1/targets
@@ -5676,6 +5773,8 @@ route	POST /studio-environments/v1/deployments/{}/decisions
 route	POST /studio-environments/v1/environments
 route	POST /studio-environments/v1/environments/{}/push-tokens
 route	POST /studio-environments/v1/environments/{}/test
+route	POST /studio-environments/v1/project-environments
+route	POST /studio-environments/v1/project-environments/{}/test
 route	POST /studio-git/v1/workspaces/{}/sources/{}/git-receive-pack
 route	POST /studio-git/v1/workspaces/{}/sources/{}/git-upload-pack
 route	POST /studio-identity/v1/memberships/backfill
@@ -5757,6 +5856,8 @@ route	PUT /studio-documents/v1/workspaces/{}/documents/{}/analyses/{}
 route	PUT /studio-environments/v1/bindings
 route	PUT /studio-environments/v1/config-secrets/{}
 route	PUT /studio-environments/v1/environments/{}
+route	PUT /studio-environments/v1/open-clusters
+route	PUT /studio-environments/v1/project-environments/{}
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-product/v1/gear-explanations/{}
 route	PUT /studio-product/v1/projects/{}/product

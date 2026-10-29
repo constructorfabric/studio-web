@@ -89,6 +89,10 @@ pub struct DeployPayload {
     pub chart: Option<String>,
     #[serde(default)]
     pub chart_ref: Option<ChartRef>,
+    /// The tenant the environment's connections are found from and read as
+    /// (ADR-0052 §5); absent for an organization's environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections_from: Option<Uuid>,
     /// Values given to the chart: the images under the environment's registry.
     pub values: serde_json::Value,
     /// A deploy to a Constructor Research environment (ADR-0049 §4): what it
@@ -236,14 +240,15 @@ impl TaskHandler for DeployTask {
             };
         }
         ctx.progress("reading the cluster's access").await;
-        let access = match cluster_access(
-            &self.hub,
+        let (reader, from) = match super::build::connection_reader(
             &ctx.security,
             payload.organization_id,
-            payload.connection_id,
-        )
-        .await
-        {
+            payload.connections_from,
+        ) {
+            Ok(r) => r,
+            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        };
+        let access = match cluster_access(&self.hub, &reader, from, payload.connection_id).await {
             Ok(a) => a,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
@@ -262,12 +267,10 @@ impl TaskHandler for DeployTask {
             };
         }
         let registry = match payload.registry_connection_id {
-            Some(id) => {
-                match registry_access(&self.hub, &ctx.security, payload.organization_id, id).await {
-                    Ok(r) => Some(r),
-                    Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
-                }
-            }
+            Some(id) => match registry_access(&self.hub, &reader, from, id).await {
+                Ok(r) => Some(r),
+                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+            },
             None => None,
         };
         ctx.progress(format!("preparing namespace {}", payload.namespace))
@@ -916,6 +919,7 @@ mod tests {
             database_image: None,
             chart: Some(String::new()),
             chart_ref: None,
+            connections_from: None,
             values: serde_json::json!({}),
             research: None,
         }

@@ -99,9 +99,14 @@ pub struct Environment {
     /// takes what succeeded in `stage`. `None` takes anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub promote_from: Option<Uuid>,
-    /// The projects that may deploy here; `None` is all of them.
+    /// The projects that may deploy here; `None` is all of them. A project's
+    /// own environment names none: it is its project's alone.
     #[serde(default)]
     pub projects: Option<Vec<Uuid>>,
+    /// The project that keeps this environment (ADR-0052); `None` for one of
+    /// the organization's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Uuid>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -115,6 +120,10 @@ fn default_pattern() -> String {
 pub struct EnvironmentList {
     #[serde(default)]
     pub items: Vec<Environment>,
+    /// The organization's clusters its projects may put environments of
+    /// their own on (ADR-0052 §2): `kubernetes` connection ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_clusters: Vec<Uuid>,
 }
 
 /// What a person may set on an environment.
@@ -248,7 +257,7 @@ pub fn checked(
     {
         return Err(invalid(
             "name",
-            format!("the organization already has an environment '{name}'"),
+            format!("there is already an environment '{name}' here"),
         ));
     }
     let pattern = input
@@ -313,8 +322,61 @@ pub fn checked(
             p.dedup();
             p
         }),
+        project_id: None,
         updated_by: by,
         updated_at: at,
+    })
+}
+
+/// A project's own environment (ADR-0052 §3), checked against every
+/// environment the project sees: `admitted`, the organization's that take
+/// its deploys, and `own`, its own (`id` is the one being edited, if any).
+/// It lists no projects and needs no approval: both are the organization's
+/// to say, on an environment of its own.
+pub fn checked_for_project(
+    admitted: &[Environment],
+    own: &[Environment],
+    project: Uuid,
+    id: Option<Uuid>,
+    input: EnvironmentInput,
+    by: String,
+    at: String,
+) -> Result<Environment, Invalid> {
+    if input.projects.is_some() {
+        return Err(invalid(
+            "projects",
+            "a project's own environment is its project's alone: it lists no projects",
+        ));
+    }
+    if input.protected {
+        return Err(invalid(
+            "protected",
+            "an environment whose deploys need approval is the organization's: ask an              organization administrator for one",
+        ));
+    }
+    let visible = EnvironmentList {
+        items: admitted.iter().chain(own).cloned().collect(),
+        open_clusters: Vec::new(),
+    };
+    let mut env = checked(&visible, id, input, by, at)?;
+    env.project_id = Some(project);
+    Ok(env)
+}
+
+/// An environment of the organization that admits `project`, on the same
+/// cluster as `env`, that gives the project the same namespace: two releases
+/// there would overwrite each other (ADR-0052 §6).
+pub fn namespace_clash<'a>(
+    env: &Environment,
+    admitted: &'a [Environment],
+    project_name: &str,
+) -> Option<&'a Environment> {
+    let ns = namespace_for(&env.namespace_pattern, project_name, &env.name).ok()?;
+    admitted.iter().find(|o| {
+        o.id != env.id
+            && o.kind == EnvironmentKind::Kubernetes
+            && o.connection_id == env.connection_id
+            && namespace_for(&o.namespace_pattern, project_name, &o.name).ok() == Some(ns.clone())
     })
 }
 
@@ -404,9 +466,20 @@ fn check_promotion(list: &EnvironmentList, own: Uuid, from: Uuid) -> Result<(), 
 }
 
 impl Environment {
-    /// May `project` deploy here?
+    /// May `project` deploy here? A project's own environment takes only
+    /// its project's deploys.
     pub fn admits(&self, project: Uuid) -> bool {
-        self.projects.as_ref().is_none_or(|p| p.contains(&project))
+        match self.project_id {
+            Some(owner) => owner == project,
+            None => self.projects.as_ref().is_none_or(|p| p.contains(&project)),
+        }
+    }
+
+    /// The tenant its connections are found from and read as (ADR-0052 §5):
+    /// its project for a project's own environment, so a connection the
+    /// project holds is found and the organization's still inherited.
+    pub fn connections_from(&self, org: Uuid) -> Uuid {
+        self.project_id.unwrap_or(org)
     }
 
     /// An image as this environment's registry holds it. One already named
@@ -473,6 +546,9 @@ pub struct BindingList {
     /// The secret keys set for it, per environment; the values never here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secrets: Vec<ConfigSecret>,
+    /// The project's own environments (ADR-0052), kept with its bindings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environments: Vec<Environment>,
 }
 
 /// How large a binding's values may be once written.
@@ -584,6 +660,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
     Ok(BindingList {
         items,
         secrets: Vec::new(),
+        environments: Vec::new(),
     })
 }
 
@@ -996,6 +1073,7 @@ mod tests {
         let stage = env("stage");
         let mut list = EnvironmentList {
             items: vec![stage.clone()],
+            ..Default::default()
         };
         let mut i = input("prod");
         i.promote_from = Some(stage.id);
@@ -1211,6 +1289,7 @@ mod tests {
     fn two_environments_may_not_share_a_name_but_an_edit_keeps_its_own() {
         let list = EnvironmentList {
             items: vec![env("prod")],
+            ..Default::default()
         };
         let id = list.items[0].id;
         assert_eq!(
@@ -1447,5 +1526,101 @@ mod tests {
         assert_eq!(e.kind, EnvironmentKind::Kubernetes);
         assert!(e.research.is_none());
         assert!(serde_json::to_value(&e).unwrap().get("research").is_none());
+    }
+
+    #[test]
+    fn a_projects_own_environment_is_its_alone_and_never_protected() {
+        let project = Uuid::from_u128(5);
+        let other = Uuid::from_u128(6);
+        let org_dev = env("dev");
+        let mine = checked_for_project(
+            std::slice::from_ref(&org_dev),
+            &[],
+            project,
+            None,
+            input("sandbox"),
+            String::new(),
+            "t".into(),
+        )
+        .unwrap();
+        assert_eq!(mine.project_id, Some(project));
+        assert!(mine.admits(project));
+        assert!(!mine.admits(other));
+        assert_eq!(mine.connections_from(Uuid::from_u128(1)), project);
+        assert_eq!(
+            org_dev.connections_from(Uuid::from_u128(1)),
+            Uuid::from_u128(1)
+        );
+
+        // A name the project already sees, the organization's or its own.
+        let taken = |name: &str| {
+            checked_for_project(
+                std::slice::from_ref(&org_dev),
+                std::slice::from_ref(&mine),
+                project,
+                None,
+                input(name),
+                String::new(),
+                "t".into(),
+            )
+            .unwrap_err()
+            .field
+        };
+        assert_eq!(taken("dev"), "name");
+        assert_eq!(taken("sandbox"), "name");
+
+        let mut protected = input("prod");
+        protected.protected = true;
+        let mut listing = input("qa");
+        listing.projects = Some(vec![other]);
+        for (i, field) in [(protected, "protected"), (listing, "projects")] {
+            assert_eq!(
+                checked_for_project(&[], &[], project, None, i, String::new(), "t".into())
+                    .unwrap_err()
+                    .field,
+                field
+            );
+        }
+
+        // It may take releases from the organization's environment it sees.
+        let mut promoted = input("stage");
+        promoted.promote_from = Some(org_dev.id);
+        assert!(
+            checked_for_project(
+                std::slice::from_ref(&org_dev),
+                &[],
+                project,
+                None,
+                promoted,
+                String::new(),
+                "t".into()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_project_environment_may_not_take_the_namespace_of_an_organization_one() {
+        let org_dev = env("dev");
+        let mut i = input("dev2");
+        i.namespace_pattern = Some("{project}-dev".into());
+        let mine = checked_for_project(
+            &[],
+            &[],
+            Uuid::from_u128(5),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap();
+        let admitted = [org_dev.clone()];
+        assert_eq!(
+            namespace_clash(&mine, &admitted, "Shop").map(|e| e.id),
+            Some(org_dev.id)
+        );
+        let mut elsewhere = mine.clone();
+        elsewhere.connection_id = Uuid::from_u128(8);
+        assert!(namespace_clash(&elsewhere, &admitted, "Shop").is_none());
     }
 }

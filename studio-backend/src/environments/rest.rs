@@ -99,6 +99,10 @@ pub struct EnvironmentDto {
     /// The projects that may deploy here; absent for all of them.
     #[schema(value_type = Option<Vec<String>>)]
     pub projects: Option<Vec<Uuid>>,
+    /// The project that keeps it (ADR-0052); absent for one of the
+    /// organization's.
+    #[schema(value_type = Option<String>)]
+    pub project_id: Option<Uuid>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -135,6 +139,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         protected: e.protected,
         promote_from: e.promote_from,
         projects: e.projects,
+        project_id: e.project_id,
         updated_by: e.updated_by,
         updated_at: e.updated_at,
     }
@@ -147,6 +152,36 @@ pub struct EnvironmentListDto {
     pub total: u32,
     /// Whether the caller may change them and decide about deploys.
     pub may_manage: bool,
+    /// The clusters the organization's projects may put environments of
+    /// their own on (ADR-0052 §2).
+    pub open_clusters: OpenClustersDto,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectEnvironmentListDto {
+    /// The project's own environments.
+    pub items: Vec<EnvironmentDto>,
+    pub total: u32,
+    /// The organization's clusters it may put one on; besides them, any
+    /// cluster the project holds itself.
+    pub open_clusters: OpenClustersDto,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct OpenClustersRequest {
+    /// `kubernetes` connections the organization holds and shares.
+    #[schema(value_type = Vec<String>)]
+    pub connection_ids: Vec<Uuid>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OpenClustersDto {
+    /// `kubernetes` connection ids.
+    #[schema(value_type = Vec<String>)]
+    pub connection_ids: Vec<Uuid>,
 }
 
 #[derive(Debug)]
@@ -641,7 +676,105 @@ async fn list_environments(
         total: total(list.items.len()),
         items: list.items.into_iter().map(env_dto).collect(),
         may_manage,
+        open_clusters: OpenClustersDto {
+            connection_ids: list.open_clusters,
+        },
     }))
+}
+
+async fn update_open_clusters(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Json(body): Json<OpenClustersRequest>,
+) -> ApiResult<JsonBody<OpenClustersDto>> {
+    let connection_ids = envs
+        .0
+        .put_open_clusters(&ctx, ctx.subject_tenant_id(), body.connection_ids)
+        .await
+        .map_err(problem)?;
+    Ok(Json(OpenClustersDto { connection_ids }))
+}
+
+async fn list_project_environments(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ProjectEnvironmentListDto>> {
+    let (items, open_clusters) = envs
+        .0
+        .project_environments(&ctx, q.project_id)
+        .await
+        .map_err(problem)?;
+    Ok(Json(ProjectEnvironmentListDto {
+        total: total(items.len()),
+        items: items.into_iter().map(env_dto).collect(),
+        open_clusters: OpenClustersDto {
+            connection_ids: open_clusters,
+        },
+    }))
+}
+
+async fn create_project_environment(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<EnvironmentRequest>,
+) -> ApiResult<(StatusCode, JsonBody<EnvironmentDto>)> {
+    let input = env_input(body)?;
+    let env = envs
+        .0
+        .put_project_environment(&ctx, q.project_id, None, input)
+        .await
+        .map_err(problem)?;
+    Ok((StatusCode::CREATED, Json(env_dto(env))))
+}
+
+async fn update_project_environment(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Path(environment_id): Path<Uuid>,
+    Json(body): Json<EnvironmentRequest>,
+) -> ApiResult<JsonBody<EnvironmentDto>> {
+    let input = env_input(body)?;
+    let env = envs
+        .0
+        .put_project_environment(&ctx, q.project_id, Some(environment_id), input)
+        .await
+        .map_err(problem)?;
+    Ok(Json(env_dto(env)))
+}
+
+async fn delete_project_environment(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Path(environment_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    envs.0
+        .delete_project_environment(&ctx, q.project_id, environment_id)
+        .await
+        .map_err(problem)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn test_project_environment(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Path(environment_id): Path<Uuid>,
+) -> ApiResult<JsonBody<EnvironmentTestDto>> {
+    let org = envs
+        .0
+        .organization_of_project(&ctx, q.project_id)
+        .await
+        .map_err(problem)?;
+    let message = envs
+        .0
+        .test_environment(&ctx, org, environment_id, Some(q.project_id))
+        .await
+        .map_err(problem)?;
+    Ok(Json(EnvironmentTestDto { message }))
 }
 
 async fn create_environment(
@@ -692,7 +825,7 @@ async fn test_environment(
 ) -> ApiResult<JsonBody<EnvironmentTestDto>> {
     let message = envs
         .0
-        .test_environment(&ctx, ctx.subject_tenant_id(), environment_id)
+        .test_environment(&ctx, ctx.subject_tenant_id(), environment_id, None)
         .await
         .map_err(problem)?;
     Ok(Json(EnvironmentTestDto { message }))
@@ -1251,6 +1384,131 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-environments/v1/open-clusters")
+        .operation_id("studio_environments.update_open_clusters")
+        .summary("Say which clusters projects may put environments of their own on")
+        .description(
+            "Organization administrators only (ADR-0052 §2). The whole list of `kubernetes` \
+             connections the organization holds and shares that its projects may put \
+             environments of their own on. A project may always use a cluster it holds itself.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .json_request::<OpenClustersRequest>(openapi, "The clusters")
+        .handler(update_open_clusters)
+        .json_response_with_schema::<OpenClustersDto>(openapi, StatusCode::OK, "Saved")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/project-environments")
+        .operation_id("studio_environments.list_project_environments")
+        .summary("List a project's own environments")
+        .description(
+            "For `?project_id=` (ADR-0052): the environments the project keeps itself, and the \
+             organization's clusters it may put one on.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(list_project_environments)
+        .json_response_with_schema::<ProjectEnvironmentListDto>(
+            openapi,
+            StatusCode::OK,
+            "The project's environments",
+        )
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-environments/v1/project-environments")
+        .operation_id("studio_environments.create_project_environment")
+        .summary("Add an environment of the project's own")
+        .description(
+            "For `?project_id=`, by a member who may write the project's settings (ADR-0052 \
+             §4). Its cluster is one the project holds, or one the organization opened to its \
+             projects; or it runs in the member's Constructor Research. It lists no projects \
+             and needs no approval.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<EnvironmentRequest>(openapi, "The environment")
+        .handler(create_project_environment)
+        .json_response_with_schema::<EnvironmentDto>(openapi, StatusCode::CREATED, "Added")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-environments/v1/project-environments/{environment_id}")
+        .operation_id("studio_environments.update_project_environment")
+        .summary("Change an environment of the project's own")
+        .description("For `?project_id=`. The whole environment is sent.")
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("environment_id", "Environment id")
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<EnvironmentRequest>(openapi, "The environment")
+        .handler(update_project_environment)
+        .json_response_with_schema::<EnvironmentDto>(openapi, StatusCode::OK, "Changed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router =
+        OperationBuilder::delete("/studio-environments/v1/project-environments/{environment_id}")
+            .operation_id("studio_environments.delete_project_environment")
+            .summary("Remove an environment of the project's own")
+            .description(
+                "For `?project_id=`. Its bindings go with it; what runs there stays, and its \
+                 records stay in the organization's history.",
+            )
+            .tag(TAG)
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("environment_id", "Environment id")
+            .query_param_typed("project_id", true, "The project", "string")
+            .handler(delete_project_environment)
+            .no_content_response(StatusCode::NO_CONTENT, "Removed")
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    router = OperationBuilder::post(
+        "/studio-environments/v1/project-environments/{environment_id}/test",
+    )
+    .operation_id("studio_environments.test_project_environment")
+    .summary("Reach the cluster of an environment of the project's own")
+    .description("For `?project_id=`: asks the cluster's API server, or Research, what answers.")
+    .tag(TAG)
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("environment_id", "Environment id")
+    .query_param_typed("project_id", true, "The project", "string")
+    .handler(test_project_environment)
+    .json_response_with_schema::<EnvironmentTestDto>(openapi, StatusCode::OK, "What answered")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     router = OperationBuilder::get("/studio-environments/v1/targets")
         .operation_id("studio_environments.get_project_targets")

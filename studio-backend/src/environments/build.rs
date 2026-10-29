@@ -107,6 +107,25 @@ pub struct BuildPayload {
     /// own tenant.
     #[serde(default)]
     pub records_in: Option<Uuid>,
+    /// The tenant the environment's connections are found from and read as
+    /// (ADR-0052 §5): the project, for a project's own environment. Absent
+    /// for an organization's, and from a build queued before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections_from: Option<Uuid>,
+}
+
+/// The context a run reads an environment's connections as, and the tenant
+/// it finds them from: the project's service for a project's own
+/// environment, else the run's own (ADR-0052 §5).
+pub(super) fn connection_reader(
+    run: &toolkit_security::SecurityContext,
+    org: Uuid,
+    from: Option<Uuid>,
+) -> anyhow::Result<(toolkit_security::SecurityContext, Uuid)> {
+    match from {
+        Some(tenant) if tenant != org => Ok((super::store::service_context(tenant)?, tenant)),
+        _ => Ok((run.clone(), org)),
+    }
 }
 
 fn default_buildkit_image() -> String {
@@ -133,6 +152,9 @@ pub struct WatchPayload {
     /// See [`BuildPayload::records_in`].
     #[serde(default)]
     pub records_in: Option<Uuid>,
+    /// See [`BuildPayload::connections_from`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections_from: Option<Uuid>,
 }
 
 /// The Job's name for a build: a DNS label.
@@ -464,17 +486,12 @@ impl TaskHandler for BuildTask {
 impl BuildTask {
     async fn start(&self, ctx: &TaskContext, p: &BuildPayload) -> anyhow::Result<String> {
         ctx.progress("reading the cluster's access").await;
-        let access =
-            cluster_access(&self.hub, &ctx.security, p.organization_id, p.connection_id).await?;
+        let (reader, from) =
+            connection_reader(&ctx.security, p.organization_id, p.connections_from)?;
+        let access = cluster_access(&self.hub, &reader, from, p.connection_id).await?;
         let client = access.client().await?;
         deploy::prepare_namespace(&client, &p.namespace, p.project_id).await?;
-        let registry = registry_access(
-            &self.hub,
-            &ctx.security,
-            p.organization_id,
-            p.registry_connection_id,
-        )
-        .await?;
+        let registry = registry_access(&self.hub, &reader, from, p.registry_connection_id).await?;
         deploy::write_pull_secret(&client, &p.namespace, &registry).await?;
 
         ctx.progress("reading the repository's access").await;
@@ -536,6 +553,7 @@ impl BuildTask {
             round: 0,
             step: None,
             records_in: p.records_in,
+            connections_from: p.connections_from,
         };
         enqueue(
             &self.hub,
@@ -740,8 +758,9 @@ impl TaskHandler for WatchTask {
 
 impl WatchTask {
     async fn watch(&self, ctx: &TaskContext, p: &WatchPayload) -> anyhow::Result<String> {
-        let access =
-            cluster_access(&self.hub, &ctx.security, p.organization_id, p.connection_id).await?;
+        let (reader, from) =
+            connection_reader(&ctx.security, p.organization_id, p.connections_from)?;
+        let access = cluster_access(&self.hub, &reader, from, p.connection_id).await?;
         let client = access.client().await?;
         let jobs: kube::Api<Job> = kube::Api::namespaced(client.clone(), &p.namespace);
         let started = std::time::Instant::now();
@@ -1550,6 +1569,7 @@ mod tests {
             builder_image: "ghcr.io/acme/studio-backend:sha-1".into(),
             buildkit_image: BUILDKIT_IMAGE.into(),
             records_in: None,
+            connections_from: None,
         }
     }
 
