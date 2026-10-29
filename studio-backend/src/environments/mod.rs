@@ -30,6 +30,7 @@ pub(crate) mod build; // a product built by Studio in the organization's cluster
 mod database;
 mod deploy;
 mod model;
+mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
 mod service;
 mod store;
