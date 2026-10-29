@@ -2518,10 +2518,12 @@ response	GET /studio-environments/v1/environments	total	u32	always
 response	GET /studio-environments/v1/research/projects	items	Vec<{}>	always
 response	GET /studio-environments/v1/research/projects	items.id	String	always
 response	GET /studio-environments/v1/research/projects	items.name	String	always
+response	GET /studio-environments/v1/research/projects	total	u32	always
 response	GET /studio-environments/v1/research/projects/{}/hardware	items	Vec<{}>	always
 response	GET /studio-environments/v1/research/projects/{}/hardware	items.id	String	always
 response	GET /studio-environments/v1/research/projects/{}/hardware	items.name	String	always
 response	GET /studio-environments/v1/research/projects/{}/hardware	items.trial	bool	always
+response	GET /studio-environments/v1/research/projects/{}/hardware	total	u32	always
 response	GET /studio-environments/v1/targets	bindings	Vec<{}>	always
 response	GET /studio-environments/v1/targets	bindings.environment_id	Uuid	always
 response	GET /studio-environments/v1/targets	bindings.profile	String	always

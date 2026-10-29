@@ -709,6 +709,8 @@ pub struct ResearchProjectDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ResearchProjectListDto {
     pub items: Vec<ResearchProjectDto>,
+    /// Research answers every project at once, so this is `items`' length.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -724,6 +726,8 @@ pub struct ResearchHardwareDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ResearchHardwareListDto {
     pub items: Vec<ResearchHardwareDto>,
+    /// Research answers every configuration at once, so this is `items`' length.
+    pub total: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -741,14 +745,16 @@ async fn list_research_projects(
         .research_projects(&ctx, ctx.subject_tenant_id(), q.connection_id)
         .await
         .map_err(problem)?;
+    let items: Vec<ResearchProjectDto> = items
+        .into_iter()
+        .map(|p| ResearchProjectDto {
+            id: p.id,
+            name: p.name,
+        })
+        .collect();
     Ok(Json(ResearchProjectListDto {
-        items: items
-            .into_iter()
-            .map(|p| ResearchProjectDto {
-                id: p.id,
-                name: p.name,
-            })
-            .collect(),
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
     }))
 }
 
@@ -763,15 +769,17 @@ async fn list_research_hardware(
         .research_hardware(&ctx, ctx.subject_tenant_id(), q.connection_id, &project)
         .await
         .map_err(problem)?;
+    let items: Vec<ResearchHardwareDto> = items
+        .into_iter()
+        .map(|h| ResearchHardwareDto {
+            id: h.id,
+            name: h.name,
+            trial: h.trial,
+        })
+        .collect();
     Ok(Json(ResearchHardwareListDto {
-        items: items
-            .into_iter()
-            .map(|h| ResearchHardwareDto {
-                id: h.id,
-                name: h.name,
-                trial: h.trial,
-            })
-            .collect(),
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
     }))
 }
 
@@ -1240,6 +1248,7 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
