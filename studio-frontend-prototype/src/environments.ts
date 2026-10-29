@@ -36,7 +36,10 @@ export function emptyEnvironment(): DeployEnvironmentInput {
   return {
     name: "",
     description: "",
+    kind: "kubernetes",
     connection_id: "",
+    research_project: null,
+    research_hardware: null,
     registry: "",
     registry_connection_id: null,
     namespace_pattern: DEFAULT_NAMESPACE_PATTERN,
@@ -53,7 +56,10 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
   return {
     name: e.name,
     description: e.description,
+    kind: e.kind ?? "kubernetes",
     connection_id: e.connection_id,
+    research_project: e.research_project ?? null,
+    research_hardware: e.research_hardware ?? null,
     registry: e.registry,
     registry_connection_id: e.registry_connection_id ?? null,
     namespace_pattern: e.namespace_pattern,
@@ -66,7 +72,14 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
 }
 
 /** The fields of the environment form a problem can belong to. */
-export type EnvironmentField = "name" | "connection_id" | "registry" | "registry_connection_id" | "namespace_pattern" | "projects";
+export type EnvironmentField =
+  | "name"
+  | "connection_id"
+  | "registry"
+  | "registry_connection_id"
+  | "namespace_pattern"
+  | "projects"
+  | "research_project";
 
 /** Everything wrong with a form, by field, in the words the person reads:
  *  shown together at their fields, so one fix does not uncover the next. */
@@ -80,6 +93,13 @@ export function environmentProblems(
   const name = input.name.trim();
   if (!isDnsLabel(name)) out.name = "Only lowercase letters, digits and '-', like dev, stage or prod.";
   else if (others.some((e) => e.name === name && e.id !== editing)) out.name = `The organization already has an environment '${name}'.`;
+  if (input.kind === "research") {
+    // Research keeps the registry, the namespace and the address (ADR-0049 §2).
+    if (!input.connection_id) out.connection_id = "Choose the organization's Constructor Research connection.";
+    if (!(input.research_project ?? "").trim()) out.research_project = "Choose the Research project the products run in.";
+    if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
+    return out;
+  }
   if (!input.connection_id) out.connection_id = "Choose the cluster: a Kubernetes connection of the organization.";
   const pattern = (input.namespace_pattern ?? "").trim() || DEFAULT_NAMESPACE_PATTERN;
   if (!pattern.includes("{project}"))
@@ -135,6 +155,12 @@ export function registryHost(baseUrl: string): string {
  *  not a personal one -- a deploy runs as the server, which cannot read it. */
 export function clusterConnections(connections: readonly Connection[]): Connection[] {
   return connections.filter((c) => c.provider === "kubernetes" && c.scope !== "personal");
+}
+
+/** The Constructor Research connections an environment can run on: the
+ *  organization's, since builds and deploys run as its service (ADR-0049). */
+export function researchConnections(connections: readonly Connection[]): Connection[] {
+  return connections.filter((c) => c.provider === "research" && c.scope !== "personal");
 }
 
 /** A deployment's state, as a person reads it. */

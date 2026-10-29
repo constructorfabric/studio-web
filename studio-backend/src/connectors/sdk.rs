@@ -38,6 +38,11 @@ pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 pub use super::kubernetes::ClusterAccess;
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
 pub use super::registry::{RegistryAccess, same_registry};
+pub use super::research::PROVIDER as RESEARCH_PROVIDER;
+/// The Research connector's calls to the integration service (ADR-0049 §6).
+pub mod research {
+    pub use super::super::research_api::*;
+}
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{
     ConnectorService, GearRepositorySource, check_owned, connection_by_id, holder_of_row,

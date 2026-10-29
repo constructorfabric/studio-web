@@ -122,7 +122,7 @@ gts = "0.12"
 
 # ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
 # "stream" is for the llm-proxy gear (SSE passthrough to the LLM upstream).
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 account-management-sdk = { package = "cf-gears-account-management-sdk", version = "0.7.5" }
 toolkit-odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
 types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9" }

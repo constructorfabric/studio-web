@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 use super::deploy::Rollout;
 use super::model::{
-    Binding, DatabaseMode, DeployImage, Deployment, DeploymentAction, Environment, EnvironmentInput,
+    Binding, DatabaseMode, DeployImage, Deployment, DeploymentAction, Environment,
+    EnvironmentInput, EnvironmentKind, ResearchTarget,
 };
 use super::service::{DeployRequest, EnvironmentService, Refusal};
 use crate::org_scope::OrgCtx;
@@ -68,9 +69,16 @@ pub struct EnvironmentDto {
     pub id: Uuid,
     pub name: String,
     pub description: String,
-    /// The `kubernetes` connection the cluster is reached through.
+    /// `kubernetes` | `research` (ADR-0049).
+    pub kind: String,
+    /// The `kubernetes` connection the cluster is reached through, or the
+    /// `research` connection Constructor Research is signed in with.
     #[schema(value_type = String)]
     pub connection_id: Uuid,
+    /// The Research project a `research` environment runs products in.
+    pub research_project: Option<String>,
+    /// The Research hardware configuration its services run on.
+    pub research_hardware: Option<String>,
     /// Image registry prefix (`ghcr.io/acme`); empty for images as generated.
     pub registry: String,
     /// The `registry` connection the cluster pulls with and a published
@@ -103,12 +111,22 @@ fn database_str(d: DatabaseMode) -> &'static str {
     }
 }
 
+fn kind_str(k: EnvironmentKind) -> &'static str {
+    match k {
+        EnvironmentKind::Kubernetes => "kubernetes",
+        EnvironmentKind::Research => "research",
+    }
+}
+
 fn env_dto(e: Environment) -> EnvironmentDto {
     EnvironmentDto {
         id: e.id,
         name: e.name,
         description: e.description,
+        kind: kind_str(e.kind).to_owned(),
         connection_id: e.connection_id,
+        research_project: e.research.as_ref().map(|r| r.project.clone()),
+        research_hardware: e.research.and_then(|r| r.hardware),
         registry: e.registry,
         registry_connection_id: e.registry_connection_id,
         namespace_pattern: e.namespace_pattern,
@@ -137,8 +155,17 @@ pub struct EnvironmentRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// `kubernetes` (default) | `research`.
+    #[serde(default)]
+    pub kind: Option<String>,
     #[schema(value_type = String)]
     pub connection_id: Uuid,
+    /// For `research`: the Research project products run in.
+    #[serde(default)]
+    pub research_project: Option<String>,
+    /// For `research`: the hardware configuration; default Research's.
+    #[serde(default)]
+    pub research_hardware: Option<String>,
     #[serde(default)]
     pub registry: String,
     /// A `registry` connection the organization holds, on the prefix's host.
@@ -181,10 +208,25 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
                 .create());
         }
     };
+    let kind = match r.kind.as_deref().map(str::trim) {
+        None | Some("" | "kubernetes") => EnvironmentKind::Kubernetes,
+        Some("research") => EnvironmentKind::Research,
+        Some(other) => {
+            return Err(StudioEnvironmentsError::invalid_argument()
+                .with_constraint(format!("kind is kubernetes or research, not '{other}'"))
+                .create());
+        }
+    };
+    let research = r.research_project.map(|project| ResearchTarget {
+        project,
+        hardware: r.research_hardware,
+    });
     Ok(EnvironmentInput {
         name: r.name,
         description: r.description,
+        kind,
         connection_id: r.connection_id,
+        research,
         registry: r.registry,
         registry_connection_id: r.registry_connection_id,
         namespace_pattern: r.namespace_pattern,
@@ -656,6 +698,83 @@ async fn test_environment(
     Ok(Json(EnvironmentTestDto { message }))
 }
 
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchProjectDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchProjectListDto {
+    pub items: Vec<ResearchProjectDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchHardwareDto {
+    pub id: String,
+    pub name: String,
+    /// A trial configuration: Research ends what runs on it by its own rules.
+    pub trial: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchHardwareListDto {
+    pub items: Vec<ResearchHardwareDto>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResearchQuery {
+    connection_id: Uuid,
+}
+
+async fn list_research_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ResearchQuery>,
+) -> ApiResult<JsonBody<ResearchProjectListDto>> {
+    let items = envs
+        .0
+        .research_projects(&ctx, ctx.subject_tenant_id(), q.connection_id)
+        .await
+        .map_err(problem)?;
+    Ok(Json(ResearchProjectListDto {
+        items: items
+            .into_iter()
+            .map(|p| ResearchProjectDto {
+                id: p.id,
+                name: p.name,
+            })
+            .collect(),
+    }))
+}
+
+async fn list_research_hardware(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Path(project): Path<String>,
+    Query(q): Query<ResearchQuery>,
+) -> ApiResult<JsonBody<ResearchHardwareListDto>> {
+    let items = envs
+        .0
+        .research_hardware(&ctx, ctx.subject_tenant_id(), q.connection_id, &project)
+        .await
+        .map_err(problem)?;
+    Ok(Json(ResearchHardwareListDto {
+        items: items
+            .into_iter()
+            .map(|h| ResearchHardwareDto {
+                id: h.id,
+                name: h.name,
+                trial: h.trial,
+            })
+            .collect(),
+    }))
+}
+
 fn binding_dto(b: Binding) -> BindingDto {
     BindingDto {
         profile: b.profile,
@@ -1082,6 +1201,45 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/research/projects")
+        .operation_id("studio_environments.list_research_projects")
+        .summary("The Research projects a connection may run products in")
+        .description(
+            "For `?connection_id=` (an organization's `research` connection): the Constructor              Research projects its user owns or collaborates on, as Research's integration              service lists them (ADR-0049). What a Research environment is created from.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("connection_id", true, "The research connection", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(list_research_projects)
+        .json_response_with_schema::<ResearchProjectListDto>(openapi, StatusCode::OK, "Its projects")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/research/projects/{project}/hardware")
+        .operation_id("studio_environments.list_research_hardware")
+        .summary("The hardware a Research project's services may run on")
+        .description(
+            "For `?connection_id=`: the hardware configurations of the Research project its              user may use, trial ones marked (ADR-0049).",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("project", "Research project id")
+        .query_param_typed("connection_id", true, "The research connection", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(list_research_hardware)
+        .json_response_with_schema::<ResearchHardwareListDto>(openapi, StatusCode::OK, "Its hardware")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

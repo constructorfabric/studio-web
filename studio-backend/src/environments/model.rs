@@ -35,6 +35,30 @@ pub enum DatabaseMode {
     Namespace,
 }
 
+/// What runs an environment's products.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentKind {
+    /// A Kubernetes cluster the organization reaches through a connection.
+    #[default]
+    Kubernetes,
+    /// A member's Constructor Research, through its integration service
+    /// (ADR-0049): a Research project, where each Studio project runs as one
+    /// application per environment.
+    Research,
+}
+
+/// Where in Constructor Research a Research environment runs its products.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResearchTarget {
+    /// The Research project, as the integration service names it.
+    pub project: String,
+    /// The hardware configuration its services run on; `None` for
+    /// Research's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<String>,
+}
+
 /// One place an organization's products run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Environment {
@@ -44,9 +68,14 @@ pub struct Environment {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub kind: EnvironmentKind,
     /// The cluster: a connection of the `kubernetes` kind the organization
-    /// holds.
+    /// holds; or, for `research`, the `research` connection it signs in with.
     pub connection_id: Uuid,
+    /// The Research project and hardware; only for `research`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<ResearchTarget>,
     /// The prefix images are pushed to and the chart pulls from
     /// (`ghcr.io/acme`). Empty: the images are used as generated.
     #[serde(default)]
@@ -93,7 +122,9 @@ pub struct EnvironmentList {
 pub struct EnvironmentInput {
     pub name: String,
     pub description: String,
+    pub kind: EnvironmentKind,
     pub connection_id: Uuid,
+    pub research: Option<ResearchTarget>,
     pub registry: String,
     pub registry_connection_id: Option<Uuid>,
     pub namespace_pattern: Option<String>,
@@ -202,6 +233,7 @@ pub fn checked(
     by: String,
     at: String,
 ) -> Result<Environment, Invalid> {
+    let research = check_research(&input, input.registry.trim())?;
     let name = input.name.trim().to_owned();
     if !is_dns_label(&name) {
         return Err(invalid(
@@ -266,7 +298,9 @@ pub fn checked(
         id: own,
         name,
         description: input.description.trim().to_owned(),
+        kind: input.kind,
         connection_id: input.connection_id,
+        research,
         registry,
         registry_connection_id: input.registry_connection_id,
         namespace_pattern: pattern,
@@ -282,6 +316,58 @@ pub fn checked(
         updated_by: by,
         updated_at: at,
     })
+}
+
+/// A Research environment's target, checked; `None` for a cluster. Research
+/// keeps the registry and the namespace itself, and has no shared database
+/// server (ADR-0049 §2), so a Research environment names none of them.
+fn check_research(
+    input: &EnvironmentInput,
+    registry: &str,
+) -> Result<Option<ResearchTarget>, Invalid> {
+    if input.kind == EnvironmentKind::Kubernetes {
+        if input.research.is_some() {
+            return Err(invalid(
+                "research",
+                "only a research environment names a Research project",
+            ));
+        }
+        return Ok(None);
+    }
+    let Some(target) = &input.research else {
+        return Err(invalid(
+            "research",
+            "a research environment names its Research project",
+        ));
+    };
+    let project = target.project.trim().to_owned();
+    if project.is_empty() {
+        return Err(invalid(
+            "research",
+            "a research environment names its Research project",
+        ));
+    }
+    if !registry.is_empty() || input.registry_connection_id.is_some() {
+        return Err(invalid(
+            "registry",
+            "Constructor Research keeps the images in its own registry: leave the registry empty",
+        ));
+    }
+    if input.database == DatabaseMode::Shared {
+        return Err(invalid(
+            "database",
+            "Constructor Research has no shared database server: choose none, or the product's own",
+        ));
+    }
+    Ok(Some(ResearchTarget {
+        project,
+        hardware: target
+            .hardware
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .map(str::to_owned),
+    }))
 }
 
 /// `own` taking releases from `from`: another environment of the list, and
@@ -717,6 +803,10 @@ pub struct Deployment {
     /// run carries it from then on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_chart: Option<String>,
+    /// For a Constructor Research environment: what the run prepares and
+    /// where it puts the application (ADR-0049 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<super::research::ResearchDeploy>,
 }
 
 impl Deployment {
@@ -870,7 +960,9 @@ mod tests {
         EnvironmentInput {
             name: name.into(),
             description: String::new(),
+            kind: EnvironmentKind::Kubernetes,
             connection_id: Uuid::from_u128(7),
+            research: None,
             registry: "ghcr.io/acme/".into(),
             registry_connection_id: None,
             namespace_pattern: None,
@@ -1229,6 +1321,7 @@ mod tests {
             reason: None,
             outcome: None,
             pending_chart: None,
+            research: None,
         }
     }
 
@@ -1267,5 +1360,92 @@ mod tests {
             image: "acme/api:1 --set x".into(),
         };
         assert!(check_images(&[bad]).is_err());
+    }
+
+    #[test]
+    fn a_research_environment_names_its_project_and_no_registry() {
+        let research = |project: &str| EnvironmentInput {
+            kind: EnvironmentKind::Research,
+            registry: String::new(),
+            research: Some(ResearchTarget {
+                project: project.into(),
+                hardware: Some(" ".into()),
+            }),
+            ..input("research")
+        };
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            research(" ml-team "),
+            String::new(),
+            String::new(),
+        )
+        .expect("a research environment");
+        assert_eq!(e.kind, EnvironmentKind::Research);
+        assert_eq!(
+            e.research,
+            Some(ResearchTarget {
+                project: "ml-team".into(),
+                hardware: None
+            })
+        );
+
+        let no_project = checked(
+            &EnvironmentList::default(),
+            None,
+            research(""),
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(no_project.unwrap_err().field, "research");
+        let with_registry = EnvironmentInput {
+            registry: "ghcr.io/acme".into(),
+            ..research("ml-team")
+        };
+        let refused = checked(
+            &EnvironmentList::default(),
+            None,
+            with_registry,
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(refused.unwrap_err().field, "registry");
+        let shared = EnvironmentInput {
+            database: DatabaseMode::Shared,
+            ..research("ml-team")
+        };
+        let refused = checked(
+            &EnvironmentList::default(),
+            None,
+            shared,
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(refused.unwrap_err().field, "database");
+
+        let stray = EnvironmentInput {
+            research: research("x").research,
+            ..input("dev")
+        };
+        let refused = checked(
+            &EnvironmentList::default(),
+            None,
+            stray,
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(refused.unwrap_err().field, "research");
+    }
+
+    #[test]
+    fn an_environment_written_before_kinds_reads_as_a_cluster() {
+        let old = serde_json::json!({
+            "id": Uuid::from_u128(1), "name": "dev", "connection_id": Uuid::from_u128(7),
+            "updated_by": "", "updated_at": "",
+        });
+        let e: Environment = serde_json::from_value(old).unwrap();
+        assert_eq!(e.kind, EnvironmentKind::Kubernetes);
+        assert!(e.research.is_none());
+        assert!(serde_json::to_value(&e).unwrap().get("research").is_none());
     }
 }

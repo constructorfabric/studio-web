@@ -54,6 +54,7 @@ mod references; // the one resolver of references (ADR-0047)
 mod registry; // an OCI registry products ship through (ADR-0048)
 mod repository;
 mod research; // where a member's products are built and run (ADR-0049)
+mod research_api; // the integration service's contract, Studio's side (ADR-0049 §6)
 mod rest;
 pub mod sdk;
 mod service;

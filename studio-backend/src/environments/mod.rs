@@ -30,6 +30,8 @@ pub(crate) mod build; // a product built by Studio in the organization's cluster
 mod database;
 mod deploy;
 mod model;
+mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
+mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
 mod service;
 mod store;
@@ -69,6 +71,7 @@ impl Gear for StudioEnvironmentsGear {
         // A build in the organization's cluster, and the watch that records it (ADR-0048 §9).
         crate::tasks::sdk::register(Arc::new(build::BuildTask::new(ctx.client_hub())))?;
         crate::tasks::sdk::register(Arc::new(build::WatchTask::new(ctx.client_hub())))?;
+        crate::tasks::sdk::register(Arc::new(research::ResearchBuildTask::new(ctx.client_hub())))?;
         info!("studio-environments: deploy runs registered");
         Ok(())
     }

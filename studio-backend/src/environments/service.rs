@@ -12,8 +12,10 @@ use super::build;
 use super::deploy::{self, DeployPayload, Rollout};
 use super::model::{
     self, Binding, BindingList, ConfigSecret, DeployImage, Deployment, DeploymentAction,
-    DeploymentList, DeploymentState, Environment, EnvironmentInput, EnvironmentList, Invalid,
+    DeploymentList, DeploymentState, Environment, EnvironmentInput, EnvironmentKind,
+    EnvironmentList, Invalid,
 };
+use super::research;
 use super::store::{Store, service_context};
 use super::workflow;
 use super::{BINDINGS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE, ENVIRONMENTS_METADATA_TYPE};
@@ -421,6 +423,31 @@ impl EnvironmentService {
         self.require_manage(ctx, org).await?;
         let env = self.environment(ctx, org, id).await?;
         let svc = self.service(org)?;
+        if env.kind == EnvironmentKind::Research {
+            let project = env
+                .research
+                .as_ref()
+                .map(|r| r.project.clone())
+                .unwrap_or_default();
+            let projects = self
+                .research_api(org, env.connection_id)
+                .await?
+                .projects()
+                .await
+                .map_err(|e| {
+                    Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
+                })?;
+            return match projects.iter().find(|p| p.id == project) {
+                Some(p) => Ok(format!(
+                    "Constructor Research answers: project {} is this connection's",
+                    if p.name.is_empty() { &p.id } else { &p.name }
+                )),
+                None => Err(Refusal::Precondition(
+                    "ENVIRONMENT_RESEARCH_PROJECT_UNKNOWN",
+                    format!("'{project}' is not one of this connection's Research projects"),
+                )),
+            };
+        }
         let access = deploy::cluster_access(&self.hub, &svc, org, env.connection_id)
             .await
             .map_err(|e| Refusal::Precondition("ENVIRONMENT_CLUSTER_UNUSABLE", format!("{e:#}")))?;
@@ -736,6 +763,7 @@ impl EnvironmentService {
                 &config.secret_keys,
                 &d.product,
             ),
+            research: d.research.clone(),
         }
     }
 
@@ -792,6 +820,11 @@ impl EnvironmentService {
         if !env.admits(project) {
             return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
         }
+        if env.kind == EnvironmentKind::Research {
+            return self
+                .request_research_deploy(ctx, org, project, &env, req)
+                .await;
+        }
         if let Some(earlier) = req.redeploy_of {
             req = self.again(ctx, org, project, earlier, req).await?;
         } else if req.action == DeploymentAction::Install
@@ -833,6 +866,7 @@ impl EnvironmentService {
             reason: None,
             outcome: None,
             pending_chart: None,
+            research: None,
         };
         let mut chart = None;
         if req.action == DeploymentAction::Install {
@@ -1102,14 +1136,20 @@ impl EnvironmentService {
         if !env.admits(project) {
             return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
         }
-        let Some(registry_connection_id) = env.registry_connection_id else {
-            return Err(Refusal::Precondition(
-                "ENVIRONMENT_HAS_NO_REGISTRY",
-                format!(
-                    "environment '{}' has no registry login: a build pushes its images there",
-                    env.name
-                ),
-            ));
+        let research = env.kind == EnvironmentKind::Research;
+        let registry_connection_id = match env.registry_connection_id {
+            Some(id) => id,
+            // Research keeps the images it builds (ADR-0049 §3).
+            None if research => Uuid::nil(),
+            None => {
+                return Err(Refusal::Precondition(
+                    "ENVIRONMENT_HAS_NO_REGISTRY",
+                    format!(
+                        "environment '{}' has no registry login: a build pushes its images there",
+                        env.name
+                    ),
+                ));
+            }
         };
         let product_file = product_file.trim().trim_start_matches("./").to_owned();
         if !workflow::is_product_file(&product_file) {
@@ -1139,12 +1179,16 @@ impl EnvironmentService {
                 "'{r}' is not a branch, tag or commit"
             )));
         }
-        let builder_image = build::builder_image().ok_or_else(|| {
-            Refusal::Unavailable(
-                "this Studio does not know its own image to build with: set STUDIO_BUILDER_IMAGE"
-                    .into(),
-            )
-        })?;
+        let builder_image = if research {
+            String::new()
+        } else {
+            build::builder_image().ok_or_else(|| {
+                Refusal::Unavailable(
+                    "this Studio does not know its own image to build with: set STUDIO_BUILDER_IMAGE"
+                        .into(),
+                )
+            })?
+        };
         let files = self
             .hub
             .get::<dyn crate::product::port::ProjectFiles>()
@@ -1166,6 +1210,26 @@ impl EnvironmentService {
         })?;
         let project_name = self.store.tenant_name(ctx, project).await;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        if research {
+            return self
+                .request_research_build(
+                    ctx,
+                    org,
+                    project,
+                    &env,
+                    profile,
+                    product_file,
+                    build::RepoRef {
+                        tenant: target.tenant,
+                        connection_id,
+                        repo: target.repo.clone(),
+                        branch: target.base_branch.clone(),
+                    },
+                    git_ref,
+                    namespace,
+                )
+                .await;
+        }
         let build_id = format!("studio-{}", &Uuid::new_v4().simple().to_string()[..12]);
         let payload = build::BuildPayload {
             build_id: build_id.clone(),
@@ -1220,6 +1284,283 @@ impl EnvironmentService {
             run_id,
             namespace,
         })
+    }
+
+    /* ── Constructor Research (ADR-0049) ── */
+
+    /// The Research connector's calls through the organization's connection,
+    /// as its service.
+    async fn research_api(
+        &self,
+        org: Uuid,
+        connection_id: Uuid,
+    ) -> Result<crate::connectors::sdk::research::ResearchApi> {
+        let svc = self.service(org)?;
+        research::api(&self.hub, &svc, org, connection_id)
+            .await
+            .map_err(|e| Refusal::Precondition("ENVIRONMENT_RESEARCH_UNUSABLE", format!("{e:#}")))
+    }
+
+    /// The Research projects a connection of the organization may run
+    /// products in: what an administrator picks a Research environment from.
+    pub async fn research_projects(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        connection_id: Uuid,
+    ) -> Result<Vec<crate::connectors::sdk::research::Project>> {
+        self.require_manage(ctx, org).await?;
+        self.research_api(org, connection_id)
+            .await?
+            .projects()
+            .await
+            .map_err(|e| {
+                Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
+            })
+    }
+
+    /// The hardware configurations of a Research project.
+    pub async fn research_hardware(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        connection_id: Uuid,
+        project: &str,
+    ) -> Result<Vec<crate::connectors::sdk::research::Hardware>> {
+        self.require_manage(ctx, org).await?;
+        self.research_api(org, connection_id)
+            .await?
+            .hardware(project)
+            .await
+            .map_err(|e| {
+                Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
+            })
+    }
+
+    /// A build Studio prepares and Constructor Research compiles.
+    #[allow(clippy::too_many_arguments)]
+    async fn request_research_build(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        profile: String,
+        product_file: String,
+        repo: build::RepoRef,
+        git_ref: Option<String>,
+        application: String,
+    ) -> Result<BuildStarted> {
+        let target = env.research.as_ref().ok_or_else(|| {
+            Refusal::Precondition(
+                "ENVIRONMENT_RESEARCH_UNUSABLE",
+                format!("environment '{}' names no Research project", env.name),
+            )
+        })?;
+        let build_id = format!("research-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let payload = research::ResearchBuildPayload {
+            build_id: build_id.clone(),
+            organization_id: org,
+            project_id: project,
+            connection_id: env.connection_id,
+            research_project: target.project.clone(),
+            profile: profile.clone(),
+            product_file,
+            repo: repo.clone(),
+            git_ref,
+            records_in: Some(ctx.subject_tenant_id()),
+        };
+        if let Ok(builds) = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+        {
+            let mut running = crate::artifact_ingest::port::BuildOutcome::running(
+                &build_id, &repo.repo, &profile,
+            );
+            running.r#where = Some("research".into());
+            builds
+                .record(ctx, &project.to_string(), &running)
+                .await
+                .map_err(|e| Refusal::Internal(format!("{e:#}")))?;
+        }
+        let run_id = build::enqueue(
+            &self.hub,
+            org,
+            research::BUILD_TASK_TYPE,
+            serde_json::to_value(&payload).map_err(anyhow::Error::from)?,
+            &format!("research-build:{application}"),
+            &build_id,
+        )
+        .await
+        .map_err(|e| Refusal::Unavailable(format!("the build could not be queued: {e:#}")))?;
+        Ok(BuildStarted {
+            build_id,
+            run_id,
+            namespace: application,
+        })
+    }
+
+    /// A deploy to a Research environment: a build made there, put as the
+    /// project's application in the environment's Research project.
+    async fn request_research_deploy(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        req: DeployRequest,
+    ) -> Result<Deployment> {
+        let target = env.research.clone().ok_or_else(|| {
+            Refusal::Precondition(
+                "ENVIRONMENT_RESEARCH_UNUSABLE",
+                format!("environment '{}' names no Research project", env.name),
+            )
+        })?;
+        let build_id = match (req.redeploy_of, &req.build) {
+            (Some(earlier), _) => self
+                .deployment(ctx, org, earlier)
+                .await?
+                .build
+                .ok_or_else(|| Refusal::Invalid(format!("deployment {earlier} names no build")))?,
+            (None, Some(b)) => b.trim().to_owned(),
+            (None, None) if req.action == DeploymentAction::Uninstall => String::new(),
+            (None, None) => {
+                return Err(Refusal::Invalid(
+                    "a deploy to Constructor Research names a build made there".into(),
+                ));
+            }
+        };
+        let files = self
+            .hub
+            .get::<dyn crate::product::port::ProjectFiles>()
+            .map_err(|_| {
+                Refusal::Unavailable(
+                    "the project's repository is not available in this deployment".into(),
+                )
+            })?;
+        let target_repo = files
+            .repository(ctx, &project.to_string())
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e:#}")))?;
+        let repo = build::RepoRef {
+            tenant: target_repo.tenant,
+            connection_id: target_repo.connection_id.ok_or_else(|| {
+                Refusal::Precondition(
+                    "REPOSITORY_HAS_NO_CONNECTION",
+                    "the project's repository is reached through no connection the server can use"
+                        .into(),
+                )
+            })?,
+            repo: target_repo.repo,
+            branch: target_repo.base_branch,
+        };
+        let product_file = match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
+            Ok(products) => products
+                .saved_description(ctx, &project.to_string())
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s.path),
+            Err(_) => None,
+        }
+        .unwrap_or_else(|| "product.gdl".to_owned());
+
+        let mut images = Vec::new();
+        let mut product = req.product.trim().to_owned();
+        let mut profile = req.profile.trim().to_owned();
+        let (mut commit, mut lock_hash) = (None, None);
+        if req.action == DeploymentAction::Install {
+            let builds = self
+                .hub
+                .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+                .map_err(|_| {
+                    Refusal::Unavailable("builds are not available in this deployment".into())
+                })?;
+            let b = builds
+                .build(ctx, &project.to_string(), &build_id)
+                .await
+                .map_err(|e| Refusal::Internal(format!("{e:#}")))?
+                .ok_or_else(|| {
+                    Refusal::NotFound(
+                        build_id.clone(),
+                        format!("the project has no build {build_id}"),
+                    )
+                })?;
+            if b.r#where.as_deref() != Some("research") {
+                return Err(Refusal::Precondition(
+                    "BUILD_NOT_MADE_IN_RESEARCH",
+                    format!(
+                        "build {build_id} was not made in Constructor Research, which runs only \
+                         images it built"
+                    ),
+                ));
+            }
+            if b.status != "passed" {
+                return Err(Refusal::Precondition(
+                    "BUILD_NOT_PASSED",
+                    format!("build {build_id} is {}, not passed", b.status),
+                ));
+            }
+            images = b
+                .images
+                .into_iter()
+                .map(|(app, image)| DeployImage { app, image })
+                .collect();
+            if product.is_empty() {
+                product = b.product.unwrap_or_default();
+            }
+            if profile.is_empty() {
+                profile = b.profile.unwrap_or_default();
+            }
+            commit = b.commit;
+            lock_hash = b.lock_hash;
+        }
+        let product = Self::release_name(&product)?;
+        let project_name = self.store.tenant_name(ctx, project).await;
+        let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        let person = self.person(ctx).await;
+        let d = Deployment {
+            id: Uuid::new_v4(),
+            project_id: project,
+            project_name,
+            environment_id: env.id,
+            environment_name: env.name.clone(),
+            profile: profile.clone(),
+            product,
+            action: req.action,
+            redeploy_of: req.redeploy_of,
+            commit: commit.clone(),
+            lock_hash,
+            build: (!build_id.is_empty()).then_some(build_id),
+            images,
+            namespace,
+            chart_sha256: String::new(),
+            chart_ref: None,
+            state: DeploymentState::Queued,
+            run_id: None,
+            requested_by: person.id,
+            requested_by_name: person.name.unwrap_or_default(),
+            requested_at: now(),
+            decided_by: None,
+            decided_by_name: None,
+            decided_at: None,
+            reason: None,
+            outcome: None,
+            pending_chart: None,
+            research: Some(research::ResearchDeploy {
+                research_project: target.project,
+                hardware: target.hardware,
+                repo,
+                product_file,
+                profile,
+                commit: commit.unwrap_or_default(),
+            }),
+        };
+        if d.action == DeploymentAction::Install {
+            self.check_promoted(ctx, org, env, &d).await?;
+        }
+        let config = self.project_config(ctx, project, env, &d.profile).await?;
+        self.submit(org, env, d, None, config).await
     }
 
     /// A short-lived token that may push `repositories` (names under the
@@ -1474,6 +1815,17 @@ impl EnvironmentService {
     ) -> Result<(Deployment, Rollout)> {
         let d = self.deployment(ctx, org, id).await?;
         let env = self.environment(ctx, org, d.environment_id).await?;
+        if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
+            let api = self.research_api(org, env.connection_id).await?;
+            let rollout = research::rollout(&api, &target.project, &d.namespace)
+                .await
+                .map_err(|e| {
+                    Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
+                })?;
+            let mut d = d;
+            d.pending_chart = None;
+            return Ok((d, rollout));
+        }
         // The member asked through a deployment they can see; the cluster is
         // read as the service, which can read the organization's connection.
         let svc = self.service(org)?;

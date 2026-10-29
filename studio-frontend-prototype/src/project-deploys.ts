@@ -17,21 +17,41 @@ export function profilesBoundTo(bindings: readonly { profile: string; environmen
   return bindings.filter((b) => b.environment_id === environment).map((b) => b.profile);
 }
 
-/** The builds a deploy can name: passed, with a published chart (ADR-0048). */
-export function deployableBuilds(builds: readonly IdeBuild[]): IdeBuild[] {
-  return builds.filter((b) => b.status === "passed" && b.chartRef && b.chartVersion);
+/** The builds a deploy can name: passed, with a published chart (ADR-0048);
+ *  or, for a Constructor Research environment, made in Research, which runs
+ *  only images it built and keeps no chart (ADR-0049 §3). Without an
+ *  environment, any build some environment could take. */
+export function deployableBuilds(builds: readonly IdeBuild[], env?: Pick<DeployEnvironment, "kind">): IdeBuild[] {
+  const charted = (b: IdeBuild) => !!(b.chartRef && b.chartVersion);
+  const research = (b: IdeBuild) => b.where === "research";
+  return builds.filter(
+    (b) => b.status === "passed" && (env ? (env.kind === "research" ? research(b) : charted(b)) : charted(b) || research(b)),
+  );
 }
 
 /** What a rollback in an environment installs again: the newest succeeded
  *  install there before the latest one, with a published chart -- an
- *  uploaded one is not kept. `null` when there is none. */
+ *  uploaded one is not kept -- or, in Research, another build. `null` when
+ *  there is none. */
 export function rollbackTarget(deployments: readonly Deployment[], environment: string): Deployment | null {
   const installs = deployments.filter(
     (d) => d.environment_id === environment && d.state === "succeeded" && (d.action ?? "install") === "install",
   );
   const [latest, ...earlier] = installs;
   if (!latest) return null;
-  return earlier.find((d) => d.chart_ref && !(d.chart_ref === latest.chart_ref && d.chart_version === latest.chart_version)) ?? null;
+  return (
+    earlier.find((d) =>
+      d.chart_ref
+        ? !(d.chart_ref === latest.chart_ref && d.chart_version === latest.chart_version)
+        : !latest.chart_ref && !!d.build && d.build !== latest.build,
+    ) ?? null
+  );
+}
+
+/** Where a product a deploy started opens: the addresses its outcome names
+ *  (a Research deploy ends "… runs in Constructor Research: https://…"). */
+export function productUrls(outcome: string | null | undefined): string[] {
+  return (outcome ?? "").match(/https?:\/\/[^\s,;]+/g) ?? [];
 }
 
 /** Whether the release runs in the environment now, so it can be taken out. */

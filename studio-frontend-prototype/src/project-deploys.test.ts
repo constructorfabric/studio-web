@@ -7,6 +7,7 @@ import {
   isSecretKey,
   latestByEnvironment,
   parseValues,
+  productUrls,
   profilesBoundTo,
   promotionGap,
   rollbackTarget,
@@ -123,5 +124,33 @@ describe("an environment's configuration", () => {
     expect(isSecretKey("SMTP_PASSWORD")).toBe(true);
     expect(isSecretKey("smtp")).toBe(false);
     expect(isSecretKey("1A")).toBe(false);
+  });
+});
+
+describe("a Constructor Research environment's deploys (ADR-0049)", () => {
+  const research = { kind: "research" as const };
+  const made = build({ buildId: "research-1", where: "research", chartRef: null, chartVersion: null });
+  const charted = build({});
+
+  it("take only builds made in Research, and a cluster only charted ones", () => {
+    expect(deployableBuilds([made, charted], research).map((b) => b.buildId)).toEqual(["research-1"]);
+    expect(deployableBuilds([made, charted], { kind: "kubernetes" }).map((b) => b.buildId)).toEqual(["ci-run-1"]);
+    expect(deployableBuilds([made, charted])).toHaveLength(2);
+    expect(deployableBuilds([{ ...made, status: "failed" }], research)).toEqual([]);
+  });
+
+  it("roll back to another build, since Research keeps no chart", () => {
+    const at = (id: string, b: string) => ({ ...dep(id, "ml", "succeeded"), build: b });
+    expect(rollbackTarget([at("3", "research-2"), at("2", "research-2"), at("1", "research-1")], "ml")?.id).toBe("1");
+    expect(rollbackTarget([at("2", "research-2"), at("1", "research-2")], "ml")).toBeNull();
+  });
+
+  it("open the product where the deploy says it runs", () => {
+    expect(productUrls("shop-ml runs in Constructor Research (revision r3): https://shop.research.example, https://b.example")).toEqual([
+      "https://shop.research.example",
+      "https://b.example",
+    ]);
+    expect(productUrls("studio-web installed into studio-web-dev")).toEqual([]);
+    expect(productUrls(null)).toEqual([]);
   });
 });
