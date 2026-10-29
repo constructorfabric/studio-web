@@ -23,6 +23,7 @@ Status: **proposed** · Date: 2026-10-29 · Amends `cpt-studio-adr-deployment-en
   - [4. Who manages it](#4-who-manages-it)
   - [5. Deploys and builds read its connections from the project](#5-deploys-and-builds-read-its-connections-from-the-project)
   - [6. Names and namespaces](#6-names-and-namespaces)
+  - [7. A project builds on gears or from its own Dockerfiles](#7-a-project-builds-on-gears-or-from-its-own-dockerfiles)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -93,6 +94,23 @@ The name of a project environment must not repeat any other environment the proj
 
 An organization administrator adding an environment cannot see every project's own environments. For that case a deploy to a project environment is refused when an organization environment that admits the project, on the same cluster, gives the same namespace. The refusal names that organization environment.
 
+### 7. A project builds on gears or from its own Dockerfiles
+
+The case above also showed a second gap. A project whose code is not described in GDL has no `product.gdl`, and a build in Studio, which runs `gearbox generate`, has nothing to build.
+
+So a project says how it builds:
+
+| How | A build in Studio | What it needs |
+|---|---|---|
+| **On gears** (the default) | Clones the repository and the gear sources, generates the profile, builds the generated Dockerfiles and publishes the generated chart (ADR-0048 §9) | `product.gdl` |
+| **Its own** | Clones the repository, builds each Dockerfile the project names with its context, and publishes the chart folder it names | One or more `(values key, image name, Dockerfile, context)` and a chart folder, each path from the repository's root |
+
+Both kinds give the same build record: images by digest, chart and version. So Builds, Deploys and the history do not depend on which kind built it. A deploy sets `<values key>.image.repository` and `.tag` for each image, as it does for a generated chart. A chart of the repository's own reads its images from those keys.
+
+A project of either kind may also build in its own CI and upload the manifest (ADR-0048 §5). Studio records that build the same way.
+
+A Constructor Research environment builds on gears only for now: Research builds images from files inside its own project, not from a cluster Job.
+
 ## Consequences
 
 - A project deploys to its own registry or cluster without an administrator.
@@ -110,5 +128,5 @@ An organization administrator adding an environment cannot see every project's o
 
 ## Traceability
 
-- `studio-backend/src/environments/`: `model.rs` (owner, open clusters, the checks), `service.rs` (project environments, targets, where connections are read from), `rest.rs` (`/studio-environments/v1/project-environments`, `/studio-environments/v1/open-clusters`).
+- `studio-backend/src/environments/`: `model.rs` (owner, open clusters, the checks), `service.rs` (project environments, targets, where connections are read from), `rest.rs` (`/studio-environments/v1/project-environments`, `/studio-environments/v1/open-clusters`, `/studio-environments/v1/project-build`), `build.rs` (`build-prepare --own`).
 - `studio-frontend-prototype/src/`: the project's Deploys tab adds and edits its environments. Organization › Environments lists the clusters opened to projects.

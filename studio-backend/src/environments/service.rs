@@ -574,6 +574,46 @@ impl EnvironmentService {
             .map(|_| ())
     }
 
+    /// How the project builds (ADR-0052 §7): `None` on gears, from its
+    /// product description; `Some` from the repository's own Dockerfiles and
+    /// chart.
+    pub async fn project_build(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Option<model::OwnBuild>> {
+        self.organization_of_project(ctx, project).await?;
+        Ok(self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0
+            .build)
+    }
+
+    /// Set how the project builds, as a member who may write its settings.
+    pub async fn put_project_build(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        build: Option<model::OwnBuild>,
+    ) -> Result<Option<model::OwnBuild>> {
+        self.organization_of_project(ctx, project).await?;
+        let build = build.map(model::checked_own_build).transpose()?;
+        self.store
+            .update::<BindingList, Option<model::OwnBuild>, Refusal>(
+                ctx,
+                project,
+                BINDINGS_METADATA_TYPE,
+                |row| {
+                    row.build = build.clone();
+                    Ok(build.clone())
+                },
+            )
+            .await?
+            .map(|(_, b)| b)
+    }
+
     /// Say which of the organization's clusters its projects may put
     /// environments of their own on (ADR-0052 §2). Administrators only.
     pub async fn put_open_clusters(
@@ -1426,6 +1466,21 @@ impl EnvironmentService {
             .project_environment(ctx, org, project, environment)
             .await?;
         let research = env.kind == EnvironmentKind::Research;
+        // How the project builds (ADR-0052 §7): on gears, or the
+        // repository's own Dockerfiles and chart.
+        let own = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0
+            .build;
+        if own.is_some() && research {
+            return Err(Refusal::Precondition(
+                "OWN_BUILD_NOT_IN_RESEARCH",
+                "a build of the repository's own Dockerfiles runs in a cluster environment;                  Constructor Research builds a product on gears for now"
+                    .into(),
+            ));
+        }
         let registry_connection_id = match env.registry_connection_id {
             Some(id) => id,
             // Research keeps the images it builds (ADR-0049 §3).
@@ -1541,6 +1596,7 @@ impl EnvironmentService {
             buildkit_image: build::buildkit_image(),
             records_in: Some(ctx.subject_tenant_id()),
             connections_from: env.project_id,
+            own,
         };
         if let Ok(builds) = self
             .hub

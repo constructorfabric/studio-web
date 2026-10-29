@@ -1858,6 +1858,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/project-build",
+      "operation_id": "studio_environments.get_project_build",
+      "tag": "",
+      "summary": "How a project builds",
+      "authenticated": true,
+      "responses": [
+        "ProjectBuildDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/project-environments",
       "operation_id": "studio_environments.list_project_environments",
       "tag": "",
@@ -5923,6 +5939,24 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/project-build",
+      "operation_id": "studio_environments.update_project_build",
+      "tag": "",
+      "summary": "Set how a project builds",
+      "authenticated": true,
+      "request": "ProjectBuildDto",
+      "responses": [
+        "ProjectBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
