@@ -40,7 +40,11 @@ export class ProductTerminals {
     // A terminal opened before the environment changed (protoc fetched, a tool
     // found) would build without it: open a new one instead of reusing it.
     const envKey = JSON.stringify(Object.entries(env).sort(([a], [b]) => a.localeCompare(b)));
-    if (terminal !== undefined && !terminal.isDisposed && this.opened.has(id) && this.opened.get(id) !== envKey) {
+    // A terminal this session did not open is one the layout restored after a
+    // restart: Theia gives it a new shell, and on Windows the widget showed
+    // nothing of it and sent nothing to it, so Build typed into a blank tab.
+    // Open a new one instead, as for a changed environment.
+    if (terminal !== undefined && !terminal.isDisposed && (!this.opened.has(id) || this.opened.get(id) !== envKey)) {
       terminal.dispose();
       terminal = undefined;
     }

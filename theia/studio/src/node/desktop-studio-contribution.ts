@@ -10,6 +10,7 @@ import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseE
 import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
 import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
+import { LlmProxy, startLlmProxy } from './desktop-llm-proxy';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
@@ -274,6 +275,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected config = desktopConfigFrom(process.env, process.cwd(), this.settings);
     protected session: DesktopSession | undefined;
     protected broker: TokenBroker | undefined;
+    protected llmProxy: LlmProxy | undefined;
     protected ready: Promise<void> | undefined;
     protected status: DesktopStatus = this.describe('signed-out');
     /** How the git routes run git; a test swaps it. */
@@ -605,6 +607,20 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         } catch (error) {
             console.error(`[studio-desktop] the git token broker could not start: ${error}`);
         }
+        // Claude Code and Codex on the member's profile key (node/desktop-llm-proxy.ts),
+        // in the environment for the same reason: the plugin host starts with the window.
+        try {
+            this.llmProxy = await startLlmProxy(
+                () => (this.config && this.session ? `${this.config.studioUrl}${this.config.gatewayPrefix}` : undefined),
+                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+            );
+            for (const name of this.llmProxy.unset) {
+                delete process.env[name];
+            }
+            Object.assign(process.env, this.llmProxy.env);
+        } catch (error) {
+            console.error(`[studio-desktop] the assistants' provider proxy could not start: ${error}`);
+        }
     }
 
     onStop(): void {
@@ -615,6 +631,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             void this.leases.endAll(target);
         }
         void this.broker?.close();
+        void this.llmProxy?.close();
     }
 
     /** Forget the token and stop handing it to git. */

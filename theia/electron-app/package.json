@@ -72,6 +72,8 @@
         "preferences": {
           "security.workspace.trust.enabled": false,
           "security.workspace.trust.startupPrompt": "never",
+          "//claudeCode.disableLoginPrompt": "Claude Code reaches Anthropic through Studio on the member's profile key (studio node/desktop-llm-proxy.ts sets ANTHROPIC_BASE_URL and the token), so its own sign-in is not needed.",
+          "claudeCode.disableLoginPrompt": true,
           "//files.watcherExclude": "From Gearbox Studio's app. A session opens the gear corpus beside the project, and `target/` in a Rust checkout is gigabytes Theia would walk. `.gearbox/` is Generate's output, rewritten wholesale; gearbox-studio's views read it on demand and rely on it not being watched.",
           "files.watcherExclude": {
             "**/.git/objects/**": true,
