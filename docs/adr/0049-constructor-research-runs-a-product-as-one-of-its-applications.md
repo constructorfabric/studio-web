@@ -4,7 +4,7 @@ status: proposed
 date: 2026-10-23
 ---
 
-# ADR-0049: Constructor Research builds and runs a product as one of its applications, reached through a connection and an integration service
+# ADR-0049: Constructor Research builds and runs a product as one of its applications, reached through a connection and Research's public API
 
 **ID**: `cpt-studio-adr-research-environments`
 
@@ -22,7 +22,7 @@ Status: **proposed** · Date: 2026-10-23 · Issue #868 · Extends `cpt-studio-ad
   - [3. Studio prepares, Research compiles](#3-studio-prepares-research-compiles)
   - [4. A deploy is an application of services](#4-a-deploy-is-an-application-of-services)
   - [5. Who owns what runs](#5-who-owns-what-runs)
-  - [6. What the integration service provides](#6-what-the-integration-service-provides)
+  - [6. What Studio calls in Research](#6-what-studio-calls-in-research)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -43,8 +43,10 @@ Research. Building the generated Dockerfiles and running the result on the
 hardware Research allocates would take them from a specification to a
 running product without operating Kubernetes.
 
-The Research team will write an integration service for what Studio needs.
-This record says what that is, and how Studio reaches it.
+This record first asked the Research team for an integration service of
+Studio's own. There will be none: Research opens its public API instead --
+the routes its web client calls, which an `rk-` access key may call too.
+This record says how Studio builds and runs a product through it.
 
 What Research has today shapes the answer:
 
@@ -67,18 +69,18 @@ What Research has today shapes the answer:
 - **The shared Constructor identity provider** (IdentityServer) signs people
   in with authorization code and PKCE, `offline_access`, and Google, Apple,
   Microsoft or Facebook as well as a password. Its clients are configuration,
-  kept in its database; it supports `private_key_jwt` client authentication.
+  kept in its database. Tokens last an hour.
   Tokens carry the tenant (`tid`). Many people have no password at all.
 
 ## Considered Options
 
-1. **Research hands out namespaces.** The integration service gives Studio a
+1. **Research hands out namespaces.** Research gives Studio a
    namespace and short-lived Kubernetes credentials, and Studio builds and
    deploys exactly as ADR-0048 does.
-2. **Research runs Studio's products as its own applications.** The
-   integration service accepts a build context and a list of services, and
-   uses Research's image build and applications to run them. Studio
-   translates its chart into that list.
+2. **Research runs Studio's products as its own applications.** Studio
+   puts the build context in the project's files, has Research build the
+   images there, and creates the application's services through Research's
+   public API. Studio translates its chart into those services.
 3. **A connection with the person's Research login and password.** Studio
    stores the password and signs in as the person.
 
@@ -92,8 +94,7 @@ inside it; making that safe is a rebuild of Research's isolation, not an
 integration. Option 3 fails everyone who signs in through Google or
 Microsoft, breaks under multi-factor sign-in, and stores a secret that cannot
 be narrowed or revoked on its own. Option 2 uses what Research already
-builds, runs, meters and exposes, and asks the integration service only to
-make it callable by Studio.
+builds, runs, meters and exposes, through the API Research already has.
 
 The cost is a second deploy path beside ADR-0048's Helm install. It is kept
 narrow: Studio renders the same chart and hands over what it contains (§4),
@@ -105,12 +106,15 @@ A new connection kind, `research`, a plugin gear like every provider
 (`cpt-studio-principle-connector-provider-is-plugin`). It is not created by
 pasting a credential. **Connect Constructor Research** sends the person to the
 identity provider with authorization code and PKCE, as a confidential client
-`constructor-studio` registered there (authenticated with `private_key_jwt`),
-asking for `offline_access` and the integration service's scope. The
-callback stores the refresh token in credstore; the connection keeps only its
-reference (`cpt-studio-principle-credentials-by-reference`).
+`constructor-studio` registered there (authenticated with a client secret;
+the identity provider's client configuration has no `private_key_jwt`),
+asking for `openid profile user platform offline_access`. The callback
+stores the refresh token in credstore; the connection keeps only its
+reference (`cpt-studio-principle-credentials-by-reference`). Every call
+trades it for an access token, and a call Research refuses with 401 is made
+once more with a fresh one: a build outlasts an access token.
 
-Its test calls the integration service's `/me`. The connection's `account` is
+Its test calls Research's `GET /auth/session`. The connection's `account` is
 the Research user's id and its tenant. A `personal` connection that passed the
 test proves its creator controls that Research account (ADR-0012), so the link
 between a Studio person and a Research user needs no mechanism of its own.
@@ -119,10 +123,16 @@ The connector gains a second way to create a connection, `oauth_start` and
 `oauth_callback`, beside the pasted credential. Research is the first provider
 to use it; a GitHub App or a GitLab OAuth application could use it later.
 
-The integration service validates the audience and the scope of every token.
-Research's own services do not check either today; the integration service
-is the place a token issued to Studio is told apart from one issued to
-Research's web client.
+Research does not check a token's audience or scope today, so a token
+issued to Studio could call any route the member can. Studio keeps to the
+routes §6 lists, which are the ones an access key is allowed.
+
+*Considered, not chosen:* right after the sign-in, Studio could create an
+`rk-` access key for the member (`POST /access-keys`) and keep it instead of
+the refresh token. It never expires and Research limits it to the allowed
+routes, but it is one more long-lived secret per member, revocable only in
+Research, and the OAuth connection (refreshed, revocable from Studio) already
+works.
 
 ### 2. A Research environment is a Research project
 
@@ -134,10 +144,11 @@ environment (`{project}-{environment}`), created on the first deploy.
 
 The hardware a service may use is one of the Research project's hardware
 configurations, chosen per application in the environment's binding, and
-offered as the integration service lists them for that user. The trial mode
+offered as Research lists them for that user. The trial mode
 is Research's: a trial user gets trial configurations and Research's trial
 limits, and their applications end when Research ends them. Studio shows what
-the integration service says about it.
+Research says about it. With no hardware chosen, a service runs on the
+smallest configuration without a GPU.
 
 The registry, the namespace and the public address are Research's, not the
 environment's: a Research environment has no registry or namespace pattern to
@@ -148,39 +159,59 @@ fill in.
 **Build in Studio** to a Research environment runs ADR-0048 §9's `prepare`
 step on the Studio server as a background run: clone the product's
 repository and its gears, `gearbox generate`, make the tree buildable. That
-generates; it does not compile (ADR-0043). The prepared tree is packed as an
-archive and sent to the integration service with the paths of the generated
-Dockerfiles. Research builds each image with its own builder, on its own
-nodes, and pushes it to its own registry. The build's record (ADR-0045) is
-`where: research`, with the images by Research's reference, the step and the
-last lines of a failure, as for any build.
+generates; it does not compile (ADR-0043). Research has no upload: Studio
+starts a desk of the Research project (its own `studio` desk, or the
+project's one desk), writes the prepared tree into its files over WebDAV
+(`studio-build/<build>/`, kept out of the project's git and removed after),
+and asks Research for one image per generated Dockerfile. Research builds
+each with its own builder, on its own nodes, into its own registry; Studio
+polls, then stops the desk if it started it. The build's record (ADR-0045)
+is `where: research`, with each image by Research's id, the step and the
+last lines of a failure (from Research's build log, while it has it), as for
+any build.
+
+A Research service takes no files and no command (§4), so the build renders
+the chart as the deploy will and bakes into each image what the chart would
+mount from a ConfigMap, its command and arguments and its scratch folders
+(each generated Dockerfile gains `COPY`, `ENTRYPOINT` and `CMD` lines). The
+image's reference carries a digest of that; a deploy whose chart asks for
+something else refuses and asks for a new build. A database server's
+Postgres is built the same way, `FROM` the environment's database image with
+the script that creates its databases.
 
 Images built by CI or the desktop into the organization's registry
-(ADR-0048 §4, §5) may run in Research once the integration service accepts an
-image by reference with a pull credential. Until then, a Research environment
-deploys only builds made in Research.
+(ADR-0048 §4, §5) may run in Research once Research accepts an image by
+reference with a pull credential. Until then, a Research environment deploys
+only builds made in Research.
 
 ### 4. A deploy is an application of services
 
 **Deploy** to a Research environment takes a build, renders the product's
 chart (`helm template`, the same chart and the same values ADR-0048 would
-install) and gives the integration service what Research can run:
+install) and creates in Research what it can run:
 
 - each Deployment as a **service**: its image, ports and which of them are
   public (from the chart's ingress), environment variables, volumes, replicas,
   and the hardware configuration of the binding;
-- configuration secrets (ADR-0048 §7) as secret variables, which the
-  integration service keeps in Research's secret store and never echoes back;
+- configuration secrets (ADR-0048 §7) as **plain** environment variables:
+  Research's public API has no secret variables and returns a service's
+  variables as they are. The deploy says so in its progress and its outcome;
 - a `namespace`-mode database (ADR-0048 §7) as one more service, a Postgres
-  with a volume and no public port, with the databases created by the
-  integration service's start hook or by the product's own migration.
+  with a volume and no public port, its databases created by the script
+  baked into its image (§3);
+- another service's address as Research's: Research reaches a service at
+  `svc-<name>`, and an address in a variable or a YAML file is rewritten.
 
-A deploy replaces the application's services with the new set, as `helm
-upgrade` would. Status reads the services' state and their public addresses
+A deploy makes the application's services exactly the new set, as `helm
+upgrade` would: it creates the application if need be, creates or changes
+each service (a volume of the same name keeps its data) and restarts it,
+removes the services the product no longer has, and waits for all to run.
+Research runs one replica of a service and has no health check of Studio's. Status reads the services' state and their public addresses
 back. Rollback deploys an earlier record again; uninstall removes the
 application. A chart object with no service equivalent (a CronJob, a
-StatefulSet other than the database, a custom resource) refuses the deploy
-and names the object, rather than dropping it silently.
+StatefulSet other than the database, a Secret mounted as files, a sidecar,
+a custom resource) refuses the deploy and names the object, rather than
+dropping it silently.
 
 Public addresses are Research's, and Research does not authenticate requests
 to an application's public port: a product is reachable by anyone with its
@@ -200,40 +231,51 @@ its owner. Studio says so instead of hiding it:
 - **Phase two: an organization's Research.** An environment held by the
   organization, as ADR-0043 requires of shared environments. It needs Research
   to own an application by its tenant, not a person, and a credential the
-  integration service issues to an organization (a client of the identity
+  Research issues to an organization (a client of the identity
   provider bound to one tenant, revocable from Research). Studio does not
   accept the act-as-any-user path Research's own services use.
 
-### 6. What the integration service provides
+### 6. What Studio calls in Research
 
-This is the contract the Research team is asked to build. Every call is
-authorized with a bearer token from the identity provider whose audience is
-the integration service; answers are JSON; errors carry a stable code and a
-message. Long operations answer at once with an id and are read back.
+Research's own public API, with the member's bearer token. The connection's
+address is the account API, `https://<stand>/api/platform-account/v1`; the
+desk's files (`/api/platform-storage`) and the logs (`/api/platform-keeper`)
+are on the same origin and take the same token. Answers are JSON; a refusal
+is `{"detail": {"msg", "error_code"}}`, and its `msg` is what the person
+sees. Nothing answers with an event: Studio polls.
 
 | Call | Purpose |
 |---|---|
-| `GET /me` | the caller: Research user id, tenant, trial or not |
-| `GET /projects` | the Research projects the caller owns or collaborates on |
-| `GET /projects/{p}/hardware` | the hardware configurations the caller may use there |
-| `POST /projects/{p}/builds` | a build: the context archive (or an upload URL), Dockerfile paths and image names; answers a build id |
-| `GET /builds/{b}` | state, per-image reference and digest, the failing step and its last lines |
-| `PUT /projects/{p}/applications/{name}` | create or replace an application: its services, ports, variables, secret variables, volumes, replicas, hardware; idempotent; answers a revision |
-| `GET /projects/{p}/applications/{name}` | state per service, public addresses, the revision running |
-| `GET …/applications/{name}/services/{s}/logs` | recent log lines of a service |
-| `DELETE /projects/{p}/applications/{name}` | remove it, volumes kept unless asked |
-| a webhook or an event stream | a build or an application changed state; a trial or a limit is about to end |
+| `GET /auth/session` | the connection's test: the member's id, name and email |
+| `GET /projects` | the projects the member owns or collaborates on |
+| `GET /projects/{p}/hardware-configurations` | the hardware a project's services may use, trial or not |
+| `GET`, `POST /projects/{p}/desks` | the desk a build uses |
+| `GET /desks/{d}`, `POST`/`DELETE /desks/{d}/filesystem` | start the desk, wait for `running`, stop it |
+| `MKCOL`, `PUT`, `GET`, `DELETE /api/platform-storage/desks/{d}/dav/project/…` | the prepared tree in the desk's files |
+| `POST /desks/{d}/images`, `GET /images/{i}` | an image per Dockerfile, and its `build_status` |
+| `GET /api/platform-keeper/image-builds/{i}/logs` | the last lines of a failed build |
+| `GET`, `POST /projects/{p}/applications`, `GET`, `DELETE /applications/{a}` | the environment's application: found by name, created, read, removed |
+| `POST /applications/{a}/services`, `PATCH /applications/{a}/services/{s}`, `DELETE /services/{s}` | its services, one call each |
+| `POST /services/{s}/start`, `/restart`, `GET /services/{s}` | run them; `status` and the public `link` |
 
-Later, for phase two and for images from elsewhere:
+What Research's API cannot do today, and what Studio does instead:
 
-- a service may name an image by reference outside Research's registry, with
-  a pull credential the integration service keeps;
-- an application may be owned by a tenant, and a tenant may hold a credential
-  of its own for the integration service.
+- **secret variables**: none; a secret is a plain variable, and the deploy
+  says so;
+- **files and a command for a service**: none; baked into the image at build
+  (§3);
+- **an upload**: none; the desk's files;
+- **events**: none; polling;
+- **service logs**: a live stream only (`/api/platform-keeper/services/{s}/
+  logs`); Studio does not show them yet.
+
+Later, for phase two and for images from elsewhere: a service that names an
+image outside Research's registry with a pull credential; an application
+owned by a tenant, with a credential of the tenant's own; secret variables.
 
 From the identity provider: a client `constructor-studio` with Studio's
-redirect URIs, `offline_access`, and a scope whose audience is the
-integration service.
+redirect URIs, a client secret, `offline_access` and the scopes `openid
+profile user platform`.
 
 ## Consequences
 
@@ -245,13 +287,18 @@ integration service.
 - Good: Research keeps its isolation. Nothing outside Research reaches its
   cluster.
 - Bad: a second deploy path. A chart feature with no Research equivalent
-  refuses the deploy until the integration service grows it.
+  refuses the deploy until Research's API grows it.
+- Bad: configuration secrets are plain variables in Research, visible to
+  whoever can open the service, until Research has secret variables.
+- Bad: what a chart mounts is baked into the image, so a change to it needs a
+  new build, not only a new deploy.
 - Bad: phase one's environments belong to a person, against ADR-0043's rule
   for shared environments; it is labelled, and lifted by phase two.
 - Bad: the connector gets an OAuth flow, with a callback, state and PKCE kept
   between two requests, and refresh-token renewal.
-- Bad: a build to Research generates on the Studio server and uploads the
-  tree; a large product's context is a large upload.
+- Bad: a build to Research generates on the Studio server and writes the
+  tree into a desk file by file; a large product's context is a large upload,
+  and the build starts (and stops) a desk.
 
 ## More Information
 
@@ -259,21 +306,20 @@ integration service.
 
 1. **The connection.** The identity provider's client; the connector's OAuth
    flow; the `research` plugin; a personal connection that lists the
-   member's Research projects and hardware. *Needs: the client, `/me`,
-   `/projects`, `/hardware`.*
+   member's Research projects and hardware. *Needs: the client,
+   `/auth/session`, `/projects`, `/hardware-configurations`.*
 2. **Deploy to a member's Research.** `kind: research` on an environment, a
-   personal one; build through the integration service; deploy as an
-   application; status, logs, rollback, uninstall. *Needs: builds,
-   applications, logs, events.*
+   personal one; build in a desk; deploy as an application; status,
+   rollback, uninstall. *Needs: desks and their files, images,
+   applications and services.*
 3. **An organization's Research.** Tenant-owned applications and a tenant
    credential; images from the organization's registry. *Needs: Research to
    model both.*
 
 **Open questions for the Research team:**
 
-- Where does a build's context go: an upload the service unpacks into a build
-  volume, or a branch in the project's repository?
-- Can a service take a secret variable kept outside the project's files?
+- Can a service take a secret variable kept outside the project's files,
+  and files or a command of its own?
 - What owns an application when its owner leaves or their trial ends, and
   what happens to it?
 - Can an application belong to a tenant (phase two), and what would identify
