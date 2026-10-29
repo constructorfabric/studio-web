@@ -1634,8 +1634,30 @@ export interface DeployEnvironment {
   promote_from?: string | null;
   /** The projects that may deploy here; absent: all of them. */
   projects?: string[] | null;
+  /** The project that keeps it (ADR-0052); absent: the organization's. */
+  project_id?: string | null;
   updated_by: string;
   updated_at: string;
+}
+
+/** How a project builds (ADR-0052 §7): on gears from its `product.gdl`, or
+ *  from the repository's own Dockerfiles and Helm chart. */
+export interface ProjectBuildSetting {
+  kind: "gears" | "own";
+  images: OwnImage[];
+  chart?: string | null;
+}
+
+/** One image of a build of the repository's own. */
+export interface OwnImage {
+  /** The chart's values key: a deploy sets `<app>.image.repository` and `.tag`. */
+  app: string;
+  /** The image's name under the environment's registry. */
+  name: string;
+  /** From the repository's root. */
+  dockerfile: string;
+  /** From the repository's root; `.` by default. */
+  context?: string | null;
 }
 
 /** What an administrator sends for an environment. */
@@ -4393,10 +4415,58 @@ export const api = {
 
   /** The organization's deployment environments, and whether the caller may change them. */
   environments: (token: string, org: string) =>
-    request<{ items: DeployEnvironment[]; total: number; may_manage: boolean }>(
-      `/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`,
+    request<{
+      items: DeployEnvironment[];
+      total: number;
+      may_manage: boolean;
+      /** The clusters its projects may put environments of their own on (ADR-0052). */
+      open_clusters?: { connection_ids: string[] };
+    }>(`/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`, token),
+  /** Say which of the organization's clusters its projects may use (ADR-0052 §2). */
+  saveOpenClusters: (token: string, org: string, connectionIds: string[]) =>
+    request<{ connection_ids: string[] }>(
+      `/studio-environments/v1/open-clusters?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ connection_ids: connectionIds }) },
+    ),
+  /** A project's own environments, and the organization's clusters it may put one on. */
+  projectEnvironments: (token: string, projectId: string) =>
+    request<{ items: DeployEnvironment[]; total: number; open_clusters: { connection_ids: string[] } }>(
+      `/studio-environments/v1/project-environments?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  createProjectEnvironment: (token: string, projectId: string, body: DeployEnvironmentInput) =>
+    request<DeployEnvironment>(
+      `/studio-environments/v1/project-environments?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  updateProjectEnvironment: (token: string, projectId: string, id: string, body: DeployEnvironmentInput) =>
+    request<DeployEnvironment>(
+      `/studio-environments/v1/project-environments/${encodeURIComponent(id)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  deleteProjectEnvironment: (token: string, projectId: string, id: string) =>
+    request<void>(
+      `/studio-environments/v1/project-environments/${encodeURIComponent(id)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "DELETE" },
+    ),
+  testProjectEnvironment: (token: string, projectId: string, id: string) =>
+    request<{ message: string }>(
+      `/studio-environments/v1/project-environments/${encodeURIComponent(id)}/test?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST" },
+    ),
+  /** How the project builds (ADR-0052 §7). */
+  projectBuild: (token: string, projectId: string) =>
+    request<ProjectBuildSetting>(`/studio-environments/v1/project-build?project_id=${encodeURIComponent(projectId)}`, token),
+  saveProjectBuild: (token: string, projectId: string, body: ProjectBuildSetting) =>
+    request<ProjectBuildSetting>(`/studio-environments/v1/project-build?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   createEnvironment: (token: string, org: string, body: DeployEnvironmentInput) =>
     request<DeployEnvironment>(`/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`, token, {
       method: "POST",

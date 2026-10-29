@@ -13,12 +13,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, api, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
+import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
 import { DataTable } from "./data-table";
 import { EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
-import { ProjectEnvironments } from "./environments-screen";
-import { STATE_LABELS, shortCommit, stateTone } from "./environments";
+import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
+import {
+  STATE_LABELS,
+  clusterConnections,
+  registryConnections,
+  researchConnections,
+  shortCommit,
+  stateTone,
+} from "./environments";
 import { errText, relTime } from "./format";
 import { KUBERNETES_PROFILES } from "./kits";
 import { deployableBuilds, latestByEnvironment, productUrls, profilesBoundTo } from "./project-deploys";
@@ -46,6 +53,29 @@ export function ProjectDeploys({
   const [round, setRound] = useState(0);
   // `undefined`: the first environment, until the reader opens or closes one.
   const [open, setOpen] = useState<string | null | undefined>(undefined);
+  // An environment of the project's own being added or changed (ADR-0052).
+  const [own, setOwn] = useState<DeployEnvironment | "new" | null>(null);
+  const [places, setPlaces] = useState<{ connections: Connection[]; open: string[] } | null>(null);
+  useEffect(() => {
+    if (own === null || places !== null) return;
+    let live = true;
+    Promise.all([
+      api.connections(token, projectId).catch(() => ({ items: [] as Connection[] })),
+      api.projectEnvironments(token, projectId).catch(() => ({ open_clusters: { connection_ids: [] as string[] } })),
+    ]).then(([c, p]) => live && setPlaces({ connections: c.items, open: p.open_clusters.connection_ids }));
+    return () => {
+      live = false;
+    };
+  }, [own, places, token, projectId]);
+  const removeOwn = async (e: DeployEnvironment) => {
+    if (!window.confirm(`Remove ${e.name}? What runs there stays, and its deploys stay in the history.`)) return;
+    try {
+      await api.deleteProjectEnvironment(token, projectId, e.id);
+      changed(`${e.name} is removed.`);
+    } catch (err) {
+      setError(errText(err));
+    }
+  };
   const changed = useCallback((message: string) => {
     setNotice(message);
     setRound((r) => r + 1);
@@ -86,9 +116,9 @@ export function ProjectDeploys({
       <style>{DEPLOYS_CSS}</style>
       <h1>Deploys</h1>
       <p className="subtitle">
-        Where this project&apos;s product runs. The organization keeps the environments (Organization › Environments): a
-        cluster, where a deploy installs a build&apos;s published chart, or Constructor Research, where it runs a build made
-        there as the project&apos;s application.
+        Where this project&apos;s product runs: the organization&apos;s environments (Organization › Environments) and the
+        project&apos;s own, each a cluster, where a deploy installs a build&apos;s published chart, or Constructor Research,
+        where it runs a build made there as the project&apos;s application.
       </p>
       {targets && (
         <PipelineLine
@@ -114,7 +144,7 @@ export function ProjectDeploys({
       ) : targets.environments.length === 0 ? (
         <div className="card">
           <p className="empty">
-            The organization has no environment this project may deploy to yet. An organization administrator adds them under
+            No environment yet. Add one of the project&apos;s own below, or ask an organization administrator for one under
             Organization › Environments.
           </p>
         </div>
@@ -139,6 +169,11 @@ export function ProjectDeploys({
                     <div className="deploy-env-head">
                       <b>{e.name}</b>
                       {e.protected && <span className="badge">needs approval</span>}
+                      {e.project_id && (
+                        <span className="badge" data-own-environment>
+                          the project&apos;s own
+                        </span>
+                      )}
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     {e.promote_from && <div className="sub">takes from {envName(e.promote_from)}</div>}
@@ -211,6 +246,16 @@ export function ProjectDeploys({
             detail={({ environment: e }) =>
               e.id === shown ? (
                 <div className="deploy-env">
+                  {e.project_id && (
+                    <div className="row deploy-own-actions">
+                      <button type="button" onClick={() => setOwn(e)}>
+                        Change {e.name}
+                      </button>
+                      <button type="button" onClick={() => void removeOwn(e)}>
+                        Remove
+                      </button>
+                    </div>
+                  )}
                   <EnvironmentActions
                     token={token}
                     projectId={projectId}
@@ -235,6 +280,37 @@ export function ProjectDeploys({
             }
           />
         </section>
+      )}
+      {targets && !unavailable && own === null && (
+        <div className="row">
+          <button type="button" onClick={() => setOwn("new")} data-add-own-environment>
+            + Add an environment of the project&apos;s own
+          </button>
+        </div>
+      )}
+      {targets && own !== null && places === null && <p className="hint">Loading the project&apos;s connections…</p>}
+      {targets && own !== null && places !== null && (
+        <EnvironmentForm
+          token={token}
+          org={targets.organization_id}
+          ownedBy={{ projectId, projectName: targets.project_name }}
+          editing={own === "new" ? null : own}
+          others={targets.environments.map((t) => t.environment)}
+          clusters={clusterConnections(places.connections).filter(
+            (c) => c.owner_tenant_id === projectId || places.open.includes(c.id),
+          )}
+          registries={registryConnections(places.connections)}
+          researches={researchConnections(places.connections)}
+          projects={[]}
+          onDone={() => {
+            const name = own === "new" ? "The environment" : own.name;
+            setOwn(null);
+            setPlaces(null);
+            changed(`${name} is saved.`);
+          }}
+          onCancel={() => setOwn(null)}
+          onClusterAdded={(c) => setPlaces((p) => (p ? { ...p, connections: [...p.connections, c] } : p))}
+        />
       )}
       {!unavailable && (
         <div className="card">

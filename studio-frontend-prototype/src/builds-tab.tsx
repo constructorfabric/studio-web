@@ -8,7 +8,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type BuildLog, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
+import {
+  api,
+  type BuildLog,
+  type Deployment,
+  type DeployEnvironment,
+  type ProjectBuildSetting,
+  type ProjectConfig,
+} from "./api";
 import {
   BUILD_STAGES,
   type BuildRun,
@@ -46,6 +53,7 @@ import { errText } from "./format";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 import { buildsHint, type PipelineTab } from "./pipeline";
 import { PipelineLine } from "./pipeline-line";
+import { HowItBuilds } from "./project-build-card";
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
@@ -104,6 +112,8 @@ export function ProjectBuilds({
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [saved, setSaved] = useState<SavedProduct | null>(null);
   const [chosen, setChosen] = useState<BuildScenario | null>(null);
+  // How the project builds (ADR-0052 §7); `null` while it loads.
+  const [build, setBuild] = useState<ProjectBuildSetting | null>(null);
   const [round, setRound] = useState(0);
   const changed = useCallback((message: string) => {
     setNote(message);
@@ -124,6 +134,10 @@ export function ProjectBuilds({
         setProfiles([...new Set(t.bindings.map((b) => b.profile))]);
       })
       .catch(() => live && setEnvironments([]));
+    api
+      .projectBuild(token, projectId)
+      .then((b) => live && setBuild(b))
+      .catch(() => live && setBuild({ kind: "gears", images: [], chart: null }));
     // What to build is the Product step's answer: where it last committed
     // product.gdl, on which branch, for which profile.
     api
@@ -183,6 +197,7 @@ export function ProjectBuilds({
           {note}
         </div>
       )}
+      <HowItBuilds token={token} projectId={projectId} projectName={projectName ?? "app"} build={build} onSaved={setBuild} />
       <section className="card" data-build-the-product>
         <h2>Build the product</h2>
         <div className="doc-views" role="tablist" aria-label="How to build" data-build-scenarios>
@@ -207,6 +222,7 @@ export function ProjectBuilds({
             environments={environments}
             profiles={profiles}
             saved={saved}
+            own={build?.kind === "own" ? build : null}
             onChanged={changed}
           />
         )}

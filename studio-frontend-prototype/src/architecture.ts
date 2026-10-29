@@ -660,7 +660,7 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Builds",
     does: "Build the composed product and publish it: in Studio as a Job in the organization's cluster, on the member's machine in the desktop IDE, or by proposing a CI workflow; follow each build's stages (prepare, images, publish) and read the end of each step's log from its pod, a failed one with its first error, a published one with its images and chart; deploy a published build to an environment; and read the CI runs of the project's repositories.",
-    components: ["ProjectBuilds", "BuildInStudio", "BuildLogPanel", "InCi", "ProposeBuildWorkflow", "DeployBuildTo"],
+    components: ["ProjectBuilds", "HowItBuilds", "BuildInStudio", "BuildLogPanel", "InCi", "ProposeBuildWorkflow", "DeployBuildTo"],
     gears: ["account-management", "studio-artifact-ingest", "studio-environments", "studio-product"],
   },
   {
@@ -675,7 +675,7 @@ export const SURFACES: Surface[] = [
     id: "project-deploys",
     area: "project",
     title: "Deploys",
-    does: "See where the project's product runs and run it there: each environment it may deploy to, its namespace and registry, the last deploy; deploy a build the Builds tab, a pipeline or the IDE published, roll back, uninstall; set the release's chart values and secrets per environment; bind the product's kubernetes profiles and read the deploy history.",
+    does: "See where the project's product runs and run it there: each environment it may deploy to, the organization's and its own (ADR-0052), its namespace and registry, the last deploy; add, change or remove an environment of the project's own; deploy a build the Builds tab, a pipeline or the IDE published, roll back, uninstall; set the release's chart values and secrets per environment; bind the product's kubernetes profiles and read the deploy history.",
     components: [
       "ProjectDeploys",
       "ProjectEnvironments",
@@ -683,7 +683,7 @@ export const SURFACES: Surface[] = [
       "EnvironmentActions",
       "EnvironmentConfig",
     ],
-    gears: ["studio-artifact-ingest", "studio-environments"],
+    gears: ["studio-artifact-ingest", "studio-connector", "studio-environments"],
   },
   {
     id: "project-artifacts",
@@ -768,7 +768,7 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Environments",
     does: "Declare where the organization's products run -- a cluster connection, a registry, a namespace per project, or a Constructor Research project and its hardware; approval for protected ones -- approve deploys, and see what runs where.",
-    components: ["OrgEnvironments", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry"],
+    components: ["OrgEnvironments", "EnvironmentForm", "ResearchFields", "AddCluster", "AddRegistry", "OpenClusters"],
     gears: ["account-management", "studio-connector", "studio-environments"],
   },
   {
