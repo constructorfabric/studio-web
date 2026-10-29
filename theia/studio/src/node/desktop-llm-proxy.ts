@@ -84,6 +84,16 @@ export function assistantEnvironment(base: string, secret: string, env: NodeJS.P
     return { set, unset };
 }
 
+/** The whole request body. By events: the build's Node types give `IncomingMessage` no async iterator. */
+export function readBody(req: http.IncomingMessage): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+}
+
 function refuse(res: http.ServerResponse, status: number, message: string): void {
     // The shape both providers answer errors in, so the assistant shows the message.
     res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -116,15 +126,12 @@ export async function startLlmProxy(studio: () => string | undefined, token: () 
             return;
         }
         try {
-            const chunks: Buffer[] = [];
-            for await (const chunk of req) {
-                chunks.push(chunk as Buffer);
-            }
+            const received = await readBody(req);
             const hasBody = !['GET', 'HEAD'].includes(req.method ?? 'GET');
             const answer = await fetch(`${target}/studio-llm/v1/providers${req.url}`, {
                 method: req.method,
                 headers: { ...forwardedRequestHeaders(req.headers), Authorization: `Bearer ${bearer}` },
-                body: hasBody ? Buffer.concat(chunks) : undefined,
+                body: hasBody ? received : undefined,
             });
             res.writeHead(answer.status, forwardedResponseHeaders(answer.headers));
             if (!answer.body) {

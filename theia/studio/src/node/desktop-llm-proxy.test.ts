@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import * as http from 'http';
-import { LlmProxy, assistantEnvironment, startLlmProxy } from './desktop-llm-proxy';
+import { LlmProxy, assistantEnvironment, readBody, startLlmProxy } from './desktop-llm-proxy';
 
 interface Seen {
     method?: string;
@@ -14,10 +14,7 @@ interface Seen {
 /** A stand-in for Studio's gateway: records the call, answers in two chunks. */
 async function fakeStudio(seen: Seen[]): Promise<{ url: string; close(): Promise<void> }> {
     const server = http.createServer(async (req, res) => {
-        let body = '';
-        for await (const chunk of req) {
-            body += chunk;
-        }
+        const body = (await readBody(req)).toString('utf8');
         seen.push({ method: req.method, url: req.url, headers: req.headers, body });
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'request-id': 'req-1' });
         res.write('event: one\n\n');
