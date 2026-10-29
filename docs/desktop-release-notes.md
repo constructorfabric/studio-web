@@ -9,6 +9,39 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.9
+
+Builds start from the portal. Everything merged since `desktop-v0.3.0-beta.8`,
+through the integration PR that carries #916 and #919.
+
+### Building
+
+- **Build in the IDE from the portal.** On a project's **Builds** tab, *On my
+  machine* → **Build in the IDE** opens the project in the desktop, opens its
+  product in Gearbox, and runs the new **Gearbox: Generate and Build**: it
+  waits for the plan, applies it when there is anything to write, and presses
+  the Build the profile shows -- Build images for a kubernetes profile,
+  `cargo build` otherwise. Where a person pressing the buttons would be
+  stopped (an error in the plan, unsaved edits, no application to build), it
+  stops and says why. A product that opens only as a file is not built, and
+  the notice says so. (#916)
+- **Studio's own product resolves again**: its `product.gdl` takes gears-rust
+  at `c14f0fb5d`, where `settings-service` declares the authorization
+  resolver it consumes; at the old pin every build stopped with GBX0206.
+  (#919)
+
+### Known not to work
+
+- **Generate and Build has not been run in a built app**: the link and its
+  handler are covered by unit tests, the command itself by none. Neither was
+  a whole build of Studio's product at the new gears-rust pin; resolving it
+  with the engine from `snapshot-cf63925` was.
+- **A terminal that stays blank.** On one Windows machine running
+  0.3.0-beta.7, the Build terminal opened with no prompt and no shell
+  process behind it, so Build printed nothing. Not reproduced or explained
+  yet; if Build shows an empty terminal, say whether **Terminal → New
+  Terminal** shows a prompt.
+
 ## 0.3.0-beta.8
 
 Everything merged since `desktop-v0.3.0-beta.7`, and Gearbox Studio's product
