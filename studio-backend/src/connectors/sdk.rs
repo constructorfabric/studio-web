@@ -39,7 +39,7 @@ pub use super::kubernetes::ClusterAccess;
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
 pub use super::registry::{RegistryAccess, same_registry};
 pub use super::research::PROVIDER as RESEARCH_PROVIDER;
-/// The Research connector's calls to the integration service (ADR-0049 §6).
+/// The Research connector's calls to Research's public API (ADR-0049 §6).
 pub mod research {
     pub use super::super::research_api::*;
 }

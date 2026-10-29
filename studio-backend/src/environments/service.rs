@@ -1358,7 +1358,14 @@ impl EnvironmentService {
             )
         })?;
         let build_id = format!("research-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        // The build bakes in what the chart mounts, so it renders the chart
+        // with the values the deploy will (ADR-0049 §3).
+        let config = self.project_config(ctx, project, env, &profile).await?;
         let payload = research::ResearchBuildPayload {
+            namespace: application.clone(),
+            values: config.values,
+            secret_keys: config.secret_keys,
+            database_image: env.database_image.clone(),
             build_id: build_id.clone(),
             organization_id: org,
             project_id: project,

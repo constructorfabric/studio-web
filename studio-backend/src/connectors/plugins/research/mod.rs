@@ -14,7 +14,7 @@ use super::{http_client, register_driver};
 
 /// This driver's section. Beside the vendor and priority every driver has, the
 /// client Studio is registered as with the Constructor identity provider and
-/// where Research's integration service is (ADR-0049 §1, §6).
+/// where Research's public API is (ADR-0049 §1, §6).
 ///
 /// A deployment that has no client yet leaves `client_id` empty, and the
 /// driver is not registered: Constructor Research is then not offered, rather
@@ -33,15 +33,18 @@ pub struct Config {
     pub client_id: String,
     #[serde(default)]
     pub client_secret: String,
-    /// What the client asks for. `offline_access` is what makes the sign-in
-    /// last past one access token.
+    /// What the client asks for: `user platform` are the scopes Research's
+    /// API is called with; `offline_access` is what makes the sign-in last
+    /// past one access token (an hour).
     #[serde(default = "default_scope")]
     pub scope: String,
     /// The portal's callback page. The identity provider sends the person
     /// here, and only here, with the code.
     #[serde(default)]
     pub redirect_uri: String,
-    /// Research's integration service, the default address of a connection.
+    /// Research's account API, `https://<stand>/api/platform-account/v1`: the
+    /// default address of a connection. Its files (`/api/platform-storage`)
+    /// and logs (`/api/platform-keeper`) are found on the same origin.
     #[serde(default)]
     pub api_url: String,
 }
@@ -68,7 +71,7 @@ fn default_priority() -> i16 {
     100
 }
 fn default_scope() -> String {
-    "openid profile offline_access research-integration".into()
+    "openid profile user platform offline_access".into()
 }
 
 impl Config {
@@ -134,7 +137,7 @@ mod tests {
             client_id: "constructor-studio".into(),
             client_secret: "s".into(),
             redirect_uri: "https://studio.example.com/connections/oauth/callback".into(),
-            api_url: "https://research.example.com/integration".into(),
+            api_url: "https://research.example.com/api/platform-account/v1".into(),
             ..Config::default()
         }
     }
