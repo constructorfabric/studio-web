@@ -9,6 +9,29 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.12
+
+Two fixes found trying 0.3.0-beta.11, through the PR that carries #935 and
+#936.
+
+### Building
+
+- **Build images builds Studio's own product.** It stopped compiling
+  `studio-backend` because the backend read its events catalogue from outside
+  its own folder, and an image build sees only the product's source folders.
+  The catalogue now lives inside `studio-backend`. Open the project again (or
+  Sync) so the clone has it. (#935)
+
+### Account
+
+- **Your photo on the Accounts button** now shows after you sign in, however
+  the sign-in happened; 0.3.0-beta.11 asked for it only when the window
+  opened, before the sign-in had finished. (#936)
+
+### Known not to work
+
+- **Neither fix was run in a built app** before this release.
+
 ## 0.3.0-beta.11
 
 Gearbox's Product tab reads as the product it describes, and a build from
