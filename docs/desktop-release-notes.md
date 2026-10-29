@@ -9,6 +9,39 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.10
+
+What trying Build in the IDE on 0.3.0-beta.9 turned up, and Constructor
+Research as a place to build and deploy. Through the integration PR that
+carries #922, #923 and #926.
+
+### Building
+
+- **Build types into a terminal that runs it.** After a restart, Build, Run
+  and Deploy typed into the terminal tab the layout restored, which showed
+  nothing and ran nothing. They now open a new one. (#926)
+- **Opening a project brings its clones up to date**, as Sync does: fetch,
+  then fast-forward only; a branch with commits of its own is left as it is.
+  A clone made at the first open no longer stays there for good. (#923)
+- **Constructor Research** as an organization's environment: Deploys lists
+  it beside the clusters, and a build made there runs as the project's
+  application. (#922)
+
+### Assistants
+
+- **Claude Code and Codex use the key in your Studio profile**, else an AI
+  connection you reach, through Studio's provider proxy; no provider key is
+  kept on the machine, and Claude Code no longer asks you to sign in to
+  Anthropic. A provider you point elsewhere yourself (its `*_BASE_URL` set)
+  is left alone. (#926)
+- **Your photo on the Accounts button**, from your Studio profile. (#926)
+
+### Known not to work
+
+- **None of the above was run in a built app.** The provider proxy is tested
+  against a stand-in Studio; whether the Codex extension still asks to sign
+  in with the key in its environment is not known.
+
 ## 0.3.0-beta.9
 
 Builds start from the portal. Everything merged since `desktop-v0.3.0-beta.8`,
