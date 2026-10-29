@@ -2623,8 +2623,9 @@ pub struct Gearbox {
     /// `gearbox --version`, asked once: the binary does not change under a
     /// running process, and the status page asked it on every load.
     version: std::sync::OnceLock<String>,
-    /// Recent previews' answers.
-    evaluations: std::sync::Mutex<Evaluations>,
+    /// Recent previews' answers, shared with the engine task that keeps one
+    /// after its request is gone.
+    evaluations: Arc<std::sync::Mutex<Evaluations>>,
 }
 
 /// A project's own product description, as its repository holds it.
@@ -2709,7 +2710,7 @@ impl Gearbox {
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_files: std::sync::Mutex::new(HashMap::new()),
             version: std::sync::OnceLock::new(),
-            evaluations: std::sync::Mutex::new(Evaluations::default()),
+            evaluations: Arc::new(std::sync::Mutex::new(Evaluations::default())),
         }
     }
 
@@ -3393,7 +3394,7 @@ impl Gearbox {
         // 1.5 GB to resolve, and the Product page asks again as picks change,
         // so two at once took the backend past its 4 GiB limit on dev
         // (OOMKilled). The next waits; a repeat is answered from `evaluations`.
-        let _turn = PREVIEW_TURNS
+        let turn = PREVIEW_TURNS
             .acquire()
             .await
             .context("the preview queue is closed")?;
@@ -3497,18 +3498,24 @@ impl Gearbox {
                 let product_id = input.product_id.clone();
                 let product_path = input.product_path.clone();
                 let profile = input.profile.clone();
-                let r = tokio::task::spawn_blocking(move || {
-                    evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)
+                let evaluations = Arc::clone(&self.evaluations);
+                // The engine outlives a request the gateway gave up on (its
+                // limit is 30 s; a product of sixty gears can take longer):
+                // the run keeps its turn and its answer, so the person's
+                // retry is answered from `evaluations` instead of starting over.
+                tokio::task::spawn_blocking(move || {
+                    let _turn = turn;
+                    let r = evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)?;
+                    if let Some(k) = key {
+                        evaluations
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .put(k, r.clone());
+                    }
+                    anyhow::Ok(r)
                 })
                 .await
-                .context("engine task")??;
-                if let Some(k) = key {
-                    self.evaluations
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .put(k, r.clone());
-                }
-                r
+                .context("engine task")??
             }
         };
         tracing::info!(
