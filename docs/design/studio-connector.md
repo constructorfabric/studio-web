@@ -59,7 +59,7 @@ trades the refresh token for an access token (`access_token()`) and stores the
 replacement when the provider rotates it. A pasted credential for a signed-in
 provider is refused. `oauth.rs` is the generic half (PKCE, the authorize
 address, the token endpoint); `research.rs` is the driver, whose address is
-Research's integration service and whose `test()` is its `GET /me`. The
+Research's own public API and whose `test()` is its `GET /auth/session`. The
 plugin registers nothing until its identity provider client is configured.
 
 A gear repository connection is one repository, not a host: its address is
