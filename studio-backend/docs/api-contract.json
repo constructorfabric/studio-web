@@ -206,6 +206,19 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/project-environments/{environment_id}",
+      "operation_id": "studio_environments.delete_project_environment",
+      "tag": "",
+      "summary": "Remove an environment of the project's own",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}",
       "operation_id": "studio_kits.remove_installation",
       "tag": "StudioKits",
@@ -1836,6 +1849,38 @@
       "authenticated": true,
       "responses": [
         "EnvironmentListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/project-build",
+      "operation_id": "studio_environments.get_project_build",
+      "tag": "",
+      "summary": "How a project builds",
+      "authenticated": true,
+      "responses": [
+        "ProjectBuildDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/project-environments",
+      "operation_id": "studio_environments.list_project_environments",
+      "tag": "",
+      "summary": "List a project's own environments",
+      "authenticated": true,
+      "responses": [
+        "ProjectEnvironmentListDto"
       ],
       "errors": [
         "401",
@@ -4530,6 +4575,43 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/project-environments",
+      "operation_id": "studio_environments.create_project_environment",
+      "tag": "",
+      "summary": "Add an environment of the project's own",
+      "authenticated": true,
+      "request": "EnvironmentRequest",
+      "responses": [
+        "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/project-environments/{environment_id}/test",
+      "operation_id": "studio_environments.test_project_environment",
+      "tag": "",
+      "summary": "Reach the cluster of an environment of the project's own",
+      "authenticated": true,
+      "responses": [
+        "EnvironmentTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack",
       "operation_id": "studio_git.push_pack",
       "tag": "StudioGit",
@@ -5829,6 +5911,61 @@
       "operation_id": "studio_environments.update_environment",
       "tag": "",
       "summary": "Change a deployment environment",
+      "authenticated": true,
+      "request": "EnvironmentRequest",
+      "responses": [
+        "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/open-clusters",
+      "operation_id": "studio_environments.update_open_clusters",
+      "tag": "",
+      "summary": "Say which clusters projects may put environments of their own on",
+      "authenticated": true,
+      "request": "OpenClustersRequest",
+      "responses": [
+        "OpenClustersDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/project-build",
+      "operation_id": "studio_environments.update_project_build",
+      "tag": "",
+      "summary": "Set how a project builds",
+      "authenticated": true,
+      "request": "ProjectBuildDto",
+      "responses": [
+        "ProjectBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/project-environments/{environment_id}",
+      "operation_id": "studio_environments.update_project_environment",
+      "tag": "",
+      "summary": "Change an environment of the project's own",
       "authenticated": true,
       "request": "EnvironmentRequest",
       "responses": [

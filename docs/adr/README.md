@@ -64,6 +64,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0049](0049-constructor-research-runs-a-product-as-one-of-its-applications.md) | Constructor Research builds and runs a product as one of its applications, reached through a connection and an integration service | proposed | 2026-10-23 |
 | [0050](0050-a-products-frontend-is-composed-from-frontx-micro-frontends.md) | A product's frontend is composed from FrontX micro-frontends, the way its backend is composed from gears | proposed | 2026-10-23 |
 | [0051](0051-an-owner-asks-for-an-organization-and-an-administrator-approves-it.md) | Anybody with a verified identity may sign in; an owner asks for an organization, and a platform administrator approves the organization, not the person | proposed | 2026-10-28 |
+| [0052](0052-a-project-keeps-environments-of-its-own-on-places-the-organization-opens.md) | A project keeps environments of its own, on places the organization opens to it | proposed | 2026-10-29 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

@@ -305,11 +305,12 @@ impl EnvironmentService {
         &self,
         ctx: &SecurityContext,
         org: Uuid,
+        from: Uuid,
         id: Uuid,
         prefix: &str,
     ) -> Result<()> {
         let am = self.store.am().as_ref();
-        let (at, c) = connectors::connection_by_id(am, ctx, org, id)
+        let (at, c) = connectors::connection_by_id(am, ctx, from, id)
             .await
             .ok_or_else(|| {
                 Refusal::Invalid(format!("there is no connection {id} in the organization"))
@@ -343,6 +344,305 @@ impl EnvironmentService {
             .map_err(|e| Refusal::Invalid(format!("{e}")))
     }
 
+    /// A Research environment signs in with a `research` connection. It is
+    /// the member's own (ADR-0049 §1): a run reads it as the member who asked.
+    async fn check_research_connection(
+        &self,
+        ctx: &SecurityContext,
+        from: Uuid,
+        id: Uuid,
+    ) -> Result<()> {
+        let am = self.store.am().as_ref();
+        let (_, c) = connectors::connection_by_id(am, ctx, from, id)
+            .await
+            .ok_or_else(|| Refusal::Invalid(format!("there is no connection {id} you can use")))?;
+        if c.provider != connectors::RESEARCH_PROVIDER {
+            return Err(Refusal::Invalid(format!(
+                "connection '{}' is {}, not Constructor Research",
+                c.label, c.provider
+            )));
+        }
+        Ok(())
+    }
+
+    /// The cluster a project's own environment runs on (ADR-0052 §2): one the
+    /// project holds and shares with it, or one of the organization's that
+    /// the organization opened to its projects. Never a personal one.
+    async fn check_project_cluster(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        open: &[Uuid],
+        id: Uuid,
+    ) -> Result<()> {
+        let am = self.store.am().as_ref();
+        let (at, c) = connectors::connection_by_id(am, ctx, project, id)
+            .await
+            .ok_or_else(|| {
+                Refusal::Invalid(format!("there is no connection {id} in the project"))
+            })?;
+        if c.provider != "kubernetes" {
+            return Err(Refusal::Invalid(format!(
+                "connection '{}' is {}, not a Kubernetes cluster",
+                c.label, c.provider
+            )));
+        }
+        if c.scope == "personal" {
+            return Err(Refusal::Invalid(format!(
+                "connection '{}' is personal: a deploy runs as the service, so connect the \
+                 cluster for the project",
+                c.label
+            )));
+        }
+        let holder = connectors::holder_of_row(&c, at);
+        if holder != project && !open.contains(&id) {
+            return Err(Refusal::Forbidden("CLUSTER_NOT_OPEN_TO_PROJECTS"));
+        }
+        connectors::check_owned(am, ctx, org, org, Some(holder))
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e}")))
+    }
+
+    /* ── a project's own environments (ADR-0052) ── */
+
+    /// The project's own environments, read as the caller.
+    async fn own_environments(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Vec<Environment>> {
+        Ok(self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0
+            .environments)
+    }
+
+    /// What `project` sees: the organization's environments that admit it,
+    /// and its own.
+    async fn visible(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+    ) -> Result<(Vec<Environment>, Vec<Environment>)> {
+        let admitted = self
+            .environments(ctx, org)
+            .await?
+            .items
+            .into_iter()
+            .filter(|e| e.admits(project))
+            .collect();
+        Ok((admitted, self.own_environments(ctx, project).await?))
+    }
+
+    /// One environment `project` may deploy to: the organization's that
+    /// admits it, or its own.
+    async fn project_environment(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        id: Uuid,
+    ) -> Result<Environment> {
+        if let Some(own) = self
+            .own_environments(ctx, project)
+            .await?
+            .into_iter()
+            .find(|e| e.id == id)
+        {
+            return Ok(own);
+        }
+        let env = self.environment(ctx, org, id).await?;
+        if !env.admits(project) {
+            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
+        }
+        Ok(env)
+    }
+
+    /// The project's own environments, and the organization's clusters it
+    /// may put one on.
+    pub async fn project_environments(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<(Vec<Environment>, Vec<Uuid>)> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let open = self.environments(ctx, org).await?.open_clusters;
+        Ok((self.own_environments(ctx, project).await?, open))
+    }
+
+    /// Add (`id` `None`) or change one of the project's own environments, as
+    /// a member who may write the project's settings (ADR-0052 §4).
+    pub async fn put_project_environment(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        id: Option<Uuid>,
+        input: EnvironmentInput,
+    ) -> Result<Environment> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let list = self.environments(ctx, org).await?;
+        match input.kind {
+            EnvironmentKind::Kubernetes => {
+                self.check_project_cluster(
+                    ctx,
+                    org,
+                    project,
+                    &list.open_clusters,
+                    input.connection_id,
+                )
+                .await?
+            }
+            EnvironmentKind::Research => {
+                self.check_research_connection(ctx, project, input.connection_id)
+                    .await?
+            }
+        }
+        if let Some(registry) = input.registry_connection_id {
+            self.check_registry_connection(ctx, org, project, registry, &input.registry)
+                .await?;
+        }
+        let admitted: Vec<Environment> = list
+            .items
+            .into_iter()
+            .filter(|e| e.admits(project))
+            .collect();
+        let by = self.person(ctx).await.id;
+        let at = now();
+        self.store
+            .update::<BindingList, Environment, Refusal>(
+                ctx,
+                project,
+                BINDINGS_METADATA_TYPE,
+                |row| {
+                    if let Some(id) = id
+                        && !row.environments.iter().any(|e| e.id == id)
+                    {
+                        return Err(Refusal::NotFound(
+                            id.to_string(),
+                            format!("the project has no environment {id} of its own"),
+                        ));
+                    }
+                    let env = model::checked_for_project(
+                        &admitted,
+                        &row.environments,
+                        project,
+                        id,
+                        input.clone(),
+                        by.clone(),
+                        at.clone(),
+                    )?;
+                    match row.environments.iter_mut().find(|e| e.id == env.id) {
+                        Some(slot) => *slot = env.clone(),
+                        None => row.environments.push(env.clone()),
+                    }
+                    row.environments.sort_by(|a, b| a.name.cmp(&b.name));
+                    Ok(env)
+                },
+            )
+            .await?
+            .map(|(_, env)| env)
+    }
+
+    /// Remove one of the project's own environments, and the bindings to it.
+    /// What runs there stays, and its records stay in the organization's
+    /// history.
+    pub async fn delete_project_environment(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        id: Uuid,
+    ) -> Result<()> {
+        self.organization_of_project(ctx, project).await?;
+        self.store
+            .update::<BindingList, (), Refusal>(ctx, project, BINDINGS_METADATA_TYPE, |row| {
+                let before = row.environments.len();
+                row.environments.retain(|e| e.id != id);
+                if row.environments.len() == before {
+                    return Err(Refusal::NotFound(
+                        id.to_string(),
+                        format!("the project has no environment {id} of its own"),
+                    ));
+                }
+                row.items.retain(|b| b.environment_id != id);
+                Ok(())
+            })
+            .await?
+            .map(|_| ())
+    }
+
+    /// How the project builds (ADR-0052 §7): `None` on gears, from its
+    /// product description; `Some` from the repository's own Dockerfiles and
+    /// chart.
+    pub async fn project_build(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Option<model::OwnBuild>> {
+        self.organization_of_project(ctx, project).await?;
+        Ok(self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0
+            .build)
+    }
+
+    /// Set how the project builds, as a member who may write its settings.
+    pub async fn put_project_build(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        build: Option<model::OwnBuild>,
+    ) -> Result<Option<model::OwnBuild>> {
+        self.organization_of_project(ctx, project).await?;
+        let build = build.map(model::checked_own_build).transpose()?;
+        self.store
+            .update::<BindingList, Option<model::OwnBuild>, Refusal>(
+                ctx,
+                project,
+                BINDINGS_METADATA_TYPE,
+                |row| {
+                    row.build = build.clone();
+                    Ok(build.clone())
+                },
+            )
+            .await?
+            .map(|(_, b)| b)
+    }
+
+    /// Say which of the organization's clusters its projects may put
+    /// environments of their own on (ADR-0052 §2). Administrators only.
+    pub async fn put_open_clusters(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        mut clusters: Vec<Uuid>,
+    ) -> Result<Vec<Uuid>> {
+        self.require_manage(ctx, org).await?;
+        clusters.sort();
+        clusters.dedup();
+        for id in &clusters {
+            self.check_connection(ctx, org, *id).await?;
+        }
+        let svc = self.service(org)?;
+        self.store
+            .update::<EnvironmentList, Vec<Uuid>, Refusal>(
+                &svc,
+                org,
+                ENVIRONMENTS_METADATA_TYPE,
+                |list| {
+                    list.open_clusters = clusters.clone();
+                    Ok(clusters.clone())
+                },
+            )
+            .await?
+            .map(|(_, open)| open)
+    }
+
     pub async fn put_environment(
         &self,
         ctx: &SecurityContext,
@@ -351,9 +651,17 @@ impl EnvironmentService {
         input: EnvironmentInput,
     ) -> Result<Environment> {
         self.require_manage(ctx, org).await?;
-        self.check_connection(ctx, org, input.connection_id).await?;
+        match input.kind {
+            EnvironmentKind::Kubernetes => {
+                self.check_connection(ctx, org, input.connection_id).await?
+            }
+            EnvironmentKind::Research => {
+                self.check_research_connection(ctx, org, input.connection_id)
+                    .await?
+            }
+        }
         if let Some(registry) = input.registry_connection_id {
-            self.check_registry_connection(ctx, org, registry, &input.registry)
+            self.check_registry_connection(ctx, org, org, registry, &input.registry)
                 .await?;
         }
         let by = self.person(ctx).await.id;
@@ -419,10 +727,19 @@ impl EnvironmentService {
         ctx: &SecurityContext,
         org: Uuid,
         id: Uuid,
+        project: Option<Uuid>,
     ) -> Result<String> {
-        self.require_manage(ctx, org).await?;
-        let env = self.environment(ctx, org, id).await?;
-        let svc = self.service(org)?;
+        // A project's own environment is tested by whoever sees it; the
+        // organization's by those who manage them.
+        let env = match project {
+            Some(project) => self.project_environment(ctx, org, project, id).await?,
+            None => {
+                self.require_manage(ctx, org).await?;
+                self.environment(ctx, org, id).await?
+            }
+        };
+        let from = env.connections_from(org);
+        let svc = self.service(from)?;
         if env.kind == EnvironmentKind::Research {
             let project = env
                 .research
@@ -448,7 +765,7 @@ impl EnvironmentService {
                 )),
             };
         }
-        let access = deploy::cluster_access(&self.hub, &svc, org, env.connection_id)
+        let access = deploy::cluster_access(&self.hub, &svc, from, env.connection_id)
             .await
             .map_err(|e| Refusal::Precondition("ENVIRONMENT_CLUSTER_UNUSABLE", format!("{e:#}")))?;
         let client = access.client().await.map_err(|e| {
@@ -471,12 +788,10 @@ impl EnvironmentService {
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
         let org = self.organization_of_project(ctx, project).await?;
         let project_name = self.store.tenant_name(ctx, project).await;
-        let environments = self
-            .environments(ctx, org)
-            .await?
-            .items
+        let (admitted, own) = self.visible(ctx, org, project).await?;
+        let environments = admitted
             .into_iter()
-            .filter(|e| e.admits(project))
+            .chain(own)
             .map(|e| {
                 let ns = model::namespace_for(&e.namespace_pattern, &project_name, &e.name)
                     .unwrap_or_default();
@@ -505,11 +820,11 @@ impl EnvironmentService {
     ) -> Result<Vec<Binding>> {
         let org = self.organization_of_project(ctx, project).await?;
         let list = model::checked_bindings(items)?;
-        let environments = self.environments(ctx, org).await?;
+        let (admitted, own) = self.visible(ctx, org, project).await?;
         for b in &list.items {
-            let env = environments
-                .items
+            let env = admitted
                 .iter()
+                .chain(own.iter())
                 .find(|e| e.id == b.environment_id)
                 .ok_or_else(|| {
                     Refusal::Invalid(format!(
@@ -528,7 +843,8 @@ impl EnvironmentService {
         // nothing -- a deploy is still checked against the environment.
         self.store
             .update::<BindingList, (), Refusal>(ctx, project, BINDINGS_METADATA_TYPE, |row| {
-                // The secrets' keys are kept: they are set one by one.
+                // The secrets' keys and the project's own environments are
+                // kept: they are set one by one.
                 row.items = list.items.clone();
                 Ok(())
             })
@@ -548,10 +864,9 @@ impl EnvironmentService {
         value: Option<String>,
     ) -> Result<ConfigSecret> {
         let org = self.organization_of_project(ctx, project).await?;
-        let env = self.environment(ctx, org, environment).await?;
-        if !env.admits(project) {
-            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
-        }
+        let env = self
+            .project_environment(ctx, org, project, environment)
+            .await?;
         let key = key.trim().to_owned();
         if !model::is_secret_key(&key) {
             return Err(Refusal::Invalid(format!(
@@ -756,6 +1071,7 @@ impl EnvironmentService {
             database_image: env.database_image.clone(),
             chart,
             chart_ref: d.chart_ref.clone(),
+            connections_from: env.project_id,
             values: model::deploy_values(
                 env,
                 &d.images,
@@ -816,14 +1132,29 @@ impl EnvironmentService {
         mut req: DeployRequest,
     ) -> Result<Deployment> {
         let org = self.organization_of_project(ctx, project).await?;
-        let env = self.environment(ctx, org, req.environment_id).await?;
-        if !env.admits(project) {
-            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
-        }
+        let env = self
+            .project_environment(ctx, org, project, req.environment_id)
+            .await?;
         if env.kind == EnvironmentKind::Research {
             return self
                 .request_research_deploy(ctx, org, project, &env, req)
                 .await;
+        }
+        if env.project_id.is_some() {
+            // An organization environment added after this one may give the
+            // project the same namespace on the same cluster (ADR-0052 §6).
+            let (admitted, _) = self.visible(ctx, org, project).await?;
+            let project_name = self.store.tenant_name(ctx, project).await;
+            if let Some(taken) = model::namespace_clash(&env, &admitted, &project_name) {
+                return Err(Refusal::Precondition(
+                    "ENVIRONMENT_NAMESPACE_TAKEN",
+                    format!(
+                        "the organization's environment '{}' deploys this project into the same \
+                         namespace on the same cluster: rename '{}' or change its namespace pattern",
+                        taken.name, env.name
+                    ),
+                ));
+            }
         }
         if let Some(earlier) = req.redeploy_of {
             req = self.again(ctx, org, project, earlier, req).await?;
@@ -1029,10 +1360,9 @@ impl EnvironmentService {
             )));
         }
         let org = self.organization_of_project(ctx, project).await?;
-        let env = self.environment(ctx, org, environment).await?;
-        if !env.admits(project) {
-            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
-        }
+        let env = self
+            .project_environment(ctx, org, project, environment)
+            .await?;
         let files = self
             .hub
             .get::<dyn crate::product::port::ProjectFiles>()
@@ -1132,11 +1462,25 @@ impl EnvironmentService {
             .unwrap_or_else(|| "product.gdl".to_owned());
         let git_ref = git_ref.or_else(|| saved.and_then(|s| s.branch));
         let org = self.organization_of_project(ctx, project).await?;
-        let env = self.environment(ctx, org, environment).await?;
-        if !env.admits(project) {
-            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
-        }
+        let env = self
+            .project_environment(ctx, org, project, environment)
+            .await?;
         let research = env.kind == EnvironmentKind::Research;
+        // How the project builds (ADR-0052 §7): on gears, or the
+        // repository's own Dockerfiles and chart.
+        let own = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?
+            .0
+            .build;
+        if own.is_some() && research {
+            return Err(Refusal::Precondition(
+                "OWN_BUILD_NOT_IN_RESEARCH",
+                "a build of the repository's own Dockerfiles runs in a cluster environment;                  Constructor Research builds a product on gears for now"
+                    .into(),
+            ));
+        }
         let registry_connection_id = match env.registry_connection_id {
             Some(id) => id,
             // Research keeps the images it builds (ADR-0049 §3).
@@ -1251,6 +1595,8 @@ impl EnvironmentService {
             builder_image,
             buildkit_image: build::buildkit_image(),
             records_in: Some(ctx.subject_tenant_id()),
+            connections_from: env.project_id,
+            own,
         };
         if let Ok(builds) = self
             .hub
@@ -1577,10 +1923,9 @@ impl EnvironmentService {
         repositories: Vec<String>,
     ) -> Result<PushToken> {
         let org = self.organization_of_project(ctx, project).await?;
-        let env = self.environment(ctx, org, environment).await?;
-        if !env.admits(project) {
-            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
-        }
+        let env = self
+            .project_environment(ctx, org, project, environment)
+            .await?;
         let Some(connection) = env.registry_connection_id else {
             return Err(Refusal::Precondition(
                 "ENVIRONMENT_HAS_NO_REGISTRY",
@@ -1588,8 +1933,9 @@ impl EnvironmentService {
             ));
         };
         let paths = model::push_paths(&env.registry, &repositories)?;
-        let svc = self.service(org)?;
-        let access = deploy::registry_access(&self.hub, &svc, org, connection)
+        let from = env.connections_from(org);
+        let svc = self.service(from)?;
+        let access = deploy::registry_access(&self.hub, &svc, from, connection)
             .await
             .map_err(|e| Refusal::Invalid(format!("{e:#}")))?;
         let (token, expires_in) = access
@@ -1694,7 +2040,9 @@ impl EnvironmentService {
         d.reason = reason;
         let chart = d.pending_chart.take();
         if approve {
-            let env = self.environment(ctx, org, d.environment_id).await?;
+            let env = self
+                .project_environment(ctx, org, d.project_id, d.environment_id)
+                .await?;
             if d.action == DeploymentAction::Install && chart.is_none() && d.chart_ref.is_none() {
                 return Err(Refusal::Precondition(
                     "DEPLOYMENT_CHART_GONE",
@@ -1816,7 +2164,9 @@ impl EnvironmentService {
         id: Uuid,
     ) -> Result<(Deployment, Rollout)> {
         let d = self.deployment(ctx, org, id).await?;
-        let env = self.environment(ctx, org, d.environment_id).await?;
+        let env = self
+            .project_environment(ctx, org, d.project_id, d.environment_id)
+            .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
             let api = self.research_api(ctx, org, env.connection_id).await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
@@ -1829,9 +2179,11 @@ impl EnvironmentService {
             return Ok((d, rollout));
         }
         // The member asked through a deployment they can see; the cluster is
-        // read as the service, which can read the organization's connection.
-        let svc = self.service(org)?;
-        let access = deploy::cluster_access(&self.hub, &svc, org, env.connection_id)
+        // read as the service, which can read the connection: the
+        // organization's, or the project's for its own environment.
+        let from = env.connections_from(org);
+        let svc = self.service(from)?;
+        let access = deploy::cluster_access(&self.hub, &svc, from, env.connection_id)
             .await
             .map_err(|e| Refusal::Precondition("ENVIRONMENT_CLUSTER_UNUSABLE", format!("{e:#}")))?;
         let rollout = deploy::rollout(&access, &d.namespace, &d.product)
@@ -1873,18 +2225,17 @@ impl EnvironmentService {
             .ok_or_else(missing)?;
         let org = self.organization_of_project(ctx, project).await?;
         let project_name = self.store.tenant_name(ctx, project).await;
-        let svc = self.service(org)?;
         let mut unreachable = None;
-        for env in self.environments(ctx, org).await?.items {
-            if !env.admits(project) {
-                continue;
-            }
+        let (admitted, own) = self.visible(ctx, org, project).await?;
+        for env in admitted.into_iter().chain(own) {
+            let from = env.connections_from(org);
+            let svc = self.service(from)?;
             let Ok(namespace) =
                 model::namespace_for(&env.namespace_pattern, &project_name, &env.name)
             else {
                 continue;
             };
-            let found = match deploy::cluster_access(&self.hub, &svc, org, env.connection_id).await
+            let found = match deploy::cluster_access(&self.hub, &svc, from, env.connection_id).await
             {
                 Ok(access) => match access.client().await {
                     Ok(client) => build::step_logs(&client, &namespace, build_id).await,
