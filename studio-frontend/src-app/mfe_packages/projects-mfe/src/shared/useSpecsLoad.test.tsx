@@ -67,7 +67,7 @@ describe('useSpecsLoad', () => {
     const filtered = await act(() =>
       load({
         ...page(1),
-        filters: { [SPECS_FILTER_KEYS.filter]: { value: 'with_findings' } },
+        filters: { [SPECS_FILTER_KEYS.filter]: { value: ['with_findings'] } },
       })
     );
     expect(names(filtered)).toEqual(['b.md']);
@@ -87,12 +87,22 @@ describe('useSpecsLoad', () => {
     expect(types).toHaveBeenCalledTimes(1);
   });
 
+  it('reads a stored filter that is not a list, or not a known filter, as none', async () => {
+    const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
+    for (const value of ['with_findings', ['no_such_filter'], [3]]) {
+      const loaded = await act(() =>
+        result.current.load({ ...page(1, 4), filters: { [SPECS_FILTER_KEYS.filter]: { value } } })
+      );
+      expect(names(loaded)).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+    }
+  });
+
   it('keeps every row, the filtered ones and the flags in the snapshot', async () => {
     const { result } = renderHook(() => useSpecsLoad('p1', 'w1'));
     await act(() =>
       result.current.load({
         ...page(1, 1),
-        filters: { [SPECS_FILTER_KEYS.documentType]: { value: 'prd' } },
+        filters: { [SPECS_FILTER_KEYS.documentType]: { value: ['prd'] } },
       })
     );
     const snapshot = result.current.snapshot!;
@@ -200,7 +210,7 @@ describe('useSpecsLoad, with reads that overlap', () => {
       Promise.all([
         result.current.load(page(1)),
         result.current.load({
-          filters: { [SPECS_FILTER_KEYS.filter]: { value: 'with_findings' } },
+          filters: { [SPECS_FILTER_KEYS.filter]: { value: ['with_findings'] } },
         }),
       ])
     );

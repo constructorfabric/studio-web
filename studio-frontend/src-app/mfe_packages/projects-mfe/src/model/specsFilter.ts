@@ -12,3 +12,6 @@ export const SPECS_FILTERS = [
 ] as const;
 
 export type SpecsFilter = (typeof SPECS_FILTERS)[number];
+
+export const isSpecsFilter = (value: unknown): value is SpecsFilter =>
+  SPECS_FILTERS.includes(value as SpecsFilter);

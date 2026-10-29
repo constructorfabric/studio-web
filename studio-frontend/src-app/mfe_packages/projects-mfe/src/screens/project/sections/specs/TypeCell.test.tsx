@@ -129,11 +129,18 @@ describe('the Type menu', () => {
     expect(sent()).toEqual([{ action: 'reset' }]);
   });
 
-  it('offers no Not a specification until the filters can bring a rejected row back (#878)', async () => {
+  it('rejects a binding as not a specification', async () => {
     renderCell({ type_key: 'prd' });
+    fireEvent.click(within(await openMenu()).getByText('type_reject'));
+    expect(sent()).toEqual([{ action: 'reject' }]);
+  });
+
+  it('marks a rejected row as not a specification, and sends nothing for it again', async () => {
+    renderCell({ type_key: null, state: 'not_a_document' });
     const menu = await openMenu();
-    expect(within(menu).queryByText('type_not_spec')).toBeNull();
-    expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(3);
+    expect(within(menu).getByRole('menuitemradio', { checked: true }).textContent).toBe('type_reject');
+    fireEvent.click(within(menu).getByText('type_reject'));
+    expect(requestTypeDecision).not.toHaveBeenCalled();
   });
 
   it('sends nothing for Unknown on a binding that has no type', async () => {

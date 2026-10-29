@@ -75,9 +75,13 @@ const STUDIO = specRowDto({
   checked_at: null,
 });
 
-function given(search = '') {
+/** Proposed, not confirmed. */
+const ADR = specRowDto({ id: 'b-adr', name: 'adr.md', type_key: 'adr', state: 'detected' });
+const NOT_SPEC = specRowDto({ id: 'b-notes', name: 'notes.md', type_key: null, state: 'not_a_document' });
+
+function given(search = '', filter = 'all', documentType: string | null = null) {
   state.current = {
-    'projects/specsFilter': { search, filter: 'all', documentType: null },
+    'projects/specsFilter': { search, filter, documentType },
     'projects/typeDecision': { pending: [] },
   };
 }
@@ -86,6 +90,12 @@ const renderSection = () => render(<SpecsSection projectId="p-1" projectName="Bi
 const rowOf = (name: string) => screen.getByText(name).closest('tr') as HTMLElement;
 const actions = (type: string) => dispatched.filter((action) => action.type.endsWith(`/${type}`));
 const lastPayload = (type: string) => actions(type).slice(-1)[0]?.payload;
+const shownIds = () => (lastPayload('specsShown') as { id: string }[]).map((row) => row.id);
+
+async function choose(chip: RegExp, option: string) {
+  if (!screen.queryByRole('radio', { name: option })) fireEvent.click(screen.getByRole('button', { name: chip }));
+  fireEvent.click(await screen.findByRole('radio', { name: option }));
+}
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
@@ -186,6 +196,73 @@ describe('the Specs section', () => {
     expect(lastPayload('setSpecsSearch')).toBe('api.md');
   });
 
+  it('narrows the rows, and Check, with Filter specs, and writes the choice back', async () => {
+    specRows.mockResolvedValue(answer([PRD, API, STUDIO, NOT_SPEC]));
+    renderSection();
+    await screen.findByText('prd.md');
+    expect(screen.queryByText('notes.md')).toBeNull();
+
+    await choose(/filter_specs/, 'filter_with_findings');
+    await waitFor(() => expect(screen.queryByText('api.md')).toBeNull());
+    expect(screen.getByText('prd.md')).toBeTruthy();
+    expect(lastPayload('setSpecsFilter')).toBe('with_findings');
+    await waitFor(() => expect(shownIds()).toEqual(['b-prd']));
+
+    await choose(/filter_specs/, 'filter_check_needed');
+    await waitFor(() => expect(shownIds()).toEqual(['doc-1']));
+
+    await choose(/filter_specs/, 'filter_not_specifications');
+    expect(await screen.findByText('notes.md')).toBeTruthy();
+    expect(screen.queryByText('prd.md')).toBeNull();
+  });
+
+  it('takes All specs as no filter', async () => {
+    renderSection();
+    await screen.findByText('prd.md');
+    await choose(/filter_specs/, 'filter_with_findings');
+    await waitFor(() => expect(screen.queryByText('api.md')).toBeNull());
+
+    await choose(/filter_specs/, 'filter_all');
+    expect(await screen.findByText('api.md')).toBeTruthy();
+    expect(lastPayload('setSpecsFilter')).toBe('all');
+    await waitFor(() => expect((screen.getByRole('radio', { name: 'filter_all' }) as HTMLInputElement).checked).toBe(false));
+  });
+
+  it('offers the types the list holds under Document type, and writes the choice back', async () => {
+    specRows.mockResolvedValue(answer([PRD, API, ADR, NOT_SPEC]));
+    renderSection();
+    await screen.findByText('prd.md');
+
+    fireEvent.click(screen.getByRole('button', { name: /filter_document_type/ }));
+    const options = (await screen.findAllByRole('radio')).map((radio) => radio.getAttribute('value'));
+    expect(options).toEqual(['adr', 'prd']);
+
+    await choose(/filter_document_type/, 'adr');
+    await waitFor(() => expect(screen.queryByText('prd.md')).toBeNull());
+    expect(screen.getByText('adr.md')).toBeTruthy();
+    expect(lastPayload('setSpecsDocumentType')).toBe('adr');
+  });
+
+  it("starts from the slice's filter and document type, so Sources opens it on confirmed types", async () => {
+    specRows.mockResolvedValue(answer([PRD, API, ADR]));
+    given('', 'type_confirmed');
+    renderSection();
+
+    await screen.findByText('prd.md');
+    await waitFor(() => expect(screen.queryByText('adr.md')).toBeNull());
+    expect(lastPayload('setSpecsFilter')).toBe('type_confirmed');
+  });
+
+  it("starts from the slice's document type", async () => {
+    specRows.mockResolvedValue(answer([PRD, API, ADR]));
+    given('', 'all', 'adr');
+    renderSection();
+
+    await screen.findByText('adr.md');
+    await waitFor(() => expect(screen.queryByText('prd.md')).toBeNull());
+    expect(lastPayload('setSpecsDocumentType')).toBe('adr');
+  });
+
   it('says there are no specs yet and offers Upload documents and Connect source', async () => {
     specRows.mockResolvedValue(answer([]));
     renderSection();
@@ -225,15 +302,16 @@ describe('the Specs section', () => {
 
   it('shows its own error with Retry when the first read fails under a seeded search', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    given('acme/api');
+    given('acme/api', 'type_confirmed');
     specRows.mockRejectedValueOnce(new Error('503'));
     renderSection();
 
     expect(await screen.findByText('read_failed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'retry' })).toBeTruthy();
     expect(specRows).toHaveBeenCalledTimes(1);
-    // The slice keeps the source's search, so Retry opens the list on it again.
+    // The slice keeps the source's search and filter, so Retry opens the list on them again.
     expect(actions('setSpecsSearch')).toEqual([]);
+    expect(actions('setSpecsFilter')).toEqual([]);
   });
 
   it('gives Check nothing to send once a reload fails', async () => {

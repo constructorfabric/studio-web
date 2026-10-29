@@ -16,7 +16,8 @@ import {
   type SpecRow,
   type SpecsQuery,
 } from '../model/specRows';
-import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
+import { isSpecsFilter } from '../model/specsFilter';
+import { TEXT_SEARCH_FILTER_KEY, tagGroupChoice } from './dataGridFilters';
 
 /** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {
@@ -63,11 +64,12 @@ const NO_SOURCES: SpecRowsSourcesDto = {
   counts: [],
 };
 
-// The search comes from the kit's text search (#692); the filter and the document type will come from its filters (#878).
+// The search comes from the kit's text search (#692), the filter and the document type from its tag groups (#878).
 function queryOf(filters: DataGridLoadContext['filters']): SpecsQuery {
+  const filter = tagGroupChoice(filters?.[SPECS_FILTER_KEYS.filter]);
   return {
-    filter: filters?.[SPECS_FILTER_KEYS.filter]?.value ?? 'all',
-    documentType: filters?.[SPECS_FILTER_KEYS.documentType]?.value ?? null,
+    filter: isSpecsFilter(filter) ? filter : 'all',
+    documentType: tagGroupChoice(filters?.[SPECS_FILTER_KEYS.documentType]),
     search: filters?.[SPECS_FILTER_KEYS.search]?.value ?? '',
   };
 }
