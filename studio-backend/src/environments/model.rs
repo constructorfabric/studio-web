@@ -549,6 +549,127 @@ pub struct BindingList {
     /// The project's own environments (ADR-0052), kept with its bindings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environments: Vec<Environment>,
+    /// How Studio builds the project (ADR-0052 §7): `None` from its
+    /// `product.gdl`, on gears; `Some` from the repository's own Dockerfiles
+    /// and Helm chart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<OwnBuild>,
+}
+
+/// A project built without a product description (ADR-0052 §7): the
+/// repository's own Dockerfiles, one image each, and its own Helm chart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnBuild {
+    pub images: Vec<OwnImage>,
+    /// The chart's folder in the repository (`chart/shop`).
+    pub chart: String,
+}
+
+/// One image of an [`OwnBuild`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnImage {
+    /// The chart's values key for it: a deploy sets `<app>.image.repository`
+    /// and `<app>.image.tag`.
+    pub app: String,
+    /// The image's name under the environment's registry (`shop-api`).
+    pub name: String,
+    /// The Dockerfile, from the repository's root (`Dockerfile`, `api/Dockerfile`).
+    pub dockerfile: String,
+    /// The build context, from the repository's root; `.` by default.
+    #[serde(default = "default_context")]
+    pub context: String,
+}
+
+fn default_context() -> String {
+    ".".to_owned()
+}
+
+/// A path inside the repository: relative, no `..`, no backslash.
+fn is_repo_path(p: &str) -> bool {
+    !p.is_empty()
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && !p.contains(':')
+        && p.split('/').all(|seg| seg != "..")
+}
+
+/// An [`OwnBuild`] as written, checked; paths normalised.
+pub fn checked_own_build(mut b: OwnBuild) -> Result<OwnBuild, Invalid> {
+    if b.images.is_empty() {
+        return Err(invalid(
+            "images",
+            "a build of the repository's own names at least one Dockerfile",
+        ));
+    }
+    if b.images.len() > 20 {
+        return Err(invalid("images", "at most 20 images"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for i in &mut b.images {
+        i.app = i.app.trim().to_owned();
+        i.name = i.name.trim().to_owned();
+        i.dockerfile = i.dockerfile.trim().trim_start_matches("./").to_owned();
+        i.context = match i
+            .context
+            .trim()
+            .trim_start_matches("./")
+            .trim_end_matches('/')
+        {
+            "" => ".".to_owned(),
+            c => c.to_owned(),
+        };
+        if !is_dns_label(&i.app) {
+            return Err(invalid(
+                "images",
+                format!(
+                    "'{}' is not a values key: lowercase letters, digits and '-'",
+                    i.app
+                ),
+            ));
+        }
+        if !seen.insert(i.app.clone()) {
+            return Err(invalid("images", format!("'{}' is named twice", i.app)));
+        }
+        let name_ok = !i.name.is_empty()
+            && i.name.bytes().all(|b| {
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'-' | b'_' | b'.' | b'/')
+            })
+            && !i.name.starts_with('/')
+            && !i.name.ends_with('/');
+        if !name_ok {
+            return Err(invalid(
+                "images",
+                format!("'{}' is not an image name, e.g. shop-api", i.name),
+            ));
+        }
+        if !is_repo_path(&i.dockerfile) {
+            return Err(invalid(
+                "images",
+                format!("'{}' is not a Dockerfile in the repository", i.dockerfile),
+            ));
+        }
+        if i.context != "." && !is_repo_path(&i.context) {
+            return Err(invalid(
+                "images",
+                format!("'{}' is not a folder in the repository", i.context),
+            ));
+        }
+    }
+    b.chart = b
+        .chart
+        .trim()
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_owned();
+    if !is_repo_path(&b.chart) {
+        return Err(invalid(
+            "chart",
+            "the chart is the folder of a Helm chart in the repository, e.g. chart/shop",
+        ));
+    }
+    Ok(b)
 }
 
 /// How large a binding's values may be once written.
@@ -661,6 +782,7 @@ pub fn checked_bindings(items: Vec<Binding>) -> Result<BindingList, Invalid> {
         items,
         secrets: Vec::new(),
         environments: Vec::new(),
+        build: None,
     })
 }
 
@@ -1597,6 +1719,55 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_build_of_the_repositorys_own_stays_in_the_repository() {
+        let image = |app: &str, dockerfile: &str, context: &str| OwnImage {
+            app: app.into(),
+            name: "shop-api".into(),
+            dockerfile: dockerfile.into(),
+            context: context.into(),
+        };
+        let ok = checked_own_build(OwnBuild {
+            images: vec![image("api", "./api/Dockerfile", "./")],
+            chart: "./chart/shop/".into(),
+        })
+        .unwrap();
+        assert_eq!(ok.images[0].dockerfile, "api/Dockerfile");
+        assert_eq!(ok.images[0].context, ".");
+        assert_eq!(ok.chart, "chart/shop");
+        for bad in [
+            OwnBuild {
+                images: vec![],
+                chart: "chart".into(),
+            },
+            OwnBuild {
+                images: vec![image("api", "../Dockerfile", ".")],
+                chart: "chart".into(),
+            },
+            OwnBuild {
+                images: vec![image("api", "Dockerfile", "/etc")],
+                chart: "chart".into(),
+            },
+            OwnBuild {
+                images: vec![image("API", "Dockerfile", ".")],
+                chart: "chart".into(),
+            },
+            OwnBuild {
+                images: vec![
+                    image("api", "Dockerfile", "."),
+                    image("api", "x/Dockerfile", "."),
+                ],
+                chart: "chart".into(),
+            },
+            OwnBuild {
+                images: vec![image("api", "Dockerfile", ".")],
+                chart: "../chart".into(),
+            },
+        ] {
+            assert!(checked_own_build(bad).is_err());
+        }
     }
 
     #[test]

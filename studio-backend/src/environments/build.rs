@@ -103,6 +103,10 @@ pub struct BuildPayload {
     /// for an organization's, and from a build queued before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connections_from: Option<Uuid>,
+    /// The repository's own Dockerfiles and chart (ADR-0052 §7); `None`
+    /// builds `product_file` on gears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own: Option<super::model::OwnBuild>,
 }
 
 /// The context a run reads an environment's connections as, and the tenant
@@ -200,10 +204,10 @@ pub fn builder_image() -> Option<String> {
 const BUILD_SCRIPT: &str = r#"set -eu
 TAG="$(cat /work/tag)"
 mkdir -p /work/meta
-while read -r app name dockerfile context; do
+while read -r app name dockerfile context filename; do
   echo "building $app as $PREFIX/$name:$TAG"
   buildctl-daemonless.sh build --frontend dockerfile.v0 \
-    --local context="$context" --local dockerfile="$dockerfile" --opt filename=Dockerfile \
+    --local context="$context" --local dockerfile="$dockerfile" --opt filename="${filename:-Dockerfile}" \
     --output "type=image,name=$PREFIX/$name:$TAG,push=true" \
     --metadata-file "/work/meta/$app.json"
 done < /work/apps
@@ -237,6 +241,10 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
         "--profile".to_owned(),
         p.profile.clone(),
     ];
+    if let Some(own) = &p.own {
+        prepare_args.push("--own".to_owned());
+        prepare_args.push(serde_json::to_string(own).unwrap_or_default());
+    }
     if let Some(r) = p.git_ref.as_ref().filter(|r| !r.trim().is_empty()) {
         prepare_args.push("--ref".to_owned());
         prepare_args.push(r.trim().to_owned());
@@ -1184,9 +1192,15 @@ pub fn prepare(
     git_ref: Option<&str>,
     product_file: &str,
     profile: &str,
+    own: Option<&str>,
 ) -> anyhow::Result<()> {
     let username = std::env::var("GIT_USERNAME").unwrap_or_default();
     let password = std::env::var("GIT_PASSWORD").unwrap_or_default();
+    if let Some(own) = own {
+        let own: super::model::OwnBuild =
+            serde_json::from_str(own).context("--own is not a build of the repository's own")?;
+        return prepare_own(work, repo_url, (&username, &password), git_ref, &own);
+    }
     prepare_as(
         work,
         repo_url,
@@ -1195,6 +1209,91 @@ pub fn prepare(
         product_file,
         profile,
     )
+}
+
+/// `build-prepare` for a project built without a product description
+/// (ADR-0052 §7): the repository cloned, and its own Dockerfiles and chart
+/// listed for `build` and `publish` as a generated tree's would be.
+pub fn prepare_own(
+    work: &Path,
+    repo_url: &str,
+    (username, password): (&str, &str),
+    git_ref: Option<&str>,
+    own: &super::model::OwnBuild,
+) -> anyhow::Result<()> {
+    let own = super::model::checked_own_build(own.clone()).map_err(|e| anyhow!("{e}"))?;
+    let repo = work.join("repo");
+    crate::connectors::sdk::git_checkout::clone_or_update_into(
+        &repo, repo_url, username, password, git_ref,
+    )
+    .context("the repository could not be cloned")?;
+    let commit = crate::connectors::sdk::git_checkout::head_commit(&repo)
+        .ok_or_else(|| anyhow!("the clone has no commit"))?;
+    let mut list = String::new();
+    let mut named = Vec::new();
+    for i in &own.images {
+        let dockerfile = repo.join(&i.dockerfile);
+        if !dockerfile.is_file() {
+            bail!("{} is not in the repository at {commit}", i.dockerfile);
+        }
+        let folder = dockerfile.parent().unwrap_or(&repo).to_path_buf();
+        let filename = dockerfile
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Dockerfile")
+            .to_owned();
+        let context = if i.context == "." {
+            repo.clone()
+        } else {
+            repo.join(&i.context)
+        };
+        if !context.is_dir() {
+            bail!(
+                "the build context {} is not a folder in the repository",
+                i.context
+            );
+        }
+        list.push_str(&format!(
+            "{} {} {} {} {}\n",
+            i.app,
+            i.name,
+            folder.display(),
+            context.display(),
+            filename
+        ));
+        named.push((i.app.clone(), i.name.clone()));
+    }
+    std::fs::write(work.join("apps"), list)?;
+    let short: String = commit.chars().take(12).collect();
+    std::fs::write(work.join("tag"), format!("sha-{short}"))?;
+    let chart_dir = repo.join(&own.chart);
+    let chart_yaml = std::fs::read_to_string(chart_dir.join("Chart.yaml"))
+        .with_context(|| format!("{} has no Chart.yaml", own.chart))?;
+    let product = chart_yaml
+        .lines()
+        .find_map(|l| l.strip_prefix("name:"))
+        .map(|n| n.trim().trim_matches('"').trim_matches('\'').to_owned())
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| anyhow!("{}/Chart.yaml names no chart", own.chart))?;
+    let prepared = Prepared {
+        product,
+        profile: "own".to_owned(),
+        commit,
+        lock_hash: None,
+        chart_dir: chart_dir.display().to_string(),
+        chart_base: chart_base_version(&chart_yaml),
+        apps: named,
+    };
+    std::fs::write(
+        work.join("build.json"),
+        serde_json::to_vec_pretty(&prepared)?,
+    )?;
+    println!(
+        "prepared {} image(s) and chart {} of the repository's own",
+        prepared.apps.len(),
+        prepared.product
+    );
+    Ok(())
 }
 
 /// [`prepare`] with the repository's credentials given, not read from the
@@ -1490,6 +1589,7 @@ mod tests {
             buildkit_image: BUILDKIT_IMAGE.into(),
             records_in: None,
             connections_from: None,
+            own: None,
         }
     }
 
@@ -1676,6 +1776,37 @@ mod tests {
             Some("sha256:abc")
         );
         assert_eq!(digest_of("{}"), None);
+    }
+
+    #[test]
+    fn a_build_of_the_repositorys_own_tells_prepare_what_to_build() {
+        let mut p = payload();
+        assert!(
+            !job_manifest(&p, true)["spec"]["template"]["spec"]["initContainers"][0]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a == "--own")
+        );
+        p.own = Some(super::super::model::OwnBuild {
+            images: vec![super::super::model::OwnImage {
+                app: "hello".into(),
+                name: "csharp-hello".into(),
+                dockerfile: "Dockerfile".into(),
+                context: ".".into(),
+            }],
+            chart: "chart/csharp-hello".into(),
+        });
+        let job = job_manifest(&p, true);
+        let args = job["spec"]["template"]["spec"]["initContainers"][0]["args"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let at = args.iter().position(|a| a == "--own").unwrap();
+        let own: super::super::model::OwnBuild =
+            serde_json::from_str(args[at + 1].as_str().unwrap()).unwrap();
+        assert_eq!(own, p.own.unwrap());
+        assert!(BUILD_SCRIPT.contains("--opt filename=\"${filename:-Dockerfile}\""));
     }
 
     #[test]

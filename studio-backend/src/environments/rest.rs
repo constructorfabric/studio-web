@@ -168,6 +168,81 @@ pub struct ProjectEnvironmentListDto {
     pub open_clusters: OpenClustersDto,
 }
 
+/// How a project builds (ADR-0052 §7).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct ProjectBuildDto {
+    /// `gears`: from its product description; `own`: the repository's own
+    /// Dockerfiles and Helm chart.
+    pub kind: String,
+    /// For `own`: one image per Dockerfile.
+    #[serde(default)]
+    pub images: Vec<OwnImageDto>,
+    /// For `own`: the chart's folder in the repository.
+    #[serde(default)]
+    pub chart: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct OwnImageDto {
+    /// The chart's values key: a deploy sets `<app>.image.repository` and `.tag`.
+    pub app: String,
+    /// The image's name under the environment's registry.
+    pub name: String,
+    /// From the repository's root.
+    pub dockerfile: String,
+    /// From the repository's root; `.` by default.
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+fn build_dto(b: Option<super::model::OwnBuild>) -> ProjectBuildDto {
+    match b {
+        None => ProjectBuildDto {
+            kind: "gears".into(),
+            images: Vec::new(),
+            chart: None,
+        },
+        Some(b) => ProjectBuildDto {
+            kind: "own".into(),
+            images: b
+                .images
+                .into_iter()
+                .map(|i| OwnImageDto {
+                    app: i.app,
+                    name: i.name,
+                    dockerfile: i.dockerfile,
+                    context: Some(i.context),
+                })
+                .collect(),
+            chart: Some(b.chart),
+        },
+    }
+}
+
+fn own_build(r: ProjectBuildDto) -> Result<Option<super::model::OwnBuild>, CanonicalError> {
+    match r.kind.trim() {
+        "gears" => Ok(None),
+        "own" => Ok(Some(super::model::OwnBuild {
+            images: r
+                .images
+                .into_iter()
+                .map(|i| super::model::OwnImage {
+                    app: i.app,
+                    name: i.name,
+                    dockerfile: i.dockerfile,
+                    context: i.context.unwrap_or_else(|| ".".into()),
+                })
+                .collect(),
+            chart: r.chart.unwrap_or_default(),
+        })),
+        other => Err(StudioEnvironmentsError::invalid_argument()
+            .with_constraint(format!("kind is gears or own, not '{other}'"))
+            .create()),
+    }
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct OpenClustersRequest {
@@ -693,6 +768,33 @@ async fn update_open_clusters(
         .await
         .map_err(problem)?;
     Ok(Json(OpenClustersDto { connection_ids }))
+}
+
+async fn get_project_build(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ProjectBuildDto>> {
+    let b = envs
+        .0
+        .project_build(&ctx, q.project_id)
+        .await
+        .map_err(problem)?;
+    Ok(Json(build_dto(b)))
+}
+
+async fn update_project_build(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<ProjectBuildDto>,
+) -> ApiResult<JsonBody<ProjectBuildDto>> {
+    let b = envs
+        .0
+        .put_project_build(&ctx, q.project_id, own_build(body)?)
+        .await
+        .map_err(problem)?;
+    Ok(Json(build_dto(b)))
 }
 
 async fn list_project_environments(
@@ -1399,6 +1501,42 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/project-build")
+        .operation_id("studio_environments.get_project_build")
+        .summary("How a project builds")
+        .description(
+            "For `?project_id=` (ADR-0052 §7): `gears`, from its product description, or              `own`, from the repository's own Dockerfiles and Helm chart.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(get_project_build)
+        .json_response_with_schema::<ProjectBuildDto>(openapi, StatusCode::OK, "How it builds")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-environments/v1/project-build")
+        .operation_id("studio_environments.update_project_build")
+        .summary("Set how a project builds")
+        .description(
+            "For `?project_id=`, by a member who may write the project's settings. A build in              Studio then generates the product on gears, or builds the Dockerfiles named and              publishes the chart folder named, each path from the repository's root.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<ProjectBuildDto>(openapi, "How it builds")
+        .handler(update_project_build)
+        .json_response_with_schema::<ProjectBuildDto>(openapi, StatusCode::OK, "Saved")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
