@@ -682,7 +682,12 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
     }
 
-    /** Clone every source of the workspace that is not on disk yet; answer with what was cloned. */
+    /**
+     * Clone every source of the workspace that is not on disk yet, and bring
+     * the ones that are up to date the way Sync does -- fetch, fast-forward
+     * only -- so a project opened from the portal builds what is on its branch
+     * now, not what was there at the first open. Answer with what was cloned.
+     */
     protected async cloneSources(config: DesktopStudioConfig, workspaceId: string, root: string): Promise<string[]> {
         const answer = await fetch(
             `${config.studioUrl}${config.gatewayPrefix}/studio-git/v1/sources?project_id=${encodeURIComponent(workspaceId)}`,
@@ -722,6 +727,12 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         for (const [index, source] of items.entries()) {
             const dir = dirOf(source);
             if (states[index].state === 'present') {
+                // A clone that cannot be brought up to date still opens:
+                // Sync in the Sources view says why and tries again.
+                const synced = await syncRepository(this.git, root, dir).catch(error => ({
+                    outcome: 'failed', message: error instanceof Error ? error.message : String(error),
+                }));
+                console.info(`[studio-desktop] ${source.name} on open: ${synced.outcome} -- ${synced.message}`);
                 continue;
             }
             report(index, { state: 'cloning', percent: 0 });
