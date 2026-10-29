@@ -111,6 +111,13 @@ backend:
     existingConfigMap: ""
   idpAdmin:
     baseUrl: "https://studio-dev.cfabric.org/auth"
+  # Constructor Research DEV (ADR-0049). The client secret is the
+  # `research_client_secret` key of the studio-web-app Secret.
+  research:
+    issuer: "https://dev-constructor.dev/idp"
+    clientId: "constructor-studio"
+    redirectUri: "https://studio-dev.cfabric.org/connections/oauth/callback"
+    apiUrl: "https://dev-constructor.dev/api/platform-account/v1"
   fileStorage:
     enabled: true
     s3:
