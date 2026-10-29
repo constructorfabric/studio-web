@@ -39,7 +39,7 @@ repository.
 - [glossary.md](glossary.md) — the project's terms, one row per term, with the other names each goes by.
 - [api-conventions.md](api-conventions.md) — the REST and event contract (ADR-0020).
 - [errors-catalog.md](errors-catalog.md) — the canonical error categories.
-- [events-catalog.md](events-catalog.md) — the `studio-events` vocabulary.
+- [events-catalog.md](../studio-backend/docs/events-catalog.md) — the `studio-events` vocabulary.
 - [theia-bridge-contract-v1.md](theia-bridge-contract-v1.md) — the wire surface of the Theia bridge (ADR-0022).
 - [graph-storage-api.md](graph-storage-api.md) — the graph-storage API as Studio consumes it.
 

@@ -1589,7 +1589,7 @@ Stability is `unstable` except where an ADR fixes the contract (`studio-events`,
 
 - **Contracts**: none external
 - **Technology**: Server-sent events, tenant-scoped, at-least-once with `after_seq` replay
-- **Location**: [`docs/events-catalog.md`](../events-catalog.md), [`studio-frontend/docs/studio-events.md`](../../studio-frontend/docs/studio-events.md)
+- **Location**: [`studio-backend/docs/events-catalog.md`](../../studio-backend/docs/events-catalog.md), [`studio-frontend/docs/studio-events.md`](../../studio-frontend/docs/studio-events.md)
 
 - [x] `p2` - **ID**: `cpt-studio-interface-portal-ide-bridge`
 

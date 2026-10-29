@@ -324,7 +324,7 @@ export function edgeCounts(edges: Edge[]): Record<Via, number> & { total: number
 
 /** What `name` uses, worst first, then by name. */
 /** One kind of event on the studio-events channel, as
- *  `GET /studio-events/v1/catalog` serves docs/events-catalog.md. */
+ *  `GET /studio-events/v1/catalog` serves studio-backend/docs/events-catalog.md. */
 export interface EventKind {
   kind: string;
   subject_type: string;

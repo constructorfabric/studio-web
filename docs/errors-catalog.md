@@ -1,7 +1,7 @@
 # The error contract
 
 What the backend answers with when a call does not succeed, and what a screen is
-allowed to read from it. The companion to [`events-catalog.md`](events-catalog.md):
+allowed to read from it. The companion to [`events-catalog.md`](../studio-backend/docs/events-catalog.md):
 that one is the vocabulary of announcements, this one the vocabulary of refusals.
 
 Every failing response in this assembly is

@@ -387,7 +387,7 @@ since. Asking again reviews against the new ones. Reviewer suggestions are the
 reviewers of earlier requests on the document, then on its type, ranked by how
 often they were asked. Each request change is announced on `studio-events` as
 `review_request.created`, `.decided` or `.cancelled`
-([events catalogue](../events-catalog.md)), which the portal's inbox reads
+([events catalogue](../../studio-backend/docs/events-catalog.md)), which the portal's inbox reads
 again. Reminders before the due date are not sent yet: an overdue request is
 marked `overdue` and leads the reviewer's inbox.
 

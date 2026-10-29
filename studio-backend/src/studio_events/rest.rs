@@ -99,7 +99,7 @@ async fn events(
 }
 
 /// The catalogue as this binary was built with it.
-const CATALOGUE: &str = include_str!("../../../docs/events-catalog.md");
+const CATALOGUE: &str = include_str!("../../docs/events-catalog.md");
 
 /// The documented kinds, by name. A catalogue that does not parse is a build
 /// the catalogue tests already failed; served as empty rather than a panic.

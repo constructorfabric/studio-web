@@ -24,7 +24,7 @@ use std::fs;
 use std::path::Path;
 
 /// Where the catalogue lives, relative to the crate root.
-pub(crate) const CATALOGUE: &str = "../docs/events-catalog.md";
+pub(crate) const CATALOGUE: &str = "docs/events-catalog.md";
 
 /// One documented `kind`.
 #[derive(Debug, Clone, PartialEq, Eq)]

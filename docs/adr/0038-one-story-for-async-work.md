@@ -100,7 +100,7 @@ refresh a cache and retry at the next boot. They are not work someone is owed.)
 
 **The Theia kinds break the catalogue's own rule.** `theia.operation`,
 `theia.repositories-changed` and the rest use hyphens and nouns, which rule E2
-forbids ([events catalog](../events-catalog.md)). No screen in either portal
+forbids ([events catalog](../../studio-backend/docs/events-catalog.md)). No screen in either portal
 subscribes to a `theia.*` kind.
 
 ## Considered Options
@@ -212,7 +212,7 @@ is done either way.
 |---|---|
 | 1 | **Read the run, not only the stream.** `followRun` in `studio-frontend-prototype/src/studio-events.ts` reads the run on subscribe and on reconnect. `artifact-sync.ts` loses "nothing to poll". |
 | 2 | **Delete the broker sink**: `EventBrokerEventSink`, the `theia-event-broker` feature and `event-broker-sdk` in `Cargo.toml`, the feature in `assembly/manifest.rs`, the compose comment, and the paragraph in `src/studio_theia/README.md`. |
-| 3 | **Rename the `theia.*` kinds** to rule E2, in `sink.rs` and the [events catalog](../events-catalog.md). |
+| 3 | **Rename the `theia.*` kinds** to rule E2, in `sink.rs` and the [events catalog](../../studio-backend/docs/events-catalog.md). |
 | 4 | **A notify port**: `studio-notify` publishes its accept path on the ClientHub; the dispatcher resolves it per use. |
 | 5 | **`reports.mirror` as a task type**, replacing `mirror_in_background`. |
 | 6 | **Write the rule down**: the table in §1 in [background-work](../background-work.md), and a line in `studio-backend/AGENTS.md` that work somebody is owed is a run. |

@@ -150,7 +150,7 @@ endpoint and never a second stream.
 The first segment is stable because clients filter on it.
 
 **E3 *(by review)* — `subject_type` comes from the registry in
-[`events-catalog.md`](events-catalog.md).** A new subject type is a PR against
+[`events-catalog.md`](../studio-backend/docs/events-catalog.md).** A new subject type is a PR against
 that file, which is what keeps the vocabulary a contract rather than a habit.
 
 **E4 *(by review)* — an event about a resource carries the fields that
@@ -420,7 +420,7 @@ break and accepts it in the same breath. Rule G4 is held by a second file from
 the same scan, `studio-backend/docs/api-contract-accepted.txt`: one
 tab-separated line per promise — every operation, every request and response
 field (followed into nested DTOs, by its name on the wire), and every subject
-type, kind and payload field in [`events-catalog.md`](events-catalog.md).
+type, kind and payload field in [`events-catalog.md`](../studio-backend/docs/events-catalog.md).
 
 `cargo test api_contract` compares it with the tree. A promise that is no
 longer kept fails, with the line to record and what a caller now meets:

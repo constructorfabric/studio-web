@@ -177,7 +177,7 @@ the order or backdate an event.
 
 The same DTO (`StudioEventDto`) is an SSE frame and an element of the replay
 page, so a client parses one shape whether it arrived live or was replayed.
-The vocabulary in use is [`docs/events-catalog.md`](../events-catalog.md).
+The vocabulary in use is [`studio-backend/docs/events-catalog.md`](../../studio-backend/docs/events-catalog.md).
 
 ### 3.2 Component Model
 
@@ -367,7 +367,7 @@ whole cost. Pruned to the configured `backlog` per tenant.
 
 | kind | subject_type |
 |--------|--------|
-| see [`docs/events-catalog.md`](../events-catalog.md) | |
+| see [`studio-backend/docs/events-catalog.md`](../../studio-backend/docs/events-catalog.md) | |
 
 #### Table: studio_events_cursor
 
@@ -416,5 +416,5 @@ The `seq` doc comment in `dto.rs` still says "per-process"; it is per tenant.
 - **PRD**: [Constructor Studio](../prd/constructor-studio.md)
 - **Design**: [Constructor Studio](constructor-studio.md)
 - **ADRs**: [ADR-0026](../adr/0026-studio-events-push-channel.md)
-- **Vocabulary**: [events catalog](../events-catalog.md)
+- **Vocabulary**: [events catalog](../../studio-backend/docs/events-catalog.md)
 - **Code**: [`studio-backend/src/studio_events/`](../../studio-backend/src/studio_events/)

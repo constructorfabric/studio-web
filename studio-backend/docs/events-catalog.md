@@ -8,7 +8,7 @@ publishing it, and a consumer may rely on nothing that is not on this page.
 The frame is always
 `{ seq, at_ms, kind, subject_type, subject_id, source, payload }` — `seq` and
 `at_ms` are assigned by the channel, the rest by the producer. How to consume it
-is [`studio-frontend/docs/studio-events.md`](../studio-frontend/docs/studio-events.md).
+is [`studio-frontend/docs/studio-events.md`](../../studio-frontend/docs/studio-events.md).
 
 ## Subject types
 
@@ -102,7 +102,7 @@ gear's kinds from it.
   `theia.`): a kind cannot ship undocumented, and a documented kind cannot
   quietly stop being sent.
 - **Against itself, over time** (rule G4 in
-  [`api-conventions.md`](api-conventions.md#g-versioning)). Every subject type,
+  [`api-conventions.md`](../../docs/api-conventions.md#g-versioning)). Every subject type,
   kind and payload field listed here is recorded as accepted in
   `studio-backend/docs/api-contract-accepted.txt`. Adding one is accepted by
   regenerating that file; removing or renaming one, or moving a kind to another

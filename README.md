@@ -249,7 +249,7 @@ the desktop app has its own build and rules in
 
 **Contracts.** Every endpoint, event and error follows
 [`docs/api-conventions.md`](docs/api-conventions.md),
-[`docs/events-catalog.md`](docs/events-catalog.md) and
+[`studio-backend/docs/events-catalog.md`](studio-backend/docs/events-catalog.md) and
 [`docs/errors-catalog.md`](docs/errors-catalog.md); a ratchet in CI holds the
 portal to them. A decision that changes how the system works gets an
 [ADR](docs/adr/README.md).
@@ -306,7 +306,7 @@ sides of that mount or neither.
 | Product brief and requirements | [`PRODUCT.md`](PRODUCT.md), [`docs/prd/`](docs/prd/constructor-studio.md) |
 | Architecture and decomposition | [`docs/design/`](docs/design/constructor-studio.md), [`docs/decomposition/`](docs/decomposition/constructor-studio.md) |
 | Architecture decisions | [`docs/adr/`](docs/adr/README.md) |
-| API, events, errors | [`api-conventions.md`](docs/api-conventions.md), [`events-catalog.md`](docs/events-catalog.md), [`errors-catalog.md`](docs/errors-catalog.md) |
+| API, events, errors | [`api-conventions.md`](docs/api-conventions.md), [`events-catalog.md`](studio-backend/docs/events-catalog.md), [`errors-catalog.md`](docs/errors-catalog.md) |
 | Push channel in the portal | [`studio-frontend/docs/studio-events.md`](studio-frontend/docs/studio-events.md) |
 | Backend | [`studio-backend/README.md`](studio-backend/README.md) |
 | IDE session | [`theia/README.md`](theia/README.md) |

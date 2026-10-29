@@ -8,7 +8,7 @@ window are rows, how an event gets from a producer to a browser on any
 replica, the routes and the two tables — is
 [`docs/design/studio-events.md`](../../../docs/design/studio-events.md). The
 vocabulary producers publish is
-[`docs/events-catalog.md`](../../../docs/events-catalog.md). This README is
+[`studio-backend/docs/events-catalog.md`](../../docs/events-catalog.md). This README is
 what you need to work in the directory.
 
 ## In the assembly

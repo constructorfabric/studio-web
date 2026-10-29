@@ -97,7 +97,7 @@ say in the pull request what you saw.
 
 **API, events and errors.** Read [`docs/api-conventions.md`](docs/api-conventions.md)
 before adding or changing an endpoint. A new event `kind` goes into
-[`docs/events-catalog.md`](docs/events-catalog.md); an error a screen branches on
+[`studio-backend/docs/events-catalog.md`](studio-backend/docs/events-catalog.md); an error a screen branches on
 uses a category from [`docs/errors-catalog.md`](docs/errors-catalog.md). The
 portal is held to the backend's OpenAPI by a ratchet
 (`scripts/check-api-usage.mjs`, [ADR-0020](docs/adr/0020-one-contract-with-the-frontend.md)):
