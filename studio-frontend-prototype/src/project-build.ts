@@ -1,4 +1,4 @@
-/* How a project builds (ADR-0052 §7): on gears, from its product.gdl, or
+/* How a project builds (ADR-0054 §7): on gears, from its product.gdl, or
  * from the repository's own Dockerfiles and Helm chart. The rules behind the
  * Builds tab's "How it builds", kept apart from the React for their tests. */
 

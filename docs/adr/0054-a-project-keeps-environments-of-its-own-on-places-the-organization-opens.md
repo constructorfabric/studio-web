@@ -4,7 +4,7 @@ status: proposed
 date: 2026-10-29
 ---
 
-# ADR-0052: A project keeps environments of its own, on places the organization opens to it
+# ADR-0054: A project keeps environments of its own, on places the organization opens to it
 
 **ID**: `cpt-studio-adr-project-environments`
 

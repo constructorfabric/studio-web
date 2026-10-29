@@ -99,7 +99,7 @@ pub struct EnvironmentDto {
     /// The projects that may deploy here; absent for all of them.
     #[schema(value_type = Option<Vec<String>>)]
     pub projects: Option<Vec<Uuid>>,
-    /// The project that keeps it (ADR-0052); absent for one of the
+    /// The project that keeps it (ADR-0054); absent for one of the
     /// organization's.
     #[schema(value_type = Option<String>)]
     pub project_id: Option<Uuid>,
@@ -153,7 +153,7 @@ pub struct EnvironmentListDto {
     /// Whether the caller may change them and decide about deploys.
     pub may_manage: bool,
     /// The clusters the organization's projects may put environments of
-    /// their own on (ADR-0052 §2).
+    /// their own on (ADR-0054 §2).
     pub open_clusters: OpenClustersDto,
 }
 
@@ -168,7 +168,7 @@ pub struct ProjectEnvironmentListDto {
     pub open_clusters: OpenClustersDto,
 }
 
-/// How a project builds (ADR-0052 §7).
+/// How a project builds (ADR-0054 §7).
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request, response)]
 pub struct ProjectBuildDto {
@@ -1491,7 +1491,7 @@ pub fn register_routes(
         .operation_id("studio_environments.update_open_clusters")
         .summary("Say which clusters projects may put environments of their own on")
         .description(
-            "Organization administrators only (ADR-0052 §2). The whole list of `kubernetes` \
+            "Organization administrators only (ADR-0054 §2). The whole list of `kubernetes` \
              connections the organization holds and shares that its projects may put \
              environments of their own on. A project may always use a cluster it holds itself.",
         )
@@ -1512,7 +1512,7 @@ pub fn register_routes(
         .operation_id("studio_environments.get_project_build")
         .summary("How a project builds")
         .description(
-            "For `?project_id=` (ADR-0052 §7): `gears`, from its product description, or              `own`, from the repository's own Dockerfiles and Helm chart.",
+            "For `?project_id=` (ADR-0054 §7): `gears`, from its product description, or              `own`, from the repository's own Dockerfiles and Helm chart.",
         )
         .tag(TAG)
         .authenticated()
@@ -1548,7 +1548,7 @@ pub fn register_routes(
         .operation_id("studio_environments.list_project_environments")
         .summary("List a project's own environments")
         .description(
-            "For `?project_id=` (ADR-0052): the environments the project keeps itself, and the \
+            "For `?project_id=` (ADR-0054): the environments the project keeps itself, and the \
              organization's clusters it may put one on.",
         )
         .tag(TAG)
@@ -1570,7 +1570,7 @@ pub fn register_routes(
         .operation_id("studio_environments.create_project_environment")
         .summary("Add an environment of the project's own")
         .description(
-            "For `?project_id=`, by a member who may write the project's settings (ADR-0052 \
+            "For `?project_id=`, by a member who may write the project's settings (ADR-0054 \
              §4). Its cluster is one the project holds, or one the organization opened to its \
              projects; or it runs in the member's Constructor Research. It lists no projects \
              and needs no approval.",

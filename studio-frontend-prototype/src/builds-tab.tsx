@@ -123,7 +123,7 @@ export function ProjectBuilds({
   const [runsError, setRunsError] = useState<string | null>(null);
   const [ciFailures, setCiFailures] = useState<{ repo: string; error: string }[]>([]);
   const [repoPaths, setRepoPaths] = useState<Map<string, string>>(new Map());
-  // How the project builds (ADR-0052 §7); `null` while it loads.
+  // How the project builds (ADR-0054 §7); `null` while it loads.
   const [build, setBuild] = useState<ProjectBuildSetting | null>(null);
   const [round, setRound] = useState(0);
   const changed = useCallback((message: string) => {

@@ -365,7 +365,7 @@ impl EnvironmentService {
         Ok(())
     }
 
-    /// The cluster a project's own environment runs on (ADR-0052 §2): one the
+    /// The cluster a project's own environment runs on (ADR-0054 §2): one the
     /// project holds and shares with it, or one of the organization's that
     /// the organization opened to its projects. Never a personal one.
     async fn check_project_cluster(
@@ -404,7 +404,7 @@ impl EnvironmentService {
             .map_err(|e| Refusal::Invalid(format!("{e}")))
     }
 
-    /* ── a project's own environments (ADR-0052) ── */
+    /* ── a project's own environments (ADR-0054) ── */
 
     /// The project's own environments, read as the caller.
     async fn own_environments(
@@ -475,7 +475,7 @@ impl EnvironmentService {
     }
 
     /// Add (`id` `None`) or change one of the project's own environments, as
-    /// a member who may write the project's settings (ADR-0052 §4).
+    /// a member who may write the project's settings (ADR-0054 §4).
     pub async fn put_project_environment(
         &self,
         ctx: &SecurityContext,
@@ -574,7 +574,7 @@ impl EnvironmentService {
             .map(|_| ())
     }
 
-    /// How the project builds (ADR-0052 §7): `None` on gears, from its
+    /// How the project builds (ADR-0054 §7): `None` on gears, from its
     /// product description; `Some` from the repository's own Dockerfiles and
     /// chart.
     pub async fn project_build(
@@ -615,7 +615,7 @@ impl EnvironmentService {
     }
 
     /// Say which of the organization's clusters its projects may put
-    /// environments of their own on (ADR-0052 §2). Administrators only.
+    /// environments of their own on (ADR-0054 §2). Administrators only.
     pub async fn put_open_clusters(
         &self,
         ctx: &SecurityContext,
@@ -1142,7 +1142,7 @@ impl EnvironmentService {
         }
         if env.project_id.is_some() {
             // An organization environment added after this one may give the
-            // project the same namespace on the same cluster (ADR-0052 §6).
+            // project the same namespace on the same cluster (ADR-0054 §6).
             let (admitted, _) = self.visible(ctx, org, project).await?;
             let project_name = self.store.tenant_name(ctx, project).await;
             if let Some(taken) = model::namespace_clash(&env, &admitted, &project_name) {
@@ -1466,7 +1466,7 @@ impl EnvironmentService {
             .project_environment(ctx, org, project, environment)
             .await?;
         let research = env.kind == EnvironmentKind::Research;
-        // How the project builds (ADR-0052 §7): on gears, or the
+        // How the project builds (ADR-0054 §7): on gears, or the
         // repository's own Dockerfiles and chart.
         let own = self
             .store

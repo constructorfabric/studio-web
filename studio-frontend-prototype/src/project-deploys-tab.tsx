@@ -53,7 +53,7 @@ export function ProjectDeploys({
   const [round, setRound] = useState(0);
   // `undefined`: the first environment, until the reader opens or closes one.
   const [open, setOpen] = useState<string | null | undefined>(undefined);
-  // An environment of the project's own being added or changed (ADR-0052).
+  // An environment of the project's own being added or changed (ADR-0054).
   const [own, setOwn] = useState<DeployEnvironment | "new" | null>(null);
   const [places, setPlaces] = useState<{ connections: Connection[]; open: string[] } | null>(null);
   useEffect(() => {

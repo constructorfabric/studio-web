@@ -103,7 +103,7 @@ pub struct Environment {
     /// own environment names none: it is its project's alone.
     #[serde(default)]
     pub projects: Option<Vec<Uuid>>,
-    /// The project that keeps this environment (ADR-0052); `None` for one of
+    /// The project that keeps this environment (ADR-0054); `None` for one of
     /// the organization's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<Uuid>,
@@ -121,7 +121,7 @@ pub struct EnvironmentList {
     #[serde(default)]
     pub items: Vec<Environment>,
     /// The organization's clusters its projects may put environments of
-    /// their own on (ADR-0052 §2): `kubernetes` connection ids.
+    /// their own on (ADR-0054 §2): `kubernetes` connection ids.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_clusters: Vec<Uuid>,
 }
@@ -328,7 +328,7 @@ pub fn checked(
     })
 }
 
-/// A project's own environment (ADR-0052 §3), checked against every
+/// A project's own environment (ADR-0054 §3), checked against every
 /// environment the project sees: `admitted`, the organization's that take
 /// its deploys, and `own`, its own (`id` is the one being edited, if any).
 /// It lists no projects and needs no approval: both are the organization's
@@ -365,7 +365,7 @@ pub fn checked_for_project(
 
 /// An environment of the organization that admits `project`, on the same
 /// cluster as `env`, that gives the project the same namespace: two releases
-/// there would overwrite each other (ADR-0052 §6).
+/// there would overwrite each other (ADR-0054 §6).
 pub fn namespace_clash<'a>(
     env: &Environment,
     admitted: &'a [Environment],
@@ -475,7 +475,7 @@ impl Environment {
         }
     }
 
-    /// The tenant its connections are found from and read as (ADR-0052 §5):
+    /// The tenant its connections are found from and read as (ADR-0054 §5):
     /// its project for a project's own environment, so a connection the
     /// project holds is found and the organization's still inherited.
     pub fn connections_from(&self, org: Uuid) -> Uuid {
@@ -546,17 +546,17 @@ pub struct BindingList {
     /// The secret keys set for it, per environment; the values never here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secrets: Vec<ConfigSecret>,
-    /// The project's own environments (ADR-0052), kept with its bindings.
+    /// The project's own environments (ADR-0054), kept with its bindings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environments: Vec<Environment>,
-    /// How Studio builds the project (ADR-0052 §7): `None` from its
+    /// How Studio builds the project (ADR-0054 §7): `None` from its
     /// `product.gdl`, on gears; `Some` from the repository's own Dockerfiles
     /// and Helm chart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<OwnBuild>,
 }
 
-/// A project built without a product description (ADR-0052 §7): the
+/// A project built without a product description (ADR-0054 §7): the
 /// repository's own Dockerfiles, one image each, and its own Helm chart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnBuild {

@@ -1,4 +1,4 @@
-/* The Builds tab's "How it builds" (ADR-0052 §7): on gears, from the
+/* The Builds tab's "How it builds" (ADR-0054 §7): on gears, from the
  * project's product.gdl, or from the repository's own Dockerfiles and Helm
  * chart. A build in Studio, the Deploys tab and the history read the same
  * record either way. */

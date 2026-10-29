@@ -675,7 +675,7 @@ export const SURFACES: Surface[] = [
     id: "project-deploys",
     area: "project",
     title: "Deploys",
-    does: "See where the project's product runs and run it there: each environment it may deploy to, the organization's and its own (ADR-0052), its namespace and registry, the last deploy; add, change or remove an environment of the project's own; deploy a build the Builds tab, a pipeline or the IDE published, roll back, uninstall; set the release's chart values and secrets per environment; bind the product's kubernetes profiles and read the deploy history.",
+    does: "See where the project's product runs and run it there: each environment it may deploy to, the organization's and its own (ADR-0054), its namespace and registry, the last deploy; add, change or remove an environment of the project's own; deploy a build the Builds tab, a pipeline or the IDE published, roll back, uninstall; set the release's chart values and secrets per environment; bind the product's kubernetes profiles and read the deploy history.",
     components: [
       "ProjectDeploys",
       "ProjectEnvironments",

@@ -148,7 +148,7 @@ enum Commands {
         #[arg(long)]
         profile: String,
         /// A build of the repository's own Dockerfiles and chart, as JSON
-        /// (ADR-0052 §7); without it the product description is built.
+        /// (ADR-0054 §7); without it the product description is built.
         #[arg(long)]
         own: Option<String>,
     },

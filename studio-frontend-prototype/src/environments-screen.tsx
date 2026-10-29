@@ -299,7 +299,7 @@ export function EnvironmentForm({
 }: {
   token: string;
   org: string;
-  /** A project's own environment (ADR-0052): saved with the project, by its
+  /** A project's own environment (ADR-0054): saved with the project, by its
    *  members, never protected and listing no projects. Absent: the
    *  organization's. */
   ownedBy?: { projectId: string; projectName: string };
@@ -1099,7 +1099,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
 }
 
 /** Which of the organization's clusters its projects may put environments of
- *  their own on (ADR-0052 §2). A project may always use a cluster it holds. */
+ *  their own on (ADR-0054 §2). A project may always use a cluster it holds. */
 function OpenClusters({
   token,
   org,

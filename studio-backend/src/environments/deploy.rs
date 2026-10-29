@@ -90,7 +90,7 @@ pub struct DeployPayload {
     #[serde(default)]
     pub chart_ref: Option<ChartRef>,
     /// The tenant the environment's connections are found from and read as
-    /// (ADR-0052 §5); absent for an organization's environment.
+    /// (ADR-0054 §5); absent for an organization's environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connections_from: Option<Uuid>,
     /// Values given to the chart: the images under the environment's registry.

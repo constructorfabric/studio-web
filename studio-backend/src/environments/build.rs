@@ -108,11 +108,11 @@ pub struct BuildPayload {
     #[serde(default)]
     pub records_in: Option<Uuid>,
     /// The tenant the environment's connections are found from and read as
-    /// (ADR-0052 §5): the project, for a project's own environment. Absent
+    /// (ADR-0054 §5): the project, for a project's own environment. Absent
     /// for an organization's, and from a build queued before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connections_from: Option<Uuid>,
-    /// The repository's own Dockerfiles and chart (ADR-0052 §7); `None`
+    /// The repository's own Dockerfiles and chart (ADR-0054 §7); `None`
     /// builds `product_file` on gears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own: Option<super::model::OwnBuild>,
@@ -120,7 +120,7 @@ pub struct BuildPayload {
 
 /// The context a run reads an environment's connections as, and the tenant
 /// it finds them from: the project's service for a project's own
-/// environment, else the run's own (ADR-0052 §5).
+/// environment, else the run's own (ADR-0054 §5).
 pub(super) fn connection_reader(
     run: &toolkit_security::SecurityContext,
     org: Uuid,
@@ -1292,7 +1292,7 @@ pub fn prepare(
 }
 
 /// `build-prepare` for a project built without a product description
-/// (ADR-0052 §7): the repository cloned, and its own Dockerfiles and chart
+/// (ADR-0054 §7): the repository cloned, and its own Dockerfiles and chart
 /// listed for `build` and `publish` as a generated tree's would be.
 pub fn prepare_own(
     work: &Path,

@@ -1634,13 +1634,13 @@ export interface DeployEnvironment {
   promote_from?: string | null;
   /** The projects that may deploy here; absent: all of them. */
   projects?: string[] | null;
-  /** The project that keeps it (ADR-0052); absent: the organization's. */
+  /** The project that keeps it (ADR-0054); absent: the organization's. */
   project_id?: string | null;
   updated_by: string;
   updated_at: string;
 }
 
-/** How a project builds (ADR-0052 §7): on gears from its `product.gdl`, or
+/** How a project builds (ADR-0054 §7): on gears from its `product.gdl`, or
  *  from the repository's own Dockerfiles and Helm chart. */
 export interface ProjectBuildSetting {
   kind: "gears" | "own";
@@ -4419,10 +4419,10 @@ export const api = {
       items: DeployEnvironment[];
       total: number;
       may_manage: boolean;
-      /** The clusters its projects may put environments of their own on (ADR-0052). */
+      /** The clusters its projects may put environments of their own on (ADR-0054). */
       open_clusters?: { connection_ids: string[] };
     }>(`/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`, token),
-  /** Say which of the organization's clusters its projects may use (ADR-0052 §2). */
+  /** Say which of the organization's clusters its projects may use (ADR-0054 §2). */
   saveOpenClusters: (token: string, org: string, connectionIds: string[]) =>
     request<{ connection_ids: string[] }>(
       `/studio-environments/v1/open-clusters?organization_id=${encodeURIComponent(org)}`,
@@ -4459,7 +4459,7 @@ export const api = {
       token,
       { method: "POST" },
     ),
-  /** How the project builds (ADR-0052 §7). */
+  /** How the project builds (ADR-0054 §7). */
   projectBuild: (token: string, projectId: string) =>
     request<ProjectBuildSetting>(`/studio-environments/v1/project-build?project_id=${encodeURIComponent(projectId)}`, token),
   saveProjectBuild: (token: string, projectId: string, body: ProjectBuildSetting) =>

@@ -357,7 +357,7 @@ export function BuildInStudio({
   environments: DeployEnvironment[];
   profiles: string[];
   saved: SavedProduct | null;
-  /** The repository's own Dockerfiles and chart (ADR-0052 §7); absent: on gears. */
+  /** The repository's own Dockerfiles and chart (ADR-0054 §7); absent: on gears. */
   own?: ProjectBuildSetting | null;
   onChanged?: (message: string) => void;
 }) {
