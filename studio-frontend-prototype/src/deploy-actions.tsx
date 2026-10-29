@@ -6,9 +6,17 @@
 
 import { useState } from "react";
 
-import { api, type ConfigSecret, type Deployment, type DeployEnvironment, type EnvironmentBinding } from "./api";
+import {
+  api,
+  type ConfigSecret,
+  type Deployment,
+  type DeployEnvironment,
+  type EnvironmentBinding,
+  type ProjectBuildSetting,
+} from "./api";
 import type { IdeBuild } from "./builds";
 import { shortCommit } from "./environments";
+import { ownBuildSummary } from "./project-build";
 import { errText, relTime } from "./format";
 import {
   deployableBuilds,
@@ -341,6 +349,7 @@ export function BuildInStudio({
   environments,
   profiles,
   saved,
+  own,
   onChanged,
 }: {
   token: string;
@@ -348,9 +357,12 @@ export function BuildInStudio({
   environments: DeployEnvironment[];
   profiles: string[];
   saved: SavedProduct | null;
+  /** The repository's own Dockerfiles and chart (ADR-0052 §7); absent: on gears. */
+  own?: ProjectBuildSetting | null;
   onChanged?: (message: string) => void;
 }) {
-  const choices = buildableEnvironments(environments);
+  // Research builds a product on gears only, for now.
+  const choices = buildableEnvironments(environments).filter((e) => !own || !isResearch(e));
   const [envId, setEnvId] = useState("");
   const [productFile, setProductFile] = useState<string | null>(null);
   const [gitRef, setGitRef] = useState<string | null>(null);
@@ -374,6 +386,15 @@ export function BuildInStudio({
   const prof = profile ?? (saved?.profile && options.includes(saved.profile) ? saved.profile : options[0]);
   return (
     <div data-build-in-studio>
+      {own ? (
+        <p data-build-summary data-build-own>
+          Builds {ownBuildSummary(own)} from {branch ? <code>{branch}</code> : "the repository's own branch"}, and pushes the
+          images and the chart to <code>{env.registry}</code> of <b>{env.name}</b>.{" "}
+          <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
+            {changing ? "Done" : "Change"}
+          </button>
+        </p>
+      ) : (
       <p data-build-summary>
         Builds <code>{file}</code> from {branch ? <code>{branch}</code> : "the repository's own branch"}
         {saved?.prUrl && branch === saved.branch ? (
@@ -401,6 +422,7 @@ export function BuildInStudio({
           {changing ? "Done" : "Change"}
         </button>
       </p>
+      )}
       {changing && (
         <div className="row" data-build-fields>
           <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
@@ -410,6 +432,7 @@ export function BuildInStudio({
               </option>
             ))}
           </select>
+          {!own && (
           <input
             value={file}
             onChange={(e) => setProductFile(e.target.value)}
@@ -417,6 +440,7 @@ export function BuildInStudio({
             title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
             placeholder="product.gdl"
           />
+          )}
           <input
             value={branch}
             onChange={(e) => setGitRef(e.target.value)}
@@ -424,11 +448,13 @@ export function BuildInStudio({
             title="The branch or tag to build; the repository's own branch when empty. Push it first: the Job clones from the repository, not from anybody's machine."
             placeholder="the repository's own branch"
           />
+          {!own && (
           <select value={prof} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
             {options.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
+          )}
         </div>
       )}
       <div className="row">

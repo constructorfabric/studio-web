@@ -282,9 +282,10 @@ function ResearchFields({
 }
 
 /** Add or change one environment. */
-function EnvironmentForm({
+export function EnvironmentForm({
   token,
   org,
+  ownedBy,
   editing,
   others,
   clusters,
@@ -298,6 +299,10 @@ function EnvironmentForm({
 }: {
   token: string;
   org: string;
+  /** A project's own environment (ADR-0052): saved with the project, by its
+   *  members, never protected and listing no projects. Absent: the
+   *  organization's. */
+  ownedBy?: { projectId: string; projectName: string };
   /** The cluster a new environment starts on: the one selected above. */
   initialCluster?: string;
   editing: DeployEnvironment | null;
@@ -345,14 +350,20 @@ function EnvironmentForm({
       touch(k as EnvironmentField);
   };
   const patternIsDefault = (input.namespace_pattern ?? "").trim() === "" || input.namespace_pattern === DEFAULT_NAMESPACE_PATTERN;
-  const examples = (projects.length > 0 ? projects.slice(0, 3).map((p) => p.name) : ["Studio Web"]).map((p) =>
+  const examples = (
+    ownedBy ? [ownedBy.projectName] : projects.length > 0 ? projects.slice(0, 3).map((p) => p.name) : ["Studio Web"]
+  ).map((p) =>
     namespaceFor(input.namespace_pattern ?? "", p, input.name || "dev"),
   );
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (editing) await api.updateEnvironment(token, org, editing.id, input);
+      if (ownedBy) {
+        const own = { ...input, protected: false, projects: null };
+        if (editing) await api.updateProjectEnvironment(token, ownedBy.projectId, editing.id, own);
+        else await api.createProjectEnvironment(token, ownedBy.projectId, own);
+      } else if (editing) await api.updateEnvironment(token, org, editing.id, input);
       else await api.createEnvironment(token, org, input);
       onDone();
     } catch (e) {
@@ -386,7 +397,7 @@ function EnvironmentForm({
         if (!problem) void save();
       }}
     >
-      <h3>{editing ? `Change ${editing.name}` : "Add an environment"}</h3>
+      <h3>{editing ? `Change ${editing.name}` : ownedBy ? `Add an environment of ${ownedBy.projectName}'s own` : "Add an environment"}</h3>
       <label className="field">
         Name
         <input
@@ -410,7 +421,11 @@ function EnvironmentForm({
           aria-label="Runs on"
           data-environment-kind
         >
-          <option value="kubernetes">A Kubernetes cluster of the organization</option>
+          <option value="kubernetes">
+            {ownedBy
+              ? "A Kubernetes cluster: the project's own, or one the organization opened to its projects"
+              : "A Kubernetes cluster of the organization"}
+          </option>
           <option value="research">Constructor Research: its hardware, its registry, its addresses</option>
         </select>
       </label>
@@ -445,7 +460,7 @@ function EnvironmentForm({
       {connecting && (
         <AddCluster
           token={token}
-          org={org}
+          org={ownedBy?.projectId ?? org}
           onCancel={() => setConnecting(false)}
           onAdded={(c) => {
             setConnecting(false);
@@ -494,7 +509,7 @@ function EnvironmentForm({
       {connectingRegistry && (
         <AddRegistry
           token={token}
-          org={org}
+          org={ownedBy?.projectId ?? org}
           onCancel={() => setConnectingRegistry(false)}
           onAdded={(c) => {
             setConnectingRegistry(false);
@@ -571,15 +586,24 @@ function EnvironmentForm({
             ))}
         </select>
       </label>
-      <label className="env-check">
-        <input type="checkbox" checked={input.protected} onChange={(e) => set("protected", e.target.checked)} /> Protected: a
-        deploy waits for an organization administrator&apos;s approval
-      </label>
-      <label className="env-check">
-        <input type="checkbox" checked={!restricted} onChange={(e) => set("projects", e.target.checked ? null : [])} /> Every
-        project of the organization may deploy here
-      </label>
-      {restricted && (
+      {ownedBy ? (
+        <p className="sub" data-own-environment-note>
+          Only {ownedBy.projectName} sees and deploys to it. An environment whose deploys need approval is the
+          organization&apos;s: ask an organization administrator for one.
+        </p>
+      ) : (
+        <>
+          <label className="env-check">
+            <input type="checkbox" checked={input.protected} onChange={(e) => set("protected", e.target.checked)} /> Protected:
+            a deploy waits for an organization administrator&apos;s approval
+          </label>
+          <label className="env-check">
+            <input type="checkbox" checked={!restricted} onChange={(e) => set("projects", e.target.checked ? null : [])} />{" "}
+            Every project of the organization may deploy here
+          </label>
+        </>
+      )}
+      {!ownedBy && restricted && (
         <ul className="env-projects">
           {projects.length === 0 && <li className="hint">No projects found.</li>}
           {projects.map((p) => (
@@ -619,6 +643,7 @@ function EnvironmentForm({
 export function OrgEnvironments({ token, org, workspaceIds }: { token: string; org: { id: string; name: string }; workspaceIds: string[] }) {
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
   const [mayManage, setMayManage] = useState(false);
+  const [openClusters, setOpenClusters] = useState<string[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [projects, setProjects] = useState<Tenant[]>([]);
@@ -661,6 +686,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
         if (!live) return;
         setEnvironments(envs.items);
         setMayManage(envs.may_manage);
+        setOpenClusters(envs.open_clusters?.connection_ids ?? []);
         setConnections(conns.items);
         setDeployments(deps.items);
       })
@@ -1057,7 +1083,83 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
           )}
         </section>
       )}
+      {clusters.length > 0 && (
+        <OpenClusters
+          key={openClusters.join(",")}
+          token={token}
+          org={org.id}
+          clusters={clusters}
+          open={openClusters}
+          mayManage={mayManage}
+          onSaved={(ids) => setOpenClusters(ids)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Which of the organization's clusters its projects may put environments of
+ *  their own on (ADR-0052 §2). A project may always use a cluster it holds. */
+function OpenClusters({
+  token,
+  org,
+  clusters,
+  open,
+  mayManage,
+  onSaved,
+}: {
+  token: string;
+  org: string;
+  clusters: Connection[];
+  open: string[];
+  mayManage: boolean;
+  onSaved: (ids: string[]) => void;
+}) {
+  const [picked, setPicked] = useState<string[]>(open);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const changed = [...picked].sort().join(",") !== [...open].sort().join(",");
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved((await api.saveOpenClusters(token, org, picked)).connection_ids);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card" data-open-clusters>
+      <h3>Clusters projects may use</h3>
+      <p className="sub">
+        A project adds environments of its own on these, with its own registry and namespaces, without an administrator. It
+        may always use a cluster it connected itself.
+      </p>
+      <ul className="env-projects">
+        {clusters.map((c) => (
+          <li key={c.id}>
+            <label>
+              <input
+                type="checkbox"
+                disabled={!mayManage}
+                checked={picked.includes(c.id)}
+                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, c.id] : p.filter((id) => id !== c.id)))}
+                data-open-cluster={c.label}
+              />{" "}
+              {c.label} <span className="sub">{c.base_url}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      {error && <div className="error">{error}</div>}
+      {mayManage && (
+        <button type="button" className="primary" disabled={busy || !changed} onClick={() => void save()}>
+          Save
+        </button>
+      )}
+    </section>
   );
 }
 
