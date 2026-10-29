@@ -465,6 +465,8 @@ mod text_of_tests {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuildRecord {
     pub build_id: String,
+    /// Where it ran: `studio`, `research`, `ci`, `desktop`.
+    pub r#where: Option<String>,
     /// `running` | `passed` | `failed` | `cancelled`.
     pub status: String,
     pub product: Option<String>,
@@ -483,6 +485,7 @@ impl BuildRecord {
         let text = |k: &str| value.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         BuildRecord {
             build_id: text("build_id").unwrap_or_default(),
+            r#where: text("where"),
             status: text("status").unwrap_or_default(),
             product: text("product"),
             profile: text("profile"),
@@ -522,6 +525,9 @@ impl BuildRecord {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuildOutcome {
     pub build_id: String,
+    /// `research` for a build Constructor Research compiled; `None` for one
+    /// in the organization's cluster (`studio`).
+    pub r#where: Option<String>,
     /// `running` | `passed` | `failed`.
     pub status: String,
     pub product: Option<String>,

@@ -132,12 +132,6 @@ struct Revision {
     revision: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct Lines {
-    #[serde(default)]
-    lines: Vec<String>,
-}
-
 /// A path segment, percent-escaped but for RFC 3986's unreserved characters.
 fn seg(s: &str) -> String {
     s.bytes()
@@ -287,27 +281,6 @@ impl ResearchApi {
             .send()
             .await;
         Self::read(res, "the application's state").await
-    }
-
-    pub async fn logs(
-        &self,
-        project: &str,
-        name: &str,
-        service: &str,
-        lines: u32,
-    ) -> anyhow::Result<Vec<String>> {
-        let res = self
-            .http
-            .get(self.url(&format!(
-                "/projects/{}/applications/{}/services/{}/logs?lines={lines}",
-                seg(project),
-                seg(name),
-                seg(service)
-            )))
-            .bearer_auth(&self.token)
-            .send()
-            .await;
-        Ok(Self::read::<Lines>(res, "the service's log").await?.lines)
     }
 
     /// Remove an application; its volumes stay unless `volumes`.

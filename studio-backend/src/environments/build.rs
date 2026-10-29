@@ -58,7 +58,7 @@ const WATCH_FOR: Duration = Duration::from_secs(10 * 60);
 const WATCH_EVERY: Duration = Duration::from_secs(20);
 
 /// Where the product's repository is, as the server read it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoRef {
     /// The tenant whose connection reaches it.
     pub tenant: Uuid,
@@ -381,6 +381,16 @@ pub async fn enqueue(
 
 /// Record a build's outcome in the project's graph: in `records_in`, the
 /// tenant its first record went to, when it names one; else in the run's.
+pub(super) async fn record_outcome(
+    hub: &Arc<ClientHub>,
+    ctx: &toolkit_security::SecurityContext,
+    records_in: Option<Uuid>,
+    project: Uuid,
+    outcome: crate::artifact_ingest::port::BuildOutcome,
+) -> anyhow::Result<()> {
+    record(hub, ctx, records_in, project, outcome).await
+}
+
 async fn record(
     hub: &Arc<ClientHub>,
     ctx: &toolkit_security::SecurityContext,
@@ -1156,14 +1166,34 @@ pub fn prepare(
     product_file: &str,
     profile: &str,
 ) -> anyhow::Result<()> {
+    let username = std::env::var("GIT_USERNAME").unwrap_or_default();
+    let password = std::env::var("GIT_PASSWORD").unwrap_or_default();
+    prepare_as(
+        work,
+        repo_url,
+        (&username, &password),
+        git_ref,
+        product_file,
+        profile,
+    )
+}
+
+/// [`prepare`] with the repository's credentials given, not read from the
+/// environment: the server prepares a Research build in its own process.
+pub fn prepare_as(
+    work: &Path,
+    repo_url: &str,
+    (username, password): (&str, &str),
+    git_ref: Option<&str>,
+    product_file: &str,
+    profile: &str,
+) -> anyhow::Result<()> {
     if !super::workflow::is_product_file(product_file) {
         bail!("'{product_file}' is not a product description in the repository");
     }
     let repo = work.join("repo");
-    let username = std::env::var("GIT_USERNAME").unwrap_or_default();
-    let password = std::env::var("GIT_PASSWORD").unwrap_or_default();
     crate::connectors::sdk::git_checkout::clone_or_update_into(
-        &repo, repo_url, &username, &password, git_ref,
+        &repo, repo_url, username, password, git_ref,
     )
     .context("the product's repository could not be cloned")?;
     let commit = crate::connectors::sdk::git_checkout::head_commit(&repo)

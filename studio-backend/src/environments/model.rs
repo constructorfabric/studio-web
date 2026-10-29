@@ -803,6 +803,10 @@ pub struct Deployment {
     /// run carries it from then on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_chart: Option<String>,
+    /// For a Constructor Research environment: what the run prepares and
+    /// where it puts the application (ADR-0049 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<super::research::ResearchDeploy>,
 }
 
 impl Deployment {
@@ -1317,6 +1321,7 @@ mod tests {
             reason: None,
             outcome: None,
             pending_chart: None,
+            research: None,
         }
     }
 

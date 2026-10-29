@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 252,
+  "open_violations": 255,
   "operations": [
     {
       "method": "DELETE",
@@ -1840,6 +1840,40 @@
       "errors": [
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/research/projects",
+      "operation_id": "studio_environments.list_research_projects",
+      "tag": "",
+      "summary": "The Research projects a connection may run products in",
+      "authenticated": true,
+      "responses": [
+        "ResearchProjectListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/research/projects/{project}/hardware",
+      "operation_id": "studio_environments.list_research_hardware",
+      "tag": "",
+      "summary": "The hardware a Research project's services may run on",
+      "authenticated": true,
+      "responses": [
+        "ResearchHardwareListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },

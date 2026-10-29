@@ -698,6 +698,83 @@ async fn test_environment(
     Ok(Json(EnvironmentTestDto { message }))
 }
 
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchProjectDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchProjectListDto {
+    pub items: Vec<ResearchProjectDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchHardwareDto {
+    pub id: String,
+    pub name: String,
+    /// A trial configuration: Research ends what runs on it by its own rules.
+    pub trial: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchHardwareListDto {
+    pub items: Vec<ResearchHardwareDto>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResearchQuery {
+    connection_id: Uuid,
+}
+
+async fn list_research_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ResearchQuery>,
+) -> ApiResult<JsonBody<ResearchProjectListDto>> {
+    let items = envs
+        .0
+        .research_projects(&ctx, ctx.subject_tenant_id(), q.connection_id)
+        .await
+        .map_err(problem)?;
+    Ok(Json(ResearchProjectListDto {
+        items: items
+            .into_iter()
+            .map(|p| ResearchProjectDto {
+                id: p.id,
+                name: p.name,
+            })
+            .collect(),
+    }))
+}
+
+async fn list_research_hardware(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Path(project): Path<String>,
+    Query(q): Query<ResearchQuery>,
+) -> ApiResult<JsonBody<ResearchHardwareListDto>> {
+    let items = envs
+        .0
+        .research_hardware(&ctx, ctx.subject_tenant_id(), q.connection_id, &project)
+        .await
+        .map_err(problem)?;
+    Ok(Json(ResearchHardwareListDto {
+        items: items
+            .into_iter()
+            .map(|h| ResearchHardwareDto {
+                id: h.id,
+                name: h.name,
+                trial: h.trial,
+            })
+            .collect(),
+    }))
+}
+
 fn binding_dto(b: Binding) -> BindingDto {
     BindingDto {
         profile: b.profile,
@@ -1124,6 +1201,45 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/research/projects")
+        .operation_id("studio_environments.list_research_projects")
+        .summary("The Research projects a connection may run products in")
+        .description(
+            "For `?connection_id=` (an organization's `research` connection): the Constructor              Research projects its user owns or collaborates on, as Research's integration              service lists them (ADR-0049). What a Research environment is created from.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("connection_id", true, "The research connection", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(list_research_projects)
+        .json_response_with_schema::<ResearchProjectListDto>(openapi, StatusCode::OK, "Its projects")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/research/projects/{project}/hardware")
+        .operation_id("studio_environments.list_research_hardware")
+        .summary("The hardware a Research project's services may run on")
+        .description(
+            "For `?connection_id=`: the hardware configurations of the Research project its              user may use, trial ones marked (ADR-0049).",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("project", "Research project id")
+        .query_param_typed("connection_id", true, "The research connection", "string")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(list_research_hardware)
+        .json_response_with_schema::<ResearchHardwareListDto>(openapi, StatusCode::OK, "Its hardware")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

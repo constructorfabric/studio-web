@@ -41,7 +41,7 @@ const HELM_TIMEOUT: &str = "8m";
 
 /// The helm binary: `STUDIO_HELM`, or `helm` on the PATH (the image installs
 /// one).
-fn helm_binary() -> String {
+pub(super) fn helm_binary() -> String {
     std::env::var("STUDIO_HELM")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -91,6 +91,10 @@ pub struct DeployPayload {
     pub chart_ref: Option<ChartRef>,
     /// Values given to the chart: the images under the environment's registry.
     pub values: serde_json::Value,
+    /// A deploy to a Constructor Research environment (ADR-0049 §4): what it
+    /// prepares and where it puts the application. `None` for a cluster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<super::research::ResearchDeploy>,
 }
 
 pub struct DeployTask {
@@ -225,6 +229,12 @@ impl TaskHandler for DeployTask {
                 ));
             }
         };
+        if let Some(research) = &payload.research {
+            return match super::research::deploy(&self.hub, ctx, &payload, research).await {
+                Ok(at) => TaskOutcome::done_with(at.clone(), serde_json::json!({ "output": at })),
+                Err(e) => TaskOutcome::Failed(format!("{e:#}")),
+            };
+        }
         ctx.progress("reading the cluster's access").await;
         let access = match cluster_access(
             &self.hub,
@@ -907,6 +917,7 @@ mod tests {
             chart: Some(String::new()),
             chart_ref: None,
             values: serde_json::json!({}),
+            research: None,
         }
     }
 
