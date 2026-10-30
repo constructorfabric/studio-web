@@ -65,7 +65,7 @@ export const TypeCell: React.FC<TypeCellProps> = ({
       )}
     </>
   );
-  if (!row.typeEditable) return <span>{label}</span>;
+  if (!row.typeEditable) return <span className={styles.type}>{label}</span>;
 
   const decide = (decision: DecideBindingDto): void =>
     requestTypeDecision({ projectId, workspaceId, bindingId: row.id, name: row.name, decision });
@@ -87,6 +87,7 @@ export const TypeCell: React.FC<TypeCellProps> = ({
           <Button
             variant="ghost"
             size="sm"
+            className={styles.trigger}
             aria-label={t('type_change', { name: row.name })}
             loading={pending}
             end={<ChevronDown size={14} strokeWidth={1.5} />}

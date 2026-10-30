@@ -101,7 +101,8 @@ const SourceCell: React.FC<CellProps> = ({ item: { source } }) => {
 export function specsColumns(t: ReturnType<typeof useSpecsText>): DataGridTableColumn<SpecRow>[] {
   return [
     { id: 'document', label: t('col_document'), component: DocumentCell },
-    { id: 'type', label: t('col_type'), component: TypeColumnCell, width: 240 },
+    // Room for "Architecture Decision Record" and the menu's chevron on one line; a proposed type wraps.
+    { id: 'type', label: t('col_type'), component: TypeColumnCell, width: 260 },
     { id: 'review', label: t('col_review'), component: ReviewCell, width: 140 },
     { id: 'source', label: t('col_source'), component: SourceCell },
   ];

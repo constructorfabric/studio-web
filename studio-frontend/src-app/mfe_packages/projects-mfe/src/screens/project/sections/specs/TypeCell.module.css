@@ -1,3 +1,19 @@
 .muted {
   color: var(--muted-foreground);
 }
+
+/* "Architecture Decision Record · proposed 85%" is wider than the column: the type wraps
+   rather than run into Review. The kit's table cell and button are both `nowrap`. */
+.type {
+  white-space: normal;
+}
+
+/* The kit's button is also one line of a fixed height, centred. */
+button.trigger {
+  white-space: normal;
+  height: auto;
+  min-height: var(--control-height-sm);
+  max-width: 100%;
+  padding-block: var(--space-1);
+  text-align: start;
+}
