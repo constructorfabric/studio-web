@@ -63,6 +63,15 @@ describe("fixes from the engine's completion", () => {
     expect(applyFix(["a", "dead"], { dead: { x: 1 } }, remove)).toEqual({ picks: ["a"], config: {} });
     expect(applyFix(["a"], {}, config).config).toEqual({ "keycloak-idp-plugin": { vendor: "cf" } });
   });
+
+  it("asks for a picked gear's settings instead of taking it out", () => {
+    const [setup] = fixesFrom(["oidc"], {}, {
+      gears: ["oidc"],
+      changes: [{ gear: "oidc", added: false, reason: "needs configuration: jwt", needs: ["jwt"] }],
+    });
+    expect(setup).toEqual({ kind: "setup", gear: "oidc", fields: ["jwt"], reason: "needs configuration: jwt" });
+    expect(applyFix(["oidc"], {}, setup)).toEqual({ picks: ["oidc"], config: {} });
+  });
 });
 
 describe("a production rule the product breaks", () => {

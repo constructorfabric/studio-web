@@ -3116,6 +3116,18 @@ export interface ProductChange {
   gear: string;
   added: boolean;
   reason: string;
+  /** A picked gear kept with settings it has yet to be given: their names. */
+  needs?: string[];
+}
+
+/** Something a product's gears need running beside them. */
+export interface ProductTechnology {
+  /** `postgres`, `oidc`, `keycloak`, `clickhouse`, ... */
+  id: string;
+  name: string;
+  why: string;
+  /** The gears that need it, by crate name. */
+  gears: string[];
 }
 
 /** The product a project is composing, as the server remembers it. */
@@ -3173,6 +3185,8 @@ export interface ProjectProduct {
     /** Every gear the resolution contains, picked or pulled in, by crate. */
     gears: string[];
     corpus_commit?: string | null;
+    /** What the gears need running beside them; absent in a record from before. */
+    infrastructure?: ProductTechnology[];
   };
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };

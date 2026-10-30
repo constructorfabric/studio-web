@@ -11,6 +11,7 @@ import {
   visibleTabs,
 } from "./project-types";
 import type { ProjectType } from "./project-types";
+import type { ProjTab } from "./project-overview";
 
 const TABS = ["overview", "specs", "components", "parts", "builds", "sources", "people"] as const;
 const BAR = TABS.map((id) => ({ id, label: id }));
@@ -83,8 +84,14 @@ describe("a project's type", () => {
   it("shows its tabs in the bar's order, and every tab when it names none", () => {
     const t: ProjectType = { key: "t", title: "T", description: "", recipe: "product", tabs: ["sources", "overview"] };
     expect(visibleTabs(BAR, t).map((x) => x.id)).toEqual(["overview", "sources"]);
-    expect(visibleTabs(BAR, BUILTIN_TYPES[0])).toHaveLength(BAR.length);
-    expect(visibleTabs(BAR, null)).toHaveLength(BAR.length);
+    expect(visibleTabs(BAR, BUILTIN_TYPES[0])).toHaveLength(BAR.length - 1);
+    expect(visibleTabs(BAR, null)).toHaveLength(BAR.length - 1);
+  });
+
+  it("shows Components as Product's Parts where there is Product, and as a tab where there is not", () => {
+    const t = (tabs: ProjTab[]): ProjectType => ({ key: "t", title: "T", description: "", recipe: "product", tabs });
+    expect(visibleTabs(BAR, t(["components", "parts"])).map((x) => x.id)).toEqual(["components"]);
+    expect(visibleTabs(BAR, t(["overview", "parts"])).map((x) => x.id)).toEqual(["overview", "parts"]);
   });
 
   it("opens on its first tab, or the first it shows", () => {

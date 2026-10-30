@@ -3,6 +3,10 @@
  * A product is one thing with up to three parts, and the Product tab shows
  * them as sections of one page rather than as tabs of their own:
  *
+ *   - Parts: what the project has to make it from -- the platform's and the
+ *     organization's components, its own gears, code that could become one,
+ *     services that are not gears, and gears the specs ask for that nobody
+ *     wrote. It was the Components tab, which read as this page twice;
  *   - Infrastructure: where it runs -- the profile it is composed for, the
  *     environments it is bound to, and the database each gives it;
  *   - Backend: the gears it is composed from (the specs-to-product journey);
@@ -15,12 +19,13 @@
  *
  * Pure, so it is tested without a backend. */
 
-import type { DeployEnvironment, EnvironmentBinding, ProjectConfig, ProjectProduct } from "./api";
+import type { DeployEnvironment, EnvironmentBinding, ProductTechnology, ProjectConfig, ProjectProduct } from "./api";
 import { PRODUCT_PROFILES } from "./product";
 
-export type ProductSectionId = "infrastructure" | "backend" | "frontend";
+export type ProductSectionId = "parts" | "infrastructure" | "backend" | "frontend";
 
 export const PRODUCT_SECTIONS: readonly { id: ProductSectionId; title: string; hint: string }[] = [
+  { id: "parts", title: "Parts", hint: "What the project has to make it from, and what it lacks" },
   { id: "infrastructure", title: "Infrastructure", hint: "Where it runs: its profile, environments and databases" },
   { id: "backend", title: "Backend", hint: "The gears it is composed from" },
   { id: "frontend", title: "Frontend", hint: "A FrontX shell with micro-frontends, if it has one" },
@@ -71,6 +76,8 @@ export interface RunsIn {
   profile: string | null;
   /** What it gives the product for a database, in words. */
   database: string;
+  /** What the product needs that it does not give: "PostgreSQL". */
+  missing: string[];
 }
 
 /** What Infrastructure says: the profile the product is composed for and the
@@ -79,6 +86,11 @@ export interface Infrastructure {
   profile: string | null;
   profileLabel: string | null;
   runsIn: RunsIn[];
+  /** What the gears need running beside them, as the last check found;
+   *  null before a check that says (an older record, or none yet). */
+  needs: ProductTechnology[] | null;
+  /** The applications the product is built into, as the last check found. */
+  applications: string[];
 }
 
 const DATABASE_WORDS: Record<DeployEnvironment["database"], string> = {
@@ -88,11 +100,13 @@ const DATABASE_WORDS: Record<DeployEnvironment["database"], string> = {
 };
 
 export function infrastructureOf(
-  product: Pick<ProjectProduct, "profile"> | null,
+  product: Pick<ProjectProduct, "profile" | "last_preview"> | null,
   targets: { environments: { environment: DeployEnvironment; namespace: string }[]; bindings: EnvironmentBinding[] } | null,
 ): Infrastructure {
   const profile = product?.profile ?? null;
   const profileLabel = profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null;
+  const needs = product?.last_preview?.infrastructure ?? null;
+  const postgres = needs?.some((t) => t.id === "postgres") ?? false;
   const runsIn = (targets?.environments ?? []).map(({ environment, namespace }) => ({
     environment: environment.name,
     namespace,
@@ -101,8 +115,9 @@ export function infrastructureOf(
       environment.database === "namespace" && environment.database_image
         ? `${DATABASE_WORDS.namespace} (${environment.database_image})`
         : (DATABASE_WORDS[environment.database] ?? environment.database),
+    missing: postgres && environment.database === "none" ? ["PostgreSQL"] : [],
   }));
-  return { profile, profileLabel, runsIn };
+  return { profile, profileLabel, runsIn, needs, applications: product?.last_preview?.applications ?? [] };
 }
 
 /** The Product page's header: the product in one line -- what it is, for

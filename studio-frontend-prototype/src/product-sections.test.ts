@@ -15,7 +15,7 @@ import {
 
 describe("the product's parts", () => {
   it("are infrastructure, backend and frontend, in that order", () => {
-    expect(PRODUCT_SECTIONS.map((s) => s.id)).toEqual(["infrastructure", "backend", "frontend"]);
+    expect(PRODUCT_SECTIONS.map((s) => s.id)).toEqual(["parts", "infrastructure", "backend", "frontend"]);
   });
 });
 
@@ -67,14 +67,43 @@ describe("where the product runs", () => {
     );
     expect(infra.profileLabel).toBe("prod · Kubernetes");
     expect(infra.runsIn).toEqual([
-      { environment: "dev", namespace: "shop-dev", profile: null, database: "the environment's shared Postgres" },
-      { environment: "prod", namespace: "shop-prod", profile: "prod", database: "a Postgres of its own in its namespace (postgres:17)" },
-      { environment: "lab", namespace: "shop-lab", profile: null, database: "no database" },
+      { environment: "dev", namespace: "shop-dev", profile: null, database: "the environment's shared Postgres", missing: [] },
+      {
+        environment: "prod",
+        namespace: "shop-prod",
+        profile: "prod",
+        database: "a Postgres of its own in its namespace (postgres:17)",
+        missing: [],
+      },
+      { environment: "lab", namespace: "shop-lab", profile: null, database: "no database", missing: [] },
     ]);
+    expect(infra.needs).toBeNull();
+  });
+
+  it("says what the gears need, and the environment that does not give it", () => {
+    const postgres = { id: "postgres", name: "PostgreSQL", why: "data", gears: ["cf-gears-file-storage"] };
+    const infra = infrastructureOf(
+      {
+        profile: "prod",
+        last_preview: {
+          profile: "prod",
+          ok: true,
+          errors: 0,
+          warnings: 0,
+          applications: ["api-gateway"],
+          gears: [],
+          infrastructure: [postgres],
+        },
+      },
+      { environments: [{ environment: env("e3", "lab", "none"), namespace: "shop-lab" }], bindings: [] },
+    );
+    expect(infra.needs).toEqual([postgres]);
+    expect(infra.applications).toEqual(["api-gateway"]);
+    expect(infra.runsIn[0].missing).toEqual(["PostgreSQL"]);
   });
 
   it("is nothing yet for a product never composed and never bound", () => {
-    expect(infrastructureOf(null, null)).toEqual({ profile: null, profileLabel: null, runsIn: [] });
+    expect(infrastructureOf(null, null)).toEqual({ profile: null, profileLabel: null, runsIn: [], needs: null, applications: [] });
   });
 });
 

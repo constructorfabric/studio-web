@@ -228,9 +228,12 @@ export function ProductConfigurator({
   kept,
   running,
   productAt,
+  focus,
 }: {
   token: string;
   index: CatalogueIndex;
+  /** A gear to open, with its settings: a fix that asks for them. */
+  focus?: { name: string; at: number } | null;
   /** The Domain entities each gear keeps, by engine id (useKeptEntities). */
   kept?: Map<string, string[]>;
   /** What each environment runs now (useRunning); absent or null: unknown. */
@@ -250,6 +253,9 @@ export function ProductConfigurator({
   const { picks, config } = product;
   const explanations = useGearExplanations(token);
   const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    if (focus) setSelected(focus.name);
+  }, [focus]);
   const [dragging, setDragging] = useState<string | null>(null);
   const composition = useMemo(() => compose(index, picks, config, preview), [index, picks, config, preview]);
   const zones = useMemo(() => subsystems(index), [index]);

@@ -550,6 +550,9 @@ pub struct Change {
     pub gear: String,
     pub added: bool,
     pub reason: String,
+    /// A picked gear kept with configuration it has yet to be given: the
+    /// fields to set. Not a change made -- the product's to make.
+    pub needs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -683,9 +686,27 @@ impl EngineCatalogue {
     /// when something it must share a binary with is, or — for a host — when
     /// every plugin it could take is.
     fn dead(&self) -> BTreeMap<String, Dead> {
+        self.dead_given(&BTreeSet::new(), &GearConfig::new())
+    }
+
+    /// [`dead`](Self::dead) for one product: a gear it picked is not ruled
+    /// out for configuration it has yet to be given -- picking it is the
+    /// product's word that it will be configured, and dropping it again on
+    /// every completion takes away what the product asked for (an OIDC
+    /// sign-in, say, leaving none) -- and the fields the product does set
+    /// are not missing.
+    fn dead_given(&self, picked: &BTreeSet<String>, config: &GearConfig) -> BTreeMap<String, Dead> {
         let mut dead: BTreeMap<String, Dead> = BTreeMap::new();
         for g in self.gears.values() {
-            let unset = self.unset_config(g);
+            let set_here = config.get(&self.pick_name(g));
+            let unset: Vec<String> = if picked.contains(&g.id) {
+                Vec::new()
+            } else {
+                self.unset_config(g)
+                    .into_iter()
+                    .filter(|f| !set_here.is_some_and(|c| c.contains_key(f)))
+                    .collect()
+            };
             if !unset.is_empty() {
                 dead.insert(g.id.clone(), Dead::NeedsConfig(unset));
             } else if g.fills.is_some() && self.host_of(g).is_none() {
@@ -798,7 +819,12 @@ fn dead_reason(catalogue: &EngineCatalogue, why: &Dead) -> String {
 /// product is for. The engine still has the last word — the caller resolves
 /// the result.
 pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearConfig) -> Completion {
-    let dead = catalogue.dead();
+    let chosen: BTreeSet<String> = picked
+        .iter()
+        .filter_map(|n| catalogue.find(n.trim()))
+        .map(|g| g.id.clone())
+        .collect();
+    let dead = catalogue.dead_given(&chosen, config);
     let mut config = config.clone();
     let crate_of = |id: &str| catalogue.pick_name_of(id);
     let mut changes: Vec<Change> = Vec::new();
@@ -815,6 +841,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
                     gear: name.to_string(),
                     added: false,
                     reason: "no gear.gdl describes it yet, so it cannot be composed".to_string(),
+                    needs: Vec::new(),
                 });
             }
             continue;
@@ -824,8 +851,26 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
                 gear: catalogue.pick_name(g),
                 added: false,
                 reason: dead_reason(catalogue, why),
+                needs: Vec::new(),
             });
             continue;
+        }
+        let unset: Vec<String> = catalogue
+            .unset_config(g)
+            .into_iter()
+            .filter(|f| {
+                !config
+                    .get(&catalogue.pick_name(g))
+                    .is_some_and(|c| c.contains_key(f))
+            })
+            .collect();
+        if !unset.is_empty() {
+            changes.push(Change {
+                gear: catalogue.pick_name(g),
+                added: false,
+                reason: format!("needs configuration: {} — set it below", unset.join(", ")),
+                needs: unset,
+            });
         }
         if !set.contains(&g.id) {
             set.push(g.id.clone());
@@ -862,6 +907,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
                             "{} needs a plugin; this one runs with no configuration",
                             crate_of(host_id)
                         ),
+                        needs: Vec::new(),
                     });
                     added = true;
                 }
@@ -885,6 +931,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
                     gear: catalogue.pick_name(h),
                     added: true,
                     reason: "the REST gears need a REST host to serve their routes".to_string(),
+                    needs: Vec::new(),
                 });
                 added = true;
             }
@@ -930,6 +977,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
                     crate_of(host_id),
                     plugin_vendor(p, None).unwrap_or_default()
                 ),
+                needs: Vec::new(),
             });
         }
     }
@@ -2056,6 +2104,90 @@ pub struct Preview {
     pub composition: Composition,
     pub resolution: Resolution,
     pub corpus_commit: Option<String>,
+    /// What the resolved gears run on besides the product's own binaries.
+    pub infrastructure: Vec<Technology>,
+}
+
+/// Something a product's gears need running beside them: the profile's
+/// Postgres, an identity provider, a store of their own.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Technology {
+    /// `postgres`, `oidc`, `keycloak`, `clickhouse`, ...
+    pub id: String,
+    pub name: String,
+    /// What it is for, in one line.
+    pub why: String,
+    /// The gears that need it, by crate name.
+    pub gears: Vec<String>,
+}
+
+/// Plugins that talk to a service of their own, by the end of their crate
+/// name. A gear says it keeps data (`db`, the profile's Postgres) in its
+/// gear.gdl; a service a plugin talks to it says only in its configuration,
+/// so these are named here.
+const PLUGIN_SERVICES: &[(&str, &str, &str, &str)] = &[
+    (
+        "oidc-authn-plugin",
+        "oidc",
+        "OIDC identity provider",
+        "signs people in: the issuer whose tokens the product trusts",
+    ),
+    (
+        "keycloak-idp-plugin",
+        "keycloak",
+        "Keycloak",
+        "keeps tenants and users, through its admin API",
+    ),
+    (
+        "clickhouse-usage-collector-plugin",
+        "clickhouse",
+        "ClickHouse",
+        "stores usage records",
+    ),
+    (
+        "timescaledb-usage-collector-plugin",
+        "timescaledb",
+        "TimescaleDB",
+        "stores usage records",
+    ),
+];
+
+/// What `gears` (engine ids, as a resolution lists them) need running beside
+/// the product: the profile's Postgres for every gear that keeps data, and
+/// the services the plugins among them talk to.
+pub fn infrastructure(catalogue: &EngineCatalogue, gears: &[String]) -> Vec<Technology> {
+    let mut out: Vec<Technology> = Vec::new();
+    let mut add =
+        |id: &str, name: &str, why: &str, gear: String| match out.iter_mut().find(|t| t.id == id) {
+            Some(t) if !t.gears.contains(&gear) => t.gears.push(gear),
+            Some(_) => {}
+            None => out.push(Technology {
+                id: id.to_string(),
+                name: name.to_string(),
+                why: why.to_string(),
+                gears: vec![gear],
+            }),
+        };
+    for id in gears {
+        let Some(g) = catalogue.gears.get(id).or_else(|| catalogue.find(id)) else {
+            continue;
+        };
+        let crate_name = catalogue.pick_name(g);
+        if g.runtime_caps.iter().any(|c| c == "db") {
+            add(
+                "postgres",
+                "PostgreSQL",
+                "the profile's database: each gear that keeps data has its own schema there",
+                crate_name.clone(),
+            );
+        }
+        for (suffix, tid, name, why) in PLUGIN_SERVICES {
+            if crate_name.ends_with(suffix) {
+                add(tid, name, why, crate_name.clone());
+            }
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -3469,6 +3601,7 @@ impl Gearbox {
                 composition,
                 resolution: Resolution::default(),
                 corpus_commit: commit,
+                infrastructure: Vec::new(),
             });
         }
 
@@ -3528,11 +3661,14 @@ impl Gearbox {
             gears = input.gears.len(),
             "gearbox: preview evaluated"
         );
+        let gears: Vec<String> = resolution.gears.iter().map(|g| g.id.clone()).collect();
+        let infrastructure = infrastructure(catalogue, &gears);
         Ok(Preview {
             product_gdl,
             composition,
             resolution,
             corpus_commit: commit,
+            infrastructure,
         })
     }
 }
@@ -4242,6 +4378,8 @@ mod tests {
             c.gears,
             [
                 "cf-gears-types-registry",
+                // picked, so kept: it is to be given its `mode`, not dropped
+                "cf-gears-event-broker",
                 "cf-gears-tenant-resolver",
                 // the host's plugin: rg-tr has the best priority but must run
                 // with resource-group, which needs authz-resolver, which
@@ -4260,15 +4398,16 @@ mod tests {
             .map(|ch| (ch.gear.as_str(), (ch.added, ch.reason.as_str())))
             .collect();
         assert!(!why["cf-gears-ledger"].0);
+        let broker = c
+            .changes
+            .iter()
+            .find(|ch| ch.gear == "cf-gears-event-broker")
+            .unwrap();
+        assert_eq!(broker.needs, ["mode"], "a default is not a missing field");
         assert!(
             why["cf-gears-resource-group"]
                 .1
                 .contains("cf-gears-authz-resolver")
-        );
-        assert!(why["cf-gears-event-broker"].1.contains("mode"));
-        assert!(
-            !why["cf-gears-event-broker"].1.contains("retention"),
-            "a default is not a missing field"
         );
         assert!(
             why["cf-gears-account-management"]
@@ -4277,6 +4416,42 @@ mod tests {
         );
         assert!(why["cf-gears-static-tr-plugin"].0);
         assert!(why["cf-gears-api-gateway"].1.contains("REST host"));
+    }
+
+    #[test]
+    fn a_product_needs_postgres_for_its_gears_that_keep_data_and_the_services_of_its_plugins() {
+        let c = corpus();
+        let ids: Vec<String> = c
+            .gears
+            .values()
+            .filter(|g| {
+                g.runtime_caps.iter().any(|x| x == "db")
+                    || g.package.crate_name.ends_with("oidc-authn-plugin")
+            })
+            .map(|g| g.id.clone())
+            .collect();
+        let t = infrastructure(&c, &ids);
+        let ids: Vec<&str> = t.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"oidc"), "{t:?}");
+        let oidc = t.iter().find(|t| t.id == "oidc").unwrap();
+        assert_eq!(oidc.gears, ["cf-gears-oidc-authn-plugin"]);
+        assert!(infrastructure(&c, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_picked_gear_is_configured_not_dropped_and_what_the_product_sets_counts() {
+        let picks = names(&["cf-gears-event-broker"]);
+        let c = complete(&corpus(), &picks, &GearConfig::new());
+        assert!(c.gears.contains(&"cf-gears-event-broker".to_string()));
+        assert_eq!(c.changes[0].needs, ["mode"]);
+        let mut config = GearConfig::new();
+        config
+            .entry("cf-gears-event-broker".into())
+            .or_default()
+            .insert("mode".into(), Value::String("kafka".into()));
+        let c = complete(&corpus(), &picks, &config);
+        assert!(c.gears.contains(&"cf-gears-event-broker".to_string()));
+        assert!(c.changes.iter().all(|ch| ch.needs.is_empty()));
     }
 
     #[test]

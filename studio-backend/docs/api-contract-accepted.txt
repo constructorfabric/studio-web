@@ -4811,6 +4811,7 @@ response	POST /studio-product/v1/gearbox/brings	brought.reason	String	always
 response	POST /studio-product/v1/gearbox/brings	changes	Vec<{}>	always
 response	POST /studio-product/v1/gearbox/brings	changes.added	bool	always
 response	POST /studio-product/v1/gearbox/brings	changes.gear	String	always
+response	POST /studio-product/v1/gearbox/brings	changes.needs	Vec<String>	always
 response	POST /studio-product/v1/gearbox/brings	changes.reason	String	always
 response	POST /studio-product/v1/gearbox/brings	described	bool	always
 response	POST /studio-product/v1/gearbox/brings	overlaps	Vec<{}>	always
@@ -4820,6 +4821,7 @@ response	POST /studio-product/v1/gearbox/brings	overlaps.contract	String	always
 response	POST /studio-product/v1/gearbox/complete	changes	Vec<{}>	always
 response	POST /studio-product/v1/gearbox/complete	changes.added	bool	always
 response	POST /studio-product/v1/gearbox/complete	changes.gear	String	always
+response	POST /studio-product/v1/gearbox/complete	changes.needs	Vec<String>	always
 response	POST /studio-product/v1/gearbox/complete	changes.reason	String	always
 response	POST /studio-product/v1/gearbox/complete	config	Value	always
 response	POST /studio-product/v1/gearbox/complete	gears	Vec<String>	always

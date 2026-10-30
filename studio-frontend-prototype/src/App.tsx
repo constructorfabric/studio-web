@@ -5772,6 +5772,9 @@ function ProjectScreen({
                 onOpenTab={setTab}
               />
             }
+            parts={(openBackend) => (
+              <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={openBackend} />
+            )}
           />
         )}
         {tab === "parts" && (

@@ -36,6 +36,8 @@ export type Fix =
   | { kind: "add"; gear: string; reason: string }
   | { kind: "remove"; gear: string; reason: string }
   | { kind: "config"; gear: string; field: string; value: unknown; reason: string }
+  /** A picked gear the product is to configure: its settings, not a change. */
+  | { kind: "setup"; gear: string; fields: string[]; reason: string }
   | { kind: "replace"; gear: string; with: string; reason: string };
 
 /** The engine's completion of the current product, as separate fixes. */
@@ -50,6 +52,10 @@ export function fixesFrom(
     const key = `${c.added ? "+" : "-"}${c.gear}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (c.needs && c.needs.length > 0) {
+      out.push({ kind: "setup", gear: c.gear, fields: c.needs, reason: c.reason });
+      continue;
+    }
     if (c.added && !picks.includes(c.gear)) out.push({ kind: "add", gear: c.gear, reason: c.reason });
     if (!c.added && picks.includes(c.gear)) out.push({ kind: "remove", gear: c.gear, reason: c.reason });
   }
@@ -105,6 +111,7 @@ export function applyFix(
   config: GearConfig,
   fix: Fix,
 ): { picks: string[]; config: GearConfig } {
+  if (fix.kind === "setup") return { picks: [...picks], config };
   if (fix.kind === "add") return { picks: picks.includes(fix.gear) ? [...picks] : [...picks, fix.gear], config };
   if (fix.kind === "remove" || fix.kind === "replace") {
     const next = { ...config };

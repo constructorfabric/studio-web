@@ -188,10 +188,12 @@ export function typeOfProject(
 
 /** The tabs a project shows: its type's, in the order `all` puts them. */
 export function visibleTabs<T extends { id: ProjTab }>(all: readonly T[], type: ProjectType | null): T[] {
-  if (!type?.tabs) return [...all];
-  const keep = new Set(type.tabs);
-  const shown = all.filter((t) => keep.has(t.id));
-  return shown.length > 0 ? shown : [...all];
+  const keep = type?.tabs ? new Set(type.tabs) : null;
+  const named = keep ? all.filter((t) => keep.has(t.id)) : [];
+  const shown = named.length > 0 ? named : [...all];
+  // Components is a section of Product (Parts) where a project has Product,
+  // and a tab of its own only where it has not: two tabs read as one.
+  return shown.some((t) => t.id === "components") ? shown.filter((t) => t.id !== "parts") : shown;
 }
 
 /** Where a project opens: its type's first tab, else the first it shows. */

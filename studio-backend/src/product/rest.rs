@@ -411,9 +411,12 @@ pub struct GearBringsDto {
 pub struct ProductChangeDto {
     /// Crate name.
     pub gear: String,
-    /// True when added, false when taken out.
+    /// True when added, false when taken out -- or, with `needs`, kept.
     pub added: bool,
     pub reason: String,
+    /// A picked gear kept with configuration it has yet to be given: the
+    /// fields the product is to set. Empty for an addition or a removal.
+    pub needs: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -1128,6 +1131,7 @@ async fn complete_product(
                 gear: c.gear,
                 added: c.added,
                 reason: c.reason,
+                needs: c.needs,
             })
             .collect(),
         config: serde_json::to_value(&completion.config).unwrap_or(Value::Null),
@@ -1182,6 +1186,7 @@ async fn gear_brings(
                 gear: c.gear,
                 added: c.added,
                 reason: c.reason,
+                needs: c.needs,
             })
             .collect(),
     }))
@@ -1878,6 +1883,7 @@ async fn preview_product(
             "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
             "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
             "corpus_commit": preview.corpus_commit,
+            "infrastructure": preview.infrastructure,
         }),
     );
     if let Some(w) = &written {

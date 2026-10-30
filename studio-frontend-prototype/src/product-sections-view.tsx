@@ -28,6 +28,7 @@ import {
   type ProductSummary,
 } from "./product-sections";
 import { errText } from "./problem";
+import { gearLabel } from "./product";
 
 /** The section an old address asked for (`/…/frontend`), read once when the
  *  page loaded: the shell rewrites the address to Product's straight after. */
@@ -52,7 +53,18 @@ function storeSection(projectId: string, id: ProductSectionId) {
 }
 
 /** The Product tab: the header, the section switch, the chosen section. */
-export function ProductPage({ token, projectId, backend }: { token: string; projectId: string; backend: ReactNode }) {
+export function ProductPage({
+  token,
+  projectId,
+  backend,
+  parts,
+}: {
+  token: string;
+  projectId: string;
+  backend: ReactNode;
+  /** The project's inventory (Parts); a section only when given. */
+  parts?: (openBackend: () => void) => ReactNode;
+}) {
   const [section, setSection] = useState<ProductSectionId>(() => {
     const first = openingSection(landing, storedSection(projectId));
     landing = null;
@@ -86,7 +98,7 @@ export function ProductPage({ token, projectId, backend }: { token: string; proj
         <SummaryLine summary={summary} />
         <div className="row" style={{ alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
           <div className="doc-views" role="tablist" aria-label="The product's parts" style={{ marginBottom: 0 }} data-product-sections>
-            {PRODUCT_SECTIONS.map((s) => (
+            {PRODUCT_SECTIONS.filter((s) => s.id !== "parts" || parts).map((s) => (
               <button
                 key={s.id}
                 type="button"
@@ -106,6 +118,7 @@ export function ProductPage({ token, projectId, backend }: { token: string; proj
           </span>
         </div>
       </section>
+      {section === "parts" && parts?.(() => pick("backend"))}
       {section === "infrastructure" && <ProductInfrastructure token={token} projectId={projectId} />}
       <div hidden={section !== "backend"} data-product-section="backend">
         {backend}
@@ -197,6 +210,7 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
                 <span className="muted">none yet; it is set when the gears below are composed into a product</span>
               )}
             </div>
+            <ProductNeeds infra={infra} />
             {infra.runsIn.length === 0 ? (
               <div className="muted">
                 No environment this project may deploy to. An organization administrator adds one under Environments; the
@@ -210,6 +224,7 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
                     <th>Namespace</th>
                     <th>Profile</th>
                     <th>Database</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -221,6 +236,15 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
                       </td>
                       <td>{r.profile ?? <span className="muted">not bound</span>}</td>
                       <td>{r.database}</td>
+                      <td>
+                        {r.missing.length > 0 ? (
+                          <span className="badge danger" title="The gears that need it cannot start there" data-env-missing>
+                            no {r.missing.join(", ")}
+                          </span>
+                        ) : infra.needs ? (
+                          <span className="badge ok">gives what it needs</span>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -230,6 +254,53 @@ function ProductInfrastructure({ token, projectId }: { token: string; projectId:
         )}
       </section>
     </>
+  );
+}
+
+/** What the product runs on besides its own applications: the technologies
+ *  its gears need, each with the gears that need it. */
+function ProductNeeds({ infra }: { infra: Infrastructure }) {
+  if (infra.needs === null) {
+    return (
+      <p className="muted" style={{ margin: 0 }}>
+        What the gears need running beside them shows once the product is checked: open Backend.
+      </p>
+    );
+  }
+  return (
+    <table className="ptable" aria-label="What the product runs on" data-product-needs>
+      <thead>
+        <tr>
+          <th>Runs on</th>
+          <th>For</th>
+          <th>Gears</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <b>{infra.profileLabel ?? "Its profile"}</b>
+          </td>
+          <td>
+            {infra.applications.length === 0
+              ? "the product's applications"
+              : `${infra.applications.length} application${infra.applications.length === 1 ? "" : "s"}: ${infra.applications.join(", ")}`}
+          </td>
+          <td className="muted">all</td>
+        </tr>
+        {infra.needs.map((t) => (
+          <tr key={t.id} data-technology={t.id}>
+            <td>
+              <b>{t.name}</b>
+            </td>
+            <td>{t.why}</td>
+            <td title={t.gears.map(gearLabel).join(", ")}>
+              {t.gears.length <= 3 ? t.gears.map(gearLabel).join(", ") : `${t.gears.length} gears`}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
