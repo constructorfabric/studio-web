@@ -194,7 +194,8 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
     );
   }
 
-  const footer = snapshot && specsFooter(snapshot.rows, snapshot.sources.reviews_known);
+  const footer =
+    snapshot && specsFooter(snapshot.rows, snapshot.sources.reviews_known, snapshot.filter);
   return (
     <div ref={findThemedRoot} className={styles.section}>
       <UploadPanel projectId={projectId} projectName={projectName} />

@@ -302,6 +302,11 @@ describe('footer', () => {
     expect(specsFooter(rows, true)).toEqual({ total: 3, findings: 5 });
   });
 
+  it('counts the rows outside the default view under Not specifications', () => {
+    expect(specsFooter(rows, true, 'not_specifications')).toEqual({ total: 1, findings: 4 });
+    expect(specsFooter(rows, true, 'with_findings').total).toBe(3);
+  });
+
   it('has no findings count while the verdicts could not be read', () => {
     expect(specsFooter(rows, false).findings).toBeNull();
   });

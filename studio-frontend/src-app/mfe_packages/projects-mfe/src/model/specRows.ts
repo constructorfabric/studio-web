@@ -214,14 +214,18 @@ export function sortSpecRows(rows: readonly SpecRow[], order: SpecsOrder | undef
 
 /** The footer's M and K; its N is the snapshot's `shown`. */
 export interface SpecsFooter {
-  /** The rows of the default view. */
+  /** The rows the filter picks from: the default view, or the rows outside it under *Not specifications*. */
   total: number;
   /** Their findings, summed; `null` while the verdicts could not be read. */
   findings: number | null;
 }
 
-export function specsFooter(rows: readonly SpecRow[], reviewsKnown: boolean): SpecsFooter {
-  const listed = rows.filter(inDefaultView);
+export function specsFooter(
+  rows: readonly SpecRow[],
+  reviewsKnown: boolean,
+  filter: SpecsFilter = 'all'
+): SpecsFooter {
+  const listed = rows.filter((row) => inDefaultView(row) !== (filter === 'not_specifications'));
   return {
     total: listed.length,
     findings: reviewsKnown

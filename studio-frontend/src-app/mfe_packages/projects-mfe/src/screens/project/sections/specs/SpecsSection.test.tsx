@@ -214,6 +214,8 @@ describe('the Specs section', () => {
     await choose(/filter_specs/, 'filter_not_specifications');
     expect(await screen.findByText('notes.md')).toBeTruthy();
     expect(screen.queryByText('prd.md')).toBeNull();
+    // Counted out of the rows outside the default view, not out of the specs.
+    expect(await screen.findByText('footer_of 1 · footer_findings 0 · Billing')).toBeTruthy();
   });
 
   it('takes All specs as no filter', async () => {
