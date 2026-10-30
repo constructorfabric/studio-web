@@ -531,7 +531,7 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 9] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 13] = [
         (
             "dev.yaml",
             "studio-product",
@@ -593,6 +593,27 @@ mod tests {
              without a database the plugin stands down and usage is simply \
              not recorded, which loses nothing a developer poking at the API \
              needs",
+        ),
+        (
+            "dev.yaml",
+            "github-mirror",
+            "the mirror is linked only with the `github-mirror` feature, which \
+             no default build turns on; it is tried on postgres.yaml first (#895)",
+        ),
+        (
+            "docker.yaml",
+            "github-mirror",
+            "same reason as dev.yaml",
+        ),
+        (
+            "oidc.yaml",
+            "github-mirror",
+            "same reason as dev.yaml",
+        ),
+        (
+            "k8s.yaml",
+            "github-mirror",
+            "same reason as dev.yaml, until studio-dev runs the mirror",
         ),
     ];
 

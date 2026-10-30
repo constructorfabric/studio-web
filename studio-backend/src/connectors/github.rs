@@ -805,6 +805,21 @@ struct ReviewThread {
     is_resolved: bool,
 }
 
+fn check_platform_auth_option(
+    options: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    options
+        .iter()
+        .map(|(k, v)| match (k.as_str(), v.as_str()) {
+            (super::driver::OPTION_PLATFORM_AUTH, "true" | "false") => Ok((k.clone(), v.clone())),
+            _ => Err(anyhow::anyhow!(
+                "a GitHub connection takes only `{}`: true | false (`{k}` = `{v}` was given)",
+                super::driver::OPTION_PLATFORM_AUTH
+            )),
+        })
+        .collect()
+}
+
 #[async_trait]
 impl ConnectorDriver for GitHubDriver {
     fn provider(&self) -> &'static str {
@@ -825,6 +840,14 @@ impl ConnectorDriver for GitHubDriver {
 
     fn credential_hint(&self) -> &'static str {
         "ghp_…"
+    }
+
+    fn check_options(
+        &self,
+        _base_url: &str,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        check_platform_auth_option(options)
     }
 
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {

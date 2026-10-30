@@ -143,6 +143,7 @@ gears:
             subject_tenant_id: "00000000-0000-0000-0000-000000000001"
             token_scopes: ["*"]
             subject_type: "gts.cf.core.security.subject_user.v1~"
+          bearer_token: "studio-admin-token"
 
   authz-resolver:
     config:
@@ -456,6 +457,7 @@ gears:
       # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
       # own for any shared environment).
       signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+      finalize_internal_secret: "dev-fs-internal-token"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
   oagw:
@@ -485,6 +487,9 @@ gears:
         # IDE chat never read it: they use a person's own key.
         - key: "studio-assistant-llm-key"
           value: "sk-REPLACE_ME"
+        - tenant_id: "00000000-0000-0000-0000-000000000001"
+          key: "github-token"
+          value: "${GITHUB_TOKEN:-}"
 
   # ── studio-tasks (durable background runs) ──
   # Owns the queue every gear's background work goes through, plus the run
@@ -587,7 +592,20 @@ gears:
         acquire_timeout: "10s"
         idle_timeout: "5m"
         max_lifetime: "30m"
-    config: {}
+    config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+
+  github-mirror:
+    database:
+      engine: "sqlite"
+      file: "github_mirror.db"
+    config:
+      api_base_url: "https://api.github.com"
+      github_token_secret:
+        tenant_id: "00000000-0000-0000-0000-000000000001"
+        key: "github-token"
 
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into
