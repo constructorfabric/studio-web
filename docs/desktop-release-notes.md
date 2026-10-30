@@ -9,6 +9,26 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.14
+
+One fix found building Studio's own product on 0.3.0-beta.13.
+
+### Building
+
+- **A project an earlier desktop left on its product branch builds today's
+  code.** Desktops up to 0.3.0-beta.12 switched the clone itself onto the
+  `product/…` branch, whose code is as old as the save; beta.13 then took
+  the description from that branch but kept the clone on it, so Build images
+  compiled the old code (for Studio's own product: `events-catalog.md` not
+  found). Opening the product now moves such a clone back onto the
+  repository's main branch, up to date, and lays only `product.gdl` from the
+  product branch over it. A clone with a changed tracked file stays where it
+  is. (#945)
+
+### Known not to work
+
+- **Not run in a built app** before this release.
+
 ## 0.3.0-beta.13
 
 The product's description is kept by Studio, and the photo is where a member
