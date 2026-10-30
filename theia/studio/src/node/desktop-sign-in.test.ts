@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import * as crypto from 'crypto';
-import { DesktopSession, authorizationUrl, keycloakEndpoints, pkcePair, signIn } from './desktop-sign-in';
+import { DesktopSession, SignInExpired, authorizationUrl, keycloakEndpoints, pkcePair, signIn } from './desktop-sign-in';
 
 const ISSUER = 'https://sso.example.com/realms/studio';
 
@@ -111,5 +111,16 @@ describe('desktop session', () => {
         const session = new DesktopSession(ISSUER, 'studio-desktop',
             { accessToken: 'a1', expiresAt: 0 }, jest.fn() as unknown as typeof fetch, () => 0);
         await expect(session.accessToken()).rejects.toThrow('sign in again');
+    });
+
+    it('says the sign-in expired when the identity provider will not renew it, and not for an outage', async () => {
+        const refused = new DesktopSession(ISSUER, 'studio-desktop', { accessToken: 'a1', refreshToken: 'r1', expiresAt: 0 },
+            (async () => tokenAnswer({ error: 'invalid_grant', error_description: 'Token is not active' }, 400)) as unknown as typeof fetch, () => 0);
+        await expect(refused.accessToken()).rejects.toBeInstanceOf(SignInExpired);
+        const down = new DesktopSession(ISSUER, 'studio-desktop', { accessToken: 'a1', refreshToken: 'r1', expiresAt: 0 },
+            (async () => tokenAnswer({ error: 'temporarily_unavailable' }, 503)) as unknown as typeof fetch, () => 0);
+        const error = await down.accessToken().catch(e => e);
+        expect(error).not.toBeInstanceOf(SignInExpired);
+        expect(String(error)).toMatch(/503/);
     });
 });

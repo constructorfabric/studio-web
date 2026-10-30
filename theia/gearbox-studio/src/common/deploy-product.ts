@@ -425,6 +425,8 @@ export interface ProductDeployment {
   readonly chartVersion: string | undefined;
   readonly state: string;
   readonly reason: string | undefined;
+  /** What the run said: its summary, or why it failed. */
+  readonly outcome?: string;
   readonly requestedAt: string;
   readonly requestedBy: string | undefined;
 }
@@ -561,8 +563,25 @@ export function nextStep(input: {
         ? { text: `Uninstalled from ${where}.`, tone: "done" }
         : { text: `Runs in ${where}${deploy.chartVersion !== undefined ? `: ${deploy.chartVersion}` : ""}.`, tone: "done" };
     case "failed":
-      return { text: `The last deploy to ${where} failed${deploy.reason !== undefined ? `: ${deploy.reason}` : ""}.`, tone: "failed" };
+      return {
+        text: `The last deploy to ${where} failed${
+          (deploy.reason ?? deploy.outcome) !== undefined ? `: ${firstLineOf(deploy.reason ?? deploy.outcome ?? "")}` : ""
+        }.`,
+        tone: "failed",
+      };
     default:
       return { text: `${deploymentStateLabel(deploy.state)}: ${where}.`, tone: "todo" };
   }
+}
+
+/**
+ * The line of `text` that says what went wrong: the first that starts with
+ * `Error` (helm and docker print theirs after a line of progress, such as
+ * "Release … does not exist. Installing it now."), else the first non-empty
+ * one; at most 240 characters.
+ */
+export function firstLineOf(text: string): string {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  const line = lines.find((l) => /^error\b/i.test(l)) ?? lines[0] ?? "";
+  return line.length > 240 ? `${line.slice(0, 240).trimEnd()}…` : line;
 }

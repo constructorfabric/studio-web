@@ -72,6 +72,8 @@ export interface ProductDeployment {
     readonly chartVersion: string | undefined;
     readonly state: string;
     readonly reason: string | undefined;
+    /** What the run said: its summary, or why it failed. */
+    readonly outcome?: string;
     readonly requestedAt: string;
     readonly requestedBy: string | undefined;
 }
@@ -261,6 +263,7 @@ export class DeployEnvironments {
                 chartVersion: text(d.chart_version),
                 state: text(d.state) ?? 'unknown',
                 reason: text(d.reason),
+                outcome: text(d.outcome),
                 requestedAt: text(d.requested_at) ?? '',
                 requestedBy: text(d.requested_by_name),
             }))

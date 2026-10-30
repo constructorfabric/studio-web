@@ -16,6 +16,7 @@ import {
   BUILD_STAGES,
   buildStages,
   deploymentStateLabel,
+  firstLineOf,
   isDeployable,
   parseTarget,
   targetValue,
@@ -106,6 +107,8 @@ export interface DeployPanelProps {
   readonly savingSecret?: boolean;
   /** Set (`value`) or remove (`undefined`) a configuration secret in the chosen environment. */
   readonly onSecret?: (key: string, value: string | undefined) => void;
+  /** Open the Generate stage, where Apply writes the tree a build on this machine needs. */
+  readonly onShowGenerate?: () => void;
 }
 
 /** A deploy's live status as the panel holds it: asked, answered, or refused. */
@@ -115,64 +118,177 @@ export type DeployStatusView =
   | { readonly kind: "error"; readonly error: string };
 
 export function DeployPanel(props: DeployPanelProps): React.ReactElement {
-  const { images, target } = props;
+  const { images, target, flow } = props;
   const environment = target?.kind === "environment" ? props.environments.find((e) => e.id === target.id) : undefined;
   const nothing = props.environments.length === 0 && props.contexts.length === 0;
+  // What this machine can do: build, push, render and install from the
+  // generated tree. Studio's own build needs none of it -- it builds from the
+  // repository -- so it is offered whether or not the tree is on disk.
+  const local: "not-generated" | "checking" | "no-plan" | "ready" = !props.generated
+    ? "not-generated"
+    : props.ready === undefined
+      ? "checking"
+      : images.length === 0 || props.chart === undefined
+        ? "no-plan"
+        : "ready";
+  const studioBuild = environment?.registryLogin === true && props.onBuildInStudio !== undefined;
+  const buildHere = local === "ready" && props.docker;
   // The server packs nothing and needs no helm here; a kube context does.
-  const canDeploy = environment !== undefined ? props.requesting !== true : target?.kind === "context" && props.helm !== undefined;
+  const canDeploy = environment !== undefined ? props.requesting !== true : target?.kind === "context" && props.helm !== undefined && local === "ready";
+  const builds = flow?.builds ?? [];
+  const latestBuild = builds[0];
+  // What was just published or built here comes first: the server's history
+  // does not have it yet, and its newest deployable build is an older one.
+  const deployable = environment !== undefined && props.published !== true && props.studioBuild !== true ? builds.find((b) => isDeployable(b)) : undefined;
+  const deploys = groupDeployments(flow?.deployments ?? []);
+  const latestDeploy = deploys.find((d) => environment === undefined || d.deployment.environmentId === environment.id) ?? deploys[0];
+  const where = environment?.name ?? (target?.kind === "context" ? target.name : "the cluster");
   return (
-    <div className="gbx-generate-run" data-generate-deploy>
-      <div className="gbx-group-label">Deploy</div>
-      {!props.generated ? (
-        <p className="gbx-waiting" data-deploy-state="not-generated">
-          Apply writes the images&apos; Dockerfiles and the chart; Deploy works on them once they are on disk.
-        </p>
-      ) : props.ready === undefined ? (
-        <p className="gbx-waiting" data-deploy-state="checking">
-          Checking for docker, helm and kubectl…
-        </p>
-      ) : images.length === 0 || props.chart === undefined ? (
-        <p className="gbx-inline-error" data-deploy-state="no-plan">
-          The generated tree has no docker/build.sh or Helm chart to deploy: generate this kubernetes profile again.
-        </p>
-      ) : (
-        <>
-          <div className="gbx-generate-actions">
-            <label>
-              Deploy to{" "}
-              <select
-                data-deploy-target
-                value={target !== undefined ? targetValue(target) : ""}
-                onChange={(e) => {
-                  const next = parseTarget(e.target.value);
-                  if (next !== undefined) props.onTarget(next);
-                }}
-                disabled={nothing}
-              >
-                {nothing && <option value="">no environment and no kube context</option>}
-                {props.environments.length > 0 && (
-                  <optgroup label="The organization's environments">
-                    {props.environments.map((e) => (
-                      <option key={e.id} value={targetValue({ kind: "environment", id: e.id })}>
-                        {e.name}
-                        {e.protected ? " (needs approval)" : ""}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {props.contexts.length > 0 && (
-                  <optgroup label="Kube contexts on this machine">
-                    {props.contexts.map((c) => (
-                      <option key={c} value={targetValue({ kind: "context", name: c })}>
-                        {c}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </label>
-          </div>
-          <p data-deploy-images>
+    <div className="gbx-generate-run gbx-ship" data-generate-deploy data-deploy-flow={flow !== undefined ? true : undefined}>
+      <div className="gbx-generate-actions gbx-ship-target">
+        <label>
+          Deploy to{" "}
+          <select
+            data-deploy-target
+            value={target !== undefined ? targetValue(target) : ""}
+            onChange={(e) => {
+              const next = parseTarget(e.target.value);
+              if (next !== undefined) props.onTarget(next);
+            }}
+            disabled={nothing}
+          >
+            {nothing && <option value="">no environment and no kube context</option>}
+            {props.environments.length > 0 && (
+              <optgroup label="The organization's environments">
+                {props.environments.map((e) => (
+                  <option key={e.id} value={targetValue({ kind: "environment", id: e.id })}>
+                    {e.name}
+                    {e.protected ? " (needs approval)" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {props.contexts.length > 0 && (
+              <optgroup label="Kube contexts on this machine">
+                {props.contexts.map((c) => (
+                  <option key={c} value={targetValue({ kind: "context", name: c })}>
+                    {c}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+        {environment !== undefined && (
+          <span className="gbx-waiting" data-deploy-environment={environment.name}>
+            {environment.registry ? `images and chart in ${environment.registry}` : "images as generated"}
+            {environment.protected ? " · an organization administrator approves it first" : ""}
+          </span>
+        )}
+      </div>
+      {flow !== undefined &&
+        (flow.error !== undefined ? (
+          <p className="gbx-inline-error" data-deploy-flow-error>
+            Studio could not be asked for the project&apos;s builds and deploys: {flow.error}
+          </p>
+        ) : (
+          <p className={`gbx-ship-next gbx-ship-next-${flow.next.tone}`} data-deploy-next={flow.next.tone} role="status">
+            {flow.next.text}
+          </p>
+        ))}
+      {flow?.unbound !== undefined && <BindRow {...props} unbound={flow.unbound} binding={flow.binding} />}
+
+      <section className="gbx-ship-step" data-ship-step="build" aria-label="Build">
+        <div className="gbx-ship-step-head">
+          <span className="gbx-ship-step-num">1</span>
+          <b>Build</b>
+          <span className="gbx-waiting">the images and the chart{environment?.registry ? `, published to ${environment.registry}` : ""}</span>
+        </div>
+        {latestBuild !== undefined ? (
+          <BuildRow build={latestBuild} {...props} environment={environment} latest />
+        ) : (
+          flow !== undefined && <p className="gbx-waiting">No build of this product yet.</p>
+        )}
+        <div className="gbx-generate-actions" data-deploy-state={local}>
+          {/* This computer first when it can build -- the IDE is where the
+              code is -- and Studio's cluster second; Studio's cluster first
+              when this machine cannot (no tree yet, or no docker). */}
+          {buildHere && (
+            <button
+              type="button"
+              className="gbx-start-primary"
+              data-deploy-build
+              onClick={props.onBuildImages}
+              title="docker build of each image, here, from the code on this computer"
+            >
+              Build on this computer
+            </button>
+          )}
+          {studioBuild && environment !== undefined && (
+            <button
+              type="button"
+              className={buildHere ? "gbx-choice" : "gbx-start-primary"}
+              data-deploy-studio-build
+              disabled={props.startingBuild === true}
+              onClick={props.onBuildInStudio}
+              title={`Studio builds what is pushed to the branch, in ${environment.name}'s cluster, and publishes to ${environment.registry}: nothing is built on this computer`}
+            >
+              {props.startingBuild === true ? "Starting…" : "Build in the Studio cluster"}
+            </button>
+          )}
+          {local === "ready" && !buildHere && (
+            <button type="button" className="gbx-choice" data-deploy-build disabled title="docker does not answer on this computer">
+              Build on this computer
+            </button>
+          )}
+          {local === "ready" && (
+            <button
+              type="button"
+              className="gbx-choice"
+              data-deploy-push
+              disabled={!props.docker || !props.registry || props.publishing === true}
+              onClick={props.onPush}
+              title={
+                environment?.registryLogin === true
+                  ? `Push the images built on this computer, and the chart, to ${props.registry} with a token the Studio server gets for them`
+                  : props.registry
+                    ? `docker push to ${props.registry}`
+                    : "No image registry: set one on the environment or the profile to push"
+              }
+            >
+              {props.publishing === true
+                ? "Publishing…"
+                : environment?.registryLogin === true
+                  ? `Publish to ${props.registry}`
+                  : "Push"}
+            </button>
+          )}
+          {local === "not-generated" && (
+            <span className="gbx-waiting" data-deploy-state="not-generated">
+              {studioBuild ? "To build on this machine instead, " : "To build on this machine, "}
+              {props.onShowGenerate !== undefined ? (
+                <button type="button" className="gbx-link" onClick={props.onShowGenerate}>
+                  Apply the code in Generate
+                </button>
+              ) : (
+                "Apply the code in Generate"
+              )}{" "}
+              first: it writes the images&apos; Dockerfiles and the chart.
+            </span>
+          )}
+          {local === "checking" && (
+            <span className="gbx-waiting" data-deploy-state="checking">
+              Checking for docker, helm and kubectl…
+            </span>
+          )}
+          {local === "no-plan" && (
+            <span className="gbx-inline-error" data-deploy-state="no-plan">
+              The generated tree has no docker/build.sh or Helm chart to deploy: generate this kubernetes profile again.
+            </span>
+          )}
+        </div>
+        {local === "ready" && (
+          <p className="gbx-waiting" data-deploy-images>
             Images: {images.map((image) => <code key={image.app}>{image.image}</code>).reduce<React.ReactNode[]>((all, one, i) => (i === 0 ? [one] : [...all, ", ", one]), [])}
             {props.registry ? (
               <>
@@ -191,228 +307,253 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
             ) : null}
             .
           </p>
-          {environment !== undefined && (
-            <p className="gbx-waiting" data-deploy-environment={environment.name}>
-              {environment.registryLogin === true
-                ? `Build the images here, then Publish pushes them and the chart to ${environment.registry} with a token the Studio server gets for them -- no registry login on this machine -- and Deploy asks the server to install that build into ${environment.name}.`
-                : `Build and push the images here, then Deploy asks the Studio server to install the chart into ${environment.name} with the organization's connection -- no cluster credentials are needed on this machine.`}
-              {environment.protected ? " An organization administrator approves it first." : ""}
-            </p>
-          )}
-          {!props.docker && (
-            <p className="gbx-inline-error" data-deploy-missing="docker">
-              docker does not answer on this machine: the images cannot be built here.
-            </p>
-          )}
-          {props.helm === undefined && environment === undefined && (
-            <p className="gbx-inline-error" data-deploy-missing="helm">
-              helm is not on this machine: install Helm to preview the manifests and deploy to a kube context.{" "}
-              <a href="https://helm.sh/docs/intro/install/" target="_blank" rel="noreferrer">
-                helm.sh
-              </a>
-            </p>
-          )}
-          <div className="gbx-generate-actions" data-deploy-state="ready">
-            <button type="button" className="gbx-start-primary" data-deploy-build disabled={!props.docker} onClick={props.onBuildImages}>
-              Build images
-            </button>
+        )}
+        {local === "ready" && !props.docker && (
+          <p className="gbx-inline-error" data-deploy-missing="docker">
+            docker does not answer on this machine: the images cannot be built here.
+          </p>
+        )}
+      </section>
+
+      <section className="gbx-ship-step" data-ship-step="deploy" aria-label="Deploy">
+        <div className="gbx-ship-step-head">
+          <span className="gbx-ship-step-num">2</span>
+          <b>Deploy to {where}</b>
+          {props.namespace ? <span className="gbx-waiting">namespace {props.namespace}</span> : null}
+        </div>
+        {latestDeploy !== undefined && <DeployRow {...props} row={latestDeploy} />}
+        <div className="gbx-generate-actions">
+          {deployable !== undefined && environment !== undefined && props.onDeployBuild !== undefined ? (
             <button
               type="button"
-              className="gbx-choice"
-              data-deploy-push
-              disabled={!props.docker || !props.registry || props.publishing === true}
-              onClick={props.onPush}
-              title={
-                environment?.registryLogin === true
-                  ? `Push the images and the chart to ${props.registry} with a token the Studio server gets for them`
-                  : props.registry
-                    ? `docker push to ${props.registry}`
-                    : "No image registry: set one on the environment or the profile to push"
-              }
+              className="gbx-start-primary"
+              data-deploy-this-build={deployable.buildId}
+              disabled={props.requesting === true}
+              aria-label={`Deploy build ${deployable.buildId} to ${environment.name}`}
+              onClick={() => props.onDeployBuild?.(deployable.buildId)}
             >
-              {environment?.registryLogin === true ? (props.publishing === true ? "Getting a token…" : "Publish") : "Push"}
+              {props.requesting === true ? "Asking the server…" : `Deploy ${deployable.chartVersion ?? deployable.buildId}`}
             </button>
-            {environment?.registryLogin === true && props.onBuildInStudio !== undefined && (
+          ) : (
+            (environment !== undefined || local === "ready") && (
               <button
                 type="button"
-                className="gbx-choice"
-                data-deploy-studio-build
-                disabled={props.startingBuild === true}
-                onClick={props.onBuildInStudio}
-                title={`Studio builds what is pushed, in ${environment.name}'s cluster, and pushes to ${environment.registry}: nothing is built on this machine`}
+                className="gbx-start-primary"
+                data-deploy-install
+                disabled={!canDeploy}
+                onClick={props.onDeploy}
+                title={environment !== undefined ? "Ask the Studio server to deploy; asks first" : "helm upgrade --install into the chosen cluster; asks first"}
               >
-                {props.startingBuild === true ? "Starting…" : "Build in Studio"}
+                {props.requesting === true
+                  ? "Asking the server…"
+                  : props.studioBuild === true
+                    ? "Deploy Studio's build"
+                    : props.published === true
+                      ? "Deploy the published build"
+                      : "Deploy"}
               </button>
-            )}
+            )
+          )}
+          {local === "ready" && (
             <button type="button" className="gbx-choice" data-deploy-template disabled={props.helm === undefined} onClick={props.onTemplate}>
               Preview manifests
             </button>
-            <button type="button" className="gbx-start-primary" data-deploy-install disabled={!canDeploy} onClick={props.onDeploy}
-              title={environment !== undefined ? "Ask the Studio server to deploy; asks first" : "helm upgrade --install into the chosen cluster; asks first"}>
-              {props.requesting === true
-                ? "Asking the server…"
-                : props.studioBuild === true
-                  ? "Deploy Studio's build"
-                  : props.published === true
-                    ? "Deploy the published build"
-                    : "Deploy"}
-            </button>
-          </div>
-          {props.note !== undefined && (
-            <p className="gbx-waiting" data-deploy-note>
-              {props.note}
-            </p>
           )}
-        </>
+          {deployable === undefined && environment !== undefined && flow !== undefined && props.published !== true && props.studioBuild !== true && (
+            <span className="gbx-waiting">Nothing published to deploy yet: build first.</span>
+          )}
+        </div>
+        {local === "ready" && props.helm === undefined && environment === undefined && (
+          <p className="gbx-inline-error" data-deploy-missing="helm">
+            helm is not on this machine: install Helm to preview the manifests and deploy to a kube context.{" "}
+            <a href="https://helm.sh/docs/intro/install/" target="_blank" rel="noreferrer">
+              helm.sh
+            </a>
+          </p>
+        )}
+        {props.note !== undefined && (
+          <p className="gbx-waiting" data-deploy-note>
+            {props.note}
+          </p>
+        )}
+      </section>
+
+      {flow !== undefined && (builds.length > 1 || deploys.length > 1) && (
+        <details className="gbx-ship-history">
+          <summary>
+            History: {builds.length} build{builds.length === 1 ? "" : "s"}, {flow.deployments.length} deploy
+            {flow.deployments.length === 1 ? "" : "s"}
+          </summary>
+          <FlowSection {...props} flow={flow} environment={environment} />
+        </details>
       )}
-      {props.flow !== undefined && <FlowSection {...props} flow={props.flow} environment={environment} />}
+      {environment !== undefined && <EnvironmentExtras {...props} environment={environment} />}
     </div>
   );
 }
 
-/**
- * Where the product stands on its way out: what to do next, the builds with
- * how far each got and what it published -- the images and chart in the
- * environment's registry -- and the deploys with how they went.
- */
-function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; readonly environment: StudioEnvironment | undefined }): React.ReactElement {
-  const { flow, environment } = props;
+/** Bind the open profile to an environment, when it is bound to none. */
+function BindRow(props: DeployPanelProps & { readonly unbound: string; readonly binding?: boolean }): React.ReactElement | null {
   const [bindTo, setBindTo] = React.useState("");
+  if (props.environments.length === 0 || props.onBind === undefined) return null;
   return (
-    <section className="gbx-deploy-flow" aria-label="Builds and deploys" data-deploy-flow>
-      <div className="gbx-group-label">Builds and deploys</div>
-      {flow.error !== undefined ? (
-        <p className="gbx-inline-error" data-deploy-flow-error>
-          Studio could not be asked for the project&apos;s builds and deploys: {flow.error}
-        </p>
-      ) : (
-        <p className={flow.next.tone === "failed" ? "gbx-inline-error" : "gbx-waiting"} data-deploy-next={flow.next.tone} role="status">
-          {flow.next.text}
+    <div className="gbx-generate-actions" data-deploy-bind={props.unbound}>
+      <label>
+        Bind {props.unbound} to{" "}
+        <select aria-label={`Environment for the ${props.unbound} profile`} value={bindTo} onChange={(e) => setBindTo(e.target.value)}>
+          <option value="">choose an environment</option>
+          {props.environments.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        className="gbx-choice"
+        data-deploy-bind-apply
+        disabled={bindTo === "" || props.binding === true}
+        onClick={() => props.onBind?.(bindTo)}
+      >
+        {props.binding === true ? "Binding…" : "Bind"}
+      </button>
+    </div>
+  );
+}
+
+/** One build: id, how far it got, what it published or why it failed, and Deploy. */
+function BuildRow(
+  props: DeployPanelProps & { readonly build: ProductBuild; readonly environment: StudioEnvironment | undefined; readonly latest?: boolean },
+): React.ReactElement {
+  const { build, environment } = props;
+  const stages = buildStages(build);
+  const canDeploy = !props.latest && isDeployable(build) && environment !== undefined && props.onDeployBuild !== undefined;
+  return (
+    <div className="gbx-ship-build" data-deploy-build-id={build.buildId} data-deploy-build-status={build.status}>
+      <div>
+        <code>{build.buildId}</code> · {build.status} · {build.where}
+        {build.shortSha !== undefined ? ` · ${build.shortSha}` : ""}
+        {build.descriptionRevision !== undefined ? ` · description rev ${build.descriptionRevision}` : ""}
+        {build.branch !== undefined ? ` on ${build.branch}` : ""}
+        <span className="gbx-deploy-stages" aria-label="Stages">
+          {BUILD_STAGES.map((stage) => (
+            <span
+              key={stage}
+              className={`gbx-deploy-stage gbx-deploy-stage-${stages[stage]}`}
+              data-deploy-stage={stage}
+              data-deploy-stage-state={stages[stage]}
+              title={`${stage}: ${stages[stage]}`}
+            >
+              {stage} · {stages[stage]}
+            </span>
+          ))}
+        </span>
+      </div>
+      {build.status === "failed" && build.failure !== undefined && (
+        <p className="gbx-inline-error" data-deploy-build-failure title={build.failure}>
+          {failureLine(build.failure)}
         </p>
       )}
-      {flow.unbound !== undefined && props.environments.length > 0 && props.onBind !== undefined && (
-        <div className="gbx-generate-actions" data-deploy-bind={flow.unbound}>
-          <label>
-            Bind {flow.unbound} to{" "}
-            <select aria-label={`Environment for the ${flow.unbound} profile`} value={bindTo} onChange={(e) => setBindTo(e.target.value)}>
-              <option value="">choose an environment</option>
-              {props.environments.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-          </label>
+      {(build.chartRef !== undefined || build.images.length > 0) && (
+        <p className="gbx-waiting" data-deploy-build-published>
+          Published:{" "}
+          {build.images
+            .map((i) => (
+              <code key={i.app} title={i.app}>
+                {i.image}
+              </code>
+            ))
+            .reduce<React.ReactNode[]>((all, one, i) => (i === 0 ? [one] : [...all, ", ", one]), [])}
+          {build.chartRef !== undefined && (
+            <>
+              {build.images.length > 0 ? "; chart " : "chart "}
+              <code>
+                {build.chartRef}
+                {build.chartVersion !== undefined ? `:${build.chartVersion}` : ""}
+              </code>
+            </>
+          )}
+        </p>
+      )}
+      {canDeploy && environment !== undefined && (
+        <button
+          type="button"
+          className="gbx-choice"
+          data-deploy-this-build={build.buildId}
+          disabled={props.requesting === true}
+          aria-label={`Deploy build ${build.buildId} to ${environment.name}`}
+          onClick={() => props.onDeployBuild?.(build.buildId)}
+        >
+          Deploy this build to {environment.name}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** One deploy (or a run of the same one): how it ended and why, and its live status once asked. */
+function DeployRow(props: DeployPanelProps & { readonly row: { readonly deployment: ProductDeployment; readonly times: number } }): React.ReactElement {
+  const { deployment: d, times } = props.row;
+  const why = d.reason ?? (d.state === "failed" ? d.outcome : undefined);
+  return (
+    <div className="gbx-ship-deploy" data-deploy-history={d.id} data-deploy-history-state={d.state} data-deploy-history-times={times}>
+      {deploymentStateLabel(d.state)}
+      {times > 1 ? <span className="gbx-deploy-times"> ×{times}</span> : null} · {d.environmentName} ({d.namespace})
+      {d.action === "uninstall" ? " · uninstall" : d.chartVersion !== undefined ? ` · ${d.chartVersion}` : ""}
+      {d.build !== undefined ? ` · build ${d.build}` : ""}
+      {d.requestedBy !== undefined ? ` · ${d.requestedBy}` : ""}
+      {why !== undefined && (
+        <span className={d.state === "failed" ? "gbx-inline-error" : undefined} title={why}>
+          {" "}
+          -- {failureLine(why)}
+        </span>
+      )}
+      {props.onStatus !== undefined && d.action !== "uninstall" && d.state === "succeeded" && (
+        <>
+          {" "}
           <button
             type="button"
             className="gbx-choice"
-            data-deploy-bind-apply
-            disabled={bindTo === "" || flow.binding === true}
-            onClick={() => props.onBind?.(bindTo)}
+            data-deploy-status={d.id}
+            disabled={props.statuses?.[d.id]?.kind === "loading"}
+            aria-label={`Live status of the deploy to ${d.environmentName}`}
+            onClick={() => props.onStatus?.(d.id)}
           >
-            {flow.binding === true ? "Binding…" : "Bind"}
+            {props.statuses?.[d.id]?.kind === "loading" ? "Reading…" : "Status"}
           </button>
-        </div>
+        </>
       )}
+      {renderStatus(props.statuses?.[d.id], props.onOpen)}
+    </div>
+  );
+}
+
+/** The project's builds and deploys, newest first, under History. */
+function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; readonly environment: StudioEnvironment | undefined }): React.ReactElement {
+  const { flow, environment } = props;
+  return (
+    <section className="gbx-deploy-flow" aria-label="Builds and deploys">
       {flow.builds.length > 0 && (
         <ul className="gbx-deploy-builds" aria-label="Builds">
-          {flow.builds.slice(0, SHOWN).map((build) => {
-            const stages = buildStages(build);
-            const canDeploy = isDeployable(build) && environment !== undefined && props.onDeployBuild !== undefined;
-            return (
-              <li key={build.buildId} data-deploy-build-id={build.buildId} data-deploy-build-status={build.status}>
-                <div>
-                  <code>{build.buildId}</code> · {build.status} · {build.where}
-                  {build.shortSha !== undefined ? ` · ${build.shortSha}` : ""}
-                  {build.descriptionRevision !== undefined ? ` · description rev ${build.descriptionRevision}` : ""}
-                  {build.branch !== undefined ? ` on ${build.branch}` : ""}
-                </div>
-                <div className="gbx-deploy-stages" aria-label="Stages">
-                  {BUILD_STAGES.map((stage) => (
-                    <span
-                      key={stage}
-                      className={`gbx-badge gbx-deploy-stage-${stages[stage]}`}
-                      data-deploy-stage={stage}
-                      data-deploy-stage-state={stages[stage]}
-                      title={`${stage}: ${stages[stage]}`}
-                    >
-                      {stage} · {stages[stage]}
-                    </span>
-                  ))}
-                </div>
-                {build.status === "failed" && build.failure !== undefined && (
-                  <p className="gbx-inline-error" data-deploy-build-failure>
-                    {firstLine(build.failure)}
-                  </p>
-                )}
-                {(build.chartRef !== undefined || build.images.length > 0) && (
-                  <p data-deploy-build-published>
-                    Published:{" "}
-                    {build.images
-                      .map((i) => (
-                        <code key={i.app} title={i.app}>
-                          {i.image}
-                        </code>
-                      ))
-                      .reduce<React.ReactNode[]>((all, one, i) => (i === 0 ? [one] : [...all, ", ", one]), [])}
-                    {build.chartRef !== undefined && (
-                      <>
-                        {build.images.length > 0 ? "; chart " : "chart "}
-                        <code>
-                          {build.chartRef}
-                          {build.chartVersion !== undefined ? `:${build.chartVersion}` : ""}
-                        </code>
-                      </>
-                    )}
-                  </p>
-                )}
-                {canDeploy && (
-                  <button
-                    type="button"
-                    className="gbx-choice"
-                    data-deploy-this-build={build.buildId}
-                    disabled={props.requesting === true}
-                    aria-label={`Deploy build ${build.buildId} to ${environment.name}`}
-                    onClick={() => props.onDeployBuild?.(build.buildId)}
-                  >
-                    Deploy this build to {environment.name}
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {flow.deployments.length > 0 && (
-        <ul className="gbx-deploy-history" aria-label="Deploys">
-          {flow.deployments.slice(0, SHOWN).map((d) => (
-            <li key={d.id} data-deploy-history={d.id} data-deploy-history-state={d.state}>
-              {deploymentStateLabel(d.state)} · {d.environmentName} ({d.namespace})
-              {d.action === "uninstall" ? " · uninstall" : d.chartVersion !== undefined ? ` · ${d.chartVersion}` : ""}
-              {d.build !== undefined ? ` · build ${d.build}` : ""}
-              {d.requestedBy !== undefined ? ` · ${d.requestedBy}` : ""}
-              {d.reason !== undefined && <span className={d.state === "failed" ? "gbx-inline-error" : undefined}> -- {d.reason}</span>}
-              {props.onStatus !== undefined && d.action !== "uninstall" && d.state === "succeeded" && (
-                <>
-                  {" "}
-                  <button
-                    type="button"
-                    className="gbx-choice"
-                    data-deploy-status={d.id}
-                    disabled={props.statuses?.[d.id]?.kind === "loading"}
-                    aria-label={`Live status of the deploy to ${d.environmentName}`}
-                    onClick={() => props.onStatus?.(d.id)}
-                  >
-                    {props.statuses?.[d.id]?.kind === "loading" ? "Reading…" : "Status"}
-                  </button>
-                </>
-              )}
-              {renderStatus(props.statuses?.[d.id], props.onOpen)}
+          {flow.builds.slice(0, SHOWN).map((build) => (
+            <li key={build.buildId}>
+              <BuildRow {...props} build={build} environment={environment} />
             </li>
           ))}
         </ul>
       )}
-      {environment !== undefined && <EnvironmentExtras {...props} environment={environment} />}
+      {flow.deployments.length > 0 && (
+        <ul className="gbx-deploy-history" aria-label="Deploys">
+          {groupDeployments(flow.deployments)
+            .slice(0, SHOWN)
+            .map((row) => (
+              <li key={row.deployment.id}>
+                <DeployRow {...props} row={row} />
+              </li>
+            ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -468,8 +609,12 @@ function EnvironmentExtras(props: DeployPanelProps & { readonly environment: Stu
   if (props.onProposeWorkflow === undefined && props.onSecret === undefined) return null;
   const keyOk = validSecretKey(key);
   const prUrl = props.workflow?.prUrl;
+  const secrets = (props.secrets ?? []).length;
   return (
-    <div className="gbx-deploy-extras" data-deploy-extras={environment.id}>
+    <details className="gbx-deploy-extras" data-deploy-extras={environment.id}>
+      <summary>
+        More for {environment.name}: build in CI, secrets{secrets > 0 ? ` (${secrets})` : ""}
+      </summary>
       {props.onProposeWorkflow !== undefined && (
         <div className="gbx-generate-actions" data-deploy-workflow>
           <button
@@ -544,10 +689,42 @@ function EnvironmentExtras(props: DeployPanelProps & { readonly environment: Stu
           </form>
         </section>
       )}
-    </div>
+    </details>
   );
 }
 
-function firstLine(text: string): string {
-  return text.split(/\r?\n/)[0] ?? text;
+/**
+ * A build's failure as one line: its first line, without what gearbox adds
+ * after ` · ` (help, evidence), at most 240 characters. The whole of it is
+ * the line's tooltip.
+ */
+export function failureLine(text: string): string {
+  const first = (firstLineOf(text) || text).split(" · ")[0]?.trim() ?? "";
+  return first.length > 240 ? `${first.slice(0, 240).trimEnd()}…` : first;
+}
+
+/**
+ * Deploys as they are read: one row for a run of the same deploy asked again
+ * and again with the same end -- five identical "Failed · dev · build X" lines
+ * were five rows, and pushed everything else off the screen.
+ */
+export function groupDeployments(
+  deployments: readonly ProductDeployment[],
+): { readonly deployment: ProductDeployment; readonly times: number }[] {
+  const out: { deployment: ProductDeployment; times: number }[] = [];
+  for (const d of deployments) {
+    const last = out[out.length - 1];
+    const same =
+      last !== undefined &&
+      last.deployment.state === d.state &&
+      last.deployment.environmentName === d.environmentName &&
+      last.deployment.namespace === d.namespace &&
+      last.deployment.action === d.action &&
+      last.deployment.build === d.build &&
+      last.deployment.chartVersion === d.chartVersion &&
+      last.deployment.reason === d.reason;
+    if (same) last.times += 1;
+    else out.push({ deployment: d, times: 1 });
+  }
+  return out;
 }

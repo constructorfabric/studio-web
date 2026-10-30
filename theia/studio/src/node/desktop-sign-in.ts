@@ -90,6 +90,21 @@ function tokensFrom(body: Record<string, unknown>, now: number): DesktopTokens {
     };
 }
 
+/** The token endpoint answered, and said no: `status` is its HTTP status. */
+export class TokenRefused extends Error {
+    constructor(message: string, readonly status: number) {
+        super(message);
+    }
+}
+
+/**
+ * The sign-in cannot be renewed: there is no refresh token, or the identity
+ * provider no longer knows its session ("Token is not active" after a day).
+ * Only signing in again helps, so whoever catches it signs the member out
+ * rather than keep failing every call.
+ */
+export class SignInExpired extends Error { }
+
 async function tokenRequest(
     endpoint: string, form: Record<string, string>, fetchImpl: typeof fetch
 ): Promise<DesktopTokens> {
@@ -101,7 +116,7 @@ async function tokenRequest(
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) {
         const reason = typeof body.error_description === 'string' ? body.error_description : body.error;
-        throw new Error(`the token endpoint refused the request (${response.status}${reason ? `: ${reason}` : ''})`);
+        throw new TokenRefused(`the token endpoint refused the request (${response.status}${reason ? `: ${reason}` : ''})`, response.status);
     }
     return tokensFrom(body, Date.now());
 }
@@ -204,7 +219,7 @@ export class DesktopSession {
         }
         const refreshToken = this.tokens.refreshToken;
         if (!refreshToken) {
-            throw new Error('the Studio sign-in has expired; sign in again');
+            throw new SignInExpired('the Studio sign-in has expired; sign in again');
         }
         // One refresh at a time: a push asks for credentials twice in a row,
         // and a refresh token may only be used once.
@@ -215,6 +230,13 @@ export class DesktopSession {
         }, this.fetchImpl);
         try {
             this.tokens = await this.pending;
+        } catch (error) {
+            // 400/401 from the token endpoint is a refresh token it will never
+            // take again (invalid_grant); anything else may pass.
+            if (error instanceof TokenRefused && (error.status === 400 || error.status === 401)) {
+                throw new SignInExpired(`the Studio sign-in has expired; sign in again (${error.message})`);
+            }
+            throw error;
         } finally {
             this.pending = undefined;
         }

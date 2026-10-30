@@ -44,6 +44,7 @@ import {
   type RunTarget,
 } from "../../common/run-product";
 import { ProductTerminals } from "./product-terminals";
+import { PUBLISH_WAIT_MS, publishOutcome } from "./publish-outcome";
 import { RunPanel, type PostgresState } from "./run-panel";
 import { DeployPanel, type DeployStatusView } from "./deploy-panel";
 import { ProductDescriptionSync } from "../shell/product-description-sync";
@@ -312,6 +313,30 @@ export class GenerateWidget extends ReactWidget {
         ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
         : {};
     return { ...(this.toolchain?.env ?? {}), ...pg };
+  }
+
+  /**
+   * Constructor Studio: which half of the product's way out the product view
+   * shows here. `generate` is the code -- the plan, its files, Apply;
+   * `deploy` is what comes after Apply -- build and run it on this machine, or
+   * build, publish and deploy it to an environment, with how that went. One
+   * screen held both, and the tree a person came to Generate for sat under a
+   * page of builds, deploys and secrets.
+   */
+  protected view: "generate" | "deploy" = "generate";
+
+  setView(view: "generate" | "deploy"): void {
+    if (this.view === view) return;
+    this.view = view;
+    this.update();
+  }
+
+  /** Whether the generated tree is on disk: applied, or nothing left to write. */
+  protected isGenerated(plans: readonly FilePlan[]): boolean {
+    return (
+      this.generate.current.written !== undefined ||
+      (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"))
+    );
   }
 
   /**
@@ -660,19 +685,35 @@ export class GenerateWidget extends ReactWidget {
         ...stamp,
         configDir,
       });
-      await this.sendDeploy(plan.commands);
-      this.published = {
-        environmentId: environment.id,
-        buildId: newBuildId(),
-        startedAt: new Date().toISOString(),
-        ...(commit !== undefined ? { commit } : {}),
-        images: plan.images,
-        chartRef: plan.chartRef,
-        chartVersion: plan.chartVersion,
-      };
-      this.deployNote =
-        `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal. ` +
-        `When it has finished, Deploy asks the Studio server to install that build into ${environment.name}.`;
+      // Published only once the terminal says every push went through: a
+      // build recorded as published with a chart the registry refused sent
+      // every Deploy after it to "not found".
+      const marker = `studio-publish-${newBuildId()}`;
+      const terminal = await this.terminals.send(
+        "publish",
+        context.product,
+        context.cwd,
+        `${plan.commands.join(" && ")} && echo ${marker}-ok || echo ${marker}-failed`,
+        { DOCKER_BUILDKIT: "1" },
+      );
+      this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Publish terminal…`;
+      this.update();
+      const ended = await publishOutcome(terminal, marker, PUBLISH_WAIT_MS);
+      if (ended.ok) {
+        this.published = {
+          environmentId: environment.id,
+          buildId: newBuildId(),
+          startedAt: new Date().toISOString(),
+          ...(commit !== undefined ? { commit } : {}),
+          images: plan.images,
+          chartRef: plan.chartRef,
+          chartVersion: plan.chartVersion,
+        };
+        this.deployNote = `Published ${plan.chartVersion} to ${environment.registry}. Deploy asks the Studio server to install it into ${environment.name}.`;
+      } else {
+        this.deployNote = `Publish failed${ended.why ? `: ${ended.why}` : ""}. Nothing was recorded as published; see the Publish terminal.`;
+        this.messages.error(`Publish to ${environment.registry} failed${ended.why ? `: ${ended.why}` : ""}`);
+      }
     } catch (error) {
       this.messages.error(`Publish did not start: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -1067,6 +1108,7 @@ export class GenerateWidget extends ReactWidget {
     const deploy = this.deploy;
     return (
       <DeployPanel
+        onShowGenerate={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "generate")}
         generated={generated}
         ready={deploy === undefined ? undefined : true}
         images={deploy?.script?.images ?? []}
@@ -1124,9 +1166,7 @@ export class GenerateWidget extends ReactWidget {
   }
 
   protected renderRun(plans: readonly FilePlan[]): React.ReactNode {
-    const gen = this.generate.current;
-    const generated =
-      gen.written !== undefined || (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"));
+    const generated = this.isGenerated(plans);
     // A kubernetes profile runs in a cluster, not on this machine.
     if (this.kubernetes() !== undefined) return this.renderDeploy(generated);
     if (generated && this.toolchain === undefined) void this.askToolchain();
@@ -1219,6 +1259,28 @@ export class GenerateWidget extends ReactWidget {
       // end. The errors are already in the store, because the resolution is what
       // this screen draws from, so the reasons cost nothing to show.
       const errors = (state.resolution?.diagnostics ?? []).filter((d) => d.severity === "error");
+      if (this.view === "deploy") {
+        // Run & Deploy works on generated code: one line on why there is none,
+        // and the way to the errors -- not a second copy of the list.
+        return (
+          <div className="gbx-generate" data-generate-view="deploy">
+            {this.renderProfile()}
+            <div className="gbx-generate-actions" data-deploy-state="resolution-errors">
+              <span className="gbx-inline-error">
+                Nothing to build or deploy yet: the product has {errors.length === 1 ? "an error" : `${errors.length} errors`}, so no code
+                was generated.
+              </span>
+              <button
+                type="button"
+                className="gbx-choice"
+                onClick={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "checks")}
+              >
+                Show them in Checks
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="gbx-generate">
           {this.renderProfile()}
@@ -1272,6 +1334,16 @@ export class GenerateWidget extends ReactWidget {
       ? [...this.generate.blocks, { id: "draft", reason: "the product has unapplied changes: apply or discard them first" }]
       : this.generate.blocks;
     const selectedPlan = plans.find((p) => p.path === this.selected);
+
+    if (this.view === "deploy") {
+      return (
+        <div className="gbx-generate" data-generate-view="deploy">
+          {this.renderProfile()}
+          {this.renderRun(plans)}
+        </div>
+      );
+    }
+    const generated = this.isGenerated(plans);
 
     return (
       <div className="gbx-generate" data-out-root={gen.plan.out_root} data-written={gen.written ?? ""}>
@@ -1350,8 +1422,21 @@ export class GenerateWidget extends ReactWidget {
             </ul>
           )}
         </div>
-        {/* Constructor Studio: what comes after Apply -- see `run-panel.tsx`. */}
-        {this.renderRun(plans)}
+        {/* Constructor Studio: what comes after Apply is the Run & Deploy
+            stage of the product view (`setView`); here, only the way there. */}
+        {generated && (
+          <div className="gbx-generate-actions" data-generate-next>
+            <span className="gbx-waiting">The code is on disk.</span>
+            <button
+              type="button"
+              className="gbx-choice"
+              data-generate-to-deploy
+              onClick={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "deploy")}
+            >
+              {this.kubernetes() !== undefined ? "Build and deploy it" : "Build and run it"} →
+            </button>
+          </div>
+        )}
         <div className="gbx-generate-body">
           <div className="gbx-generate-tree" role="tree">
             {treeOf(plans).map((node) => this.renderNode(node, 0))}

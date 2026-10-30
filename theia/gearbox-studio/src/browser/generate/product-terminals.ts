@@ -10,7 +10,18 @@ import { inject, injectable } from "@theia/core/shared/inversify";
 import type { TerminalWidget } from "@theia/terminal/lib/browser/base/terminal-widget";
 import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-service";
 
-export type ProductTerminalKind = "build" | "run" | "deploy";
+/** `publish` has a terminal of its own: typed into the Deploy terminal while a build ran there, it was lost. */
+export type ProductTerminalKind = "build" | "run" | "deploy" | "publish";
+
+/** Whether the terminal's shell still runs: the backend answers for its process. */
+async function alive(terminal: TerminalWidget): Promise<boolean> {
+  try {
+    await terminal.processId;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** The widget id of a product's terminal: stable, so the next press finds it. */
 export function productTerminalId(kind: ProductTerminalKind, product: string): string {
@@ -48,11 +59,19 @@ export class ProductTerminals {
       terminal.dispose();
       terminal = undefined;
     }
+    // A tab whose shell has ended (it was exited, or the backend restarted)
+    // is still a widget, but the backend no longer knows its process, and
+    // the first call that names it fails with `terminal "<n>" does not
+    // exist` -- which the portal's Build on my machine showed as its error.
+    if (terminal !== undefined && !terminal.isDisposed && !(await alive(terminal))) {
+      terminal.dispose();
+      terminal = undefined;
+    }
     const reused = terminal !== undefined && !terminal.isDisposed;
     if (terminal === undefined || terminal.isDisposed) {
       terminal = await this.terminals.newTerminal({
         id,
-        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : "Deploy"} ${product}`,
+        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : "Deploy"} ${product}`,
         cwd: FileUri.create(cwd),
         env,
         destroyTermOnClose: true,

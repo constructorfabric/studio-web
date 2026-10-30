@@ -11,7 +11,7 @@ import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress 
 import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { LlmProxy, startLlmProxy } from './desktop-llm-proxy';
-import { DesktopSession, signIn } from './desktop-sign-in';
+import { DesktopSession, SignInExpired, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
 /**
@@ -299,7 +299,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         return {
             studioUrl: this.config.studioUrl,
             gatewayPrefix: this.config.gatewayPrefix,
-            accessToken: () => session.accessToken(),
+            accessToken: () => this.tokenOf(session),
             deviceId,
             deviceName: os.hostname(),
         };
@@ -350,7 +350,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
         return fetch(`${config.studioUrl}${config.gatewayPrefix}${gearPath}`, {
             ...init,
-            headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${await session.accessToken()}` },
+            headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${await this.tokenOf(session)}` },
         });
     }
 
@@ -555,7 +555,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 const answer = await fetch(target, {
                     method: req.method,
                     headers: {
-                        Authorization: `Bearer ${await this.session.accessToken()}`,
+                        Authorization: `Bearer ${await this.tokenOf(this.session)}`,
                         ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
                         ...(req.headers.accept ? { Accept: String(req.headers.accept) } : {}),
                         // What makes a retried POST that starts work answer the run it
@@ -571,9 +571,33 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 }
                 res.end(Buffer.from(await answer.arrayBuffer()));
             } catch (error) {
+                // An expired sign-in is not an outage: the widgets show Sign in
+                // for `signed-out` (browser/studio-api.ts `STUDIO_SIGNED_OUT`).
+                if (error instanceof SignInExpired) {
+                    res.status(503).json({ error: error.message, reason: 'signed-out' });
+                    return;
+                }
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
             }
         });
+    }
+
+    /**
+     * The member's token, as `session` gives it; a sign-in the identity
+     * provider will not renew signs the member out here, so the views offer
+     * Sign in instead of every call failing with the same refusal.
+     */
+    protected async tokenOf(session: DesktopSession): Promise<string> {
+        try {
+            return await session.accessToken();
+        } catch (error) {
+            if (error instanceof SignInExpired && this.session === session) {
+                console.warn(`[studio-desktop] ${error.message}`);
+                await this.signOut().catch(() => undefined);
+                this.status = this.describe('failed', { error: 'Your Studio sign-in has expired. Sign in again.' });
+            }
+            throw error;
+        }
     }
 
     async onStart(): Promise<void> {
@@ -601,7 +625,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         try {
             this.broker = await startTokenBroker(
                 () => (this.config ? new URL(this.config.studioUrl).host : ''),
-                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+                () => (this.session ? this.tokenOf(this.session) : Promise.reject(new Error('not signed in to Studio'))),
             );
             process.env[CREDENTIALS_ENV] = this.broker.address;
         } catch (error) {
@@ -612,7 +636,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         try {
             this.llmProxy = await startLlmProxy(
                 () => (this.config && this.session ? `${this.config.studioUrl}${this.config.gatewayPrefix}` : undefined),
-                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+                () => (this.session ? this.tokenOf(this.session) : Promise.reject(new Error('not signed in to Studio'))),
             );
             for (const name of this.llmProxy.unset) {
                 delete process.env[name];

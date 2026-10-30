@@ -1663,6 +1663,19 @@ button.gbx-health-pill:hover { border-color: var(--theia-focusBorder); }
 .gbx-deploy-builds, .gbx-deploy-history { list-style: none; margin: 6px 0 0; padding: 0; }
 .gbx-deploy-builds > li, .gbx-deploy-history > li { padding: 8px 0; border-bottom: 1px solid var(--theia-widget-border); overflow-wrap: anywhere; }
 .gbx-deploy-stages { display: inline-flex; gap: 4px; margin: 0 6px; }
+.gbx-deploy-stage { font-size: 11px; line-height: 16px; padding: 0 6px; border: 1px solid var(--theia-panel-border); border-radius: 8px; }
+.gbx-deploy-times { font-weight: 600; }
+.gbx-ship { display: flex; flex-direction: column; gap: 12px; }
+.gbx-ship-next { margin: 0; padding: 8px 12px; border-radius: 6px; background: var(--theia-editorWidget-background); border-left: 3px solid var(--theia-focusBorder); }
+.gbx-ship-next-failed { border-left-color: var(--theia-errorForeground); color: var(--theia-errorForeground); }
+.gbx-ship-next-done { border-left-color: var(--theia-testing-iconPassed, var(--theia-focusBorder)); }
+.gbx-ship-step { border: 1px solid var(--theia-panel-border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.gbx-ship-step-head { display: flex; align-items: baseline; gap: 8px; }
+.gbx-ship-step-num { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--theia-button-background); color: var(--theia-button-foreground); font-size: 11px; font-weight: 600; }
+.gbx-ship-build p, .gbx-ship-deploy p { margin: 2px 0; }
+.gbx-ship-history > summary { cursor: pointer; color: var(--theia-descriptionForeground); }
+.gbx-deploy-extras { margin-top: 8px; }
+.gbx-deploy-extras > summary { cursor: pointer; color: var(--theia-descriptionForeground); }
 .gbx-deploy-stage-done { color: var(--theia-testing-iconPassed, var(--theia-descriptionForeground)); border-color: currentColor; }
 .gbx-deploy-stage-running { color: var(--theia-focusBorder); border-color: currentColor; }
 .gbx-deploy-stage-failed { color: var(--theia-errorForeground); border-color: currentColor; }

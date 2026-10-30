@@ -109,7 +109,7 @@ export function nextStepOf(args: {
   return {
     kind: "generate",
     title: "Generate the code",
-    detail: "Then build and deploy it from the Generate stage.",
+    detail: "Then build and deploy it from the Run & Deploy stage.",
     action: "Generate",
   };
 }

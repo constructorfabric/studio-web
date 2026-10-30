@@ -41,6 +41,21 @@
 }
 .studio-desktop__studio .codicon,
 .studio-desktop__who .codicon { color: var(--sd-muted); flex: none; }
+.studio-desktop__avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: none; }
+.studio-desktop__avatar--none { display: inline-flex; align-items: center; justify-content: center; font-size: 20px; }
+.studio-desktop__who-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.studio-desktop__email { color: var(--sd-muted); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-desktop__studio-row { display: flex; align-items: center; gap: 10px; min-width: 0; margin-top: 4px; }
+.studio-desktop__studio-row .studio-desktop__studio { flex: 1; min-width: 0; }
+.studio-desktop__repos { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.studio-desktop__repo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.92em; }
+.studio-desktop__repo .codicon-repo { color: var(--sd-muted); }
+.studio-desktop__repo-name { font-weight: 600; }
+.studio-desktop__chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--sd-line); border-radius: 8px; font-size: 0.9em; color: var(--sd-muted); }
+.studio-desktop__chip .codicon { font-size: 12px; }
+.studio-desktop__chip--warn { color: var(--theia-editorWarning-foreground, #b45309); border-color: currentColor; }
+.studio-desktop__card-meta--bad { color: var(--theia-errorForeground); }
+.studio-desktop__card-path { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .studio-desktop__host {
     color: var(--sd-muted);
     font-size: 0.92em;
@@ -206,6 +221,7 @@
 }
 .studio-desktop__twisty { flex: none; width: 16px; color: var(--sd-muted); }
 .studio-desktop__icon { flex: none; color: var(--sd-muted); }
+.studio-desktop__logo { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; }
 .studio-desktop__row--organization .studio-desktop__icon,
 .studio-desktop__row--here .studio-desktop__icon { color: var(--theia-foreground); }
 .studio-desktop__row-name {

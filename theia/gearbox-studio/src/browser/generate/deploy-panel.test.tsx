@@ -6,7 +6,7 @@ import "reflect-metadata";
 
 import React from "@theia/core/shared/react";
 
-import { DeployPanel, type DeployPanelProps } from "./deploy-panel";
+import { DeployPanel, failureLine, groupDeployments, type DeployPanelProps } from "./deploy-panel";
 
 interface Root {
   render(node: React.ReactNode): void;
@@ -248,5 +248,39 @@ describe("the Deploy panel", () => {
       await draw({});
       expect(host.querySelector("[data-deploy-flow]")).toBeNull();
     });
+  });
+});
+
+describe("the Deploy panel's history", () => {
+  const deploy = (id: string, state = "failed") => ({
+    id,
+    environmentId: "e",
+    environmentName: "dev",
+    namespace: "studio-web-dev",
+    profile: "prod",
+    product: "studio-web",
+    action: "install",
+    build: "b-1",
+    chartVersion: "0.0.0-desktop.be5c7a4",
+    state,
+    reason: undefined,
+    requestedAt: "2026-10-30T10:00:00Z",
+    requestedBy: "A",
+  });
+
+  it("is one row for the same deploy asked again with the same end", () => {
+    const rows = groupDeployments([deploy("5"), deploy("4"), deploy("3"), deploy("2", "succeeded"), deploy("1")]);
+    expect(rows.map((r) => [r.deployment.id, r.times])).toEqual([["5", 3], ["2", 1], ["1", 1]]);
+  });
+
+  it("says a build's failure in one line, without gearbox's help and evidence", () => {
+    const failure =
+      "gearbox generate failed: error [GBX0322] gear `tenant-resolver` carries consumes · help: add consume(...) · evidence: libs/x.rs\nmore";
+    expect(failureLine(failure)).toBe("gearbox generate failed: error [GBX0322] gear `tenant-resolver` carries consumes");
+    expect(failureLine("x".repeat(300))).toHaveLength(241);
+    expect(failureLine("\n\nsecond line")).toBe("second line");
+    expect(failureLine('helm upgrade failed: Release "shop" does not exist. Installing it now.\nError: context deadline exceeded')).toBe(
+      "Error: context deadline exceeded",
+    );
   });
 });

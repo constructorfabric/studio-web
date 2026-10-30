@@ -54,7 +54,6 @@ import { DeployEnvironments, GEARBOX_DEPLOY_ENVIRONMENTS } from './gearbox-deplo
 import { BuildReports, GEARBOX_BUILD_REPORTS } from './gearbox-build-reports';
 import { GEARBOX_PRODUCT_DESCRIPTIONS, ProductDescriptions } from './gearbox-product-descriptions';
 import { isDesktopHost } from './desktop-git-contribution';
-import { DesktopAccountAvatar } from './desktop-account-avatar';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditFrontendController } from './audit-controller';
 import { OperationsWidget } from './operations-widget';
@@ -165,9 +164,6 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // What each mode keeps on its rails, whatever order the modes were visited in.
     bind(StudioModeLayout).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioModeLayout);
-    // The desktop's Accounts button, as the member's photo.
-    bind(DesktopAccountAvatar).toSelf().inSingletonScope();
-    bind(FrontendApplicationContribution).toService(DesktopAccountAvatar);
     // The three modes, chosen explicitly, each with its own toolbar.
     bind(StudioModeBar).toSelf().inSingletonScope();
     bind(StudioModeSwitch).toSelf().inSingletonScope();
