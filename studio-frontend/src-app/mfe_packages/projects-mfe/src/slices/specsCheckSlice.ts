@@ -21,7 +21,7 @@ export interface SpecsCheck {
 }
 
 export interface SpecsCheckState {
-  /** The ticked row ids, written by #692's selection column. */
+  /** The ticked row ids, written by #879's selection column. */
   selected: string[];
   /** The `checkable` rows the filters show, written after every load; `null` until the first. */
   shown: SpecsCheckTarget[] | null;
@@ -57,13 +57,13 @@ const {
         .filter((row) => row.checkable)
         .map(({ id, origin }) => ({ id, origin }));
     },
+    /** The ticks stay while it runs: the reload at its end clears them (#879). */
     checkStarted: (
       state: SpecsCheckState,
       action: ReducerPayload<{ projectId: string; project: string; count: number }>
     ) => {
       const { projectId, project, count } = action.payload;
       state.checks[projectId] = { project, count, phases: {}, outcome: null };
-      state.selected = [];
     },
     /** `phase: null` drops a run that has ended. */
     checkProgressed: (

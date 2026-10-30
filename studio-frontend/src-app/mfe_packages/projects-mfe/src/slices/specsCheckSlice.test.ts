@@ -43,9 +43,9 @@ describe("Check's rows", () => {
     }
   });
 
-  it('clears the selection when a check starts', () => {
+  it('keeps the selection while a check runs: the reload at its end clears it', () => {
     const state = reducer(reducer(undefined, specsSelected(['b-1', 'b-2'])), start());
-    expect(state.selected).toEqual([]);
+    expect(state.selected).toEqual(['b-1', 'b-2']);
   });
 });
 

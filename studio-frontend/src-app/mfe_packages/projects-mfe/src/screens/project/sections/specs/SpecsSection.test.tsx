@@ -74,6 +74,8 @@ const STUDIO = specRowDto({
   repo_full_path: '',
   checked_at: null,
 });
+/** No type yet: Check cannot send it. */
+const UNTYPED = specRowDto({ id: 'b-new', name: 'new.md', path: 'new.md', type_key: null, state: 'unknown' });
 
 /** Proposed, not confirmed. */
 const ADR = specRowDto({ id: 'b-adr', name: 'adr.md', type_key: 'adr', state: 'detected' });
@@ -103,6 +105,8 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   } as unknown as typeof ResizeObserver;
+  // jsdom has none, and the kit's checkbox builds one on a click.
+  globalThis.PointerEvent ??= MouseEvent as unknown as typeof PointerEvent;
 });
 
 beforeEach(() => {
@@ -180,6 +184,52 @@ describe('the Specs section', () => {
     await waitFor(() => expect(actions('specsShown').length).toBeGreaterThan(0));
     const shown = lastPayload('specsShown') as { id: string }[];
     expect(shown.map((row) => row.id)).toEqual(['b-prd', 'b-api', 'doc-1']);
+  });
+
+  it('gives only the rows Check can send a checkbox, and hands Check the ticked ones', async () => {
+    specRows.mockResolvedValue(answer([PRD, API, STUDIO, UNTYPED]));
+    renderSection();
+    await screen.findByText('new.md');
+
+    expect(within(rowOf('new.md')).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(rowOf('prd.md')).getByRole('checkbox'));
+    expect(lastPayload('specsSelected')).toEqual(['b-prd']);
+  });
+
+  it('ticks the checkable rows of the page from the header', async () => {
+    specRows.mockResolvedValue(answer([PRD, API, STUDIO, UNTYPED]));
+    renderSection();
+    await screen.findByText('new.md');
+
+    fireEvent.click(within(screen.getAllByRole('columnheader')[0]).getByRole('checkbox'));
+    expect(lastPayload('specsSelected')).toEqual(['b-prd', 'b-api', 'doc-1']);
+  });
+
+  it('clears the ticks when the search changes', async () => {
+    renderSection();
+    await screen.findByText('prd.md');
+    fireEvent.click(within(rowOf('prd.md')).getByRole('checkbox'));
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'prd' } });
+    await waitFor(() => expect(lastPayload('specsSelected')).toEqual([]));
+  });
+
+  it('clears the ticks when a filter changes', async () => {
+    renderSection();
+    await screen.findByText('prd.md');
+    fireEvent.click(within(rowOf('prd.md')).getByRole('checkbox'));
+
+    await choose(/filter_specs/, 'filter_with_findings');
+    await waitFor(() => expect(lastPayload('specsSelected')).toEqual([]));
+  });
+
+  it('drops the ticks with the table, as a switch of section does', async () => {
+    const { unmount } = renderSection();
+    await screen.findByText('prd.md');
+    fireEvent.click(within(rowOf('prd.md')).getByRole('checkbox'));
+
+    unmount();
+    expect(lastPayload('specsSelected')).toEqual([]);
   });
 
   it("starts from the slice's search, so Sources opens it on one repository, and keeps it there", async () => {

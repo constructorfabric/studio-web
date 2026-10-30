@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector, useMfeBridge } from '@gears-frontx/react';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   DataGridFiltersPlugin,
   DataGridOrderPlugin,
   DataGridPaginationPlugin,
+  DataGridRowSelectPlugin,
   DataGridTextSearchPlugin,
   Empty,
   EmptyActions,
@@ -25,12 +26,12 @@ import { FileText, Plug } from 'lucide-react';
 import { useSpecsText } from '../../../../i18n';
 import { requestOpenSpec } from '../../../../actions/artifactActions';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
-import { documentTypeOptions, specsFooter } from '../../../../model/specRows';
+import { documentTypeOptions, specsFooter, type SpecRow } from '../../../../model/specRows';
 import { isSpecsFilter, SPECS_FILTERS } from '../../../../model/specsFilter';
 import { tagGroupChoice } from '../../../../shared/dataGridFilters';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from '../../../../shared/useSpecsLoad';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
-import { specsShown } from '../../../../slices/specsCheckSlice';
+import { specsSelected, specsShown } from '../../../../slices/specsCheckSlice';
 import {
   SPECS_FILTER_SLICE_KEY,
   setSpecsDocumentType,
@@ -43,6 +44,9 @@ import { SpecsCellsContext, specsColumns, type SpecsCells } from './specsColumns
 import styles from './SpecsTable.module.css';
 
 const PAGE_LIMITS = [25, 50, 100];
+
+/** Only a row Check can send gets a checkbox (#879). */
+const checkable = (row: SpecRow): boolean => row.checkable;
 
 /**
  * The search and both filters start from #683's slice, so Sources can open the
@@ -168,6 +172,19 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
     if (snapshot) dispatch(specsShown(snapshot.shown));
   }, [dispatch, snapshot]);
 
+  // Check takes the ticked rows when there are any (#879). Every load clears them, and the kit says
+  // so only while the grid is mounted: ticks left behind by a switch of section would be checked unseen.
+  const select = useCallback(
+    (rows: SpecRow[]) => dispatch(specsSelected(rows.map((row) => row.id))),
+    [dispatch]
+  );
+  useEffect(
+    () => () => {
+      dispatch(specsSelected([]));
+    },
+    [dispatch]
+  );
+
   const types = snapshot?.types;
   const cells = useMemo<SpecsCells>(
     () => ({
@@ -215,6 +232,7 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
           <DataGridTextSearchPlugin placeholder={t('search')} />
           <DataGridFiltersPlugin entities={filterEntities} isAllFiltersOptionVisible={false} />
           <FiltersFromSlice read={snapshot !== null && !snapshot.failed} />
+          <DataGridRowSelectPlugin<SpecRow> visible={checkable} onSelectionChange={select} />
           <DataGridOrderPlugin />
           <DataGridPaginationPlugin defaultLimit={PAGE_LIMITS[0]} limits={PAGE_LIMITS} />
           <DataGridEmptyStatePlugin component={SpecsEmpty} />
