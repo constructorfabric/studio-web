@@ -454,6 +454,10 @@ gears:
       # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
       # own for any shared environment).
       signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+      # Dev-only shared secret of the sidecar callbacks (file-storage 0.4
+      # requires it; a sidecar would get the same value as
+      # FS_SIDECAR_INTERNAL_TOKEN). None runs in this profile.
+      finalize_internal_secret: "studio-dev-fs-internal-token"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
   oagw:
