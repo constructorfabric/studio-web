@@ -1,6 +1,6 @@
-"""Generate one file-storage Ed25519 signing pair.
+"""Generate one file-storage Ed25519 signing pair and its callback secret.
 
-Both values use RFC 4648 base64url without padding, exactly as gears-rust
+Every value uses RFC 4648 base64url without padding, exactly as gears-rust
 decodes them. Run once for each GitHub Environment; do not commit the output.
 """
 
@@ -31,3 +31,4 @@ public_key = key.public_key().public_bytes(
 
 print(f"FILE_STORAGE_SIGNING_SEED={base64url(seed)}")
 print(f"FILE_STORAGE_SIDECAR_PUBLIC_KEY={base64url(public_key)}")
+print(f"FILE_STORAGE_INTERNAL_TOKEN={base64url(secrets.token_bytes(32))}")

@@ -19,11 +19,12 @@ promote the same release to test only after the dev upload/download smoke test.
 - [ ] Set `FILE_STORAGE_S3_SECRET_ACCESS_KEY`.
 - [ ] Set `FILE_STORAGE_SIGNING_SEED`.
 - [ ] Set `FILE_STORAGE_SIDECAR_PUBLIC_KEY`.
+- [ ] Set `FILE_STORAGE_INTERNAL_TOKEN`.
 
 ## 3. Configure GitHub Environment `test`
 
 - [ ] Generate a different test keypair.
-- [ ] Set the same four secret names with test-only values.
+- [ ] Set the same five secret names with test-only values.
 
 ## 4. Build
 

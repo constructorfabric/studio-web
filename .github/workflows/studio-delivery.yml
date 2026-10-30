@@ -1566,6 +1566,7 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.FILE_STORAGE_S3_SECRET_ACCESS_KEY }}
           SIGNING_SEED: ${{ secrets.FILE_STORAGE_SIGNING_SEED }}
           SIDECAR_PUBLIC_KEY: ${{ secrets.FILE_STORAGE_SIDECAR_PUBLIC_KEY }}
+          INTERNAL_TOKEN: ${{ secrets.FILE_STORAGE_INTERNAL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1573,12 +1574,17 @@ jobs:
           test -n "$S3_SECRET_ACCESS_KEY" || { echo "GitHub Environment secret FILE_STORAGE_S3_SECRET_ACCESS_KEY is empty" >&2; exit 1; }
           test -n "$SIGNING_SEED" || { echo "GitHub Environment secret FILE_STORAGE_SIGNING_SEED is empty" >&2; exit 1; }
           test -n "$SIDECAR_PUBLIC_KEY" || { echo "GitHub Environment secret FILE_STORAGE_SIDECAR_PUBLIC_KEY is empty" >&2; exit 1; }
+          test -n "$INTERNAL_TOKEN" || { echo "GitHub Environment secret FILE_STORAGE_INTERNAL_TOKEN is empty" >&2; exit 1; }
           [[ "$SIGNING_SEED" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
             echo "FILE_STORAGE_SIGNING_SEED must be a 32-byte base64url value without padding" >&2
             exit 1
           }
           [[ "$SIDECAR_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
             echo "FILE_STORAGE_SIDECAR_PUBLIC_KEY must be a 32-byte base64url value without padding" >&2
+            exit 1
+          }
+          [[ "$INTERNAL_TOKEN" =~ ^[A-Za-z0-9_-]{43}$ ]] || {
+            echo "FILE_STORAGE_INTERNAL_TOKEN must be a 32-byte base64url value without padding" >&2
             exit 1
           }
 
@@ -1589,13 +1595,14 @@ jobs:
           kubectl create secret generic studio-web-file-storage-signing -n "$NAMESPACE" \
             --from-literal=signing_seed="$SIGNING_SEED" \
             --from-literal=sidecar_public_key="$SIDECAR_PUBLIC_KEY" \
+            --from-literal=internal_token="$INTERNAL_TOKEN" \
             --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
-          revision=$(printf '%s\0%s\0%s\0%s' \
-            "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" \
+          revision=$(printf '%s\0%s\0%s\0%s\0%s' \
+            "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$SIGNING_SEED" "$SIDECAR_PUBLIC_KEY" "$INTERNAL_TOKEN" \
             | sha256sum | cut -d' ' -f1)
           echo "secret_revision=$revision" >> "$GITHUB_OUTPUT"
-          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY
+          unset S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY SIGNING_SEED SIDECAR_PUBLIC_KEY INTERNAL_TOKEN
 
       - name: Verify images and namespace prerequisites
         id: versions

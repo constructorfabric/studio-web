@@ -10,6 +10,7 @@
 #       (OIDC realm the portal + backend validate against)
 #   studio-web-app        llm_api_key           [required: mini-chat (Ask AI) only]
 #                         fs_signing_seed       [required, e.g. `openssl rand -base64 32 | tr '+/' '-_'`]
+#                         fs_internal_token     [required, same form; file-storage's callback secret]
 #                         credstore_key         [strongly recommended: `openssl rand -base64 32`;
 #                                                without it user-typed secrets (repo PATs) die
 #                                                with every pod restart — #66]

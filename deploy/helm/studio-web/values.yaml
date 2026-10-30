@@ -97,7 +97,7 @@ backend:
   auth:
     existingSecret: "studio-web-idp"
   # Application secrets (keys: llm_api_key [required; mini-chat only], fs_signing_seed
-  # [required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
+  # and fs_internal_token [both required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
   # spec_quality_api_key [optional; enables the external detector wrapper],

@@ -314,6 +314,14 @@ spec:
               {{- else }}
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
               {{- end }}
+            # The secret the sidecar's callbacks carry; same value as the
+            # sidecar's FS_SIDECAR_INTERNAL_TOKEN (file-storage 0.4 requires it).
+            - name: STUDIO_FS_INTERNAL_TOKEN
+              {{- if .Values.backend.fileStorage.enabled }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: internal_token } }
+              {{- else }}
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_internal_token } }
+              {{- end }}
             {{- if .Values.backend.fileStorage.enabled }}
             - name: STUDIO_FS_SIDECAR_BASE_URL
               value: {{ default (printf "https://%s" .Values.global.hostname) .Values.backend.fileStorage.publicBaseUrl | quote }}
@@ -400,6 +408,10 @@ spec:
               value: "/tmp"
             - name: FS_SIDECAR_PUBLIC_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: sidecar_public_key } }
+            # Sent on the upload callbacks; the backend checks it against its
+            # finalize_internal_secret (STUDIO_FS_INTERNAL_TOKEN, same key).
+            - name: FS_SIDECAR_INTERNAL_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: internal_token } }
             - name: FS_SIDECAR_CONTROL_URL
               value: "http://127.0.0.1:{{ .Values.backend.port }}/cf"
             - name: FS_SIDECAR_S3_BACKENDS
