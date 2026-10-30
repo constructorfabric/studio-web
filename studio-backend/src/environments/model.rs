@@ -19,19 +19,27 @@ pub const HISTORY: usize = 200;
 pub const MAX_CHART_BYTES: usize = 512 * 1024;
 
 /// How an environment gives a product's `db` gears a database.
+///
+/// The database is part of the product: a product whose gears keep data
+/// gets a Postgres of its own with every deploy, in the project's namespace
+/// (in Research, as one more service of its application), under the host
+/// the profile names, with the databases the chart's gears keep (ADR-0048
+/// §7). A product whose gears keep none gets none. So `None` and
+/// `Namespace` deploy alike; a Postgres already in the namespace under that
+/// host that Studio did not make is left alone -- the product's own,
+/// brought some other way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseMode {
-    /// The product brings its own, or has none.
+    /// The product's own, when its gears keep data.
     #[default]
     None,
     /// A Postgres server of the environment, one database per gear. Recorded,
     /// not used: a generated chart fixes its host and database names, so two
     /// projects on one server would collide (ADR-0048 §7).
     Shared,
-    /// A Postgres of the product's own in the project's namespace, under the
-    /// host the profile names, with the databases the chart's gears keep
-    /// (ADR-0048 §7).
+    /// The product's own, as `None`; kept as environments recorded it before
+    /// the database followed the product.
     Namespace,
 }
 

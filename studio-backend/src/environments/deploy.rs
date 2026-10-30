@@ -311,7 +311,9 @@ impl TaskHandler for DeployTask {
             Ok(p) => p,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
-        if payload.database == DatabaseMode::Namespace {
+        // The product's database comes with it (`DatabaseMode`): whatever
+        // its gears keep, in its namespace, before the release that reads it.
+        if payload.database != DatabaseMode::Shared {
             ctx.progress("reading what the chart needs of databases")
                 .await;
             let rendered = match helm(
@@ -343,8 +345,16 @@ impl TaskHandler for DeployTask {
                     need.databases.len()
                 ))
                 .await;
-                if let Err(e) = database::ensure(&client, &payload.namespace, need, &image).await {
-                    return TaskOutcome::Failed(format!("{e:#}"));
+                match database::ensure(&client, &payload.namespace, need, &image).await {
+                    Ok(database::Ensured::Studios) => {}
+                    Ok(database::Ensured::LeftAlone) => {
+                        ctx.progress(format!(
+                            "{} in {} is not Studio's: the product's own, left as it is",
+                            need.host, payload.namespace
+                        ))
+                        .await;
+                    }
+                    Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
                 }
             }
         }
