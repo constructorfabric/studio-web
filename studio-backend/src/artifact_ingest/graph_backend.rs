@@ -262,6 +262,8 @@ impl GraphStorageBackend {
                     edge_type_patterns: edge_patterns.to_vec(),
                     node_type_patterns: Vec::new(),
                     max_nodes: Some(TRAVERSE_NODE_BUDGET),
+                    direction: None,
+                    edge_discriminators: Vec::new(),
                 },
             )
             .await

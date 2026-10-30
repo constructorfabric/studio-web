@@ -99,7 +99,7 @@ for (const [plugin, host] of plugins) {
 }
 // Linked, but no description anywhere: the toolkit's runtime, which every
 // assembly has and no product names. Anything else is a gear.gdl missing.
-const runtime = new Set(["gear-orchestrator"]);
+const runtime = new Set(["service-discovery"]);
 const missing = undescribed.filter((n) => !runtime.has(n));
 if (missing.length) throw new Error(`no gear.gdl describes: ${missing.join(", ")}`);
 

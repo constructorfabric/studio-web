@@ -928,9 +928,9 @@ mod graph_sink_tests {
     use graph_storage_sdk::GraphStorageClientV1;
     use graph_storage_sdk::models::{
         DeleteOutcome, EdgeKey, ElementEnvelope, GraphRevision, GtsTypeId, IngestCounts,
-        IngestOutcome, IngestRequest, NeighborhoodRequest, NodeKey, NodeRow, NodeView, Page,
-        SearchRequest, SearchResponse, Subject, TraversalResponse, TraverseRequest, TypeQuery,
-        TypeRecord, TypeRegistration,
+        IngestOutcome, IngestRequest, NeighborhoodRequest, NodeCount, NodeKey, NodeRow, NodeView,
+        Page, RegisteredType, SearchRequest, SearchResponse, Subject, TraversalResponse,
+        TraverseRequest, TypeQuery, TypeRecord, TypeRegistration, TypeRegistrationOptions,
     };
     use toolkit_canonical_errors::CanonicalError;
     use uuid::Uuid;
@@ -987,6 +987,7 @@ mod graph_sink_tests {
                 source_epoch: 0,
                 revision: 0,
             },
+            version: Some(1),
         }
     }
 
@@ -1005,11 +1006,12 @@ mod graph_sink_tests {
 
     #[async_trait]
     impl GraphStorageClientV1 for FakeGraph {
-        async fn register_types(
+        async fn register_types_with(
             &self,
             _ctx: &SecurityContext,
             _batch: Vec<TypeRegistration>,
-        ) -> Result<Vec<TypeRecord>, CanonicalError> {
+            _options: TypeRegistrationOptions,
+        ) -> Result<Vec<RegisteredType>, CanonicalError> {
             Ok(Vec::new())
         }
         async fn get_type(
@@ -1024,6 +1026,14 @@ mod graph_sink_tests {
             _ctx: &SecurityContext,
             _query: TypeQuery,
         ) -> Result<Page<TypeRecord>, CanonicalError> {
+            unimplemented!()
+        }
+        async fn count_nodes(
+            &self,
+            _ctx: &SecurityContext,
+            _type_patterns: &[String],
+            _query: toolkit_odata::ODataQuery,
+        ) -> Result<NodeCount, CanonicalError> {
             unimplemented!()
         }
 
