@@ -218,6 +218,19 @@ describe('the Specs section', () => {
     expect(await screen.findByText('footer_of 1 · footer_findings 0 · Billing')).toBeTruthy();
   });
 
+  it("opens the filters inside the section's themed root, where its styles reach", async () => {
+    const { container } = render(
+      <div data-theme="light">
+        <SpecsSection projectId="p-1" projectName="Billing" />
+      </div>
+    );
+    await screen.findByText('prd.md');
+
+    fireEvent.click(screen.getByRole('button', { name: /filter_specs/ }));
+    const option = await screen.findByRole('radio', { name: 'filter_all' });
+    expect(container.querySelector('[data-theme]')?.contains(option)).toBe(true);
+  });
+
   it('takes All specs as no filter', async () => {
     renderSection();
     await screen.findByText('prd.md');

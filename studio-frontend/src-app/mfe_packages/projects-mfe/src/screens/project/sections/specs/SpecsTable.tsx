@@ -205,7 +205,13 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
         </Alert>
       )}
       <SpecsCellsContext.Provider value={cells}>
-        <DataGrid name="specs" persistent="memory" columns={columns} load={load}>
+        <DataGrid
+          name="specs"
+          persistent="memory"
+          columns={columns}
+          load={load}
+          portalContainer={container ?? undefined}
+        >
           <DataGridTextSearchPlugin placeholder={t('search')} />
           <DataGridFiltersPlugin entities={filterEntities} isAllFiltersOptionVisible={false} />
           <FiltersFromSlice read={snapshot !== null && !snapshot.failed} />
