@@ -315,18 +315,19 @@ describe('the Specs section', () => {
     expect(specRows).toHaveBeenCalledTimes(2);
   });
 
-  it('shows its own error with Retry when the first read fails under a seeded search', async () => {
+  it('shows its own error with Retry when the first read fails under a seeded search and filters', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    given('acme/api', 'type_confirmed');
+    given('acme/api', 'type_confirmed', 'prd');
     specRows.mockRejectedValueOnce(new Error('503'));
     renderSection();
 
     expect(await screen.findByText('read_failed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'retry' })).toBeTruthy();
     expect(specRows).toHaveBeenCalledTimes(1);
-    // The slice keeps the source's search and filter, so Retry opens the list on them again.
+    // The slice keeps the search, the filter and the document type, so Retry opens the list on them again.
     expect(actions('setSpecsSearch')).toEqual([]);
     expect(actions('setSpecsFilter')).toEqual([]);
+    expect(actions('setSpecsDocumentType')).toEqual([]);
   });
 
   it('gives Check nothing to send once a reload fails', async () => {
