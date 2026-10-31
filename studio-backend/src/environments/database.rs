@@ -8,9 +8,9 @@
 //! names are fixed by the gears, so two projects could not share one server
 //! without their databases colliding.
 //!
-//! So an environment whose database mode is `namespace` gets the product a
-//! Postgres of its own, in the project's namespace, under the name the
-//! profile gives the host: a StatefulSet with a volume, a Service, and its
+//! So a product whose gears keep data gets a Postgres of its own with every
+//! deploy (an environment's `shared` mode aside), in the project's
+//! namespace, under the name the profile gives the host: a StatefulSet with a volume, a Service, and its
 //! password in a secret Studio keeps there. Before each install the run
 //! renders the chart (`helm template`, the same chart and values), reads what
 //! it needs with [`needs`], makes sure the server runs, creates the databases
@@ -270,12 +270,29 @@ where
 
 /// Make sure the namespace runs a Postgres for `need`, with its databases,
 /// and that every secret the chart reads holds its password.
+/// What [`ensure`] did about a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ensured {
+    /// Studio runs it: made, or found as Studio made it, with its databases.
+    Studios,
+    /// The namespace has a Service under the host that Studio did not make:
+    /// the product's own, brought some other way, and not Studio's to change.
+    LeftAlone,
+}
+
+/// Whether a Service's labels say Studio made it.
+fn made_by_studio(labels: Option<&BTreeMap<String, String>>) -> bool {
+    labels
+        .and_then(|l| l.get("app.kubernetes.io/managed-by"))
+        .is_some_and(|m| m == MANAGER)
+}
+
 pub async fn ensure(
     client: &kube::Client,
     namespace: &str,
     need: &ServerNeed,
     image: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Ensured> {
     if !in_namespace(&need.host) {
         bail!(
             "the product's database host is '{}': Studio gives a product a Postgres in its \
@@ -284,6 +301,14 @@ pub async fn ensure(
         );
     }
     let name = server_name(&need.host);
+    let services: kube::Api<Service> = kube::Api::namespaced(client.clone(), namespace);
+    match services.get_opt(&need.host).await {
+        Ok(Some(s)) if !made_by_studio(s.metadata.labels.as_ref()) => {
+            return Ok(Ensured::LeftAlone);
+        }
+        Ok(_) => {}
+        Err(e) => bail!("the namespace's services could not be read: {e}"),
+    }
     let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), namespace);
 
     // The password: the one already kept, or a new one.
@@ -310,7 +335,6 @@ pub async fn ensure(
     )
     .await?;
 
-    let services: kube::Api<Service> = kube::Api::namespaced(client.clone(), namespace);
     apply(
         &services,
         &need.host,
@@ -350,7 +374,7 @@ pub async fn ensure(
         )
         .await?;
     }
-    Ok(())
+    Ok(Ensured::Studios)
 }
 
 /// The server: one replica, its data on a volume, running as the image's
@@ -512,6 +536,14 @@ async fn run_job(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_service_studio_did_not_make_is_the_products_own() {
+        assert!(super::made_by_studio(Some(&super::labels("postgres-db"))));
+        assert!(!super::made_by_studio(None));
+        let theirs = [("app.kubernetes.io/managed-by".to_owned(), "Helm".to_owned())].into();
+        assert!(!super::made_by_studio(Some(&theirs)));
+    }
+
     use super::*;
 
     /// `helm template` of a chart `gearbox generate` wrote for a kubernetes

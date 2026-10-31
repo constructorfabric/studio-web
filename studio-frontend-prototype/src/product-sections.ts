@@ -94,10 +94,19 @@ export interface Infrastructure {
 }
 
 const DATABASE_WORDS: Record<DeployEnvironment["database"], string> = {
-  none: "no database",
-  shared: "the environment's shared Postgres",
-  namespace: "a Postgres of its own in its namespace",
+  none: "its own Postgres, with each deploy",
+  shared: "the environment's shared Postgres (not handed to the chart yet)",
+  namespace: "its own Postgres, with each deploy",
 };
+
+/** How a technology the product needs gets to where it runs: the database
+ *  comes with every deploy; the rest is somebody else's to run, and the
+ *  gear's settings say where. */
+export function comesWith(technology: string): { deployed: boolean; words: string } {
+  return technology === "postgres"
+    ? { deployed: true, words: "with every deploy: Studio runs it beside the product" }
+    : { deployed: false, words: "not deployed by Studio: run it, and set where in the gear's settings" };
+}
 
 export function infrastructureOf(
   product: Pick<ProjectProduct, "profile" | "last_preview"> | null,
@@ -112,10 +121,14 @@ export function infrastructureOf(
     namespace,
     profile: targets?.bindings.find((b) => b.environment_id === environment.id)?.profile ?? null,
     database:
-      environment.database === "namespace" && environment.database_image
-        ? `${DATABASE_WORDS.namespace} (${environment.database_image})`
-        : (DATABASE_WORDS[environment.database] ?? environment.database),
-    missing: postgres && environment.database === "none" ? ["PostgreSQL"] : [],
+      needs !== null && !postgres && environment.database !== "shared"
+        ? "none needed"
+        : environment.database !== "shared" && environment.database_image
+          ? `${DATABASE_WORDS[environment.database]} (${environment.database_image})`
+          : (DATABASE_WORDS[environment.database] ?? environment.database),
+    // A shared server is recorded, not handed to the chart: nothing serves
+    // the host it names. Any other mode brings the product's own.
+    missing: postgres && environment.database === "shared" ? ["PostgreSQL"] : [],
   }));
   return { profile, profileLabel, runsIn, needs, applications: product?.last_preview?.applications ?? [] };
 }

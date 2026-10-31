@@ -4,6 +4,7 @@ import type { DeployEnvironment } from "./api";
 import {
   FRONTX_SHELL_TEMPLATE,
   PRODUCT_SECTIONS,
+  comesWith,
   hasFrontend,
   infrastructureOf,
   openingSection,
@@ -67,20 +68,26 @@ describe("where the product runs", () => {
     );
     expect(infra.profileLabel).toBe("prod · Kubernetes");
     expect(infra.runsIn).toEqual([
-      { environment: "dev", namespace: "shop-dev", profile: null, database: "the environment's shared Postgres", missing: [] },
+      {
+        environment: "dev",
+        namespace: "shop-dev",
+        profile: null,
+        database: "the environment's shared Postgres (not handed to the chart yet)",
+        missing: [],
+      },
       {
         environment: "prod",
         namespace: "shop-prod",
         profile: "prod",
-        database: "a Postgres of its own in its namespace (postgres:17)",
+        database: "its own Postgres, with each deploy (postgres:17)",
         missing: [],
       },
-      { environment: "lab", namespace: "shop-lab", profile: null, database: "no database", missing: [] },
+      { environment: "lab", namespace: "shop-lab", profile: null, database: "its own Postgres, with each deploy", missing: [] },
     ]);
     expect(infra.needs).toBeNull();
   });
 
-  it("says what the gears need, and the environment that does not give it", () => {
+  it("says what the gears need; every environment but a shared one brings the product its Postgres", () => {
     const postgres = { id: "postgres", name: "PostgreSQL", why: "data", gears: ["cf-gears-file-storage"] };
     const infra = infrastructureOf(
       {
@@ -95,11 +102,30 @@ describe("where the product runs", () => {
           infrastructure: [postgres],
         },
       },
-      { environments: [{ environment: env("e3", "lab", "none"), namespace: "shop-lab" }], bindings: [] },
+      {
+        environments: [
+          { environment: env("e3", "lab", "none"), namespace: "shop-lab" },
+          { environment: env("e1", "dev", "shared"), namespace: "shop-dev" },
+        ],
+        bindings: [],
+      },
     );
     expect(infra.needs).toEqual([postgres]);
     expect(infra.applications).toEqual(["api-gateway"]);
-    expect(infra.runsIn[0].missing).toEqual(["PostgreSQL"]);
+    expect(infra.runsIn.map((r) => r.missing)).toEqual([[], ["PostgreSQL"]]);
+    expect(comesWith("postgres").deployed).toBe(true);
+    expect(comesWith("keycloak").deployed).toBe(false);
+  });
+
+  it("says a product that keeps no data needs no database", () => {
+    const infra = infrastructureOf(
+      {
+        profile: "prod",
+        last_preview: { profile: "prod", ok: true, errors: 0, warnings: 0, applications: [], gears: [], infrastructure: [] },
+      },
+      { environments: [{ environment: env("e3", "lab", "none"), namespace: "shop-lab" }], bindings: [] },
+    );
+    expect(infra.runsIn[0].database).toBe("none needed");
   });
 
   it("is nothing yet for a product never composed and never bound", () => {

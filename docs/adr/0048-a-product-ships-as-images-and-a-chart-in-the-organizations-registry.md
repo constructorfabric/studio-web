@@ -158,20 +158,27 @@ A generated chart fixes what it needs of a database in the configuration it
 carries: the profile's host (`postgres` by default) and user, a database name
 per gear, and the password as `${NAME}`, read from the secret the profile's
 `database(existing_secret = …)` names under the key `NAME`. Two projects on
-one shared server would therefore collide on their names, so the
-environment's database mode is one of:
+one shared server would therefore collide on their names. The database is
+part of the product: a product whose gears keep data gets one with every
+deploy, whatever environment it goes to, and the environment's database mode
+is one of:
 
-- **`namespace`**: the product gets a Postgres of its own in the project's
-  namespace, under the host's name: a StatefulSet with a volume, a Service,
+- **`none`** (the default) and **`namespace`**, which deploy alike: the
+  product gets a Postgres of its own in the project's namespace, under the host's name: a StatefulSet with a volume, a Service,
   and its password in a secret kept there. Before each install the deploy
   renders the chart (`helm template`, the same chart and values), reads the
   servers, databases and secrets it needs, makes sure the server runs,
   creates the databases that are missing with a Job, and writes the password
   into each secret the chart reads. The server is reached from inside the
-  cluster, never from Studio.
+  cluster, never from Studio. A product whose gears keep no data gets none;
+  a Service already under the host that Studio did not make is the
+  product's own, brought some other way, and is left alone.
 - **`shared`**: recorded, not used, until generated charts name their
   databases per release.
-- **`none`**: the product brings its own.
+
+Until the database followed the product, `none` meant the product brought
+its own: an environment left at the default deployed a product that keeps
+data without the Postgres its chart names, and its gears could not start.
 
 A release's configuration in an environment is the project's. Plain chart
 values are kept on the profile's binding and laid under what the deploy sets;
