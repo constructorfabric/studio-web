@@ -183,7 +183,7 @@ export function alsoCovers(plan: readonly PlanRow[]): Record<string, string[]> {
 // ── The next step ────────────────────────────────────────────────────────
 
 /** `builds`: the product is written; building it is the Builds tab's. */
-export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "build" | "open" | "builds";
+export type NextAction = "add-recommended" | "take-from-code" | "preview" | "fix" | "save" | "build" | "open" | "builds";
 
 export interface NextStep {
   text: string;
@@ -208,7 +208,8 @@ export interface FlowState {
   resolves: boolean | null;
   /** Fixes the engine offers for a product that does not resolve. */
   fixes: number;
-  /** product.gdl is in the repository for the current product. */
+  /** The current product is saved: kept in Studio as a revision (ADR-0053),
+   *  or written to the repository before Studio kept it. */
   written: boolean;
   composing: boolean;
 }
@@ -243,9 +244,11 @@ export function nextStep(s: FlowState): NextStep {
     s.open > 0
       ? ` ${plural(s.open, "capability", "capabilities")} the specs ask for ${s.open === 1 ? "is" : "are"} not closed yet.`
       : "";
-  if (!s.written) return { text: `The product resolves: build it in Studio-ide.${gap}`, action: "build", tone: gap ? "warn" : "todo" };
+  if (!s.written) {
+    return { text: `The product resolves: save it, and every build takes it from Studio.${gap}`, action: "save", tone: gap ? "warn" : "todo" };
+  }
   return {
-    text: `Composed: product.gdl is in the repository. Next: build it, in Studio, the IDE or CI.${gap}`,
+    text: `Saved in Studio. Next: build it, in Studio from Builds or in the desktop app.${gap}`,
     action: "builds",
     tone: gap ? "warn" : "done",
   };
@@ -265,7 +268,7 @@ export interface ProductStep {
 /** The three steps — what the specs ask for, the product composed and
  *  checked, the product built — each with where it stands. A step is done
  *  when the next can start on it: gears picked, the product resolving,
- *  product.gdl written. */
+ *  the product saved. */
 export function productSteps(s: FlowState): ProductStep[] {
   const closing =
     s.composing && s.picks > 0 && s.covered !== undefined
@@ -288,8 +291,8 @@ export function productSteps(s: FlowState): ProductStep[] {
     { id: "product", title: "Compose and check", status: compose },
     {
       id: "build",
-      title: "Build in Studio-ide",
-      status: !s.written ? "not built yet" : s.resolves === true ? "product.gdl in the repository" : "built earlier · build again once it resolves",
+      title: "Save and build",
+      status: !s.written ? "not saved yet" : s.resolves === true ? "saved in Studio" : "saved earlier · save again once it resolves",
     },
   ];
   // A step is done only on the steps before it: a product built earlier is

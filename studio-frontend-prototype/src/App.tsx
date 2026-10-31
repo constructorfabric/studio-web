@@ -4,7 +4,7 @@ import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent } from "react";
-import { env as runtimeEnv, idpConsoleUrl } from "./env";
+import { idpConsoleUrl } from "./env";
 import { errText, matches, relTime } from "./format";
 // Screens that arrive when somebody asks for them — see ./lazy-screens for
 // what is split and what deliberately is not.
@@ -114,9 +114,8 @@ import {
   usePreference,
 } from "./view-mode";
 
-/** The person's theme and language, among their other preferences. */
+/** The person's theme, among their other preferences. */
 const PREF_THEME = "app.theme";
-const PREF_LANGUAGE = "app.language";
 /** Whether the person shows the navigation rail at all: `shown` | `hidden`.
  *  The rail holds only what they pinned; every level's own sections are the
  *  band above the work area, so hiding it loses no destination. */
@@ -267,7 +266,7 @@ const DEFAULT_FILTERS: Filters = {
   gearCategory: "",
 };
 
-type PanelView = View | "dashboard";
+type PanelView = View;
 
 /** The sections whose list owns its search, filters and sort, above it and in
  *  the address (docs/list-standard.md). The side panel has nothing for them,
@@ -279,19 +278,16 @@ const LISTS_WITH_OWN_FILTERS: ReadonlySet<PanelView> = new Set<PanelView>([
   "tasks",
   "gears",
   "platform",
-  "chats",
-  "files",
 ]);
 
 function activeFilterCount(view: PanelView, f: Filters): number {
   if (LISTS_WITH_OWN_FILTERS.has(view)) return 0;
   let n = 0;
-  if (view !== "system" && view !== "profile" && view !== "dashboard" && f.query.trim()) n++;
+  if (view !== "system" && view !== "profile" && f.query.trim()) n++;
   if (view === "projects") {
     if (f.selfManagedOnly) n++;
     if (f.sort !== "name-asc") n++;
   }
-  if (view === "chats" && f.model) n++;
   if (view === "system") n += Object.values(f.sections).filter((v) => !v).length;
   if (view === "gears") {
     if (f.gearKind) n++;
@@ -616,11 +612,8 @@ function Login({
 /* ── App shell ── */
 
 type View =
-  | "home"
   | "projects"
   | "people"
-  | "chats"
-  | "files"
   | "connectors"
   | "environments"
   | "costs"
@@ -960,7 +953,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // The address wins over the tab's memory: a link someone followed names the
   // place they meant, and the stored one is only where this tab last was.
   const restoredPlace = useRef<Partial<Place>>({ ...readPlace(), ...placeFromUrl() }).current;
-  const [view, setView] = useState<View>(restoredPlace.view ?? "projects");
+  // A tab remembers its last screen; one this build no longer has (Home,
+  // Chats, Files) opens on the workspaces instead of on nothing.
+  const [view, setView] = useState<View>(
+    restoredPlace.view && restoredPlace.view in VIEW_PATHS ? restoredPlace.view : "projects",
+  );
   /** A component page the platform catalogue should open on, asked for from
    *  elsewhere (a project's product). Stamped, so asking twice reopens it. */
   const [componentFocus, setComponentFocus] = useState<{ name: string; at: number } | null>(null);
@@ -1031,7 +1028,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     setAdminView(v);
     if (orgId) setAdminOrgId(orgId);
     setActiveSpace(null);
-    setDash(null);
     setStudio(null);
     setAccountMenu(false);
     setMenuOpen(false);
@@ -1072,13 +1068,23 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  token sees only its home's subtree, so the ones outside it come from
    *  here, and picking one moves the home there (ADR-0011 §2). */
   const [memberOrgs, setMemberOrgs] = useState<{ id: string; name: string }[]>([]);
+  /** Whether the person administers any organization: an active `owner` or
+   *  `admin` membership. `null` until the memberships answer, and left `null`
+   *  when they cannot be read — the menu then stays, and the backend still
+   *  refuses what the person may not do. */
+  const [holdsAdmin, setHoldsAdmin] = useState<boolean | null>(null);
+  const administers = showPlatform || holdsAdmin !== false;
+  // A place restored from the last visit can reopen the admin area; it closes
+  // once the memberships say this person does not administer.
+  useEffect(() => {
+    if (!administers) setAdminOpen(false);
+  }, [administers]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   // Temporary platform-admin fallback until every installation bootstraps its
   // default organization server-side. Never runs for an external identity.
   const seededOrgRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [studio, setStudio] = useState<StudioTarget | null>(null);
-  const [dash, setDash] = useState<Workspace | null>(null);
   // Spaces: embedded IDE sessions living INSIDE the portal window. Every
   // space keeps its iframe mounted (hidden, not unmounted), so switching
   // between the portal and sessions never reloads Theia.
@@ -1773,7 +1779,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         ? "platform"
         : "organization";
 
-  const panelView: PanelView = dash ? "dashboard" : view;
+  const panelView: PanelView = view;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -1856,6 +1862,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       const held: Awaited<ReturnType<typeof api.myMemberships>> = await api
         .myMemberships(token)
         .catch(() => []);
+      if (held.length) {
+        setHoldsAdmin(held.some((m) => m.status === "active" && (m.role === "owner" || m.role === "admin")));
+      }
       setMemberOrgs(
         held
           // The platform root is not an organization, even for its owner.
@@ -1997,16 +2006,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               >
                 <span className="ico"><LayersIcon /></span> Architecture
               </button>
-              <button
-                role="menuitem"
-                title="Organizations, members, workspaces administration"
-                onClick={() => {
-                  setProductMenu(false);
-                  openAdmin();
-                }}
-              >
-                <span className="ico"><ShieldIcon /></span> Admin
-              </button>
+              {administers && (
+                <button
+                  role="menuitem"
+                  title="Organizations, members, workspaces administration"
+                  onClick={() => {
+                    setProductMenu(false);
+                    openAdmin();
+                  }}
+                >
+                  <span className="ico"><ShieldIcon /></span> Admin
+                </button>
+              )}
             </div>
           )}
         </span>
@@ -2147,7 +2158,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   >
                     Profile
                   </button>
-                  <button onClick={() => openAdmin()}>Admin settings</button>
+                  {administers && <button onClick={() => openAdmin()}>Admin settings</button>}
                   <button onClick={onLogout}>Sign out</button>
                 </div>
 
@@ -2450,7 +2461,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           a project's below. The rail is only what the person pinned. */}
       {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
         <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
-          {LEVEL_NAV[level].map((n) => (
+          {LEVEL_NAV[level].filter((n) => n.id !== "system" || showPlatform).map((n) => (
             <button
               key={n.id}
               className={`psection${view === n.id ? " on" : ""}`}
@@ -2662,7 +2673,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <LazyScreens>
         {adminOpen ? (
           <>
-            {adminView === "identities" && (
+            {adminView === "identities" && showPlatform && (
               <IdentityDirectory token={token} query={filters.query} />
             )}
             {adminView === "tenants" && (showPlatform || orgs.length > 1) && adminOrgId !== "__new__" && (
@@ -2716,7 +2727,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 meName={userName}
               />
             )}
-            {adminView === "workspaces" && (
+            {adminView === "workspaces" && showPlatform && (
               <WorkspacesView
                 token={token}
                 orgs={adminOrg ? [adminOrg] : orgs}
@@ -2755,13 +2766,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             {adminView === "objects" && <ObjectTypes token={token} query={filters.query} />}
             {adminView === "views" && <ViewsScreen token={token} />}
           </>
-        ) : dash ? (
-          <WorkspaceDashboard
-            token={token}
-            ws={dash}
-            onBack={() => setDash(null)}
-            onOpenStudio={setStudio}
-          />
         ) : (
           <>
         {view === "projects" && (
@@ -2819,6 +2823,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "org" && orgAsSpace && (
+          <>
+          {/* What waits on this person across the organization's workspaces:
+              the first thing to see on its overview, not a page of its own. */}
+          <WaitingOnYou
+            token={token}
+            workspaces={workspaces.filter((w) => w.orgId === orgAsSpace.id)}
+            onOpenWorkspace={(ws) => {
+              setCrumb({ projectId: ws.id });
+              setView("projects");
+            }}
+          />
           <OrgDashboard
             key={orgAsSpace.id}
             token={token}
@@ -2834,19 +2849,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               setView("projects");
             }}
           />
-        )}
-        {view === "home" && (
-          <HomeView
-            token={token}
-            home={home}
-            orgs={orgs}
-            workspaces={workspaces}
-            spaces={spaces}
-            onOpenSpace={(wsId) => setActiveSpace(wsId)}
-            onOpenStudio={setStudio}
-            onOpenDashboard={setDash}
-            onNavigate={setView}
-          />
+          </>
         )}
         {view === "connectors" &&
           (orgAsSpace ? (
@@ -2861,8 +2864,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             </div>
           ))}
         {/* The tenant hierarchy renders only inside the Admin area, under the flag. */}
-        {view === "chats" && <ChatsView token={token} filters={filters} />}
-        {view === "files" && <FilesView token={token} filters={filters} />}
         {view === "reports" && (
           <ReportsScreen
             token={token}
@@ -2896,7 +2897,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
-        {view === "system" && (
+        {/* The deployment's own console -- raw types, JSON, test notifications
+            -- is the platform administrator's, not every member's. */}
+        {view === "system" && showPlatform && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
         )}
         {view === "profile" && (
@@ -2934,7 +2937,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       {!activeSpace && panelOpen && (
         <FilterPanel
           view={panelView}
-          token={token}
           filters={filters}
           onChange={setFilters}
           onClose={() => setPanelOpen(false)}
@@ -3014,36 +3016,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
 function FilterPanel({
   view,
-  token,
   filters,
   onChange,
   onClose,
   componentCategories,
 }: {
   view: PanelView;
-  token: string;
   filters: Filters;
   onChange: (f: Filters) => void;
   onClose: () => void;
   componentCategories: string[];
 }) {
-  const [models, setModels] = useState<import("./api").Model[]>([]);
-
-  useEffect(() => {
-    if (view === "chats" && models.length === 0) {
-      api
-        .models(token)
-        .then((p) => setModels(p.items ?? []))
-        .catch(() => {
-          /* model list is a nicety — search still works */
-        });
-    }
-  }, [view, token, models.length]);
-
   const count = activeFilterCount(view, filters);
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
   const ownFilters = LISTS_WITH_OWN_FILTERS.has(view);
-  const noFilters = view === "profile" || view === "dashboard" || ownFilters;
+  const noFilters = view === "profile" || ownFilters;
   const hasSearch = !noFilters && view !== "system";
 
   return (
@@ -3178,20 +3165,6 @@ function FilterPanel({
                 </div>
               </div>
             </>
-          )}
-
-          {view === "chats" && (
-            <div className="filter-group">
-              <span className="lbl">Model</span>
-              <select value={filters.model} onChange={(e) => set({ model: e.target.value })}>
-                <option value="">All models</option>
-                {models.map((m) => (
-                  <option key={m.model_id} value={m.model_id}>
-                    {m.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
           )}
 
           {view === "system" && (
@@ -5983,7 +5956,7 @@ function WorkspacesView({
                 {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
                 <button onClick={() => onOpen(w)}>Open</button>
                 <button className="primary" onClick={() => onOpenStudio(w)}>
-                  Open in IDE
+                  Open in Web IDE
                 </button>
                 <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
                   ✕
@@ -6126,348 +6099,6 @@ function AutomationSettings({ token, ws }: { token: string; ws: Workspace }) {
         </form>
       )}
     </div>
-  );
-}
-
-function WorkspaceDashboard({
-  token,
-  ws,
-  onBack,
-  onOpenStudio,
-  embedded = false,
-}: {
-  token: string;
-  ws: Workspace;
-  onBack: () => void;
-  onOpenStudio: (target: StudioTarget) => void;
-  /** Rendered inside the workspace row rather than as its own page: the row
-   *  already shows the name and carries "Open in IDE", so the topbar would be
-   *  a second copy of both. */
-  embedded?: boolean;
-}) {
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
-  /** The repositories (`project-sources.ts`), as rows. */
-  const [repos, setRepos] = useState<RepoEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const s = await api.workspaceSettings(token, ws.id);
-      setRepos(await projectRepoRows(token, ws.id).catch((): RepoEntry[] => []));
-      setSettings(s ?? { automation_level: "recommendations", approved_worker_categories: [] });
-    } catch (e) {
-      setError(errText(e));
-    }
-  }, [token, ws.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return (
-    <>
-      {!embedded && (
-        <div className="topbar">
-          <div>
-            <h1>{ws.name}</h1>
-            <p className="subtitle" style={{ margin: 0 }}>
-              {ws.orgName} · <code>{ws.id.slice(0, 8)}…</code>
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onBack}>← Back</button>
-            <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
-            </button>
-          </div>
-        </div>
-      )}
-      {error && <div className="error">{error}</div>}
-
-      {/* Project at a glance: identity, attached repositories, and a placeholder
-          for the artifact map + work status that will render here next. */}
-      <div className="card">
-        <div className="card-head">
-          <h2>Project</h2>
-        </div>
-        <ul className="rows">
-          <li>
-            <div className="grow">
-              <div className="name">{ws.name}</div>
-              <div className="sub">
-                id <code>{ws.id}</code>
-                {ws.orgName ? ` · ${ws.orgName}` : ""}
-                {ws.self_managed ? " · self-managed" : ""}
-              </div>
-            </div>
-          </li>
-        </ul>
-        <p className="hint">
-          {settings?.root_repo_url
-            ? `Workspace repository: ${settings.root_repo_url}`
-            : settings?.root_path
-              ? `Workspace folder: ${settings.root_path}`
-              : "Managed workspace — sources are cloned in when a session launches."}
-        </p>
-      </div>
-
-      <div className="card">
-        <div className="card-head">
-          <h2>
-            Repositories
-            {repos && repos.length > 0 ? ` · ${repos.length}` : ""}
-          </h2>
-          {onOpenStudio && (
-            <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
-            </button>
-          )}
-        </div>
-        {!repos ? (
-          <p className="empty">Loading…</p>
-        ) : repos.length === 0 ? (
-          <p className="empty">No repositories attached — add them on the Artifacts tab.</p>
-        ) : (
-          <ul className="rows">
-            {repos.map((r) => (
-              <li key={r.name}>
-                <div className="grow">
-                  <div className="name">{r.name}</div>
-                  <div className="sub">
-                    {r.source}
-                    {r.url ? ` · ${r.url}` : ""}
-                    {r.branch ? ` · ${r.branch}` : ""}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-    </>
-  );
-}
-
-/* ── Chats (mini-chat: threads, history, models) ── */
-
-/** `filters` is the side panel's; the list has its own search and model filter. */
-function ChatsView({ token }: { token: string; filters?: Filters }) {
-  const [chats, setChats] = useState<import("./api").Chat[] | null>(null);
-  const [models, setModels] = useState<import("./api").Model[]>([]);
-  const [open, setOpen] = useState<import("./api").Chat | null>(null);
-  const [history, setHistory] = useState<import("./api").ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [live, setLive] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [c, m] = await Promise.all([api.chats(token), api.models(token)]);
-      setChats(c.items ?? []);
-      setModels(m.items ?? []);
-    } catch (e) {
-      setError(errText(e));
-    }
-  }, [token]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function openChat(c: import("./api").Chat) {
-    setOpen(c);
-    setHistory([]);
-    setLive(null);
-    try {
-      const page = await api.chatMessages(token, c.id);
-      setHistory(page.items ?? []);
-    } catch (e) {
-      setError(errText(e));
-    }
-  }
-
-  async function send(e: FormEvent) {
-    e.preventDefault();
-    if (!open || !input.trim()) return;
-    const content = input.trim();
-    setInput("");
-    setBusy(true);
-    setHistory((h) => [
-      ...h,
-      { id: crypto.randomUUID(), role: "user", content, created_at: new Date().toISOString() },
-    ]);
-    setLive("…");
-    try {
-      await api.streamMessage(token, open.id, content, setLive);
-      const page = await api.chatMessages(token, open.id);
-      setHistory(page.items ?? []);
-      setLive(null);
-      await load();
-    } catch (err) {
-      setLive(null);
-      setError(errText(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** Throws, so the confirm dialog stays open with the reason. */
-  async function remove(c: import("./api").Chat) {
-    await api.deleteChat(token, c.id);
-    if (open?.id === c.id) setOpen(null);
-    await load();
-  }
-  const chatTitle = (c: import("./api").Chat) => c.title ?? c.id.slice(0, 8);
-
-  return (
-    <>
-      <h1>Chats</h1>
-      <p className="subtitle">
-        mini-chat gear · models: {models.map((m) => m.display_name).join(", ") || "…"}
-      </p>
-      {error && <div className="error">{error}</div>}
-
-      <div className="card">
-        <DataTable<import("./api").Chat>
-          list="chats"
-          rows={chats === null && error ? [] : chats}
-          error={chats === null ? error : null}
-          onRetry={() => void load()}
-          rowKey={(c) => c.id}
-          rowLabel={chatTitle}
-          onOpen={(c) => void openChat(c)}
-          search={{ placeholder: "Search chats" }}
-          searchText={(c) => [c.title, c.model, c.id]}
-          filters={[
-            {
-              id: "model",
-              allLabel: "Every model",
-              kind: "select",
-              options: models.map((m) => ({ value: m.model_id, label: m.display_name })),
-              match: (c, v) => c.model === v,
-            },
-          ]}
-          empty={{ title: "No chats yet.", body: "Start one from a project overview (Ask AI)." }}
-          columns={[
-            { id: "title", header: "Chat", compare: (a, b) => chatTitle(a).localeCompare(chatTitle(b)), cell: (c) => <div className="pname plain">{chatTitle(c)}</div> },
-            { id: "model", header: "Model", cell: (c) => <span className="sub">{c.model}</span> },
-            { id: "messages", header: "Messages", num: true, compare: (a, b) => a.message_count - b.message_count, cell: (c) => c.message_count },
-            { id: "updated", header: "Updated", compare: (a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at), cell: (c) => <When iso={c.updated_at} /> },
-          ]}
-          actions={(c) => [
-            { label: "Open", onSelect: () => openChat(c) },
-            {
-              label: "Delete",
-              danger: { title: `Delete chat “${chatTitle(c)}”?`, body: "Its messages go with it.", confirmLabel: "Delete" },
-              onSelect: () => remove(c),
-            },
-          ]}
-        />
-      </div>
-
-      {open && (
-        <div className="card">
-          <div className="card-head">
-            <h2>{open.title ?? open.id.slice(0, 8)}</h2>
-            <button className="ghost" onClick={() => setOpen(null)}>
-              close
-            </button>
-          </div>
-          <div style={{ maxHeight: 380, overflowY: "auto" }}>
-            {history.map((m) => (
-              <p key={m.id} style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
-                <strong>{m.role === "user" ? "You" : "AI"}:</strong> {m.content}
-              </p>
-            ))}
-            {live !== null && (
-              <p style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
-                <strong>AI:</strong> {live}
-              </p>
-            )}
-          </div>
-          <form className="inline" onSubmit={send}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} />
-            <button className="primary" disabled={busy || !input.trim()}>
-              {busy ? "Streaming…" : "Send"}
-            </button>
-          </form>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ── Files (file-storage: read-only until an upload sidecar is deployed) ── */
-
-/** `filters` is the side panel's; the list has its own search. */
-function FilesView({ token }: { token: string; filters?: Filters }) {
-  const [files, setFiles] = useState<import("./api").StoredFile[] | null>(null);
-  const [storages, setStorages] = useState<unknown>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    Promise.all([api.files(token), api.storages(token)])
-      .then(([f, s]) => {
-        setFiles(f.items ?? []);
-        setStorages(s);
-      })
-      .catch((e) => setError(errText(e)));
-  }, [token]);
-
-
-  const storageItems: unknown[] | null = Array.isArray(storages)
-    ? storages
-    : storages && typeof storages === "object" && "items" in storages &&
-        Array.isArray((storages as { items: unknown[] }).items)
-      ? (storages as { items: unknown[] }).items
-      : null;
-
-  return (
-    <>
-      <h1>Files</h1>
-      <p className="subtitle">
-        The file-storage gear is the platform's blob store: in the domain model it backs
-        Documents, Text Content and chat Attachments. Today it serves mini-chat attachments;
-        uploads go through signed URLs from a separate sidecar this dev assembly doesn't run —
-        so the view is read-only and usually empty.
-      </p>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        <DataTable<import("./api").StoredFile>
-          list="files"
-          title="Files"
-          rows={files === null && error ? [] : files}
-          error={files === null ? error : null}
-          rowKey={(f) => f.id}
-          rowLabel={(f) => f.name ?? f.file_name ?? f.id}
-          search={{ placeholder: "Search files" }}
-          searchText={(f) => [f.name, f.file_name, f.id]}
-          empty={{
-            title: "Nothing stored yet.",
-            body: "Files appear here once chats get attachments, or the upload sidecar is deployed.",
-          }}
-          columns={[
-            {
-              id: "name",
-              header: "File",
-              compare: (a, b) => (a.name ?? a.file_name ?? a.id).localeCompare(b.name ?? b.file_name ?? b.id),
-              cell: (f) => <div className="name">{f.name ?? f.file_name ?? f.id}</div>,
-            },
-            { id: "id", header: "Id", cell: (f) => <code className="sub">{f.id}</code> },
-          ]}
-        />
-      </div>
-      {storageItems && storageItems.length > 0 && (
-        <div className="card">
-          <h2>Storage backends ({storageItems.length})</h2>
-          <pre style={{ overflow: "auto", fontSize: 12 }}>{JSON.stringify(storageItems, null, 2)}</pre>
-        </div>
-      )}
-    </>
   );
 }
 
@@ -6833,195 +6464,6 @@ function SystemView({
    Hence no top-level Projects view: they live on the Workspace Dashboard. */
 
 /* ── Organizations ── */
-
-/* ── Home hub ── */
-
-function HomeView({
-  token,
-  home,
-  orgs,
-  workspaces,
-  spaces,
-  onOpenSpace,
-  onOpenStudio,
-  onOpenDashboard,
-  onNavigate,
-}: {
-  token: string;
-  home: Tenant | null;
-  orgs: Tenant[];
-  workspaces: Workspace[];
-  spaces: { wsId: string; wsName: string }[];
-  onOpenSpace: (wsId: string) => void;
-  onOpenStudio: (target: StudioTarget) => void;
-  onOpenDashboard: (ws: Workspace) => void;
-  onNavigate: (v: View) => void;
-}) {
-  const [live, setLive] = useState<import("./api").StudioSession[]>([]);
-  const [gearCount, setGearCount] = useState<string>("…");
-
-  useEffect(() => {
-    void api.studioSessions(token).then(
-      (p) => setLive(p.items.filter((s) => s.state !== "stopped")),
-      () => setLive([]),
-    );
-    void api.gears(token).then(
-      (g: unknown) => {
-        const items =
-          Array.isArray(g) ? g
-          : g && typeof g === "object" && "items" in g && Array.isArray((g as { items: unknown[] }).items)
-            ? (g as { items: unknown[] }).items
-            : null;
-        setGearCount(items ? String(items.length) : "—");
-      },
-      () => setGearCount("—"),
-    );
-  }, [token]);
-
-  const hidden = orgs.filter((o) => o.self_managed).length;
-  const continueItems = workspaces
-    .map((ws) => ({
-      ws,
-      space: spaces.find((s) => s.wsId === ws.id),
-      session: live.find((s) => s.workspace_id === ws.id),
-    }))
-    .filter((x) => x.space || x.session);
-
-  return (
-    <>
-      <div className="home-hero">
-        <div>
-          <h1>
-            <span className="hero-gradient">Constructor Studio</span>
-          </h1>
-          <p className="subtitle">
-            Projects that build with AI over real repositories — the control plane of the Studio
-            domain model.
-          </p>
-        </div>
-        <div className="hero-links">
-          {/* Discord invite comes from env (runtime env.js in clusters,
-              VITE_ var in dev) so each deployment points at its own server;
-              without it the link hides itself. */}
-          {runtimeEnv.discordUrl && (
-            <a href={runtimeEnv.discordUrl} target="_blank" rel="noopener noreferrer">
-              🎮 Discord
-            </a>
-          )}
-          <a href="https://github.com/constructorfabric/studio-web" target="_blank" rel="noopener noreferrer">
-            🐙 GitHub
-          </a>
-          <a href="/api-docs/" target="_blank" rel="noopener noreferrer">
-            ⧉ Docs &amp; API
-          </a>
-        </div>
-      </div>
-
-      <div className="home-grid">
-        <div className="card span-all">
-          <h2>Continue</h2>
-          {continueItems.length === 0 ? (
-            <p className="empty">No live sessions. Open a project to start one.</p>
-          ) : (
-            <ul className="rows">
-              {continueItems.map(({ ws, space, session }) => (
-                <li key={ws.id}>
-                  <div className="grow">
-                    <div className="name">⚙ {ws.name}</div>
-                    <div className="sub">project{session ? ` · session ${session.state}` : ""}</div>
-                  </div>
-                  {space ? (
-                    <button className="primary" onClick={() => onOpenSpace(ws.id)}>
-                      Switch to space
-                    </button>
-                  ) : (
-                    <button className="primary" onClick={() => onOpenStudio(ws)}>
-                      Reopen
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <WaitingOnYou token={token} workspaces={workspaces} onOpenWorkspace={onOpenDashboard} />
-
-        <div className="card">
-          <h2>Build</h2>
-          <ul className="home-links">
-            <li>
-              <button className="linklike" onClick={() => onNavigate("projects")}>
-                Projects — open one, or start the Studio IDE →
-              </button>
-            </li>
-            {workspaces[0] && (
-              <li>
-                <button className="linklike" onClick={() => onOpenDashboard(workspaces[0])}>
-                  Project overview (sources, automation, nested projects) →
-                </button>
-              </li>
-            )}
-            <li>
-              <button className="linklike" onClick={() => onNavigate("people")}>
-                Invite someone into a project →
-              </button>
-            </li>
-            <li>
-              <button className="linklike" onClick={() => onNavigate("connectors")}>
-                Connect a repository →
-              </button>
-            </li>
-          </ul>
-        </div>
-
-        <div className="card">
-          <h2>Platform</h2>
-          <ul className="rows">
-            <li>
-              <div className="grow"><div className="sub">Scope</div>
-                <div className="name">
-                  {home?.tenant_type === TENANT_TYPES.organization
-                    ? `${home.name} subtree`
-                    : `entire platform${hidden ? ` · ${hidden} self-managed hidden` : ""}`}
-                </div>
-              </div>
-            </li>
-            <li>
-              <div className="grow">
-                <div className="sub">Projects</div>
-                <div className="name">
-                  {workspaces.length}
-                  {/* The organization count stays visible as a platform fact,
-                      not as a place to go — concept v2 hides the level, it does
-                      not pretend the tenants vanished. */}
-                  <span className="sub" style={{ fontWeight: 400 }}>
-                    {orgs.length > 0 ? ` · in ${orgs.length} organization${orgs.length === 1 ? "" : "s"} (hidden)` : ""}
-                  </span>
-                </div>
-              </div>
-            </li>
-            <li>
-              <div className="grow"><div className="sub">Gears running</div>
-                <div className="name">{gearCount}</div>
-              </div>
-              <button className="ghost" onClick={() => onNavigate("system")}>System →</button>
-            </li>
-          </ul>
-        </div>
-
-        <div className="card">
-          <h2>Documentation</h2>
-          <ul className="home-links">
-            <li><a href="https://github.com/constructorfabric/studio-web#readme" target="_blank" rel="noopener noreferrer">README — running the stack →</a></li>
-            <li><a href="https://github.com/constructorfabric/studio-web/tree/main/docs/adr" target="_blank" rel="noopener noreferrer">Architecture decisions (ADR) →</a></li>
-            <li><a href="https://github.com/constructorfabric/studio-web/blob/main/docs/domain-alignment.md" target="_blank" rel="noopener noreferrer">Domain model alignment →</a></li>
-          </ul>
-        </div>
-      </div>
-    </>
-  );
-}
 
 /* ── Secrets (credstore surface) ──
    credstore has NO list endpoint (gears feedback #5), so the view builds
@@ -7796,7 +7238,7 @@ function ProjectSources({
         primary={
           (repos?.length ?? 0) > 0 && onOpenStudio ? (
             <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
+              Open in Web IDE
             </button>
           ) : null
         }
@@ -8371,7 +7813,7 @@ function AddConnector({
                     className="conn-picker-tile"
                     disabled
                     data-research-pending
-                    title="This Studio has no Constructor sign-in client and no Research integration service address yet (research-connector-plugin: issuer, client_id, client_secret, redirect_uri, api_url)."
+                    title="This Studio is not registered with the Constructor sign-in yet, or does not know Research's address: the platform administrator sets it up."
                   >
                     <span className="conn-logo-slot" aria-hidden>
                       <ConnectorLogo provider="research" label="Constructor Research" />
@@ -10136,23 +9578,19 @@ function ProfileView({
   // Stored with the person's other preferences (`usePreference`); the form
   // edits a draft and Save commits it.
   const [savedTheme, saveTheme] = usePreference(PREF_THEME, "light");
-  const [savedLanguage, saveLanguage] = usePreference(PREF_LANGUAGE, "en");
   const [rail, saveRail] = usePreference(PREF_RAIL, "shown");
   const [theme, setTheme] = useState(savedTheme);
-  const [language, setLanguage] = useState(savedLanguage);
   const [saved, setSaved] = useState(false);
   const [error] = useState<string | null>(null);
 
   // The record answers a moment after mount; the draft follows it until the
   // person starts editing.
   useEffect(() => setTheme(savedTheme), [savedTheme]);
-  useEffect(() => setLanguage(savedLanguage), [savedLanguage]);
 
   function save(e: FormEvent) {
     e.preventDefault();
     setSaved(false);
     saveTheme(theme);
-    saveLanguage(language);
     document.documentElement.dataset.theme = theme;
     setSaved(true);
   }
@@ -10178,8 +9616,10 @@ function ProfileView({
 
       <MyIdentitiesCard token={token} sessionSubject={me.subject_id} />
 
-      <div className="card">
-        <h2>This session</h2>
+      {/* For support and debugging: what the token says. Folded, because
+          nothing in it is something a person acts on. */}
+      <details className="card">
+        <summary>Technical details of this sign-in</summary>
         <p className="hint">What the token you are signed in with says. It identifies one sign-in, not you.</p>
         <ul className="rows">
           <li>
@@ -10222,7 +9662,7 @@ function ProfileView({
         <p className="hint" style={{ marginTop: 12 }}>
           API: <a href="/api-docs/">/api-docs/</a>
         </p>
-      </div>
+      </details>
 
       <AiKeysCard token={token} />
 
@@ -10230,13 +9670,11 @@ function ProfileView({
         <h2>Preferences</h2>
         <p className="hint">Stored server-side per user, with your other Studio preferences.</p>
         <form className="inline" onSubmit={save}>
-          <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-            <option value="light">light</option>
-            <option value="dark">dark</option>
-          </select>
-          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option value="en">en</option>
-            <option value="ru">ru</option>
+          {/* No language here: the portal has one, English, until it is
+              translated; a choice that changed nothing was a promise. */}
+          <select aria-label="Theme" value={theme} onChange={(e) => setTheme(e.target.value)}>
+            <option value="light">Light theme</option>
+            <option value="dark">Dark theme</option>
           </select>
           <button className="primary">Save</button>
           {saved && <span className="hint">saved ✓</span>}

@@ -30,6 +30,18 @@ export function previewNameFor(build: Pick<IdeBuild, "chartVersion" | "buildId">
   return tail || "preview";
 }
 
+/** The lifetimes a preview can be asked for, in hours: the usual steps up to
+ *  the environment's most, which is always offered and comes last. */
+export function previewLifetimes(most: number): number[] {
+  const steps = [4, 24, 72, 168].filter((h) => h < most);
+  return most >= 1 ? [...steps, most] : steps;
+}
+
+/** A lifetime as a person reads it: "4 h", "3 d". */
+export function lifetimeLabel(hours: number): string {
+  return hours >= 48 && hours % 24 === 0 ? `${hours / 24} d` : `${hours} h`;
+}
+
 /** How long until a preview expires, as a person reads it: "expires in 2 d",
  *  "expires in 5 h", "expiring". */
 export function expiresIn(expiresAt: string, now: number = Date.now()): string {

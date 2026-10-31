@@ -1,4 +1,4 @@
-// "Desktop IDE": the project, in the desktop Studio the member has
+// "Desktop app": the project, in the desktop Studio the member has
 // installed (ADR-0027 §6).
 //
 // The link names this Studio and the project, and carries no token -- the app
@@ -14,9 +14,11 @@ import { useEffect, useRef, useState } from "react";
 import { api, type DesktopSession } from "./api";
 import { ISSUER } from "./oidc";
 
-/** Where the desktop installer is published: the workflow that builds it. */
+/** Where the desktop installer is published: the repository's desktop
+ *  releases, newest first. Not `/releases/latest`: they are pre-releases,
+ *  which that leaves out. */
 export const DESKTOP_DOWNLOAD_URL =
-  "https://github.com/constructorfabric/studio-web/actions/workflows/desktop.yml";
+  "https://github.com/constructorfabric/studio-web/releases?q=desktop-v&expanded=true";
 
 /** The link the desktop app opens a project with. Mirrors
  *  `theia/studio/src/common/desktop-link.ts`, which reads it.
@@ -142,7 +144,7 @@ export function OpenInDesktop({ token, project }: { token: string; project: { id
         onClick={open}
         title="Open this project in the Constructor Studio app on your machine: it signs you in, clones the sources and opens them"
       >
-        Desktop IDE
+        Desktop app
       </button>
       {presence && (
         <span className="hint" style={{ fontSize: 12 }} data-desktop-presence>

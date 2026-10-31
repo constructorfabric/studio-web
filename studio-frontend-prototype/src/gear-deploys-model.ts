@@ -67,11 +67,14 @@ export function runningNow(
   const envs = new Map(environments.map((e) => [e.id, e]));
   const latest = new Map<string, Deployment>();
   for (const d of deployments) {
-    if (d.state !== "succeeded") continue;
+    // A preview runs beside the environment, not in it (ADR-0055 §2).
+    if (d.state !== "succeeded" || d.preview) continue;
     const seen = latest.get(d.environment_id);
     if (!seen || Date.parse(d.requested_at) > Date.parse(seen.requested_at)) latest.set(d.environment_id, d);
   }
   return [...latest.values()]
+    // The latest was taking it out: nothing runs there now.
+    .filter((d) => (d.action ?? "install") === "install")
     .map((d) => {
       const env = envs.get(d.environment_id);
       const name = env?.name ?? d.environment_name;

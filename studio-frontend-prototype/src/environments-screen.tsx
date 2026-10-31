@@ -67,6 +67,13 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
     <div className="env-deployment">
       <StateBadge d={d} />
       <b>{d.product}</b>
+      {/* Beside the environment, not in it (ADR-0055), and it goes on its own. */}
+      {d.preview && (
+        <span className="badge" title="A preview: its own namespace beside the environment, removed when it expires">
+          preview {d.preview.name}
+        </span>
+      )}
+      {(d.action ?? "install") === "uninstall" && <span className="badge">taken out</span>}
       {showProject && <span className="sub">{d.project_name}</span>}
       <span className="sub">
         → {d.environment_name} · <code>{d.namespace}</code>
@@ -1225,12 +1232,15 @@ export function ProjectEnvironments({
   projectId,
   profiles,
   title = "Environments",
+  onSaved,
 }: {
   token: string;
   projectId: string;
   profiles: readonly string[];
   /** The heading: where the bindings sit decides what they are called. */
   title?: string;
+  /** The bindings were saved: whatever else shows them reads them again. */
+  onSaved?: () => void;
 }) {
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [bindings, setBindings] = useState<EnvironmentBinding[]>([]);
@@ -1263,7 +1273,12 @@ export function ProjectEnvironments({
   const bound = (profile: string) => bindings.find((b) => b.profile === profile)?.environment_id ?? "";
   const bind = (profile: string, environment: string) => {
     setSaved(false);
-    setBindings((all) => [...all.filter((b) => b.profile !== profile), ...(environment ? [{ profile, environment_id: environment }] : [])]);
+    // Values belong to a profile in one environment: kept while it stays there.
+    setBindings((all) => {
+      const was = all.find((b) => b.profile === profile);
+      const next = was?.environment_id === environment ? was : { profile, environment_id: environment };
+      return [...all.filter((b) => b.profile !== profile), ...(environment ? [next] : [])];
+    });
   };
   const save = async () => {
     setBusy(true);
@@ -1271,6 +1286,7 @@ export function ProjectEnvironments({
     try {
       setBindings((await api.saveBindings(token, projectId, bindings)).items);
       setSaved(true);
+      onSaved?.();
     } catch (e) {
       setError(errText(e));
     } finally {

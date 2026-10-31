@@ -321,7 +321,17 @@ export function ProjectDeploys({
       )}
       {!unavailable && (
         <div className="card">
-          <ProjectEnvironments token={token} projectId={projectId} profiles={KUBERNETES_PROFILES} title="Which environment each profile deploys to" />
+          {/* Read again after every change on the tab: chart values saved on
+              an environment's row are in the same bindings, and a stale copy
+              saved here would put the old ones back. */}
+          <ProjectEnvironments
+            key={round}
+            token={token}
+            projectId={projectId}
+            profiles={KUBERNETES_PROFILES}
+            title="Which environment each profile deploys to"
+            onSaved={() => changed("Bindings saved.")}
+          />
         </div>
       )}
     </div>
