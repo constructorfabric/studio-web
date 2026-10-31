@@ -1072,6 +1072,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  token sees only its home's subtree, so the ones outside it come from
    *  here, and picking one moves the home there (ADR-0011 §2). */
   const [memberOrgs, setMemberOrgs] = useState<{ id: string; name: string }[]>([]);
+  /** Whether the person administers any organization: an active `owner` or
+   *  `admin` membership. `null` until the memberships answer, and left `null`
+   *  when they cannot be read — the menu then stays, and the backend still
+   *  refuses what the person may not do. */
+  const [holdsAdmin, setHoldsAdmin] = useState<boolean | null>(null);
+  const administers = showPlatform || holdsAdmin !== false;
+  // A place restored from the last visit can reopen the admin area; it closes
+  // once the memberships say this person does not administer.
+  useEffect(() => {
+    if (!administers) setAdminOpen(false);
+  }, [administers]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   // Temporary platform-admin fallback until every installation bootstraps its
   // default organization server-side. Never runs for an external identity.
@@ -1856,6 +1867,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       const held: Awaited<ReturnType<typeof api.myMemberships>> = await api
         .myMemberships(token)
         .catch(() => []);
+      if (held.length) {
+        setHoldsAdmin(held.some((m) => m.status === "active" && (m.role === "owner" || m.role === "admin")));
+      }
       setMemberOrgs(
         held
           // The platform root is not an organization, even for its owner.
@@ -1997,16 +2011,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               >
                 <span className="ico"><LayersIcon /></span> Architecture
               </button>
-              <button
-                role="menuitem"
-                title="Organizations, members, workspaces administration"
-                onClick={() => {
-                  setProductMenu(false);
-                  openAdmin();
-                }}
-              >
-                <span className="ico"><ShieldIcon /></span> Admin
-              </button>
+              {administers && (
+                <button
+                  role="menuitem"
+                  title="Organizations, members, workspaces administration"
+                  onClick={() => {
+                    setProductMenu(false);
+                    openAdmin();
+                  }}
+                >
+                  <span className="ico"><ShieldIcon /></span> Admin
+                </button>
+              )}
             </div>
           )}
         </span>
@@ -2147,7 +2163,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   >
                     Profile
                   </button>
-                  <button onClick={() => openAdmin()}>Admin settings</button>
+                  {administers && <button onClick={() => openAdmin()}>Admin settings</button>}
                   <button onClick={onLogout}>Sign out</button>
                 </div>
 
@@ -2450,7 +2466,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           a project's below. The rail is only what the person pinned. */}
       {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
         <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
-          {LEVEL_NAV[level].map((n) => (
+          {LEVEL_NAV[level].filter((n) => n.id !== "system" || showPlatform).map((n) => (
             <button
               key={n.id}
               className={`psection${view === n.id ? " on" : ""}`}
@@ -2662,7 +2678,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <LazyScreens>
         {adminOpen ? (
           <>
-            {adminView === "identities" && (
+            {adminView === "identities" && showPlatform && (
               <IdentityDirectory token={token} query={filters.query} />
             )}
             {adminView === "tenants" && (showPlatform || orgs.length > 1) && adminOrgId !== "__new__" && (
@@ -2716,7 +2732,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 meName={userName}
               />
             )}
-            {adminView === "workspaces" && (
+            {adminView === "workspaces" && showPlatform && (
               <WorkspacesView
                 token={token}
                 orgs={adminOrg ? [adminOrg] : orgs}
@@ -2896,7 +2912,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
-        {view === "system" && (
+        {/* The deployment's own console -- raw types, JSON, test notifications
+            -- is the platform administrator's, not every member's. */}
+        {view === "system" && showPlatform && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
         )}
         {view === "profile" && (
@@ -5983,7 +6001,7 @@ function WorkspacesView({
                 {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
                 <button onClick={() => onOpen(w)}>Open</button>
                 <button className="primary" onClick={() => onOpenStudio(w)}>
-                  Open in IDE
+                  Open in Web IDE
                 </button>
                 <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
                   ✕
@@ -6178,7 +6196,7 @@ function WorkspaceDashboard({
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={onBack}>← Back</button>
             <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
+              Open in Web IDE
             </button>
           </div>
         </div>
@@ -6220,7 +6238,7 @@ function WorkspaceDashboard({
           </h2>
           {onOpenStudio && (
             <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
+              Open in Web IDE
             </button>
           )}
         </div>
@@ -7796,7 +7814,7 @@ function ProjectSources({
         primary={
           (repos?.length ?? 0) > 0 && onOpenStudio ? (
             <button className="primary" onClick={() => onOpenStudio(ws)}>
-              Open in IDE
+              Open in Web IDE
             </button>
           ) : null
         }

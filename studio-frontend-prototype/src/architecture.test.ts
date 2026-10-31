@@ -191,7 +191,7 @@ describe("uses", () => {
 // Every source file of the prototype, as text — tests and generated code aside.
 const SOURCES = Object.entries(
   import.meta.glob<string>("./**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true }),
-).filter(([path]) => !/\.test\.tsx?$|\.gen\.ts$|\/_to_delete\//.test(path));
+).filter(([path]) => !/\.test\.tsx?$|\.gen\.ts$/.test(path));
 
 // The IDE's Studio extension, where the repository has it beside the prototype.
 const THEIA = Object.entries(

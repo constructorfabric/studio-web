@@ -243,7 +243,7 @@ export function nextStep(s: FlowState): NextStep {
     s.open > 0
       ? ` ${plural(s.open, "capability", "capabilities")} the specs ask for ${s.open === 1 ? "is" : "are"} not closed yet.`
       : "";
-  if (!s.written) return { text: `The product resolves: build it in Studio-ide.${gap}`, action: "build", tone: gap ? "warn" : "todo" };
+  if (!s.written) return { text: `The product resolves: build it in the desktop app.${gap}`, action: "build", tone: gap ? "warn" : "todo" };
   return {
     text: `Composed: product.gdl is in the repository. Next: build it, in Studio, the IDE or CI.${gap}`,
     action: "builds",
@@ -288,7 +288,7 @@ export function productSteps(s: FlowState): ProductStep[] {
     { id: "product", title: "Compose and check", status: compose },
     {
       id: "build",
-      title: "Build in Studio-ide",
+      title: "Build in the desktop app",
       status: !s.written ? "not built yet" : s.resolves === true ? "product.gdl in the repository" : "built earlier · build again once it resolves",
     },
   ];

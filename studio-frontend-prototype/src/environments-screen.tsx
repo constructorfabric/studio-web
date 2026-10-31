@@ -67,6 +67,13 @@ function DeploymentLine({ d, showProject }: { d: Deployment; showProject: boolea
     <div className="env-deployment">
       <StateBadge d={d} />
       <b>{d.product}</b>
+      {/* Beside the environment, not in it (ADR-0055), and it goes on its own. */}
+      {d.preview && (
+        <span className="badge" title="A preview: its own namespace beside the environment, removed when it expires">
+          preview {d.preview.name}
+        </span>
+      )}
+      {(d.action ?? "install") === "uninstall" && <span className="badge">taken out</span>}
       {showProject && <span className="sub">{d.project_name}</span>}
       <span className="sub">
         → {d.environment_name} · <code>{d.namespace}</code>

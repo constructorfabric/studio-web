@@ -166,6 +166,12 @@ export async function startSsoLogin(idpHint?: string, loginHint?: string): Promi
     code_challenge: b64url(new Uint8Array(digest)),
     code_challenge_method: "S256",
   });
+  // Always the IdP's form, never its session cookie: a browser still signed
+  // in to Keycloak as someone else — who closed the tab without signing out —
+  // would otherwise sign the next person in as them with no form shown. The
+  // desktop has sent the same since #395. Renewal is untouched: it goes by
+  // refresh token, not through here.
+  params.set("prompt", "login");
   if (idpHint) params.set("kc_idp_hint", idpHint);
   // Pre-fills the IdP's own form, so an e-mail typed here is not asked twice.
   if (loginHint) params.set("login_hint", loginHint);

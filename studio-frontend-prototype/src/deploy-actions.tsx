@@ -22,8 +22,10 @@ import {
   deployableBuilds,
   expiresIn,
   isSecretKey,
+  lifetimeLabel,
   livePreviews,
   parseValues,
+  previewLifetimes,
   previewNameFor,
   promotionGap,
   rollbackTarget,
@@ -70,16 +72,20 @@ export function DeployBuildTo({
   deployments: Deployment[];
   onChanged: (message: string) => void;
 }) {
-  const [envId, setEnvId] = useState(environments[0]?.id ?? "");
+  // Only where this build can go: a Research environment runs only what
+  // Research built, the others only a published chart -- the same rule the
+  // Deploys tab picks builds by, so the two never offer different things.
+  const takers = environments.filter((e) => deployableBuilds([build], e).length > 0);
+  const [envId, setEnvId] = useState(takers[0]?.id ?? "");
   const { busy, error, ask } = useDeployRequest(token, projectId, onChanged);
   const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? id;
-  const env = environments.find((e) => e.id === envId);
+  const env = takers.find((e) => e.id === envId);
   const gap = env ? promotionGap(env, build, deployments, envName) : null;
-  if (environments.length === 0) return null;
+  if (takers.length === 0) return null;
   return (
     <div className="row" style={{ gap: 6, marginTop: 6 }} data-deploy-build-to>
       <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
-        {environments.map((e) => (
+        {takers.map((e) => (
           <option key={e.id} value={e.id}>
             {e.name}
           </option>
@@ -94,7 +100,7 @@ export function DeployBuildTo({
           env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows under Deploys`)
         }
       >
-        Deploy…
+        Deploy
       </button>
       {gap && <span className="sub warn">{gap}</span>}
       {error && <span className="error">{error}</span>}
@@ -123,13 +129,19 @@ export function EnvironmentActions({
   onChanged: (message: string) => void;
 }) {
   const [picking, setPicking] = useState(false);
+  // The build a preview is being asked for, if any: its name and lifetime are
+  // set in a line under it.
+  const [previewing, setPreviewing] = useState<string | null>(null);
   const request = useDeployRequest(token, projectId, onChanged);
   const { busy, error } = request;
   const candidates = deployableBuilds(builds, env);
   const back = rollbackTarget(deployments, env.id);
   const previews = env.kind !== "research" && !!env.previews;
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
-    if (await request.ask(body, what)) setPicking(false);
+    if (await request.ask(body, what)) {
+      setPicking(false);
+      setPreviewing(null);
+    }
   };
   return (
     <div className="deploy-actions" data-environment-actions={env.name}>
@@ -176,7 +188,8 @@ export function EnvironmentActions({
               {candidates.slice(0, 8).map((b) => {
                 const gap = promotionGap(env, b, deployments, envName);
                 return (
-                  <li key={b.id}>
+                  // Wraps, so the preview's line can sit under the build.
+                  <li key={b.id} style={{ flexWrap: "wrap" }}>
                     <div className="grow">
                       <b>{b.chartVersion ?? b.buildId}</b> <span className="sub">{b.where}</span>{" "}
                       {b.commit && <code>{shortCommit(b.commit)}</code>}{" "}
@@ -194,22 +207,27 @@ export function EnvironmentActions({
                       <button
                         type="button"
                         disabled={busy}
+                        aria-expanded={previewing === b.buildId}
                         data-preview-build={b.buildId}
-                        title={`Install it in a namespace of its own beside ${env.name}, removed after ${env.previews?.ttl_hours ?? 72} h`}
-                        onClick={() => {
-                          const name = window.prompt(
-                            "The preview's name: lowercase letters, digits and -, at most 20.",
-                            previewNameFor(b),
-                          );
-                          if (name === null) return;
-                          void ask(
-                            { environment_id: env.id, build: b.buildId, preview: { name: name.trim() || undefined } },
-                            `Preview ${b.chartVersion ?? b.buildId} in ${env.name}`,
-                          );
-                        }}
+                        title={`Install it in a namespace of its own beside ${env.name}, removed when it expires`}
+                        onClick={() => setPreviewing((v) => (v === b.buildId ? null : b.buildId))}
                       >
-                        Preview
+                        Preview…
                       </button>
+                    )}
+                    {previews && previewing === b.buildId && (
+                      <PreviewForm
+                        build={b}
+                        most={env.previews?.ttl_hours ?? 72}
+                        busy={busy}
+                        onCancel={() => setPreviewing(null)}
+                        onStart={(name, ttl) =>
+                          void ask(
+                            { environment_id: env.id, build: b.buildId, preview: { name: name || undefined, ttl_hours: ttl } },
+                            `Preview ${b.chartVersion ?? b.buildId} in ${env.name}`,
+                          )
+                        }
+                      />
                     )}
                   </li>
                 );
@@ -220,6 +238,62 @@ export function EnvironmentActions({
       )}
       {error && <div className="error">{error}</div>}
     </div>
+  );
+}
+
+/** A preview's name and how long it lives, asked in a line under its build.
+ *  The server checks both again: the name's characters, the environment's
+ *  most hours. */
+function PreviewForm({
+  build,
+  most,
+  busy,
+  onStart,
+  onCancel,
+}: {
+  build: IdeBuild;
+  most: number;
+  busy: boolean;
+  onStart: (name: string, ttlHours: number) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(() => previewNameFor(build));
+  const lifetimes = previewLifetimes(most);
+  const [ttl, setTtl] = useState(() => (lifetimes.includes(24) ? 24 : lifetimes[lifetimes.length - 1]));
+  const valid = /^[a-z0-9-]{0,20}$/.test(name.trim());
+  return (
+    <form
+      className="row"
+      style={{ gap: 6, flexBasis: "100%" }}
+      data-preview-form={build.buildId}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid) onStart(name.trim(), ttl);
+      }}
+    >
+      <input
+        aria-label="Preview name"
+        value={name}
+        maxLength={20}
+        placeholder="name"
+        onChange={(e) => setName(e.target.value.toLowerCase())}
+        title="Lowercase letters, digits and -, at most 20"
+      />
+      <select aria-label="Lives for" value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
+        {lifetimes.map((h) => (
+          <option key={h} value={h}>
+            for {lifetimeLabel(h)}
+          </option>
+        ))}
+      </select>
+      <button type="submit" className="primary" disabled={busy || !valid}>
+        Start preview
+      </button>
+      <button type="button" className="ghost" onClick={onCancel}>
+        Cancel
+      </button>
+      {!valid && <span className="sub warn">Lowercase letters, digits and -, at most 20.</span>}
+    </form>
   );
 }
 
@@ -262,14 +336,14 @@ export function EnvironmentPreviews({
         {env.previews.domain ? (
           <>
             {" "}
-            · at <code>&lt;namespace&gt;.{env.previews.domain}</code>
+            · each at its own address under <code>{env.previews.domain}</code>
           </>
         ) : (
           " · no preview domain: reach them by port-forward"
         )}
       </div>
       {live.length === 0 ? (
-        <p className="hint">No preview here. Deploy a build… › Preview installs one beside {env.name}, in a namespace of its own.</p>
+        <p className="hint">No preview here. Deploy a build… › Preview… installs one beside {env.name}, in a namespace of its own.</p>
       ) : (
         <ul className="rows">
           {live.map((d) => {

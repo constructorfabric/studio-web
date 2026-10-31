@@ -165,6 +165,17 @@ describe("what runs where", () => {
     expect(runningNow(list).map((d) => d.id)).toEqual(["new", "other-env"]);
     expect(awaitingDecision(list).map((d) => d.id)).toEqual(["waiting"]);
   });
+
+  it("is not a preview beside it, nor a release taken out since", () => {
+    const preview = { name: "pr-1" } as Deployment["preview"];
+    const list = [
+      deployment({ id: "preview", preview }),
+      deployment({ id: "taken-out", environment_id: "e2", action: "uninstall" }),
+      deployment({ id: "before", environment_id: "e2" }),
+      deployment({ id: "runs" }),
+    ];
+    expect(runningNow(list).map((d) => d.id)).toEqual(["runs"]);
+  });
 });
 
 describe("cluster cards", () => {

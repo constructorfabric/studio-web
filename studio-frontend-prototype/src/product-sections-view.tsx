@@ -71,12 +71,23 @@ export function ProductPage({
     return first;
   });
   const [summary, setSummary] = useState<ProductSummary | null>(null);
+  // A product that could not be read is not a product that is not there.
+  const [readError, setReadError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api.projectProduct(token, projectId).catch(() => null),
+      api.projectProduct(token, projectId).then(
+        (p) => {
+          if (alive) setReadError(null);
+          return p;
+        },
+        (e: unknown) => {
+          if (alive) setReadError(errText(e));
+          return null;
+        },
+      ),
       api.projectConfig(token, projectId).catch(() => null),
     ]).then(([product, cfg]) => alive && setSummary(productSummary(product, cfg)));
     return () => {
@@ -95,7 +106,7 @@ export function ProductPage({
   return (
     <>
       <section className="card" style={{ marginBottom: 12 }} data-product-header>
-        <SummaryLine summary={summary} />
+        <SummaryLine summary={summary} readError={readError} />
         <div className="row" style={{ alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
           <div className="doc-views" role="tablist" aria-label="The product's parts" style={{ marginBottom: 0 }} data-product-sections>
             {PRODUCT_SECTIONS.filter((s) => s.id !== "parts" || parts).map((s) => (
@@ -131,12 +142,22 @@ export function ProductPage({
 }
 
 /** The product in one line. */
-function SummaryLine({ summary: s }: { summary: ProductSummary | null }) {
+function SummaryLine({ summary: s, readError }: { summary: ProductSummary | null; readError: string | null }) {
+  if (readError) {
+    return (
+      <p className="error" style={{ margin: 0 }} data-product-summary>
+        The product could not be read: {readError}
+      </p>
+    );
+  }
   if (!s) return <p className="muted" style={{ margin: 0 }}>Reading the product…</p>;
   if (!s.id && s.gears === 0) {
     return (
       <p style={{ margin: 0 }} data-product-summary>
-        <b>No product yet.</b> <span className="muted">Pick its gears under Backend; it is saved to the repository from there.</span>
+        <b>No product yet.</b>{" "}
+        <span className="muted">
+          Pick its gears under Backend and Save: Studio keeps it, and Publish puts it in the repository.
+        </span>
       </p>
     );
   }
@@ -171,7 +192,7 @@ function SummaryLine({ summary: s }: { summary: ProductSummary | null }) {
             )}
           </>
         ) : (
-          "not saved to the repository yet"
+          "not saved yet"
         )}
       </span>
       <span className="muted">· {s.frontend ? "with a frontend" : "no frontend"}</span>
