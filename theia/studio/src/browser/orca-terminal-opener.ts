@@ -12,9 +12,12 @@
 // Off a session there is no pairing until the person makes one: the tab asks
 // for the link the Orca desktop app generates for this computer, and attaches
 // once it has it (../node/orca-terminal-bridge.ts keeps it for later starts).
+// A link already copied in Orca is taken from the clipboard, so pairing (or
+// pairing again, after Orca forgot the old one) is copy and Open (#493).
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { CommandContribution, CommandRegistry, type Command } from '@theia/core/lib/common/command';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { QuickInputService } from '@theia/core/lib/common/quick-pick-service';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
@@ -25,6 +28,7 @@ import { TerminalLocation, type TerminalWidget } from '@theia/terminal/lib/brows
 import type { OrcaTerminal } from '../common/orca-protocol';
 import {
     needsPairing,
+    pairingLinkIn,
     OrcaTerminalService,
     type OrcaTerminalClient
 } from '../common/orca-terminal-protocol';
@@ -72,6 +76,9 @@ export class OrcaTerminalOpener {
 
     @inject(QuickInputService)
     protected readonly quickInput!: QuickInputService;
+
+    @inject(ClipboardService)
+    protected readonly clipboard!: ClipboardService;
 
     /** Open tabs, by Orca terminal handle — so Open twice shows the same tab. */
     protected readonly byHandle = new Map<string, TerminalWidget>();
@@ -160,6 +167,17 @@ export class OrcaTerminalOpener {
      */
     async askToPair(): Promise<boolean> {
         let problem: string | undefined;
+        // A link the member already copied in Orca pairs without a prompt; one
+        // Orca refuses (an old copy) is said in the prompt instead.
+        const copied = pairingLinkIn(await Promise.resolve(this.clipboard.readText()).catch(() => undefined));
+        if (copied) {
+            try {
+                await this.bridge.pair(copied);
+                return true;
+            } catch (error) {
+                problem = `The link on the clipboard did not pair: ${error instanceof Error ? error.message : String(error)}. Generate a new one in Orca and paste it here.`;
+            }
+        }
         for (;;) {
             const link = await this.quickInput.input({
                 title: 'Pair with Orca on this computer',

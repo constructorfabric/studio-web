@@ -45,7 +45,7 @@ export function desktopLink(project: { id: string; name?: string; product?: stri
 const NO_APP_AFTER_MS = 1500;
 
 /** The token's own subject: what a desktop session records as its member. */
-function tokenSubject(token: string): string | undefined {
+export function tokenSubject(token: string): string | undefined {
   try {
     const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const sub = (JSON.parse(atob(payload)) as { sub?: unknown }).sub;
@@ -65,6 +65,35 @@ export function desktopPresence(sessions: readonly DesktopSession[], me: string 
     return s.member_id === me ? `${device} (you)` : device;
   });
   return `Open on ${sessions.length} desktop${sessions.length === 1 ? "" : "s"}: ${names.join(", ")}`;
+}
+
+/** The desktop of mine a file of the project should open on: the one heard
+ *  from last, since that is the machine the member is most likely at. */
+export function myDesktop(sessions: readonly DesktopSession[], me: string | undefined): DesktopSession | undefined {
+  if (!me) return undefined;
+  return sessions
+    .filter((s) => s.member_id === me)
+    .sort((a, b) => b.last_seen_epoch_secs - a.last_seen_epoch_secs)[0];
+}
+
+/** Open a project's file on the member's own desktop, when the project is open
+ *  there: the device it went to, or `undefined` when there is none (or Studio
+ *  has no desktop sessions), and the caller opens it another way. */
+export async function openOnMyDesktop(token: string, projectId: string, path: string): Promise<string | undefined> {
+  let sessions: DesktopSession[];
+  try {
+    sessions = await api.desktopSessions(token, projectId);
+  } catch {
+    return undefined;
+  }
+  const desktop = myDesktop(sessions, tokenSubject(token));
+  if (!desktop) return undefined;
+  try {
+    await api.sendDesktopCommand(token, desktop.id, "open_in_editor", { relativePath: path });
+  } catch {
+    return undefined;
+  }
+  return desktop.device_name?.trim() || "your desktop";
 }
 
 /** The desktops the project is open on, re-read as often as they renew. */

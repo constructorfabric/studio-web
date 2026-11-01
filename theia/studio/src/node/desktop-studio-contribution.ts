@@ -4,14 +4,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as express from '@theia/core/shared/express';
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { KeyStoreService } from '@theia/core/lib/common/key-store';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
 import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
 import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
+import { CommandInbox, CommandListener, CommandOutcome, commandActivity, postDesktopEvent } from './desktop-bridge';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { LlmProxy, startLlmProxy } from './desktop-llm-proxy';
-import { DesktopSession, signIn } from './desktop-sign-in';
+import { DesktopSession, DesktopTokens, SignInExpired, signIn } from './desktop-sign-in';
+import { RememberedSignIn } from './desktop-sign-in-store';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
 /**
@@ -274,6 +277,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected settings = readSettings(this.settingsFile);
     protected config = desktopConfigFrom(process.env, process.cwd(), this.settings);
     protected session: DesktopSession | undefined;
+    /** The OS keychain: the web session's backend has one too, and never reaches it (no config). */
+    @inject(KeyStoreService) @optional() protected readonly keyStore: KeyStoreService | undefined;
+    protected remembered(): RememberedSignIn {
+        return new RememberedSignIn(this.keyStore);
+    }
     protected broker: TokenBroker | undefined;
     protected llmProxy: LlmProxy | undefined;
     protected ready: Promise<void> | undefined;
@@ -281,6 +289,13 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     /** How the git routes run git; a test swaps it. */
     protected git: GitRunner = runGit;
     protected readonly leases = new DesktopLeases();
+    /** Commands from the portal, waiting for the window that shows their workspace (ADR-0027 §5). */
+    protected readonly inbox = new CommandInbox();
+    protected readonly commands = new CommandListener(
+        () => this.leaseTarget(),
+        leaseId => this.leases.workspaceOf(leaseId),
+        this.inbox,
+    );
 
     /** The open in progress, or the last one, for the Studio view to draw. */
     protected openProgress: OpenProgress | undefined;
@@ -299,7 +314,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         return {
             studioUrl: this.config.studioUrl,
             gatewayPrefix: this.config.gatewayPrefix,
-            accessToken: () => session.accessToken(),
+            accessToken: () => this.tokenOf(session),
             deviceId,
             deviceName: os.hostname(),
         };
@@ -350,7 +365,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
         return fetch(`${config.studioUrl}${config.gatewayPrefix}${gearPath}`, {
             ...init,
-            headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${await session.accessToken()}` },
+            headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${await this.tokenOf(session)}` },
         });
     }
 
@@ -379,7 +394,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 res.status(400).json({ error: `no Studio "${id ?? ''}" in this build` });
                 return;
             }
-            await this.signOut();
+            await this.signOut(false);
             // The update channel is the member's too, and outlives a change of Studio.
             // So is what each folder was opened for: it says which Studio too.
             // And the device is the same machine whichever Studio it talks to.
@@ -388,6 +403,10 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
+            // Back to a Studio signed in to before: signed in again, as at a start.
+            if (this.config) {
+                this.ready = this.resume(this.config).then(() => undefined);
+            }
             res.json(this.status);
         });
         // The update channel as the Studio view kept it before the choice
@@ -467,13 +486,46 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 // Only a change is worth a line; a renewal every 30 s is not.
                 if (held && !had) {
                     console.info(`[studio-desktop] ${target.studioUrl} sees workspace ${tenantId} open on this device`);
+                    void this.postEvent(tenantId, 'workspace-activity', { type: 'desktop-opened', at: new Date().toISOString() });
                 } else if (!held && had) {
                     console.warn(`[studio-desktop] ${target.studioUrl} no longer holds workspace ${tenantId} open for this device`);
+                }
+                // The portal reaches a desktop only while it holds a lease.
+                if (this.leases.open.length > 0) {
+                    this.commands.start();
+                } else {
+                    this.commands.stop();
                 }
                 res.status(held ? 204 : 409).end();
             } catch (error) {
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
             }
+        });
+        // The window showing a workspace asks for the portal's commands to it,
+        // waiting up to 25 s for one (a long poll, below the gateway's 30 s).
+        app.get('/studio-desktop/commands', async (req, res) => {
+            const root = typeof req.query.root === 'string' ? req.query.root : '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            if (!tenantId) {
+                res.status(404).json({ error: 'this folder was not opened from Studio' });
+                return;
+            }
+            const waitMs = Math.min(25_000, Math.max(0, Number(req.query.wait_ms ?? 25_000) || 0));
+            const commands = await this.inbox.take(tenantId, waitMs);
+            res.json({ commands: commands.map(({ commandId, command, params }) => ({ commandId, command, params })) });
+        });
+        // What came of a command, from the window that ran it: back to the
+        // portal as the desktop session's own event (ADR-0027 §5).
+        app.post('/studio-desktop/commands/outcome', express.json(), async (req, res) => {
+            const body = (req.body ?? {}) as { root?: string } & Partial<CommandOutcome>;
+            const tenantId = body.root ? openedTenant(this.settings, this.config!, body.root) : undefined;
+            if (!tenantId || typeof body.commandId !== 'string' || typeof body.command !== 'string') {
+                res.status(400).json({ error: 'root, commandId and command are required' });
+                return;
+            }
+            const outcome: CommandOutcome = { commandId: body.commandId, command: body.command, ok: body.ok === true, detail: body.detail };
+            const sent = await this.postEvent(tenantId, 'workspace-activity', commandActivity(outcome, new Date().toISOString()));
+            res.status(sent ? 204 : 502).end();
         });
         // The window closed. Another window on the same workspace renews the
         // lease again on its next heartbeat, so ending it here is never wrong
@@ -555,7 +607,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 const answer = await fetch(target, {
                     method: req.method,
                     headers: {
-                        Authorization: `Bearer ${await this.session.accessToken()}`,
+                        Authorization: `Bearer ${await this.tokenOf(this.session)}`,
                         ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
                         ...(req.headers.accept ? { Accept: String(req.headers.accept) } : {}),
                         // What makes a retried POST that starts work answer the run it
@@ -571,9 +623,33 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 }
                 res.end(Buffer.from(await answer.arrayBuffer()));
             } catch (error) {
+                // An expired sign-in is not an outage: the widgets show Sign in
+                // for `signed-out` (browser/studio-api.ts `STUDIO_SIGNED_OUT`).
+                if (error instanceof SignInExpired) {
+                    res.status(503).json({ error: error.message, reason: 'signed-out' });
+                    return;
+                }
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
             }
         });
+    }
+
+    /**
+     * The member's token, as `session` gives it; a sign-in the identity
+     * provider will not renew signs the member out here, so the views offer
+     * Sign in instead of every call failing with the same refusal.
+     */
+    protected async tokenOf(session: DesktopSession): Promise<string> {
+        try {
+            return await session.accessToken();
+        } catch (error) {
+            if (error instanceof SignInExpired && this.session === session) {
+                console.warn(`[studio-desktop] ${error.message}`);
+                await this.signOut().catch(() => undefined);
+                this.status = this.describe('failed', { error: 'Your Studio sign-in has expired. Sign in again.' });
+            }
+            throw error;
+        }
     }
 
     async onStart(): Promise<void> {
@@ -585,6 +661,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         // a deployment asks for it at launch.
         if (this.config && process.env.STUDIO_DESKTOP_AUTO_SIGN_IN === '1') {
             this.ready = this.start(this.config);
+        } else if (this.config) {
+            // A member who signed in last time is signed in again, if the
+            // identity provider still takes what was kept.
+            const config = this.config;
+            this.ready = this.resume(config).then(() => undefined);
         }
     }
 
@@ -601,7 +682,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         try {
             this.broker = await startTokenBroker(
                 () => (this.config ? new URL(this.config.studioUrl).host : ''),
-                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+                () => (this.session ? this.tokenOf(this.session) : Promise.reject(new Error('not signed in to Studio'))),
             );
             process.env[CREDENTIALS_ENV] = this.broker.address;
         } catch (error) {
@@ -612,7 +693,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         try {
             this.llmProxy = await startLlmProxy(
                 () => (this.config && this.session ? `${this.config.studioUrl}${this.config.gatewayPrefix}` : undefined),
-                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+                () => (this.session ? this.tokenOf(this.session) : Promise.reject(new Error('not signed in to Studio'))),
             );
             for (const name of this.llmProxy.unset) {
                 delete process.env[name];
@@ -623,7 +704,18 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
     }
 
+    /** One event of this desktop's session on a workspace (ADR-0027 §5, phase 4). */
+    protected async postEvent(workspaceId: string, kind: string, event: unknown): Promise<boolean> {
+        const target = this.leaseTarget();
+        const leaseId = this.leases.leaseOf(workspaceId);
+        if (!target || !leaseId) {
+            return false;
+        }
+        return postDesktopEvent((input, init) => fetch(input, init), target, leaseId, workspaceId, kind, event);
+    }
+
     onStop(): void {
+        this.commands.stop();
         // Best effort: the process may be gone before Studio answers, and a
         // lease nobody renews ends on its own there.
         const target = this.leaseTarget();
@@ -635,12 +727,19 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     }
 
     /** Forget the token and stop handing it to git. */
-    protected async signOut(): Promise<void> {
+    protected async signOut(forget = true): Promise<void> {
+        // Signing out means the next start asks again: the kept sign-in goes
+        // too -- but not when the member only switches to another Studio.
+        if (forget && this.config && this.session) {
+            await this.remembered().forget(this.config.issuer, this.config.clientId);
+        }
         const target = this.leaseTarget();
         if (target) {
             await this.leases.endAll(target);
         }
         this.leases.forget();
+        this.commands.stop();
+        this.inbox.clear();
         // The broker stays: it refuses from now on, and whatever inherited its
         // address gets the next member's token without a restart.
         this.session = undefined;
@@ -675,7 +774,58 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             // The member switched Studios while the browser was open.
             return;
         }
-        this.session = new DesktopSession(config.issuer, config.clientId, tokens);
+        this.session = this.sessionOf(config, tokens);
+        await this.remembered().save(config.issuer, config.clientId, tokens);
+        await this.prepare(config, tokens);
+    }
+
+    /** A session whose refreshed tokens are kept, so the next start resumes with the newest. */
+    protected sessionOf(config: DesktopStudioConfig, tokens: DesktopTokens): DesktopSession {
+        const keep = (t: DesktopTokens) => void this.remembered().save(config.issuer, config.clientId, t);
+        return new DesktopSession(config.issuer, config.clientId, tokens, fetch, Date.now, keep);
+    }
+
+    /**
+     * Sign in with the refresh token the last run kept, without a browser.
+     * False when there is none, or the identity provider no longer takes it
+     * (then it is forgotten): the member signs in from the Studio view.
+     */
+    protected async resume(config: DesktopStudioConfig): Promise<boolean> {
+        const kept = await this.remembered().load(config.issuer, config.clientId);
+        if (!kept) {
+            return false;
+        }
+        this.status = this.describe('signing-in');
+        const keep = (t: DesktopTokens) => void this.remembered().save(config.issuer, config.clientId, t);
+        const session = DesktopSession.resumed(config.issuer, config.clientId, kept, fetch, keep);
+        try {
+            await session.accessToken();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[studio-desktop] the kept sign-in was not taken: ${message}`);
+            // An expired one is gone for good; a network failure may pass, so it stays.
+            if (error instanceof SignInExpired) {
+                await this.remembered().forget(config.issuer, config.clientId);
+            }
+            this.status = this.describe('signed-out');
+            return false;
+        }
+        if (config !== this.config) {
+            return false;
+        }
+        this.session = session;
+        try {
+            await this.prepare(config, session.current);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[studio-desktop] ${message}`);
+            this.status = { ...this.status, error: message };
+        }
+        return true;
+    }
+
+    /** What follows a sign-in, from a browser or a kept token: git, the status, the pinned workspace. */
+    protected async prepare(config: DesktopStudioConfig, tokens: DesktopTokens): Promise<void> {
         // Opened at start already, unless this run became a desktop Studio since.
         await this.openBroker();
         // And where Studio's own Git remotes are, with the helper that signs

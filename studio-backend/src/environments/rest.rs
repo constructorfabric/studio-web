@@ -797,6 +797,30 @@ pub struct DeploymentStatusDto {
     pub workloads: Vec<WorkloadDto>,
     /// Hosts the release's ingresses answer on.
     pub hosts: Vec<String>,
+    /// The containers that cannot start, and why: one line each.
+    pub problems: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ContainerLogDto {
+    pub pod: String,
+    pub container: String,
+    /// The run before the last restart.
+    pub previous: bool,
+    pub text: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeploymentLogsDto {
+    pub containers: Vec<ContainerLogDto>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogsQuery {
+    #[serde(default)]
+    lines: Option<i64>,
 }
 
 fn status_dto(d: Deployment, r: Rollout) -> DeploymentStatusDto {
@@ -813,6 +837,7 @@ fn status_dto(d: Deployment, r: Rollout) -> DeploymentStatusDto {
             })
             .collect(),
         hosts: r.hosts,
+        problems: r.problems,
     }
 }
 
@@ -1443,6 +1468,35 @@ async fn get_deployment_status(
     Ok(Json(status_dto(d, r)))
 }
 
+async fn get_deployment_logs(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+    Path(deployment_id): Path<Uuid>,
+    Query(q): Query<LogsQuery>,
+) -> ApiResult<JsonBody<DeploymentLogsDto>> {
+    let logs = envs
+        .0
+        .logs(
+            &ctx,
+            ctx.subject_tenant_id(),
+            deployment_id,
+            super::deploy::log_lines(q.lines),
+        )
+        .await
+        .map_err(problem)?;
+    Ok(Json(DeploymentLogsDto {
+        containers: logs
+            .into_iter()
+            .map(|l| ContainerLogDto {
+                pod: l.pod,
+                container: l.container,
+                previous: l.previous,
+                text: l.text,
+            })
+            .collect(),
+    }))
+}
+
 /* ── Registration ── */
 
 const TAG: &str = "StudioEnvironments";
@@ -2056,6 +2110,29 @@ pub fn register_routes(
         .query_param_typed("organization_id", false, "The organization", "string")
         .handler(get_deployment_status)
         .json_response_with_schema::<DeploymentStatusDto>(openapi, StatusCode::OK, "Status")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/deployments/{deployment_id}/logs")
+        .operation_id("studio_environments.get_deployment_logs")
+        .summary("The end of each container's log of a deployed release")
+        .description(
+            "Reads the last `lines` lines (200 unless asked, at most 2000) of every container \
+             of the release's pods from the environment's cluster, through the environment's \
+             connection; for a container that restarted and is not running, also the run \
+             before. A container that never started answers with the cluster's reason.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("deployment_id", "Deployment id")
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed("lines", false, "Lines of each log, from its end", "integer")
+        .handler(get_deployment_logs)
+        .json_response_with_schema::<DeploymentLogsDto>(openapi, StatusCode::OK, "Logs")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

@@ -1,4 +1,4 @@
-import { avatarCss, avatarSource, photoKey } from './desktop-account-avatar';
+import { avatarSource, logoSource, photoKey } from './desktop-account-avatar';
 
 describe('the desktop account photo', () => {
     it('finds an uploaded photo on the Studio it was uploaded to, and takes an identity provider\'s as it is', () => {
@@ -15,17 +15,6 @@ describe('the desktop account photo', () => {
         expect(avatarSource('javascript:alert(1)', 'https://s')).toBeUndefined();
     });
 
-    it('draws the photo on the Constructor Studio tab, the person glyph a member sees', () => {
-        const css = avatarCss('https://s/a.png');
-        expect(css).toContain('[id="shell-tab-studio.desktop"] .lm-TabBar-tabIcon {');
-        expect(css).toContain('url("https://s/a.png")');
-        expect(css).not.toContain('theia-sidebar-menu');
-    });
-
-    it('quotes the address, so it cannot close the rule', () => {
-        expect(avatarCss('https://s/a") ; } body { x: y')).toContain('url("https://s/a\\") ; } body { x: y")');
-    });
-
     it('asks for a photo again only when the person or the Studio changes', () => {
         const me = { state: 'signed-in', studioUrl: 'https://s', user: { sub: 'u-1' } };
         expect(photoKey(me)).toBe(photoKey({ ...me }));
@@ -33,5 +22,19 @@ describe('the desktop account photo', () => {
         expect(photoKey(me)).not.toBe(photoKey({ ...me, studioUrl: 'https://t' }));
         expect(photoKey({ ...me, state: 'signing-in' })).toBe('');
         expect(photoKey(undefined)).toBe('');
+    });
+});
+
+describe('an organization logo', () => {
+    it('shows an image the portal accepts, as data', () => {
+        expect(logoSource({ content_type: 'image/png', data: 'iVBORw0KGgo=' })).toBe('data:image/png;base64,iVBORw0KGgo=');
+        expect(logoSource({ content_type: 'IMAGE/WEBP ', data: 'UklGRg==' })).toBe('data:image/webp;base64,UklGRg==');
+    });
+
+    it('shows nothing for another type, no data, or data that is not base64', () => {
+        expect(logoSource({ content_type: 'image/svg+xml', data: 'PHN2Zz4=' })).toBeUndefined();
+        expect(logoSource({ content_type: 'image/png', data: '' })).toBeUndefined();
+        expect(logoSource({ content_type: 'image/png', data: 'abc"onerror=x' })).toBeUndefined();
+        expect(logoSource(undefined)).toBeUndefined();
     });
 });

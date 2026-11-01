@@ -2430,6 +2430,36 @@ impl EnvironmentService {
         Ok((d, rollout))
     }
 
+    /// The end of each container's log of a deployed release, read from its
+    /// cluster now, as `status` reads the rollout.
+    pub async fn logs(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        id: Uuid,
+        lines: i64,
+    ) -> Result<Vec<deploy::ContainerLog>> {
+        let d = self.deployment(ctx, org, id).await?;
+        let env = self
+            .project_environment(ctx, org, d.project_id, d.environment_id)
+            .await?;
+        if env.kind == EnvironmentKind::Research {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_LOGS_UNSUPPORTED",
+                "Constructor Research keeps an application's logs itself: read them there"
+                    .to_owned(),
+            ));
+        }
+        let from = env.connections_from(org);
+        let svc = self.service(from)?;
+        let access = deploy::cluster_access(&self.hub, &svc, from, env.connection_id)
+            .await
+            .map_err(|e| Refusal::Precondition("ENVIRONMENT_CLUSTER_UNUSABLE", format!("{e:#}")))?;
+        deploy::logs(&access, &d.namespace, &d.product, lines)
+            .await
+            .map_err(|e| Refusal::Precondition("ENVIRONMENT_CLUSTER_UNREACHABLE", format!("{e:#}")))
+    }
+
     /// A build Studio runs, step by step with the end of each step's log, as
     /// its pod has them now. The build must be one of the project's the
     /// caller can see; its pod is looked for in the project's namespace of

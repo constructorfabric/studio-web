@@ -5,6 +5,12 @@
 
 import type { Connection, DeployEnvironment, DeployEnvironmentInput, Deployment, DeploymentState } from "./api";
 
+/** Whether a deploy's release is worth reading from its cluster: one that
+ *  installed, or one that failed -- whose pods say why -- or is installing. */
+export function canReadStatus(d: Pick<Deployment, "state" | "action">): boolean {
+  return d.action !== "uninstall" && (d.state === "succeeded" || d.state === "failed" || d.state === "running");
+}
+
 /** One namespace per project and environment, unless the environment says otherwise. */
 export const DEFAULT_NAMESPACE_PATTERN = "{project}-{environment}";
 

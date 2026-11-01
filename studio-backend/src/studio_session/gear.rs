@@ -51,6 +51,14 @@ impl Default for StudioSessionGear {
 impl Gear for StudioSessionGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: StudioSessionConfig = ctx.config_or_default()?;
+        // The bridge finds a desktop session through this (ADR-0027 phases 4
+        // and 5); like the leases themselves it needs no driver.
+        ctx.client_hub()
+            .register::<dyn crate::studio_session::sdk::DesktopSessionsClientV1>(Arc::new(
+                crate::studio_session::sdk::DesktopSessionsLocalClient::new(Arc::clone(
+                    &self.desktops,
+                )),
+            ));
         // A desktop session is a lease, not a container: it is authorized the
         // same way and needs nothing else, so it is set up before anything
         // that can turn container sessions off.

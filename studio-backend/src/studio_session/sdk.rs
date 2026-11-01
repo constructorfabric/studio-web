@@ -95,5 +95,58 @@ impl StudioSessionDiscoveryClientV1 for StudioSessionDiscoveryLocalClient {
     }
 }
 
+/// The desktop sessions (ADR-0027 §4–5), for the bridge: a desktop posts its
+/// events, and the portal sends it commands, under the member's own token and
+/// the lease's id — no S2S token exists for a session the backend never
+/// launched. Registered whether or not container sessions are enabled, since a
+/// lease needs no driver.
+#[async_trait]
+pub trait DesktopSessionsClientV1: Send + Sync {
+    /// The trusted coordinates of the live desktop session `id`, when the
+    /// caller holds it. `None` for an ended lease and for somebody else's.
+    async fn resolve_own_desktop_session(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+    ) -> Option<SessionIdentity>;
+}
+
+/// In-process implementation over the gear's lease registry.
+pub struct DesktopSessionsLocalClient {
+    leases: Arc<super::desktop::DesktopLeases>,
+}
+
+impl DesktopSessionsLocalClient {
+    pub fn new(leases: Arc<super::desktop::DesktopLeases>) -> Self {
+        Self { leases }
+    }
+}
+
+#[async_trait]
+impl DesktopSessionsClientV1 for DesktopSessionsLocalClient {
+    async fn resolve_own_desktop_session(
+        &self,
+        ctx: &SecurityContext,
+        id: Uuid,
+    ) -> Option<SessionIdentity> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.leases
+            .held_by(
+                now,
+                id,
+                &ctx.subject_id().to_string(),
+                ctx.subject_tenant_id(),
+            )
+            .map(|lease| SessionIdentity {
+                session_id: lease.id,
+                tenant_id: lease.tenant_id,
+                workspace_id: lease.workspace_id,
+            })
+    }
+}
+
 pub(crate) use super::access::{TenantMembership, WorkspaceAccess};
 pub(crate) use super::config::StudioSessionConfig;

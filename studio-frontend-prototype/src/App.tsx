@@ -76,6 +76,7 @@ import {
   type StudioDocumentRef,
   type StudioTarget,
 } from "./studio-bridge";
+import { openOnMyDesktop } from "./open-in-desktop";
 import {
   ACCESS_MODELS,
   normalizeAccessConfig,
@@ -222,6 +223,7 @@ type BridgeMessage = { type: string } & Record<string, unknown>;
 type HandoffState =
   | { kind: "opening"; name: string; targetId: string }
   | { kind: "ready"; name: string; targetId: string }
+  | { kind: "desktop"; name: string; device: string; target: StudioTarget; path: string }
   | { kind: "error"; name: string; error: string };
 
 /** The product's mark, served from public/. Built through BASE_URL rather than
@@ -1480,8 +1482,20 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           // one of this target's own, and the document reads the same in either.
           true,
         ),
-      openFile: (target: StudioTarget, path: string) =>
-        openInStudio(target, { type: "studio.openInEditor", path }),
+      // A file of a project the member has open on their own desktop opens
+      // there (ADR-0027 §5), unless a web session for it is already mounted:
+      // that is the editor they are at, and the desktop is a minute faster
+      // than starting a session.
+      openFile: async (target: StudioTarget, path: string) => {
+        if (!spacesRef.current.some((s) => s.wsId === target.id)) {
+          const device = await openOnMyDesktop(token, target.id, path);
+          if (device) {
+            setHandoff({ kind: "desktop", name: target.name, device, target, path });
+            return;
+          }
+        }
+        await openInStudio(target, { type: "studio.openInEditor", path });
+      },
       // A product opens as its file: the Gearbox perspective it used to ask
       // for is the desktop's, and a portal session has no engine behind it.
       // The branch it was saved on is not brought in beside the checkout.
@@ -1493,7 +1507,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
       savedDocument,
     }),
-    [openInStudio, prewarm, opening, savedDocument],
+    [token, openInStudio, prewarm, opening, savedDocument],
   );
 
   useEffect(() => {
@@ -2962,6 +2976,26 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               <p className="error">{handoff.error}</p>
               <div className="handoff-actions">
                 <button onClick={() => setHandoff(null)}>Close</button>
+              </div>
+            </>
+          ) : handoff.kind === "desktop" ? (
+            <>
+              <strong>Sent to {handoff.device}</strong>
+              <p className="hint">
+                {handoff.name} is open in your desktop Studio, so <code>{handoff.path}</code> opens
+                there.
+              </p>
+              <div className="handoff-actions">
+                <button onClick={() => setHandoff(null)}>OK</button>
+                <button
+                  onClick={() => {
+                    const { target, path } = handoff;
+                    setHandoff(null);
+                    void openInStudio(target, { type: "studio.openInEditor", path });
+                  }}
+                >
+                  Open in the web IDE instead
+                </button>
               </div>
             </>
           ) : handoff.kind === "ready" ? (

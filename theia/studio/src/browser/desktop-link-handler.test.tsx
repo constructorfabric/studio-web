@@ -31,6 +31,7 @@ import { DesktopLandingWidget } from './desktop-landing-widget';
 import { DesktopStudioWidget } from './desktop-studio-widget';
 import { TENANT_TYPES } from './desktop-projects';
 import { fakeStudio, onDesktopChange, type DesktopChange } from './desktop-studio-client.fake';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
 
 const actual = jest.requireActual<typeof Client>('./desktop-studio-client');
 
@@ -118,6 +119,8 @@ describe('the desktop link handler', () => {
         const container = new Container();
         container.load(new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue(workspaces as never);
+            // The open project's checkouts come from SCM; none here.
+            bind(ScmService).toConstantValue({ repositories: [], onDidAddRepository: () => ({ dispose() { /* nothing */ } }), onDidRemoveRepository: () => ({ dispose() { /* nothing */ } }) } as never);
             bind(CommandService).toConstantValue(commands as never);
             bind(CommandRegistry).toConstantValue(commands as never);
             bind(MessageService).toConstantValue(messages as never);

@@ -7,6 +7,7 @@
 //! credential, which it reads from credstore as the service at the last
 //! moment and writes only into a file of its own that it removes afterwards.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,10 +17,10 @@ use async_trait::async_trait;
 use base64::Engine;
 use k8s_openapi::api::apps::v1::Deployment as KubeDeployment;
 use k8s_openapi::api::authentication::v1::SelfSubjectReview;
-use k8s_openapi::api::core::v1::{LocalObjectReference, Namespace, Secret, ServiceAccount};
+use k8s_openapi::api::core::v1::{LocalObjectReference, Namespace, Pod, Secret, ServiceAccount};
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::api::rbac::v1::{RoleBinding, RoleRef, Subject};
-use kube::api::{ListParams, ObjectMeta, Patch, PatchParams, PostParams};
+use kube::api::{ListParams, LogParams, ObjectMeta, Patch, PatchParams, PostParams};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use toolkit::client_hub::ClientHub;
@@ -28,6 +29,7 @@ use uuid::Uuid;
 
 use super::database;
 use super::model::{ChartRef, DatabaseMode, DeploymentAction};
+use super::preflight;
 use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
@@ -311,29 +313,29 @@ impl TaskHandler for DeployTask {
             Ok(p) => p,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
+        ctx.progress("reading what the chart needs").await;
+        let rendered = match helm(
+            &scratch,
+            helm_template_args(&payload, &prepared),
+            &ctx.cancel,
+        )
+        .await
+        {
+            Ok(out) => out,
+            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        };
+        let needs = match database::needs(&rendered) {
+            Ok(n) => n,
+            // Without a database of Studio's to prepare, a configuration it
+            // cannot read is the product's business, not a reason to refuse.
+            Err(_) if payload.database == DatabaseMode::Shared => Vec::new(),
+            Err(e) => {
+                return TaskOutcome::Failed(format!("the chart's database configuration: {e:#}"));
+            }
+        };
         // The product's database comes with it (`DatabaseMode`): whatever
         // its gears keep, in its namespace, before the release that reads it.
         if payload.database != DatabaseMode::Shared {
-            ctx.progress("reading what the chart needs of databases")
-                .await;
-            let rendered = match helm(
-                &scratch,
-                helm_template_args(&payload, &prepared),
-                &ctx.cancel,
-            )
-            .await
-            {
-                Ok(out) => out,
-                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
-            };
-            let needs = match database::needs(&rendered) {
-                Ok(n) => n,
-                Err(e) => {
-                    return TaskOutcome::Failed(format!(
-                        "the chart's database configuration: {e:#}"
-                    ));
-                }
-            };
             let image = payload
                 .database_image
                 .clone()
@@ -358,14 +360,52 @@ impl TaskHandler for DeployTask {
                 }
             }
         }
+        ctx.progress("checking the namespace has every secret the chart reads")
+            .await;
+        match secrets_in(&client, &payload.namespace).await {
+            Ok(present) => {
+                let reads = preflight::secrets_read(&rendered);
+                if let Some(why) = preflight::missing_secrets(
+                    &reads,
+                    &present,
+                    &needs,
+                    payload.database,
+                    &payload.namespace,
+                ) {
+                    return TaskOutcome::Failed(why);
+                }
+            }
+            // Not being allowed to list secrets is no reason to refuse: the
+            // watch below still sees a pod that cannot start.
+            Err(e) => {
+                warn!(error = %e, "studio-environments: the namespace's secrets could not be listed")
+            }
+        }
+        if let Err(e) = unstick_release(&scratch, &payload, &prepared, &ctx.cancel).await {
+            return TaskOutcome::Failed(format!("{e:#}"));
+        }
         ctx.progress(format!(
             "helm upgrade --install {} into {}",
             payload.release, payload.namespace
         ))
         .await;
-        let out = match helm(&scratch, helm_args(&payload, &prepared), &ctx.cancel).await {
-            Ok(out) => out,
-            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        let stuck = tokio::select! {
+            out = helm(&scratch, helm_args(&payload, &prepared), &ctx.cancel) => Ok(out),
+            why = watch_start(client.clone(), &payload.namespace) => Err(why),
+        };
+        let out = match stuck {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => return TaskOutcome::Failed(format!("{e:#}")),
+            Err(why) => {
+                // helm was stopped by being dropped and left the release
+                // pending, which would refuse the next install: put it back.
+                if let Err(e) = unstick_release(&scratch, &payload, &prepared, &ctx.cancel).await {
+                    warn!(error = %e, "studio-environments: a stopped release could not be put back");
+                }
+                return TaskOutcome::Failed(format!(
+                    "the release could not start, so the deploy stopped waiting: {why}"
+                ));
+            }
         };
         info!(
             deployment = %payload.deployment_id,
@@ -856,6 +896,98 @@ async fn helm_uninstall(
     helm(&scratch, helm_uninstall_args(p, &kubeconfig), cancel).await
 }
 
+/// The arguments that read a release's state, as JSON.
+pub fn helm_status_args(p: &DeployPayload, kubeconfig: &Path) -> Vec<String> {
+    vec![
+        "status".into(),
+        p.release.clone(),
+        "--namespace".into(),
+        p.namespace.clone(),
+        "--kubeconfig".into(),
+        kubeconfig.display().to_string(),
+        "--output".into(),
+        "json".into(),
+    ]
+}
+
+/// The arguments that take a release back to its last good revision.
+pub fn helm_rollback_args(p: &DeployPayload, kubeconfig: &Path) -> Vec<String> {
+    vec![
+        "rollback".into(),
+        p.release.clone(),
+        "--namespace".into(),
+        p.namespace.clone(),
+        "--kubeconfig".into(),
+        kubeconfig.display().to_string(),
+        "--wait".into(),
+        "--timeout".into(),
+        HELM_TIMEOUT.into(),
+    ]
+}
+
+/// Put back a release an earlier run left `pending-*` (see
+/// [`preflight::unstick`]); a release that is not there, or cannot be read,
+/// is left to the install, which says what is wrong with it.
+async fn unstick_release(
+    scratch: &Scratch,
+    p: &DeployPayload,
+    c: &Prepared,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    let Ok(status) = helm(scratch, helm_status_args(p, &c.kubeconfig), cancel).await else {
+        return Ok(());
+    };
+    let args = match preflight::unstick(&status) {
+        preflight::Unstick::None => return Ok(()),
+        preflight::Unstick::Uninstall => helm_uninstall_args(p, &c.kubeconfig),
+        preflight::Unstick::Rollback => helm_rollback_args(p, &c.kubeconfig),
+    };
+    warn!(release = %p.release, namespace = %p.namespace, "studio-environments: putting back a release an earlier run left pending");
+    helm(scratch, args, cancel)
+        .await
+        .map(|_| ())
+        .context("the release an earlier deploy left pending could not be put back")
+}
+
+/// The names of the namespace's secrets.
+async fn secrets_in(client: &kube::Client, namespace: &str) -> anyhow::Result<BTreeSet<String>> {
+    let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), namespace);
+    let list = tokio::time::timeout(
+        Duration::from_secs(20),
+        secrets.list_metadata(&ListParams::default()),
+    )
+    .await
+    .map_err(|_| anyhow!("the cluster did not answer in 20 s"))??;
+    Ok(list
+        .items
+        .into_iter()
+        .filter_map(|s| s.metadata.name)
+        .collect())
+}
+
+/// How often the install's pods are looked at.
+const WATCH_EVERY: Duration = Duration::from_secs(10);
+
+/// Look at the namespace's pods while helm waits, and answer why once a
+/// container cannot start (see [`preflight::StartWatch`]); never otherwise.
+async fn watch_start(client: kube::Client, namespace: &str) -> String {
+    let pods: kube::Api<Pod> = kube::Api::namespaced(client, namespace);
+    let mut watch = preflight::StartWatch::default();
+    loop {
+        tokio::time::sleep(WATCH_EVERY).await;
+        // A look the cluster did not answer is skipped, not counted.
+        let Ok(Ok(list)) =
+            tokio::time::timeout(Duration::from_secs(20), pods.list(&ListParams::default())).await
+        else {
+            continue;
+        };
+        let now: Vec<_> = list.items.iter().flat_map(preflight::waiting).collect();
+        if let Some(why) = watch.look(&now) {
+            return why;
+        }
+    }
+}
+
 /// One workload of a release as the cluster reports it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Workload {
@@ -871,6 +1003,113 @@ pub struct Rollout {
     pub workloads: Vec<Workload>,
     /// Hosts the release's ingresses answer on.
     pub hosts: Vec<String>,
+    /// The containers that cannot start, and why: one line each.
+    pub problems: Vec<String>,
+}
+
+/// The end of one container's log, as the release's pod has it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContainerLog {
+    pub pod: String,
+    pub container: String,
+    /// The log of the run before the last restart: what a crashing
+    /// container said before it died, which its new run has not.
+    pub previous: bool,
+    pub text: String,
+}
+
+/// How many lines of each log a reader gets when it does not say.
+pub const LOG_LINES: i64 = 200;
+const LOG_LINES_MAX: i64 = 2000;
+const LOG_BYTES: i64 = 128 * 1024;
+/// A release with more pods than this is read for its first ones only.
+const LOG_PODS: usize = 12;
+
+/// The lines to ask for: what was asked, within reason.
+pub fn log_lines(asked: Option<i64>) -> i64 {
+    asked.unwrap_or(LOG_LINES).clamp(1, LOG_LINES_MAX)
+}
+
+/// Which logs of a container to read: the current run's, and the one
+/// before when it has restarted and is not running now -- a crash loop's
+/// current run is often too young to have said anything.
+pub fn logs_to_read(pod: &Pod) -> Vec<(String, bool)> {
+    let Some(status) = &pod.status else {
+        return Vec::new();
+    };
+    status
+        .init_container_statuses
+        .iter()
+        .flatten()
+        .chain(status.container_statuses.iter().flatten())
+        .flat_map(|c| {
+            let running = c.state.as_ref().is_some_and(|s| s.running.is_some());
+            let mut out = vec![(c.name.clone(), false)];
+            if c.restart_count > 0 && !running {
+                out.push((c.name.clone(), true));
+            }
+            out
+        })
+        .collect()
+}
+
+/// The end of every container's log of a release, read now.
+pub async fn logs(
+    access: &ClusterAccess,
+    namespace: &str,
+    release: &str,
+    lines: i64,
+) -> anyhow::Result<Vec<ContainerLog>> {
+    let client = access.client().await?;
+    let pods: kube::Api<Pod> = kube::Api::namespaced(client, namespace);
+    let selector = format!("app.kubernetes.io/instance={release}");
+    let list = async {
+        let mut items = pods
+            .list(&ListParams::default().labels(&selector))
+            .await?
+            .items;
+        // As for the rollout: a chart that does not label its pods.
+        if items.is_empty() {
+            items = pods.list(&ListParams::default()).await?.items;
+        }
+        Ok::<_, kube::Error>(items)
+    };
+    let items = tokio::time::timeout(Duration::from_secs(20), list)
+        .await
+        .map_err(|_| anyhow!("the cluster did not answer in 20 s"))?
+        .map_err(|e| anyhow!("the cluster refused to say: {e}"))?;
+    let mut out = Vec::new();
+    for pod in items.iter().take(LOG_PODS) {
+        let name = pod.metadata.name.clone().unwrap_or_default();
+        for (container, previous) in logs_to_read(pod) {
+            let params = LogParams {
+                container: Some(container.clone()),
+                tail_lines: Some(lines),
+                limit_bytes: Some(LOG_BYTES),
+                previous,
+                ..LogParams::default()
+            };
+            // A container that never started has no log; the cluster's
+            // answer says why ("waiting to start: CreateContainerConfigError").
+            let text = match tokio::time::timeout(
+                Duration::from_secs(20),
+                pods.logs(&name, &params),
+            )
+            .await
+            {
+                Ok(Ok(text)) => text,
+                Ok(Err(e)) => format!("(no log: {e})"),
+                Err(_) => "(no log: the cluster did not answer in 20 s)".to_owned(),
+            };
+            out.push(ContainerLog {
+                pod: name.clone(),
+                container,
+                previous,
+                text,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Read a release's workloads and addresses from the cluster.
@@ -904,9 +1143,16 @@ pub async fn rollout(
             .flat_map(|s| s.rules.unwrap_or_default())
             .filter_map(|r| r.host)
             .collect::<Vec<_>>();
-        Ok::<_, kube::Error>((items, hosts))
+        // The pods say what the workloads' counts do not: why one is not ready.
+        let pods: kube::Api<Pod> = kube::Api::namespaced(client.clone(), namespace);
+        let problems = pods
+            .list(&ListParams::default())
+            .await
+            .map(|l| preflight::problems(&l.items))
+            .unwrap_or_default();
+        Ok::<_, kube::Error>((items, hosts, problems))
     };
-    let (items, hosts) = tokio::time::timeout(Duration::from_secs(20), read)
+    let (items, hosts, problems) = tokio::time::timeout(Duration::from_secs(20), read)
         .await
         .map_err(|_| anyhow!("the cluster did not answer in 20 s"))?
         .map_err(|e| anyhow!("the cluster refused to say: {e}"))?;
@@ -927,7 +1173,11 @@ pub async fn rollout(
             }
         })
         .collect();
-    Ok(Rollout { workloads, hosts })
+    Ok(Rollout {
+        workloads,
+        hosts,
+        problems,
+    })
 }
 
 #[cfg(test)]
@@ -1016,6 +1266,57 @@ mod tests {
         let line = helm_uninstall_args(&p, Path::new("/s/kubeconfig")).join(" ");
         assert!(line.starts_with("uninstall studio-web --namespace studio-web-prod"));
         assert!(line.contains("--wait") && line.contains("--ignore-not-found"));
+    }
+
+    #[test]
+    fn a_log_is_read_for_a_reasonable_number_of_lines() {
+        assert_eq!(log_lines(None), LOG_LINES);
+        assert_eq!(log_lines(Some(50)), 50);
+        assert_eq!(log_lines(Some(0)), 1);
+        assert_eq!(log_lines(Some(1_000_000)), LOG_LINES_MAX);
+    }
+
+    #[test]
+    fn a_crashing_container_is_read_with_the_run_before_it() {
+        let pod: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": { "name": "shop-api-1" },
+            "status": {
+                "initContainerStatuses": [{ "name": "migrate", "image": "x", "imageID": "", "ready": true,
+                    "restartCount": 0, "state": { "terminated": { "exitCode": 0 } } }],
+                "containerStatuses": [
+                    { "name": "api", "image": "x", "imageID": "", "ready": false, "restartCount": 4,
+                      "state": { "waiting": { "reason": "CrashLoopBackOff" } } },
+                    { "name": "sidecar", "image": "x", "imageID": "", "ready": true, "restartCount": 2,
+                      "state": { "running": {} } }
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            logs_to_read(&pod),
+            [
+                ("migrate".to_owned(), false),
+                ("api".to_owned(), false),
+                ("api".to_owned(), true),
+                ("sidecar".to_owned(), false),
+            ]
+        );
+        let empty: Pod =
+            serde_json::from_value(serde_json::json!({ "metadata": { "name": "p" } })).unwrap();
+        assert!(logs_to_read(&empty).is_empty());
+    }
+
+    #[test]
+    fn a_pending_release_is_read_as_json_and_rolled_back_with_a_wait() {
+        let p = payload();
+        let status = helm_status_args(&p, Path::new("/s/kubeconfig")).join(" ");
+        assert_eq!(
+            status,
+            "status studio-web --namespace studio-web-prod --kubeconfig /s/kubeconfig --output json"
+        );
+        let back = helm_rollback_args(&p, Path::new("/s/kubeconfig")).join(" ");
+        assert!(back.starts_with("rollback studio-web --namespace studio-web-prod"));
+        assert!(back.contains("--wait --timeout 8m"));
     }
 
     #[test]

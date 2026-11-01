@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Connection, DeployEnvironment, Deployment } from "./api";
 import {
   awaitingDecision,
+  canReadStatus,
   clusterConnections,
   emptyEnvironment,
   environmentProblem,
@@ -212,5 +213,16 @@ describe("a Constructor Research environment (ADR-0049)", () => {
   it("is chosen from Research sign-ins, a member's own among them", () => {
     const c = (id: string, provider: string, scope: string) => ({ id, provider, scope }) as Connection;
     expect(researchConnections([c("a", "research", "organization"), c("b", "research", "personal"), c("k", "kubernetes", "organization")]).map((x) => x.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("whose release the portal reads from its cluster", () => {
+  it("an installed, a failed and an installing deploy's, not an uninstall or one not started", () => {
+    expect(canReadStatus({ state: "succeeded", action: "install" })).toBe(true);
+    expect(canReadStatus({ state: "failed", action: "install" })).toBe(true);
+    expect(canReadStatus({ state: "running", action: "install" })).toBe(true);
+    expect(canReadStatus({ state: "queued", action: "install" })).toBe(false);
+    expect(canReadStatus({ state: "awaiting_approval", action: "install" })).toBe(false);
+    expect(canReadStatus({ state: "succeeded", action: "uninstall" })).toBe(false);
   });
 });

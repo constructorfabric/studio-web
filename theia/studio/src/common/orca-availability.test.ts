@@ -1,7 +1,7 @@
 // Every state the Agents panel can find the Orca runtime in, and what it says
 // and offers for each, on a member's machine and in a session.
 
-import { compareVersions, missingAgentsNote, orcaAvailability } from './orca-availability';
+import { agentsOrcaCannotFind, compareVersions, missingAgentsNote, orcaAvailability, orcaMissingAgentsNote } from './orca-availability';
 import type { OrcaRuntimeStatus } from './orca-protocol';
 
 const status = (over: Partial<OrcaRuntimeStatus>): OrcaRuntimeStatus => ({
@@ -115,5 +115,36 @@ describe('the agents Studio did not find', () => {
 
     it('say nothing when none is missing', () => {
         expect(missingAgentsNote('local', [])).toBe('');
+    });
+});
+
+describe('the agents Orca cannot start on a member\'s machine', () => {
+    const hooks = {
+        statuses: [
+            { agent: 'claude', state: 'installed', detail: null },
+            { agent: 'codex', state: 'not_installed', detail: 'Orca could not find Codex at codex' },
+            { agent: 'gemini', state: 'not_installed', detail: 'Orca could not find Gemini at gemini' },
+            { agent: 'opencode', state: 'not_installed', detail: null },
+        ],
+    };
+
+    it('are the offered ones Orca looked for and did not find', () => {
+        expect(agentsOrcaCannotFind(hooks, ['claude', 'codex', 'opencode'])).toEqual([
+            { agent: 'codex', why: 'Orca could not find Codex at codex' },
+        ]);
+    });
+
+    it('are none when Orca says nothing usable', () => {
+        expect(agentsOrcaCannotFind(undefined, ['codex'])).toEqual([]);
+        expect(agentsOrcaCannotFind({ statuses: 'x' }, ['codex'])).toEqual([]);
+        expect(agentsOrcaCannotFind({ statuses: [null, { agent: 7 }] }, ['codex'])).toEqual([]);
+    });
+
+    it('are named with Orca\'s reason and how to install each', () => {
+        expect(orcaMissingAgentsNote([{ agent: 'codex', why: 'Orca could not find Codex at codex' }])).toBe(
+            'Orca could not find Codex at codex. Install it with npm install -g @openai/codex, then press Refresh.'
+        );
+        expect(orcaMissingAgentsNote([{ agent: 'devin', why: 'Orca could not find Devin' }])).toBe('Orca could not find Devin.');
+        expect(orcaMissingAgentsNote([])).toBe('');
     });
 });

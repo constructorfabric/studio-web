@@ -13,6 +13,7 @@ import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import {
     type OrcaCreateTaskRequest,
+    type OrcaMissingAgent,
     type OrcaRepository,
     type OrcaRuntimeStatus,
     type OrcaService,
@@ -24,6 +25,7 @@ import {
     ORCA_AGENTS
 } from '../common/orca-protocol';
 import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents, orcaHost } from './orca-cli';
+import { agentsOrcaCannotFind } from '../common/orca-availability';
 import { NO_PROJECT_SYNC, type OrcaProjectSync } from '../common/desktop-orca-projects';
 import { DesktopOrcaProjects, fileStore, type OrcaProjectsPort } from './desktop-orca-projects';
 import { pairingOffer } from './orca-terminal-bridge';
@@ -99,7 +101,7 @@ export class OrcaServiceImpl implements OrcaService {
                 desktopRunning: asString(app.desktopWindowStatus)
                     ? asString(app.desktopWindowStatus) === 'available'
                     : app.running === true,
-                agents: availableAgents(ORCA_AGENTS),
+                ...(await this.agentsHere(host)),
                 host,
                 binary: this.binaryPath(),
                 paired
@@ -122,6 +124,28 @@ export class OrcaServiceImpl implements OrcaService {
                 agents: availableAgents(ORCA_AGENTS)
             };
         }
+    }
+
+    /**
+     * The agents this host can start. In a session the image is the truth and
+     * PATH shows it. On a member's machine Orca starts an agent with its own
+     * environment, so Orca is asked (#495); when it cannot say, every agent
+     * stays on offer.
+     */
+    protected async agentsHere(host: OrcaRuntimeStatus['host']): Promise<Pick<OrcaRuntimeStatus, 'agents' | 'agentsMissing'>> {
+        if (host !== 'local') {
+            return { agents: availableAgents(ORCA_AGENTS) };
+        }
+        let missing: OrcaMissingAgent[] = [];
+        try {
+            missing = agentsOrcaCannotFind(await this.cli.json<unknown>(['agent', 'hooks', 'status']), ORCA_AGENTS);
+        } catch {
+            // An Orca too old for the command: offer them all, as before.
+        }
+        return {
+            agents: ORCA_AGENTS.filter(agent => !missing.some(m => m.agent === agent)),
+            agentsMissing: missing,
+        };
     }
 
     async listWorktrees(): Promise<OrcaWorktree[]> {

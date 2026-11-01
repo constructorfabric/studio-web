@@ -67,8 +67,10 @@ pub fn needs(rendered: &str) -> anyhow::Result<Vec<ServerNeed>> {
     // env var -> secrets it is read from, across every workload.
     let mut secret_of: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for doc in serde_yaml::Deserializer::from_str(rendered) {
+        // A document that does not parse ends the stream: serde_yaml's
+        // iterator answers the same error again forever rather than move on.
         let Ok(doc) = Value::deserialize(doc) else {
-            continue;
+            break;
         };
         match doc.get("kind").and_then(Value::as_str) {
             Some("ConfigMap") => {
@@ -649,6 +651,12 @@ spec:
         assert!(in_namespace("postgres"));
         assert!(!in_namespace("db.acme.example"));
         assert_eq!(server_name("postgres"), "studio-postgres-postgres");
+    }
+
+    #[test]
+    fn manifests_that_stop_parsing_end_the_read_instead_of_hanging_it() {
+        let text = format!("{RENDERED}\n---\n: : not yaml [\n");
+        assert_eq!(needs(&text).unwrap(), needs(RENDERED).unwrap());
     }
 
     #[test]

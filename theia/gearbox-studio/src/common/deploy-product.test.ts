@@ -2,6 +2,11 @@ import {
   buildStages,
   defaultTarget,
   deploymentStateLabel,
+  flowToFollow,
+  logHeading,
+  nextTarget,
+  shouldAskFlow,
+  TARGETS_RETRY_MS,
   nextStep,
   type ProductBuild,
   type ProductDeployment,
@@ -270,5 +275,70 @@ describe("the way a product goes out: builds and deploys", () => {
   it("word a deploy's state as the portal does", () => {
     expect(deploymentStateLabel("running")).toBe("Deploying");
     expect(deploymentStateLabel("something-new")).toBe("something-new");
+  });
+});
+
+describe("what the Run & Deploy view follows", () => {
+  const deploy = (id: string, state: string, action = "install") => ({ id, state, action });
+
+  it("nothing once every build and deploy has ended", () => {
+    expect(flowToFollow([{ status: "passed" }], [deploy("a", "succeeded"), deploy("b", "failed")])).toEqual({ again: false, statuses: [] });
+  });
+
+  it("looks again while a build runs, without reading any release", () => {
+    expect(flowToFollow([{ status: "running" }], [deploy("a", "succeeded")])).toEqual({ again: true, statuses: [] });
+  });
+
+  it("reads the release of an installing deploy each time, and waits on a queued one", () => {
+    expect(flowToFollow([], [deploy("a", "running"), deploy("b", "queued"), deploy("c", "running", "uninstall")])).toEqual({
+      again: true,
+      statuses: ["a"],
+    });
+  });
+
+  it("does not wait for an approval that may never come", () => {
+    expect(flowToFollow([], [deploy("a", "awaiting_approval")])).toEqual({ again: false, statuses: [] });
+  });
+});
+
+describe("the deploy target once the environments are known", () => {
+  const prod = { id: "e-prod", name: "prod", namespace: "shop-prod", registry: "ghcr.io/acme", protected: false };
+  const targets = { projectId: "p", environments: [prod], bound: {} };
+  const local = { kind: "context" as const, name: "dmz-core" };
+
+  it("moves off a local context picked only because no environment was known yet", () => {
+    expect(nextTarget(local, false, targets, "prod", ["dmz-core"], "dmz-core")).toEqual({ kind: "environment", id: "e-prod" });
+  });
+
+  it("keeps a context the member picked", () => {
+    expect(nextTarget(local, true, targets, "prod", ["dmz-core"], "dmz-core")).toBe(local);
+  });
+
+  it("keeps an environment, and falls back to the machine's context only with no environment", () => {
+    const env = { kind: "environment" as const, id: "e-prod" };
+    expect(nextTarget(env, false, undefined, "prod", ["dmz-core"], "dmz-core")).toBe(env);
+    expect(nextTarget(undefined, false, undefined, "prod", ["dmz-core"], "dmz-core")).toEqual(local);
+    expect(nextTarget(undefined, false, undefined, "prod", [], undefined)).toBeUndefined();
+  });
+});
+
+describe("when the Run & Deploy view asks for the project's environments", () => {
+  it("once per product file when the project was placed", () => {
+    expect(shouldAskFlow({ placed: false }, "/a/product.gdl", 0)).toBe(true);
+    expect(shouldAskFlow({ file: "/a/product.gdl", at: 0, placed: true }, "/a/product.gdl", 10 * TARGETS_RETRY_MS)).toBe(false);
+    expect(shouldAskFlow({ file: "/a/product.gdl", at: 0, placed: true }, "/b/product.gdl", 1)).toBe(true);
+  });
+
+  it("again after a while when it could not be placed, not on every draw", () => {
+    const asked = { file: "/a/product.gdl", at: 1_000, placed: false };
+    expect(shouldAskFlow(asked, "/a/product.gdl", 1_000 + TARGETS_RETRY_MS - 1)).toBe(false);
+    expect(shouldAskFlow(asked, "/a/product.gdl", 1_000 + TARGETS_RETRY_MS)).toBe(true);
+  });
+});
+
+describe("a container's log heading", () => {
+  it("names the pod and the container, and the run before a restart", () => {
+    expect(logHeading({ pod: "shop-api-1", container: "api", previous: false })).toBe("shop-api-1 · api");
+    expect(logHeading({ pod: "shop-api-1", container: "api", previous: true })).toBe("shop-api-1 · api (the run before its last restart)");
   });
 });

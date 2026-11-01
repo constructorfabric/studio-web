@@ -23,6 +23,7 @@ import { DesktopLandingWidget } from './desktop-landing-widget';
 import { DesktopStudioWidget } from './desktop-studio-widget';
 import { TENANT_TYPES } from './desktop-projects';
 import { fakeStudio } from './desktop-studio-client.fake';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
 
 const STUDIO = 'https://studio-dev.cfabric.org';
 const ENVIRONMENTS = [
@@ -78,6 +79,8 @@ describe('the landing page and the Studio view', () => {
                 tryGetRoots: () => [], recentWorkspaces: async () => [], open: jest.fn(),
             } as never);
             const commands = { executeCommand: jest.fn(async () => undefined), getCommand: () => undefined, isEnabled: () => true };
+            // The open project's checkouts come from SCM; none here.
+            bind(ScmService).toConstantValue({ repositories: [], onDidAddRepository: () => ({ dispose() { /* nothing */ } }), onDidRemoveRepository: () => ({ dispose() { /* nothing */ } }) } as never);
             bind(CommandService).toConstantValue(commands as never);
             bind(CommandRegistry).toConstantValue(commands as never);
             bind(StorageService).toConstantValue({ getData: async () => undefined, setData: async () => undefined } as never);

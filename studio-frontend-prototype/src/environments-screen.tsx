@@ -19,6 +19,7 @@ import {
   type DeployEnvironment,
   type DeployEnvironmentInput,
   type Deployment,
+  type ContainerLog,
   type DeploymentStatus,
   type EnvironmentBinding,
   type ProjectTargets,
@@ -32,6 +33,7 @@ import {
   type EnvironmentField,
   STATE_LABELS,
   awaitingDecision,
+  canReadStatus,
   clusterCards,
   clusterConnections,
   emptyEnvironment,
@@ -102,6 +104,23 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
   const [status, setStatus] = useState<DeploymentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [logs, setLogs] = useState<ContainerLog[] | null>(null);
+  const [readingLogs, setReadingLogs] = useState(false);
+  const readLogs = async () => {
+    if (logs) {
+      setLogs(null);
+      return;
+    }
+    setReadingLogs(true);
+    setError(null);
+    try {
+      setLogs((await api.deploymentLogs(token, org, d.id)).containers);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setReadingLogs(false);
+    }
+  };
   const read = async () => {
     setBusy(true);
     setError(null);
@@ -117,6 +136,9 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
     <div className="env-status">
       <button type="button" className="ghost" disabled={busy} onClick={() => void read()} data-deployment-status>
         {busy ? "Asking the cluster…" : status ? "Ask again" : "Status in the cluster"}
+      </button>{" "}
+      <button type="button" className="ghost" disabled={readingLogs} onClick={() => void readLogs()} data-deployment-logs>
+        {readingLogs ? "Reading the logs…" : logs ? "Hide logs" : "Logs"}
       </button>
       {error && <span className="error">{error}</span>}
       {status && (
@@ -130,6 +152,11 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
               {w.name} <span className="sub">{w.images.join(", ")}</span>
             </li>
           ))}
+          {(status.problems ?? []).map((p) => (
+            <li key={p} className="error" data-deployment-problem>
+              {p}
+            </li>
+          ))}
           {status.hosts.map((h) => (
             <li key={h}>
               <a href={`https://${h}`} target="_blank" rel="noreferrer">
@@ -138,6 +165,22 @@ function StatusButton({ token, org, d }: { token: string; org: string; d: Deploy
             </li>
           ))}
         </ul>
+      )}
+      {logs && (
+        <div className="env-logs" data-deployment-logs-view>
+          {logs.length === 0 && <p className="sub">No pods of this release run in {d.namespace}.</p>}
+          {logs.map((l) => (
+            <details key={`${l.pod}/${l.container}/${l.previous}`} open={logs.length === 1 || l.previous}>
+              <summary>
+                {l.pod} · {l.container}
+                {l.previous ? " (the run before its last restart)" : ""}
+              </summary>
+              <pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                {l.text.trim() === "" ? "(empty)" : l.text}
+              </pre>
+            </details>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -1354,7 +1397,7 @@ export function ProjectEnvironments({
           {deployments.slice(0, 10).map((d) => (
             <li key={d.id}>
               <DeploymentLine d={d} showProject={false} />
-              {d.state === "succeeded" && <StatusButton token={token} org={targets.organization_id} d={d} />}
+              {canReadStatus(d) && <StatusButton token={token} org={targets.organization_id} d={d} />}
             </li>
           ))}
         </ul>

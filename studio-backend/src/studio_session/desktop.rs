@@ -146,6 +146,23 @@ impl DesktopLeases {
         found
     }
 
+    /// The live lease `id`, when `member` of `tenant_id` holds it. The desktop
+    /// posting its events (phase 4) and the portal sending it a command
+    /// (phase 5) are both the member's own calls: somebody else's lease is
+    /// answered like a missing one, as in [`Self::end`].
+    pub fn held_by(
+        &self,
+        now: u64,
+        id: Uuid,
+        member: &str,
+        tenant_id: Uuid,
+    ) -> Option<DesktopLease> {
+        self.live(now)
+            .get(&id)
+            .filter(|lease| lease.member == member && lease.tenant_id == tenant_id)
+            .cloned()
+    }
+
     /// End a lease the member holds. Somebody else's lease is answered like a
     /// missing one: ending it is not theirs to do, and saying it exists would
     /// be telling them where a colleague is working from.
@@ -230,6 +247,34 @@ mod tests {
         assert_eq!(leases.in_workspace(2, ws).len(), 1);
         assert!(leases.end(2, lease.id, "alice"));
         assert!(!leases.end(2, lease.id, "alice"));
+    }
+
+    #[test]
+    fn a_lease_is_found_only_for_its_holder_in_its_tenant_and_while_it_lives() {
+        let leases = DesktopLeases::default();
+        let ws = Uuid::new_v4();
+        let tenant = Uuid::new_v4();
+        let mut held = renewal(ws, "alice", "laptop");
+        held.tenant_id = tenant;
+        let (lease, _) = leases.renew(1, held);
+        assert_eq!(
+            leases
+                .held_by(2, lease.id, "alice", tenant)
+                .map(|l| l.workspace_id),
+            Some(ws)
+        );
+        assert!(leases.held_by(2, lease.id, "bob", tenant).is_none());
+        assert!(
+            leases
+                .held_by(2, lease.id, "alice", Uuid::new_v4())
+                .is_none()
+        );
+        assert!(leases.held_by(2, Uuid::new_v4(), "alice", tenant).is_none());
+        assert!(
+            leases
+                .held_by(lease.expires_at_epoch_secs(), lease.id, "alice", tenant)
+                .is_none()
+        );
     }
 
     #[test]
