@@ -6,11 +6,10 @@ import React, { useCallback } from 'react';
 import {
   useAppSelector,
   useDomainExtensions,
-  useMountedExtensions,
   eventBus,
   FRONTX_SCREEN_DOMAIN,
-  type ScreenExtension,
 } from '@gears-frontx/react';
+import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import {
   NavigationMenu,
   NavigationMenuItem,
@@ -24,15 +23,15 @@ import {
   type MfeBootstrapState,
 } from '@/app/slices/mfeBootstrapSlice';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
-import { parentSectionOf, resolveLevelMenu, sectionOf } from '@/app/mfe/screenLevels';
+import { parentSectionOf, resolveLevelMenu, sectionOf, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { levelIconName } from './levelIcon';
 import { useScreenLevel } from './useScreenLevel';
 import styles from './LevelTabs.module.css';
 
 function isActiveItem(
-  item: ScreenExtension,
-  mounted: ScreenExtension | undefined,
+  item: StudioScreenExtension,
+  mounted: StudioScreenExtension | undefined,
   section: string | null
 ): boolean {
   const itemSection = sectionOf(item);
@@ -48,9 +47,9 @@ function isActiveItem(
 export const LevelTabs: React.FC = () => {
   const t = useShellText();
   const level = useScreenLevel();
-  const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as ScreenExtension[];
+  const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const items = resolveLevelMenu(registered, level);
-  const mounted = useMountedExtensions(FRONTX_SCREEN_DOMAIN)[0] as ScreenExtension | undefined;
+  const mounted = useMountedExtensions(FRONTX_SCREEN_DOMAIN)[0] as StudioScreenExtension | undefined;
   const section = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.section ?? null
   );
@@ -59,7 +58,7 @@ export const LevelTabs: React.FC = () => {
       (state[MFE_BOOTSTRAP_SLICE_KEY] as MfeBootstrapState | undefined)?.status ?? 'pending'
   );
 
-  const choose = useCallback((chosen: ScreenExtension) => {
+  const choose = useCallback((chosen: StudioScreenExtension) => {
     eventBus.emit('app/context/screen/requested', { extensionId: chosen.id });
   }, []);
 

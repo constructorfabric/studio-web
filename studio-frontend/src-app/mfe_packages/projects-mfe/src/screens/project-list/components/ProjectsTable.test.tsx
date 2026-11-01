@@ -1,7 +1,7 @@
 import { TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -24,6 +24,12 @@ const CONFIG = { status: 'draft' as const, owner_id: 'user-1' };
 
 /** Reassigned per test: the Status cell reads all four fields differently. */
 let configState: ProjectConfigState;
+
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
 
 vi.mock('../../../shared/useProjectConfig', () => ({
   useProjectConfig: () => configState,
@@ -71,7 +77,6 @@ function tenant(id: string, tenantType: string): Tenant {
 const PROJECT = tenant('proj', TENANT_TYPES.project);
 
 async function mount(rows: Tenant[]) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',

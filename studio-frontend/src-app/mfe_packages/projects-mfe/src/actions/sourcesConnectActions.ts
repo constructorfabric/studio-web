@@ -22,7 +22,7 @@ export function openSourcesConnect(bridge: ChildMfeBridge | null): void {
 }
 
 export function closeSourcesConnect(bridge: ChildMfeBridge | null): void {
-  void closeOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID, 'projects');
+  closeOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID, 'projects');
 }
 
 export function openConnectionForm(bridge: ChildMfeBridge | null): void {

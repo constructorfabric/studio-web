@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -8,6 +8,12 @@ import {
 import { CONNECTION_LIST_NAMESPACE } from '../../../i18n';
 import en from '../i18n/en.json';
 import { ConnectionsToolbar } from './ConnectionsToolbar';
+
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
 
 /**
  * The header's controls come from the kit and are configured, not written, so
@@ -20,7 +26,6 @@ import { ConnectionsToolbar } from './ConnectionsToolbar';
  * racing the async loader.
  */
 async function mount(busy: boolean) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   i18nRegistry.register(CONNECTION_LIST_NAMESPACE, 'en' as never, en);
   // The toolbar reads the bridge to mount the overlay; below a real root that

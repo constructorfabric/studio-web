@@ -1,4 +1,4 @@
-import type { ScreenExtension } from '@gears-frontx/react';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
 /**
  * A screen extension as the routing tests need one: the entry derived from
@@ -10,5 +10,5 @@ export const screen = (
   route: string,
   level: string,
   extra: Record<string, unknown> = {}
-): ScreenExtension =>
+): StudioScreenExtension =>
   ({ id, entry: `entry.${route.split('/')[1]}`, presentation: { label: id, route, level, ...extra } }) as never;

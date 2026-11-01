@@ -1,74 +1,45 @@
 /**
- * An in-memory navigation history for tests.
- *
- * `@gears-frontx/routing` keeps ONE `NavigationHistory` per realm under a
- * well-known symbol and hands the same instance to every caller. Tests need a
- * fresh one each, over an adapter they control instead of `window`, so this
- * helper deletes the realm-global before resolving again. The key literal is
- * the package's own (`history/singleton.ts`), marked @internal there; if a
- * future version renames it, the "fresh instance per call" test fails first.
+ * An in-memory navigation history for tests, with the library's semantics: the
+ * location already reflects a navigation when its subscribers run, `push` and
+ * `replace` notify at once, `go` lands later as a `'history'` round, every entry
+ * keeps its position, and a round started from inside another waits for it.
+ * `@gears-frontx/routing` 0.4 builds its own only over `window`.
  */
-import {
-  resolveNavigationHistory,
-  type AdapterLocation,
-  type HistoryAdapter,
-  type NavigationHistory,
+import type {
+  HistoryNotification,
+  HistorySubscriber,
+  Location,
+  NavigationHistory,
+  NavigationKind,
 } from '@gears-frontx/routing';
 
-const NAVIGATION_HISTORY_KEY = Symbol.for('@gears-frontx/routing/navigation-history/v1');
-
-export interface MemoryHistoryAdapter extends HistoryAdapter {
+export interface MemoryHistoryAdapter {
+  /** Every write goes through these two, so a test can count them. */
+  pushState(url: string): void;
+  replaceState(url: string): void;
   /** The current entry's path, query and fragment, as pushed. */
   url(): string;
   /** How many entries the stack holds. */
   length(): number;
-  /** Resolves once the pop listeners queued by `go` have run. */
+  /** Resolves once the rounds queued by `go` have run. */
   settle(): Promise<void>;
 }
 
-interface StackEntry {
-  path: string;
-  state: unknown;
+interface Entry {
+  url: string;
+  position: number;
 }
 
-function split(path: string): AdapterLocation {
-  const url = new URL(path, 'http://memory.test');
+/** The library abandons a queue that refills itself this many times in a row. */
+const ROUND_LIMIT = 100;
+
+function locationOf(entry: Entry): Location {
+  const url = new URL(entry.url, 'http://memory.test');
   return {
     path: url.pathname,
     search: url.search.startsWith('?') ? url.search.slice(1) : url.search,
     hash: url.hash.startsWith('#') ? url.hash.slice(1) : url.hash,
-  };
-}
-
-export function createMemoryHistoryAdapter(initialUrl = '/'): MemoryHistoryAdapter {
-  const stack: StackEntry[] = [{ path: initialUrl, state: undefined }];
-  let index = 0;
-  const pops = new Set<() => void>();
-  return {
-    getLocation: () => split(stack[index].path),
-    pushState(path, state) {
-      stack.splice(index + 1);
-      stack.push({ path, state });
-      index = stack.length - 1;
-    },
-    replaceState(path, state) {
-      stack[index] = { path, state };
-    },
-    getState: () => stack[index].state,
-    go(delta) {
-      const next = index + delta;
-      if (next < 0 || next >= stack.length) return;
-      index = next;
-      // The browser delivers popstate asynchronously; so does this.
-      queueMicrotask(() => pops.forEach((listener) => listener()));
-    },
-    onPop(listener) {
-      pops.add(listener);
-      return () => pops.delete(listener);
-    },
-    url: () => stack[index].path,
-    length: () => stack.length,
-    settle: () => new Promise((resolve) => queueMicrotask(() => queueMicrotask(resolve))),
+    position: entry.position,
   };
 }
 
@@ -76,7 +47,82 @@ export function freshNavigationHistory(initialUrl = '/'): {
   history: NavigationHistory;
   adapter: MemoryHistoryAdapter;
 } {
-  delete (globalThis as unknown as Record<symbol, unknown>)[NAVIGATION_HISTORY_KEY];
-  const adapter = createMemoryHistoryAdapter(initialUrl);
-  return { history: resolveNavigationHistory(() => adapter), adapter };
+  const stack: Entry[] = [{ url: initialUrl, position: 0 }];
+  let index = 0;
+  const subscribers = new Set<HistorySubscriber>();
+  const pending: HistoryNotification[] = [];
+  let dispatching = false;
+
+  const runRound = (notification: HistoryNotification): void => {
+    for (const subscriber of [...subscribers]) {
+      if (!subscribers.has(subscriber)) continue;
+      try {
+        subscriber(notification);
+      } catch (error) {
+        console.error('[memoryNavigationHistory] a subscriber threw during a round', error);
+      }
+    }
+  };
+
+  const notify = (kind: NavigationKind): void => {
+    pending.push({ location: locationOf(stack[index]), kind });
+    if (dispatching) return;
+    dispatching = true;
+    try {
+      for (let rounds = 0; pending.length > 0; rounds += 1) {
+        if (rounds > ROUND_LIMIT) {
+          pending.length = 0;
+          throw new Error(`[memoryNavigationHistory] ${ROUND_LIMIT} rounds without the queue emptying`);
+        }
+        runRound(pending.shift()!);
+      }
+    } finally {
+      dispatching = false;
+    }
+  };
+
+  const adapter: MemoryHistoryAdapter = {
+    pushState(url) {
+      const position = stack[index].position + 1;
+      stack.splice(index + 1, stack.length, { url, position });
+      index += 1;
+    },
+    replaceState(url) {
+      stack[index] = { url, position: stack[index].position };
+    },
+    url: () => stack[index].url,
+    length: () => stack.length,
+    settle: () => new Promise((resolve) => queueMicrotask(() => queueMicrotask(resolve))),
+  };
+
+  const history: NavigationHistory = {
+    get location() {
+      return locationOf(stack[index]);
+    },
+    subscribe(subscriber) {
+      subscribers.add(subscriber);
+      return () => {
+        subscribers.delete(subscriber);
+      };
+    },
+    push(url) {
+      adapter.pushState(url);
+      notify('push');
+    },
+    replace(url) {
+      adapter.replaceState(url);
+      notify('replace');
+    },
+    go(delta) {
+      const next = index + delta;
+      if (next < 0 || next >= stack.length) return;
+      // The browser lands a `go` later, as a popstate; so does this.
+      queueMicrotask(() => {
+        index = next;
+        notify('history');
+      });
+    },
+  };
+
+  return { history, adapter };
 }

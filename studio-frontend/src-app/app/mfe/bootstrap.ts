@@ -27,7 +27,6 @@ import {
   sidebarDomain,
   popupDomain,
   overlayDomain,
-  prewarmShadowStyles,
 } from '@gears-frontx/react';
 import type {
   FrontXApp,
@@ -45,6 +44,8 @@ import type {
 
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
+  STUDIO_ACTION_CHAIN_DONE,
+  STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
@@ -55,6 +56,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+  prewarmShadowStyles,
 } from '@constructor-studio/mfe-shared';
 import {
   createArtifactOpenHandler,
@@ -62,6 +64,8 @@ import {
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
 import { createNotifyHandler } from '@/app/mfe/notifyAction';
+import { occupancyOf } from '@/app/mfe/domainOccupancy';
+import { outcomesOf } from '@/app/mfe/shellOutcomes';
 import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
@@ -173,27 +177,33 @@ export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): str
 class HostContainerHooks implements ContainerHooks {
   private readonly elements = new Map<string, HTMLElement>();
 
-  constructor(private readonly fill: boolean = true) {}
+  constructor(
+    private readonly registry: MfeRegistry,
+    private readonly domainId: string,
+    private readonly fill: boolean = true,
+  ) {}
 
   create(extensionId: string): Element {
     const el = document.createElement('div');
     el.dataset.extensionId = extensionId;
     if (this.fill) el.style.height = '100%';
     this.elements.set(extensionId, el);
+    occupancyOf(this.registry).created(this.domainId, extensionId);
     return el;
   }
 
   destroy(extensionId: string): void {
     this.elements.delete(extensionId);
+    occupancyOf(this.registry).destroyed(this.domainId, extensionId);
   }
 }
 
 class ScreenDomainImpl extends ExtensionDomainImplementation {
   private readonly strategy: ExclusiveMountStrategy;
 
-  constructor(ctx: DomainContext, hooks: ContainerHooks, registry: MfeRegistry, domainId: string) {
+  constructor(ctx: DomainContext, hooks: ContainerHooks, registry: MfeRegistry) {
     super();
-    this.strategy = new ExclusiveMountStrategy(ctx.mounter, hooks, registry, domainId);
+    this.strategy = new ExclusiveMountStrategy(ctx.mounter, hooks);
     ctx.registerHandler(
       FRONTX_ACTION_MOUNT_EXT,
       ActionHandler.fromFunction((_t, p) => this.strategy.mount(p as ActionPayload)),
@@ -205,6 +215,9 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_WORKSPACES_PUBLISH, createWorkspacePublishHandler());
     ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
     ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
+    // Where every shell request reports how it ended (shellOutcomes.ts).
+    ctx.registerHandler(STUDIO_ACTION_CHAIN_DONE, outcomesOf(registry).done);
+    ctx.registerHandler(STUDIO_ACTION_CHAIN_FAILED, outcomesOf(registry).failed);
   }
 
   protected getMountStrategies(): MountStrategy[] {
@@ -215,15 +228,9 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
 class OptionalDomainImpl extends ExtensionDomainImplementation {
   private readonly strategy: OptionalMountStrategy;
 
-  constructor(
-    ctx: DomainContext,
-    hooks: ContainerHooks,
-    registry: MfeRegistry,
-    domainId: string,
-    handlers: Record<string, ActionHandler> = {},
-  ) {
+  constructor(ctx: DomainContext, hooks: ContainerHooks, handlers: Record<string, ActionHandler> = {}) {
     super();
-    this.strategy = new OptionalMountStrategy(ctx.mounter, hooks, registry, domainId);
+    this.strategy = new OptionalMountStrategy(ctx.mounter, hooks);
     ctx.registerHandler(
       FRONTX_ACTION_MOUNT_EXT,
       ActionHandler.fromFunction((_t, p) => this.strategy.mount(p as ActionPayload)),
@@ -245,7 +252,7 @@ class OptionalDomainImpl extends ExtensionDomainImplementation {
 class ScreenDomainFactory extends ExtensionDomainImplementationFactory {
   constructor(private readonly registry: MfeRegistry) { super(); }
   build(ctx: DomainContext): ScreenDomainImpl {
-    return new ScreenDomainImpl(ctx, new HostContainerHooks(), this.registry, screenDomain.id);
+    return new ScreenDomainImpl(ctx, new HostContainerHooks(this.registry, screenDomain.id), this.registry);
   }
 }
 
@@ -257,13 +264,7 @@ class OptionalDomainFactory extends ExtensionDomainImplementationFactory {
     private readonly handlers: Record<string, ActionHandler> = {},
   ) { super(); }
   build(ctx: DomainContext): OptionalDomainImpl {
-    return new OptionalDomainImpl(
-      ctx,
-      new HostContainerHooks(this.fill),
-      this.registry,
-      this.domainId,
-      this.handlers,
-    );
+    return new OptionalDomainImpl(ctx, new HostContainerHooks(this.registry, this.domainId, this.fill), this.handlers);
   }
 }
 
@@ -413,13 +414,23 @@ async function registerMfePackage(
 }
 
 /**
+ * A domain declaration without its `route`. The framework starts its own router
+ * for every routed domain, and that router clears our address (ADR-0028).
+ */
+function unrouted<T extends { route?: string }>(declaration: T): Omit<T, 'route'> {
+  const rest = { ...declaration };
+  delete rest.route;
+  return rest;
+}
+
+/**
  * The screen domain this host registers: the framework's `screenDomain` plus
  * the studio context properties a screen-mounted MFE may ask for, and the
  * frame address a frame-entry MFE's `urlProperty` names (ADR-0021). Exported
  * so a test can read what the shell declares without standing up a registry.
  */
 export function buildStudioScreenDomain(): ExtensionDomain {
-  return {
+  return unrouted({
     ...screenDomain,
     actions: [
       ...screenDomain.actions,
@@ -427,6 +438,8 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_WORKSPACES_PUBLISH,
       STUDIO_ACTION_ARTIFACT_OPEN,
       STUDIO_ACTION_NOTIFY,
+      STUDIO_ACTION_CHAIN_DONE,
+      STUDIO_ACTION_CHAIN_FAILED,
     ],
     sharedProperties: [
       ...screenDomain.sharedProperties,
@@ -438,7 +451,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
     ],
-  };
+  });
 }
 
 /**
@@ -468,7 +481,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
    * a domain that does not declare a property cannot deliver it — an entry
    * asking for one fails registration instead.
    */
-  const studioOverlayDomain: ExtensionDomain = {
+  const studioOverlayDomain: ExtensionDomain = unrouted({
     ...overlayDomain,
     // The overlay that creates a workspace hands it back through this action —
     // it is mounted here, and an action reaches only the domain it targets, so
@@ -481,11 +494,11 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
       STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
     ],
-  };
+  });
   registry.registerDomain(studioScreenDomain, new ScreenDomainFactory(registry));
-  registry.registerDomain(sidebarDomain, new OptionalDomainFactory(registry, sidebarDomain.id));
+  registry.registerDomain(unrouted(sidebarDomain), new OptionalDomainFactory(registry, sidebarDomain.id));
   // Framed domains: the extension states its own footprint, the shell only clamps it.
-  registry.registerDomain(popupDomain, new OptionalDomainFactory(registry, popupDomain.id, false));
+  registry.registerDomain(unrouted(popupDomain), new OptionalDomainFactory(registry, popupDomain.id, false));
   registry.registerDomain(
     studioOverlayDomain,
     new OptionalDomainFactory(registry, overlayDomain.id, false, {

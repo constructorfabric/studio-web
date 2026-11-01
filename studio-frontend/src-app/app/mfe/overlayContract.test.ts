@@ -24,16 +24,17 @@ import {
   gtsPlugin,
   type MfeEntryMF,
   type Extension,
-  type ScreenExtension,
 } from '@gears-frontx/react';
 // Not re-exported by @gears-frontx/react — this is the contract check
 // `registerExtension` runs after the type-system register succeeds.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { SHELL_SCHEMAS } from './schemas';
-import { resolveLevelMenu } from './screenLevels';
+import { resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
+  STUDIO_ACTION_CHAIN_DONE,
+  STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_NOTIFY,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -105,6 +106,17 @@ describe('generated MFE manifest', () => {
       ...(config.extensions ?? []).map((extension) => extension.id),
     ]);
     expect(ids.filter((id) => !isWellFormedGtsId(id))).toEqual([]);
+  });
+
+  // requestFromHost's replies come back to the entry that asked, and the runtime
+  // drops a reply its target does not declare without a word: New workspace
+  // would wait forever (domainRegistration.test shows it on a real registry).
+  it('lets New workspace take the replies to its request to the shell', () => {
+    const entry = entriesById.get(
+      'gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.workspace_create.v1'
+    );
+
+    expect(entry?.actions).toEqual(expect.arrayContaining([STUDIO_ACTION_CHAIN_DONE, STUDIO_ACTION_CHAIN_FAILED]));
   });
 
   it('gives every declared property and action a well-formed GTS id', () => {
@@ -332,7 +344,7 @@ describe('generated MFE manifest', () => {
     });
 
     it("draws the project's tabs in the design's order, Specs and Sources after Artifacts", () => {
-      const tabs = resolveLevelMenu(screens as ScreenExtension[], 'project');
+      const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
         'Artifacts',

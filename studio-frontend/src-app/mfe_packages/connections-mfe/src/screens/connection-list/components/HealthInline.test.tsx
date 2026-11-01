@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import { CONNECTION_LIST_NAMESPACE } from '../../../i18n';
 import en from '../i18n/en.json';
 
@@ -26,7 +26,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
   // Spy in place: `register`/`initialize` live on the prototype, so a spread
   // copy of the singleton would drop what `./init` needs.
   vi.spyOn(actual.apiRegistry, 'getService').mockImplementation(getServiceMock);
-  return { ...actual };
+  return { ...actual, queryCacheShared: actual.queryCache };
 });
 
 /** The gears' RFC 7807 body, with their own vocabulary under `context`. */
@@ -55,7 +55,6 @@ async function mount(query: Record<string, unknown>) {
   });
   useQueryMock.mockReturnValue({ isPending: false, isError: false, error: null, ...query });
 
-  createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   const { HealthInline } = await import('./HealthInline');
   i18nRegistry.register(CONNECTION_LIST_NAMESPACE, 'en' as never, en);

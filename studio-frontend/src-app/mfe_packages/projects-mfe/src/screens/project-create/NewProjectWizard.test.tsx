@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { FrontXProvider } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -12,6 +12,12 @@ import {
 const { translations } = vi.hoisted(() => ({
   translations: { current: { isLoaded: true, error: null as Error | null } },
 }));
+
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -38,7 +44,6 @@ vi.mock('./steps/RepositoriesStep', () => ({ RepositoriesStep: () => null }));
 vi.mock('./steps/RepositoriesFooterNote', () => ({ RepositoriesFooterNote: () => null }));
 
 async function mountWizard() {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { NewProjectWizard } = await import('./NewProjectWizard');
   const { bridge } = createMfeBridgeFixture({ domainId: 'overlay', instanceId: 'inst' });

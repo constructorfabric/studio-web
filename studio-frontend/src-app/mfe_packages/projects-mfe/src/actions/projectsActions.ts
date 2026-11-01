@@ -78,9 +78,9 @@ export function requestOpenProject(
  * the workspace's projects and not the one row the wizard knows; the caller
  * reads them and this only makes sure the new project is among them.
  *
- * Awaited, because the wizard may only unmount once the shell has heard it:
- * the overlay closes on Escape and on the scrim without asking, and the wizard
- * is what holds the created project's identity.
+ * Handed over before the wizard closes: the wizard is what holds the created
+ * project's identity, and the overlay closes on Escape and on the scrim without
+ * asking.
  */
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-after-create:p1
 export function announceCreatedProject(
@@ -88,12 +88,11 @@ export function announceCreatedProject(
   project: ContextEntity,
   siblings: readonly ContextEntity[],
   workspaceId: string
-): Promise<void> {
-  if (!bridge) return Promise.resolve();
+): void {
   const listed = siblings.some((sibling) => sibling.id === project.id)
     ? [...siblings]
     : [...siblings, project];
-  return sendToHost(bridge, {
+  sendToHost(bridge, {
     type: STUDIO_ACTION_CONTEXT_PUBLISH,
     target: FRONTX_SCREEN_DOMAIN,
     payload: {

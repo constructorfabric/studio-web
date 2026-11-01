@@ -45,21 +45,24 @@ describe('requestOpenArtifact', () => {
     });
   });
 
-  it('survives a chain the shell refuses — the screen stays up', async () => {
+  it('survives a bridge call that throws — the screen stays up', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { bridge } = createMfeBridgeFixture({
       domainId: 'screen',
       instanceId: 'inst',
+      // mfes 0.4.0 drops a refused request without throwing; this covers a call that throws.
       executeActionsChain: vi
         .fn<ReturnType<typeof createMfeBridgeFixture>['bridge']['executeActionsChain']>()
-        .mockRejectedValue(new Error('No handler for action target')),
+        .mockImplementation(() => {
+          throw new Error('bridge disposed');
+        }),
     });
 
     expect(() => requestOpenArtifact(bridge, 'proj-1', FILE)).not.toThrow();
     await Promise.resolve();
     await Promise.resolve();
 
-    // Logged, not swallowed: a refused request leaves a trace.
+    // Logged, not swallowed: the exception leaves a trace.
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('host action failed'),
       STUDIO_ACTION_ARTIFACT_OPEN,

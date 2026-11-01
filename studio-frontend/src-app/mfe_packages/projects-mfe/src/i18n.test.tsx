@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { describe, expect, it, vi } from 'vitest';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import {
   PROJECT_LIST_NAMESPACE,
   SOURCES_NAMESPACE,
@@ -12,6 +12,12 @@ import {
   useSpecsSectionTranslations,
   useSpecsText,
 } from './i18n';
+
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
 
 /**
  * Two things worth pinning down about the split: that a child can read without
@@ -48,7 +54,6 @@ const Sections: React.FC = () => {
 };
 
 async function mount(node: React.ReactElement = <Screen />) {
-  createFrontXApp({});
   const { mfeApp } = await import('./init');
   await act(async () => {
     await i18nRegistry.setLanguage('en' as never);

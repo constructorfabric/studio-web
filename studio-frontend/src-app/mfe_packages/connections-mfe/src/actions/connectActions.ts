@@ -17,7 +17,7 @@ export function openConnectDialog(bridge: ChildMfeBridge | null): void {
 }
 
 export function closeConnectDialog(bridge: ChildMfeBridge | null): void {
-  void closeOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE, 'connections');
+  closeOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE, 'connections');
 }
 
 export function requestConnectionCreate(orgId: string, draft: ConnectionDraft): void {

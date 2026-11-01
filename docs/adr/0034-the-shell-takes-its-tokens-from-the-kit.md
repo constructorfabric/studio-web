@@ -178,6 +178,13 @@ kit's `body, [data-theme]` rule now paints the three overlay roots with
 - `packages/framework` differs from the template's `0.2.0-alpha.0` in two
   more files; both changes are the published `alpha.4` code.
 
+### Amendment 2026-10-30 — the framework comes from npm
+
+With the FrontX packages from npm (#946), `packages/` is gone, and the lines
+copied into `packages/framework` above left with it, as this record expected:
+`@gears-frontx/framework` 0.2.0-alpha.16 stamps `data-theme` from `appearance`
+and writes the `:root:root` rule itself. The rest of this record stands.
+
 ## More Information
 
 - **Not in this record:** taking the FrontX packages from npm; MFEs

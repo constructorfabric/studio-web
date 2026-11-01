@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, eventBus } from '@gears-frontx/react';
+import { FrontXProvider, eventBus, type ActionHandler, type ActionsChain } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -28,6 +28,12 @@ class StubService {
   readonly getPlugins = () => new Map();
 }
 
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
+
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   AccountsApiService: StubService,
@@ -46,6 +52,18 @@ const CREATED = { id: 'ws-9', name: 'Platform' };
 
 type Chain = [{ action: { payload?: Record<string, unknown> } }];
 
+/** The reply handlers the form registered on its bridge. */
+const handlers = new Map<string, ActionHandler>();
+
+/** The shell's side of each request, in turn: it answers through the chain's own `next` or `fallback`. */
+function shellAnswering(...outcomes: Array<'next' | 'fallback'>) {
+  return vi.fn((chain: ActionsChain) => {
+    if (!chain.next && !chain.fallback) return;
+    const reply = outcomes.shift() === 'fallback' ? chain.fallback : chain.next;
+    if (reply) void handlers.get(reply.action.type)?.handleAction(reply.action.type, reply.action.payload);
+  });
+}
+
 /** The `created` announcements among whatever else the form sent the host. */
 function announcements(calls: Chain[]): Record<string, unknown>[] {
   return calls
@@ -54,13 +72,15 @@ function announcements(calls: Chain[]): Record<string, unknown>[] {
 }
 
 async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { NewWorkspaceForm } = await import('./NewWorkspaceForm');
   const fixture = createMfeBridgeFixture({
     domainId: 'overlay',
     instanceId: 'inst',
     ...(executeActionsChain ? { executeActionsChain: executeActionsChain as never } : {}),
+    registerActionHandler: vi.fn((type: string, handler: ActionHandler) => {
+      handlers.set(type, handler);
+    }) as never,
   });
 
   const tree = () => (
@@ -136,10 +156,7 @@ describe('the organization a new workspace is announced under', () => {
   // A refused announcement keeps the workspace *and* its organization, so Try
   // again re-sends the same scope rather than reading one afresh.
   it('is kept for the retry when the announcement fails', async () => {
-    const executeActionsChain = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('lost'))
-      .mockResolvedValue(undefined);
+    const executeActionsChain = shellAnswering('fallback', 'next');
 
     org.current = { id: 'org-2', name: 'Other' };
     const { press, written } = await mountForm(executeActionsChain);

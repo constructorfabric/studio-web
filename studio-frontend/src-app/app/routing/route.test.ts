@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { parseGrammar, validateName } from '@gears-frontx/routing';
+import { parseGrammar } from '@gears-frontx/routing';
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
 import { createShellNavigation } from './navigation';
 import { SCREEN_DOMAIN_KEY, routeFromEntry, routeToParams, routesEqual } from './route';
 
+/** The library's own `name` pattern, which it no longer exports. */
+const NAME = /^[a-z][a-z0-9-]*$/;
+
 describe('the screen route codec', () => {
   it('uses a root key the library accepts', () => {
-    expect(validateName(SCREEN_DOMAIN_KEY)).toBe(true);
+    expect(NAME.test(SCREEN_DOMAIN_KEY)).toBe(true);
   });
 
   it('writes parameters in the fixed order and skips what is absent', () => {

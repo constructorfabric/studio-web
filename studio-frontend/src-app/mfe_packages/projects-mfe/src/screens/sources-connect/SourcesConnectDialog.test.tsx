@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { FrontXProvider } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -24,10 +24,10 @@ const { data, actions } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@gears-frontx/react', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  useSharedProperty: () => PROJECT,
-}));
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache, useSharedProperty: () => PROJECT };
+});
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -98,7 +98,6 @@ const repo = (full_path: string, default_branch: string | null = null): RemoteRe
 });
 
 async function mountDialog() {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { SourcesConnectDialog } = await import('./SourcesConnectDialog');
   const { bridge } = createMfeBridgeFixture({ domainId: 'overlay', instanceId: 'inst' });

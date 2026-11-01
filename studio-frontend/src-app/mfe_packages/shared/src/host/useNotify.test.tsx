@@ -27,10 +27,13 @@ describe('useNotify', () => {
     });
   });
 
-  it('logs a refused request under its tag', async () => {
+  it('logs, under its tag, an exception the bridge call throws', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { result, executeActionsChain } = mount();
-    executeActionsChain.mockRejectedValueOnce(new Error('no handler'));
+    // mfes 0.4.0 drops a refused request without throwing; this covers a call that throws.
+    executeActionsChain.mockImplementationOnce(() => {
+      throw new Error('bridge disposed');
+    });
     result.current({ kind: 'error', text: 'Not saved' });
     await waitFor(() =>
       expect(error).toHaveBeenCalledWith(

@@ -47,7 +47,10 @@
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~"
       ],
-      "actions": [],
+      "actions": [
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.chain_outcome.done.v1~",
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.chain_outcome.failed.v1~"
+      ],
       "domainActions": [
         "gts.frontx.mfes.comm.action.v1~constructor_studio.context.workspaces.publish.v1~"
       ],

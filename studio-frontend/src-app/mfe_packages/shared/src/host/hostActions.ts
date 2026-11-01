@@ -7,6 +7,12 @@ import {
   FRONTX_SCREEN_DOMAIN,
   type ChildMfeBridge,
 } from '@gears-frontx/react';
+import {
+  STUDIO_ACTION_CHAIN_DONE,
+  STUDIO_ACTION_CHAIN_FAILED,
+  createChainOutcomes,
+  type ChainOutcomes,
+} from './chainOutcome';
 
 /** Screen domain: `kind: opened | closed | section`. */
 export const STUDIO_ACTION_CONTEXT_PUBLISH =
@@ -83,16 +89,47 @@ export interface HostAction {
   payload: Record<string, unknown>;
 }
 
-export function sendToHost(bridge: ChildMfeBridge | null, action: HostAction): Promise<void> {
-  if (!bridge) return Promise.reject(new Error(`no MFE bridge for ${action.type}`));
-  return bridge.executeActionsChain({ action }).then(() => undefined);
+/**
+ * Hands `action` to the host. Nothing comes back: mfes 0.4.0 returns no outcome,
+ * and drops an action it refuses without throwing or telling the MFE.
+ */
+export function sendToHost(bridge: ChildMfeBridge | null, action: HostAction): void {
+  bridge?.executeActionsChain({ action });
 }
 
+/**
+ * `sendToHost` that logs, under `tag`, an exception the call itself throws.
+ * mfes 0.4.0 throws none, so a refusal never reaches this log.
+ */
 export function sendAndForget(bridge: ChildMfeBridge | null, action: HostAction, tag: string): void {
-  if (!bridge) return;
-  void sendToHost(bridge, action).catch((error: unknown) => {
+  try {
+    sendToHost(bridge, action);
+  } catch (error) {
     console.error(`[${tag}] host action failed`, action.type, error);
-  });
+  }
+}
+
+const outcomesByBridge = new WeakMap<ChildMfeBridge, ChainOutcomes>();
+
+/**
+ * Resolves once the host has carried `action` out and rejects when it took the
+ * fallback, for a caller that shows the outcome. The replies come back to this
+ * MFE's own extension, so its entry in mfe.json must list both
+ * `STUDIO_ACTION_CHAIN_DONE` and `STUDIO_ACTION_CHAIN_FAILED` in `actions`: the
+ * runtime drops a reply its target does not declare, silently, and the promise
+ * never settles. No timer: an inactive bridge hands nothing over, which happens
+ * only after the MFE has unmounted, when no form waits on it.
+ */
+export function requestFromHost(bridge: ChildMfeBridge | null, action: HostAction): Promise<void> {
+  if (!bridge) return Promise.reject(new Error(`no MFE bridge for ${action.type}`));
+  let outcomes = outcomesByBridge.get(bridge);
+  if (!outcomes) {
+    outcomes = createChainOutcomes();
+    bridge.registerActionHandler(STUDIO_ACTION_CHAIN_DONE, outcomes.done);
+    bridge.registerActionHandler(STUDIO_ACTION_CHAIN_FAILED, outcomes.failed);
+    outcomesByBridge.set(bridge, outcomes);
+  }
+  return outcomes.run((chain) => bridge.executeActionsChain(chain), action, bridge.extensionId);
 }
 
 export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice, tag: string): void {
@@ -111,15 +148,6 @@ export function openOverlay(bridge: ChildMfeBridge | null, extensionId: string, 
   sendAndForget(bridge, overlayAction(FRONTX_ACTION_MOUNT_EXT, extensionId), tag);
 }
 
-export function closeOverlay(
-  bridge: ChildMfeBridge | null,
-  extensionId: string,
-  tag: string
-): Promise<void> {
-  if (!bridge) return Promise.resolve();
-  return sendToHost(bridge, overlayAction(FRONTX_ACTION_UNMOUNT_EXT, extensionId)).catch(
-    (error: unknown) => {
-      console.error(`[${tag}] closing the overlay failed`, extensionId, error);
-    }
-  );
+export function closeOverlay(bridge: ChildMfeBridge | null, extensionId: string, tag: string): void {
+  sendAndForget(bridge, overlayAction(FRONTX_ACTION_UNMOUNT_EXT, extensionId), tag);
 }

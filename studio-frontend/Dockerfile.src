@@ -7,8 +7,8 @@
 FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS build
 WORKDIR /src
 # The manifests-first layer-cache trick the prototype used does not survive
-# npm workspaces: `npm ci` walks every workspace's package.json (packages/*,
-# src-app/mfe_packages/*), so the full tree has to be present before install.
+# npm workspaces: `npm ci` walks every workspace's package.json
+# (src-app/mfe_packages/*), so the full tree has to be present before install.
 COPY studio-frontend/ ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 RUN npm run build

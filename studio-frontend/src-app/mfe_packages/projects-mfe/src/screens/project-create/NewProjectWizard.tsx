@@ -88,9 +88,8 @@ const WizardBody: React.FC = () => {
     const subscription = eventBus.on(
       'mfe/projects/created',
       ({ project, siblings, workspaceId: writtenUnder }) => {
-        void announceCreatedProject(bridge, project, siblings, writtenUnder).finally(() =>
-          closeProjectWizard(bridge)
-        );
+        announceCreatedProject(bridge, project, siblings, writtenUnder);
+        closeProjectWizard(bridge);
       }
     );
     return () => subscription.unsubscribe();

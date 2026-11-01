@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
+import { describe, expect, it, vi } from 'vitest';
+import { FrontXProvider } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -29,6 +29,12 @@ class SilentService {
   readonly providers = this.refuse();
 }
 
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
+
 vi.mock('./api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: SilentService }));
 vi.mock('./api/DocumentsApiService', () => ({ DocumentsApiService: SilentService }));
 // Both gears' clients live in the shared package now, so one mock covers them.
@@ -39,11 +45,6 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 }));
 
 describe('ProjectsRoot', () => {
-  // Once per file: a second app re-runs the mock plugin against the stubbed services.
-  beforeAll(() => {
-    createFrontXApp({});
-  });
-
   it('swaps the list for the project frame when a project is open', async () => {
     const { mfeApp } = await import('./init');
     const { ProjectsRoot } = await import('./ProjectsRoot');

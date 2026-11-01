@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
+import { FrontXProvider, i18nRegistry } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -48,6 +48,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@gears-frontx/react')>();
   return {
     ...actual,
+    queryCacheShared: actual.queryCache,
     useApiQuery: () => ({
       data: { items: providers },
       isLoading: false,
@@ -60,7 +61,6 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
 });
 
 async function renderDialog(organization: unknown = { id: 'org-1', name: 'Acme' }) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } = await import(
     '@constructor-studio/mfe-shared'

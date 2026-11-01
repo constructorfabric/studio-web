@@ -23,7 +23,6 @@ vi.mock('@gears-frontx/react', () => ({
   effects,
   i18n,
   queryCacheShared,
-  authShared,
   // The accounts client extends the kit's base service; the module is imported
   // for real by init.ts, so the mock has to carry these.
   BaseApiService: class BaseApiServiceStub {
@@ -33,6 +32,14 @@ vi.mock('@gears-frontx/react', () => ({
   },
   RestProtocol: class RestProtocolStub {},
   RestEndpointProtocol: class RestEndpointProtocolStub {},
+  // mfe-shared's lifecycle and auth transport extend these as the package loads.
+  ThemeAwareReactLifecycle: class ThemeAwareReactLifecycleStub {},
+  RestPlugin: class RestPluginStub {},
+}));
+
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  authShared,
 }));
 
 vi.mock('./api/_BlankApiService', () => ({

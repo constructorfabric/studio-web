@@ -5,18 +5,16 @@
  * passes while the browser fails.
  */
 
-import {
-  themeSchema,
-  languageSchema,
-  extensionScreenSchema,
-  type JSONSchema,
-} from '@gears-frontx/react';
+import type { JSONSchema } from '@gears-frontx/react';
+import { themeSchema, languageSchema, extensionScreenSchema } from '@gears-frontx/frontx-template-shell';
 import extensionOverlaySchemaJson from './extension_overlay.v1.json';
 import extensionScreenLeveledSchemaJson from './extension_screen_leveled.v1.json';
 import actionContextPublishSchemaJson from './action_context_publish.v1.json';
 import actionContextWorkspacesPublishSchemaJson from './action_context_workspaces_publish.v1.json';
 import actionContextArtifactOpenSchemaJson from './action_context_artifact_open.v1.json';
 import actionShellNotificationShowSchemaJson from './action_shell_notification_show.v1.json';
+import actionChainOutcomeDoneSchemaJson from './action_chain_outcome_done.v1.json';
+import actionChainOutcomeFailedSchemaJson from './action_chain_outcome_failed.v1.json';
 import sharedPropertyContextArtifactSchemaJson from './shared_property_context_artifact.v1.json';
 import sharedPropertyContextProjectSchemaJson from './shared_property_context_project.v1.json';
 import sharedPropertyContextOrganizationSchemaJson from './shared_property_context_organization.v1.json';
@@ -58,6 +56,9 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   sharedPropertyContextArtifactSchemaJson as JSONSchema,
   // A toast an MFE asks for: the shell owns the only toaster.
   actionShellNotificationShowSchemaJson as JSONSchema,
+  // The replies that say how a request ended: see chainOutcome in mfe-shared.
+  actionChainOutcomeDoneSchemaJson as JSONSchema,
+  actionChainOutcomeFailedSchemaJson as JSONSchema,
   // The shell -> MFE half of the same slot. `sharedProperties` on a domain and
   // `requiredProperties` on an entry both carry an `x-gts-ref` that checks the type
   // is IN THE REGISTRY, not merely that the string looks right, so an unregistered

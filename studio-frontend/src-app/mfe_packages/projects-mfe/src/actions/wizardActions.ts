@@ -17,7 +17,7 @@ export function openProjectWizard(bridge: ChildMfeBridge | null): void {
 }
 
 export function closeProjectWizard(bridge: ChildMfeBridge | null): void {
-  void closeOverlay(bridge, WIZARD_EXTENSION_ID, 'projects');
+  closeOverlay(bridge, WIZARD_EXTENSION_ID, 'projects');
 }
 
 export function requestProjectCreate(workspaceId: string, draft: ProjectDraft): void {

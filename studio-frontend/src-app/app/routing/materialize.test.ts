@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FrontXApp, ScreenExtension } from '@gears-frontx/react';
+import type { FrontXApp } from '@gears-frontx/react';
 
 const { SCREEN_DOMAIN, mocks } = vi.hoisted(() => ({
   SCREEN_DOMAIN: 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1',
   mocks: {
     mounted: [] as string[],
     mountScreen: vi.fn(),
-    isMountingScreen: vi.fn(() => false),
     publish: vi.fn(),
   },
 }));
@@ -17,9 +16,9 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 vi.mock('@/app/mfe/mountScreen', () => ({
   mountScreen: mocks.mountScreen,
-  isMountingScreen: mocks.isMountingScreen,
 }));
 vi.mock('@/app/mfe/sharedContext', () => ({ publishStudioContext: mocks.publish }));
+vi.mock('@/app/mfe/domainOccupancy', () => ({ occupancyOf: () => ({ mounted: () => mocks.mounted }) }));
 
 import { freshNavigationHistory } from '@frontx-test-utils/memoryNavigationHistory';
 import { screen } from '@frontx-test-utils/screenFixture';
@@ -30,7 +29,7 @@ import reducer, {
   type AppContextState,
 } from '@/app/slices/appContextSlice';
 import { createShellNavigation } from './navigation';
-import { levelOf } from '@/app/mfe/screenLevels';
+import { levelOf, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { groupScreens } from './screenTokens';
 import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
@@ -51,11 +50,10 @@ const WS = { id: 'w1', name: 'Work' };
 const WS2 = { id: 'w2', name: 'Other' };
 const ATLAS = { id: 'p1', name: 'Atlas' };
 
-function fakeApp(initial: Partial<AppContextState>, extensions: readonly ScreenExtension[] = screens) {
+function fakeApp(initial: Partial<AppContextState>, extensions: readonly StudioScreenExtension[] = screens) {
   let state: AppContextState = { ...reducer(undefined, { type: '@@init' }), ...initial };
   const registry = {
     getExtensionsForDomain: () => extensions,
-    getMountedExtensions: () => mocks.mounted,
   };
   const app = {
     store: {
@@ -67,7 +65,7 @@ function fakeApp(initial: Partial<AppContextState>, extensions: readonly ScreenE
   return { app, state: () => state };
 }
 
-function setup(url: string, initial: Partial<AppContextState>, extensions: readonly ScreenExtension[] = screens, session?: Pick<EditorSession, 'sync'>) {
+function setup(url: string, initial: Partial<AppContextState>, extensions: readonly StudioScreenExtension[] = screens, session?: Pick<EditorSession, 'sync'>) {
   const { history, adapter } = freshNavigationHistory(url);
   const navigation = createShellNavigation(history);
   const { app, state } = fakeApp(initial, extensions);
@@ -89,8 +87,7 @@ const ready = { org: ORG, orgs: [ORG], access: 'ready' as const, workspace: WS, 
 
 beforeEach(() => {
   mocks.mounted = [];
-  mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: ScreenExtension) => { mocks.mounted = [ext.id]; });
-  mocks.isMountingScreen.mockReturnValue(false);
+  mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: StudioScreenExtension) => { mocks.mounted = [ext.id]; });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -508,13 +505,6 @@ describe('materialize', () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
-  it('does not call mountScreen while one is running', () => {
-    mocks.isMountingScreen.mockReturnValue(true);
-    const { materialize } = setup('/?screen=people;org=o1', ready);
-    materialize();
-    expect(mocks.mountScreen).not.toHaveBeenCalled();
-  });
-
   it('stops after one fallback when the chain resolves without mounting', async () => {
     mocks.mountScreen.mockImplementation(async () => undefined);
     const { materialize, transition, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
@@ -556,65 +546,81 @@ describe('materialize', () => {
     expect(warn).toHaveBeenCalledTimes(4);
   });
 
-  it('a failure about an address since left re-applies the current one instead of replacing it', async () => {
-    let finish!: () => void;
-    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const { materialize, transition, adapter, navigation } = setup('/?screen=people;org=o1', ready);
+  // mfes 0.4.0 takes the fallback and keeps the cause to itself, so the warning
+  // says which extension and route did not come up.
+  it('names the extension and its route when a mount fails', async () => {
+    mocks.mountScreen.mockRejectedValue(new Error('mount_ext on screen failed'));
+    const { materialize, warn } = setup('/?screen=organization;org=o1;section=workspaces', ready);
     materialize();
-    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('org.workspaces'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('/organization/workspaces'));
+  });
 
-    mocks.isMountingScreen.mockReturnValue(true);
-    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
-    transition();
-    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
+  // A pass that runs again while the mount is on its way asks again; the
+  // runtime joins both requests to one entry, and they fail together.
+  it('warns once when the requests of one visit fail together', async () => {
+    let fail!: (error: Error) => void;
+    const failing = new Promise<void>((_resolve, reject) => { fail = reject; });
+    mocks.mountScreen.mockReturnValue(failing);
+    const { materialize, warn } = setup('/?screen=organization;org=o1;section=workspaces', ready);
+    materialize();
+    materialize();
+    fail(new Error('mount_ext on screen failed'));
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 
-    mocks.isMountingScreen.mockReturnValue(false);
-    finish();
-    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
-    expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'gears' });
-    expect(adapter.url()).toBe('/?screen=gears;org=o1');
-    expect(adapter.length()).toBe(2);
+  it('falls back once when the requests of one visit fail together', async () => {
+    let fail!: (error: Error) => void;
+    const failing = new Promise<void>((_resolve, reject) => { fail = reject; });
+    mocks.mountScreen.mockReturnValueOnce(failing).mockReturnValueOnce(failing);
+    const { materialize, adapter, warn } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    materialize();
+    fail(new Error('mount_ext on screen failed'));
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
   });
 
   // Reviewer finding (vasylcf, round 3): the stuck guard was keyed by a hash of
   // the route, which a quick there-and-back reproduces — the abandoned attempt
   // then looked like a failure of the current visit and blocked the address.
-  it('a mount abandoned by a quick there-and-back gets a fresh attempt when it settles as a failure', async () => {
-    let finish!: () => void;
-    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  it('a mount abandoned by a quick there-and-back does not block the address when it fails', async () => {
+    let fail!: () => void;
+    mocks.mountScreen.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { fail = () => reject(new Error('replaced')); })
+    );
     const { materialize, transition, adapter, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
-    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
-
-    mocks.isMountingScreen.mockReturnValue(true);
     navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
     transition();
     navigation.navigate({ token: 'people', org: 'o1' }, 'push');
     transition();
-    expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
 
-    mocks.isMountingScreen.mockReturnValue(false);
-    finish();
-    await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
-    expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'people' });
+    fail();
     await vi.waitFor(() => expect(mocks.mounted).toEqual(['people']));
+    expect(mocks.mountScreen).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ id: 'people' }));
     expect(adapter.url()).toBe('/?screen=people;org=o1');
   });
 
   it('a failure about an address since left does not block a later return to it', async () => {
     mocks.mounted = ['gears'];
-    let finish!: () => void;
-    mocks.mountScreen.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    let fail!: () => void;
+    mocks.mountScreen.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { fail = () => reject(new Error('no such entry')); })
+    );
     const { materialize, transition, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
 
-    mocks.isMountingScreen.mockReturnValue(true);
     navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
     transition();
-    mocks.isMountingScreen.mockReturnValue(false);
     // The chain failed before it evicted gears: nothing to mount for the current address.
-    finish();
+    fail();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.mountScreen).toHaveBeenCalledTimes(1);
 
@@ -624,15 +630,50 @@ describe('materialize', () => {
     expect(mocks.mountScreen.mock.calls[1][1]).toMatchObject({ id: 'people' });
   });
 
-  it('does not treat a superseded mount as a failure while another one is running', async () => {
-    mocks.mountScreen.mockImplementation(async () => {
-      mocks.isMountingScreen.mockReturnValue(true);
-    });
-    const { materialize, adapter, warn } = setup('/?screen=people;org=o1', ready);
+  // The runtime queues mounts and fails the one a newer request replaced.
+  it('a mount replaced by a newer one does not mark the address as stuck', async () => {
+    let replace!: (error: Error) => void;
+    mocks.mountScreen
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { replace = reject; }))
+      .mockImplementation(async (_registry: unknown, ext: StudioScreenExtension) => { mocks.mounted = [ext.id]; });
+    const { materialize, transition, adapter, navigation, warn } = setup('/?screen=people;org=o1', ready);
     materialize();
+
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    transition();
+    replace(new Error('was replaced in the occupancy queue by a newer request'));
     await new Promise((resolve) => setTimeout(resolve, 20));
+
     expect(warn).not.toHaveBeenCalled();
-    expect(adapter.url()).toBe('/?screen=people;org=o1');
+    expect(mocks.mounted).toEqual(['gears']);
+    expect(adapter.url()).toBe('/?screen=gears;org=o1');
+  });
+
+  it('two quick navigations end on the last screen', async () => {
+    const lands: Record<string, () => void> = {};
+    mocks.mountScreen.mockImplementation(
+      (_registry: unknown, ext: StudioScreenExtension) =>
+        new Promise<void>((resolve) => {
+          lands[ext.id] = () => { mocks.mounted = [ext.id]; resolve(); };
+        })
+    );
+    const { materialize, transition, adapter, navigation, warn } = setup('/?screen=people;org=o1', ready);
+    materialize();
+    navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
+    transition();
+
+    // In the runtime's order: the running mount lands, then the one queued behind it.
+    // The runtime starts the queued mount at once, and its container counts as mounted.
+    lands.people();
+    mocks.mounted = ['gears'];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    lands.gears();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mocks.mountScreen).toHaveBeenCalledTimes(2);
+    expect(mocks.mounted).toEqual(['gears']);
+    expect(warn).not.toHaveBeenCalled();
+    expect(adapter.url()).toBe('/?screen=gears;org=o1');
   });
 
   it('retries a stuck screen when asked to, once the slot is attached again', async () => {
@@ -641,7 +682,7 @@ describe('materialize', () => {
     materialize();
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: ScreenExtension) => { mocks.mounted = [ext.id]; });
+    mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: StudioScreenExtension) => { mocks.mounted = [ext.id]; });
     retry();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
     expect(mocks.mounted).toEqual(['org.workspaces']);

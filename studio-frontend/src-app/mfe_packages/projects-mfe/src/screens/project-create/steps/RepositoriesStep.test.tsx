@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, type FrontXApp } from '@gears-frontx/react';
+import { FrontXProvider, type FrontXApp } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -8,6 +8,12 @@ import {
 import type { ConnectionDto, RemoteRepoDto } from '@constructor-studio/mfe-shared';
 
 /** The wizard's step hands the picker the create slice, and its handlers reach their reducers. */
+
+// One FrontX app per runtime: the MFE's own, holding the query client a host would share.
+vi.mock('@gears-frontx/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
+  return { ...actual, queryCacheShared: actual.queryCache };
+});
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -50,7 +56,6 @@ vi.mock('../../../shared/useRepositories', () => ({
 }));
 
 async function mountStep(): Promise<FrontXApp> {
-  createFrontXApp({});
   const { mfeApp } = await import('../../../init');
   const { resetWizard } = await import('../../../slices/createSlice');
   const { RepositoriesStep } = await import('./RepositoriesStep');

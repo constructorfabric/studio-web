@@ -2,10 +2,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { ScreenExtension } from '@gears-frontx/react';
 import { screen } from '@frontx-test-utils/screenFixture';
 import { EDITOR_SCREEN_TOKEN } from './route';
 import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } from './screenTokens';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
 const projectsList = screen('projects.main', '/projects', 'workspace', { order: 20 });
 const projectsOverview = screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 });
@@ -76,7 +76,7 @@ describe('the real manifests', () => {
   const packagesDir = join(dirname(fileURLToPath(import.meta.url)), '../../mfe_packages');
   const extensions = readdirSync(packagesDir)
     .filter((dir) => existsSync(join(packagesDir, dir, 'mfe.json')))
-    .flatMap((dir) => (JSON.parse(readFileSync(join(packagesDir, dir, 'mfe.json'), 'utf-8')).extensions ?? []) as ScreenExtension[])
+    .flatMap((dir) => (JSON.parse(readFileSync(join(packagesDir, dir, 'mfe.json'), 'utf-8')).extensions ?? []) as StudioScreenExtension[])
     .filter((extension) => extension.domain === 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1');
 
   it('register space-mfe as the one owner of the editor token', () => {

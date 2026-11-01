@@ -43,7 +43,7 @@ export function createMfeBridgeFixture(
   const unsubscriptions: RecordedUnsubscribe[] = [];
   const executeActionsChain =
     options.executeActionsChain ??
-    vi.fn<ChildMfeBridge['executeActionsChain']>().mockResolvedValue(undefined);
+    vi.fn<ChildMfeBridge['executeActionsChain']>().mockReturnValue(undefined);
   const registerActionHandler =
     options.registerActionHandler ??
     vi.fn<ChildMfeBridge['registerActionHandler']>();
@@ -84,8 +84,8 @@ export function createMfeBridgeFixture(
 
   return {
     bridge: {
-      domainId: options.domainId,
-      instanceId: options.instanceId,
+      extDomainId: options.domainId,
+      extensionId: options.instanceId,
       executeActionsChain,
       registerActionHandler,
       getProperty,
@@ -111,5 +111,5 @@ export function mfeContextValue(
   bridge: ChildMfeBridge,
   extensionId = 'test-extension'
 ): MfeContextValue {
-  return { bridge, extensionId, domainId: bridge.domainId };
+  return { bridge, extensionId, domainId: bridge.extDomainId };
 }

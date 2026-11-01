@@ -23,7 +23,6 @@ vi.mock('@gears-frontx/react', () => ({
   effects,
   i18n,
   queryCacheShared,
-  authShared,
 }));
 
 // The connector client is shared with the other MFE now; `init.ts` imports it
@@ -31,6 +30,7 @@ vi.mock('@gears-frontx/react', () => ({
 // runtime (the wire types are type-only imports and erase).
 vi.mock('@constructor-studio/mfe-shared', () => ({
   ConnectorsApiService: class ConnectorsApiService {},
+  authShared,
 }));
 
 vi.mock('./slices/connectSlice', () => ({

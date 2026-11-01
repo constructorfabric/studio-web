@@ -11,8 +11,8 @@ standard template. For an overview of what the template contains, see
 
 ```bash
 npm install
-npm run build:package && npm run build:packages   # build the lib + solution packages
-npm run dev:all                                    # host + all MFE dev servers
+npm run build:package   # build the lib
+npm run dev:all         # host + all MFE dev servers
 ```
 
 Open **http://localhost:5173**. The host faces the shared `dev` stand — sign in
@@ -44,7 +44,6 @@ src-app/
     ├── demo-mfe/             # Hello World, Profile, Theme, UIKit, Widgets Host
     ├── _blank-mfe/           # Minimal MFE — copy this to start a new one
     └── widgets-fixture-a|b/  # Widgets that mount into demo-mfe's widgets domain
-packages/                     # Solution packages: react, framework, state, i18n, studio, auth
 src/                          # Shared solution lib (api, build, gts)
 ```
 
@@ -199,16 +198,15 @@ Import via the `@` alias: `import { Badge } from '@/app/components/ui/badge';`
 ```bash
 # Development
 npm run dev:all           # build MFEs + start host and all MFE preview servers
-npm run dev               # host only (rebuilds packages + MFEs, then vite)
+npm run dev               # host only (rebuilds the lib + MFEs, then vite)
 npm run build             # full production build
-npm run build:packages    # build solution workspace packages
 npm run build:mfes        # build all MFE packages
 npm run generate:mfe-manifests   # regenerate the host MFE manifest index
 npm run preview           # preview a production build
 
 # Validation
 npm run lint              # ESLint
-npm run type-check        # type-check host app, packages, and MFEs
+npm run type-check        # type-check the lib, host app, MFEs and e2e
 npm run arch:deps         # dependency-boundary rules
 npm run test:unit         # unit tests (package + app + workspace MFEs)
 ```

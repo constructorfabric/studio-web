@@ -110,8 +110,11 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useAppSelector: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({ 'app/mfe-bootstrap': bootstrapState, 'app/context': { section: section.value } }),
   useDomainExtensions: () => registered.value,
-  useMountedExtensions: () => mounted.value,
   eventBus: mockEventBus,
+}));
+vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/mfe/domainOccupancy')>()),
+  useMountedExtensions: () => mounted.value,
 }));
 
 vi.mock('@/app/i18n/shellTranslations', () => ({ useShellText: () => (key: string) => key }));

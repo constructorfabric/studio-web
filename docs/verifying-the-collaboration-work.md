@@ -95,7 +95,7 @@ npm ci && npm test        # vitest, 131 tests in 13 files
 
 `work-inbox.test.ts` is the one that covers what is waiting on you.
 
-Do **not** reach for `npm run build:packages` here: that belongs to
+Do **not** reach for `npm run build:package` here: that belongs to
 `studio-frontend`, the other application, and nothing in this work is in it.
 
 ---

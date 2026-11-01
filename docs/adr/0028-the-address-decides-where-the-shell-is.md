@@ -375,6 +375,16 @@ that MFE's virtual location will already contain.
 - `FrontXConfig.routerMode` in the vendored `packages/framework` stays
   declared and unread, as it was; removing it is a template concern.
 
+### Amendment 2026-10-30 — the framework's router stays inert
+
+With the FrontX packages from npm (#946), the framework (0.2.0-alpha.16) hands
+`@gears-frontx/routing`'s router to the registry, and mfes 0.4.0 starts it for
+every domain that declares a `route`: it would clear the query string on load
+and push entries of its own on every mount. The shell registers its four
+domains without `route` (`unrouted` in `bootstrap.ts`), so that router has
+nothing to start and this record stands. Extensions keep `presentation.route`.
+Revisit together with ADR-0036 upstream.
+
 ## Traceability
 
 - **PRD**: [PRD](../prd/constructor-studio.md)

@@ -7,6 +7,7 @@ import {
   overlayDomain,
   FRONTX_ACTION_MOUNT_EXT,
 } from '@gears-frontx/react';
+import { executeAndSettle } from '@/app/mfe/shellOutcomes';
 import { Button } from '@gears-frontx/ui-kit/button';
 import { Icon } from '@iconify/react';
 import { cn } from '@/app/lib/utils';
@@ -63,13 +64,11 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
       if (!mfeRegistry || mounting) return;
       setMounting(true);
       try {
-        await mfeRegistry.executeActionsChain({
-          action: {
-            type: FRONTX_ACTION_MOUNT_EXT,
-            target: overlayDomain.id,
-            payload: { subject: extensionId },
-          },
-        });
+        await executeAndSettle(mfeRegistry, {
+          type: FRONTX_ACTION_MOUNT_EXT,
+          target: overlayDomain.id,
+          payload: { subject: extensionId },
+        }).catch(() => undefined);
       } finally {
         setMounting(false);
       }

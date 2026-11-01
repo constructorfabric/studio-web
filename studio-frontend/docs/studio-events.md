@@ -287,9 +287,9 @@ that only listens sits silent there. Keep a slow reload as a floor if the view
 must be right without it; that is what the surviving `setInterval` in the
 prototype's `tasks.tsx` is for.
 
-**Do not confuse it with `packages/studio/src/events/studioEvents.ts`.** That
-`StudioEvents` is the canvas package's own event names and has nothing to do
-with this channel.
+**Do not confuse it with the `StudioEvents` inside `@gears-frontx/studio`.**
+That `StudioEvents` is the canvas package's own event names and has nothing to
+do with this channel.
 
 **Retries produce repeats.** `studio-tasks` retries up to five times with a
 requeue between attempts, so a failing run emits running/queued pairs before
