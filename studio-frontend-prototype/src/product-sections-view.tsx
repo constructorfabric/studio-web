@@ -17,6 +17,7 @@ import {
   FRONTX_SHELL_TEMPLATE,
   PRODUCT_SECTIONS,
   hasFrontend,
+  comesWith,
   infrastructureOf,
   openingSection,
   productSummary,
@@ -274,6 +275,7 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
           <th>Runs on</th>
           <th>For</th>
           <th>Gears</th>
+          <th>Comes</th>
         </tr>
       </thead>
       <tbody>
@@ -287,6 +289,9 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
               : `${infra.applications.length} application${infra.applications.length === 1 ? "" : "s"}: ${infra.applications.join(", ")}`}
           </td>
           <td className="muted">all</td>
+          <td>
+            <span className="badge ok">with every deploy</span>
+          </td>
         </tr>
         {infra.needs.map((t) => (
           <tr key={t.id} data-technology={t.id}>
@@ -296,6 +301,15 @@ function ProductNeeds({ infra }: { infra: Infrastructure }) {
             <td>{t.why}</td>
             <td title={t.gears.map(gearLabel).join(", ")}>
               {t.gears.length <= 3 ? t.gears.map(gearLabel).join(", ") : `${t.gears.length} gears`}
+            </td>
+            <td title={comesWith(t.id).words}>
+              {comesWith(t.id).deployed ? (
+                <span className="badge ok">with every deploy</span>
+              ) : (
+                <span className="badge" data-outside>
+                  outside Studio
+                </span>
+              )}
             </td>
           </tr>
         ))}

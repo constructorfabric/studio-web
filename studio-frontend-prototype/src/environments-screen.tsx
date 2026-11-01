@@ -548,18 +548,18 @@ export function EnvironmentForm({
           onChange={(e) => set("database", e.target.value as "none" | "shared" | "namespace")}
           aria-label="Database"
         >
-          <option value="none">None: the product brings its own</option>
-          <option value="namespace">
+          <option value="none">
             {research
-              ? "A Postgres service of the product's own in its Research application, with the databases its gears keep"
-              : "A Postgres of the product's own, in its namespace, with the databases its gears keep"}
+              ? "The product's own, when its gears keep data: a Postgres service in its Research application"
+              : "The product's own, when its gears keep data: a Postgres in its namespace, with every deploy"}
           </option>
+          {input.database === "namespace" && <option value="namespace">The product&apos;s own (as recorded before)</option>}
           {!research && (
             <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
           )}
         </select>
       </label>
-      {input.database === "namespace" && (
+      {input.database !== "shared" && (
         <label className="field">
           Postgres image
           <input
@@ -1058,7 +1058,6 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                       <b>{e.name}</b>
                       {e.protected && <span className="badge">protected</span>}
                       {e.database === "shared" && <span className="badge">shared database</span>}
-                      {e.database === "namespace" && <span className="badge">own Postgres</span>}
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />
