@@ -212,11 +212,13 @@ export function runningNow(deployments: readonly Deployment[]): Deployment[] {
   const seen = new Set<string>();
   const out: Deployment[] = [];
   for (const d of deployments) {
-    if (d.state !== "succeeded") continue;
+    // A preview runs beside the environment, not in it (ADR-0055 §2).
+    if (d.state !== "succeeded" || d.preview) continue;
     const key = `${d.project_id}/${d.environment_id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(d);
+    // Taken out: nothing of the project runs there now.
+    if ((d.action ?? "install") === "install") out.push(d);
   }
   return out;
 }

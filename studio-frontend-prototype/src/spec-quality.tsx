@@ -803,7 +803,9 @@ export function SpecQuality({
         }
       }
     } catch (e) {
-      console.warn("[spec-quality] materialize to graph failed", e);
+      // The analysis stands, but the links are not in the graph: say so, or the
+      // Specs table reads as if nothing was found.
+      setError(`The analysis ran, but its links were not saved to the graph: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -838,7 +840,7 @@ export function SpecQuality({
         ...scopeTags,
       });
     } catch (e) {
-      console.warn("[spec-quality] finding save failed", e);
+      setError(`The finding for ${doc.path} was not saved to the graph: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

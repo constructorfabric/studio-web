@@ -793,7 +793,7 @@ export function ProjectOverview({
                   {repos.length === 0
                     ? "an empty workspace — attach a repository first to have it check something out"
                     : `${repos.length} attached repositor${repos.length === 1 ? "y" : "ies"} and opens them together`}
-                  ; the Desktop IDE does the same in the Constructor Studio app on your machine.
+                  ; the desktop app does the same in the Constructor Studio app on your machine.
                 </p>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
                   <button className="primary" onClick={onOpenStudio} title="Start a session for this project and open it in this window">
