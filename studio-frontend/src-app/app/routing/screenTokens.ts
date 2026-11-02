@@ -11,8 +11,6 @@
  * mounting it with no project open would make the tabs show project sections
  * over nothing.
  */
-import type { ScreenExtension } from '@gears-frontx/react';
-import { validateName } from '@gears-frontx/routing';
 import {
   SCREEN_LEVELS,
   UNDECLARED_ORDER,
@@ -20,22 +18,24 @@ import {
   levelOf,
   sectionOf,
   type ScreenLevel,
+  type StudioScreenExtension,
 } from '@/app/mfe/screenLevels';
+import { ROUTE_NAME } from './route';
 
 export interface ScreenGroup {
   token: string;
-  owner: ScreenExtension;
-  members: ScreenExtension[];
+  owner: StudioScreenExtension;
+  members: StudioScreenExtension[];
 }
 
-export function tokenOf(extension: ScreenExtension): string | undefined {
+export function tokenOf(extension: StudioScreenExtension): string | undefined {
   const route = extension.presentation?.route ?? '';
   const trimmed = route.startsWith('/') ? route.slice(1) : route;
   const [first = ''] = trimmed.split('/');
-  return validateName(first) ? first : undefined;
+  return ROUTE_NAME.test(first) ? first : undefined;
 }
 
-function ownerRank(extension: ScreenExtension): [number, number, number] {
+function ownerRank(extension: StudioScreenExtension): [number, number, number] {
   return [
     SCREEN_LEVELS.indexOf(levelOf(extension)),
     sectionOf(extension) === undefined ? 0 : 1,
@@ -43,15 +43,15 @@ function ownerRank(extension: ScreenExtension): [number, number, number] {
   ];
 }
 
-function byOwnerRank(a: ScreenExtension, b: ScreenExtension): number {
+function byOwnerRank(a: StudioScreenExtension, b: StudioScreenExtension): number {
   const ra = ownerRank(a);
   const rb = ownerRank(b);
   for (let i = 0; i < ra.length; i += 1) if (ra[i] !== rb[i]) return ra[i] - rb[i];
   return 0;
 }
 
-export function groupScreens(extensions: readonly ScreenExtension[]): ScreenGroup[] {
-  const byToken = new Map<string, ScreenExtension[]>();
+export function groupScreens(extensions: readonly StudioScreenExtension[]): ScreenGroup[] {
+  const byToken = new Map<string, StudioScreenExtension[]>();
   for (const extension of extensions) {
     const token = tokenOf(extension);
     if (!token) continue;
@@ -78,7 +78,7 @@ export function groupOfExtension(
 
 /** The token of the level's entry point, the way the tabs decide it. */
 export function entryTokenOf(
-  extensions: readonly ScreenExtension[],
+  extensions: readonly StudioScreenExtension[],
   level: ScreenLevel
 ): string | undefined {
   const entry = entryPointOf(extensions, level);

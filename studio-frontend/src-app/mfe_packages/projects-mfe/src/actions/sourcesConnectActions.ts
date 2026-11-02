@@ -18,15 +18,15 @@ export const SOURCES_CONNECT_EXTENSION_ID =
   'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.project_sources_connect.main.v1';
 
 export function openSourcesConnect(bridge: ChildMfeBridge | null): void {
-  openOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID, 'projects');
+  openOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID);
 }
 
 export function closeSourcesConnect(bridge: ChildMfeBridge | null): void {
-  void closeOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID, 'projects');
+  closeOverlay(bridge, SOURCES_CONNECT_EXTENSION_ID);
 }
 
 export function openConnectionForm(bridge: ChildMfeBridge | null): void {
-  openOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE, 'projects');
+  openOverlay(bridge, STUDIO_EXTENSION_CONNECTION_CREATE);
 }
 
 export function requestSourcesConnect(projectId: string, picks: RepositoryPick[]): void {

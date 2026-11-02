@@ -11,10 +11,13 @@ const { mockRegistry, mounted } = vi.hoisted(() => ({
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   useFrontX: () => ({ mfeRegistry: mockRegistry }),
-  useMountedExtensions: () => mounted.value,
   // Stand-in for the real slot: this suite is about whether the slot is in the
   // tree and when, not about what the mounter does with it.
   ExtensionDomainSlot: () => <div data-testid="overlay-slot" />,
+}));
+vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/mfe/domainOccupancy')>()),
+  useMountedExtensions: () => mounted.value,
 }));
 
 import { OverlayDialog } from './OverlayDialog';
@@ -22,7 +25,6 @@ import { OverlayDialog } from './OverlayDialog';
 describe('OverlayDialog', () => {
   beforeEach(() => {
     mounted.value = [];
-    mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

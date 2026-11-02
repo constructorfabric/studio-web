@@ -25,16 +25,32 @@ export {
   STUDIO_EXTENSION_CONNECTION_CREATE,
   isStudioArtifactKind,
   sendToHost,
-  sendAndForget,
   openOverlay,
   closeOverlay,
+  requestFromHost,
   type HostAction,
   type StudioNotice,
   type StudioArtifact,
   type StudioArtifactKind,
   type StudioArtifactRequest,
 } from './host/hostActions';
+export {
+  STUDIO_ACTION_CHAIN_DONE,
+  STUDIO_ACTION_CHAIN_FAILED,
+  createChainOutcomes,
+  type ChainOutcomes,
+} from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
+export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
+export { authShared } from './auth/authShared';
+export {
+  clearSharedAuthSession,
+  publishSharedAuthSession,
+  readSharedAuthSession,
+  type SharedAuthSessionAccessor,
+} from './auth/sharedAuthSession';
+export { prewarmShadowStyles } from './mfe/shadowStyles';
+export { anchorKitThemeOnShadowHost } from './mfe/anchorKitThemeOnShadowHost';
 export {
   OrganizationProvider,
   useOrganization,

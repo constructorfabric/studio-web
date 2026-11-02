@@ -1,0 +1,24 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.shell.chain_outcome.failed.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Reply a chain carries as its fallback: the request failed, whether its handler threw, timed out or was missing, the action was not admitted, or a newer request replaced it. See mfe-shared host/chainOutcome.ts.",
+  "allOf": [
+    {
+      "$ref": "gts://gts.frontx.mfes.comm.action.v1~"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["requestId"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["payload"]
+}

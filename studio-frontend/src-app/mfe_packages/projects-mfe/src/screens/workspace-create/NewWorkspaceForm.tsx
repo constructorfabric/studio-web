@@ -59,7 +59,7 @@ const FormBody: React.FC = () => {
         dispatch(workspaceAnnounceFailed({ workspace, error: refusalFrom(error, 'error_announce') }));
         return;
       }
-      await closeWorkspaceForm(bridge);
+      closeWorkspaceForm(bridge);
     },
     [bridge, dispatch]
   );
@@ -133,7 +133,7 @@ const FormBody: React.FC = () => {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void closeWorkspaceForm(bridge)}
+          onClick={() => closeWorkspaceForm(bridge)}
           disabled={submitting}
         >
           {t('cancel')}

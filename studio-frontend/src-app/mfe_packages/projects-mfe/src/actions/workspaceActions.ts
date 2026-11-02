@@ -17,32 +17,29 @@ import {
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_EXTENSION_WORKSPACE_CREATE,
   closeOverlay,
-  sendAndForget,
+  requestFromHost,
   sendToHost,
 } from '@constructor-studio/mfe-shared';
 import './../events/workspaceEvents';
 
 /**
- * Awaited by the form: it may only close once the shell has the workspace.
- *
- * A refusal is reported and not raised. By the time this runs the shell has
- * been told, and neither call site has anything to offer the member about an
- * overlay that will not unmount.
+ * Fire-and-forget: neither call site has anything to offer the member about an
+ * overlay that will not unmount, and mfes 0.4.0 does not report a refusal anyway.
  */
-export function closeWorkspaceForm(bridge: ChildMfeBridge | null): Promise<void> {
-  return closeOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE, 'projects');
+export function closeWorkspaceForm(bridge: ChildMfeBridge | null): void {
+  closeOverlay(bridge, STUDIO_EXTENSION_WORKSPACE_CREATE);
 }
 
 /**
  * The announcement itself. The tenant is already written when this runs, so its
- * failure is the caller's to handle — never fire-and-forget.
+ * failure is the caller's to show: it waits on the shell's reply.
  */
 export function publishCreatedWorkspace(
   bridge: ChildMfeBridge | null,
   workspace: { id: string; name: string },
   organizationId: string | null
 ): Promise<void> {
-  return sendToHost(bridge, {
+  return requestFromHost(bridge, {
     type: STUDIO_ACTION_WORKSPACES_PUBLISH,
     target: FRONTX_OVERLAY_DOMAIN,
     payload: { kind: 'created', workspace, ...(organizationId ? { organizationId } : {}) },
@@ -55,15 +52,11 @@ export function publishCreatedWorkspace(
  * over.
  */
 export function publishWorkspaceScope(bridge: ChildMfeBridge | null): void {
-  sendAndForget(
-    bridge,
-    {
-      type: STUDIO_ACTION_WORKSPACES_PUBLISH,
-      target: FRONTX_SCREEN_DOMAIN,
-      payload: { kind: 'scoped' },
-    },
-    'projects'
-  );
+  sendToHost(bridge, {
+    type: STUDIO_ACTION_WORKSPACES_PUBLISH,
+    target: FRONTX_SCREEN_DOMAIN,
+    payload: { kind: 'scoped' },
+  });
 }
 
 export function requestWorkspaceCreate(orgId: string, name: string): void {

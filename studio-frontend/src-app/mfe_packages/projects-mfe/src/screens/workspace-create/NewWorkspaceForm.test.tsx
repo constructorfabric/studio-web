@@ -1,6 +1,13 @@
+import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontXProvider, createFrontXApp, eventBus } from '@gears-frontx/react';
+import {
+  FrontXProvider,
+  eventBus,
+  FRONTX_ACTION_UNMOUNT_EXT,
+  type ActionHandler,
+  type ActionsChain,
+} from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
   mfeContextValue,
@@ -28,6 +35,8 @@ class StubService {
   readonly getPlugins = () => new Map();
 }
 
+vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
+
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   AccountsApiService: StubService,
@@ -44,7 +53,19 @@ vi.mock('../../i18n', async (importOriginal) => ({
 
 const CREATED = { id: 'ws-9', name: 'Platform' };
 
-type Chain = [{ action: { payload?: Record<string, unknown> } }];
+type Chain = [{ action: { type: string; payload?: Record<string, unknown> } }];
+
+/** The reply handlers the form registered on its bridge. */
+const handlers = new Map<string, ActionHandler>();
+
+/** The shell's side of each request, in turn: it answers through the chain's own `next` or `fallback`. */
+function shellAnswering(...outcomes: Array<'next' | 'fallback'>) {
+  return vi.fn((chain: ActionsChain) => {
+    if (!chain.next && !chain.fallback) return;
+    const reply = outcomes.shift() === 'fallback' ? chain.fallback : chain.next;
+    if (reply) void handlers.get(reply.action.type)?.handleAction(reply.action.type, reply.action.payload);
+  });
+}
 
 /** The `created` announcements among whatever else the form sent the host. */
 function announcements(calls: Chain[]): Record<string, unknown>[] {
@@ -53,14 +74,24 @@ function announcements(calls: Chain[]): Record<string, unknown>[] {
     .filter((payload): payload is Record<string, unknown> => payload?.kind === 'created');
 }
 
+/** What the form asked of the shell about the new workspace, in order: `announce`, then `close` its overlay. */
+function requests(calls: Chain[]): string[] {
+  return calls.flatMap(([chain]) => {
+    if (chain.action.payload?.kind === 'created') return ['announce'];
+    return chain.action.type === FRONTX_ACTION_UNMOUNT_EXT ? ['close'] : [];
+  });
+}
+
 async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
-  createFrontXApp({});
   const { mfeApp } = await import('../../init');
   const { NewWorkspaceForm } = await import('./NewWorkspaceForm');
   const fixture = createMfeBridgeFixture({
     domainId: 'overlay',
     instanceId: 'inst',
     ...(executeActionsChain ? { executeActionsChain: executeActionsChain as never } : {}),
+    registerActionHandler: vi.fn((type: string, handler: ActionHandler) => {
+      handlers.set(type, handler);
+    }) as never,
   });
 
   const tree = () => (
@@ -136,10 +167,7 @@ describe('the organization a new workspace is announced under', () => {
   // A refused announcement keeps the workspace *and* its organization, so Try
   // again re-sends the same scope rather than reading one afresh.
   it('is kept for the retry when the announcement fails', async () => {
-    const executeActionsChain = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('lost'))
-      .mockResolvedValue(undefined);
+    const executeActionsChain = shellAnswering('fallback', 'next');
 
     org.current = { id: 'org-2', name: 'Other' };
     const { press, written } = await mountForm(executeActionsChain);
@@ -166,6 +194,33 @@ describe('the organization a new workspace is announced under', () => {
     expect(screen.getByRole('alert').textContent).toBe('error_no_org');
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(announcements(executeActionsChain.mock.calls as never)).toEqual([]);
+  });
+});
+
+describe('the form once the workspace is announced', () => {
+  beforeEach(() => {
+    createWorkspace.mockReset();
+    createWorkspace.mockResolvedValue(CREATED);
+  });
+
+  it('closes its overlay when the shell takes the announcement', async () => {
+    const executeActionsChain = shellAnswering('next');
+    const { written } = await mountForm(executeActionsChain);
+
+    await written('org-1');
+
+    await vi.waitFor(() =>
+      expect(requests(executeActionsChain.mock.calls as never)).toEqual(['announce', 'close'])
+    );
+  });
+
+  it('stays open while the shell has not answered', async () => {
+    const { executeActionsChain, written } = await mountForm();
+
+    await written('org-1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(requests(executeActionsChain.mock.calls as never)).toEqual(['announce']);
   });
 });
 

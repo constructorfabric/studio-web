@@ -16,14 +16,14 @@ type LanguageProperty = SharedProperty;
 
 function makeBridge(language: string): ChildMfeBridge {
   return {
-    domainId: 'test-domain',
-    instanceId: 'test-instance',
+    extDomainId: 'test-domain',
+    extensionId: 'test-instance',
     getProperty: vi.fn(() => ({
       id: FRONTX_SHARED_PROPERTY_LANGUAGE,
       value: language,
     })),
     subscribeToProperty: vi.fn(() => vi.fn()),
-    executeActionsChain: vi.fn().mockResolvedValue(undefined),
+    executeActionsChain: vi.fn(),
     registerActionHandler: vi.fn(),
   };
 }
@@ -88,8 +88,8 @@ describe('useScreenTranslations', () => {
     };
     let subscriptionCallback: ((property: LanguageProperty) => void) | undefined;
     const bridge: ChildMfeBridge = {
-      domainId: 'test-domain',
-      instanceId: 'test-instance',
+      extDomainId: 'test-domain',
+      extensionId: 'test-instance',
       getProperty: vi.fn(() => ({
         id: FRONTX_SHARED_PROPERTY_LANGUAGE,
         value: 'en',
@@ -100,7 +100,7 @@ describe('useScreenTranslations', () => {
           return vi.fn();
         },
       ),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
       registerActionHandler: vi.fn(),
     };
 
@@ -144,14 +144,14 @@ describe('useScreenTranslations', () => {
   it('unsubscribes from bridge language updates on unmount', async () => {
     const unsubscribe = vi.fn();
     const bridge: ChildMfeBridge = {
-      domainId: 'test-domain',
-      instanceId: 'test-instance',
+      extDomainId: 'test-domain',
+      extensionId: 'test-instance',
       getProperty: vi.fn(() => ({
         id: FRONTX_SHARED_PROPERTY_LANGUAGE,
         value: 'en',
       })),
       subscribeToProperty: vi.fn(() => unsubscribe),
-      executeActionsChain: vi.fn().mockResolvedValue(undefined),
+      executeActionsChain: vi.fn(),
       registerActionHandler: vi.fn(),
     };
     const languageModules = {

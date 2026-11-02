@@ -10,7 +10,6 @@
 import {
   MfeHandler,
   MfeBridgeFactory,
-  ChildMfeBridgeImpl,
   type ChildMfeBridge,
   type MfeEntry,
   type MfeEntryLifecycle,
@@ -32,17 +31,15 @@ export interface MfeEntryIframe extends MfeEntry {
 export type FrameHook = (frame: HTMLIFrameElement, entry: MfeEntryIframe) => (() => void) | undefined;
 
 /**
- * The shipped default does exactly this one line — the runtime wires the
- * bridge through its own, separate factory afterwards. Written out here
- * rather than imported because `MfeBridgeFactoryDefault` has left the
- * package's public surface in versions after the pinned 0.3.0-alpha.2.
+ * `MfeHandler` requires a bridge factory, but the runtime never calls it: every
+ * bridge comes from the runtime's own factory.
  */
-class IframeBridgeFactory extends MfeBridgeFactory<ChildMfeBridgeImpl> {
-  create(domainId: string, _entryTypeId: string, instanceId: string): ChildMfeBridgeImpl {
-    return new ChildMfeBridgeImpl(domainId, instanceId);
+class IframeBridgeFactory extends MfeBridgeFactory<ChildMfeBridge> {
+  create(_domainId: string, _entryTypeId: string, _instanceId: string): ChildMfeBridge {
+    throw new Error('MfeHandlerIframe: the MFE runtime creates bridges, not this handler');
   }
 
-  dispose(_bridge: ChildMfeBridgeImpl): void {
+  dispose(_bridge: ChildMfeBridge): void {
     // Nothing of ours to release: the frame and its subscription belong to the
     // lifecycle and are dropped in unmount.
   }

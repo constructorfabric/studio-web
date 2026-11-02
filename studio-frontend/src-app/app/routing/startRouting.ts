@@ -9,12 +9,12 @@
  * — so no write is ever made behind the library's back. The observer's first
  * report is synchronous, and `materialize` mounts from it at once.
  */
-import { screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
+import { screenDomain, type FrontXApp } from '@gears-frontx/react';
 import {
   resolveNavigationHistory,
   type ExtensionToken,
   type NavigationHistory,
-  type RegisteredExtensionsSource,
+  type RouteSignal,
 } from '@gears-frontx/routing';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
@@ -22,6 +22,7 @@ import { createMaterializer } from './materialize';
 import { createShellNavigation, type ShellNavigation } from './navigation';
 import { SCREEN_DOMAIN_KEY } from './route';
 import { groupScreens, type ScreenGroup } from './screenTokens';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
 export interface RoutingHandle {
   navigation: ShellNavigation;
@@ -42,10 +43,10 @@ export function startRouting(
   if (!registry) throw new Error('[routing] the MFE registry is not available on the app');
 
   const navigation = createShellNavigation(history);
-  const groups = groupScreens(registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[]);
+  const groups = groupScreens(registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[]);
   const materializer = createMaterializer({ app, navigation, groups: () => groups, catalogs, session });
 
-  const source: RegisteredExtensionsSource<ScreenGroup> = {
+  const source: Parameters<RouteSignal['createObserver']>[1] = {
     getRegistrations: () =>
       groups.map((group) => ({ extension: group.token as ExtensionToken, routeOwner: group })),
   };

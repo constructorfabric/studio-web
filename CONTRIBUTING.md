@@ -77,7 +77,7 @@ locally for each component you changed:
 | Component | Checks |
 |---|---|
 | `studio-backend/` | `scripts/backend-check.sh` — fmt, clippy, build, feature combinations and tests in CI's own image; only Docker is needed |
-| `studio-frontend/` | `npm ci && npm run build:packages`, then `npm run lint`, `npm run type-check` and `npm run test:unit` |
+| `studio-frontend/` | `npm ci && npm run build`, then `npm run lint`, `npm run type-check` and `npm run test:unit` |
 | `studio-frontend-prototype/` | `npm ci && npm test && npm run build` |
 | `theia/` | `npm test`; for an IDE change, rebuild with `docker compose build session-image` and try it in a session |
 | `keycloak/` | the account-takeover tests against the running Compose Keycloak — [`keycloak/README.md`](keycloak/README.md) has the command |

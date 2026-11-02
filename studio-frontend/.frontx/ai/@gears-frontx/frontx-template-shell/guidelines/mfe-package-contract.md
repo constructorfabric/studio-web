@@ -35,6 +35,13 @@ not a separate spec. If the scanners change, this file must be updated to match
    actions), and `extensions[]` (domain + presentation metadata per screen or
    widget the package contributes). See the `gts-id-conventions` guideline in
    the `template-mfe` AI bundle for the ID taxonomy these fields use.
+   An entry whose code waits on the shell with `requestFromHost`
+   (`@constructor-studio/mfe-shared`) lists both replies,
+   `STUDIO_ACTION_CHAIN_DONE` and `STUDIO_ACTION_CHAIN_FAILED`, in its
+   `actions`: the runtime drops a reply its target does not declare without a
+   word, and the promise never settles. Name the entry in
+   `REQUEST_FROM_HOST_ENTRIES` in `src-app/app/mfe/overlayContract.test.ts`,
+   which fails for a package that calls `requestFromHost` and names none.
 3. **`vite.config.ts`** that runs `@module-federation/vite`'s `federation()`
    plugin, then `frontxMfGts()` (imported from
    `@gears-frontx/frontx-template-shell/build/mf-gts`) with `enforce: 'post'` so

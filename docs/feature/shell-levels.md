@@ -266,17 +266,15 @@ resolve, and the tabs name a section the screen does not show. The mount is
 the slow part and the part that can fail; what the member asked for is in the
 address before it starts.
 
-One mount at a time is the rule, not the guarantee: a mount bound to a root
-that has since been detached cannot be called off, and the lock is let go for it
-so that the next one is not swallowed. So `inst-5` is about where things end up
-— once the overlapping mounts have settled, the domain holds the group the
-address names. A click that arrives while a mount is running is not dropped: it
-is in the address, and when the running mount settles the address is applied
-again, which mounts what it names now. A mount that has been replaced and still
-reaches the domain last is undone rather than prevented, by asking for the
-current group again once the domain is free; `mountScreen`'s own generation
-counter refuses the superseded one. Preventing it would need a cancellation the
-runtime does not offer.
+One mount at a time is the runtime's rule: its queue keeps one mount running
+and one waiting, and a newer request replaces the waiting one. So `inst-5` is
+about where things end up — once the overlapping requests have settled, the
+domain holds the group the address names. A click that arrives while a mount is
+running is not dropped: it is in the address, and when the running mount
+settles the address is applied again, which mounts what it names now. A mount
+started for an address the member has since left says nothing about the one
+they are on: its outcome is ignored, and the current address gets its own pass
+(ADR-0028, amendment of 2026-11-02).
 
 That leaves two writers of the active section, which is what
 `cpt-studiofrontend-flow-shell-levels-section` already asks for: the shell

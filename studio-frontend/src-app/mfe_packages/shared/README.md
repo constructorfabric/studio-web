@@ -20,8 +20,10 @@ transport moves into FrontX.
 **It does not touch MFE isolation.** Nothing here is added to any MFE's
 `sharedDeps`, so nothing becomes a runtime singleton: every MFE realm keeps its
 own compiled copy and its own instances, exactly as it already does with
-`@gears-frontx/ui-kit`. What crosses a realm boundary is still only what the
-framework hands over through `globalThis` — the QueryClient and the host session.
+`@gears-frontx/ui-kit`. What crosses a realm boundary is still only what goes
+through `globalThis`: the QueryClient, which the framework hands over, and the
+host session, which the shell publishes (`sharedAuthTransport`) under the key
+its `dist-lib` exports, `SHARED_AUTH_SESSION_SYMBOL`.
 
 **What belongs here:** code that is *byte-identical* in two or more MFEs. If one
 MFE needs to diverge, move that piece back into it. Do not add a flag or an

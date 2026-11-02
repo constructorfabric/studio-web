@@ -21,24 +21,22 @@ import {
   type SseConnectContext,
   type SseShortCircuitResponse,
 } from '@gears-frontx/api';
+import { SHARED_AUTH_SESSION_SYMBOL } from '../sharedAuthSession';
 import { FetchEventSource, type FetchEventSourceResume } from '../sse/FetchEventSource';
 
 /**
- * The part of the framework's `SharedAuthSession` this plugin uses,
- * declared structurally rather than imported.
- *
- * `@gears-frontx/framework` imports this package, so importing it back would
- * close a build cycle — and this file is L1 (zero @gears-frontx dependencies)
- * for exactly that reason. Structural typing keeps it honest: whatever the
- * host publishes still has to have this shape.
+ * The part of the published session this plugin uses, declared structurally
+ * rather than imported: the full accessor (`SharedAuthSessionAccessor`) lives in
+ * mfe-shared, which depends on this package. Structural typing keeps it honest:
+ * whatever the host publishes still has to have this shape.
  */
 interface SharedAuthSession {
   getSession: () => Promise<{ kind?: string; token?: string } | null | undefined>;
 }
 
 /**
- * The host's session, published by the `auth()` plugin under a `Symbol.for()`
- * key on `globalThis`.
+ * The host's session, published by the shell's `sharedAuthTransport()` under
+ * `SHARED_AUTH_SESSION_SYMBOL` on `globalThis`.
  *
  * Read directly rather than through an import because services are
  * instantiated by `apiRegistry.register(ServiceClass)` with no arguments —
@@ -46,8 +44,6 @@ interface SharedAuthSession {
  * its own module realm, where this symbol is the only thing that crosses. It
  * is the same handoff `authShared()` uses for REST.
  */
-const SHARED_AUTH_SESSION_SYMBOL = Symbol.for('frontx:auth:shared-session');
-
 type SharedAuthHost = typeof globalThis & {
   [SHARED_AUTH_SESSION_SYMBOL]?: SharedAuthSession;
 };
@@ -55,8 +51,8 @@ type SharedAuthHost = typeof globalThis & {
 export interface SseAuthConfig {
   /**
    * Where the bearer token comes from. Omitted = the host's published session,
-   * which is what an app with `auth()` installed should use: one owner of
-   * login, logout and refresh.
+   * which is what an app whose auth plugin publishes one (`sharedAuthTransport()`)
+   * should use: one owner of login, logout and refresh.
    */
   getToken?: () => string | null | undefined | Promise<string | null | undefined>;
   /**

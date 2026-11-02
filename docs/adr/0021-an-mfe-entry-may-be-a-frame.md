@@ -266,6 +266,15 @@ handler still knows nothing of what is inside; three things changed.
   address and are taken from the frame's window and that origin only, so a
   fixture on its own port and an IDE on the portal's origin are both covered.
 
+### Amendment 2026-11-02 — the runtime makes every bridge
+
+With the FrontX packages from npm (#946), mfes 0.4.0 creates every bridge
+through its own factory, and `ChildMfeBridgeImpl` has left the package's public
+surface. "The loader is built on `ChildMfeBridgeImpl`" no longer holds:
+`MfeHandlerIframe` still passes the `bridgeFactory` that `MfeHandler`
+requires, and that factory throws if it is ever called, which the runtime does
+not do. The `0.3.0-alpha.2` pin went with it. The rest of this record stands.
+
 ## Traceability
 
 - **PRD**: [PRD](../prd/constructor-studio.md)
