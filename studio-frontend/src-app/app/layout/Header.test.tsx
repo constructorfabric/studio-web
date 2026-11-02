@@ -66,7 +66,6 @@ describe('Header (global top bar)', () => {
   beforeEach(() => {
     overlayExtensions.value = [];
     screenExtensions.value = [peopleScreen];
-    mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

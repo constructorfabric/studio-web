@@ -7,11 +7,11 @@ import { occupancyOf, useMountedExtensions } from './domainOccupancy';
 const registry = (): MfeRegistry => ({}) as MfeRegistry;
 
 describe('domain occupancy', () => {
-  it('an extension counts as mounted from created until destroyed', () => {
+  it('an extension counts as mounted from the end of its mount until destroyed', () => {
     const occupancy = occupancyOf(registry());
 
     expect(occupancy.mounted('screen')).toEqual([]);
-    occupancy.created('screen', 'projects');
+    occupancy.mountFinished('screen', 'projects');
     expect(occupancy.mounted('screen')).toEqual(['projects']);
     occupancy.destroyed('screen', 'projects');
     expect(occupancy.mounted('screen')).toEqual([]);
@@ -20,9 +20,9 @@ describe('domain occupancy', () => {
   it('mounted keeps the order of creation', () => {
     const occupancy = occupancyOf(registry());
 
-    occupancy.created('overlay', 'search');
-    occupancy.created('overlay', 'wizard');
-    occupancy.created('overlay', 'connect');
+    occupancy.mountFinished('overlay', 'search');
+    occupancy.mountFinished('overlay', 'wizard');
+    occupancy.mountFinished('overlay', 'connect');
     occupancy.destroyed('overlay', 'wizard');
 
     expect(occupancy.mounted('overlay')).toEqual(['search', 'connect']);
@@ -34,12 +34,12 @@ describe('domain occupancy', () => {
     const listener = vi.fn();
     const unsubscribe = occupancy.subscribe(listener);
 
-    occupancy.created('screen', 'projects');
+    occupancy.mountFinished('screen', 'projects');
     occupancy.destroyed('screen', 'projects');
     expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
-    occupancy.created('screen', 'people');
+    occupancy.mountFinished('screen', 'people');
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
@@ -47,7 +47,7 @@ describe('domain occupancy', () => {
     const first = registry();
     const second = registry();
 
-    occupancyOf(first).created('screen', 'projects');
+    occupancyOf(first).mountFinished('screen', 'projects');
 
     expect(occupancyOf(first)).toBe(occupancyOf(first));
     expect(occupancyOf(first).mounted('screen')).toEqual(['projects']);
@@ -74,7 +74,7 @@ describe('useMountedExtensions', () => {
 
   it('returns the same array across renders while nothing changes', () => {
     const mfeRegistry = registryOf(SEARCH);
-    occupancyOf(mfeRegistry).created('overlay', 'search');
+    occupancyOf(mfeRegistry).mountFinished('overlay', 'search');
     const { result, rerender } = renderMounted(mfeRegistry);
     const first = result.current;
 
@@ -84,25 +84,25 @@ describe('useMountedExtensions', () => {
     expect(result.current).toBe(first);
   });
 
-  it('returns a new array once an extension is created or destroyed', () => {
+  it('returns a new array once a mount finishes or an extension is destroyed', () => {
     const mfeRegistry = registryOf(SEARCH, WIZARD);
     const { result } = renderMounted(mfeRegistry);
     const before = result.current;
 
-    act(() => occupancyOf(mfeRegistry).created('overlay', 'wizard'));
-    const created = result.current;
+    act(() => occupancyOf(mfeRegistry).mountFinished('overlay', 'wizard'));
+    const afterMount = result.current;
     act(() => occupancyOf(mfeRegistry).destroyed('overlay', 'wizard'));
 
     expect(before).toEqual([]);
-    expect(created).toEqual([WIZARD]);
+    expect(afterMount).toEqual([WIZARD]);
     expect(result.current).toEqual([]);
-    expect(result.current).not.toBe(created);
+    expect(result.current).not.toBe(afterMount);
   });
 
   it('leaves out an id whose extension is no longer registered', () => {
     const mfeRegistry = registryOf(SEARCH);
-    occupancyOf(mfeRegistry).created('overlay', 'unregistered');
-    occupancyOf(mfeRegistry).created('overlay', 'search');
+    occupancyOf(mfeRegistry).mountFinished('overlay', 'unregistered');
+    occupancyOf(mfeRegistry).mountFinished('overlay', 'search');
 
     const { result } = renderMounted(mfeRegistry);
 

@@ -111,7 +111,7 @@ describe('blank-mfe lifecycle', () => {
     ).toBeTruthy();
   });
 
-  it('inherits base mount behavior from ThemeAwareReactLifecycle', async () => {
+  it('inherits base mount behavior from StudioMfeLifecycle', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default as {
       mount: (container: Element, bridge: TestBridge) => void;

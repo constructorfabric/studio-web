@@ -25,7 +25,6 @@ import { OverlayDialog } from './OverlayDialog';
 describe('OverlayDialog', () => {
   beforeEach(() => {
     mounted.value = [];
-    mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

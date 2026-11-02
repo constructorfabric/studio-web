@@ -132,7 +132,6 @@ describe('LevelTabs (the level navigation)', () => {
     // Deliberately out of order: the tabs sort, the registry does not.
     registered.value = [settings, connections, people, projects];
     mounted.value = [people];
-    mockRegistry.executeActionsChain.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

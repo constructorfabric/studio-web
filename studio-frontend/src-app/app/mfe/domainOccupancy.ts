@@ -14,7 +14,7 @@ export interface DomainOccupancy {
 }
 
 export interface DomainOccupancyRecorder {
-  created(domainId: string, extensionId: string): void;
+  mountFinished(domainId: string, extensionId: string): void;
   destroyed(domainId: string, extensionId: string): void;
 }
 
@@ -38,7 +38,7 @@ function createOccupancy(): Occupancy {
         listeners.delete(listener);
       };
     },
-    created(domainId, extensionId) {
+    mountFinished(domainId, extensionId) {
       const ids = domains.get(domainId) ?? NONE;
       if (!ids.includes(extensionId)) update(domainId, [...ids, extensionId]);
     },

@@ -196,7 +196,7 @@ class HostContainerHooks implements ContainerHooks {
    * extension counts as mounted only from here: once its mount has finished.
    */
   mounted(extensionId: string): void {
-    occupancyOf(this.registry).created(this.domainId, extensionId);
+    occupancyOf(this.registry).mountFinished(this.domainId, extensionId);
   }
 
   destroy(extensionId: string): void {

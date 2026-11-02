@@ -281,7 +281,7 @@ Use the most appropriate evidence:
 For Studio runtime verification:
 
 * MFE menu items do nothing without the `:30xx` preview servers;
-* rebuild `dist-lib` (`npm run build:package`) after a branch switch: MFEs import the shell's library from it, and `dev:all` does not rebuild it.
+* rebuild `dist-lib` (`npm run build:package`) after a branch switch: MFEs import the shell's library from it, and `dev:all` builds it only when it starts.
 
 Every finding must have concrete evidence.
 

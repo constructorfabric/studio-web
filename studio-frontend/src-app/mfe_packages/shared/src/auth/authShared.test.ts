@@ -19,8 +19,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { apiRegistry, createStore, RestProtocol } from '@gears-frontx/react';
-import type { RestPlugin, RestPluginHooks, RestRequestContext } from '@gears-frontx/react';
+import { apiRegistry, createStore, frontxApiTransport, RestProtocol } from '@gears-frontx/react';
+import type { AuthProvider, RestPlugin, RestPluginHooks, RestRequestContext } from '@gears-frontx/react';
 import type { AuthSession } from '@gears-frontx/auth';
 import { authShared } from './authShared';
 import {
@@ -266,6 +266,52 @@ describe('authShared plugin', () => {
       await plugin.onError?.(make401Ctx());
 
       expect(refresh).toHaveBeenCalledTimes(3);
+    });
+
+    // The guard is a copy: the same 401s, waits and successes have to refresh in
+    // the same places as npm's own plugin, or a framework bump has moved it.
+    it("refreshes exactly where npm's AuthRestPlugin does", async () => {
+      vi.useFakeTimers();
+      try {
+        const session = { kind: 'bearer', token: 'fresh' } satisfies AuthSession;
+        // A number is a wait in ms: 29 s and one more pin the window from both sides.
+        const steps = ['401', '401', '401', 29_000, '401', 1_000, '401', '401', '401', '2xx', '401'] as const;
+        const refreshesOf = async (plugin: AuthRestPlugin, calls: () => number): Promise<boolean[]> => {
+          const refreshed: boolean[] = [];
+          for (const step of steps) {
+            if (typeof step === 'number') {
+              vi.advanceTimersByTime(step);
+            } else if (step === '2xx') {
+              await plugin.onResponse?.({ status: 200, headers: {}, data: {} });
+            } else {
+              const before = calls();
+              await plugin.onError?.(make401Ctx());
+              refreshed.push(calls() > before);
+            }
+          }
+          return refreshed;
+        };
+
+        const ourRefresh = vi.fn().mockResolvedValue(session);
+        publishBearer('stale', { refresh: ourRefresh });
+        const ours = await refreshesOf(childPlugin(), () => ourRefresh.mock.calls.length);
+
+        const npmRefresh = vi.fn().mockResolvedValue(session);
+        let npmPlugin: AuthRestPlugin | undefined;
+        frontxApiTransport()({
+          provider: { getSession: vi.fn().mockResolvedValue(session), refresh: npmRefresh } as unknown as AuthProvider,
+          addRestPlugin: (plugin) => {
+            npmPlugin = plugin as AuthRestPlugin;
+          },
+          removeRestPlugin: vi.fn(),
+        });
+        if (!npmPlugin) throw new Error('frontxApiTransport() did not add a REST plugin');
+        const npm = await refreshesOf(npmPlugin, () => npmRefresh.mock.calls.length);
+
+        expect(ours).toEqual(npm);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('returns the error untouched for a non-401', async () => {
